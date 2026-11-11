@@ -46,19 +46,19 @@ jobs:
     env:
       MACOS_ONLY_TESTS: test:vault-paths test:html-page-import test:live-page-capture test:live-page-capture-window test:live-page-capture-markup ${{ inputs.hosted && 'test:vault-gallery:write-windows' || '' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
       # test:board-panel (unit tier) runs `bun test`, so bun is needed before test:unit.
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
       - name: Cache Bun packages
         if: ${{ inputs.hosted }}
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
@@ -71,8 +71,8 @@ jobs:
       - name: Unit tier (minus macOS-only scripts)
         run: |
           node scripts/run-tests.mjs --check
-          names=$(node -p "const skip = process.env.MACOS_ONLY_TESTS.split(' '); require('./scripts/test-tiers.json').unit.filter((n) => !skip.includes(n)).join(' ')")
-          node scripts/run-tests.mjs $names
+          read -r -a names <<< "$(node -p "const skip = process.env.MACOS_ONLY_TESTS.split(' '); require('./scripts/test-tiers.json').unit.filter((n) => !skip.includes(n)).join(' ')")"
+          node scripts/run-tests.mjs "${names[@]}"
       - name: Worker tests
         run: bun test ./worker
 
@@ -85,21 +85,21 @@ jobs:
        github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
       github.event_name == 'workflow_dispatch'
-    runs-on: ${{ inputs.hosted && 'macos-14' || fromJSON('["self-hosted","macOS","ARM64"]') }}
+    runs-on: ${{ inputs.hosted && 'macos-15' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
       - name: Cache Bun packages
         if: ${{ inputs.hosted }}
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
@@ -115,7 +115,7 @@ jobs:
     # checks measure font/pixel layout and are still being made portable, so
     # these run on demand and nightly, and a failure does not fail the workflow.
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
-    runs-on: ${{ inputs.hosted && 'macos-14' || fromJSON('["self-hosted","macOS","ARM64"]') }}
+    runs-on: ${{ inputs.hosted && 'macos-15' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 60
     continue-on-error: true
     strategy:
@@ -123,18 +123,18 @@ jobs:
       matrix:
         tier: [dom, e2e]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
       - name: Cache Bun packages
         if: ${{ inputs.hosted }}
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}

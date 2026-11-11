@@ -116,15 +116,17 @@ function App(){const [picker,P]=React.useState(false),[panel,S]=React.useState(t
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Tab')
   assert.equal(await page.locator('.research-detail button').first().evaluate(el=>el===document.activeElement), true, await page.evaluate(()=>document.activeElement.outerHTML))
-  for (const [label,op] of [['Rename…','rename'],['Change kind…','kind'],['Move to another talk…','move'],['Copy to another talk…','copy'],['Delete…','delete']]) {
+  for (const [label,op,verb] of [['Rename…','rename','Rename'],['Change kind…','kind','Change kind'],['Move to another talk…','move','Move'],['Copy to another talk…','copy','Copy'],['Delete…','delete','Delete']]) {
     await page.getByRole('button',{name:'Tidy research',exact:true}).click()
     await page.getByRole('button',{name:label,exact:true}).click()
     const dialog=page.getByRole('dialog')
-    assert.equal(await dialog.getByRole('button',{name:'Cancel',exact:true}).evaluate(el=>el===document.activeElement),true,'Cancel is the default')
-    if(op==='rename'){await dialog.getByLabel('Title',{exact:true}).fill('New title');await dialog.getByLabel('Rename the file slug too').check()}
+    assert.equal(await dialog.getByRole('button',{name:'Cancel',exact:true}).evaluate(el=>el===document.activeElement),op==='rename'?false:true,op==='rename'?'the name field has the focus':'Cancel is the default')
+    if(op==='rename'){await dialog.getByLabel('Research item name').fill('New title');await dialog.getByText('Details',{exact:true}).click();await dialog.getByLabel('Also rename the file on disk').check()}
     if(op==='kind')await dialog.getByLabel('Kind',{exact:true}).selectOption('snippet')
     if(op==='move'||op==='copy')await dialog.getByLabel('Destination talk').selectOption('/vault/other')
-    await dialog.getByRole('button',{name:'Review changes'}).click()
+    assert.equal(await dialog.getByRole('button',{name:'Review changes'}).count(),0,'no "Review changes" label')
+    // The confirm card for a deletion shows what it affects at once; every other action asks with its own verb first.
+    if(op!=='delete')await dialog.getByRole('button',{name:verb,exact:true}).click()
     await dialog.getByText('Used in 2 slides:',{exact:true}).waitFor()
     await dialog.getByText('Slide 1 “First”',{exact:true}).waitFor()
     await dialog.getByText(/^Slide 2 “Second” in (?:Other talk|other)$/).waitFor()
@@ -134,14 +136,16 @@ function App(){const [picker,P]=React.useState(false),[panel,S]=React.useState(t
     }
     await dialog.getByText('Could not check these outlines. Their slides may have broken links:',{exact:true}).waitFor()
     await dialog.getByText('/vault/other/linked-outline.md',{exact:true}).waitFor()
-    assert.equal(await dialog.getByRole('button',{name:'Cancel',exact:true}).evaluate(el=>el===document.activeElement),true,'review keeps Cancel as default')
     if(op==='delete'){
+      const text=await dialog.innerText()
+      assert.match(text,/Bin/);assert.doesNotMatch(text,/Trash/)
+      assert.equal(await dialog.getByRole('button',{name:'Cancel',exact:true}).evaluate(el=>el===document.activeElement),true,'review keeps Cancel as default')
       const count=await page.evaluate(()=>window.calls.filter(x=>x==='write:delete').length)
       await page.keyboard.press('Enter')
       assert.equal(await page.evaluate(()=>window.calls.filter(x=>x==='write:delete').length),count,'Return defaults to Cancel')
       continue
     }
-    await dialog.getByRole('button',{name:'Confirm',exact:true}).click()
+    await dialog.getByRole('button',{name:verb,exact:true}).click()
     await page.waitForFunction(op=>window.calls.includes('write:'+op),op)
     await page.getByRole('dialog').waitFor({state:'detached'})
   }

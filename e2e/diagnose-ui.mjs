@@ -162,7 +162,7 @@ try {
   await page.waitForTimeout(200)
 
   // editor↔strip sync: clicking a slide heading highlights the matching strip card.
-  await page.locator('[title="Both panes"]').first().click().catch(() => {})
+  await page.locator('[data-testid="slides-toggle"]').first().click().catch(() => {})
   await page.waitForTimeout(400)
   // pick a distinctive heading present in the agents talk
   const headingText = await page.evaluate(() => {

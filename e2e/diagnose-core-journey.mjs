@@ -37,6 +37,8 @@ import { PRE_WORK, TASK_PICTURE } from '../scripts/lib/work-page-fixture.mjs'
 import { WORKERS_SUBDOMAIN, pagesFileHash, startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
 import { startLiveWorker } from '../scripts/lib/live-worker-harness.mjs'
 import { appWrittenLoopback } from '../src/main/handout-publishing.ts'
+import { loadWranglerBlake3, pagesAssetHash } from '../src/main/pages-direct-upload.ts'
+import { SITE_RECORD_PATH, serialiseSiteRecord } from '../src/main/site-record.ts'
 
 const root = process.cwd()
 const scratch = mkdtempSync(join(tmpdir(), 'tw-core-journey-'))
@@ -60,9 +62,12 @@ const LIVE_HOST = `talkweaver-live-sessions.${WORKERS_SUBDOMAIN}.workers.dev`
 const EVENT = 'Core journey workshop'
 const EXPECTED = 12
 const NOT_AVAILABLE = 'This page is not available'
-// An earlier publish already live on the site: the publication-preservation check reads it from the fake API and
-// refuses a publish from a computer that no longer holds it (first publish below), then passes once it is restored.
+// An earlier publish already live on the site, which this computer has no copy of: per-talk publishing merges the Run's
+// folder into the live manifest, so the earlier page stays on the site with its exact hash (spec 2026-11-05).
 const EARLIER_PATH = '/earlier-talk/index.html'
+// The site already carries its record (/_talkweaver/site.json, as after its first per-talk publish): this computer follows it.
+const SITE_RECORD_TEXT = serialiseSiteRecord({ registry: {}, shortLinks: false, headers: '', publishedBy: 'Another Mac' })
+const SITE_RECORD_HASH = pagesAssetHash(loadWranglerBlake3(join(import.meta.dirname, '..')), Buffer.from(SITE_RECORD_TEXT), SITE_RECORD_PATH)
 const EARLIER_PAGE = '<!doctype html><title>Earlier talk</title><p>Published from this computer before the journey.</p>\n'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
@@ -84,9 +89,9 @@ writeFileSync(outlinePath, OUTLINE)
 const CHECKS = [
   'the app started on the throwaway folder, pointed at the fake API; the live Worker is local',
   'attach a work file in metadata; before any publish the strip says "not sent to anyone"',
-  'Plan a run with pre-work: one Save writes the planned Run with its file and window, and opens its Run page',
+  'Plan a Run with pre-work: one Save writes the planned Run with its file and window, and opens its Run page',
   'the Run page is not published: Publish is on its Published step; the live service is set up through Settings first',
-  'Publish for this run: refused while this computer lacks the earlier published page (nothing uploaded); once restored, one link for that Run only (the handout and its pre-work page under one folder; the talk itself is not published) and the earlier page kept on the site',
+  'Publish for this run, with no copy of the site on this computer: one link for that Run only (the handout and its pre-work page under one folder; the talk itself is not published), and the earlier page kept on the site with its exact hash and never fetched here',
   'the participant opens /pre-work from the written site and answers two steps; no page error, no right answer in the page',
   'the Run page shows 1 of the expected people and the answers (the open answer as text, the quick check\'s spread)',
   'the status bar chip shows the count: "pre-work 1/N"',
@@ -137,7 +142,8 @@ try {
   api = await startCloudflareApiStub({
     sites: [], accounts: [ADA], accountSites: { [ADA.id]: [SITE] },
     tokens: { [TOKEN]: { accounts: [ADA.id] } },
-    pagesDeployments: { [ADA.id]: { [SITE]: { files: { [EARLIER_PATH]: pagesFileHash(EARLIER_PAGE) } } } },
+    pagesDeployments: { [ADA.id]: { [SITE]: { files: { [EARLIER_PATH]: pagesFileHash(EARLIER_PAGE), [SITE_RECORD_PATH]: SITE_RECORD_HASH } } } },
+    pagesAssets: { [SITE_RECORD_HASH]: SITE_RECORD_TEXT },
   })
   worker = await startLiveWorker()
   const workerPort = new URL(worker.baseUrl).port
@@ -205,9 +211,9 @@ try {
   await page.waitForFunction(() => document.querySelector('[data-work-strip="pre"]')?.textContent?.includes('not sent to anyone'), null, { timeout: 8000 }).catch(() => {})
   const notSent = (await strip.innerText()).replace(/\s+/g, ' ').trim()
   await shot('1-not-sent')
-  record(1, notSent.startsWith('Pre-work · Research teams intake · 4 steps · not sent to anyone') && notSent.includes('Plan a run'), notSent)
+  record(1, notSent.startsWith('Pre-work · Research teams intake · 4 steps · not sent to anyone') && notSent.includes('Plan a Run'), notSent)
 
-  // ---- 2. Plan a run with pre-work; 3. Save opens the Run page.
+  // ---- 2. Plan a Run with pre-work; 3. Save opens the Run page.
   await page.waitForTimeout(3500) // the attachment is written before the sheet reads the talk's metadata
   await strip.locator('[data-strip-action="plan-run"]').click()
   const sheet = page.locator('[data-testid="plan-run-sheet"]')
@@ -248,22 +254,10 @@ try {
   const publishOutcome = () => until(async () => (await tools.locator('[data-run-published-block]').count()) > 0 ? 'published' : (await tools.locator('[data-run-notice]').innerText().catch(() => '')).trim(),
     (state) => state === 'published' || state !== '', 300_000, 'the Published block or a notice')
   const deploys = () => api.requests.filter((request) => request.method === 'POST' && request.path.endsWith('/deployments')).length
-  // First try: the site on Cloudflare holds an earlier page this computer's site folder does not. The check refuses, uploads nothing.
+  // Per-talk publishing (spec 2026-11-05): the site on Cloudflare holds an earlier page this computer's site folder does not.
+  // The publish sends only the Run's folder; the earlier page keeps its live hash and nothing of it is fetched here.
   await publishButton.click()
-  const refusedText = await publishOutcome()
-  const refusedAt = { notice: refusedText.replace(/\s+/g, ' ').slice(0, 200), deployments: deploys(), published: await tools.locator('[data-run-published-block]').count() }
-  const refusedRight = refusedText.includes('PUBLISH_COVERAGE_MISSING') && refusedAt.deployments === 0 && refusedAt.published === 0
-  if (!refusedRight) throw new Error(`The first Publish should have been refused for the missing earlier page (PUBLISH_COVERAGE_MISSING); it said: ${JSON.stringify(refusedAt)}`)
-  await shot('4-run-page-publish-refused', tools)
-  // The refused attempt must leave nothing behind that the retry would upload (or give a "-2" folder to).
-  const leftBehind = readdirSync(site, { withFileTypes: true }).map((entry) => entry.name)
-  refusedAt.leftBehind = leftBehind.length
-  if (leftBehind.length) throw new Error(`The refused publish left ${JSON.stringify(leftBehind)} in the site folder`)
-  // Restore the complete site folder, as the message says, and publish again.
-  mkdirSync(join(site, 'earlier-talk'), { recursive: true })
-  writeFileSync(join(site, 'earlier-talk', 'index.html'), EARLIER_PAGE)
-  await tools.locator('[data-run-step="published"] [data-run-action="publish"]').click()
-  await publishOutcome().then((state) => { if (state !== 'published') throw new Error(`Publish for this run (earlier page restored) said: ${state}`) })
+  await publishOutcome().then((state) => { if (state !== 'published') throw new Error(`Publish for this run (no copy of the site here) said: ${state}`) })
   await shot('4-run-page-published', tools)
   const published = runRecord()
   const handoutUrl = published.handoutUrl
@@ -275,11 +269,12 @@ try {
   const talkOutline = readFileSync(outlinePath, 'utf8')
   const uploadedTo = api.production(ADA.id, SITE)
   const uploadedFiles = Object.keys(uploadedTo?.files ?? {})
+  const earlierKept = uploadedTo?.files?.[EARLIER_PATH] === pagesFileHash(EARLIER_PAGE)
   record(4, typeof handoutUrl === 'string' && handoutUrl.startsWith(`${PAGES}/${runFolder}/`) && !!preLink && preLink.text.replace(/\s+/g, '').includes(`${runFolder}/pre-work`)
     && pagesOfRun.every(Boolean)
-    && JSON.stringify(topLevel) === JSON.stringify(['earlier-talk', runFolder].sort()) && !talkOutline.includes('handout_url') && published.work?.pre?.publishedAt
-    && refusedRight && uploadedTo?.environment === 'production' && UUID.test(uploadedTo.id) && uploadedFiles.includes(EARLIER_PATH) && uploadedFiles.includes(`/${runFolder}/pre-work/index.html`),
-    JSON.stringify({ refused: refusedAt, handoutUrl, links: linkRows, topLevel, pagesOfRun, production: { id: uploadedTo?.id, files: uploadedFiles.length } }))
+    && JSON.stringify(topLevel) === JSON.stringify([runFolder]) && !talkOutline.includes('handout_url') && published.work?.pre?.publishedAt
+    && uploadedTo?.environment === 'production' && UUID.test(uploadedTo.id) && earlierKept && uploadedFiles.includes(`/${runFolder}/pre-work/index.html`),
+    JSON.stringify({ handoutUrl, links: linkRows, topLevel, pagesOfRun, earlierKept, production: { id: uploadedTo?.id, files: uploadedFiles.length } }))
   const preUrl = `${handoutUrl.replace(/\/+$/, '')}/pre-work/`
 
   // ---- 5. The participant.
@@ -392,7 +387,7 @@ try {
   const keptAfter = runRecord()?.prework
   const answersStay = (keptAfter?.entries ?? []).some((entry) => entry.kind === 'answer' && entry.text === ANSWER)
   const finalFiles = Object.keys(api.production(ADA.id, SITE)?.files ?? {})
-  const strays = finalFiles.filter((file) => file !== EARLIER_PATH && !file.startsWith(`/${runFolder}/`) && !/^\/(_redirects|_headers|404\.html)$/.test(file))
+  const strays = finalFiles.filter((file) => file !== EARLIER_PATH && !file.startsWith(`/${runFolder}/`) && !/^\/(_redirects|_headers|404\.html|_talkweaver\/site\.json)$/.test(file))
   record(9, again === 1 && !/-2$/.test(runFolder ?? '') && strays.length === 0 && finalFiles.includes(EARLIER_PATH) && gone.includes(NOT_AVAILABLE) && handoutGone.includes(NOT_AVAILABLE) && !!stamped.work?.pre?.unpublishedAt && answersStay
     && (await tools.locator('[data-run-section="pre-answers"] [data-run-answered]').innerText()).trim() === `1/${EXPECTED} answered`,
     JSON.stringify({ publishAgain: again, strays, siteKeepsEarlierPage: finalFiles.includes(EARLIER_PATH), participant: gone.slice(0, 80), handout: handoutGone.slice(0, 80), kept: keptAfter?.entries?.length }))

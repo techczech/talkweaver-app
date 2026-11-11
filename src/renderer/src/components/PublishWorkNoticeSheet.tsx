@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import { CalendarPlus, Globe, Info, Presentation, X } from 'lucide-react'
 
 // The talk's Publish dialog when the talk names a pre-work and/or post-work file (work-files ticket 23,
-// hifi shots 10-has-pre-work): the notice that work files go out with a Run, with Plan a run, then
+// hifi shots 10-has-pre-work): the notice that work files go out with a Run, with Plan a Run, then
 // Cancel / Publish. The sentence is built by src/shared/publish-work-notice.ts. A talk naming neither
 // file publishes straight away, as in 0.39, and never sees this sheet.
 
@@ -38,7 +38,7 @@ export default function PublishWorkNoticeSheet({ talkTitle, notice, onCancel, on
           <div className="sh-work-notice" role="note" data-testid="publish-work-notice">
             <Info size={16} aria-hidden="true" />
             <span className="sh-work-notice-text" data-testid="publish-work-notice-text">{notice}</span>
-            <button className="sh-btn sh-btn--plain sh-btn--sm" data-testid="publish-work-notice-plan" onClick={onPlanRun}><CalendarPlus size={14} aria-hidden="true" />Plan a run</button>
+            <button className="sh-btn sh-btn--plain sh-btn--sm" data-testid="publish-work-notice-plan" onClick={onPlanRun}><CalendarPlus size={14} aria-hidden="true" />Plan a Run</button>
           </div>
         </div>
         <div className="sh-foot">

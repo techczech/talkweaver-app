@@ -85,7 +85,7 @@ function App() {
   return <div className="workspace-row" style={{ flex: 1 }}><div className="workspace-main"><div className={'workspace-toolbar' + (layoutApi.layout.mode === 'docked' ? ' workspace-toolbar--tight' : '')} data-testid="fake-toolbar">
       <span className="workspace-title">A talk with a fairly long title</span>
       <div className="pane-toggle">{[1, 2, 3, 4].map((n) => <button key={n} className="pane-btn"><svg width="17" height="17" /></button>)}</div>
-      <div className="toolbar-actions">{btn('Share')}{btn('Place')}{btn('Deck')}{btn('Tools')}{btn('Present', ' toolbar-btn--primary')}</div>
+      <div className="toolbar-actions">{btn('Share')}{btn('Place')}{btn('Talk')}{btn('Tools')}{btn('Present', ' toolbar-btn--primary')}</div>
     </div><button id="open-browser-probe" onClick={() => window.calls.push('browser')}>probe</button></div>
     <ScratchpadPanel data={data} layoutApi={layoutApi} registerActions={(a) => { actions.current = a }} onOpenSlideBrowser={() => window.calls.push('browser')} insert={insert} /></div>
 }
@@ -97,7 +97,7 @@ createRoot(document.getElementById('root')).render(<App />)`,
   })
   writeFileSync(join(scratch, 'test.html'), '<!doctype html><meta charset="utf-8"><style>:root{--panel:#fffdf8;--paper:#f7f3ea;--line:#d9d0c1;--ink:#17202a;--muted:#5d6875;--faint:#8a9099;--oxford:#0b3a6b;--green:#166534;--amber:#92600a;--crimson:#9b1c1c;--hover:#ede8dc;--font-ui:system-ui;--font-serif:Georgia;--font-mono:monospace}body{margin:0;background:var(--paper)}#root{height:100vh;display:flex}</style><link rel="stylesheet" href="test.css"><div id="root"></div><script src="test.js"></script>')
   browser = await chromium.launch({ headless: true, executablePath: process.env.TW_CHROMIUM_HEADLESS_SHELL || undefined })
-  const page = await browser.newPage({ viewport: { width: 1300, height: 900 } })
+  const page = await browser.newPage({ viewport: { width: 1800, height: 900 } })
   page.setDefaultTimeout(8000)
   const panel = () => page.locator('.sp-panel')
   const errors = []
@@ -168,7 +168,7 @@ createRoot(document.getElementById('root')).render(<App />)`,
     assert.deepEqual(await page.locator('.sp-card-title').allInnerTexts(), ['A research loop'])
     await page.getByRole('button', { name: /^Opening ▾/ }).click()
     await page.getByRole('menuitem', { name: 'New group…' }).click()
-    await page.getByLabel('New group name').fill('Maybe')
+    await page.getByLabel('Group name', { exact: true }).fill('Maybe')
     await page.getByRole('button', { name: 'Create' }).click()
     assert.ok((await calls()).includes('new:Maybe'))
     assert.match(await page.locator('.sp-searchrow > .sp-anchor > .sp-btn').innerText(), /Maybe/)
@@ -380,18 +380,15 @@ createRoot(document.getElementById('root')).render(<App />)`,
     assert.ok(await page.locator('.sp-panel--docked').count() === 1)
     assert.equal(await page.locator('.sp-panel--docked').evaluate((el) => Math.round(el.getBoundingClientRect().width)), 560)
     if (shots) await page.screenshot({ path: join(shots, 'scratchpad-docked.png') })
-    await page.setViewportSize({ width: 1160, height: 900 }) // the installed window: the main area is left with about 600px
-    const geometry = await page.evaluate(() => {
-      const panelBox = document.querySelector('.sp-panel--docked').getBoundingClientRect()
-      const bar = document.querySelector('[data-testid="fake-toolbar"]').getBoundingClientRect()
-      const buttons = [...document.querySelectorAll('[data-testid="fake-toolbar"] button')].map((b) => b.getBoundingClientRect())
-      const sp = document.querySelector('.toolbar-btn--primary')
-      return { panelLeft: panelBox.left, barRight: bar.right, rightmost: Math.max(...buttons.map((r) => r.right)), spHeight: sp.getBoundingClientRect().height, spLine: parseFloat(getComputedStyle(sp).lineHeight) || 20 }
-    })
-    assert.ok(geometry.barRight <= geometry.panelLeft + 1, 'the toolbar ends where the docked panel begins')
-    assert.ok(geometry.rightmost <= geometry.panelLeft, `no toolbar control sits under the docked panel (${geometry.rightmost} vs ${geometry.panelLeft})`)
-    assert.ok(geometry.spHeight < geometry.spLine * 2 + 12, 'the Present button stays on one line')
-    await page.setViewportSize({ width: 1300, height: 900 })
+    // R17: a window narrower than the dock needs (1700 px) draws the docked panel as the floating one, with no Dock button,
+    // so it never squeezes the toolbar or the editor below their room.
+    await page.setViewportSize({ width: 1160, height: 900 })
+    await page.locator('.sp-panel--float').waitFor()
+    assert.equal(await page.locator('.sp-panel--docked').count(), 0, 'no docked panel in a narrow window')
+    assert.equal(await page.getByRole('button', { name: 'Dock to the right' }).count(), 0, 'no Dock button where the dock does not fit')
+    assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('tw-scratchpad-layout-v1'))).mode, 'docked', 'the saved choice is kept for a wider window')
+    await page.setViewportSize({ width: 1800, height: 900 })
+    await page.locator('.sp-panel--docked').waitFor()
     await page.getByRole('button', { name: 'Collapse' }).click()
     await page.locator('.sp-pill').waitFor()
     const saved = JSON.parse(await page.evaluate(() => localStorage.getItem('tw-scratchpad-layout-v1')))
@@ -491,13 +488,13 @@ createRoot(document.getElementById('root')).render(<App />)`,
     await page.locator('.sp-tabs button').first().click()
     await page.getByLabel('Select Run middle', { exact: true }).check()
     await page.getByRole('button', { name: 'Move selected items up', exact: true }).click()
-    assert.equal(await page.getByLabel('Scratchpad sort order').inputValue(), 'manual')
+    assert.equal(await page.getByLabel('Slide Scratchpad sort order').inputValue(), 'manual')
     const order = () => page.locator('.sp-card input[type=checkbox]').evaluateAll(nodes=>nodes.map(node=>node.getAttribute('aria-label')))
     assert.deepEqual(await order(), ['Select Run middle','Select Run newest','Select Run oldest','Select Run tail'])
-    await page.getByLabel('Scratchpad sort order').selectOption('newest')
+    await page.getByLabel('Slide Scratchpad sort order').selectOption('newest')
     await page.waitForFunction(() => document.querySelector('.sp-card input[type=checkbox]')?.getAttribute('aria-label') === 'Select Run newest')
     assert.equal((await order())[0], 'Select Run newest')
-    await page.getByLabel('Scratchpad sort order').selectOption('manual')
+    await page.getByLabel('Slide Scratchpad sort order').selectOption('manual')
     await page.waitForFunction(() => document.querySelector('.sp-card input[type=checkbox]')?.getAttribute('aria-label') === 'Select Run middle')
     assert.equal((await order())[0], 'Select Run middle')
     await page.evaluate(() => window.run('scratchpad-move-down'))

@@ -6,7 +6,7 @@
 //
 // Design lock: docs/design/2026-07-11-v015-tags-metadata/direction-a-rail.html (stage 2).
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
-import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Lock, Unlock, Plus, X } from 'lucide-react'
+import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Lock, Unlock, Plus } from 'lucide-react'
 import type { TalkInfo, MetadataVocabulary } from '../../../preload/index'
 import {
   METADATA_REGISTRY,
@@ -16,12 +16,11 @@ import {
   type MetadataEntry
 } from '../../../shared/metadata-registry'
 import { notify } from '../lib/notify'
+import { discardedNotice, keepDraft, restoreDraft, setStoredNotice, storedNotice } from '../lib/talkDrafts'
 
 interface Props {
   talk: TalkInfo | null
-  vaultRoot: string
   isOpen: boolean
-  onClose: () => void
   /** Awaited before the panel reads the outline from disk, so a live editor buffer's autosave lands first. */
   flushBeforeIO?: () => Promise<void>
   /** Called with the outline's new full text after every write. An open talk's write already went
@@ -50,7 +49,7 @@ function valueFor(entry: MetadataEntry, pairs: Array<{ key: string; value: strin
 
 type DoctorRowState = 'open' | 'removed' | 'kept'
 
-export default function MetadataPanel({ talk, vaultRoot, isOpen, onClose, flushBeforeIO, onSaved }: Props) {
+export default function MetadataPanel({ talk, isOpen, flushBeforeIO, onSaved }: Props) {
   const [content, setContent] = useState<string | null>(null)
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [baseline, setBaseline] = useState<Record<string, string>>({})
@@ -60,11 +59,15 @@ export default function MetadataPanel({ talk, vaultRoot, isOpen, onClose, flushB
   const [sysOpen, setSysOpen] = useState(false)
   const [confirmKey, setConfirmKey] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
+  const [notice, setNotice] = useState('')
+  const presenceRef = useRef<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
   const [savedFlash, setSavedFlash] = useState(false)
   const firstFieldRef = useRef<HTMLInputElement>(null)
 
-  const userEntries = useMemo(() => activeUserFrontmatterEntries(), [])
+  // The Advanced part of the Talk tab (house rule R11): the design fields (Talk design) are already above it, so only the keys
+  // outside the deck are here, with the notice about keys TalkWeaver does not know and the managed (System) keys.
+  const userEntries = useMemo(() => activeUserFrontmatterEntries().filter((e) => e.outsideDeck), [])
   const systemEntries = useMemo(() => systemFrontmatterEntries(), [])
   const groups = useMemo(() => {
     const order: string[] = []
@@ -83,6 +86,11 @@ export default function MetadataPanel({ talk, vaultRoot, isOpen, onClose, flushB
     () => Object.keys(draft).some((k) => (draft[k] ?? '') !== (baseline[k] ?? '')),
     [draft, baseline]
   )
+
+  // Kept per talk while the disclosure or the tab is away (lib/talkDrafts.ts); not before the first read has set the baseline.
+  useEffect(() => {
+    if (isOpen && talk && content !== null) keepDraft('advanced', talk.outlinePath, draft, baseline, presenceRef.current)
+  }, [isOpen, talk, content, draft, baseline])
 
   // Load everything when the panel opens: flush the live buffer, then read disk truth.
   useEffect(() => {
@@ -110,16 +118,22 @@ export default function MetadataPanel({ talk, vaultRoot, isOpen, onClose, flushB
         setDoctorRows((mine?.unregistered ?? []).map((k) => ({ ...k, state: 'open' as const })))
         const parsed = parsePairs(text)
         const values: Record<string, string> = {}
-        for (const e of activeUserFrontmatterEntries()) values[e.key] = valueFor(e, parsed)
-        setDraft(values)
+        for (const e of userEntries) values[e.key] = valueFor(e, parsed)
+        const present: Record<string, boolean> = {}
+        for (const e of userEntries) present[e.key] = [e.key, ...(e.aliases ?? [])].some((name) => parsed.some((p) => p.key === name))
+        presenceRef.current = present
+        const restored = restoreDraft('advanced', talk.outlinePath, values, present)
+        setDraft(restored.draft)
+        const fresh = discardedNotice(restored.discarded.map((key) => findEntry(key)?.label ?? key))
+        if (fresh) setStoredNotice('advanced', talk.outlinePath, fresh)
+        setNotice(fresh || storedNotice('advanced', talk.outlinePath))
         setBaseline(values)
-        requestAnimationFrame(() => firstFieldRef.current?.focus())
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load metadata.')
       }
     })()
     return () => { cancelled = true }
-  }, [isOpen, talk])
+  }, [isOpen, talk, userEntries])
 
   // One write path for everything (fields, doctor removals, system deletes).
   const writeEdits = useCallback(
@@ -146,6 +160,11 @@ export default function MetadataPanel({ talk, vaultRoot, isOpen, onClose, flushB
     [talk, onSaved]
   )
 
+  function dismissNotice() {
+    setNotice('')
+    if (talk) setStoredNotice('advanced', talk.outlinePath, '')
+  }
+
   async function handleSave() {
     if (!talk || saving) return
     const edits: Array<{ key: string; value: string | null; aliases?: string[] }> = []
@@ -160,6 +179,7 @@ export default function MetadataPanel({ talk, vaultRoot, isOpen, onClose, flushB
     setError(null)
     try {
       if (await writeEdits(edits)) {
+        dismissNotice()
         setBaseline({ ...draft })
         setSavedFlash(true)
         setTimeout(() => setSavedFlash(false), 2500)
@@ -188,215 +208,187 @@ export default function MetadataPanel({ talk, vaultRoot, isOpen, onClose, flushB
     notify(`${key} removed from the frontmatter.`, 'success')
   }
 
-  // Esc: close the innermost thing first (confirm → panel). Autocomplete handles its own Esc
-  // with stopPropagation before this listener sees it.
-  useEffect(() => {
-    if (!isOpen) return
-    function onKey(e: globalThis.KeyboardEvent) {
-      if (e.key !== 'Escape') return
-      e.preventDefault()
-      if (confirmKey !== null) setConfirmKey(null)
-      else onClose()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [isOpen, confirmKey, onClose])
-
   if (!isOpen || !talk) return null
 
   const openDoctorRows = doctorRows.filter((r) => r.state === 'open')
   const presentSystem = systemEntries.filter((e) => valueFor(e, pairs) !== '')
-  const relPath = vaultRoot && talk.outlinePath.startsWith(vaultRoot)
-    ? talk.outlinePath.slice(vaultRoot.length).replace(/^\//, '')
-    : talk.outlinePath
 
-  return (
-    <div style={S.backdrop} onClick={(e) => { if (e.target === e.currentTarget) onClose() }}>
-      <div style={S.modal} role="dialog" aria-modal="true" aria-label={`Metadata — ${talk.title}`}>
-        <div style={S.header}>
-          <div style={{ minWidth: 0 }}>
-            <span style={S.title}>{talk.title}</span>
-            <span style={S.headLabel}>frontmatter</span>
-          </div>
-          <span style={S.registryNote}>{METADATA_REGISTRY.length} declared keys</span>
-          <button type="button" onClick={onClose} style={S.closeBtn} aria-label="Close metadata panel" title="Close (Esc)">
-            <X size={16} />
-          </button>
+  const bodyEl = (
+    <div style={S.bodyEmbedded}>
+      {error && <div style={S.errorBox}>{error}</div>}
+      {notice && (
+        <div role="status" style={S.errorBox} data-draft-notice="true">
+          {notice} <button type="button" style={{ border: 0, background: 'transparent', color: OXFORD, cursor: 'pointer', textDecoration: 'underline' }} onClick={dismissNotice}>Dismiss</button>
         </div>
-        <div style={S.srcPath}>{relPath}</div>
-
-        <div style={S.body}>
-          {error && <div style={S.errorBox}>{error}</div>}
-          {content === null && !error && <div style={S.loading}>Loading…</div>}
-          {content !== null && (
-            <>
-              {/* Doctor status is ALWAYS visible — a clean bill of health is a designed state
-                  (Gate-5), not an absence. Green check + "Everything declared" when there is
-                  nothing to report; amber review row when unregistered keys were found. */}
-              {doctorRows.length === 0 && (
-                <div style={{ ...S.doctor, ...S.doctorClean }}>
-                  <div style={S.doctorRow}>
-                    <CheckCircle2 size={15} style={{ color: GREEN, flexShrink: 0 }} />
-                    <span style={S.doctorText}>
-                      <b style={{ color: GREEN }}>Everything declared ✓</b> — every frontmatter key in this
-                      outline is in the Metadata Registry.
-                    </span>
-                  </div>
-                </div>
-              )}
-              {doctorRows.length > 0 && (
-                <div style={S.doctor}>
-                  <div style={S.doctorRow}>
-                    <AlertTriangle size={15} style={{ color: AMBER, flexShrink: 0 }} />
-                    <span style={S.doctorText}>
-                      {openDoctorRows.length > 0 ? (
+      )}
+      {content === null && !error && <div style={S.loading}>Loading…</div>}
+      {content !== null && (
+        <>
+          {/* Doctor status is ALWAYS visible — a clean bill of health is a designed state
+              (Gate-5), not an absence. Green check + "Everything declared" when there is
+              nothing to report; amber review row when unregistered keys were found. */}
+          {doctorRows.length === 0 && (
+            <div style={{ ...S.doctor, ...S.doctorClean }}>
+              <div style={S.doctorRow}>
+                <CheckCircle2 size={15} style={{ color: GREEN, flexShrink: 0 }} />
+                <span style={S.doctorText}>
+                  <b style={{ color: GREEN }}>All recognised ✓</b> — every setting in this
+                  talk is one TalkWeaver knows.
+                </span>
+              </div>
+            </div>
+          )}
+          {doctorRows.length > 0 && (
+            <div style={S.doctor}>
+              <div style={S.doctorRow}>
+                <AlertTriangle size={15} style={{ color: AMBER, flexShrink: 0 }} />
+                <span style={S.doctorText}>
+                  {openDoctorRows.length > 0 ? (
+                    <>
+                      <b style={{ color: AMBER }}>
+                        {openDoctorRows.length} unrecognised setting{openDoctorRows.length === 1 ? '' : 's'}
+                      </b>{' '}
+                      found in this talk. TalkWeaver cannot explain or edit {openDoctorRows.length === 1 ? 'it' : 'them'}.
+                    </>
+                  ) : (
+                    <b style={{ color: GREEN }}>All clear — every setting in this talk is recognised or kept on purpose.</b>
+                  )}
+                </span>
+                <button type="button" style={S.doctorBtn} onClick={() => setDoctorOpen((o) => !o)}>
+                  {doctorOpen ? 'Hide' : 'Review'}
+                </button>
+              </div>
+              {doctorOpen && (
+                <div style={S.doctorKeys}>
+                  {doctorRows.map((r) => (
+                    <div key={r.key} style={{ ...S.dkey, ...(r.state !== 'open' ? S.dkeyGone : {}) }}>
+                      <span style={{ ...S.dkeyName, ...(r.state !== 'open' ? { textDecoration: 'line-through' } : {}) }}>
+                        {r.key}
+                      </span>
+                      <span style={S.dkeyWhere}>
+                        frontmatter{r.value ? <> · value <code style={S.code}>{r.value}</code></> : null}
+                      </span>
+                      {r.state === 'open' ? (
                         <>
-                          <b style={{ color: AMBER }}>
-                            {openDoctorRows.length} unregistered key{openDoctorRows.length === 1 ? '' : 's'}
-                          </b>{' '}
-                          found in this outline — not declared in the Metadata Registry, so no surface can
-                          explain or edit {openDoctorRows.length === 1 ? 'it' : 'them'}.
+                          <button
+                            type="button"
+                            style={S.dkeyBtn}
+                            title="Leave the key in the outline and stop flagging it here. Registering it properly is a development act — it needs an explanation and a vocabulary in the registry."
+                            onClick={() => void handleDoctorKeep(r.key)}
+                          >
+                            Keep (ignore)
+                          </button>
+                          <button
+                            type="button"
+                            style={{ ...S.dkeyBtn, color: CRIMSON, borderColor: CRIMSON }}
+                            title="Delete this key’s line from the outline’s frontmatter"
+                            onClick={() => void handleDoctorRemove(r.key)}
+                          >
+                            Remove from outline
+                          </button>
                         </>
                       ) : (
-                        <b style={{ color: GREEN }}>All clear — every key in this outline is declared or kept on purpose.</b>
+                        <span style={{ color: r.state === 'removed' ? GREEN : MUTED, fontSize: '0.78rem' }}>
+                          {r.state === 'removed' ? 'removed ✓' : 'kept ✓'}
+                        </span>
                       )}
-                    </span>
-                    <button type="button" style={S.doctorBtn} onClick={() => setDoctorOpen((o) => !o)}>
-                      {doctorOpen ? 'Hide' : 'Review keys'}
-                    </button>
-                  </div>
-                  {doctorOpen && (
-                    <div style={S.doctorKeys}>
-                      {doctorRows.map((r) => (
-                        <div key={r.key} style={{ ...S.dkey, ...(r.state !== 'open' ? S.dkeyGone : {}) }}>
-                          <span style={{ ...S.dkeyName, ...(r.state !== 'open' ? { textDecoration: 'line-through' } : {}) }}>
-                            {r.key}
-                          </span>
-                          <span style={S.dkeyWhere}>
-                            frontmatter{r.value ? <> · value <code style={S.code}>{r.value}</code></> : null}
-                          </span>
-                          {r.state === 'open' ? (
-                            <>
-                              <button
-                                type="button"
-                                style={S.dkeyBtn}
-                                title="Leave the key in the outline and stop flagging it here. Registering it properly is a development act — it needs an explanation and a vocabulary in the registry."
-                                onClick={() => void handleDoctorKeep(r.key)}
-                              >
-                                Keep (ignore)
-                              </button>
-                              <button
-                                type="button"
-                                style={{ ...S.dkeyBtn, color: CRIMSON, borderColor: CRIMSON }}
-                                title="Delete this key’s line from the outline’s frontmatter"
-                                onClick={() => void handleDoctorRemove(r.key)}
-                              >
-                                Remove from outline
-                              </button>
-                            </>
-                          ) : (
-                            <span style={{ color: r.state === 'removed' ? GREEN : MUTED, fontSize: '0.78rem' }}>
-                              {r.state === 'removed' ? 'removed ✓' : 'kept ✓'}
-                            </span>
-                          )}
-                        </div>
-                      ))}
                     </div>
-                  )}
-                </div>
-              )}
-
-              {/* No frontmatter yet — say so and point at the way forward (designed empty state),
-                  instead of presenting a wall of blank fields with no explanation. */}
-              {pairs.length === 0 && (
-                <div style={S.noFm}>
-                  This talk has no frontmatter yet. Fill in any field below and press Save —
-                  TalkWeaver will create the frontmatter block at the top of the outline for you.
-                </div>
-              )}
-              {groups.map((group) => (
-                <div key={group.name}>
-                  <div style={S.groupHead}>{group.name}</div>
-                  {group.entries.map((entry, i) => (
-                    <Field
-                      key={entry.key}
-                      entry={entry}
-                      value={draft[entry.key] ?? ''}
-                      onChange={(v) => { setDraft((d) => ({ ...d, [entry.key]: v })); setSavedFlash(false) }}
-                      vocabValues={vocab[entry.key] ?? []}
-                      mapPresent={pairs.some((p) => [entry.key, ...(entry.aliases ?? [])].includes(p.key))}
-                      inputRef={group.name === groups[0].name && i === 0 ? firstFieldRef : undefined}
-                    />
                   ))}
                 </div>
-              ))}
+              )}
+            </div>
+          )}
 
-              <div style={S.sys}>
-                <button type="button" style={S.sysHead} onClick={() => setSysOpen((o) => !o)} aria-expanded={sysOpen}>
-                  {sysOpen ? <Unlock size={14} style={{ color: FAINT }} /> : <Lock size={14} style={{ color: FAINT }} />}
-                  <span style={S.sysTitle}>
-                    System
-                    <span style={S.sysCount}>
-                      {presentSystem.length} managed key{presentSystem.length === 1 ? '' : 's'} · {idStampCount} slide id{idStampCount === 1 ? '' : 's'}
-                    </span>
-                  </span>
-                  <span style={S.sysReveal}>
-                    {sysOpen ? 'Hide' : 'Reveal'}
-                    {sysOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
-                  </span>
-                </button>
-                {sysOpen && (
-                  <div style={S.sysBody}>
-                    <div style={S.sysExp}>
-                      TalkWeaver manages these. They keep identity, provenance and migrations working — edit
-                      the fields above instead. Deleting one always names its consequence first.
-                    </div>
+          {/* No frontmatter yet — say so and point at the way forward (designed empty state),
+              instead of presenting a wall of blank fields with no explanation. */}
+          {pairs.length === 0 && (
+            <div style={S.noFm}>
+              This talk has no frontmatter yet. Fill in any field below and press Save —
+              TalkWeaver will create the frontmatter block at the top of the outline for you.
+            </div>
+          )}
+          {groups.map((group) => (
+            <div key={group.name}>
+              <div style={S.groupHead}>{group.name}</div>
+              {group.entries.map((entry, i) => (
+                <Field
+                  key={entry.key}
+                  entry={entry}
+                  value={draft[entry.key] ?? ''}
+                  onChange={(v) => { setDraft((d) => ({ ...d, [entry.key]: v })); setSavedFlash(false) }}
+                  vocabValues={vocab[entry.key] ?? []}
+                  mapPresent={pairs.some((p) => [entry.key, ...(entry.aliases ?? [])].includes(p.key))}
+                  inputRef={group.name === groups[0].name && i === 0 ? firstFieldRef : undefined}
+                />
+              ))}
+            </div>
+          ))}
+
+          <div style={S.sys}>
+            <button type="button" style={S.sysHead} onClick={() => setSysOpen((o) => !o)} aria-expanded={sysOpen}>
+              {sysOpen ? <Unlock size={14} style={{ color: FAINT }} /> : <Lock size={14} style={{ color: FAINT }} />}
+              <span style={S.sysTitle}>
+                Kept by TalkWeaver
+              </span>
+              <span style={S.sysReveal}>
+                {sysOpen ? 'Hide details' : 'Details'}
+                {sysOpen ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+              </span>
+            </button>
+            {sysOpen && (
+              <div style={S.sysBody}>
+                <div style={S.sysExp}>
+                  {presentSystem.length} setting{presentSystem.length === 1 ? '' : 's'} and {idStampCount} slide marker{idStampCount === 1 ? '' : 's'} in this talk.{' '}
+                  TalkWeaver manages these. They keep identity, provenance and migrations working — edit
+                  the fields above instead. Deleting one always names its consequence first.
+                </div>
+                <div style={S.srow}>
+                  <span style={S.srowKey}>{'{id=…}'} stamps</span>
+                  <span style={S.srowVal}>{idStampCount} slide{idStampCount === 1 ? '' : 's'}</span>
+                  <span style={S.srowWhy}>{findEntry('id')?.explanation}</span>
+                </div>
+                {presentSystem.map((entry) => (
+                  <div key={entry.key}>
                     <div style={S.srow}>
-                      <span style={S.srowKey}>{'{id=…}'} stamps</span>
-                      <span style={S.srowVal}>{idStampCount} slide{idStampCount === 1 ? '' : 's'}</span>
-                      <span style={S.srowWhy}>{findEntry('id')?.explanation}</span>
+                      <span style={S.srowKey}>{entry.key}</span>
+                      <span style={S.srowVal}>{valueFor(entry, pairs)}</span>
+                      <span style={S.srowWhy}>{entry.explanation}</span>
+                      <button type="button" style={S.srowDel} onClick={() => setConfirmKey(entry.key)}>
+                        Delete…
+                      </button>
                     </div>
-                    {presentSystem.map((entry) => (
-                      <div key={entry.key}>
-                        <div style={S.srow}>
-                          <span style={S.srowKey}>{entry.key}</span>
-                          <span style={S.srowVal}>{valueFor(entry, pairs)}</span>
-                          <span style={S.srowWhy}>{entry.explanation}</span>
-                          <button type="button" style={S.srowDel} onClick={() => setConfirmKey(entry.key)}>
-                            Delete…
+                    {confirmKey === entry.key && (
+                      <div style={S.sysConfirm}>
+                        Deleting <b style={{ color: CRIMSON }}>{entry.key}</b> — {entry.deleteConsequence}
+                        <div style={S.confirmActs}>
+                          <button
+                            type="button"
+                            style={{ ...S.confirmBtn, color: CRIMSON, borderColor: CRIMSON }}
+                            onClick={() => void handleSystemDelete(entry.key)}
+                          >
+                            Delete anyway
+                          </button>
+                          <button type="button" style={S.confirmBtn} onClick={() => setConfirmKey(null)}>
+                            Keep it
                           </button>
                         </div>
-                        {confirmKey === entry.key && (
-                          <div style={S.sysConfirm}>
-                            Deleting <b style={{ color: CRIMSON }}>{entry.key}</b> — {entry.deleteConsequence}
-                            <div style={S.confirmActs}>
-                              <button
-                                type="button"
-                                style={{ ...S.confirmBtn, color: CRIMSON, borderColor: CRIMSON }}
-                                onClick={() => void handleSystemDelete(entry.key)}
-                              >
-                                Delete anyway
-                              </button>
-                              <button type="button" style={S.confirmBtn} onClick={() => setConfirmKey(null)}>
-                                Keep it
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                    {presentSystem.length === 0 && (
-                      <div style={{ ...S.sysExp, paddingTop: 6 }}>
-                        No system frontmatter keys in this outline yet — publishing and migrations stamp them.
                       </div>
                     )}
                   </div>
+                ))}
+                {presentSystem.length === 0 && (
+                  <div style={{ ...S.sysExp, paddingTop: 6 }}>
+                    No system frontmatter keys in this outline yet — publishing and migrations stamp them.
+                  </div>
                 )}
               </div>
-            </>
-          )}
-        </div>
-
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  )
+  const footerEl = (
         <div style={S.footer}>
           <div style={{ flex: 1, fontSize: '0.8rem' }}>
             {savedFlash ? (
@@ -405,9 +397,6 @@ export default function MetadataPanel({ talk, vaultRoot, isOpen, onClose, flushB
               <span style={{ color: AMBER }}>Unsaved changes</span>
             ) : null}
           </div>
-          <button type="button" onClick={onClose} style={{ ...S.btn, ...S.btnSecondary }}>
-            Close
-          </button>
           <button
             type="button"
             onClick={() => void handleSave()}
@@ -417,7 +406,13 @@ export default function MetadataPanel({ talk, vaultRoot, isOpen, onClose, flushB
             {saving ? 'Saving…' : 'Save'}
           </button>
         </div>
-      </div>
+  )
+  // One Save and one status line in the Talk tab (R10): the Design part above owns the always-visible Save and its
+  // "All changes saved" line, so Advanced shows its own only while it has something to save (or has just saved).
+  return (
+    <div style={S.embeddedRoot} data-metadata-embedded>
+      {bodyEl}
+      {(dirty || saving || savedFlash) && footerEl}
     </div>
   )
 }
@@ -441,9 +436,9 @@ function Field({
 }) {
   const badge =
     entry.vocabulary.kind === 'open' ? (
-      <span style={{ ...S.vocabBadge, color: GREEN, background: 'rgba(22,101,52,.1)' }}>open · vault-wide</span>
+      <span style={{ ...S.vocabBadge, color: GREEN, background: 'rgba(22,101,52,.1)' }}>any value</span>
     ) : entry.vocabulary.kind === 'closed' ? (
-      <span style={{ ...S.vocabBadge, color: OXFORD, background: 'rgba(11,58,107,.09)' }}>closed · documented</span>
+      <span style={{ ...S.vocabBadge, color: OXFORD, background: 'rgba(11,58,107,.09)' }}>fixed choices</span>
     ) : null
 
   return (
@@ -455,8 +450,8 @@ function Field({
       <div style={S.fieldExp}>{entry.explanation}</div>
       {entry.type === 'map' ? (
         <div style={S.mapNote}>
-          {mapPresent ? 'Set in this outline (structured YAML).' : 'Not set in this outline.'} Edited in the
-          outline{entry.key === 'defaults' ? ' or on the Deck design panel' : ''} — not on this form.
+          {mapPresent ? 'Set in this outline (structured setting).' : 'Not set in this outline.'} Edited in the
+          outline{entry.key === 'defaults' ? ' or in Talk design' : ''} — not on this form.
         </div>
       ) : entry.vocabulary.kind === 'closed' ? (
         <ClosedField options={entry.vocabulary.options} value={value} onChange={onChange} label={entry.label} />
@@ -659,6 +654,8 @@ const S: Record<string, React.CSSProperties> = {
     padding: '0 0.95rem 0.55rem', borderBottom: `1px solid ${LINE}`, flex: '0 0 auto',
     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap'
   },
+  embeddedRoot: { display: 'flex', flexDirection: 'column', minHeight: 0 },
+  bodyEmbedded: { padding: '0.5rem 0.75rem 0.5rem', minHeight: 0 },
   body: { flex: 1, overflowY: 'auto', padding: '0.85rem 0.95rem 1.1rem', minHeight: 0 },
   loading: { color: FAINT, fontSize: '0.85rem', padding: '1rem 0' },
   errorBox: {

@@ -5,6 +5,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import * as bridle from '../src/shared/bridle-commands.ts'
 import { updateCheckMenuTemplate } from '../src/main/settings-update-menu.ts'
+import { macAppMenu } from '../src/main/app-menu.ts'
 import { openSettings } from '../src/main/settings-open.ts'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -38,4 +39,19 @@ assert.equal(bridle.appCommandIdOf(ran[0]), 'check-for-updates')
 assert.equal(logs.length, 0)
 assert.equal(updateCheckMenuTemplate({ platform: 'linux', keys, run() {}, log: (l) => logs.push(l) }), null, 'off macOS the menu is left alone')
 await opened.close()
+// The app menu's role items take their labels from app.name, which is the package name ("talk-weaver").
+// They must carry the product name instead; app.name itself stays as it is (userData and Keychain depend on it).
+function assertProductNameLabels(submenu, where) {
+  assert.equal(submenu.find((i) => i.role === 'about')?.label, 'About TalkWeaver', `${where}: About item label`)
+  assert.equal(submenu.find((i) => i.role === 'hide')?.label, 'Hide TalkWeaver', `${where}: Hide item label`)
+  assert.equal(submenu.find((i) => i.role === 'quit')?.label, 'Quit TalkWeaver', `${where}: Quit item label`)
+  for (const i of submenu) {
+    assert.ok(!String(i.label ?? '').toLowerCase().includes('talk-weaver'), `${where}: no label may say "talk-weaver" (got "${i.label}")`)
+  }
+}
+assertProductNameLabels(appMenu, 'settings-update-menu (macOS template)')
+const fallbackMenu = macAppMenu('talk-weaver', [])
+assertProductNameLabels(fallbackMenu.submenu, 'app-menu.ts macAppMenu')
+
 console.log('PASS Update-check menu: registry id resolves, item placed in the app menu, no throw')
+console.log('PASS App menu: About, Hide and Quit read TalkWeaver, not talk-weaver')

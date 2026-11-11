@@ -1,12 +1,18 @@
+import ImageEditDialog from './ImageEditDialog'
 import { useEffect, useRef, useState } from 'react'
 
 interface Props {
+  autoEdit: boolean
+  onUseCopy: (id: string) => Promise<boolean>
+  outlinePath: string | null
   imageId: string | null
   vaultRoot: string
   onClose: () => void
 }
 
-export default function ImageMetaPanel({ imageId, vaultRoot, onClose }: Props): React.JSX.Element | null {
+export default function ImageMetaPanel({ imageId, vaultRoot, outlinePath, onClose, autoEdit, onUseCopy }: Props): React.JSX.Element | null {
+  const [editing, setEditing] = useState(false)
+  const [editedId, setEditedId] = useState<string | null>(null)
   const [alt, setAlt] = useState('')
   const [caption, setCaption] = useState('')
   const [source, setSource] = useState('')
@@ -20,6 +26,8 @@ export default function ImageMetaPanel({ imageId, vaultRoot, onClose }: Props): 
     if (imageId === null) return
     let cancelled = false
     setSaved(false)
+    setEditing(autoEdit)
+    setEditedId(null)
     setLoading(true)
     // Reset fields immediately so stale values never flash for the new image.
     setAlt('')
@@ -45,13 +53,13 @@ export default function ImageMetaPanel({ imageId, vaultRoot, onClose }: Props): 
     return () => {
       cancelled = true
     }
-  }, [imageId])
+  }, [imageId, autoEdit])
 
   // Escape closes the panel.
   useEffect(() => {
     if (imageId === null) return
     function handleKey(e: KeyboardEvent): void {
-      if (e.key === 'Escape') {
+      if (e.key === 'Escape' && !editing) {
         e.preventDefault()
         e.stopPropagation()
         onClose()
@@ -59,7 +67,7 @@ export default function ImageMetaPanel({ imageId, vaultRoot, onClose }: Props): 
     }
     window.addEventListener('keydown', handleKey, { capture: true })
     return () => window.removeEventListener('keydown', handleKey, { capture: true })
-  }, [imageId, onClose])
+  }, [imageId, onClose, editing])
 
   if (imageId === null) return null
 
@@ -175,6 +183,9 @@ export default function ImageMetaPanel({ imageId, vaultRoot, onClose }: Props): 
         </div>
       )}
 
+      {outlinePath && <button type="button" onClick={() => setEditing(true)}>Crop and mark up…</button>}
+      {editedId && <p>Edited copy saved: <code>![]({editedId})</code>. Paste this reference where you want the copy.</p>}
+      {editing && outlinePath && <ImageEditDialog imageId={editedId ?? imageId} outlinePath={outlinePath} onClose={() => setEditing(false)} onSaved={setEditedId} onUseCopy={onUseCopy} />}
       {/* Fields */}
       <Field label="Alt text">
         <input

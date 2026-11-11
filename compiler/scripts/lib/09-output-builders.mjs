@@ -637,9 +637,15 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // mirrored. The channel source is inlined only when the page has such a slide.
   ${hasLocalEmbed ? embedChannelSource() : ""}
   var SHARE_EMBED_FRAMES = 'figure.slide-embed[data-embed="local"] > iframe[data-embed-doc]';
+  var heldLiveEmbedEvents = new Map();
   var shareEmbedChannel = typeof embedCreateChannel === "function" ? embedCreateChannel({
     // The channel has checked the fixed key list, that THIS page engaged the frame (the reader
     // pressed its Interact chip), that the frame has the focus, a live user activation, and the rate.
+    onReady: function (who) {
+      const pending = heldLiveEmbedEvents.get(who.frame) || [];
+      heldLiveEmbedEvents.delete(who.frame);
+      pending.forEach(function (event) { shareEmbedChannel.deliver(who.frame, event); });
+    },
     onKey: function (who, key) {
       if (key === "Escape") { leaveShareEmbed(who.frame); return; }
       window.dispatchEvent(new KeyboardEvent("keydown", { key: key, bubbles: true }));
@@ -803,7 +809,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
       if (want && !live) {
         var order = shareEmbedOrder(slide, frame);
         // The record first, then the document: the agent's ready must find it.
-        if (!shareEmbedChannel.activate(frame, { slide: slide.dataset.id || "", index: order, role: "none" })) return;
+        if (!shareEmbedChannel.activate(frame, { slide: slide.dataset.id || "", index: order, role: "replay" })) return;
         figure.setAttribute("data-embed-state", "live");
         // Not a tab stop: the way into a page is its Interact chip, which this page sees.
         frame.tabIndex = -1;
@@ -813,6 +819,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
         // Before the page is unloaded: a frame that goes away holding the focus leaves this page with none.
         if (shareEmbedFocus) shareEmbedFocus.release(frame);
         shareEmbedChannel.deactivate(frame);
+        heldLiveEmbedEvents.delete(frame);
         frame.classList.remove("embed-live");
         setShareEmbedScrollable(frame, false);
         figure.setAttribute("data-embed-state", "idle");
@@ -1400,6 +1407,29 @@ ${hasMermaid ? mermaidVendorSource : ""}
       venue: VENUE_MODE,
       breakQr: ${venue ? '() => ({ svg: VENUE_JOIN.qrSvg, url: VENUE_JOIN.shortUrl, link: /^https?:\\/\\//i.test(VENUE_JOIN.shortUrl) })' : 'null'},
       getViewerPosition: currentViewerPosition,
+      resetLiveEmbeds: () => {
+        heldLiveEmbedEvents.clear();
+        document.querySelectorAll('.live-embed-note').forEach(note => note.remove());
+      },
+      onEmbed: (message) => {
+        const slide = slides[index];
+        if (!slide || slide.dataset.id !== message.slideId) return;
+        if (message.event.k === 'unavailable') {
+          let note = slide.querySelector('.live-embed-note');
+          if (!note) { note = document.createElement('p'); note.className = 'live-embed-note'; note.style.cssText = 'position:absolute;left:24px;right:24px;bottom:24px;padding:14px 18px;background:#fff;color:#242424;border:1px solid #ccc;border-radius:6px;font:20px/1.4 system-ui;z-index:5'; note.setAttribute('role', 'status'); (slide.querySelector('.slide-content') || slide).appendChild(note); }
+          note.textContent = message.event.reason === 'frozen' ? 'The presenter is marking a frozen web page. This page cannot show those marks online.' : 'This web page cannot follow the presenter online. You can explore your own copy.';
+          return;
+        }
+        if (!shareEmbedChannel) return;
+        const frame = slide.querySelectorAll('figure.slide-embed iframe')[message.index];
+        if (frame && shareEmbedChannel.status(frame) && !shareEmbedChannel.deliver(frame, message.event)) {
+          // Navigation can reach the slide before its iframe finishes the ready/hello handshake.
+          const pending = heldLiveEmbedEvents.get(frame) || [];
+          pending.push(message.event);
+          if (pending.length > 32) pending.shift();
+          heldLiveEmbedEvents.set(frame, pending);
+        }
+      },
       applyLiveSlideState,
       releaseLiveSlideState,
       // A phone that joins a board left open after End live has no slide to follow: take it to the board's slide.
@@ -1465,6 +1495,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
       // the board on the speaker's slide; it is told whether the page follows the speaker.
       audienceSteps: HOME_MODE,
       onFollowChanged: (state) => {
+        document.querySelectorAll('.live-embed-note').forEach(note => { note.hidden = !state.following; if (!state.live) note.remove(); });
+        if (!state.live) heldLiveEmbedEvents.clear();
         if (!handoutHome) return;
         const at = state.speakerSlideId ? slides.findIndex((slide) => slide.dataset.id === state.speakerSlideId) : -1;
         handoutHome.followChanged({ speaker: at >= 0 ? at : null, following: state.following });
@@ -1556,6 +1588,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // as kind "reveal" and is no mode at all, so modeKind is null there and one click on Reveal (or
   // Focus) enters the reader's own mode.
   let liveFocus = null;
+  let liveLightbox = false;
   let emphasisPainted = null;
   // Whether the image sequence runs on this slide: the deck runtime's imageStops rule, read from
   // the same markup (the setting's stamp, no carousel, no {nostep}, a still image that is not the
@@ -1602,7 +1635,9 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // goes back to what a handout shows, all emphasis on. The venue screen never leaves the session's
   // last state this way.
   function releaseLiveSlideState() {
-    if (VENUE_MODE || !liveFocus) return;
+    if (VENUE_MODE) return;
+    if (liveLightbox) { liveLightbox = false; closeLightbox(); }
+    if (!liveFocus) return;
     liveFocus = null;
     applyModeDimming();
   }
@@ -1819,10 +1854,12 @@ ${hasMermaid ? mermaidVendorSource : ""}
     galleryStep = audienceRevealIndex;
     applyGallery();
     setModeState(message.focus?.kind || null, message.focus?.step || 0, false, true);
+    // The live image layer and its marks must refer to the same image on every follower.
+    liveLightbox = Boolean(message.lightbox?.open);
+    if (message.lightbox?.open) openLightbox(message.lightbox.index);
+    else closeLightbox();
     if (VENUE_MODE) {
       document.getElementById('venueClosing').hidden = true;
-      if (message.lightbox?.open) openLightbox(message.lightbox.index);
-      else closeLightbox();
       showVenueTalkQr(message.talkQr === true);
       applyVenueMedia(message.focus || null, message.lightbox || null);
     }
@@ -2883,7 +2920,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     { keys: ["←", "PgUp", "↑", "⌫"], label: "Previous slide / step" },
     { keys: ["Home", "End"], label: "First / last slide" },
     { keys: ["R"], label: "Reveal mode (step items one by one)" },
-    { keys: ["F"], label: "Focus mode (spotlight one item)" },
+    { keys: ["F"], label: "Spotlight (one item at a time)" },
     { keys: ["Z"], label: "Image gallery (when the slide has images)" },
     { keys: ["O"], label: "Overview panel" },
     { keys: ["/"], label: "Search slides (opens overview)" },

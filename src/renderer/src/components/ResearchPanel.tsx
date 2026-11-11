@@ -1,6 +1,7 @@
 import ResearchTidySheet from './ResearchTidySheet'
 import type { ResearchWriteOp } from '../../../shared/research'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { BookOpen, Plus, Search, X } from 'lucide-react'
 import { RESEARCH_SCOPES, RESEARCH_SCOPE_LABELS, RESEARCH_DRAG_TYPE, researchReference, researchSourceLabel, type ResearchItem, type ResearchScope, type ResearchUse, type ResearchUsedResult } from '../../../shared/research'
 import { eventMatchesEffectiveShortcut, liveShortcutLabel } from '../keymap/store'
@@ -24,6 +25,8 @@ interface Props {
   onRevealFolder: () => void
   onInsert: (item: ResearchItem, slide: boolean) => Promise<boolean>
   onJump: (use: ResearchUse) => void
+  /** The sidebar's Research tab body: the panel is drawn into it (R11a). undefined = drawn in place; null = tab not up yet. */
+  host?: HTMLElement | null
 }
 const usageLabel = (reply: ResearchUsedResult | undefined): string => !reply ? 'Checking use…' : !reply.ok ? 'Usage unavailable' : reply.uses.length ? `Used in ${reply.uses.length} slide${reply.uses.length === 1 ? '' : 's'}` : 'Not used yet'
 const dateLabel = (value: string): string => {
@@ -117,7 +120,7 @@ export default function ResearchPanel(props: Props) {
     return () => { cancelled = true; clearTimeout(timer); for (const request of requests) window.tw.research.cancelUsage(request) }
   }, [items, selected, visibleFiles, refresh, retry, visible])
   useEffect(() => { if (pickerOpen) pickerInput.current?.focus() }, [pickerOpen])
-  useEffect(() => { if (panelOpen && !pickerOpen) panelInput.current?.focus() }, [panelOpen])
+  useEffect(() => { if (panelOpen && !pickerOpen) panelInput.current?.focus() }, [panelOpen, props.host])
   useEffect(() => {
     if (!visible) return
     const row = document.querySelector(`.research-${pickerOpen ? 'picker' : 'panel'} [aria-selected="true"]`)
@@ -224,11 +227,12 @@ export default function ResearchPanel(props: Props) {
     {(skipped > 0 || limited) && <p className="research-status">{skipped > 0 ? `${skipped} unreadable item${skipped === 1 ? '' : 's'} skipped. ` : ''}{limited ? 'Showing a limited result set. Narrow your search.' : ''}</p>}
     {picker && <footer className="research-picker-foot">{[['previous','↑'],['next','↓'],['insert','Insert at cursor'],['make-slide','Make slide'],['open','Open panel'],['scope','Change scope'],['close','Close']].map(([id, title]) => <span key={id}><kbd>{liveShortcutLabel(`research.${id}`)}</kbd> {title}</span>)}</footer>}
   </>
-  return <>{tidy && item && <ResearchTidySheet key={`${item.file}:${tidy}`} item={item} op={tidy} onClose={() => { setTidy(null); panelInput.current?.focus() }} onDone={() => { setTidy(null); usageCache.current = {}; setDetail(null); setRetry(n => n + 1) }}/>} {panelOpen && !pickerOpen && <aside className="research-panel" aria-label="Research" onDragOver={event => { if (event.dataTransfer.types.includes('Files') || event.dataTransfer.types.includes('text/plain')) event.preventDefault() }} onDrop={event => {
+  const asideEl = <aside className="research-panel" aria-label="Research" onDragOver={event => { if (event.dataTransfer.types.includes('Files') || event.dataTransfer.types.includes('text/plain')) event.preventDefault() }} onDrop={event => {
     if (event.dataTransfer.types.includes(RESEARCH_DRAG_TYPE)) return
     const file = event.dataTransfer.files[0], body = event.dataTransfer.getData('text/plain')
     if (!file && !body) return
     event.preventDefault(); event.stopPropagation()
     props.onCapture({ body, ...(file ? { artefact: window.tw.asset.pathForFile(file) } : {}) })
-  }}>{content(false)}</aside>}{pickerOpen && <div className="research-picker-overlay"><div className="research-picker" role="dialog" aria-modal="true" aria-label="Find in research">{content(true)}</div></div>}</>
+  }}>{content(false)}</aside>
+  return <>{tidy && item && <ResearchTidySheet key={`${item.file}:${tidy}`} item={item} op={tidy} onClose={() => { setTidy(null); panelInput.current?.focus() }} onDone={() => { setTidy(null); usageCache.current = {}; setDetail(null); setRetry(n => n + 1) }}/>} {panelOpen && !pickerOpen && (props.host === undefined ? asideEl : props.host ? createPortal(asideEl, props.host) : null)}{pickerOpen && <div className="research-picker-overlay"><div className="research-picker" role="dialog" aria-modal="true" aria-label="Find in research">{content(true)}</div></div>}</>
 }

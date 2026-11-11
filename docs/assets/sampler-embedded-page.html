@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>A counter: the sampler's embedded page</title>
+<style>
+  body { margin: 0; display: grid; place-items: center; min-height: 100vh; font: 24px/1.4 system-ui, sans-serif; background: #f6f7f9; color: #14181d; }
+  main { text-align: center; }
+  button { font: inherit; padding: 0.4em 1em; border: 1px solid #14181d; border-radius: 8px; background: #fff; cursor: pointer; }
+  output { display: block; margin-top: 0.6em; font-size: 2.5em; font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+  <button id="add" type="button">Add one</button>
+  <output id="count">0</output>
+</main>
+<script>
+  var count = 0;
+  document.getElementById('add').addEventListener('click', function () { count += 1; document.getElementById('count').textContent = String(count); });
+</script>
+</body>
+</html>

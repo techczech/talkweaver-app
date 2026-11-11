@@ -5,7 +5,7 @@ import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { APP_SCHEMES, decideFrameNavigation, decideNavigation, decideStartedNavigation, externalLinkOf, guardWebContents, installNavigationGuard, navigationStarter } from '../src/main/navigation-guard.ts'
+import { isLocalEmbedFrame, APP_SCHEMES, decideFrameNavigation, decideNavigation, decideStartedNavigation, externalLinkOf, guardWebContents, installNavigationGuard, navigationStarter } from '../src/main/navigation-guard.ts'
 import { contentHandOutRefusal } from '../src/main/hand-out.ts'
 
 let passed = 0
@@ -434,11 +434,25 @@ await test('wiring: the hand-out rule is for every window; the thumbnail window 
   assert.match(thumbnails, /disableDialogs: true/)
   assert.match(thumbnails, /'will-prevent-unload', \(event\) => event\.preventDefault\(\)/)
   assert.match(thumbnails, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
-  // Five windows in index.ts: editor, Tools, Pathways, deck and Capture embed; plus the hidden thumbnail renderer.
+  // Four windows in index.ts: editor (including the Pathways dock), Tools, deck and Capture embed.
+  // Pathways no longer creates a window; both hidden capture renderers remain classified below.
   const mainDir = fileURLToPath(new URL('../src/main/', import.meta.url))
   const made = []
   for (const name of readdirSync(mainDir)) if (/\.ts$/.test(name)) for (const _ of readFileSync(join(mainDir, name), 'utf8').matchAll(/new BrowserWindow\(/g)) made.push(name)
-  assert.deepEqual(made.sort(), ['index.ts', 'index.ts', 'index.ts', 'index.ts', 'index.ts', 'scratchpad-html-capture.ts', 'thumbnails.ts'], 'a new window: decide whether it is an app window, a deck window or a hidden renderer')
+  assert.deepEqual(made.sort(), ['embed-preview-artwork.ts', 'index.ts', 'index.ts', 'index.ts', 'index.ts', 'offline-page-capture.ts', 'scratchpad-html-capture.ts', 'thumbnails.ts'], 'a new window: decide whether it is an app window, a deck window or a hidden renderer')
+  const artwork = readFileSync(join(mainDir, 'embed-preview-artwork.ts'), 'utf8')
+  assert.match(artwork, /show: false/)
+  assert.match(artwork, /markHiddenRenderer\(win\)/)
+  assert.match(artwork, /livePageWebPreferences\(isolated, false\)/)
+  assert.match(artwork, /hardenLivePageSession\(isolated/)
+  assert.match(artwork, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
+  assert.match(artwork, /'will-navigate', event => event\.preventDefault\(\)/)
+  const offline = readFileSync(join(mainDir, 'offline-page-capture.ts'), 'utf8')
+  assert.match(offline, /show: false/)
+  assert.match(offline, /markHiddenRenderer\(win\)/)
+  assert.match(offline, /livePageWebPreferences\(isolated, false\)/)
+  assert.match(offline, /hardenLivePageSession\(isolated/)
+  assert.match(offline, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
   const capture = readFileSync(join(mainDir, 'scratchpad-html-capture.ts'), 'utf8')
   assert.match(capture, /show: false/)
   assert.match(capture, /markHiddenRenderer\(win\)/)
@@ -529,6 +543,28 @@ await test('frame guard: installed for every webContents the app creates', () =>
     hook({}, wc)
     const e = navEvent('file:///etc/passwd', { isMainFrame: false }); wc.emit('will-frame-navigate', e); assert.equal(e.prevented, true, url)
   }
+})
+
+await test('local widget navigation: authoring stays put, presenter/audience permit HTTP(S), all deny app/file', () => {
+  for (const [url, authoring] of [[renderer,true], ['twpresent://preview/example.html',true], [`${deck}?presenter=1`,false], [`${deck}?audience=1`,false]]) {
+    const wc=fakeContents(url)
+    guardWebContents(wc,{openExternal:()=>{throw Error('never')},isAuthoringContents:()=>authoring})
+    for (const target of ['https://example.org/form','http://example.org/link','twfile://f/private','twpresent://vault/private','file:///etc/passwd']) {
+      const event=navEvent(target,{isMainFrame:false,frame:{url:'about:blank',parent:{url:'about:srcdoc'}}})
+      wc.emit('will-frame-navigate',event)
+      assert.equal(event.prevented,authoring || !/^https?:/.test(target),url+' '+target)
+    }
+  }
+})
+
+await test('remote video frames are distinct from srcdoc frames after navigation', () => {
+  const top = {url: renderer}
+  assert.equal(isLocalEmbedFrame({url:'https://www.youtube.com/embed/example',parent:top}), false)
+  const widget = {url:'about:srcdoc',parent:top}
+  assert.equal(isLocalEmbedFrame(widget), true)
+  widget.url = 'https://example.org/form'
+  assert.equal(isLocalEmbedFrame(widget), true)
+  assert.equal(isLocalEmbedFrame({url:'about:blank',parent:widget}), true)
 })
 
 console.log(`navigation guard: ${passed} passed`)

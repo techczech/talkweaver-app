@@ -5,7 +5,7 @@
 //      are gone, and the Layout Doctor's "Move to a work file" note always shows.
 //   2. Nothing in the app writes a talk's `{prework}` section: the Inspector has no "Before the
 //      session" section or right-answer writer, and the compiler exports no writer for it.
-//   3. History publishes and unpublishes no Run handout and has no pre-work column; Publish and
+//   3. The Runs ledger publishes and unpublishes no Run handout and has no pre-work column; Publish and
 //      Unpublish are called from the Sessions Run page (and Unpublish from Published pages) only.
 //   4. The plan sheet offers a talk's `{prework}` section to no new Run.
 //   5. A leftover `{prework}` section: compiled, it is a Layout Doctor note ("Move to a work file"),
@@ -58,15 +58,14 @@ assert.equal(/resultsSteps|preworkFromOutline|preworkRunLine|mode: 'step'|mode: 
 assert.equal(/prework-right-answer|prework-nudge|prework-form"|prework-this-slide|Pre-work needs a planned Run|onRightAnswer|onInspectStep/.test(read('src/renderer/src/components/InspectorPrework.tsx')), false, 'the Inspector draws no Before the session section')
 assert.equal(existsSync(join(REPO, 'src/renderer/src/components/usePlannedRuns.ts')), false, 'the Inspector no longer reads planned Runs for a form')
 
-// ── 3. History hands Runs to Sessions ───────────────────────────────────────────────────────
-const history = read('src/renderer/src/components/History.tsx')
-assert.equal(/window\.tw\.history\.(publishRunHandout|unpublishRunHandout|buildRunHandout)/.test(history), false, 'History calls no Run handout publish, unpublish or build')
-assert.equal(/Publish handout for this Run|Unpublish Run handout|PublishNotReadySheet/.test(history), false, 'History shows no Publish or Unpublish for a Run')
-assert.equal(/data-plan-prework|data-review-prework|preworkWindow|twh-plan-prework/.test(history), false, 'History has no pre-work column')
-assert.match(history, /const openInSessions[\s\S]*?window\.tw\.tools\.openRun\(run\.talkSlug, run\.id\)/, 'History opens a Run in Sessions through the one Tools route')
-assert.match(history, /data-planned-run=\{run\.id\} \{\.\.\.opens\}/, 'a planned Run row carries the open-in-Sessions action')
-assert.deepEqual(callers(/window\.tw\.history\.publishRunHandout\(/), ['src/renderer/src/components/SessionsView.tsx'], 'Publish for a Run is called from the Sessions Run page only')
-assert.deepEqual(callers(/window\.tw\.history\.unpublishRunHandout\(/), ['src/renderer/src/components/PublishedPagesView.tsx', 'src/renderer/src/components/SessionsView.tsx'], 'Unpublish for a Run is called from Sessions and Published pages only')
+// ── 3. The Runs view's ledger (History's content) publishes nothing; Publish lives on the Run page ───────────────
+const history = read('src/renderer/src/components/RunLedger.tsx')
+assert.equal(/window\.tw\.history\.(publishRunHandout|unpublishRunHandout|buildRunHandout)/.test(history), false, 'The ledger calls no Run handout publish, unpublish or build')
+assert.equal(/Publish handout for this Run|Unpublish Run handout|PublishNotReadySheet/.test(history), false, 'The ledger shows no Publish or Unpublish for a Run')
+assert.equal(/data-plan-prework|data-review-prework|preworkWindow|twh-plan-prework/.test(history), false, 'The ledger has no pre-work column')
+assert.equal(/openInSessions|tools\.openRun/.test(history), false, 'the ledger is on the Run page: it hands no Run to another view')
+assert.deepEqual(callers(/window\.tw\.history\.publishRunHandout\(/), ['src/renderer/src/components/RunsView.tsx'], 'Publish for a Run is called from the Runs view\'s Run page only')
+assert.deepEqual(callers(/window\.tw\.history\.unpublishRunHandout\(/), ['src/renderer/src/components/PublishedPagesView.tsx', 'src/renderer/src/components/RunsView.tsx'], 'Unpublish for a Run is called from the Runs view and Published pages only')
 
 // ── 4. The plan sheet offers the section to no new Run ──────────────────────────────────────
 const sheet = read('src/renderer/src/components/PlanRunSheet.tsx')
@@ -90,7 +89,7 @@ assert.match(read('src/main/history.ts'), /'history:update-planned-run', [^\n]*u
 assert.match(read('src/main/planned-runs-ipc.ts'), /createPlannedRun\(vault\.root, input[^\n]*\{ refuseNewSectionPrework: true \}\)/, 'the create handler refuses the section')
 assert.match(read('src/main/planned-runs-ipc.ts'), /updatePlannedRun\(vault\.root, [^\n]*patch as PlannedRunPatch, \{ refuseNewSectionPrework: true \}\)/, 'the update handler refuses it on a Run without it')
 
-// Copy → save: "Plan the next run like this" on a Run planned with the section saves a Run without it.
+// Copy → save: "Plan the next Run like this" on a Run planned with the section saves a Run without it.
 {
   const vault = mkdtempSync(join(tmpdir(), 'tw-prework-section-copy-'))
   try {
@@ -139,4 +138,4 @@ assert.equal(/PREWORK_CONFIG = \{|preworkSteps|createPreworkForm|\{right\}/.test
 assert.equal(existsSync(join(REPO, 'compiler/assets/runtime/prework-status.js')), false, 'the handout’s pre-work status runtime is gone')
 assert.match(read('src/main/run-work-publish.ts'), /if \(work\.fileId === LEGACY_SECTION_FILE_ID\) \{ warning = WORK_LEGACY_NOT_PUBLISHED; continue \}/, 'a Run attached to the section publishes no pre-work page')
 
-console.log('PASS pre-work section entry points: no pre-work switch remains; nothing writes or offers a {prework} section; History hands Runs to Sessions; a leftover section is a Layout Doctor note and never published')
+console.log('PASS pre-work section entry points: no pre-work switch remains; nothing writes or offers a {prework} section; the Runs view ledger hands Runs nowhere; a leftover section is a Layout Doctor note and never published')

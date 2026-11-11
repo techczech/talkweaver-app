@@ -48,7 +48,8 @@ const DRAWN_REACH = { 'idle-1280': 4, 'idle-1440': 1, 'recording-1280': 3, 'reco
 // What each state shows (present-rec-view.ts, as drawn). Colours are the drawing's.
 const GREY = 'rgb(93, 109, 124)', RED = 'rgb(239, 68, 68)', AMBER = 'rgb(245, 182, 74)'
 const EXPECT = {
-  idle: { mark: 'dot', dot: GREY, word: 'Not recording', wordCollapses: true, time: false, buttons: ['twrec-primary'] },
+  // Microphone (9 Nov 2026 incident): beside Record, icon-only, before recording starts.
+  idle: { mark: 'dot', dot: GREY, word: 'Not recording', wordCollapses: true, time: false, buttons: ['twrec-primary', 'twrec-mic'] },
   recording: { mark: 'dot', dot: RED, word: 'REC', time: true, buttons: ['twrec-pause', 'twrec-stop'] },
   paused: { mark: 'dot', dot: AMBER, word: 'Recording paused', wordCollapses: true, time: true, timeColor: AMBER, buttons: ['twrec-resume', 'twrec-stop'] },
   saving: { mark: 'spinner', word: 'Saving recording…', time: true, buttons: [] },
@@ -61,7 +62,7 @@ const TIPS = {
   'twrec-primary': ['Start recording', '⇧R'], 'twrec-pause': ['Pause recording', '⇧P'], 'twrec-resume': ['Resume recording', '⇧P'],
   'twrec-stop': ['Stop and save recording', '⇧R'], 'twrec-change-kind': ['Change run kind', 'L'],
   'twrec-start-record': ['Start recording', '⇧R'], 'twrec-toast-yes': ['Resume recording', '⇧P'], 'twrec-save-delivery': ['Save this run as a delivery', '↵'],
-  'twrec-save-as': ['Save run as…', 'L'], 'twrec-saved-change': ['Change run kind', 'L']
+  'twrec-save-as': ['Save run as…', 'L'], 'twrec-saved-change': ['Change run kind', 'L'], 'twrec-mic': ['Microphone', '']
 }
 const failures = []
 const check = (ok, message) => { if (!ok) failures.push(message) }
@@ -267,6 +268,10 @@ export const clipboard = { writeText() {} }
       check(b?.w === REC_ICON_BUTTON && b.h === REC_ICON_BUTTON && b.icon === '16px', `${name}: ${id} is ${REC_ICON_BUTTON}px square with its 16px icon (${JSON.stringify(b)})`)
     }
     for (const id of ['twrec-primary', 'twrec-change-kind']) if (c.buttons.includes(id)) check(c.labelShown[id] === !steps.includes('c6'), `${name}: ${id} ${steps.includes('c6') ? 'is icon-only at c6' : 'shows its label'} (${c.labelShown[id]})`)
+    if (c.buttons.includes('twrec-mic')) {
+      const b = c.boxes['twrec-mic']
+      check(!c.labelShown['twrec-mic'] && b?.w === 26 && b.icon === '16px', `${name}: twrec-mic is icon-only, 26px wide with its 16px icon (${JSON.stringify(b)})`)
+    }
     check(!c.picker, `${name}: no run-kind picker`)
   }
 

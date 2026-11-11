@@ -1,3 +1,4 @@
+import { normaliseLiveEmbed, liveEmbedKey } from '../../compiler/assets/runtime/live-embed.js'
 /// <reference lib="dom" />
 import type { PresenterShareLinkUpdate } from './index'
 import { reportGuideCommand } from './present-guide'
@@ -530,16 +531,58 @@ export function mountLiveBridge(): void {
     if (statusRevision === requestedStatusRevision) updateStatus(next)
   }).catch(() => {})
 
+  let lastEmbedAvailability = ''
+  const lastEmbedScroll = new Map<string, string>()
+  function reportEmbedScroll(): void {
+    if (status !== 'live') return
+    const raw = document.documentElement.dataset.twLiveEmbedScroll
+    if (!raw || raw.length > 64000) return
+    try {
+      const states = JSON.parse(raw)
+      if (!Array.isArray(states) || states.length > 32) return
+      for (const value of states) {
+        const clean = normaliseLiveEmbed(value)
+        if (!clean || clean.event.k !== 'scroll' || clean.slideId !== currentSlideState()?.slideId) continue
+        const key = liveEmbedKey(clean)
+        const signature = `${statusRevision}:${value.visit}:${JSON.stringify(clean)}`
+        if (lastEmbedScroll.get(key) === signature) continue
+        lastEmbedScroll.delete(key); lastEmbedScroll.set(key, signature)
+        if (lastEmbedScroll.size > 32) lastEmbedScroll.delete(lastEmbedScroll.keys().next().value!)
+        ipcRenderer.send('live:embed', clean)
+      }
+    } catch { /* invalid deck slot */ }
+  }
+  function reportEmbedAvailability(): void {
+    // A notice sent before Go live has no receiver. A reconnect must publish it again too.
+    if (status !== 'live') return
+    const slot = document.querySelector('#currentPreview .live-page-slot')
+    const state = currentSlideState()
+    if (!slot || !state) { lastEmbedAvailability = ''; return }
+    const reason = document.documentElement.hasAttribute(LIVE_FREEZE_ATTRIBUTE) ? 'frozen' : 'unsupported'
+    const key = `${statusRevision}:${state.slideId}:${reason}`
+    if (key === lastEmbedAvailability) return
+    lastEmbedAvailability = key
+    ipcRenderer.send('live:embed', { type: 'embed.live', slideId: state.slideId, index: 0, event: { k: 'unavailable', reason } })
+  }
   let last = ''
   const report = (): void => {
     const state = currentSlideState()
     if (!state) return
     const key = liveSlideStateKey(state)
-    if (key === last) return
+    if (key === last) { reportEmbedAvailability(); reportEmbedScroll(); return }
     last = key
     if (state.slideId !== audienceSlideId) { audienceSlideId = state.slideId; showAudienceCounts() }
     ipcRenderer.send('live:publish-slide', state)
+    reportEmbedAvailability()
+    reportEmbedScroll()
   }
+  const embedObserver = new MutationObserver(() => {
+    const raw = document.documentElement.dataset.twLiveEmbed
+    if (!raw || raw.length > 8192) return
+    try { report(); const value = JSON.parse(raw); if (value?.event?.k !== 'scroll') ipcRenderer.send('live:embed', value) } catch { /* invalid deck slot */ }
+  })
+  embedObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-tw-live-embed'] })
+  window.addEventListener('beforeunload', () => embedObserver.disconnect(), { once: true })
   let pointerLast = ''
   const reportPointer = (): void => {
     // Attribute ticks are page events: movement is throttled there, resting keep-alives are 1 Hz.

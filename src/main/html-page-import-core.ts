@@ -57,6 +57,10 @@ export type HtmlPageImportJob = {
   realTalkPath: string
   outlineName: string
   outline: FileId
+  /** Offline capture also refuses edits to the same outline inode while rendering the source. */
+  outlineVersion?: { size: number; mtimeMs: number }
+  /** Offline capture retains the directory that was authorised before the source page ran. */
+  talkDirectory?: FileId
   /** The chosen page's real path, and the file it was when chosen. */
   source: string
   sourceId: FileId
@@ -191,8 +195,10 @@ export function importInWorkingFolder(job: HtmlPageImportJob, fs: HtmlPageFs = n
   const placeHolds = (): boolean => {
     try {
       if (realNow('.') !== job.realTalkPath) return false
+      if (job.talkDirectory && !sameFile(fs.statSync('.'), job.talkDirectory)) return false
       const outline = fs.lstatSync(job.outlineName)
       return outline.isFile() && sameFile(outline, job.outline)
+        && (!job.outlineVersion || (outline.size === job.outlineVersion.size && outline.mtimeMs === job.outlineVersion.mtimeMs))
     } catch { return false }
   }
   /**

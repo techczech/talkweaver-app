@@ -307,4 +307,14 @@ assert.equal(chains(wrong)['Child'], 'Section > Added slide', 'fixture: placed t
 assert.equal(insertedAsOneSlide(nested, wrong, 6, 3, 3), false, 'a result in which a slide has a new parent is not accepted')
 const right = nested.replace('### Next', '### Added slide\n\n- fresh\n\n### Next')
 assert.equal(insertedAsOneSlide(nested, right, 10, 3, 3), true, 'the same slide after the child is accepted')
+// Preserve the archive insert's established treatment of level-1 closing headings that carry text.
+// A closing heading alone stays after the new slide; with body text its entire text stays before it.
+for (const tail of ['### B\nbody B\n', '']) {
+  const before = '# Talk\n\n### A\nbody A\n# Thanks\nclosing text\n' + tail
+  const result = insertSlideAfterCaret({ text: before, caret: before.indexOf('body A'), slide: NEW })
+  assert.ok(result.ok, 'archive insert retains closing-heading body placement')
+  assert.ok(result.text.indexOf('closing text') < result.text.indexOf('### Added slide'))
+  if (tail) assert.ok(result.text.indexOf('### Added slide') < result.text.indexOf('### B'))
+  assert.deepEqual(withoutAdded(result.text), chains(before))
+}
 console.log('old slides: ok')

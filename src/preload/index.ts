@@ -1,3 +1,5 @@
+import type { ImageEditPreview, ImageEditRecipe, ImageEditResult } from '../shared/image-edit'
+import type { OfflinePageInput, OfflinePageSaveResult } from '../shared/offline-page'
 import type { GalleryHandouts } from '../shared/gallery-handouts'
 import type { InventoryRequest, InventoryResult } from '../shared/vault-gallery-storage'
 import type { GalleryCatalogue, GalleryFacts } from '../shared/vault-gallery'
@@ -391,16 +393,24 @@ export type RunSlideSet = { kind: 'full' } | { kind: 'pathway'; pathwayId: strin
 export type Pathway = { id: string; name: string; note?: string; slideIds: string[] }
 export type ResolvedPathway = Pathway & { present: ProjectionRow[]; missing: string[] }
 export type PathwaySnapshot = { slides: ProjectionRow[]; pathways: ResolvedPathway[] }
-export type PathwayWindowContext = { outlinePath: string; talkSlug: string; talkTitle: string }
 
 // Cached liveness probe for a published handout URL. Main treats any failure as offline.
 export type HistoryLiveCheck = { status: 'live' | 'offline'; checkedAt: string }
 export type { ToolsView, ToolsRunRef }
-type ToolsShowPayload = { view: ToolsView; sessionId?: string; pathway?: PathwayWindowContext; run?: ToolsRunRef }
+type ToolsShowPayload = { command?: 'tools-animated-video'; view: ToolsView; sessionId?: string; run?: ToolsRunRef }
 export type RecordingKind = 'delivery' | 'rehearsal' | 'recording'
 export type HighlightRange = { block: number; start: number; end: number }
 export type TranscriptSegment = { start: number; end: number; text: string }
-export type Transcript = { engine: 'parakeet'; createdAt: string; segments: TranscriptSegment[] }
+export type Transcript = { engine: 'parakeet'; createdAt: string; timingClock?: 'recording'|'recording-v2'; needsTranscription?:boolean; segments: TranscriptSegment[]; words?: WordTiming[] }
+/** transcript:get — the stored transcript, plus whether the transcript contains word timings for the Run. */
+export type TranscriptWithWordsFlag = Transcript & { hasWords: boolean }
+/** One stored word: milliseconds on the recording clock, like TranscriptSegment. */
+export type WordTiming = { text: string; start: number; end: number }
+export type WordTimings = { engine: 'parakeet'; createdAt: string; words: WordTiming[] }
+export type VideoPackStatus = {state:'none'} | ({packageId:string;folder:string;prompt:string;createdAt:string;durationMs:number;stretch:string} & ({state:'waiting'}|{state:'ready';videoPath:string;lengthMs:number}))
+export type VideoPackRequest = { talkSlug: string; sessionId: string; home?: string | null; sections?: string[]; animate?: Record<string, 'animate' | 'keep'> }
+export type VideoPackProgress = { step: 'audio' | 'words' | 'slides' | 'images' }
+export type VideoPackResult = { ok: true; folder: string; prompt: string; durationMs: number; gaps: Array<{start:number;end:number;length:number}> } | {ok:false;error:string}
 export type TrimRange = { start: number; end: number }
 export type TranscriptionSettings = {
   python: string
@@ -953,7 +963,9 @@ const api = {
       content: string
     ): Promise<{ ok: true; collisions: string[]; content?: string } | { ok: false; refused: 'empty-over-nonempty' | 'ownership' } | { ok: false; refused: 'outside-vault'; error: string } | OutlineChangedOnDiskRefusal | false> =>
       ipcRenderer.invoke('talk:write-outline', outlinePath, content),
-    compile: (outlinePath: string, content: string): Promise<ProjectionRow[] | null> =>
+    // `{ superseded: true }`: a newer live-preview compile of the same talk from this window replaced
+    // this one before it started (main's single-flight gate); ignore it, the newer reply follows.
+    compile: (outlinePath: string, content: string): Promise<ProjectionRow[] | null | { superseded: true }> =>
       ipcRenderer.invoke('talk:compile', outlinePath, content),
     selectedThumbnail: (
       outlinePath: string,
@@ -1049,6 +1061,10 @@ const api = {
     // Browser's background per-talk render must not supersede each other (2026-09-15).
     thumbnails: (outlinePath: string, content: string, opts?: { lane?: string; requestId?: string }): Promise<Record<string, string> | null> =>
       ipcRenderer.invoke('talk:thumbnails', outlinePath, content, opts),
+    /** The slides on screen (deck indices: the active slide first, then the strip's visible range);
+     *  this talk's thumbnail render captures them before the rest. Fire-and-forget. */
+    thumbnailFocus: (outlinePath: string, indices: number[]): void =>
+      ipcRenderer.send('talk:thumbnail-focus', outlinePath, indices),
     /** Pictures for one correlated request, cached first and then as each slide finishes. */
     onThumbnailProgress: (cb: (payload: { outlinePath: string; requestId: string; thumbnails: Record<string, string> }) => void): (() => void) => {
       const listener = (_event: unknown, payload: { outlinePath: string; requestId: string; thumbnails: Record<string, string> }): void => cb(payload)
@@ -1163,6 +1179,15 @@ const api = {
   // (saveToken); every reply and every push is a CloudflareStatus, which holds states, an account's
   // name and id and fixed sentences, never the token. A call resolves when its work is done, but
   // nothing in the window waits on it: `onStatus` delivers each change as it happens.
+  // The built-in agent skill (agent-skill-host.ts). Agent ids only; main holds every folder.
+  agentSkill: {
+    status: (): Promise<import('../shared/agent-skill/types').StatusReport> => ipcRenderer.invoke('agent-skill:status'),
+    offer: (): Promise<import('../shared/agent-skill/types').Offer> => ipcRenderer.invoke('agent-skill:offer'),
+    install: (ids: string[]): Promise<import('../shared/agent-skill/types').ActionReport> => ipcRenderer.invoke('agent-skill:install', ids),
+    decline: (ids: string[]): Promise<import('../shared/agent-skill/types').ActionReport> => ipcRenderer.invoke('agent-skill:decline', ids),
+    answerOffer: (answer: { install: string[]; decline: string[] }): Promise<import('../shared/agent-skill/types').ActionReport> => ipcRenderer.invoke('agent-skill:answer-offer', answer),
+    offerShown: (ids: string[]): Promise<void> => ipcRenderer.invoke('agent-skill:offer-shown', ids),
+  },
   // Update notices (ADR-0041, src/main/update-notices.ts). The windows send no address: Download opens the
   // link the last validated feed gave for this computer, and the notes link is built from a version.
   updates: {
@@ -1271,10 +1296,13 @@ const api = {
   // talk and writes nothing (null = cancelled); import copies the chosen page into that talk's assets
   // folder and answers the reference for the `[Embed: …]` line, which the editor writes.
   htmlPage: {
+    saveOffline: (input: OfflinePageInput): Promise<OfflinePageSaveResult> => ipcRenderer.invoke('talk:save-offline-page', input),
     choose: (outlinePath: string): Promise<HtmlPageChoice | null> => ipcRenderer.invoke('talk:choose-html-page', outlinePath),
     import: (token: string, outlinePath: string): Promise<HtmlPageImport> => ipcRenderer.invoke('talk:import-html-page', token, outlinePath),
   },
   asset: {
+    readImageEdit: (outlinePath: string, id: string): Promise<ImageEditPreview | null> => ipcRenderer.invoke('asset:read-image-edit', outlinePath, id),
+    saveImageEdit: (outlinePath: string, originalId: string, recipe: ImageEditRecipe): Promise<ImageEditResult> => ipcRenderer.invoke('asset:save-image-edit', outlinePath, originalId, recipe),
     // outlinePath: the talk being edited; the image goes to that talk's vault (default: the current vault).
     pasteImage: (bytes: ArrayBuffer, ext?: string, outlinePath?: string): Promise<{ id: string; ext: string; path: string } | null> =>
       ipcRenderer.invoke('asset:paste-image', bytes, ext ?? 'png', outlinePath),
@@ -1601,11 +1629,28 @@ const api = {
     build: (talkSlug: string): Promise<{ success: boolean; url?: string; error?: string }> =>
       ipcRenderer.invoke('replay:build', talkSlug)
   },
+  videoPack: {
+    slides: (input:VideoPackRequest): Promise<ProjectionRow[]|null> => ipcRenderer.invoke('video-pack:slides',input),
+    watch: (inputs: VideoPackRequest[]): Promise<Record<string,VideoPackStatus>> => ipcRenderer.invoke('video-pack:watch', inputs),
+    unwatch: (): Promise<void> => ipcRenderer.invoke('video-pack:unwatch'),
+    onStatus: (cb: (states: Record<string,VideoPackStatus>) => void): (()=>void) => { const handler=(_e: Electron.IpcRendererEvent, states:Record<string,VideoPackStatus>):void=>cb(states);ipcRenderer.on('video-pack:status',handler);return()=>ipcRenderer.removeListener('video-pack:status',handler) },
+    reveal: (input: VideoPackRequest & {packageId:string}, target:'video'|'package'): Promise<boolean> => ipcRenderer.invoke('video-pack:reveal', input, target),
+    play: (input: VideoPackRequest & {packageId:string}): Promise<boolean> => ipcRenderer.invoke('video-pack:play', input),
+    wordStatus: (input: VideoPackRequest): Promise<{ok:true;hasWords:boolean;canTranscribe:boolean;ffmpegFound:boolean}|{ok:false;error:string}> => ipcRenderer.invoke('video-pack:word-status', input),
+    make: (input: VideoPackRequest): Promise<VideoPackResult> => ipcRenderer.invoke('video-pack:make', input),
+    cancel: (): Promise<void> => ipcRenderer.invoke('video-pack:cancel'),
+    onProgress: (cb: (progress: VideoPackProgress) => void): (() => void) => {
+      const handler = (_event: Electron.IpcRendererEvent, progress: VideoPackProgress) => cb(progress)
+      ipcRenderer.on('video-pack:progress', handler)
+      return () => ipcRenderer.removeListener('video-pack:progress', handler)
+    }
+  },
   transcript: {
     // On-demand transcript for one recorded Run. Progress is pushed separately as readable notes.
-    run: (talkSlug: string, sessionId: string): Promise<{ ok: boolean; segments?: TranscriptSegment[]; error?: string }> =>
+    // hasWords: the run also stored word timings (only a script that offers --words makes them).
+    run: (talkSlug: string, sessionId: string): Promise<{ ok: boolean; segments?: TranscriptSegment[]; hasWords?: boolean; error?: string }> =>
       ipcRenderer.invoke('transcript:run', talkSlug, sessionId),
-    get: (talkSlug: string, sessionId: string): Promise<Transcript | null> =>
+    get: (talkSlug: string, sessionId: string): Promise<TranscriptWithWordsFlag | null> =>
       ipcRenderer.invoke('transcript:get', talkSlug, sessionId),
     cancel: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('transcript:cancel'),
     onProgress: (cb: (event: { sessionId: string; note: string }) => void): (() => void) => {
@@ -1779,7 +1824,7 @@ const api = {
   },
   sessions: {
     /** Every planned and delivered Run of every open vault, plus the Runs a live session is bound to (`talkSlug/runId`). */
-    list: (): Promise<{ runs: SessionSource[]; live: string[] }> => ipcRenderer.invoke('sessions:list'),
+    list: (options?: { allKinds?: boolean }): Promise<{ runs: SessionSource[]; live: string[] }> => ipcRenderer.invoke('sessions:list', options),
     /** How each work file attached to a Run reads: title, step count and its first blocking finding in words. */
     runFiles: (run: SessionRunRef): Promise<{ ok: true; files: { pre?: WorkFileState; post?: WorkFileState } } | { ok: false; error: string }> => ipcRenderer.invoke('sessions:run-files', run),
     /** Each attached phase's steps (from its work file, or the talk's `{prework}` section) and the Run's answers for the phase. */
@@ -1817,18 +1862,16 @@ const api = {
   tools: {
     open: (view: ToolsView, sessionId?: string, run?: ToolsRunRef): Promise<{ success: boolean; error?: string }> =>
       isToolsView(view) ? ipcRenderer.invoke('tools:open', view, sessionId, run) : Promise.resolve({ success: false, error: 'Unknown Tools view.' }),
-    /** Sessions on one Run; with vaultId, that vault's Run when two vaults hold the same talk and Run id. */
+    /** The Runs view on one Run; with vaultId, that vault's Run when two vaults hold the same talk and Run id. */
     openRun: (talkSlug: string, runId: string, vaultId?: string, home?: string | null): Promise<{ success: boolean; error?: string }> => {
       const ref = parseToolsRunRef({ talkSlug, runId, ...(vaultId ? { vaultId } : {}) })
-      return ref ? ipcRenderer.invoke('tools:open', 'sessions', undefined, { ...ref, ...(home !== undefined ? { home } : {}) }) : Promise.resolve({ success: false, error: 'Unknown Run.' })
+      return ref ? ipcRenderer.invoke('tools:open', 'runs', undefined, { ...ref, ...(home !== undefined ? { home } : {}) }) : Promise.resolve({ success: false, error: 'Unknown Run.' })
     },
     onShow: (cb: (payload: ToolsShowPayload) => void): (() => void) => {
       toolsShowSubscribers.add(cb)
       if (lastToolsShow) queueMicrotask(() => cb(lastToolsShow as ToolsShowPayload))
       return () => toolsShowSubscribers.delete(cb)
     },
-    openPathways: (context: PathwayWindowContext): Promise<{ success: boolean; error?: string }> =>
-      ipcRenderer.invoke('tools:open-pathways', context)
   },
   pathways: {
     onChanged: (cb: (event: { outlinePath: string }) => void): (() => void) => {

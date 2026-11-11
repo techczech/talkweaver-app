@@ -14,6 +14,7 @@ import AboutUpdatesSettings from './components/AboutUpdatesSettings'
 import './update-notices.css'
 import { useUpdateSnapshot } from './lib/updateNotices'
 import { RECORDING_STORAGE_FIELD, focusSettingField } from './settings-focus'
+import { audioInputs, microphoneSettingOptions, type AudioInput } from '../../shared/microphone-choice'
 
 type Bridge = import('@app-patterns/settings-electron').SettingsBridge
 const bridge = (window as unknown as { bridleSettings: Bridge }).bridleSettings
@@ -26,6 +27,24 @@ const ROW_HINTS: Record<string, RowHint> = {
   'recording.discardShorter': { step: 5, example: '30' }
 }
 
+/**
+ * This Mac's audio inputs, kept current as devices come and go. Their names are what Settings ›
+ * Recording › Microphone offers (the setting is stored as a name: the schema keeps it text, and this
+ * window draws it as a menu of what is connected).
+ */
+function useAudioInputs(): AudioInput[] {
+  const [inputs, setInputs] = useState<AudioInput[]>([])
+  useEffect(() => {
+    const md = navigator.mediaDevices
+    if (!md || typeof md.enumerateDevices !== 'function') return
+    const read = (): void => { void md.enumerateDevices().then((list) => setInputs(audioInputs(list))).catch(() => {}) }
+    read()
+    md.addEventListener('devicechange', read)
+    return () => md.removeEventListener('devicechange', read)
+  }, [])
+  return inputs
+}
+
 /** Where the window is open: a section, a sheet on it, or one setting whose field gets the keyboard (`focusKey`). */
 type Opened = { section: string; sheet?: SheetState; focusKey?: string; n: number }
 
@@ -34,6 +53,7 @@ function SettingsApp(): React.JSX.Element | null {
   const [view, setView] = useState<SettingsView | null>(null)
   const [opened, setOpened] = useState<Opened>({ section: 'general', n: 0 })
   const [seenAt, setSeenAt] = useState(() => Date.now())
+  const inputs = useAudioInputs()
 
   useEffect(() => {
     const open = async (req: SectionRequest): Promise<void> => {
@@ -71,6 +91,10 @@ function SettingsApp(): React.JSX.Element | null {
   const goToSetting = (section: string, key: string): void => setOpened((o) => ({ section, focusKey: key, n: o.n + 1 }))
 
   if (!view) return null
+  const savedMic = view.state.settings['recording.microphone']
+  const micOptions = microphoneSettingOptions(inputs, typeof savedMic === 'string' ? savedMic : '')
+  const shown = (update?.source === 'store' ? schema.settings.filter((d) => d.key !== 'updates.checkForNewVersions') : schema.settings)
+    .map((d) => (d.key === 'recording.microphone' ? { ...d, type: 'choice' as const, options: micOptions } : d))
   const pages: CustomPage[] = [
     { id: 'updates', label: 'About and updates', icon: 'info', render: () => <>
       <AboutUpdatesSettings look={{ sectionHead: { display: 'none' }, hint: {}, rowFolder: {}, folderLabel: { fontWeight: 600 }, btn: { cursor: 'pointer' } }} record={() => {}} onShowWhatsNew={() => { void (window as unknown as { tw: { settings: { editorAction(action: string): Promise<unknown> } } }).tw.settings.editorAction('whats-new') }} />
@@ -83,7 +107,7 @@ function SettingsApp(): React.JSX.Element | null {
   return (
     <SettingsWindow
       key={opened.n}
-      schema={{ ...schema, settings: update?.source === 'store' ? schema.settings.filter((d) => d.key !== 'updates.checkForNewVersions') : schema.settings, sections: [...schema.sections.filter((s) => s.id !== 'about' && s.id !== 'updates'), { ...schema.section('updates')!, pinned: true }] }}
+      schema={{ ...schema, settings: shown, def: (key: string) => shown.find((d) => d.key === key) ?? schema.def(key), sections: [...schema.sections.filter((s) => s.id !== 'about' && s.id !== 'updates'), { ...schema.section('updates')!, pinned: true }] }}
       state={view.state}
       registry={registry}
       menus={MENUS}

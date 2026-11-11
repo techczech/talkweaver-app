@@ -148,7 +148,7 @@ export default function PropagationChecklist({
     if (result === null) { setRefused(true); return }
     if (result.replaced.length > 0) onAdopted?.(result)
     if (result.failed.length === 0) {
-      notify(`Replaced in ${result.replaced.length} presentation${result.replaced.length === 1 ? '' : 's'}`, 'success')
+      notify(`Replaced in ${result.replaced.length} talk${result.replaced.length === 1 ? '' : 's'}`, 'success')
       onClose()
       return
     }

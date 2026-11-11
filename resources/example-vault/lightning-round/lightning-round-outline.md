@@ -69,7 +69,7 @@ These notes are only for you. The audience never sees them. Read the first line,
 ## 07 Share
 {id=07-share}
 
-> **Try it.** In All commands (<kbd>⌘⇧P</kbd>): **Share: handout** and **Share: HTML presentation** make files and show them in Finder. **Share: publish to Cloudflare Pages…** puts the handout online; **Share: for comments…** opens a sheet to share the talk for comments.
+> **Try it.** In All commands (<kbd>⌘⇧P</kbd>): **Share: handout** and **Share: HTML presentation** make files and show them in Finder. **Share: publish to Cloudflare Pages…** puts the handout online; **Share: for comments…** opens a sheet to share the talk for comments. **Animated video…** prepares a recorded Run for video creation.
 
 :::notes
 Thank the room and say where the handout is.

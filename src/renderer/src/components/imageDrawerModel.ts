@@ -12,7 +12,7 @@ export const DRAWER_COLUMNS = 2
 
 export const DRAWER_COPY = {
   title: 'Find images',
-  searchPlaceholder: 'Search screenshots and images',
+  searchPlaceholder: 'Search by words or picture description',
   tabImages: 'SlideWell',
   tabOldSlides: 'PowerPoint Imports',
   tabInTalks: 'TalkWeaver Vaults',
@@ -32,7 +32,7 @@ export const DRAWER_COPY = {
   inTalksNoVault: 'Open a vault to see the pictures in its talks.',
   inTalksPlaceholder: 'Search the pictures in your talks',
   idleOldSlides: 'Type to search slides from your old PowerPoints.',
-  meaningOff: 'Picture matching is not running, so only word matches are shown.',
+  meaningOff: 'Picture matching is unavailable. Open SlideWell and check picture search; word matches are shown here.',
   inserted: 'Inserted',
   groupThisTalk: 'In this talk',
   groupOldPowerPoints: 'From old PowerPoints'

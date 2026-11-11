@@ -132,7 +132,7 @@ export default function GalleryManagement({ management: m, vaultId, folder, sele
     </>}
     {!selection && writable && category && vault && <>
       <Btn busy={busy} primary label={UI.newTalk} icon={<Plus size={16} />} onClick={() => m.onNewTalk(folder, vault.id)} />
-      <Btn busy={busy} label={UI.newFolder} icon={<FolderPlus size={16} />} onClick={() => setPrompt({ label: `New folder in ${vault.name} / ${folder || 'root'}`, initial: '', cta: 'Create', onSubmit: async name => { await actions.doNewFolder(name, folder, vault.id); reconcile({}) } })} />
+      <Btn busy={busy} label={UI.newFolder} icon={<FolderPlus size={16} />} onClick={() => setPrompt({ label: `New folder`, kind: `folder`, mode: `new`, initial: '', cta: 'Create', onSubmit: async name => { await actions.doNewFolder(name, folder, vault.id); reconcile({}) } })} />
     </>}
     {/* Nothing inspect-only has a menu: its one action is in the toolbar and Copy location is in Details. */}
     {selection && selection.kind !== 'entry' && !(selection.kind === 'folder' && inspectOnlyPath(selection.path)) ? <span className="vg-menuwrap">

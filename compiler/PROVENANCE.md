@@ -45,3 +45,11 @@ Local change: `asset-containment.mjs` accepts an optional per-compile acquired-a
 TalkWeaver's private compile worker supplies demand-only, bounded native acquisitions and
 app-cache snapshots for gallery previews. Other compilation paths retain their existing adapter.
 No upstream checkout changed.
+
+## Presenter slide counter (2026-11-07)
+
+Local change (authorised, consistency batch 4, house rule R7): `assets/templates/presenter-popup-single-html.html` shows
+the slide's number out of the slides (`slideNumberOfBeat(state.beat)` / `slides.length`) in the presenter's counter
+(`presenterCount`), the audience window's counter (`slideCount`) and the slide labels of the instant-slide strip and the
+board panels, instead of the beat's position out of `beats.length` (beats outnumber slides where a grid returns or a
+carousel steps: 45 beats for 43 slides). The progress bar stays beat-based. Nothing else in the compiler changed.

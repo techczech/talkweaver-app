@@ -5,19 +5,19 @@
   },
   "harvest-supper-draft": {
     "slides": 10,
-    "sha256": "12af2f2a3f2ba73678ecf16f0f23aca67bca95f8d9880ef4ea04fb0697828ad8"
+    "sha256": "023dc055ac7b9440ea4ccd25adadc58bfc8cad580eaec774a11be84ee5ab3b35"
   },
   "lightning-round": {
     "slides": 9,
-    "sha256": "1b47d823e898f38e13aaf80be80b208ebdaca21287b73c1f5ece91668a7cd6e4"
+    "sha256": "c2a6b649e4302a2479c949183ade3d356cc1f20845c999f702f513b0043a5843"
   },
   "the-saturday-market": {
     "slides": 25,
-    "sha256": "65395cd11f730f8359563fb4c5fb61b11af51fb11bc3b89faeb8de610151997a"
+    "sha256": "991d12356c95d0587b2d076a3455d131a28f122da3ae5a0b1faac5c785bc114c"
   },
   "walking-the-old-town": {
     "slides": 30,
-    "sha256": "6e49f9c90dd3c8acab969e2ea183c6557eea850186eac8f0b4005e522afa0e2f"
+    "sha256": "84a9662d871c7c179c05d8288dcd7acc2eb16d728a35bde5abbafe3239e9df36"
   },
   "braces-that-are-not-icons": {
     "slides": 7,

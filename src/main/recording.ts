@@ -64,7 +64,14 @@ export { recoverInterruptedRecordings } from './recording-stream-ipc'
 // resolves; full screen to any frame; clipboard write to a window's own page; clipboard read to the editor,
 // Tools and Pathways pages; nothing else to anyone. The handlers are the session's (the default
 // session) and are shared by every window.
-const recordingPermissions = createRecordingPermissions({ appWindowIds })
+// The Settings window, while open, may see the microphones' names (Settings › Recording › Microphone).
+let deviceListWindow: () => number | null = () => null
+const recordingPermissions = createRecordingPermissions({ appWindowIds, deviceListWindow: () => deviceListWindow() })
+
+/** Which window may list the microphones by name: the Settings window's `webContents.id`, or null. */
+export function setDeviceListWindow(get: () => number | null): void {
+  deviceListWindow = get
+}
 
 /** At app start: from then on every permission request and check is answered by the table. */
 export function installRecordingPermissions(session: Parameters<typeof recordingPermissions.install>[0]): void {
@@ -119,6 +126,11 @@ export interface RecordingDeps {
   /** A vault root while that vault is open and its folder is there (a recovered recording's vault), else undefined. */
   writableVault?: (root: string) => string | undefined
   discardThresholdMs: () => number // getConfig('recordingDiscardMs', 20000)
+  /** The microphone chosen on this Mac, by name (setting recording.microphone); '' = the built-in one. */
+  configuredFfmpeg?: () => string
+  microphone?: () => string
+  /** Remember the microphone the presenter chose (the same setting; this Mac only). */
+  setMicrophone?: (name: string) => void
   storage: () => RecordingUploader // Settings → Recording storage (endpoint, bucket and keys)
   testMode?: () => boolean // env flag for the e2e (synthetic audio + upload short-circuit)
   beforeCloseWindow?: (webContentsId: number, liveAction?: 'end' | 'keep') => Promise<{ ok: boolean; error?: string }>
@@ -411,6 +423,7 @@ export const KEPT_IN_APP_DATA = 'The vault this talk is in is not open, so this 
 export function registerRecordingIpc(deps: RecordingDeps): void {
   // Audio streams to disk while recording (recording:stream-*; recording-stream-ipc.ts).
   const streamStore: RecordingStreams = registerRecordingStreamIpc({
+    configuredFfmpeg: deps.configuredFfmpeg,
     userDataDir: () => deps.userDataDir(),
     vaultRoot: () => deps.vaultRoot(),
     // Only a presenter window names its talk's vault for the marker; any other keeps the marker as before (current vault).
@@ -433,8 +446,16 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       pathwayId: ctx?.pathwayId ?? null,
       preferredPlannedRunId: ctx?.preferredPlannedRunId ?? null,
       discardThresholdMs: deps.discardThresholdMs(),
-      testMode: deps.testMode ? deps.testMode() : process.env.TW_REC_TEST === '1'
+      testMode: deps.testMode ? deps.testMode() : process.env.TW_REC_TEST === '1',
+      microphone: deps.microphone?.() ?? ''
     }
+  })
+
+  // The presenter picked a microphone: remembered on this Mac. A name only, from a presenter window.
+  ipcMain.handle('recording:set-microphone', (event, name: unknown) => {
+    if (!contexts.has(event.sender.id) || typeof name !== 'string' || name.length > 200 || /[\u0000-\u001f]/.test(name)) return { ok: false }
+    deps.setMicrophone?.(name.trim())
+    return { ok: true }
   })
 
   ipcMain.handle('recording:save', async (event, payload) => {

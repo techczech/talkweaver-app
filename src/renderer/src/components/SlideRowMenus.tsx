@@ -72,7 +72,7 @@ export function slideRowMenuItems(opts: { section: boolean; hasLine: boolean; ed
       { action: 'copy', icon: <Copy size={IC} />, label: `Copy ${what}`, k: '⌘C' }
     )
   }
-  if (opts.hasLine && opts.editable && opts.setAside) items.push({ action: 'set-aside', icon: <Copy size={IC} />, label: 'Set aside in Scratchpad', k: liveShortcutLabel('app.set-aside') || undefined })
+  if (opts.hasLine && opts.editable && opts.setAside) items.push({ action: 'set-aside', icon: <Copy size={IC} />, label: 'Set aside in Slide Scratchpad', k: liveShortcutLabel('app.set-aside') || undefined })
   if (opts.hasLine) items.push({ action: 'paste', icon: <ClipboardPaste size={IC} />, label: opts.section ? 'Paste after section' : 'Paste slide after', k: '⌘V', breakAfter: true })
   if (opts.section && opts.collapsed != null) {
     items.push(opts.collapsed

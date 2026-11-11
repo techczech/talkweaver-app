@@ -91,7 +91,7 @@ try {
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 900))
   await page.locator('.tl-row').first().dblclick()
   await page.waitForTimeout(3000)
-  await page.keyboard.press('Meta+p') // Inspector mode
+  if (!(await page.locator('.tw-inspector').count())) await page.keyboard.press('Meta+p') // the Inspector is the sidebar's default tab
   await page.waitForTimeout(1500)
 
   // ── 1. Insert › Board slide ─────────────────────────────────────────────────────────────────

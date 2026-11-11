@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url'
 import {
   CAPTURE_EMBED_MAX_PICTURES, CAPTURE_EMBED_TEXT, captureEmbedInitScript, checkCaptureEmbedRequest, readCaptureEmbedViews
 } from '../src/main/live-page-capture-window.ts'
-import { openCaptureEmbed, savedViewsLabel, slideLivePages } from '../src/renderer/src/lib/captureEmbed.ts'
+import { captureSourceBlock, openCaptureEmbed, savedViewsLabel, slideLivePages } from '../src/renderer/src/lib/captureEmbed.ts'
 import { MAX_CAPTURE_IMAGE_BYTES } from '../compiler/scripts/lib/live-page-captures.mjs'
 
 const repo = fileURLToPath(new URL('..', import.meta.url))
@@ -122,6 +122,21 @@ await test('inspector: each web page on the slide with its saved views now (empt
   assert.equal(await openCaptureEmbed(deps, { outlinePath: null, slideId: 'radio', title: '', text }), false)
   assert.equal(await openCaptureEmbed({ ...deps, open: async () => ({ ok: false, message: 'refused here' }) }, { outlinePath, slideId: 'radio', title: '', text }), false)
   assert.equal(asked.length, 2); assert.equal(told.at(-1), 'refused here')
+  assert.equal(await openCaptureEmbed(deps, { outlinePath, slideId: 'old-derived-id', title: 'Radio', text: '### Radio\n{id=permanent-radio}\n\n[Embed: https://example.com/]\n' }), true)
+  assert.equal(asked[2].slideId, 'permanent-radio', 'a permanent id in the current source wins over a stale compiled id')
+  const current = '### Before\n{id=before}\n\n### Radio\n{id=permanent-radio}\n\n[Embed: https://example.com/]\n'
+  const row = { slide_id: 'radio', source_markdown: '### Radio\n\n[Embed: https://example.com/]' }
+  assert.match(captureSourceBlock(current, { ...row, slide_id: 'permanent-radio' }, row.source_markdown), /id=permanent-radio/, 'stable slide IDs resolve in the current buffer even while the compile is stale')
+  assert.match(captureSourceBlock(current.replace('{id=permanent-radio}', '{layout=media} {id=permanent-radio}'), { ...row, slide_id: 'permanent-radio', source_markdown: '### Radio {layout=media}\n\n[Embed: https://example.com/]' }, '### Radio {layout=media}\n\n[Embed: https://example.com/]'), /id=permanent-radio/, 'moving heading triggers during a save does not change the capture identity')
+  assert.equal(captureSourceBlock(current + '\n### Radio\n{id=other-radio}\n\n[Embed: https://example.com/]\n', row, row.source_markdown), null, 'an ambiguous old heading never selects a different slide')
+  const selected = '### Radio {layout=media}\n\n[Embed: https://example.com/]'
+  const remaining = '### Radio {layout=title}\n{id=other}\n\n[Embed: https://example.com/]'
+  assert.equal(captureSourceBlock(remaining, { slide_id: 'radio', source_markdown: selected }, selected + '\n\n' + remaining), null, 'deleting the selected slide cannot retarget a same-title slide with different attributes')
+  assert.equal(captureSourceBlock(current, row, row.source_markdown + '\n\n' + row.source_markdown), null, 'indistinguishable original blocks are not resolved by their new positions')
+  assert.equal(captureSourceBlock(current, row, row.source_markdown), null, 'a newly stamped identity waits for the matching preview instead of guessing continuity')
+  assert.match(captureSourceBlock(row.source_markdown, row, row.source_markdown), /### Radio/, 'a fresh current compile still resolves an untouched unstamped slide')
+  const copied = '### Radio\n{id=copied-radio}\n\n[Embed: https://example.com/]\n'
+  assert.equal(captureSourceBlock(copied, row, row.source_markdown), null, 'copying then deleting the unstamped original cannot retarget its exact copied replacement')
 })
 
 fs.rmSync(scratch, { recursive: true, force: true })

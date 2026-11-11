@@ -9,6 +9,7 @@
 import { useState } from 'react'
 import { ChevronDown, Code2, Image as ImageIcon, MonitorPlay, Search, Sparkles, X } from 'lucide-react'
 import { capItems } from './railModel'
+import { layoutDisplayName } from '../../../../shared/layout-registry/options'
 import type { ContentItem, FacetItem, RailFacets, ToggleFacetFn } from './railTypes'
 
 const CHIP_CAP = 6 // tag/section rows before "Show all"
@@ -106,7 +107,7 @@ export default function FilterGroups({
     return null
   }
 
-  const layMatches = layoutItems.filter((l) => l.value.includes(fq.lay.trim().toLowerCase()))
+  const layMatches = layoutItems.filter((l) => (l.value.includes(fq.lay.trim().toLowerCase()) || layoutDisplayName(l.value).toLowerCase().includes(fq.lay.trim().toLowerCase())))
   const lay = capItems(layMatches, LAY_CAP, showAll.lay, fq.lay)
   const tagMatches = tagItems.filter((t) => t.value.includes(fq.tags.trim().toLowerCase()))
   const tags = capItems(tagMatches, CHIP_CAP, showAll.tags, fq.tags)
@@ -129,10 +130,10 @@ export default function FilterGroups({
               key={l.value}
               type="button"
               className={`lt-lchip${facets.layoutSet.has(l.value) ? ' on' : ''}${l.count === 0 ? ' zero' : ''}`}
-              title={l.count === 0 ? 'No slides under the other active filters — click to see why the combination is empty' : undefined}
+              title={l.count === 0 ? 'No slides under the other active filters — click to see why the combination is empty' : `Layout id: ${l.value}`}
               onClick={() => onToggle('lay', l.value)}
             >
-              {l.value}<span className="lt-cc">{l.count}</span>
+              {layoutDisplayName(l.value)}<span className="lt-cc">{l.count}</span>
             </button>
           ))}
           {layMatches.length === 0 && <div className="lt-fzero">No layout matches.</div>}

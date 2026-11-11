@@ -1,3 +1,4 @@
+import type { SupersedeTicket } from './single-flight.ts'
 /**
  * The cache identity of one talk prepared one way. `defaults` (timer settings) and `options`
  * (the compiler's media contract) are both part of it: a model prepared WITHOUT video for a
@@ -15,7 +16,10 @@ export function createPreparedTalkCache<T>(options: {
   sizeOf: (value: T) => number
 }) {
   const retained = new Map<string, { group: string; value: T; bytes: number }>()
-  const pending = new Map<string, { group: string; promise: Promise<T> }>()
+  // `owner`: the supersede key of the caller that started the load (undefined: an ordinary caller).
+  // `shared` turns true once any caller with a different owner joins it: from then on the load must
+  // run whatever its first owner does next, because someone else is waiting on its value.
+  const pending = new Map<string, { group: string; promise: Promise<T>; owner?: string; shared: boolean }>()
   const latest = new Map<string, string>()
   let bytes = 0
   function remove(key: string): void {
@@ -29,7 +33,13 @@ export function createPreparedTalkCache<T>(options: {
     }
   }
   return {
-    get(key: string, group: string, load: () => Promise<T>): Promise<T> {
+    /**
+     * `owner` is the live preview's supersede key (window + talk). `load` receives a ticket for the gate:
+     * `droppable()` is true while only that owner waits on this load, so the gate may drop it unstarted
+     * for a newer request of the same owner, and false once anyone else has joined, so a shared
+     * preparation is never dropped. `dropped()` removes the entry at once, so nobody joins a doomed load.
+     */
+    get(key: string, group: string, load: (ticket: { droppable(): boolean; dropped(): void }) => Promise<T>, owner?: string): Promise<T> {
       latest.set(group, key)
       const hit = retained.get(key)
       if (hit) {
@@ -38,8 +48,16 @@ export function createPreparedTalkCache<T>(options: {
         return Promise.resolve(hit.value)
       }
       const running = pending.get(key)
-      if (running) return running.promise
-      const promise = Promise.resolve().then(load).then(value => {
+      if (running) {
+        if (owner === undefined || owner !== running.owner) running.shared = true
+        return running.promise
+      }
+      const entry: { group: string; promise: Promise<T>; owner?: string; shared: boolean } = { group, promise: null as unknown as Promise<T>, owner, shared: owner === undefined }
+      const ticket = {
+        droppable: (): boolean => !entry.shared,
+        dropped: (): void => { if (pending.get(key) === entry) pending.delete(key) }
+      }
+      const promise = Promise.resolve().then(() => load(ticket)).then(value => {
         // An older slow request may finish after a newer document. Return it to its caller,
         // but never let it evict the latest requested revision from the shared cache.
         if (latest.get(group) === key && pending.get(key)?.promise === promise) {
@@ -58,7 +76,8 @@ export function createPreparedTalkCache<T>(options: {
         if (pending.get(key)?.promise === promise) pending.delete(key)
         pruneGroups()
       })
-      pending.set(key, { group, promise })
+      entry.promise = promise
+      pending.set(key, entry)
       return promise
     },
     /**
@@ -100,15 +119,19 @@ export type GatedRun = <R>(task: () => Promise<R>) => Promise<R>
  * and at background priority, but uses its explicit entry point so it does not release itself.
  */
 export function createPreparationRoute<T>(
-  cache: { get(key: string, group: string, load: () => Promise<T>): Promise<T> },
-  gate: GatedRun & { background: GatedRun; prewarm: GatedRun }
+  cache: { get(key: string, group: string, load: (ticket: SupersedeTicket) => Promise<T>, owner?: string): Promise<T> },
+  gate: GatedRun & { background: GatedRun; prewarm: GatedRun; latest<R>(key: string, task: () => Promise<R>, ticket?: SupersedeTicket): Promise<R> }
 ) {
-  return (lane: PreparationLane, key: string, group: string, load: (gated: GatedRun) => Promise<T>): Promise<T> =>
+  /** `supersedeKey` (live lane only): the editor's live-preview compile, owner window + talk path. A
+   *  newer one with the same key drops an older one still queued on the gate (single-flight.ts). */
+  return (lane: PreparationLane, key: string, group: string, load: (gated: GatedRun) => Promise<T>, supersedeKey?: string): Promise<T> =>
     lane === 'prewarm'
       ? load((task) => gate.prewarm(task))
       : lane === 'variant'
         ? load((task) => gate.background(task))
-        : cache.get(key, group, () => load((task) => gate(task)))
+        : supersedeKey === undefined
+          ? cache.get(key, group, () => load((task) => gate(task)))
+          : cache.get(key, group, (ticket) => load((task) => gate.latest(supersedeKey, task, ticket)), supersedeKey)
 }
 
 /**

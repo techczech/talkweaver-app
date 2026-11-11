@@ -1,3 +1,5 @@
+import { plainTalkTitle } from '../../../../shared/plain-title'
+import { BIN_CONSEQUENCE, BIN_RECOVERY } from '../cards'
 import type { TalkInfo, VaultView } from '../../../../preload/index'
 import { rebaseTalk, topicOf } from '../talkTreeNav'
 import { notify } from '../../lib/notify'
@@ -9,8 +11,8 @@ import type { TalkAction, FolderAction } from './menus'
 // Vault operations for the Talks browser. Every op toasts on failure — a silent no-op
 // re-render reads as "the click didn't register" (ADR-0023 never fail silently).
 
-export type Prompt = { label: string; initial: string; cta: string; onSubmit: (value: string) => void | Promise<void> }
-export type Confirm = { label: string; cta: string; danger?: boolean; onConfirm: () => void | Promise<void> }
+export type Prompt = { label: string; kind?: string; mode?: 'new' | 'rename'; initial: string; cta: string; onSubmit: (value: string) => void | Promise<void> }
+export type Confirm = { label: string; title?: string; itemName?: string; consequence?: string; recovery?: string; cta: string; danger?: boolean; onConfirm: () => void | Promise<void> }
 
 interface Deps {
   talks: TalkInfo[]
@@ -74,7 +76,7 @@ export function useTalkActions(deps: Deps) {
   }
 
   function startRename(talk: TalkInfo): void {
-    setPrompt({ label: `Rename “${talk.title}” to`, initial: talk.title, cta: 'Rename', onSubmit: (v) => doRename(talk, v) })
+    setPrompt({ label: 'Rename talk', kind: 'talk', mode: 'rename', initial: talk.title, cta: 'Rename', onSubmit: (v) => doRename(talk, v) })
   }
   async function doRename(talk: TalkInfo, newTitle: string): Promise<void> {
     const wasActive = activeTalk?.outlinePath === talk.outlinePath
@@ -99,7 +101,7 @@ export function useTalkActions(deps: Deps) {
 
   }
   function startDuplicate(talk: TalkInfo): void {
-    setPrompt({ label: `Duplicate “${talk.title}” as`, initial: `${talk.title} (copy)`, cta: 'Duplicate', onSubmit: (v) => doClone(talk, v) })
+    setPrompt({ label: 'Duplicate talk', initial: `${talk.title} (copy)`, cta: 'Duplicate', onSubmit: (v) => doClone(talk, v) })
   }
   async function doClone(talk: TalkInfo, newTitle: string): Promise<void> {
     if (activeTalk?.outlinePath === talk.outlinePath && !(await settleActive())) return
@@ -108,7 +110,7 @@ export function useTalkActions(deps: Deps) {
     else notify(`Couldn’t duplicate “${talk.title}”.`, 'error')
   }
   function startDelete(talk: TalkInfo): void {
-    setConfirm({ label: `Move “${talk.title}” to the Bin? (recoverable from Finder)`, cta: 'Delete', danger: true, onConfirm: () => doDeleteTalk(talk) })
+    setConfirm({ label: `Move “${plainTalkTitle(talk.title)}” to the Bin?`, title: 'Delete this talk?', itemName: plainTalkTitle(talk.title), consequence: BIN_CONSEQUENCE, recovery: BIN_RECOVERY, cta: 'Delete', danger: true, onConfirm: () => doDeleteTalk(talk) })
   }
   async function doDeleteTalk(talk: TalkInfo): Promise<void> {
     if (activeTalk?.outlinePath === talk.outlinePath && !(await settleActive())) return
@@ -196,15 +198,19 @@ export function useTalkActions(deps: Deps) {
     const leaf = topic.split('/').pop() || topic
     if (action === 'open-new-window') openInNewWindow({ kind: 'folder', topic, vaultId })
     else if (action === 'new-talk') onNewTalk?.(topic, vaultId)
-    else if (action === 'new-subfolder') setPrompt({ label: `New subfolder inside “${leaf}”`, initial: '', cta: 'Create', onSubmit: (v) => doNewFolder(v, topic, vaultId) })
-    else if (action === 'rename') setPrompt({ label: `Rename folder “${leaf}” to`, initial: leaf, cta: 'Rename', onSubmit: (v) => doRenameFolder(topic, v, vaultId) })
+    else if (action === 'new-subfolder') setPrompt({ label: 'New subfolder', kind: 'subfolder', mode: 'new', initial: '', cta: 'Create', onSubmit: (v) => doNewFolder(v, topic, vaultId) })
+    else if (action === 'rename') setPrompt({ label: 'Rename folder', kind: 'folder', mode: 'rename', initial: leaf, cta: 'Rename', onSubmit: (v) => doRenameFolder(topic, v, vaultId) })
     else if (action === 'delete') {
       const here = talks.filter((t) => vaultIdOf(t) === (vaultId ?? firstOpen?.id))
       const count = here.filter((t) => topicOf(t, rootOf(t)) === topic || topicOf(t, rootOf(t)).startsWith(topic + '/')).length
       setConfirm({
         label: count > 0
-          ? `Move folder “${leaf}” and its ${count} talk${count === 1 ? '' : 's'} to the Bin? (recoverable from Finder)`
-          : `Move folder “${leaf}” to the Bin? (recoverable from Finder)`,
+          ? `Move folder “${leaf}” and its ${count} talk${count === 1 ? '' : 's'} to the Bin?`
+          : `Move folder “${leaf}” to the Bin?`,
+        title: 'Delete this folder?',
+        itemName: count > 0 ? `${leaf} (with ${count} talk${count === 1 ? '' : 's'})` : leaf,
+        consequence: BIN_CONSEQUENCE,
+        recovery: BIN_RECOVERY,
         cta: 'Delete', danger: true, onConfirm: () => doDeleteFolder(topic, vaultId)
       })
     }

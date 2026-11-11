@@ -10,6 +10,8 @@ import type { SlidePlace } from '../../../../shared/slide-handling/place'
 
 export interface BatchBarProps {
   count: number
+  /** Generated cards can join pathways, but cannot participate in outline edits. */
+  outlineEditable?: boolean
   /** The outline rows of the talk's current text, and the heading lines of the selected slides. */
   rows: readonly SlideRow[]
   selectedLines: readonly number[]
@@ -21,6 +23,7 @@ export interface BatchBarProps {
   onCut: () => void
   onCopy: () => void
   onDelete: () => void
+  onAddToPathway?: () => void
   onSetAside?: () => void
   /** The bar's height while it shows (0 when it does not): the grid pads its scroll area by it so the last row scrolls clear. */
   onHeight?: (px: number) => void
@@ -85,7 +88,7 @@ function MoveToMenu({ count, rows, selectedLines, onChoose, onClose }: {
   )
 }
 
-export default function BatchBar({ count, rows, selectedLines, moveOpen: moving, onMoveOpenChange: setMoving, onClear, onMove, onCut, onCopy, onDelete, onSetAside, onHeight }: BatchBarProps) {
+export default function BatchBar({ count, outlineEditable = true, rows, selectedLines, moveOpen: moving, onMoveOpenChange: setMoving, onClear, onMove, onCut, onCopy, onDelete, onSetAside, onAddToPathway, onHeight }: BatchBarProps) {
   const close = useCallback(() => setMoving(false), [setMoving])
   const barRef = useRef<HTMLDivElement>(null)
   const showing = count >= 2
@@ -128,19 +131,21 @@ export default function BatchBar({ count, rows, selectedLines, moveOpen: moving,
     <div ref={barRef} className="batch-bar" data-batch-bar role="toolbar" aria-label="Selected slides" onClick={(e) => e.stopPropagation()}>
       <span className="batch-bar-n" data-batch-count>{count} selected</span>
       <button type="button" className="batch-bar-link" data-batch-action="clear" onClick={onClear}>Clear</button>
+      {!outlineEditable && <span>Generated slides can only be added to a pathway.</span>}
       <span className="batch-bar-wrap">
-        <button type="button" className="batch-bar-btn" data-batch-action="move" aria-haspopup="dialog" onClick={() => setMoving(!moving)}>Move to…</button>
-        {moving && (
+        <button type="button" className="batch-bar-btn" data-batch-action="move" disabled={!outlineEditable} aria-haspopup="dialog" onClick={() => setMoving(!moving)}>Move to…</button>
+        {moving && outlineEditable && (
           <MoveToMenu
             count={count} rows={rows} selectedLines={selectedLines} onClose={close}
             onChoose={(o) => { setMoving(false); onMove(o.place) }}
           />
         )}
       </span>
-      {onSetAside && <button type="button" className="batch-bar-btn" data-batch-action="set-aside" onClick={onSetAside}>Set aside in Scratchpad</button>}
-      <button type="button" className="batch-bar-btn" data-batch-action="cut" onClick={onCut}>Cut</button>
-      <button type="button" className="batch-bar-btn" data-batch-action="copy" onClick={onCopy}>Copy</button>
-      <button type="button" className="batch-bar-btn batch-bar-btn--danger" data-batch-action="delete" onClick={onDelete}>Delete</button>
+      {onAddToPathway && <button type="button" className="batch-bar-btn" data-batch-action="add-to-pathway" onClick={onAddToPathway}>Add to pathway…</button>}
+      {onSetAside && <button type="button" className="batch-bar-btn" data-batch-action="set-aside" disabled={!outlineEditable} onClick={onSetAside}>Set aside in Slide Scratchpad</button>}
+      <button type="button" className="batch-bar-btn" data-batch-action="cut" disabled={!outlineEditable} onClick={onCut}>Cut</button>
+      <button type="button" className="batch-bar-btn" data-batch-action="copy" disabled={!outlineEditable} onClick={onCopy}>Copy</button>
+      <button type="button" className="batch-bar-btn batch-bar-btn--danger" data-batch-action="delete" disabled={!outlineEditable} onClick={onDelete}>Delete</button>
     </div>
   )
 }

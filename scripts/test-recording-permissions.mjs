@@ -207,7 +207,23 @@ await test('check handler: the same table — permissions.query and device label
   assert.equal(check(session, EDITOR, 'clipboard-read', { get isMainFrame() { throw new Error('x') } }), false, 'details that cannot be read')
 })
 
-await test('wiring: installed at app start; the three editor-kind windows are registered; the isolated live-page session has its own deny-all handlers', () => {
+await test('the Settings window: the microphones\' names (an audio check), never a microphone, never the camera', () => {
+  const SETTINGS = 9
+  let open = true
+  const session = fakeSession()
+  const permissions = createRecordingPermissions({ deviceListWindow: () => (open ? SETTINGS : null) })
+  permissions.install(session)
+  assert.equal(check(session, SETTINGS, 'media', { isMainFrame: true, mediaType: 'audio' }), true, 'Settings › Recording › Microphone lists the inputs by name')
+  assert.equal(check(session, SETTINGS, 'media', { isMainFrame: true, mediaType: 'video' }), false)
+  assert.equal(check(session, SETTINGS, 'media', { isMainFrame: false, mediaType: 'audio' }), false, 'not a frame in it')
+  assert.equal(request(session, SETTINGS, 'media', mic), false, 'it never opens a microphone')
+  assert.equal(check(session, EDITOR, 'media', { isMainFrame: true, mediaType: 'audio' }), false, 'no other window')
+  open = false
+  assert.equal(check(session, SETTINGS, 'media', { isMainFrame: true, mediaType: 'audio' }), false, 'closed: nothing')
+  assert.equal(decidePermission({ permission: 'media', contentsId: SETTINGS, isMainFrame: true, mediaTypes: ['audio'], presenterIds: new Set(), appWindowIds: new Set(), deviceListIds: new Set([SETTINGS]) }), false, 'a request (no check flag) is refused')
+})
+
+await test('wiring: installed at app start; the editor and Tools windows are registered; the isolated live-page session has its own deny-all handlers', () => {
   const recording = readFileSync(new URL('../src/main/recording.ts', import.meta.url), 'utf8')
   assert.match(recording, /recordingPermissions\.addPresenter\(win/)
   assert.match(recording, /recordingPermissions\.addAppWindow\(win/)
@@ -215,12 +231,14 @@ await test('wiring: installed at app start; the three editor-kind windows are re
   const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   assert.match(index, /installRecordingPermissions\(session\.defaultSession\)/)
   assert.match(index, /setupRecordingPermissions\(win\)/)
-  // Editor, Tools and Pathways: every window that gets the app handler is registered on the next line.
+  // Editor (including the Pathways dock) and Tools: every app-handler window is registered on the next line.
   const appWindows = [...index.matchAll(/win\.webContents\.setWindowOpenHandler\(appWindowOpenHandler\(appWindowOpenOpts, [^\n]*\)\)\n\s*(\S+)/g)].map((m) => m[1])
-  assert.deepEqual(appWindows, ['registerAppWindowPermissions(win)', 'registerAppWindowPermissions(win)', 'registerAppWindowPermissions(win)'])
-  assert.equal(index.match(/registerAppWindowPermissions\(win\)/g).length, 3, 'and no other window (never a deck window)')
+  assert.deepEqual(appWindows, ['registerAppWindowPermissions(win)', 'registerAppWindowPermissions(win)'])
+  assert.equal(index.match(/registerAppWindowPermissions\(win\)/g).length, 2, 'and no other window (never a deck window)')
   // One list of editor-kind windows for every rule (window-kinds.ts): the permissions share it, they keep no copy.
-  assert.match(recording, /createRecordingPermissions\(\{ appWindowIds \}\)/)
+  assert.match(recording, /createRecordingPermissions\(\{ appWindowIds, deviceListWindow: /)
+  // The Settings window is the one window that may list the microphones by name.
+  assert.match(index, /setDeviceListWindow\(\(\) => \{\n\s*const win = sharedSettings\?\.host\.settingsWindow\(\)/)
   const shared = new Set()
   const sharing = createRecordingPermissions({ appWindowIds: shared })
   sharing.addAppWindow(fakeWindow(77))

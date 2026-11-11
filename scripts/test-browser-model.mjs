@@ -175,13 +175,13 @@ ck(stampedIdOf('### Pricing\n{statement}\n') === null, 'stampedIdOf null when un
 ck(stampedIdOf(undefined) === null, 'stampedIdOf null on missing markdown')
 
 /* ---------- propagationSummaryLabel: the checklist confirm button (Task 7) ---------- */
-ck(propagationSummaryLabel(2, 1) === 'Replace in 2 presentations · skip 1', 'summary: plural replace + skip')
-ck(propagationSummaryLabel(1, 0) === 'Replace in 1 presentation', 'summary: singular replace, no skip suffix')
-ck(propagationSummaryLabel(1, 2) === 'Replace in 1 presentation · skip 2', 'summary: singular replace + skip')
+ck(propagationSummaryLabel(2, 1) === 'Replace in 2 talks · skip 1', 'summary: plural replace + skip')
+ck(propagationSummaryLabel(1, 0) === 'Replace in 1 talk', 'summary: singular replace, no skip suffix')
+ck(propagationSummaryLabel(1, 2) === 'Replace in 1 talk · skip 2', 'summary: singular replace + skip')
 ck(propagationSummaryLabel(0, 1) === 'Nothing to replace · skip 1', 'summary: N=0 reads Nothing to replace')
 ck(propagationSummaryLabel(0, 3) === 'Nothing to replace · skip 3', 'summary: N=0 with several skips')
 ck(propagationSummaryLabel(0, 0) === 'Nothing to replace', 'summary: nothing at all')
-ck(propagationSummaryLabel(3, 0) === 'Replace in 3 presentations', 'summary: plural replace only')
+ck(propagationSummaryLabel(3, 0) === 'Replace in 3 talks', 'summary: plural replace only')
 
 /* ---------- splitDiffColumns: two-column drawer feed (Task 7) ---------- */
 const diff = [

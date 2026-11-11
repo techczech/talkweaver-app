@@ -274,13 +274,13 @@ for (const set of [{ ELECTRON_RUN_AS_NODE: '0' }, { NODE_OPTIONS: '--require /ev
     assert.ok(message?.includes(hazard) && /^Publishing stopped: /.test(message), `${hazard} stops the publish, by name`)
   }
   assert.ok(pagesBundlingHazard('C:\\ud\\site', 'C:\\ud\\wrangler-runs', (path) => path === 'C:\\ud\\site\\_worker.js', 'win32')?.includes('C:\\ud\\site\\_worker.js'))
-  // One place uploads the site (ticket 04: handout-publishing.ts `uploadSite`), and it checks first.
+  // One place sends the site's changes (per-talk publishing: handout-publishing.ts, with Cloudflare's API), and it checks first.
   const main = readSource(join(repo, 'src/main/index.ts'))
-  assert.equal(main.split('pagesBundlingBlock(siteDir)').length - 1, 1, 'the main process hands the check to the one place that uploads')
+  assert.equal(main.split('pagesBundlingBlock(siteDir)').length - 1, 1, 'the main process hands the check to the one place that publishes')
   assert.ok(!main.includes("'pages', 'deploy'"), 'and runs no `pages deploy` of its own')
   const publishing = readSource(join(repo, 'src/main/handout-publishing.ts'))
-  assert.equal(publishing.split("'pages', 'deploy'").length - 1, 1, 'one place runs `pages deploy`')
-  assert.ok(publishing.indexOf('ports.bundlingHazard(dir)') > 0 && publishing.indexOf('ports.bundlingHazard(dir)') < publishing.indexOf("'pages', 'deploy'"), 'and it checks first')
+  assert.equal(publishing.split("'pages', 'deploy'").length - 1, 0, 'handouts are no longer published with `pages deploy`')
+  assert.ok(publishing.indexOf('ports.bundlingHazard(root)') > 0 && publishing.indexOf('ports.bundlingHazard(root)') < publishing.indexOf('attempt.deploy('), 'and it checks before the deployment')
 }
 
 // The rules the ambient-access trace test judges by, on Windows shapes (that test runs them for
@@ -1075,10 +1075,10 @@ function directWranglerCallsIn(fileName, text) {
   for (const command of ["'dev', '--config'"]) {
     assert.ok(main.includes(command), `the ${command} call site is still in the main process (update this list if it moved)`)
   }
-  // `pages deploy` moved into the one publishing sequence (ticket 04), which the main process calls
-  // with `runBundledWrangler` as its upload port (scripts/test-handout-publishing.mjs drives it).
-  assert.ok(readSource(join(repo, 'src/main/handout-publishing.ts')).includes("'pages', 'deploy'"), "the 'pages', 'deploy' call site is in the publishing sequence (update this list if it moved)")
-  assert.ok(main.includes("upload: (args, credentials, started) => runBundledWrangler(args, { set: credentials, cwd: join(args[2], '.wrangler', 'run'), publicationStarted: started })"), 'and its upload goes through the bundled launcher')
+  // Handouts no longer go up with `pages deploy` (per-talk publishing, spec 2026-11-05: the change is merged into the live
+  // manifest and sent with Cloudflare's API, pages-direct-upload.ts); the main process launches no wrangler to publish.
+  assert.ok(!readSource(join(repo, 'src/main/handout-publishing.ts')).includes("'pages', 'deploy'"), 'no `pages deploy` in the publishing sequence')
+  assert.ok(!main.includes('runBundledWrangler'), 'and no wrangler launch for an upload in the main process')
   // The live service is set up and updated without wrangler (ticket 11): its sequence is Cloudflare
   // API requests (scripts/test-live-service-upload.mjs drives it), and nothing in it or in the main
   // process's set-up launches a tool. `wrangler dev` stays, for tests and the unpackaged app.

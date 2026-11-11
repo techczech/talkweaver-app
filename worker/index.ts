@@ -1,3 +1,5 @@
+import { liveEmbedKey, normaliseLiveEmbed } from './live-embed-runtime.ts'
+import type { EmbedMessage } from './protocol.ts'
 import { createSignedToken, verifySignedToken } from './auth'
 import {
   adminAuthorised,
@@ -327,6 +329,13 @@ export class LiveSession {
     state.storage.sql.exec('CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)')
     state.blockConcurrencyWhile(async () => {
       this.session = this.readSession()
+      this.embedSlideId = this.session ? currentStateMessage(this.session)?.slideId ?? null : null
+      const saved = this.session?.status === 'open' ? this.readRow('live-embeds') : null
+      if (saved) for (const value of (JSON.parse(saved) as unknown[]).slice(-32)) {
+        const state = normaliseLiveEmbed(value)
+        if (state?.slideId === this.embedSlideId && (state.event.k === 'scroll' || state.event.k === 'unavailable'))
+          this.liveEmbeds.set(liveEmbedKey(state), state)
+      }
     })
   }
 
@@ -471,7 +480,7 @@ export class LiveSession {
     }
     const current = this.session && currentStateMessage(this.session)
     if (current && socketRoleReceivesSlideState(role)) server.send(JSON.stringify(current))
-    if (kind === 'screen') this.inkForScreen(server)
+    if (role === 'audience') this.inkForFollower(server)
     if (this.session) {
       // Old handouts have no closed-state display contract; retain their original initial snapshot.
       for (const message of currentPollStateMessages(this.session, role).filter((p) => p.open)) server.send(JSON.stringify(message))
@@ -500,6 +509,11 @@ export class LiveSession {
   }
 
   private broadcastSlideState(message: unknown): void {
+    const next = (message as { slideId?: unknown })?.slideId
+    if (typeof next === 'string' && next !== this.embedSlideId) {
+      this.storeEmbeds(new Map([...this.liveEmbeds].filter(([, state]) => state.slideId !== this.embedSlideId)))
+      this.embedSlideId = next
+    }
     for (const socket of this.sockets()) {
       const role = socket.deserializeAttachment<LiveSocketAttachment>()?.role
       if (role && socketRoleReceivesSlideState(role)) this.send(socket, message)
@@ -547,6 +561,7 @@ export class LiveSession {
     const kept = keepBoards && reason === 'ended' ? keepBoardsOpen(this.session, now) : {}
     const message = closeSession(this.session)
     this.liveInk = null
+    this.storeEmbeds(new Map())
     this.save()
     for (const socket of this.sockets()) {
       this.send(socket, socket.deserializeAttachment<LiveSocketAttachment>()?.protocol === 2 ? { ...message, reason } : message)
@@ -686,9 +701,17 @@ export class LiveSession {
 
   private pointerRates = new WeakMap<HibernatingWebSocket, { at: number; count: number }>()
   private inkRates = new WeakMap<HibernatingWebSocket, { at: number; count: number }>()
+  private embedSlideId: string | null = null
+  /** Bounded current scroll/availability survives hibernation; no clicks, typed values or images. */
+  private liveEmbeds = new Map<string, EmbedMessage>()
+  private storeEmbeds(next: Map<string, EmbedMessage>): void {
+    this.writeRow('live-embeds', JSON.stringify([...next.values()]))
+    this.liveEmbeds = next
+  }
+  private embedRates = new WeakMap<HibernatingWebSocket, { at: number; count: number }>()
   /**
    * The Pen's latest ink (ticket 08): the presenter's current layer, held in this object's memory
-   * only (never this.save(), never storage) so a venue screen that joins or reconnects is sent it.
+   * only (never this.save(), never storage) so a follower that joins or reconnects is sent it.
    * Gone when the session ends or the object is evicted; the presenter resends it on reconnect.
    */
   private liveInk: InkMessage | null = null
@@ -698,11 +721,11 @@ export class LiveSession {
   private inkRepliedTo = new WeakMap<HibernatingWebSocket, { version: number; at: number }>()
 
   /**
-   * A venue screen joined or reconnected: send it the current layer. When this object holds none
+   * A follower joined or reconnected: send it the current layer. When this object holds none
    * (evicted: ink lives in memory only), ask the presenter to send it again (at most once a second);
-   * the answer reaches every venue screen through the ordinary ink relay. Ink is never stored.
+   * the answer reaches every follower through the ordinary ink relay. Ink is never stored.
    */
-  private inkForScreen(screen: HibernatingWebSocket): void {
+  private inkForFollower(screen: HibernatingWebSocket): void {
     if (this.liveInk) {
       // A screen that syncs again and again gets the same layer at most once a second (a new
       // drawing reaches it through the relay anyway).
@@ -725,10 +748,10 @@ export class LiveSession {
     for (const presenter of presenters) this.send(presenter, { type: 'ink.request' })
   }
 
-  /** Venue screens only: phones never receive the pointer or ink. */
-  private sendToScreens(message: unknown): void {
+  /** All followers receive bounded presenter marks; each page displays them only while following. */
+  private sendToFollowers(message: unknown): void {
     for (const follower of this.sockets('audience')) {
-      if (follower.deserializeAttachment<LiveSocketAttachment>()?.kind === 'screen') this.send(follower, message)
+      this.send(follower, message)
     }
   }
 
@@ -754,15 +777,33 @@ export class LiveSession {
     // Ink frames are larger than a pointer's; only a frame naming ink.live pays for this extra parse
     // (the name is no authority: parsePresenterMessage checks the frame in full).
     const transient = attachment.role === 'presenter'
-      && (value.length <= POINTER_LIMITS.bytes || (value.length <= INK_LIMITS.bytes && value.includes('"ink.live"')))
+      && (value.length <= POINTER_LIMITS.bytes || (value.length <= 8192 && value.includes('"embed.live"')) || (value.length <= INK_LIMITS.bytes && value.includes('"ink.live"')))
       ? parsePresenterMessage(value) : null
+    if (transient?.type === 'embed.live') {
+      if (this.embedSlideId === null) this.embedSlideId = currentStateMessage(this.session)?.slideId ?? null
+      const now = Date.now(), previous = this.embedRates.get(socket)
+      const rate = previous && now - previous.at < 1000 ? previous : { at: now, count: 0 }
+      this.embedRates.set(socket, rate)
+      if (++rate.count > 60) return
+      // Keep only current scroll positions / availability, never typed values or click history.
+      if (transient.event.k === 'scroll' || transient.event.k === 'unavailable') {
+        const key = liveEmbedKey(transient)
+        const next = new Map(this.liveEmbeds)
+        next.delete(key)
+        next.set(key, transient)
+        if (next.size > 32) next.delete(next.keys().next().value!)
+        this.storeEmbeds(next)
+      }
+      this.sendToFollowers(transient)
+      return
+    }
     if (transient?.type === 'pointer.live') {
       if (attachment.role !== 'presenter') return
       const now = Date.now(), previous = this.pointerRates.get(socket)
       const rate = previous && now - previous.at < 1000 ? previous : { at: now, count: 0 }
       this.pointerRates.set(socket, rate)
       if (++rate.count > POINTER_LIMITS.perSecond) return
-      this.sendToScreens(transient)
+      this.sendToFollowers(transient)
       return
     }
     if (transient?.type === 'ink.live') {
@@ -774,7 +815,7 @@ export class LiveSession {
       if (++rate.count > INK_LIMITS.perSecond) return
       this.liveInk = transient
       this.liveInkVersion++
-      this.sendToScreens(transient)
+      this.sendToFollowers(transient)
       return
     }
     const recovery = attachment.protocol === 2 ? parseRecoveryClientMessage(value) : null
@@ -813,7 +854,7 @@ export class LiveSession {
     }
 
     const message = parsePresenterMessage(value)
-    if (!message || message.type === 'pointer.live' || message.type === 'ink.live' || message.type === 'question.answer' || message.type === 'switches.set'
+    if (!message || message.type === 'embed.live' || message.type === 'pointer.live' || message.type === 'ink.live' || message.type === 'question.answer' || message.type === 'switches.set'
       || isPresenterBoardMessage(message)) {
       this.send(socket, { type: 'protocol.error', code: 'invalid_or_inert_message' })
       return
@@ -1000,8 +1041,12 @@ export class LiveSession {
         })
       }
       this.send(socket, snapshot)
-      // A venue screen that joins or reconnects is sent the drawing on the presenter's current layer.
-      if (attachment.role === 'audience' && attachment.kind === 'screen') this.inkForScreen(socket)
+      // A follower that joins or reconnects is sent the drawing on the presenter's current layer.
+      if (attachment.role === 'audience') {
+        this.inkForFollower(socket)
+        const slide = currentStateMessage(this.session)
+        for (const state of this.liveEmbeds.values()) if (state.slideId === slide?.slideId) this.send(socket, state)
+      }
       return
     }
     if (message.type === 'operation' && attachment.role === 'presenter') {

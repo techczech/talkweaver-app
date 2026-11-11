@@ -30,6 +30,7 @@ export interface RunAudioFields {
   segments?: RunAudioSegment[]
   gaps?: RunAudioGap[]
   /** The recording ended without Stop (crash, window lost); the files hold what was written. */
+  recoveryNote?: string
   partial?: boolean
 }
 
@@ -53,13 +54,18 @@ const finite = (value: unknown): number => {
   return Number.isFinite(n) ? Math.max(0, n) : 0
 }
 
-/** Sum of the segments' lengths on the recording clock. */
+/**
+ * Audio held on the recording clock: the union of the segments' spans. A microphone switch starts
+ * the new segment before the old one stops, so two can overlap by a moment; that time counts once.
+ */
 export function audioMsFromSegments(segments: ReadonlyArray<Pick<RunAudioSegment, 'startMs' | 'endMs'>>): number {
   let total = 0
-  for (const seg of segments) {
-    const start = finite(seg.startMs)
-    const end = finite(seg.endMs)
-    if (end > start) total += end - start
+  let reach = 0
+  const spans = segments.map((seg) => [finite(seg.startMs), finite(seg.endMs)]).sort((a, b) => a[0] - b[0])
+  for (const [start, end] of spans) {
+    const from = Math.max(start, reach)
+    if (end > from) total += end - from
+    reach = Math.max(reach, end)
   }
   return total
 }
@@ -91,5 +97,6 @@ export function runAudioSummary(run: { recordingMs?: number; audio?: RunAudioFie
   const parts = [recordingMs > 0 ? `Audio ${fmtAudioLength(audioMs)} of ${fmtAudioLength(recordingMs)}` : `Audio ${fmtAudioLength(audioMs)}`]
   if (gaps > 0) parts.push(`${gaps} ${gaps === 1 ? 'gap' : 'gaps'}`)
   if (partial) parts.push('recording interrupted')
+  if (audio.recoveryNote) parts.push(audio.recoveryNote)
   return { audioMs, recordingMs, differs, gaps, partial, label: parts.join(' · ') }
 }

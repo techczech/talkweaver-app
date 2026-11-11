@@ -1,3 +1,4 @@
+import { tmpdir as fixtureTmpdir } from 'node:os'
 import assert from 'node:assert/strict'
 import {mkdir,mkdtemp,writeFile,symlink,rm,rename,readFile} from 'node:fs/promises'
 import {inventoryFilesystem} from '../src/main/vault-gallery-inventory-fs.ts'
@@ -5,7 +6,7 @@ import {scanInventory} from '../src/main/vault-gallery-inventory.ts'
 import {execFileSync} from 'node:child_process'
 if(process.platform!=='darwin'){console.log('SKIP real macOS adapter fixture; portable fake-adapter/authority tests remain registered');process.exit(0)}
 const source=new URL('../native/vault-gallery',import.meta.url).pathname
-const fixture=await mkdtemp(new URL('../evidence/vault-gallery/.storage-',import.meta.url))
+const fixture=await mkdtemp(fixtureTmpdir()+'/tw-gallery-storage-')
 try {
  await mkdir(fixture+'/root/empty',{recursive:true});await mkdir(fixture+'/outside')
  await writeFile(fixture+'/root/file', 'fixture bytes');await writeFile(fixture+'/outside/secret','never read')

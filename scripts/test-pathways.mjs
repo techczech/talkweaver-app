@@ -1,7 +1,7 @@
 import { strict as assert } from 'node:assert'
-import { mkdirSync, mkdtempSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import {
@@ -13,6 +13,8 @@ import {
   setPathwaySlideIdsInManifest
 } from '../src/main/pathways.ts'
 import * as pathwayModule from '../src/main/pathways.ts'
+import ts from 'typescript'
+import { runInNewContext } from 'node:vm'
 
 const pathwayViewModule = await import('../src/renderer/src/components/pathwayViewModel.ts').catch(() => null)
 assert.ok(pathwayViewModule, 'pathway view preference model exists')
@@ -273,3 +275,54 @@ assert.equal(
 assert.match(filtered, /<\/body>\s*<\/html>\s*$/, 'pathway output keeps the real document body tail')
 
 console.log('pathways: manifest, resolution, and compiled injection checks passed')
+
+// Exercise the actual main-process mutation/broadcast functions without starting Electron.
+// Both windows enter through mutatePathways; a shared compile gate makes overlapping reads deterministic.
+{
+  const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const ast = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true)
+  const names = new Set(['pathwaySnapshot', 'mutatePathways', 'notifyPathwaysChanged'])
+  const code = ast.statements.filter(node =>
+    (ts.isFunctionDeclaration(node) && names.has(node.name?.text)) ||
+    (ts.isVariableStatement(node) && node.declarationList.declarations.some(d => d.name.getText(ast) === 'pathwayMutationQueue'))
+  ).map(node => node.getText(ast)).join('\n')
+  const root = mkdtempSync(join(tmpdir(), 'tw-pathway-overlap-'))
+  try {
+    const manifestPath = pathwayModule.pathwayManifestPath(root, 'shared')
+    pathwayModule.writePathwayManifest(manifestPath, JSON.stringify({pathways:[{id:'short',name:'Short',slideIds:['s1']}]}))
+    let release
+    const compileGate = new Promise(resolve => { release = resolve })
+    let compiles = 0
+    let windows = []
+    const mutate = runInNewContext(ts.transpileModule(code, {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText + '\nmutatePathways', {
+      ...pathwayModule, basename, dirname, resolvePath: resolve,
+      vaultRootFor: () => root,
+      prepareTalk: async () => { compiles++; await compileGate; return {slug:'shared',rows:[{slide_id:'s1'},{slide_id:'s2'}]} },
+      BrowserWindow: {getAllWindows: () => windows}, notifyTalkMetaUpdated: () => {}
+    })
+    const outline = join(root, 'shared-outline.md')
+    const create = mutate(outline, '', text => createPathwayInManifest(text, {id:'planned',name:'Planned',slideIds:[]}))
+    const edit = mutate(outline, '', text => setPathwaySlideIdsInManifest(text, 'short', ['s1','s2']))
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(compiles, 1, 'the second mutation cannot start compiling before the first completes')
+    release()
+    await Promise.all([create, edit])
+    const saved = pathwayModule.readPathwayManifest(root, 'shared').pathways
+    assert.equal(saved.length, 2, 'the Tools-created pathway survives a simultaneous dock edit')
+    assert.deepEqual(saved.find(p => p.id === 'short').slideIds, ['s1','s2'], 'the dock membership edit survives the simultaneous create')
+    assert.equal(compiles, 2)
+
+    const delivered = []
+    windows = [
+      {isDestroyed: () => true, get webContents() { throw Error('destroyed window must be skipped') }},
+      {isDestroyed: () => false, webContents: {isDestroyed: () => true, send() { throw Error('destroyed contents must be skipped') }}},
+      {isDestroyed: () => false, webContents: {isDestroyed: () => false, send() { throw Error('window closed during send') }}},
+      {isDestroyed: () => false, webContents: {isDestroyed: () => false, send(channel) { delivered.push(channel) }}}
+    ]
+    const result = await mutate(outline, '', text => renamePathwayInManifest(text, 'planned', 'Renamed'))
+    assert.equal(result.pathways.find(p => p.id === 'planned').name, 'Renamed', 'a send failure cannot report a persisted edit as failed')
+    assert.equal(pathwayModule.readPathwayManifest(root, 'shared').pathways.find(p => p.id === 'planned').name, 'Renamed')
+    assert.deepEqual(delivered, ['pathways:changed'], 'closing windows do not prevent delivery to the remaining live window')
+    console.log('PASS overlapping pathway create/membership edits both survive; closing-window broadcasts cannot fail a persisted mutation')
+  } finally { rmSync(root, {recursive:true,force:true}) }
+}

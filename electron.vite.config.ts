@@ -33,11 +33,15 @@ const BUNDLED = ['@app-patterns/commands', '@app-patterns/settings', '@app-patte
 
 export default defineConfig({
   main: {
+    define: { __TW_SECURITY_TEST__: 'false' },
     plugins: [externalizeDepsPlugin({ exclude: BUNDLED })],
     build: {
       rollupOptions: {
+        // Keep the guard as the first require, before Rollup hoists other dependencies.
+        external: ['./security-startup'],
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
+          'security-startup': resolve(__dirname, 'src/main/security-startup.ts'),
           'vault-gallery-inventory-worker': resolve(__dirname, 'src/main/vault-gallery-inventory-worker.ts'),
           // A publish builds and writes its handout pages in a utility process of its own (handout-pages-worker.ts).
           'handout-pages-worker': resolve(__dirname, 'src/main/handout-pages-worker.ts'),
@@ -72,6 +76,7 @@ export default defineConfig({
   renderer: {
     root: resolve(__dirname, 'src/renderer'),
     define: {
+      __TW_SECURITY_TEST__: 'false',
       __APP_VERSION__: JSON.stringify(APP_VERSION),
       __BUILD_SHA__: JSON.stringify(BUILD_SHA),
       __BUILD_TIME__: JSON.stringify(BUILD_TIME)

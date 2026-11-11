@@ -188,15 +188,20 @@ html, body, #root {
 .icon-btn--active { color: var(--accent); background: var(--bg-2); }
 
 /* toolbar */
-.tl-toolbar { flex: 0 0 auto; display: flex; align-items: center; gap: 2px; padding: 7px 8px 5px; }
+.tl-toolbar { flex: 0 0 auto; display: flex; align-items: center; gap: 1px; padding: 7px 6px 5px; min-width: 0; }
+/* R17: a narrow Talks sidebar (the default is 220 px) drops the word "Talks" so the eight buttons are never clipped. */
+.sidebar-wrap { container-type: inline-size; }
+@container (max-width: 250px) { .tl-label { display: none; } }
 .tl-label {
   font-size: 11px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
   color: var(--oxford); padding: 0 6px 0 4px; margin-right: auto;
   display: flex; align-items: center; gap: 6px;
+  /* The label gives way first, so the eighth button (Add vault) is never clipped at narrow sidebar widths. */
+  min-width: 0; overflow: hidden; white-space: nowrap; flex: 0 1 auto;
 }
 .tl-tbtn {
   appearance: none; border: 1px solid transparent; background: transparent;
-  width: 24px; height: 24px; border-radius: 5px;
+  width: 22px; height: 24px; border-radius: 5px; flex: 0 0 auto;
   display: inline-flex; align-items: center; justify-content: center;
   color: var(--muted); cursor: pointer;
 }
@@ -207,7 +212,7 @@ html, body, #root {
 .tl-modeswitch {
   display: inline-flex; align-items: center;
   border: 1px solid var(--line); border-radius: 6px;
-  background: var(--paper); padding: 1px; margin-right: 5px;
+  background: var(--paper); padding: 1px; margin-right: 5px; flex: 0 0 auto;
 }
 .tl-modeswitch .tl-tbtn { width: 22px; height: 20px; border-radius: 4px; }
 .tl-modeswitch .tl-tbtn[aria-pressed="true"] { background: var(--panel); color: var(--oxford); border-color: var(--line); box-shadow: 0 1px 1.5px rgba(23,32,42,.08); }
@@ -652,17 +657,40 @@ html, body, #root {
 .pane-btn { display: inline-flex; align-items: center; justify-content: center; background: none; border: none; color: var(--text-2); cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 14px; transition: color 0.15s, background 0.15s; }
 .pane-btn:hover { color: var(--text-0); }
 .pane-btn--active { background: var(--bg-1); color: var(--accent) !important; box-shadow: 0 1px 3px #17202a14; }
+.pane-btn-label { margin-left: 6px; font-size: 12.5px; font-weight: 500; white-space: nowrap; }
+.pane-btn--sidebar { background: var(--bg-2); border-radius: var(--radius); padding: 6px 8px; flex: none; }
+.pane-toggle { flex: none; }
+/* R17: the toolbar gives way in a fixed order as its width shrinks (data-density, set from the measured width in
+   WorkspaceLayout): the view names go, then the menu buttons' words, then Present's word; the title never drops
+   below about 25 characters until the last step. Every control keeps its icon, tooltip and accessible name. */
+.workspace-toolbar .workspace-title { flex: 1 1 auto; min-width: 25ch; }
+.workspace-toolbar[data-density="compact"] .pane-btn-label,
+.workspace-toolbar[data-density="icons"] .pane-btn-label,
+.workspace-toolbar[data-density="tight"] .pane-btn-label { display: none; }
+.workspace-toolbar[data-density="icons"] .grid-col-label,
+.workspace-toolbar[data-density="tight"] .grid-col-label { display: none; }
+.workspace-toolbar[data-density="icons"] .toolbar-btn:not(.toolbar-btn--primary) .toolbar-btn-content > :nth-child(n+2):not(.fb-n),
+.workspace-toolbar[data-density="tight"] .toolbar-btn .toolbar-btn-content > :nth-child(n+2):not(.fb-n) { display: none; }
+.workspace-toolbar[data-density="icons"] .toolbar-btn:not(.toolbar-btn--primary),
+.workspace-toolbar[data-density="tight"] .toolbar-btn { padding-left: 9px; padding-right: 9px; }
+.workspace-toolbar[data-density="icons"] .toolbar-btn--primary .toolbar-btn-content > :last-child,
+.workspace-toolbar[data-density="tight"] .toolbar-btn--primary .toolbar-btn-content > :last-child { display: none; }
+.workspace-toolbar[data-present="icon"] .toolbar-btn--primary .toolbar-btn-content > :nth-child(n+2) { display: none; }
+.workspace-toolbar[data-present="icon"] .toolbar-btn--primary { padding-left: 9px; padding-right: 9px; }
+.workspace-toolbar[data-density="tight"] .workspace-title { min-width: 12ch; }
+.workspace-toolbar[data-density="tight"] { gap: 4px; padding-left: 10px; padding-right: 10px; }
 
 /* ── Panes ───────────────────────────────────────────────── */
 .workspace-panes { flex: 1; display: flex; overflow: hidden; min-height: 0; }
 /* The editor column holds the optional action bar (ADR-0025) above the editor pane, so the shelf
    starts where the editor starts and the sidebar / preview column are untouched. */
-/* Plain / Markdown tabs above the editor (plain editing view). */
-.tw-editor-tabs { flex: none; display: flex; align-items: flex-end; gap: 6px; padding: 0 20px; height: 38px; background: var(--bg-1); border-bottom: 1px solid var(--border); -webkit-app-region: no-drag; }
-.tw-editor-tab { padding: 0 12px; height: 38px; border: none; border-bottom: 2px solid transparent; background: none; color: var(--muted); font: inherit; font-size: 14px; cursor: pointer; }
+/* Plain / Markdown: a compact segmented switch at the start of the editor's toolbar (R1: no bar of its own). */
+.tw-action-bar-lead { flex: none; display: flex; align-items: center; margin-right: 8px; }
+.tw-editor-tabs { flex: none; display: inline-flex; align-items: center; gap: 2px; padding: 2px; border-radius: var(--radius); background: var(--bg-2); -webkit-app-region: no-drag; }
+.tw-editor-tab { padding: 0 10px; height: 24px; border: none; border-radius: 4px; background: none; color: var(--muted); font: inherit; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
 .tw-editor-tab:hover { color: var(--ink); }
-.tw-editor-tab.is-selected { color: var(--accent); font-weight: 600; border-bottom-color: var(--accent); }
-.tw-editor-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; border-radius: 4px; }
+.tw-editor-tab.is-selected { color: var(--accent); font-weight: 600; background: var(--bg-1); box-shadow: 0 1px 3px #17202a14; }
+.tw-editor-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -1px; }
 .editor-column { display: flex; flex-direction: column; height: 100%; width: 100%; min-width: 0; min-height: 0; overflow: hidden; }
 .workspace-panes--editor .editor-column { flex: 1; }
 .editor-column .pane--editor { flex: 1; height: auto; }
@@ -1500,7 +1528,7 @@ html, body, #root {
 }
 .sidebar-modes { display: flex; gap: 2px; flex: 1; }
 .sidebar-mode-btn {
-  flex: 1; padding: 4px 6px; font-size: 11px; font-family: var(--font-ui);
+  flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 4px 6px; font-size: 11px; font-family: var(--font-ui);
   color: var(--muted); background: transparent; border: 1px solid transparent;
   border-radius: 4px; cursor: pointer;
 }
@@ -1539,6 +1567,10 @@ html, body, #root {
 /* Slide-outline search: a sticky header so the box stays put while matches scroll under it. */
 .so-search { position: sticky; top: 0; z-index: 1; padding: 6px 8px; background: var(--paper); border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 2px; }
 .so-search .so-search-input { flex: 1 1 0; min-width: 0; width: auto; margin-right: 2px; }
+.so-section-no { flex: 0 0 auto; font-size: 11px; font-family: var(--font-mono); font-weight: 700; color: var(--oxford); padding-left: 2px; }
+/* The layout mark a row carries: the strip card's own chip (SlideStrip), on slides and on sections alike (R7). */
+.so-layout { flex: 0 0 auto; margin-left: auto; font-size: 8.5px; line-height: 1.3; color: var(--oxford); background: rgba(11, 58, 107, 0.1); border-radius: 2px; padding: 1px 3px; max-width: 34%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.so-section .so-layout { margin-left: 4px; }
 .so-count { flex-shrink: 0; font-size: 11px; font-family: var(--font-mono); color: var(--faint); padding-left: 6px; }
 .so-search-input { width: 100%; box-sizing: border-box; padding: 5px 9px; font-size: 13px; color: var(--ink); background: var(--panel); border: 1px solid var(--line); border-radius: 6px; outline: none; }
 .so-search-input:focus { border-color: var(--accent); }
@@ -1575,6 +1607,7 @@ html, body, #root {
 }
 .cm-fm-raw-btn:hover, .cm-fm-table-btn:hover { background: var(--paper); }
 .cm-fm-table-btn { margin-left: 8px; }
+.cm-fm-edit-btn { margin-left: auto; margin-right: 8px; font-family: var(--font-ui); font-size: 11px; }
 .cm-fm-grid { display: flex; flex-direction: column; padding: 6px 10px; gap: 10px; }
 .cm-fm-row { display: flex; flex-direction: column; gap: 3px; }
 .cm-fm-row.is-readonly { opacity: 0.86; }
@@ -2339,4 +2372,25 @@ html, body, #root {
 
 .cm-scratch-insert-here { border-top: 3px solid var(--oxford); }
 
-.vault-gallery-entry { position: fixed; bottom: 12px; left: 12px; z-index: 30; padding: 7px 12px; border: 1px solid #dfd7c8; border-radius: 6px; background: #fffdf8; color: #203247; }
+/* The Vault Gallery entry is a button in the sidebar's mode bar and rail, not a pill floating over the sidebar's foot (R17). */
+.vault-gallery-entry { flex: none; }
+.sidebar-rail .vault-gallery-entry { margin-top: 6px; }
+
+/* R13: help on demand. An info mark with a popover instead of resident explainer text. */
+.tw-infotip { position: relative; display: inline-flex; }
+.tw-infotip-btn { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; }
+.tw-infotip-btn:hover, .tw-infotip-btn[aria-expanded="true"] { color: var(--oxford); background: var(--hover); }
+.tw-infotip-pop { position: absolute; z-index: 40; left: 0; top: calc(100% + 4px); width: 240px; padding: 8px 10px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 8px 24px #17202a33; color: var(--ink); font-size: 12px; line-height: 1.45; font-weight: 400; }
+
+/* R2: the disk-change notice is a warning chip in the status bar; its actions are in the popover. */
+.tw-disk-chip { position: relative; display: inline-flex; align-items: center; flex: none; margin-left: 8px; }
+.tw-disk-chip-btn { display: inline-flex; align-items: center; gap: 5px; height: 18px; padding: 0 8px; border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); border-radius: 4px; background: var(--amber-bg); color: var(--amber); font: 600 11px var(--font-ui); white-space: nowrap; cursor: pointer; }
+.tw-disk-chip-pop { position: absolute; z-index: 2000; right: 0; bottom: calc(100% + 6px); width: min(420px, 90vw); padding: 0; border-radius: 8px; overflow: hidden; box-shadow: 0 8px 30px #17202a33; border: 1px solid color-mix(in srgb, var(--amber) 45%, transparent); }
+.tw-disk-chip-pop .disk-change-bar { border-bottom: 0; padding: 8px 12px; }
+
+/* The one back control of a workspace mode (R16): top left, "← Back to <talk>", Esc does the same. */
+/* The look is the one button (ui-kit.css .tw-btn--secondary); this is only its place and its long-title behaviour. */
+.mode-back { display: inline-flex; align-items: center; gap: 6px; max-width: min(46ch, 60%); min-width: 0; font-size: 13px; font-weight: 600; }
+.mode-back svg { flex: 0 0 auto; }
+.mode-back-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mode-back-bar { display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--paper); flex: 0 0 auto; }

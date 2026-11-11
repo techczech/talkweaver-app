@@ -46,7 +46,7 @@ const BAR = {
   mid: ['presenterPrev', 'presenterNext', 'skipNextBtn'],
   right: ['navQuickPoll', 'navInstant', 'presenterFocus', 'presenterPointer', 'presenterPen', 'presenterHighlight', 'presenterMore', 'twedit-btn']
 }
-const LABELS = { outlineBtn: 'Outline', presenterPrev: 'Previous', presenterNext: 'Next', navQuickPoll: 'Quick poll', navInstant: 'Instant slide', presenterFocus: 'Focus', presenterPointer: 'Pointer', presenterPen: 'Pen', presenterHighlight: 'Highlight' }
+const LABELS = { outlineBtn: 'Outline', presenterPrev: 'Previous', presenterNext: 'Next', navQuickPoll: 'Quick poll', navInstant: 'Instant slide', presenterFocus: 'Spotlight', presenterPointer: 'Pointer', presenterPen: 'Pen', presenterHighlight: 'Highlight' }
 const ICON_ONLY = ['skipNextBtn', 'presenterMore', 'twedit-btn']
 // The drawn More menu (shot menu-more-open-1440x900.png), with Reveal mode, which the ticket puts
 // in More, first under "This slide".
@@ -313,7 +313,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
     })
     let c = await chip()
     check(!c.mode && !c.highlight && c.focusPressed === 'false' && c.highlightPressed === 'false', `chip: none while no mode is on (${JSON.stringify(c)})`)
-    for (const [key, word, icon, exitName] of [['f', 'Focus mode', 'lucide-focus', 'Turn off focus mode'], ['r', 'Reveal mode', 'lucide-layers', 'Turn off reveal mode']]) {
+    for (const [key, word, icon, exitName] of [['f', 'Spotlight', 'lucide-focus', 'Turn off spotlight'], ['r', 'Reveal mode', 'lucide-layers', 'Turn off reveal mode']]) {
       await page.keyboard.press(key); await settle(page, 300)
       c = await chip()
       check(c.mode?.words === word && c.mode?.icon === icon && c.mode?.inStatus, `chip: "${word}" with its icon in the status bar (${JSON.stringify(c.mode)})`)
@@ -479,7 +479,8 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
       check(m.topFits === 'true', `${at}: the top bar still fits (${m.topFits}, ${m.topCollapse})`)
       // With the Pen in the mark group (0.38 ticket 08) n1 is the normal step at every drawn size.
       check(m.collapse === 'n1', `${at}: tools stay labelled and the layout uses its normal fit step (${m.collapse})`)
-      if (size[0] >= 1600) check(Math.abs(m.nextCentre - (size[0] / 2 + 60)) <= 70, `${at}: the centre group is centred on the window (${m.nextCentre})`)
+      // 90, not 70: the right group's label is Spotlight (a word wider than Focus), which moves the centre group a few pixels left.
+      if (size[0] >= 1600) check(Math.abs(m.nextCentre - (size[0] / 2 + 60)) <= 90, `${at}: the centre group is centred on the window (${m.nextCentre})`)
       // The More menu: opens upward from "…", inside the window, items unclipped, drawn order.
       await tap(page, '#presenterMore'); await settle(page, 200)
       const menu = await page.evaluate(() => {

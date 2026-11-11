@@ -353,7 +353,9 @@ try {
     assert.match(mac, /REPO=\$\(node -p "const p=require\('\.\/package\.json'\)\.build\.publish; p\.owner \+ '\/' \+ p\.repo"\)/, 'to the repository electron-builder publishes to')
     assert.match(mac, /BASE="TalkWeaver-\$VERSION-ffmpeg-\$FFMPEG-corresponding-source"/, 'the source under its fixed asset name')
     assert.equal((mac.replace(/^\s*#.*$/gm, '').match(/electron-builder/g) ?? []).length, 1, 'the macOS job runs electron-builder once, to package')
-    assert.doesNotMatch(workflow.replace(/^\s*#.*$/gm, ''), /gh release upload|--clobber|electron-builder publish|electron-builder --mac --publish (always|onTag)/, 'nothing else uploads Mac files')
+    const uploadCommands = workflow.replace(/^\s*#.*$/gm, '').replace(/^          gh release upload "v\$VERSION" TalkWeaver-demo-vault\.zip --repo techczech\/talkweaver-app$/m, '')
+    // Only the exact demo-vault upload is allowed outside the verified Mac asset uploader.
+    assert.doesNotMatch(uploadCommands, /gh release upload|--clobber|electron-builder publish|electron-builder --mac --publish (always|onTag)/, 'nothing else uploads Mac files')
     assert.match(windows, /npx electron-builder --win --publish always/, 'Windows is published as before')
     assert.doesNotMatch(windows, /ffmpeg-source|release-mac-assets/, 'the Windows job does not handle the Mac files')
     const packaged = read('.github', 'workflows', 'packaged.yml')

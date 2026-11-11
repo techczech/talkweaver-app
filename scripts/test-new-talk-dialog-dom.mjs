@@ -19,7 +19,7 @@ let browser
 const open = async () => {
   const context = await browser.newContext({ viewport: { width: 900, height: 700 } })
   await context.route('http://tw.test/**', r => r.fulfill(r.request().url().endsWith('bundle.js') ? { contentType: 'text/javascript', path: join(dir, 'bundle.js') } : { contentType: 'text/html', body: '<!doctype html><body><div id="root"></div><script src="/bundle.js"></script>' }))
-  const page = await context.newPage(); await page.goto('http://tw.test/'); await page.getByLabel('Talk title').waitFor()
+  const page = await context.newPage(); await page.goto('http://tw.test/'); await page.getByLabel('Talk name').waitFor()
   return { page, context }
 }
 const failures = []
@@ -27,24 +27,24 @@ const check = async (name, fn) => { try { await fn(); console.log('HOLD', name) 
 try {
   await build({ stdin: { resolveDir: repo, loader: 'tsx', contents: harness }, bundle: true, outfile: join(dir, 'bundle.js'), platform: 'browser', jsx: 'automatic', logLevel: 'error' })
   browser = await chromium.launch({ headless: true, ...(process.env.TW_HEADLESS_SHELL ? { executablePath: process.env.TW_HEADLESS_SHELL } : {}) })
-  const slugOf = async (title) => { const { page, context } = await open(); await page.getByLabel('Talk title').fill(title); const slug = await page.locator('code').innerText(); await page.getByRole('button', { name: /^Create/ }).click(); await page.waitForTimeout(150); const sent = await page.evaluate(() => window.calls.create.at(-1)); await context.close(); return { slug, sent } }
+  const slugOf = async (title) => { const { page, context } = await open(); await page.getByLabel('Talk name').fill(title); const preview = await page.locator('code').count(); await page.getByRole('button', { name: /^Create/ }).click(); await page.waitForTimeout(150); const sent = await page.evaluate(() => window.calls.create.at(-1)); await context.close(); return { preview, sent } }
   for (const [title, slug] of [['Assets', 'assets-talk'], ['Research', 'research-talk'], ['Bundle', 'bundle-talk'], ['Dist', 'dist-talk'], ['assets', 'assets-talk'], ['Assets review', 'assets-review'], ['Research methods', 'research-methods'], ['Bundles', 'bundles'], ['Distinction', 'distinction'], ['My talk', 'my-talk']]) {
-    await check(`slug for “${title}” is ${slug}, the title stays`, async () => { const r = await slugOf(title); assert.equal(r.slug, slug, 'preview'); assert.equal(r.sent.slug, slug, 'slug sent'); assert.equal(r.sent.title, title, 'title kept as typed') })
+    await check(`slug for “${title}” is ${slug}, the title stays`, async () => { const r = await slugOf(title); assert.equal(r.preview, 0, 'no file name is shown'); assert.equal(r.sent.slug, slug, 'slug sent'); assert.equal(r.sent.title, title, 'title kept as typed') })
   }
   await check('a refusal from main stays in the dialog with a message', async () => {
     const { page, context } = await open()
     try {
-      await page.getByLabel('Talk title').fill('Taken'); await page.getByRole('button', { name: /^Create/ }).click(); await page.waitForTimeout(200)
+      await page.getByLabel('Talk name').fill('Taken'); await page.getByRole('button', { name: /^Create/ }).click(); await page.waitForTimeout(200)
       const alert = await page.getByRole('alert').innerText().catch(() => null)
       assert.ok(alert && /could not be created/i.test(alert), `a refused creation says so (${alert})`)
-      assert.equal(await page.evaluate(() => window.calls.created.length), 0, 'no talk is reported created'); assert.equal(await page.getByLabel('Talk title').count(), 1, 'the dialog stays')
+      assert.equal(await page.evaluate(() => window.calls.created.length), 0, 'no talk is reported created'); assert.equal(await page.getByLabel('Talk name').count(), 1, 'the dialog stays')
       assert.equal(await page.getByRole('button', { name: /^Create/ }).isEnabled(), true, 'and can be submitted again')
     } finally { await context.close() }
   })
   await check('the created talk is reported as main returned it, and the vault is added only when it is missing', async () => {
     const ok = await open()
     try {
-      await ok.page.evaluate(() => { window.ctl.result = { title: 'Taken', slug: 'taken', path: '/x', outlinePath: '/x/o.md', vaultId: 'b' } }); await ok.page.getByLabel('Talk title').fill('Taken'); await ok.page.getByRole('button', { name: /^Create/ }).click(); await ok.page.waitForTimeout(150)
+      await ok.page.evaluate(() => { window.ctl.result = { title: 'Taken', slug: 'taken', path: '/x', outlinePath: '/x/o.md', vaultId: 'b' } }); await ok.page.getByLabel('Talk name').fill('Taken'); await ok.page.getByRole('button', { name: /^Create/ }).click(); await ok.page.waitForTimeout(150)
       const created = await ok.page.evaluate(() => window.calls.created); assert.equal(created.length, 1); assert.equal(created[0].vaultId, 'b')
       const merged = await ok.page.evaluate(() => [window.dialog.createdTalk({ vaultId: 'b', title: 't' }, 'a').vaultId, window.dialog.createdTalk({ title: 't' }, 'a').vaultId])
       assert.deepEqual(merged, ['b', 'a'])

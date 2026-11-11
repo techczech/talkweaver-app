@@ -6,8 +6,9 @@
 // button is: a view never registers an action its button would refuse.
 //
 // Registration is per render and removed when the view goes (`useToolsActions`). Nothing here holds
-// state of its own beyond that list.
-import { useEffect } from 'react'
+// state of its own beyond that list; deferred video menu intent is local to Studio.
+import { useCallback, useEffect, useState } from 'react'
+import { recordingRunHome, recordingRunKey, type RecordingRunLocation } from '../../../shared/recording-run-home'
 
 export interface ToolsAction {
   /** Whether the button this command mirrors would be enabled now. */
@@ -17,6 +18,24 @@ export interface ToolsAction {
 }
 
 const actions = new Map<string, ToolsAction>()
+export type VideoRequestTarget = { talk:string; home:string|null|undefined; recordingRunKey:string }
+
+/** A menu request binds once Studio has selected its Run, then belongs only to that selection. */
+export function useVideoMenuRequest(request:number|null,run:RecordingRunLocation|null,onRegistered:()=>void):[VideoRequestTarget|null,()=>void] {
+  const [pending,setPending]=useState<VideoRequestTarget|null>(null)
+  const talk=run?.talkSlug,home=run?recordingRunHome(run):undefined,key=run?recordingRunKey(run):null
+  const clear=useCallback(()=>setPending(null),[])
+  useEffect(()=>{
+    if(request===null||talk===undefined||key===null)return
+    setPending({talk,home,recordingRunKey:key})
+    onRegistered()
+  },[request,talk,home,key,onRegistered])
+  useEffect(()=>{
+    setPending(current=>current&&(current.talk!==talk||current.home!==home||current.recordingRunKey!==key)?null:current)
+  },[talk,home,key])
+  // State disappears on Studio unmount; a target mismatch is cancelled before its action can fire.
+  return [pending&&pending.talk===talk&&pending.home===home&&pending.recordingRunKey===key?pending:null,clear]
+}
 
 /** The action a command has now, or undefined when no view in the window offers it. */
 export function toolsAction(commandId: string): ToolsAction | undefined {

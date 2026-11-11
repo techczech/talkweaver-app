@@ -3,7 +3,7 @@
 //   1. the drawn list: Run pages (Saïd, Keble, ITLC) then Talk handouts (two), newest first, each with its
 //      link, published date and Unpublish; Medical Sciences (not published) and an unpublished Run are not listed;
 //   2. a Run's pre-work and post-work pages sit inside its row, never rows of their own; the post-work link
-//      reads "opens after the session" until it has opened (the checklist's own open test);
+//      reads "opens after the Run" until it has opened (the checklist's own open test);
 //   3. checked against the site folder: a folder missing here, the site's copy missing, a link that names
 //      no folder of its own; what is blocked and what is not; never "publish again";
 //   4. across vaults, keyed by vault; the empty list;
@@ -91,23 +91,23 @@ const drawn = (extra = {}) => ({
   console.log('PASS 1: the drawn list: Run pages then Talk handouts, newest first, each with link, date and Unpublish')
 }
 
-// ---- 2. a Run's pages inside its row; post-work "opens after the session" until it opens
+// ---- 2. a Run's pages inside its row; post-work "opens after the Run" until it opens
 {
   const list = publishedPages(drawn(), NOW)
   const s = list.rows.find((row) => row.title === 'Saïd workshop')
   assert.deepEqual(s.links, [
     { kind: 'handout', label: 'Handout link', url: 'https://handouts.fyi/dl/said-21-oct' },
     { kind: 'pre-work', label: 'Pre-work link', url: 'https://handouts.fyi/dl/said-21-oct/pre-work' },
-    { kind: 'post-work', label: 'Post-work link · opens after the session', url: 'https://handouts.fyi/dl/said-21-oct/post-work' },
+    { kind: 'post-work', label: 'Post-work link · opens after the Run', url: 'https://handouts.fyi/dl/said-21-oct/post-work' },
   ])
   assert.ok(!list.rows.some((row) => /pre-work|post-work/.test(row.link)), 'no pre-work or post-work page is a row of its own')
   assert.equal(list.rows.filter((row) => row.unpublish.kind === 'run' && row.unpublish.runId === 'said').length, 1, 'one row for the Run')
   assert.deepEqual(list.rows.find((row) => row.title === 'Keble').links.map((link) => link.kind), ['handout', 'pre-work'], 'no post-work page: no post-work link')
-  // The same open test as the checklist: once the app has opened it (openedAt), the label drops "opens after the session".
+  // The same open test as the checklist: once the app has opened it (openedAt), the label drops "opens after the Run".
   const opened = said({ status: 'delivered', endedAt: '2026-10-21T15:00:00Z', work: { ...said().work, post: post('2026-11-04T17:00', { publishedAt: '2026-10-14T08:00:00Z', openedAt: '2026-10-21T15:58:00Z' }) } })
   const at = (iso) => publishedPages({ runs: [opened], talks: [], site: SITE }, new Date(iso)).rows[0].links[2].label
   for (const [when, label, checklist] of [
-    ['2026-10-21T15:00:00Z', 'Post-work link · opens after the session', 'Post-work · opens after the session'],
+    ['2026-10-21T15:00:00Z', 'Post-work link · opens after the Run', 'Post-work · opens after the Run'],
     ['2026-10-22T10:00:00Z', 'Post-work link', 'Post-work · open'],
     ['2026-11-05T10:00:00Z', 'Post-work link · closed', 'Post-work · closed'],
   ]) {
@@ -121,7 +121,7 @@ const drawn = (extra = {}) => ({
   const plain = said({ sent: [], work: undefined, answers: undefined })
   const row = publishedPages({ runs: [plain], talks: [], site: SITE }, NOW).rows[0]
   assert.deepEqual([row.links.map((link) => link.kind), row.published, row.confirm.body], [['handout'], 'Published Wed 14 Oct', 'The handout will be taken off the site.'])
-  console.log('PASS 2: a Run\'s pre-work and post-work links sit in its row; post-work reads "opens after the session" until the checklist\'s own test says it opened')
+  console.log('PASS 2: a Run\'s pre-work and post-work links sit in its row; post-work reads "opens after the Run" until the checklist\'s own test says it opened')
 }
 
 // ---- 3. checked against the site folder

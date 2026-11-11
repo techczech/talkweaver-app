@@ -23,7 +23,8 @@ import {
   listSessionJsonFiles,
   talkSessionsFolder,
   transcriptPath,
-  vaultSessionPath
+  vaultSessionPath,
+  wordsPath
 } from '../src/main/recording-paths.ts'
 import { createPlannedRun, deletePlannedRun, listRuns, normaliseRun, persistRun, readRun, updatePlannedRun } from '../src/main/runs.ts'
 import { resolveTalkTextPaths } from '../src/main/talkTextPathSafety.ts'
@@ -61,6 +62,9 @@ const MANIFEST_TEXT = '{"pathways":[{"id":"short","name":"Short","slideIds":[]}]
 mkdirSync(join(vault, '_PRESENTATIONS', 'age-of-the-claw'), { recursive: true })
 writeFileSync(join(vault, '_PRESENTATIONS', 'age-of-the-claw', 'manifest.json'), MANIFEST_TEXT)
 symlinkSync(join(outside, 'secret.transcript.json'), join(vault, '_PRESENTATIONS', 'linked-file-talk', 'sess-20260930-101500-x.transcript.json'))
+// The same for the word timings file beside it.
+writeFileSync(join(outside, 'secret.words.json'), '{"secret":true}')
+symlinkSync(join(outside, 'secret.words.json'), join(vault, '_PRESENTATIONS', 'linked-file-talk', 'sess-20260930-101500-x.words.json'))
 
 function tree(root) {
   const out = []
@@ -254,41 +258,43 @@ for (const slug of GOOD_SLUGS) {
   checks += 2
 }
 
-// ── Transcripts (transcript:get / transcript:run) ──
-for (const slug of UNSAFE_SLUGS) {
-  for (const v of [vault, null]) {
-    const result = transcriptPath(v, userData, slug, GOOD_IDS[0])
-    assert.deepEqual(result, { ok: false, error: 'unsafe-talk-slug' }, `transcriptPath(${v ? 'vault' : 'no vault'}) refuses slug ${JSON.stringify(slug)}`)
+// ── Transcripts and word timings (transcript:get / transcript:run): the same rules for both ──
+for (const [name, sidecar, kind] of [['transcriptPath', transcriptPath, 'transcript'], ['wordsPath', wordsPath, 'words']]) {
+  for (const slug of UNSAFE_SLUGS) {
+    for (const v of [vault, null]) {
+      const result = sidecar(v, userData, slug, GOOD_IDS[0])
+      assert.deepEqual(result, { ok: false, error: 'unsafe-talk-slug' }, `${name}(${v ? 'vault' : 'no vault'}) refuses slug ${JSON.stringify(slug)}`)
+      act(result)
+      checks++
+    }
+  }
+  for (const id of UNSAFE_IDS) {
+    for (const v of [vault, null]) {
+      const result = sidecar(v, userData, GOOD_SLUGS[0], id)
+      assert.deepEqual(result, { ok: false, error: 'unsafe-session-id' }, `${name}(${v ? 'vault' : 'no vault'}) refuses id ${JSON.stringify(id)}`)
+      act(result)
+      checks++
+    }
+  }
+  for (const [label, result] of [
+    ['talk folder linked outside', sidecar(vault, userData, 'linked-out', GOOD_IDS[0])],
+    [`${kind} file linked outside`, sidecar(vault, userData, 'linked-file-talk', GOOD_IDS[0])]
+  ]) {
+    assert.deepEqual(result, { ok: false, error: 'unsafe-path' }, `${name} refuses a ${label}`)
     act(result)
     checks++
   }
-}
-for (const id of UNSAFE_IDS) {
-  for (const v of [vault, null]) {
-    const result = transcriptPath(v, userData, GOOD_SLUGS[0], id)
-    assert.deepEqual(result, { ok: false, error: 'unsafe-session-id' }, `transcriptPath(${v ? 'vault' : 'no vault'}) refuses id ${JSON.stringify(id)}`)
-    act(result)
-    checks++
-  }
-}
-for (const [label, result] of [
-  ['talk folder linked outside', transcriptPath(vault, userData, 'linked-out', GOOD_IDS[0])],
-  ['transcript file linked outside', transcriptPath(vault, userData, 'linked-file-talk', GOOD_IDS[0])]
-]) {
-  assert.deepEqual(result, { ok: false, error: 'unsafe-path' }, `transcriptPath refuses a ${label}`)
-  act(result)
-  checks++
-}
-for (const slug of GOOD_SLUGS) {
-  for (const id of GOOD_IDS) {
-    const t = transcriptPath(vault, userData, slug, id)
-    assert.deepEqual(t, { ok: true, path: join(presentations, slug, `${id}.transcript.json`) }, `transcript ${slug}/${id}`)
-    act(t)
-    assert.deepEqual(transcriptPath(vault, userData, slug, id), t, `existing transcript still readable ${slug}/${id}`)
-    const local = transcriptPath(null, userData, slug, id)
-    assert.deepEqual(local, { ok: true, path: join(recordings, `${id}.transcript.json`) }, `no-vault transcript ${slug}/${id}`)
-    act(local)
-    checks += 3
+  for (const slug of GOOD_SLUGS) {
+    for (const id of GOOD_IDS) {
+      const t = sidecar(vault, userData, slug, id)
+      assert.deepEqual(t, { ok: true, path: join(presentations, slug, `${id}.${kind}.json`) }, `${kind} ${slug}/${id}`)
+      act(t)
+      assert.deepEqual(sidecar(vault, userData, slug, id), t, `existing ${kind} still readable ${slug}/${id}`)
+      const local = sidecar(null, userData, slug, id)
+      assert.deepEqual(local, { ok: true, path: join(recordings, `${id}.${kind}.json`) }, `no-vault ${kind} ${slug}/${id}`)
+      act(local)
+      checks += 3
+    }
   }
 }
 

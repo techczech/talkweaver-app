@@ -20,7 +20,7 @@ export interface GoLiveApi<R extends { id: string }> {
 
 export const GO_LIVE_REFUSED = 'This Run cannot be presented from here.'
 
-/** Go live from the Sessions page: the Run and its talk's outline from the Run's own vault. */
+/** Go live from the Run's page: the Run and its talk's outline from the Run's own vault. */
 export async function goLiveFromSessions<R extends { id: string }>(target: SessionRunTarget, api: GoLiveApi<R>): Promise<{ ok: true } | { ok: false; error: string }> {
   const [runs, talks] = await Promise.all([api.listRuns(target.talkSlug, target.vaultId), api.talkHandouts(target.vaultId)])
   const run = runs.find((candidate) => candidate.id === target.runId)
@@ -29,9 +29,9 @@ export async function goLiveFromSessions<R extends { id: string }>(target: Sessi
 }
 
 /** window.tw.tools.open, as Open results uses it. */
-export type ToolsOpen = (view: 'history', sessionId: string, run: SessionRunTarget) => Promise<{ success: boolean; error?: string }>
+export type ToolsOpen = (view: 'runs', sessionId: string, run: SessionRunTarget) => Promise<{ success: boolean; error?: string }>
 
-/** Open results from the Sessions page: History's results for the Run, naming the Run's vault. */
+/** Open results from the Run's page: the Runs view on that Run's ledger, naming the Run's vault. */
 export function openResultsFromSessions(target: SessionRunTarget, open: ToolsOpen): Promise<{ success: boolean; error?: string }> {
-  return open('history', `results:${target.talkSlug}/${target.runId}`, { vaultId: target.vaultId, talkSlug: target.talkSlug, runId: target.runId })
+  return open('runs', `results:${target.talkSlug}/${target.runId}`, { vaultId: target.vaultId, talkSlug: target.talkSlug, runId: target.runId })
 }

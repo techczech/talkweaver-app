@@ -117,7 +117,7 @@ check(texts[1].includes('Terminal · 8 Oct 2026') && !texts[1].includes('Used in
 check(texts[2].includes('Used in 2 talks'), 'used in 2 talks')
 check(texts[3].includes('Digital Skills Forum 2024') && texts[3].includes('Old PowerPoint'), 'old-PowerPoint caption')
 check((await focused()) === 'well:1', 'first result highlighted')
-check((await drawer.locator('.image-drawer__foot').innerText()).replace(/\s+/g, ' ').includes('Drag onto the slide · ⌘⏎ insert at caret · Esc close'), 'footer hints')
+check((await drawer.locator('.image-drawer__foot').count()) === 0, 'no resident key legend in the drawer')
 if (shots) await page.screenshot({ path: join(shots, 'drawer-1-results.png') })
 
 await page.keyboard.press('ArrowDown')
@@ -407,7 +407,7 @@ check((await focused()) === 'old-slide:a', 'switching back starts on the first o
   const toggle = layout.match(/toggleImageDrawerRef\.current = \(\) => \{([\s\S]*?)\n {2}\}/)
   check(!!toggle && /if \(imageDrawerOpen\) closeImageDrawer\(\)/.test(toggle[1]), 'the closing half of ⌘⇧I is closeImageDrawer')
   const close = layout.match(/function closeImageDrawer\(\): void \{([\s\S]*?)\n {2}\}/)
-  check(!!close && close[1].includes('setImageDrawerOpen(false)') && close[1].includes('focusEditor()'), 'closeImageDrawer closes the drawer and gives the editor the keyboard')
+  check(!!close && close[1].includes("closeTab('images')") && close[1].includes('focusEditor()'), 'closeImageDrawer closes the drawer (the Images tab goes back to the Inspector tab) and gives the editor the keyboard')
   check(/<ImageDrawer[\s\S]*?onClose=\{closeImageDrawer\}/.test(layout), 'the drawer’s own Esc and × use the same closeImageDrawer')
 }
 
@@ -499,13 +499,13 @@ check((await page.locator('[data-quiet]').innerText()).endsWith('there is nothin
 {
   const layout = await readFile(join(root, 'src/renderer/src/components/WorkspaceLayout.tsx'), 'utf8')
   const show = layout.match(/function showImageDrawer\(\): void \{([\s\S]*?)\n {2}\}/)
-  check(!!show && show[1].includes('setInspectorMode(false)') && show[1].includes('setImageDrawerOpen(true)'), 'showImageDrawer closes the Inspector and opens the drawer')
+  check(!!show && show[1].includes("showTab('images')"), 'showImageDrawer brings the sidebar up on the Images tab (R11a)')
   const open = layout.match(/function openImageDrawer\(\): void \{([\s\S]*?)\n {2}\}/)
-  check(!!open && open[1].includes('showImageDrawer()') && !open[1].includes('setImageDrawerOpen(true)'), 'the menu and palette entry open the drawer through showImageDrawer')
+  check(!!open && open[1].includes('showImageDrawer()') && !open[1].includes("showTab('images')"), 'the menu and palette entry open the drawer through showImageDrawer')
   const toggle = layout.match(/toggleImageDrawerRef\.current = \(\) => \{([\s\S]*?)\n {2}\}/)
-  check(!!toggle && toggle[1].includes('showImageDrawer()') && !toggle[1].includes('setImageDrawerOpen(true)'), '⌘⇧I opens the drawer through showImageDrawer')
+  check(!!toggle && toggle[1].includes('showImageDrawer()') && !toggle[1].includes("showTab('images')"), '⌘⇧I opens the drawer through showImageDrawer')
   const close = layout.match(/function closeImageDrawer\(\): void \{([\s\S]*?)\n {2}\}/)
-  check(!!close && !close[1].includes('setInspectorMode'), 'closing the drawer does not reopen the Inspector')
+  check(!!close && !close[1].includes("showTab('inspector')"), 'closing the drawer only drops its tab; it does not run the Inspector\'s opening')
 }
 
 check(errors.length === 0, 'no page errors' + (errors.length ? ': ' + errors.join('; ') : ''))

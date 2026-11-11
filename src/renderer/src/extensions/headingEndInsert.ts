@@ -38,7 +38,8 @@ import { isBareUrl, PARAGRAPH_STOP_RE } from '../../../../compiler/scripts/lib/0
 import { LAYOUTS } from '../../../shared/layout-registry/entries'
 import { headingLevels } from '../../../shared/heading-lines'
 import { logicalTriggerBlockAfterHeading } from '../../../shared/trigger-line'
-import { isSlideClip, isTalkTitleLine, isTitleClip, pasteSlides, startOfTalkPlace } from './slideBlockOps'
+import { caretSlidePlace } from '../../../shared/slide-handling/place'
+import { isSlideClip, isTitleClip, pasteSlides } from './slideBlockOps'
 
 /**
  * "The caret is at the end of its line" for a view that hides text at the end of a line. The Plain
@@ -217,9 +218,8 @@ export interface CaretLineInsertion {
  */
 function slidesAfterCaretHeading(text: string, pos: number, block: string): CaretLineInsertion | null {
   if (!isSlideClip(block) || isTitleClip(block)) return null
-  const lines = text.split('\n')
-  const { index } = lineAt(lines, pos)
-  if (!isHeadingLine(lines, index)) return null
+  const place = caretSlidePlace(text, pos)
+  if (!place) return null
   // pasteSlides re-ids a collision through the minter. Each minted id is a marker, put back to the
   // id it replaced, so the inserted text is the given text.
   let n = 0
@@ -228,7 +228,6 @@ function slidesAfterCaretHeading(text: string, pos: number, block: string): Care
     do { id = `tw-insert-keeps-id-${n}`; n += 1 } while (taken.has(id))
     return id
   }
-  const place = isTalkTitleLine(text, index + 1) ? startOfTalkPlace(text) : { after: index + 1 }
   const paste = pasteSlides(text, block, place, marker)
   if (!paste) return null
   let insert = paste.insert

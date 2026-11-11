@@ -44,7 +44,7 @@ import { history, undo, redo, isolateHistory } from '@codemirror/commands'
 import GridView from './src/renderer/src/components/GridView.tsx'
 import { copySlideAt, cutSlideAt, deleteSlideAt, moveSlideTo, pasteSlidesAfter } from './src/renderer/src/extensions/slideCutPaste.ts'
 import { rememberSlideClip } from './src/renderer/src/extensions/slideBlockOps.ts'
-import { copyBlocks, cutBlocks, moveBlocks, refHolds } from './src/shared/slide-handling/blocks.ts'
+import { copyBlocks, cutBlocks, moveBlocks, refHolds, stepPlace } from './src/shared/slide-handling/blocks.ts'
 import { publishOutline, resetOutlineCollapseForTests } from './src/renderer/src/lib/outlineCollapseStore.ts'
 import { slideSelectionControls } from './src/renderer/src/lib/slideSelectionBus.ts'
 
@@ -70,12 +70,15 @@ function cardsOf(text) {
 }
 const step = (view, text, changes) => view.dispatch({ changes, annotations: isolateHistory.of('full') })
 
-window.mountGrid = (doc) => {
+window.mountGrid = (doc, generated = false) => {
   unmount()
   resetOutlineCollapseForTests({ storage: null })
   window.toasts.length = 0
   window.moves = []
   window.clip = null
+  window.pathwayAdds = []
+  window.asideCalls = 0
+  window.stepCalls = []
   document.getElementById('stage').innerHTML = '<div id="grid" style="width:760px;height:620px"></div><div id="cm" style="display:none"></div>'
   let setContent = () => {}
   const view = new EditorView({
@@ -94,7 +97,11 @@ window.mountGrid = (doc) => {
     const [content, set] = useState(doc)
     const [active, setActive] = useState(1)
     useEffect(() => { setContent = set }, [])
-    const cards = useMemo(() => cardsOf(content), [content])
+    const cards = useMemo(() => {
+      const authored = cardsOf(content)
+      const synthetic = (title, role) => ({ slide_id: role, title, nav_title: title, section: '', role, source_markdown: '', content_hash: role, render_hash: role, warnings: [], line: null })
+      return generated ? [synthetic('Generated cover', 'cover'), ...authored, synthetic('Generated closing', 'closing')] : authored
+    }, [content])
     useEffect(() => { publishOutline(TALK_KEY, content) }, [content])
     window.activeTitle = () => cards[active]?.title ?? null
     return React.createElement(GridView, {
@@ -102,6 +109,8 @@ window.mountGrid = (doc) => {
       compiledSlides: cards, triggerFindings: [], thumbnails: null, activeIndex: active, columns: 4,
       onSelectSlide: setActive, onEdit: () => {}, onExplain: () => {},
       slideOps,
+      onAddToPathway: generated ? ids => window.pathwayAdds.push(ids) : undefined,
+      onSetAsideSlides: generated ? async () => { window.asideCalls++; return true } : undefined,
       lineOfSlide: (i) => cards[i]?.line ?? null,
       // As WorkspaceLayout: paste after a card only when its heading is still on its line.
       onPasteAfterCard: (clip, i) => {
@@ -110,8 +119,18 @@ window.mountGrid = (doc) => {
         if (!refHolds(view.state.doc.toString(), { line: c.line, headingText: c.heading })) return null
         return slideOps.paste(clip, c.line)
       },
-      slideRefOf: (i) => (cards[i] ? { line: cards[i].line, headingText: view.state.doc.line(cards[i].line).text } : null),
+      slideRefOf: (i) => (cards[i]?.line != null ? { line: cards[i].line, headingText: view.state.doc.line(cards[i].line).text } : null),
       onLanded: () => {},
+      // Production handleStepSlide: resolve the neighbouring block, then use the checked move core.
+      onStepSlide: (ref, dir) => {
+        window.stepCalls.push([ref, dir])
+        const text = view.state.doc.toString()
+        const place = stepPlace(text, ref.line, dir)
+        if (!place) return
+        const r = moveBlocks(text, [ref], place)
+        if ('refused' in r) { window.lastRefusal = r.refused; return }
+        step(view, r.text, r.changes)
+      },
       onMoveSlides: (refs, place) => {
         window.moves.push([refs, place])
         const r = moveBlocks(view.state.doc.toString(), refs, place)
@@ -420,6 +439,71 @@ try {
   await page.evaluate(() => { document.getElementById('fake-panel').remove() })
   await undo()
   pass('bar: stays fully usable beside the Scratchpad pill and its floating panel (ends left of them)')
+
+  await page.evaluate(doc => window.mountGrid(doc, true), TALK)
+  await sleep(80)
+  assert.equal(await page.evaluate(() => window.activeTitle()), 'Section 0')
+  await tick('Generated cover'); await tick('Slide 0.1')
+  await page.locator('.grid-view').focus()
+  await page.keyboard.press('Meta+ArrowDown')
+  await sleep(80)
+  assert.equal(await doc(), TALK, 'mixed selection blocks the active section step move and preserves every byte')
+  await page.keyboard.press('Meta+ArrowUp')
+  assert.equal(await doc(), TALK, 'mixed selection also blocks upward step moves')
+  assert.deepEqual(await page.evaluate(() => window.stepCalls), [], 'refused keys never reach the host step writer')
+  await page.evaluate(() => window.selectionCommands().clear())
+  await page.keyboard.press('Meta+ArrowDown')
+  await sleep(80)
+  assert.notEqual(await doc(), TALK, 'with no ticks the active authored section can still step down')
+  assert.equal(await page.evaluate(() => window.stepCalls.length), 1)
+  await undo()
+  assert.equal(await doc(), TALK, 'the permitted section move is one byte-identical Undo')
+  pass('step keys refuse a mixed generated selection; without ticks the authored active section still moves')
+
+  for (const title of ['Generated cover', 'Generated closing']) {
+    await tick(title)
+    await tick('Slide 0.1')
+    assert.equal(await barCount(), '2 selected')
+    for (const action of ['move', 'cut', 'copy', 'delete', 'set-aside']) {
+      assert.equal(await page.locator(`[data-batch-action="${action}"]`).isDisabled(), true, `${title}: ${action} cannot edit only the authored subset`)
+    }
+    const acted = await page.evaluate(() => {
+      const c = window.selectionCommands()
+      return [c.openMove(), c.setAside(), c.remove()]
+    })
+    assert.deepEqual(acted, [false, false, false], 'palette commands also refuse mixed selection')
+    assert.equal(await page.evaluate(() => window.selectionCommands().canEditOutline()), false)
+    await sCell(0, 1).click({button: 'right'})
+    await page.getByRole('menuitem', {name: /^Delete slide/}).click()
+    assert.equal(await doc(), TALK, 'card-menu Delete cannot bypass a generated selection')
+    await page.locator('.grid-section-header').filter({hasText: 'Section 0'}).first().click({button: 'right'})
+    await page.getByRole('menuitem', {name: /^Cut section/}).click()
+    assert.equal(await doc(), TALK, 'section-menu Cut cannot bypass a generated selection')
+
+    await page.locator('.grid-view').focus()
+    await page.keyboard.press('Meta+x')
+    assert.equal(await doc(), TALK, 'mixed-selection Cut cannot remove authored text')
+    const copied = await page.evaluate(() => {
+      const dt = new DataTransfer()
+      document.querySelector('.grid-view').dispatchEvent(new ClipboardEvent('copy', {clipboardData: dt, bubbles: true, cancelable: true}))
+      return dt.getData('text/plain')
+    })
+    assert.equal(copied, '', 'Copy cannot silently copy the authored subset')
+    await drag(sCell(0, 1), sCell(1, 2))
+    assert.equal(await doc(), TALK, 'dragging a mixed selection cannot move only its authored subset')
+
+    await page.locator('[data-batch-action="add-to-pathway"]').click()
+    assert.deepEqual(await page.evaluate(() => window.pathwayAdds.at(-1)), title.endsWith('cover') ? ['cover', 's0-1'] : ['s0-1', 'closing'], 'pathway adding retains both cards in talk order')
+    await page.evaluate(() => window.selectionCommands().clear())
+    await tick(title)
+    await page.locator('.grid-view').focus()
+    await page.keyboard.press('Meta+x')
+    assert.equal(await doc(), TALK, 'one generated pick cannot cut the active authored card')
+    await page.evaluate(() => window.selectionCommands().clear())
+  }
+  assert.equal(await page.evaluate(() => window.asideCalls), 0)
+  assert.deepEqual(await moves(), [])
+  pass('generated cover and closing selections allow pathways but refuse outline batch writes and clipboard cuts')
 
   assert.deepEqual(errors, [], 'no page errors')
   console.log(`grid-selection-dom: ${passed} checks passed`)

@@ -3,6 +3,7 @@ import { Check, Link2, MessageSquareText, Pencil, Presentation, Sparkles, Trash2
 import { RUN_EXTRAS_LIMITS, RUN_EXTRA_SLIDE_LIMITS as SLIDE_LIMITS, runExtrasSummary, type RunExtraLink, type RunExtras } from '../../../shared/run-extras'
 import { EXTRA_SLIDES_NEED_NEW_FORMAT, EXTRA_SLIDES_NOT_SHOWN, extraSlidePlacement, type RunExtraSlidesState } from '../../../shared/run-extra-slides'
 import type { SessionSource } from '../../../shared/sessions-list'
+import { StateBadge } from './StateBadge'
 
 type Editing =
   | { kind: 'intro'; text: string }
@@ -118,10 +119,10 @@ export function RunExtrasSection({ source, onSaved, busy = false }: { source: Se
       {body}
       {error && <div className="tw-extra-err" role="alert" data-run-extra-error>{error}</div>}
       <div className="tw-extra-acts">
-        <button type="button" className="tw-sess-btn sm pri" data-run-extra-done disabled={locked} title="Done (⌘↩)" onClick={done}><Check aria-hidden />Done</button>
-        <button type="button" className="tw-sess-btn sm" data-run-extra-cancel disabled={saving} title="Cancel (Esc)" onClick={() => setEditing(null)}><X aria-hidden />Cancel</button>
+        <button type="button" className="tw-btn tw-btn--sm tw-btn--primary" data-run-extra-done disabled={locked} title="Done (⌘↩)" onClick={done}><Check aria-hidden />Done</button>
+        <button type="button" className="tw-btn tw-btn--sm" data-run-extra-cancel disabled={saving} title="Cancel (Esc)" onClick={() => setEditing(null)}><X aria-hidden />Cancel</button>
         <span className="sp" />
-        {removeLabel && <button type="button" className="tw-sess-btn sm dng" data-run-extra-remove disabled={locked} onClick={remove}><Trash2 aria-hidden />{removeLabel}</button>}
+        {removeLabel && <button type="button" className="tw-btn tw-btn--sm tw-btn--danger" data-run-extra-remove disabled={locked} onClick={remove}><Trash2 aria-hidden />{removeLabel}</button>}
       </div>
     </div>
   )
@@ -190,8 +191,8 @@ export function RunExtrasSection({ source, onSaved, busy = false }: { source: Se
           <MessageSquareText aria-hidden className="ic" />
           <div className="t"><b>Intro note</b><small>{extras.intro}</small></div>
           {open?.kind === 'intro'
-            ? <span className="tw-sess-pill blue"><Pencil aria-hidden />Editing</span>
-            : <button type="button" className="tw-sess-btn sm" data-run-extra-edit-intro disabled={locked} onClick={() => setEditing({ key: runKey, kind: 'intro', text: extras.intro ?? '' })}><Pencil aria-hidden />Edit</button>}
+            ? <StateBadge state="planned" small><Pencil aria-hidden />Editing</StateBadge>
+            : <button type="button" className="tw-btn tw-btn--sm" data-run-extra-edit-intro disabled={locked} onClick={() => setEditing({ key: runKey, kind: 'intro', text: extras.intro ?? '' })}><Pencil aria-hidden />Edit</button>}
         </div>
       )}
       {extras?.intro ? introEditor : null}
@@ -201,8 +202,8 @@ export function RunExtrasSection({ source, onSaved, busy = false }: { source: Se
             <Link2 aria-hidden className="ic" />
             <div className="t"><b>{link.label || hostOf(link.url)}</b><small>{link.url}</small></div>
             {open?.kind === 'link' && open.index === index
-              ? <span className="tw-sess-pill blue"><Pencil aria-hidden />Editing</span>
-              : <button type="button" className="tw-sess-btn sm" data-run-extra-edit-link={index} disabled={locked} onClick={() => setEditing({ key: runKey, kind: 'link', index, url: link.url, label: link.label ?? '' })}><Pencil aria-hidden />Edit</button>}
+              ? <StateBadge state="planned" small><Pencil aria-hidden />Editing</StateBadge>
+              : <button type="button" className="tw-btn tw-btn--sm" data-run-extra-edit-link={index} disabled={locked} onClick={() => setEditing({ key: runKey, kind: 'link', index, url: link.url, label: link.label ?? '' })}><Pencil aria-hidden />Edit</button>}
           </div>
           {linkEditor(index)}
         </div>
@@ -213,8 +214,8 @@ export function RunExtrasSection({ source, onSaved, busy = false }: { source: Se
             <div className="thumb" aria-hidden><i /><i /><i /></div>
             <div className="t"><b>{slide.title}</b><small data-run-extra-placed={slide.placed}>{extraSlidePlacement(slide)}</small></div>
             {open?.kind === 'slide' && open.id === slide.id
-              ? <span className="tw-sess-pill blue"><Pencil aria-hidden />Editing</span>
-              : <button type="button" className="tw-sess-btn sm" data-run-extra-edit-slide={slide.id} disabled={locked}
+              ? <StateBadge state="planned" small><Pencil aria-hidden />Editing</StateBadge>
+              : <button type="button" className="tw-btn tw-btn--sm" data-run-extra-edit-slide={slide.id} disabled={locked}
                 onClick={() => setEditing({ key: runKey, kind: 'slide', id: slide.id, title: slide.title, text: slide.text, after: slide.after })}><Pencil aria-hidden />Edit</button>}
           </div>
           {slideEditor(slide.id)}
@@ -227,12 +228,12 @@ export function RunExtrasSection({ source, onSaved, busy = false }: { source: Se
       {legacyOutline && <div className="tw-extra-note" data-run-extra-slides-legacy>{extraSlides.length ? EXTRA_SLIDES_NOT_SHOWN : EXTRA_SLIDES_NEED_NEW_FORMAT}</div>}
       <div className="r1 add" data-run-extras-add>
         <span className="lab">Add</span>
-        <button type="button" className="tw-sess-btn sm" data-run-extra-add="intro" disabled={locked || Boolean(extras?.intro) || open !== null}
+        <button type="button" className="tw-btn tw-btn--sm" data-run-extra-add="intro" disabled={locked || Boolean(extras?.intro) || open !== null}
           onClick={() => setEditing({ key: runKey, kind: 'intro', text: '' })}><MessageSquareText aria-hidden />Intro note</button>
-        <button type="button" className="tw-sess-btn sm" data-run-extra-add="link" disabled={locked || links.length >= RUN_EXTRAS_LIMITS.links || open !== null}
+        <button type="button" className="tw-btn tw-btn--sm" data-run-extra-add="link" disabled={locked || links.length >= RUN_EXTRAS_LIMITS.links || open !== null}
           title={links.length >= RUN_EXTRAS_LIMITS.links ? `Up to ${RUN_EXTRAS_LIMITS.links} links` : undefined}
           onClick={() => setEditing({ key: runKey, kind: 'link', index: -1, url: '', label: '' })}><Link2 aria-hidden />Link</button>
-        <button type="button" className="tw-sess-btn sm" data-run-extra-add="slide" disabled={locked || !slides || legacyOutline || extraSlides.length >= SLIDE_LIMITS.slides || open !== null}
+        <button type="button" className="tw-btn tw-btn--sm" data-run-extra-add="slide" disabled={locked || !slides || legacyOutline || extraSlides.length >= SLIDE_LIMITS.slides || open !== null}
           title={legacyOutline ? EXTRA_SLIDES_NEED_NEW_FORMAT : extraSlides.length >= SLIDE_LIMITS.slides ? `Up to ${SLIDE_LIMITS.slides} extra slides` : undefined}
           onClick={() => setEditing({ key: runKey, kind: 'slide', id: '', title: '', text: '', after: choices[0]?.id ?? '' })}><Presentation aria-hidden />Slide</button>
       </div>

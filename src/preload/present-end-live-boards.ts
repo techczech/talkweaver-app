@@ -19,7 +19,7 @@ export function endLiveBoardsCopy(boards: OpenBoard[]): { title: string; sub: st
     title: 'End the live session?',
     sub: `Phones stop following. ${which}`,
     close: [`Close the ${plural} now`, 'The Run keeps it as it is.'],
-    keep: ['Keep it open for late cards', 'The join link still takes cards. Refresh it into the Run from History; close it there.'],
+    keep: ['Keep it open for late cards', 'The join link still takes cards. Refresh it into the Run from the Runs view; close it there.'],
   }
 }
 

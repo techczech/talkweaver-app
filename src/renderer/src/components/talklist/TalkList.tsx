@@ -193,8 +193,10 @@ export default function TalkList({
   // Recent talks (collapsible, top of the panel): the 5 most-recently-edited talks across the WHOLE
   // vault, so a talk buried deep in a folder hierarchy is one click away and never needs browsing to
   // (Dominik 2026-07-20). Ordered by editedMs desc; hidden while searching (the search IS the filter).
-  const [recentOpen, setRecentOpen] = useState<boolean>(() => localStorage.getItem('tw-recent-open') !== '0')
-  useEffect(() => { localStorage.setItem('tw-recent-open', recentOpen ? '1' : '0') }, [recentOpen])
+  // Recent repeats talks the tree shows right below it, so it starts collapsed (house rule R8) and stays as the person leaves it.
+  // A new key: the old one was written as "open" on every first run, so it cannot tell a choice from the old default.
+  const [recentOpen, setRecentOpen] = useState<boolean>(() => localStorage.getItem('tw-recent-shown') === '1')
+  useEffect(() => { localStorage.setItem('tw-recent-shown', recentOpen ? '1' : '0') }, [recentOpen])
   const recentTalks = useMemo(() => {
     return talksInShow(talks, showVaultId, primary?.id ?? null)
       .filter((t) => !isIgnoredPath(topicOf(t, rootOfTalk(t))) && (talkMeta[t.slug]?.editedMs ?? 0) > 0)
@@ -840,7 +842,7 @@ export default function TalkList({
         viewMode={viewMode}
         onSetViewMode={setViewMode}
         onNewTalk={() => onNewTalk?.(targetFolder, targetVaultId)}
-        onNewFolder={() => setPrompt({ label: targetFolder ? `New folder inside "${targetFolder.split('/').pop()}"` : 'New folder name', initial: '', cta: 'Create', onSubmit: (v) => void actions.doNewFolder(v, targetFolder, targetVaultId) })}
+        onNewFolder={() => setPrompt({ label: 'New folder', kind: 'folder', mode: 'new', initial: '', cta: 'Create', onSubmit: (v) => void actions.doNewFolder(v, targetFolder, targetVaultId) })}
         onToggleSort={(e) => { e.stopPropagation(); toggleSortPop(); commandRan('browser.sort') }}
         sortOpen={!!sortPop}
         sortBtnRef={sortBtnRef}
@@ -945,17 +947,6 @@ export default function TalkList({
 
       <SidebarFoot onAddVault={() => onAddVault?.()} guide={guideButton ?? null} />
 
-      <div className="tl-keybar" aria-hidden>
-        <span><b>↑↓</b>navigate</span>
-        <span><b>←→</b>fold</span>
-        <span><b>↵</b>open</span>
-        <span><b>⌘↑</b>up</span>
-        <span><b>v</b>view</span>
-        <span><b>n</b>names</span>
-        <span><b>/</b>search</span>
-        <span><b>F2</b>rename</span>
-        <span><b>⌘K</b>menu</span>
-      </div>
 
       {/* Keyboard previews stay Ledger-only and panel-focus-bound (unchanged); hover previews
           work in both view modes and need no focus. */}
@@ -1004,14 +995,14 @@ export default function TalkList({
       )}
       {prompt && (
         <PromptModal
-          label={prompt.label} initial={prompt.initial} cta={prompt.cta}
+          label={prompt.label} kind={prompt.kind} mode={prompt.mode} initial={prompt.initial} cta={prompt.cta}
           onCancel={() => setPrompt(null)}
           onSubmit={(v) => { const fn = prompt.onSubmit; setPrompt(null); if (v.trim()) fn(v.trim()) }}
         />
       )}
       {confirm && (
         <ConfirmModal
-          label={confirm.label} cta={confirm.cta} danger={confirm.danger}
+          label={confirm.label} title={confirm.title} itemName={confirm.itemName} consequence={confirm.consequence} recovery={confirm.recovery} cta={confirm.cta} danger={confirm.danger}
           onCancel={() => setConfirm(null)}
           onConfirm={() => { const fn = confirm.onConfirm; setConfirm(null); fn() }}
         />

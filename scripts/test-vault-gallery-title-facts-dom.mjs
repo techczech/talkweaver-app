@@ -61,7 +61,7 @@ try {
  assert.equal(await page.evaluate(()=>window.openCalls||0),calls)
  assert.match(await page.getByRole('alert').innerText(),/The vault changed while opening this talk/)
  console.log('PASS a real root change discards deferred galleryTalk before onOpen and says so')
- await page.getByRole('button',{name:'Return to talk'}).click()
+ await page.getByRole('button',{name:/^Back( to .+)?$/}).click()
  assert.equal(await editor.inputValue(),'Dirty buffer preserved')
  assert.deepEqual(await editor.evaluate(el=>[el===window.savedEditor,el.selectionStart,el.selectionEnd,el.scrollTop===window.savedScroll]),[true,2,8,true])
  console.log('PASS mounted editor buffer, selection and scroll; folder destination; List; refused open retains gallery')

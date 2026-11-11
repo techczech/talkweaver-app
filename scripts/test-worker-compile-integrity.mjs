@@ -41,7 +41,7 @@
 // Integration tier: about 8 seconds alone but over half a minute beside the unit pool, so it is run
 // by name and in the "Packaged builds" workflow on macOS and Windows; not part of `npm test`.
 import { strict as assert } from 'node:assert'
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -56,6 +56,7 @@ import { setUpLiveService, steadyLeave, uploadedOf } from './lib/live-service-se
 
 const started = Date.now()
 const repo = realpathSync(dirname(dirname(fileURLToPath(import.meta.url))))
+execFileSync(process.execPath, [join(repo, 'scripts/build-worker-live-embed.mjs'), '--check'], { stdio: 'pipe' })
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'tw-worker-integrity-')))
 // A machine: the installed app under one tree, the person's home (with the app's user data) under another.
 const aboveApp = join(scratch, 'Applications')

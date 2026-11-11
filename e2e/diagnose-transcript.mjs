@@ -128,7 +128,7 @@ try {
   const activeSid = await tools.locator('.tws-scard.active').getAttribute('data-sid').catch(() => null)
   record('Studio opens with the transcript fixture session active', studioUp && activeSid === sessionId, `active=${activeSid}`)
 
-  await tools.locator('button.tws-btn.primary', { hasText: 'Transcribe' }).click({ timeout: 8000 })
+  await tools.locator('button.tw-btn--primary', { hasText: 'Transcribe' }).click({ timeout: 8000 })
   const segmentCount = await waitFor(async () => await tools.locator('.tws-ts-seg').count() === 3, 6000)
   const middleText = await tools.locator('.tws-ts-seg').nth(1).locator('.tws-ts-text').textContent().catch(() => '')
   record('Transcribe renders the deterministic fixture transcript', segmentCount && /middle segment/.test(middleText || ''), `middle=${middleText}`)

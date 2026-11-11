@@ -469,6 +469,40 @@ try {
     }
   })
 
+  await test('the watcher reconciles new and edited files when the OS event stream stays silent', async () => {
+    const talk = newTalk()
+    mkdirSync(scratch(talk))
+    const original = fs.watch
+    fs.watch = () => ({ on() { return this }, close() {} })
+    syncBuiltinESMExports()
+    let fired = 0
+    const settle = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+    const until = async (cond) => { const end = Date.now() + 5000; while (!cond() && Date.now() < end) await settle(25); return cond() }
+    let watcher
+    try {
+      watcher = watchScratchFolder(talk, () => { fired++ }, 10)
+      await settle(30)
+      assert.equal(fired, 0, 'an unchanged folder stays quiet')
+      writeFileSync(join(scratch(talk), 'agent.svg'), 'first')
+      assert.ok(await until(() => fired >= 1), 'a new file is noticed without an OS event')
+      assert.equal(fired, 1)
+      writeFileSync(join(scratch(talk), 'scratchpad-state.json'), '{}')
+      writeFileSync(join(scratch(talk), '.scratchpad-state.json.1.abcd.tmp'), '{}')
+      await settle(2300)
+      assert.equal(fired, 1, 'reconciliation ignores the app state and its temporary files')
+      writeFileSync(join(scratch(talk), 'agent.svg'), 'edited')
+      assert.ok(await until(() => fired >= 2), 'an edited file is noticed without an OS event')
+      watcher.close()
+      writeFileSync(join(scratch(talk), 'after-close.svg'), 'x')
+      await settle(2300)
+      assert.equal(fired, 2, 'closing cancels reconciliation')
+    } finally {
+      watcher?.close()
+      fs.watch = original
+      syncBuiltinESMExports()
+    }
+  })
+
   await test('the watcher fires once, debounced, for a new file and for a folder that appears later; not for the state file', async () => {
     const talk = newTalk()
     let fired = 0

@@ -1,7 +1,8 @@
 import { strict as assert } from 'node:assert'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, utimesSync, writeFileSync, symlinkSync, lstatSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { pruneThumbnailArtwork, thumbnailArtworkNamespace } from '../src/main/thumbnail-artwork-prune.ts'
 import { sweepOrphanedThumbCaches } from '../src/main/thumbnail-cache-gc.ts'
 
 // The sweep removes superseded thumb-cache namespaces and nothing else: never the live one,
@@ -68,3 +69,49 @@ const again = await sweepOrphanedThumbCaches(ud, 'thumb-cache-v8-live0000', { no
 assert.equal(again.removed.length, 0, 'sweep is idempotent')
 
 console.log('PASS thumbnail cache gc: live + recent kept, old orphans removed with sizes, nothing else touched')
+
+// Same-user boundary canaries: never prune through a linked talk or namespace directory.
+const canaries=mkdtempSync(join(tmpdir(),'tw-thumb-links-'))
+const failures=[]
+try {
+  const userData=join(canaries,'userData');mkdirSync(userData)
+  const outside=join(canaries,'outside');mkdirSync(outside)
+  const root=join(userData,'thumb-cache-v10-test');mkdirSync(root)
+  const outsidePicture=join(outside,'0000000000000000-model.png')
+  writeFileSync(outsidePicture,'outside picture')
+  const linkedTalk=join(root,'linked-talk');symlinkSync(outside,linkedTalk,'junction')
+  try {
+    const warnings=[]
+    await pruneThumbnailArtwork(linkedTalk,thumbnailArtworkNamespace(linkedTalk,userData),'1111111111111111-',new Set(['model']),m=>warnings.push(m))
+    assert.equal(readFileSync(outsidePicture,'utf8'),'outside picture','a linked talk cache cannot delete its outside canary')
+    assert.ok(warnings.some(m=>m.includes('skipped artwork pruning')))
+    console.log('PASS canary: linked talk cache preserves outside PNG')
+  } catch(error) {failures.push(error);console.error('FAIL canary: linked talk cache',error.message)}
+  const outsideNamespace=join(canaries,'outside-namespace');mkdirSync(outsideNamespace)
+  const author=join(outsideNamespace,'author.txt');writeFileSync(author,'outside author data')
+  const old=new Date(now-30*DAY);utimesSync(author,old,old);utimesSync(outsideNamespace,old,old)
+  const linkedNamespace=join(userData,'thumb-cache-v9-linked');symlinkSync(outsideNamespace,linkedNamespace,'junction')
+  try {
+    const swept=await sweepOrphanedThumbCaches(userData,'thumb-cache-v10-test',{now})
+    assert.equal(readFileSync(author,'utf8'),'outside author data','a linked old namespace cannot delete its outside canary')
+    assert.equal(lstatSync(linkedNamespace).isSymbolicLink(),true,'namespace link is skipped')
+    assert.ok(!swept.removed.some(item=>item.name==='thumb-cache-v9-linked'))
+    console.log('PASS canary: linked namespace preserves outside author file')
+  } catch(error) {failures.push(error);console.error('FAIL canary: linked namespace',error.message)}
+  // A normal old namespace still removes its own link, without descending into the target.
+  const oldTree=join(userData,'thumb-cache-v9-tree');mkdirSync(oldTree)
+  symlinkSync(outsideNamespace,join(oldTree,'linked-child'),'junction')
+  utimesSync(oldTree,old,old)
+  await sweepOrphanedThumbCaches(userData,'thumb-cache-v10-test',{now})
+  assert.equal(existsSync(oldTree),false,'a nested link does not prevent removal of the owned tree')
+  assert.equal(readFileSync(author,'utf8'),'outside author data','nested directory links are not descended into')
+  const safeTalk=join(root,'safe-talk');mkdirSync(safeTalk)
+  const obsolete=join(safeTalk,'0000000000000000-model.png');writeFileSync(obsolete,'generated old picture')
+  const current=join(safeTalk,'1111111111111111-model.png');writeFileSync(current,'verified current picture')
+  await pruneThumbnailArtwork(safeTalk,root,'1111111111111111-',new Set(['model']))
+  assert.equal(existsSync(obsolete),false,'regular generated obsolete pictures are still pruned')
+  assert.equal(readFileSync(current,'utf8'),'verified current picture')
+  console.log('PASS cache hardening: nested links never traversed; regular current/obsolete artwork preserved/pruned correctly')
+
+} finally {rmSync(canaries,{recursive:true,force:true})}
+assert.equal(failures.length,0,'both outside-cache canaries must survive')

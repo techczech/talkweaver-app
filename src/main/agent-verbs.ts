@@ -1,3 +1,5 @@
+import { saveOfflinePage } from './offline-page.ts'
+import type { OfflinePageInput, OfflinePageSaveResult } from '../shared/offline-page.ts'
 import { writeResearch, type ResearchWriteDeps } from './research-writer.ts'
 import type { ResearchWriteOp, ResearchWriteResult } from '../shared/research.ts'
 // The agent's content verbs (ADR-0019: the content-verb law). TalkWeaver had no verb table before the
@@ -99,7 +101,13 @@ export function researchWriteHandler(op: string, input: unknown, deps: ResearchW
   const verb = RESEARCH_WRITE_VERBS.find(v => v.id === `research.${op}`)
   return verb ? verb.run(input, deps) : Promise.resolve({ ok: false, error: { code: 'invalid-input', message: 'Choose a research action.' } })
 }
-export const AGENT_VERBS = [RESEARCH_CAPTURE_VERB, RESEARCH_LIST_VERB, RESEARCH_WHERE_USED_VERB, RESEARCH_SEARCH_VERB, RESEARCH_INSERT_VERB, RESEARCH_MAKE_SLIDE_VERB, ...RESEARCH_WRITE_VERBS] as const
+export const OFFLINE_PAGE_VERB: AgentVerb<OfflinePageInput, OfflinePageSaveResult> = {
+  id: 'webPage.saveOffline', tier: 'content', posture: 'direct',
+  inputs: { outlinePath: 'absolute outline in an open writable vault', source: 'public HTTP(S) URL or relative local HTML embed path' },
+  run: (input, deps) => deps.offlinePage ? saveOfflinePage(input, deps.offlinePage) : Promise.resolve({ ok: false, message: 'Offline page saving is not available in this host.' })
+}
+
+export const AGENT_VERBS = [OFFLINE_PAGE_VERB, RESEARCH_CAPTURE_VERB, RESEARCH_LIST_VERB, RESEARCH_WHERE_USED_VERB, RESEARCH_SEARCH_VERB, RESEARCH_INSERT_VERB, RESEARCH_MAKE_SLIDE_VERB, ...RESEARCH_WRITE_VERBS] as const
 
 /** IPC and agents call the very same registered implementation, with only open vault roots. */
 export function researchReadHandler(
@@ -115,6 +123,7 @@ export function researchReadHandler(
 
 /** Content commands of the command registry (by command id) and the verb each one calls. */
 export const COMMAND_VERBS: Readonly<Record<string, string>> = {
+  'save-offline-page': 'webPage.saveOffline',
   'research-insert': 'research.insert',
   'research-make-slide': 'research.makeSlide',
   'research-capture': 'research.capture',

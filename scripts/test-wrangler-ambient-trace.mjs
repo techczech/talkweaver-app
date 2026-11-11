@@ -36,7 +36,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, join, relative, resolve, sep } from 'node:path'
+import { delimiter, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { liveWorkerDeployConfig } from '../src/main/live-worker-deploy-config.ts'
 import { blockingFileText, brokenJsonFileInOutput } from '../src/main/wrangler-failures.ts'
@@ -50,6 +50,9 @@ import { classifyProcess, isLocalConnect, isSystemPath, pathRules } from './lib/
 
 const started = Date.now()
 const repo = realpathSync(dirname(dirname(fileURLToPath(import.meta.url))))
+// Bundled yargs strips node_modules then treats a dotted checkout basename as a file.
+// Packaged Resources/app has no extension. Fail explicitly rather than reading above the install.
+assert.equal(extname(repo), '', 'install layout: run this trace from a checkout with no dotted basename (packaged Resources/app layout)')
 const windows = process.platform === 'win32'
 const preload = join(repo, 'scripts', 'lib', 'wrangler-trace-preload.cjs')
 const verbose = process.argv.includes('--verbose')
@@ -208,7 +211,7 @@ function check(name, file, { named = [], localPorts = [], minEvents = 50 } = {})
       const allowed = ALLOWED_ELSEWHERE.find((entry) => entry.test(path, tree))
       if (allowed) { elsewhere.set(path, allowed.why); continue }
       if (under(path, realpathSync(tmpdir())) || under(path, tmpdir())) { elsewhere.set(path, 'the temp folder'); continue }
-      problems.push(`${event.kind} ${event.op ?? ''} ${path}`)
+      problems.push(`${event.kind} ${event.op ?? ''} ${path}${event.stack ? '\n' + event.stack : ''}`)
     } else if (event.kind === 'process') {
       // The app's Node, the bundled esbuild or workerd, or the system shell running wrangler's git probe.
       const kind = classifyProcess(event, { platform: process.platform, execPath: process.execPath, appRoot: repo, systemRoot })

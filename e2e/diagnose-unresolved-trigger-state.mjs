@@ -60,6 +60,8 @@ try {
   await page.waitForLoadState('domcontentloaded')
   await page.getByText('Unresolved probe', { exact: true }).first().click()
   await page.waitForSelector('.workspace')
+  // The Inspector is the sidebar's default tab (R11a): the strip is the second tab.
+  await page.locator('[data-rc-tab="slides"] button').click()
 
   const stripCards = page.locator('.tw-slide-card')
   const firstCard = stripCards.filter({ hasText: 'First' })
@@ -71,12 +73,12 @@ try {
   record('strip keeps the following slide clear', await lastCard.locator('[data-slide-warning]').count() === 0)
 
   await brokenCard.click()
-  await page.keyboard.press('Meta+p')
+  await page.locator('[data-rc-tab="inspector"] button').click()
   await page.waitForSelector('.tw-inspector-unresolved')
   record('Inspector opens the unresolved state for the addressed slide', await page.locator('.tw-inspector-unresolved code', { hasText: 'nonsense' }).count() === 1)
   record('Inspector hides option groups on the broken slide', await page.locator('.tw-inspector-group').count() === 0)
 
-  await page.keyboard.press('Meta+p')
+  await page.locator('[data-rc-tab="slides"] button').click()
   await page.getByTestId('grid-toggle').click()
   const gridCells = page.locator('.grid-cell')
   const brokenGrid = gridCells.filter({ hasText: 'Broken' })

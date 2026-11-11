@@ -102,6 +102,7 @@ if (failures === 0) ok(`${METADATA_REGISTRY.length} entries well-formed (locatio
 // Reads that LOOK like metadata-key accesses but are not talk-outline metadata. Every entry
 // needs a reason; delete the entry when the code it excuses goes away.
 const SCAN_IGNORE = new Map([
+  ['metadata', 'The metadata: block of the agent skill\'s own SKILL.md frontmatter (src/main/agent-skill/skill-source.ts), not a deck key'],
   ['http', 'Loopback URL scheme in the Cloudflare inventory API test adapter, not outline metadata'],
   ['tw-candidate', 'Deployment commit-message marker in the Cloudflare inventory response, not outline metadata'],
   ['url', 'The url: research source prefix (ResearchPanel.tsx) is provenance, not a deck frontmatter key'],

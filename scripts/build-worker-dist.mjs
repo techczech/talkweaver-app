@@ -1,3 +1,4 @@
+import './build-worker-live-embed.mjs'
 // Build step (ticket 11): compile the live service once, here in the repository, into worker-dist/,
 // which ships in the app's resources and is what the app uploads. Then check what was written, so
 // the build fails on a missing, empty or mismatched bundle (scripts/lib/worker-dist.mjs).

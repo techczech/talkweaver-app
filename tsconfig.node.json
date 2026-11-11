@@ -1,5 +1,5 @@
 {
-  "include": ["electron.vite.config.*", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "worker/protocol.ts", "worker/poll-ballots.ts", "worker/share-id.ts", "worker/prework-protocol.ts"],
+  "include": ["electron.vite.config.*", "electron.vite.security-test.config.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*", "worker/protocol.ts", "worker/poll-ballots.ts", "worker/share-id.ts", "worker/prework-protocol.ts"],
   "compilerOptions": {
     "module": "ESNext",
     "moduleResolution": "bundler",

@@ -104,9 +104,9 @@ export const HOW_TOPICS: readonly HowTopic[] = [
     id: 'how.8', title: 'Every delivery is kept.', picture: 'deliveries',
     sentences: [
       'A run through the presenter can be saved as a delivery, a rehearsal or a recording, with its audio, polls and questions attached.',
-      'Tools › History lists them. PowerPoint can record a presentation and export it as a video, but it keeps no record of when and where you gave the talk.'
+      'Tools › Runs lists them. PowerPoint can record a presentation and export it as a video, but it keeps no record of when and where you gave the talk.'
     ],
-    tryIt: command('history', 'Open TalkWeaver History.', 'Opens History, where each kept delivery is listed.')
+    tryIt: command('history', 'Open TalkWeaver Runs.', 'Opens the Runs view, where each kept delivery is listed.')
   },
   {
     id: 'how.9', title: 'No TalkWeaver account or server.', picture: 'cloudflare',

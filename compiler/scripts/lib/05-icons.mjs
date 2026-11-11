@@ -214,7 +214,47 @@ const ALIAS_MAP = [
   // resolve to the Copilot marks (svgl) instead of the github/microsoft parent tiles that the
   // fewest-token index would otherwise pick.
   [/\bmicrosoft\s+copilot\b/i,      "microsoft-copilot"],
-  [/\bcopilot\b/i,                  "github-copilot"],
+  [/\bgithub\s+copilot\b/i,         "github-copilot"],
+  [/\bcopilot\b/i,                  "microsoft-copilot"],
+  // AI makers and products (extra.json, LobeHub marks). Multi-word or maker-specific forms only,
+  // so ordinary prose words ("reflection", "group", "labs", "black", "nano") never gain a logo.
+  // Only "Amazon Nova" is the Nova mark; bare "Amazon" takes the Amazon Web Services group mark
+  // (the closest Amazon mark vendored); Amazon Q keeps its own.
+  [/\bamazon\s+nova\b/i,            "amazon-nova"],
+  [/\bamazon\s+q\b/i,               "amazon-q"],
+  [/\bamazon\b/i,                   "amazon-web-services"],
+  [/\bxiaomi\s+mimo\b/i,           "xiaomi-mimo"],
+  [/\bnano\s+banana\b/i,           "nano-banana"],
+  [/\bblack\s+forest\s+labs\b/i,  "black-forest-labs"],
+  // Falcon: brand forms only (case-sensitive), so the bird, CrowdStrike Falcon and SpaceX Falcon 9 gain nothing.
+  [/\bTII\b|(?<!SpaceX\s)\bFalcon[\s-]+(?:\d|H1\b|Mamba\b|LLM\b|E\b)|^\s*Falcon\s*[.,;:)]*\s*$/, "tii"],
+  [/\breflection\s+ai\b/i,         "reflection-ai"],
+  [/\bant\s+group\b/i,             "ant-group"],
+  [/\ballen\s+(?:institute\s+for\s+)?ai\b/i, "ai2"],
+  [/\bzhipu\b/i,                    "zhipu-ai"],
+  [/\bluma\s+ai\b/i,               "luma-ai"],
+  [/\bsakana\b/i,                   "sakana-ai"],
+  [/\bai21\b/i,                     "ai21-labs"],
+  [/\baleph\s+alpha\b/i,           "aleph-alpha"],
+  [/\blm\s*arena\b|\bchatbot\s+arena\b|\barena\s+ai\b|\barena\.ai\b/i, "arena-ai"],
+  [/\bartificial\s+analysis\b/i,   "artificial-analysis"],
+  [/\bthinking\s+machines\b/i,     "thinking-machines"],
+  // Inkling models wear the Thinking Machines mark. "inkling" is an ordinary word, so only
+  // product forms resolve: "Thinking Machines Inkling", "Inkling" + a model id, or the bare
+  // capitalised name as a whole item. "I had an inkling" gains nothing.
+  [/\bThinking\s+Machines\s+Inkling\b/i, "thinking-machines"],
+  [/\bInkling[\s-]+(?:\d|v\d|mini\b|pro\b|large\b|small\b)|^\s*Inkling\s*[.,;:)]*\s*$/, "thinking-machines"],
+  // Products that wear their maker's mark. "whisper", "parakeet" and "seed" are ordinary English
+  // words, so these are case-sensitive and only fire for a product use: "OpenAI Whisper",
+  // "Whisper large-v3", "Parakeet TDT", the bare capitalised name as a whole item (a logolist
+  // label), "ByteDance Seed", "Seedance". "a whisper", "the parakeet", "plant a seed" gain nothing.
+  [/\bOpenAI\s+Whisper\b/i,         "openai"],
+  [/\bWhisper\s+(?:large|turbo|medium|small|base|tiny|v\d)\b|^\s*Whisper\s*[.,;:)]*\s*$/, "openai"],
+  [/\bNVIDIA\s+Parakeet\b/i,        "nvidia"],
+  [/\bParakeet[\s-]+(?:TDT|CTC|RNNT|v\d)\b|^\s*Parakeet\s*[.,;:)]*\s*$/, "nvidia"],
+  [/\bveo\b/i,                      "google"],
+  [/\bByteDance\s+Seed\b|\bSeedance\b/i, "bytedance"],
+  [/\bhyperclova\b/i,               "naver"],
   [/\bperplexit/i,                  "perplexity-ai"],
   [/\bmistral\b/i,                  "mistral-ai"],
   [/\bhugging\s*face\b/i,           "hugging-face"],
@@ -1391,9 +1431,14 @@ function isWhitePaint(value) {
   const hex = v.startsWith("#") ? v.slice(1) : "";
   return hex.length >= 3 && /^f+$/.test(hex);
 }
-function classifyBrandSvg(svg) {
-  if (typeof svg !== "string" || !/<\s*(path|circle|rect|polygon|polyline|ellipse|line|g)\b/i.test(svg)) {
-    return "empty";
+// An embedded raster (site-icon marks wrapped as <image href="data:image/png;base64,…">) is
+// drawable but colour-only: it has no fill to strip, so monochrome mode leaves it as is. An
+// <image> with no href or an external (non-data:) href draws nothing we control and stays empty.
+const EMBEDDED_RASTER_RE = /<\s*image\b[^>]*\b(?:xlink:)?href\s*=\s*["']data:image\/(?:png|jpe?g|webp);base64,[A-Za-z0-9+\/=]+["']/i;
+export function classifyBrandSvg(svg) {
+  if (typeof svg !== "string") return "empty";
+  if (!/<\s*(path|circle|rect|polygon|polyline|ellipse|line|g)\b/i.test(svg)) {
+    return EMBEDDED_RASTER_RE.test(svg) ? "colored" : "empty";
   }
   // Collect explicit fill/stroke paint values across the whole document.
   const paints = [];

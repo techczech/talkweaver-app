@@ -7,7 +7,9 @@
  * are never followed. Every reply is size-capped, decoded as strict UTF-8 and parsed by the strict
  * parser. Results carry fixed reason codes, HTTP status and numeric API error codes only: never a
  * message, a body, a value from the transport's own error (it can quote the request), or the token.
- * Nothing in a reply is opened, fetched or resolved.
+ * Nothing in a reply is opened, fetched or resolved here. (The production deployment's own address is
+ * passed on, in Cloudflare's exact shape only: per-talk publishing reads its site record there and checks
+ * the bytes against the manifest's hash.)
  */
 import { evidenceTime } from '../../shared/inventory-schema.ts'
 import {
@@ -48,6 +50,7 @@ const ERROR_BODY_BYTES = 64 * 1024
 const TOKEN = /^[\x21-\x7e]{16,512}$/u
 const API_TIME = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/u
 const SHORT_ID = /^[0-9a-f]{8}$/u
+const DEPLOYMENT_URL = /^https:\/\/[0-9a-f]{8}\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.pages\.dev$/u
 const EARLIEST_DEPLOYMENT = Date.parse('2015-01-01T00:00:00.000Z')
 
 export interface InventoryQuery {
@@ -271,7 +274,10 @@ export async function queryProductionInventory(query: InventoryQuery): Promise<I
       const trigger = isRecord(value.deployment_trigger) ? value.deployment_trigger : {}
       const metadata = isRecord(trigger.metadata) ? trigger.metadata : {}
       const marker = typeof metadata.commit_message === 'string' ? /^tw-candidate:([0-9a-f]{64})$/u.exec(metadata.commit_message) : null
-      return { deploymentId: value.id, createdOn, ...(marker ? { candidateDigest: marker[1] } : {}), ...(typeof value.short_id === 'string' && SHORT_ID.test(value.short_id) ? { shortId: value.short_id } : {}) }
+      // The deployment's own address is kept only in Cloudflare's exact shape: per-talk publishing reads the site record from it
+      // and checks those bytes against the manifest's hash, so nothing else of a reply is ever opened.
+      const url = typeof value.url === 'string' && DEPLOYMENT_URL.test(value.url) ? { url: value.url } : {}
+      return { deploymentId: value.id, createdOn, ...(marker ? { candidateDigest: marker[1] } : {}), ...(typeof value.short_id === 'string' && SHORT_ID.test(value.short_id) ? { shortId: value.short_id } : {}), ...url }
     }
 
     const project = async (): Promise<ProductionDeployment> => {

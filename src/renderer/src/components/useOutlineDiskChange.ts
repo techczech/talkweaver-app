@@ -16,7 +16,7 @@ export interface OutlineDiskChangeWiring {
   /** The editor's live text for the talk (Editor registerReadDoc), or null. */
   readDoc(): { path: string; text: string } | null
   /** Puts text into the editor as one undoable change (Editor registerReplaceDoc, no save). */
-  replaceDoc(text: string): string | null
+  replaceDoc(text: string, opts?: { fromDisk?: boolean }): string | null
   /** Saves the editor's buffer as it stands through the file's queue (the D1 seam). */
   saveBuffer(outlinePath: string): Promise<boolean>
   /** Flushes the editor's pending typing (Editor flushSave). */
@@ -80,9 +80,9 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
         const doc = wiringRef.current.readDoc()
         return doc && doc.path === outlinePath ? doc.text : null
       },
-      replaceBuffer: (outlinePath, text) => {
+      replaceBuffer: (outlinePath, text, opts) => {
         const doc = wiringRef.current.readDoc()
-        return !!doc && doc.path === outlinePath && wiringRef.current.replaceDoc(text) != null
+        return !!doc && doc.path === outlinePath && wiringRef.current.replaceDoc(text, opts) != null
       },
       saveBuffer: (outlinePath) => wiringRef.current.saveBuffer(outlinePath),
       recovery: (outlinePath) => window.tw.talk.outlineRecovery(outlinePath),

@@ -1,4 +1,4 @@
-// Reactions ticket 06, History's Run card (drawing R1, docs/design/2026-09-28-reactions-questions/round-2):
+// Reactions ticket 06, the Runs view's Run ledger (was History's Run card; drawing R1, docs/design/2026-09-28-reactions-questions/round-2):
 // a delivered Run holding questions and reactions shows "Questions · n" (slide, time, name if given,
 // answered or not) and "Reactions by slide" (each slide's net counts, slides with none left out).
 // Audience text renders as text only. Viewing never rewrites the Run file; an old Run without the
@@ -82,18 +82,18 @@ try {
   const toolsPromise = app.waitForEvent('window')
   await editor.evaluate(() => window.dispatchEvent(new Event('tw-open-history')))
   const history = await toolsPromise
-  await history.waitForSelector('.twhistory')
-  await app.evaluate(({ BrowserWindow }) => { for (const win of BrowserWindow.getAllWindows()) if (win.webContents.getURL().includes('history') || win.getTitle().includes('History')) win.setSize(1440, 900) })
+  await history.waitForSelector('[data-tools-view="runs"] [data-sessions-row]')
+  await app.evaluate(({ BrowserWindow }) => { for (const win of BrowserWindow.getAllWindows()) if (win.webContents.getURL().includes('view=')) win.setSize(1440, 900) })
   await history.setViewportSize({ width: 1440, height: 900 }).catch(() => {})
-  await history.waitForSelector('[data-history-sid="run-feedback"]')
+  await history.waitForSelector('[data-sessions-row$="/run-feedback"]')
 
-  await history.locator('[data-history-sid="run-old"]').click()
+  await history.locator('[data-sessions-row$="/run-old"]').click()
   await history.waitForTimeout(400)
   record('an old Run without the fields shows neither section',
-    await history.locator('[data-history-sid="run-old"] [data-history-questions], [data-history-sid="run-old"] [data-history-reactions]').count() === 0)
+    await history.locator('[data-sessions-detail] [data-history-questions], [data-sessions-detail] [data-history-reactions]').count() === 0)
 
-  await history.locator('[data-history-sid="run-feedback"]').click()
-  const card = history.locator('[data-history-sid="run-feedback"]')
+  await history.locator('[data-sessions-row$="/run-feedback"]').click()
+  const card = history.locator('[data-sessions-detail]')
   await card.locator('[data-history-questions]').waitFor()
   // Slide numbers and titles resolve against the talk as it is now.
   await history.waitForFunction(() => document.querySelector('[data-history-questions] .isl-kind')?.textContent?.includes('What makes'), null, { timeout: 15_000 }).catch(() => {})
@@ -138,7 +138,7 @@ try {
   record('the footnote says slides with none are left out', (await text(card.locator('.rr-foot'))) === 'Slides with no reactions are not listed.')
 
   await card.locator('[data-history-questions]').scrollIntoViewIfNeeded()
-  await history.evaluate(() => { const el = document.querySelector('[data-history-sid="run-feedback"]'); el?.scrollIntoView({ block: 'start' }) })
+  await history.evaluate(() => { const el = document.querySelector('[data-sessions-detail]'); el?.scrollIntoView({ block: 'start' }) })
   await history.waitForTimeout(250)
   await history.screenshot({ path: join(shots, 'R1-history-run-card-1440x900.png') })
   await history.evaluate(() => document.querySelector('[data-history-reactions]')?.scrollIntoView({ block: 'start' }))

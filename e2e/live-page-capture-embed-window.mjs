@@ -30,6 +30,7 @@ const CHECKS = [
   'the inspector shows the slide\'s web page with an explicit "No saved views"',
   'Capture embed… opens the capture window with the page live in it',
   'Entire page + Capture: the whole page saved and the window says it was added to the slide',
+  'resizing keeps the audience page layout at 1280 by 720',
   'the {capture} line is under the embed in the open editor, unsaved typing kept, and the inspector and the window count 1'
 ]
 const ledger = createCheckLedger(CHECKS)
@@ -72,19 +73,38 @@ try {
   await page.locator('.cm-line', { hasText: 'Before body.' }).click()
   await page.keyboard.press('End')
   await page.keyboard.type(' TYPED-NOT-SAVED')
-  await page.locator('.cm-line', { hasText: SITE }).click()
+  // Embed source is now a compact object card; select its slide through the visible heading.
+  await page.locator('.cm-line', { hasText: 'Radio page' }).click()
   const count = () => page.locator('.tw-inspector-web-page-count').first().textContent().catch(() => '')
   const empty = await waitFor(async () => (await count()) === 'No saved views', 15000)
   record(CHECKS[0], empty, `count "${await count()}"; host "${await page.locator('.tw-inspector-web-page-host').first().textContent().catch(() => '')}"`)
 
-  const opened = app.waitForEvent('window')
+  const opened = app.waitForEvent('window', { predicate: async window => {
+    try { await window.waitForURL(/capture-embed\.html/, { timeout: 5000 }); return true } catch { return false }
+  } })
+  let captureWindowOpened = false
+  void opened.then(() => { captureWindowOpened = true }, () => {})
   await page.locator('[data-capture-embed]').first().click()
+  // A save that stamps the derived ID refuses its stale preview. Retry that explicit safe refusal
+  // until the refreshed preview names the permanent ID; an unrelated failure is never retried.
+  await waitFor(async () => {
+    if (captureWindowOpened) return true
+    if (await page.getByText('This slide has changed. Wait for the preview, then capture again.', { exact: true }).isVisible().catch(() => false))
+      await page.locator('[data-capture-embed]').first().click()
+    return captureWindowOpened
+  }, 15000, 500)
   const win = await opened
   await win.waitForLoadState('domcontentloaded')
   const live = await waitFor(async () => { const vs = (await views()).filter((v) => v.url.startsWith(SITE) && /Capture embed/.test(v.win)); return vs.length === 1 && vs[0].visible ? vs : null }, 30000, 500)
   const hidden = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every((w) => !w.isVisible()))
   record(CHECKS[1], live && hidden && /capture-embed\.html/.test(win.url()), `${JSON.stringify(live || await views())}; hidden ${hidden}; ${win.url().replace(REPO, '')}`)
   if (!live) throw new Error('the live page did not show in the capture window')
+  const pageViewport = () => app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript('({width:innerWidth,height:innerHeight})'), live[0].id)
+  const audienceSized = value => Math.abs(value.width - 1280) <= 3 && Math.abs(value.height - 720) <= 3
+  const beforeResize = await waitFor(async () => { const size = await pageViewport(); return audienceSized(size) ? size : null }, 10000)
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().find(w => /capture-embed\.html/.test(w.webContents.getURL())).setSize(1000, 650))
+  const afterResize = await waitFor(async () => { const size = await pageViewport(); return audienceSized(size) ? size : null }, 10000)
+  record('resizing keeps the audience page layout at 1280 by 720', beforeResize && afterResize, JSON.stringify({ beforeResize, afterResize }))
   await app.evaluate(({ webContents }, id) => webContents.fromId(id).executeJavaScript('window.scrollTo(0, 900)'), live[0].id)
   await wait(500)
   await win.getByRole('radio', { name: 'Entire page' }).click()
@@ -95,15 +115,15 @@ try {
   const entry = records().length ? JSON.parse(readFileSync(join(folder, records()[0]), 'utf8')) : null
   record(CHECKS[2], saved && /added it to the slide/.test(await status()) && JSON.stringify(entry).includes('"mode":"page"'), `status "${await status()}"; record ${JSON.stringify(entry)?.slice(0, 300)}`)
 
-  const editorText = () => page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].map((l) => l.textContent).join('\n'))
-  // The editor draws the image line as its words (markdown view); the saved file has the markup.
-  const placedLine = new RegExp(`\\[Embed: ${SITE.replace(/[.]/g, '\\.')}\\]\\n!\\[Entire page, [^\\]]+\\]\\(assets/live-page-captures/[0-9a-f]{16}\\.jpg\\)\\{capture\\}\\n`)
-  const placed = await waitFor(async () => placedLine.test(await editorText().then(() => readFileSync(outlinePath, 'utf8'))) && /\[Embed: [^\]]+\]\nEntire page, /.test(await editorText()), 15000)
+  const editorText = () => page.evaluate(() => document.querySelector('.cm-content')?.cmTile?.root?.view?.state.doc.toString() ?? '')
+  // Object cards replace the rendered source; check the canonical buffer and saved file together.
+  const placedLine = new RegExp(`\\[Embed: ${SITE.replace(/[.]/g, '\\.')}\\]\\n<!-- saved views \\{capture\\} -->\\n!\\[Entire page, [^\\]]+\\]\\(assets/live-page-captures/[0-9a-f]{16}\\.jpg\\)\\{capture\\}\\n`)
+  const placed = await waitFor(async () => placedLine.test(readFileSync(outlinePath, 'utf8')) && placedLine.test(await editorText()), 15000)
   const text = await editorText()
   const disk = readFileSync(outlinePath, 'utf8')
   const one = await waitFor(async () => (await count()) === '1 saved view', 10000)
   const listed = await win.locator('.ce-item').count()
-  record(CHECKS[3], placed && text.includes('Before body. TYPED-NOT-SAVED') && disk.includes('Before body. TYPED-NOT-SAVED') && (disk.match(/\{capture\}/g) ?? []).length === 1 && one && listed === 1,
+  record(CHECKS[4], placed && text.includes('Before body. TYPED-NOT-SAVED') && disk.includes('Before body. TYPED-NOT-SAVED') && (disk.match(/^!.*\{capture\}$/gm) ?? []).length === 1 && (disk.match(/<!-- saved views \{capture\} -->/g) ?? []).length === 1 && one && listed === 1,
     `saved ${JSON.stringify(disk.slice(disk.indexOf('### Radio'), disk.indexOf('### After')))}; typing kept ${text.includes('TYPED-NOT-SAVED')}/${disk.includes('TYPED-NOT-SAVED')}; inspector "${await count()}"; window list ${listed}`)
   await win.locator('.ce-quiet', { hasText: 'Close' }).click()
 } catch (error) {

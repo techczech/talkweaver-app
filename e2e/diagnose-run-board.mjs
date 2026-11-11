@@ -209,7 +209,7 @@ try {
   const historyPromise = app.waitForEvent('window')
   await editor.evaluate(() => window.dispatchEvent(new Event('tw-open-history')))
   const history = await historyPromise
-  await history.waitForSelector('.twhistory')
+  await history.waitForSelector('[data-tools-view="runs"] [data-sessions-row]')
   await app.evaluate(({ BrowserWindow }) => { for (const win of BrowserWindow.getAllWindows()) win.setSize(1440, 900) })
   await history.setViewportSize({ width: 1440, height: 900 }).catch(() => {})
   // A hidden window has no focus, so the web clipboard refuses it; the page's writes are recorded instead.
@@ -217,21 +217,23 @@ try {
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText: async (value) => { window.__copied = value } } })
   })
   const copied = () => history.evaluate(() => window.__copied ?? '')
-  const card = history.locator('[data-history-sid="run-oct"]')
-  await card.waitFor()
-  record('the ledger row says the board is open (R9)', (await text(card.locator('[data-board-badge]'))).startsWith('Board open'), await text(card.locator('[data-board-badge]')))
-  await history.locator('.twh-tool', { hasText: 'Re-check live' }).click()
-  await until(() => text(card.locator('[data-board-badge]')), (value) => value === 'Board open · 1 late card', 15_000, 'late card on the ledger')
+  // The Runs view: the list row carries the Board open badge (R9); selecting a Run shows its ledger in the detail pane.
+  const row = history.locator('[data-sessions-row$="/run-oct"]')
+  const card = history.locator('[data-sessions-detail]')
+  await row.waitFor()
+  record('the list row says the board is open (R9)', (await text(row.locator('[data-board-badge]'))).startsWith('Board open'), await text(row.locator('[data-board-badge]')))
+  await history.locator('[data-runs-recheck]').click()
+  await until(() => text(row.locator('[data-board-badge]')), (value) => value === 'Board open · 1 late card', 15_000, 'late card on the ledger')
   record('Re-check live pulls the late card in: "Board open · 1 late card" (R9)', true)
   savedBoard = JSON.parse(readFileSync(plannedPath, 'utf8')).boards[0]
   record('the late card is on the Run file', savedBoard.cards.some((c) => c.text === 'Recording of the demo, please'))
   // R9 is drawn with the row closed: select the other Run for the shot.
-  await history.locator('[data-history-sid="run-sep"]').click()
+  await history.locator('[data-sessions-row$="/run-sep"]').click()
   await history.waitForTimeout(300)
-  await card.evaluate((node) => node.scrollIntoView({ block: 'center' }))
+  await row.evaluate((node) => node.scrollIntoView({ block: 'center' }))
   await history.screenshot({ path: join(shots, 'R9-late-cards-in-the-ledger-1440x900.png') })
 
-  await card.click()
+  await row.click()
   const block = card.locator('[data-history-board="poll-board-live"]')
   await block.waitFor()
   const head = await text(block.locator('.rb-h'))
@@ -293,7 +295,7 @@ try {
   await block.locator('.rb-bt', { hasText: 'Close it now' }).click()
   await until(() => text(block.locator('.rb-h')), (value) => value.includes('closed'), 15_000, 'board closed on the Run card')
   record('Close it now: the card says closed; no banner', await block.locator('.rb-banner').count() === 0)
-  record('the ledger badge goes', await card.locator('[data-board-badge]').count() === 0)
+  record('the list badge goes', await row.locator('[data-board-badge]').count() === 0)
   const tooLate = await phone('eve').then((p) => p.add('keep', 'Too late')).catch(() => ({ status: 'refused' }))
   record('the board takes no card after Close it now', tooLate.status !== 'confirmed', JSON.stringify(tooLate))
   savedBoard = JSON.parse(readFileSync(plannedPath, 'utf8')).boards[0]
@@ -302,8 +304,8 @@ try {
 
   // ── Part 2: a seeded Run ──────────────────────────────────────────────────────────────────
   const seededBytes = readFileSync(seededPath, 'utf8')
-  const sep = history.locator('[data-history-sid="run-sep"]')
-  await sep.click()
+  await history.locator('[data-sessions-row$="/run-sep"]').click()
+  const sep = history.locator('[data-sessions-detail]')
   const sepBoard = sep.locator('[data-history-board="poll-board"]')
   await sepBoard.waitFor()
   await history.waitForFunction(() => document.querySelector('[data-history-board="poll-board"] .rb-h .q')?.textContent?.includes('slide'), null, { timeout: 15_000 }).catch(() => {})

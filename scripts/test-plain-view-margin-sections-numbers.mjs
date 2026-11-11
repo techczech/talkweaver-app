@@ -56,11 +56,11 @@ Body
 `
 {
   const { rows, labels, at, words } = await labelsOf(talk)
-  assert.equal(words('## Alpha'), 'Section 1')
-  assert.equal(words('## Beta'), 'Section 2')
-  assert.equal(words('## Gamma'), 'Section 3')
-  assert.equal(words('### B Group'), 'Section 2.1', 'a ### with #### under it is a nested section')
-  assert.equal(words('### B Group Two'), 'Section 2.2')
+  assert.equal(words('## Alpha'), '§1')
+  assert.equal(words('## Beta'), '§2')
+  assert.equal(words('## Gamma'), '§3')
+  assert.equal(words('### B Group'), '§2.1', 'a ### with #### under it is a nested section')
+  assert.equal(words('### B Group Two'), '§2.2')
   assert.equal(at('### B Group').level, 2)
   assert.equal(at('## Alpha').level, 1)
   assert.equal(marginDetail(at('## Alpha')), 'L1 · 2 slides')
@@ -113,7 +113,7 @@ Body
   const n = numbers.get(lineOf(carousel, '### Steps'))
   assert.ok(n > 0, 'the compiler emits ONE slide for the carousel heading')
   assert.equal(rows.filter((r) => r.source_line === lineOf(carousel, '#### First')).length, 0, 'the items have no slide of their own')
-  assert.equal(words('### Steps {carousel}'), 'Section 1.1', 'the carousel heading is a section in the section sequence')
+  assert.equal(words('### Steps {carousel}'), '§1.1', 'the carousel heading is a section in the section sequence')
   assert.equal(at('### Steps').layoutLabel, 'Carousel')
   assert.equal(marginDetail(at('### Steps')), 'L2 · 3 slides', 'k counts its items')
   assert.equal(words('#### First'), `Slide ${n}.1`)
@@ -142,7 +142,7 @@ Some text
   assert.ok(index >= 0)
   assert.equal(words('### Old style'), `Slide ${index + 1}`, 'the row number: cover, divider, then this slide')
   assert.equal(at('### Old style').layoutLabel, 'Icon list')
-  assert.equal(words('## Part'), 'Section 1')
+  assert.equal(words('## Part'), '§1')
 }
 
 // 4. A talk with no sections: slides only, numbered, nothing claimed as a section.
@@ -187,8 +187,8 @@ Body
 {
   const labels = marginLabels(null, talk)
   const at = (text) => labels.find((l) => l.line === lineOf(talk, text))
-  assert.equal(marginWord(at('## Beta')), 'Section 2')
-  assert.equal(marginWord(at('### B Group')), 'Section 2.1')
+  assert.equal(marginWord(at('## Beta')), '§2')
+  assert.equal(marginWord(at('### B Group')), '§2.1')
   assert.equal(at('## Alpha').slideCount, 2)
   assert.equal(at('## Beta').slideCount, 4)
   assert.equal(marginWord(at('### A1')), 'Slide 1')
@@ -200,7 +200,7 @@ Body
 {
   const text = '# Talk\n\n## Part\n\n### Parent {statement}\nA body line.\n\n#### Child\nBody\n'
   const { at, words } = await labelsOf(text)
-  assert.equal(words('### Parent'), 'Section 1.1', 'a heading with slides under it is a section')
+  assert.equal(words('### Parent'), '§1.1', 'a heading with slides under it is a section')
   assert.equal(at('### Parent').layoutLabel, 'Statement')
   assert.equal(at('### Parent').slideCount, 2, 'its own slide and the child')
 }

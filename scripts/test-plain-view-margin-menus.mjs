@@ -93,7 +93,7 @@ try {
 
   // Roles.
   const b = await ev(() => window.buttons())
-  assert.deepEqual(b.map((x) => [x.kind, x.line, x.word]), [['talk', 1, 'Talk'], ['section', 3, 'Section 1'], ['slide', 5, 'Slide 1'], ['slide', 10, 'Slide 2']])
+  assert.deepEqual(b.map((x) => [x.kind, x.line, x.word]), [['talk', 1, 'Talk'], ['section', 3, '§1'], ['slide', 5, 'Slide 1'], ['slide', 10, 'Slide 2']])
   for (const x of b) assert.equal(x.wordPopup, 'menu', x.word + ' word is a menu button')
   // Slide one writes {iconlist} over one paragraph and no list: the compiler draws a Statement, and
   // the margin names the layout the slide is drawn in (it said Icon list before, which it is not).

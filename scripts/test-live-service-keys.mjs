@@ -1176,6 +1176,9 @@ const ownSecret = (pc, id = ACCOUNT, address = ADDRESS) => `ADMIN_SECRET_${pc.ke
       'live-session-history.ts': ['record.presenterToken', 'record.presenterToken'],
       // Read-only Pages inventory uses the named Cloudflare publish authorisation.
       'observation/cloudflare-inventory.ts': ['token'],
+      // Per-talk publishing's requests: the Cloudflare token handed over by the publish authorisation, or the upload token
+      // Cloudflare issued for it (never a key of this computer).
+      'pages-direct-upload.ts': ['init.auth'],
       'owner-tokens.ts': ['ownerToken'],
       'shared-talk-owner-socket.ts': ['options.ownerToken'],
     }, 'a new Bearer header in src/main: if it carries this computer\'s key it goes through sendAsAdmin (live-admin-request.ts)')

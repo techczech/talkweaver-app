@@ -42,7 +42,7 @@ const cases = [
     name: 'Saïd, not published', run: said(), now: '2026-10-13T10:00:00Z', opts: { files: FILES },
     steps: 'planned:done pre-ready:done published:current pre-closes:todo delivered:todo post-open:todo post-closes:todo results:todo',
     counter: '2 of 8', publication: 'not-published', phase: 'planned', pill: ['grey', 'Not published'],
-    details: { planned: '18 expected · Europe/London', 'pre-ready': '4 steps · file “Research teams intake”', published: 'Not published', 'pre-closes': 'Wed 21 Oct 13:00 · opens Wed 14 Oct 09:00', delivered: 'Wed 21 Oct · 14:00', 'post-open': 'When the session ends · 3 steps · file “Session feedback”', 'post-closes': 'Wed 4 Nov 17:00' },
+    details: { planned: '18 expected · Europe/London', 'pre-ready': '4 steps · file “Research teams intake”', published: 'Not published', 'pre-closes': 'Wed 21 Oct 13:00 · opens Wed 14 Oct 09:00', delivered: 'Wed 21 Oct · 14:00', 'post-open': 'When the Run ends · 3 steps · file “Session feedback”', 'post-closes': 'Wed 4 Nov 17:00' },
     actions: { published: ['publish', 'preview-page'], delivered: ['go-live', 'mark-delivered'], results: ['open-results!'] }
   },
   {
@@ -57,7 +57,7 @@ const cases = [
     counter: '3 of 8', publication: 'published', phase: 'published', pill: ['green', 'Published'],
     details: { published: 'Since Wed 14 Oct 09:00', 'pre-closes': 'Wed 21 Oct 13:00' }, actions: { 'pre-closes': ['change-pre-time'] },
     qr: 'pre-work',
-    links: ['Handout', 'Pre-work', 'Post-work · opens after the session']
+    links: ['Handout', 'Pre-work', 'Post-work · opens after the Run']
   },
   {
     name: 'Saïd, unpublished', run: said({ handoutUrl: 'https://handouts.fyi/dl/said-21-oct' }, { pre: { ...PUBLISHED.pre, unpublishedAt: '2026-10-16T09:00:00Z' }, post: PUBLISHED.post }), now: '2026-10-17T10:00:00Z', opts: { files: FILES, answers: { pre: 7 } },
@@ -91,7 +91,7 @@ const cases = [
     now: '2026-10-15T10:00:00Z', opts: { files: FILES },
     steps: 'planned:done pre-ready:done published:done pre-closes:current delivered:todo post-open:todo post-closes:todo results:todo',
     counter: '3 of 8', publication: 'published', phase: 'published', qr: 'handout',
-    details: { published: 'Since Wed 14 Oct 16:20', 'post-closes': 'Wed 18 Nov 17:00' }, links: ['Handout', 'Pre-work · opens Wed 28 Oct 09:00', 'Post-work · opens after the session']
+    details: { published: 'Since Wed 14 Oct 16:20', 'post-closes': 'Wed 18 Nov 17:00' }, links: ['Handout', 'Pre-work · opens Wed 28 Oct 09:00', 'Post-work · opens after the Run']
   },
   {
     name: 'Keble, pre-work open', run: { status: 'planned', plannedDate: '2026-10-28', startTime: '16:00', expectedPeople: 40, timeZone: TZ, handoutUrl: 'https://handouts.fyi/dl/keble-28-oct',
@@ -194,7 +194,7 @@ assert.equal(whenLabel('2026-11-04T17:00'), 'Wed 4 Nov 17:00')
 const postSet = runChecklist(said({ handoutUrl: 'https://h/dl/x' }, { pre: PUBLISHED.pre, post: { ...PUBLISHED.post, opens: '2026-10-28T09:00' } }), at('2026-10-22T10:00:00Z'), { files: FILES })
 assert.equal(postSet.steps.find((s) => s.id === 'published').links.at(-1).label, `Post-work · opens ${whenLabel('2026-10-28T09:00')}`)
 assert.equal(postSet.steps.find((s) => s.id === 'published').links.at(-1).label, 'Post-work · opens Wed 28 Oct 09:00')
-assert.ok(!postSet.steps.find((s) => s.id === 'published').links.at(-1).label.includes('after the session'))
+assert.ok(!postSet.steps.find((s) => s.id === 'published').links.at(-1).label.includes('after the Run'))
 const ny = runChecklist(said({}, { pre: { timeZone: 'America/New_York', opens: '2026-10-14T09:00', closes: '2026-10-21T09:00', publishedAt: '2026-10-14T08:00:00Z' }, post: {} }), at('2026-10-21T12:30:00Z'), { files: FILES })
 assert.equal(ny.steps.find((s) => s.id === 'pre-closes').state, 'current') // 08:30 in New York is before the 09:00 close
 
@@ -235,8 +235,8 @@ assert.equal(workPageUrl('', 'pre'), '', 'no handout link, no work page link')
   // Delivered, published, the opening not pushed yet: not open, and it says it is opening.
   const pending = runChecklist(said({ status: 'delivered', endedAt: '2026-10-21T14:58:00Z', handoutUrl: 'https://h/dl/x' }, PUBLISHED), at('2026-10-21T15:00:00Z'), { files: FILES })
   assert.equal(step(pending, 'post-open').state, 'current')
-  assert.equal(step(pending, 'post-open').detail, 'Opening now the session has ended · 3 steps · file “Session feedback”')
-  assert.equal(link(pending), 'Post-work · opens after the session')
+  assert.equal(step(pending, 'post-open').detail, 'Opening now the Run has ended · 3 steps · file “Session feedback”')
+  assert.equal(link(pending), 'Post-work · opens after the Run')
   assert.equal(pending.phase, 'delivered')
   // Pushed: open, since when it was opened (the next launch, when the app was closed at the session's end).
   const nextLaunch = runChecklist(said({ status: 'delivered', endedAt: '2026-10-21T14:58:00Z', handoutUrl: 'https://h/dl/x' },
@@ -280,7 +280,7 @@ assert.equal(workPageUrl('', 'pre'), '', 'no handout link, no work page link')
   const future = runChecklist(said({ status: 'delivered', endedAt: '2026-10-21T14:58:00Z', handoutUrl: 'https://h/dl/x' },
     { pre: PUBLISHED.pre, post: { ...PUBLISHED.post, openedAt: '2026-10-23T09:00:00Z' } }), at('2026-10-22T09:00:00Z'), { files: FILES })
   assert.notEqual(step(future, 'post-open').state, 'done')
-  assert.equal(link(future), 'Post-work · opens after the session')
+  assert.equal(link(future), 'Post-work · opens after the Run')
   assert.notEqual(step(future, 'published').qr, 'post-work')
   assert.equal(future.phase, 'delivered')
   // Unpublished after it opened: participants are shown "not available", so it is not open here either.

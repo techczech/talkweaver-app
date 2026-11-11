@@ -58,11 +58,11 @@ export const SUBGROUP_ORDER: Readonly<Record<TaskGroup, readonly string[]>> = {
   'Write the outline': ['Format text', 'Fold', 'Headings and levels', 'Lists', 'Reorder slides and items', 'Undo and redo'],
   'Build a slide': ['Inspector', 'Layouts', 'Images and icons', 'Objects', 'Components'],
   'Reuse slides': ['Where used and versions', 'Find a talk', 'Slides from other talks', 'Tags'],
-  'See the talk': ['Views (editor, strip, grid)', 'Focus on a slide', 'Sidebar and outline search'],
-  'Shape the talk': ['Plan a run', 'Pathways', 'Deck design', 'Metadata and abstract'],
+  'See the talk': ['Views (slides, grid, strip)', 'Focus on a slide', 'Sidebar and outline search'],
+  'Shape the talk': ['Plan a Run', 'Pathways', 'Talk design', 'Metadata and abstract'],
   'Present': ['Open presenter and audience', 'Live audience, polls and questions', 'Move through slides', 'Timer', 'Recording', 'Display modes', 'Speaker notes (added)', 'Live board (added)', 'Help and commands'],
-  'Share': ['Handout', 'HTML presentation', 'Publish', 'Share for comments'],
-  'Manage talks': ['Importer, Studio, History', 'Windows', 'Talks panel', 'Vaults', 'Scripts and notes'],
+  'Share': ['Handout', 'HTML presentation', 'Publish', 'Share for comments', 'Video'],
+  'Manage talks': ['Importer, Studio, Runs', 'Windows', 'Talks panel', 'Vaults', 'Scripts and notes'],
   'Check and repair': ['Optimise images', 'Index image text', 'Check embeds', 'Layout Doctor'],
   'Set up TalkWeaver': ['Command palette', 'Shortcuts', 'Settings', 'Get started']
 }
@@ -84,7 +84,7 @@ export const MERGED_ROWS: readonly MergedRow[] = [
 
 /**
  * Commands that stay in the palette and the menus but are not rows of any chapter. Presentation window
- * and Audience view are editor-side launches that Launch audience (F5) covers (owner check 10 Oct:
+ * and Audience window are editor-side launches that Open audience window (F5) covers (owner check 10 Oct:
  * "not a command in here and duplicates audience launch").
  */
 export const CHAPTER_EXCLUDED: ReadonlySet<string> = new Set([
@@ -105,7 +105,9 @@ export const CHAPTER_EXCLUDED: ReadonlySet<string> = new Set([
   // Work files ticket 30: the Tools window's commands (Sessions, Published pages, Work files, and what the Run
   // on show can do) and the two Attach commands. No chapter row and no practice line yet (ticket 30 left them
   // out while pre-work was hidden); they are on the ⌘/ sheet and in the Tools window's palette.
-  'tools-view-sessions', 'tools-view-published', 'tools-view-workfiles', 'tools-plan-run', 'tools-edit-plan', 'tools-plan-like-this',
+  // `history` is the old name of the Runs command (R5), kept as a hidden alias: the Guide names Runs, not both.
+  'history',
+  'tools-view-runs', 'tools-view-sessions', 'tools-view-published', 'tools-view-workfiles', 'tools-plan-run', 'tools-edit-plan', 'tools-plan-like-this',
   'tools-publish', 'tools-unpublish', 'tools-go-live', 'tools-open-run', 'tools-copy-link', 'tools-copy-invitation', 'tools-new-work-file',
   'attach-prework', 'attach-postwork',
   // Update notices (ADR-0041): Check for Updates… and What's new in TalkWeaver are app chrome in the Help menu and the

@@ -12,7 +12,7 @@ import { join, resolve } from 'node:path'
 
 const appBundle = resolve(process.argv[2])
 const tmpdir = () => resolve(process.argv[3])
-const executable = join(appBundle, 'Contents/MacOS/TalkWeaver')
+const executable = join(appBundle, 'Contents/MacOS/TalkWeaver Security Test')
 const scratchRoots = []
 process.on('exit', () => { for (const dir of scratchRoots) rmSync(dir, { recursive: true, force: true }) })
 for (const mode of process.env.TW_TEST_EDITOR_MODE ? [process.env.TW_TEST_EDITOR_MODE] : ['markdown', 'plain']) {
@@ -39,11 +39,27 @@ for (const mode of process.env.TW_TEST_EDITOR_MODE ? [process.env.TW_TEST_EDITOR
     assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every((w) => !w.isVisible())), true, 'windows stay hidden')
     const pid = app.process().pid
     console.log(`packaged ${executable} pid ${pid} version ${await app.evaluate(({ app: a }) => `${a.getVersion()} packaged=${a.isPackaged} electron=${process.versions.electron}`)}`)
-    const page = await app.firstWindow()
+    assert.equal(await app.evaluate(({ app }) => app.getPath('userData')), userData, 'the owned isolated profile is used')
+    const page = (await app.windows()).find(p => p.url().includes('/renderer/index.html')) ?? await app.firstWindow()
     page.setDefaultTimeout(15000)
     const errors = []
     page.on('pageerror', (e) => errors.push(e.message))
-    const editorText = () => page.evaluate(() => [...document.querySelectorAll('.cm-content .cm-line')].map((l) => l.textContent).join('\n'))
+    // CodeMirror's HTML object card replaces the visible Embed markup in markdown view.
+    // Read the document (as the source-build scenario does), rather than its decorated DOM.
+    const readEditorDocument = () => {
+      if (typeof window.__twSecurityEditorText !== 'function') throw new Error('Security test editor document hook missing')
+      const text = window.__twSecurityEditorText()
+      if (typeof text !== 'string') throw new Error('Security test editor document is unavailable')
+      return text
+    }
+    const editorText = () => page.evaluate(readEditorDocument)
+    const waitForDocument = async predicate => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        if (predicate(await editorText())) return
+        await page.waitForTimeout(100)
+      }
+      throw new Error('Editor document did not reach the expected state')
+    }
     const pick = (path) => app.evaluate((_electron, value) => { globalThis.__twE2eHtmlPagePick = value; globalThis.__twE2eHtmlPagePickOptions = undefined }, path)
     const pickerOptions = () => app.evaluate(() => globalThis.__twE2eHtmlPagePickOptions ?? null)
     const insertHtmlPage = async () => {
@@ -53,6 +69,17 @@ for (const mode of process.env.TW_TEST_EDITOR_MODE ? [process.env.TW_TEST_EDITOR
 
     await page.locator('[data-talk-slug="html-page"]').first().dblclick()
     await page.locator('.cm-content').waitFor()
+    assert.equal(typeof await editorText(), 'string')
+    await page.evaluate(() => {
+      window.__savedSecurityEditorText = window.__twSecurityEditorText
+      delete window.__twSecurityEditorText
+    })
+    await assert.rejects(editorText, /Security test editor document hook missing/)
+    await page.evaluate(() => {
+      window.__twSecurityEditorText = window.__savedSecurityEditorText
+      delete window.__savedSecurityEditorText
+    })
+    console.log(`PASS (${mode}) missing editor document hook fails loudly`)
     // Unsaved typing at the caret: the insert must keep it.
     await page.locator('.cm-line').filter({ hasText: 'Map slide body.' }).click()
     await page.keyboard.press('End')
@@ -73,7 +100,7 @@ for (const mode of process.env.TW_TEST_EDITOR_MODE ? [process.env.TW_TEST_EDITOR
     // A page from outside the vault.
     await pick(external)
     await insertHtmlPage()
-    await page.waitForFunction(() => document.querySelector('.cm-content')?.textContent.includes('[Embed: assets/energy-domain-map.html]'))
+    await waitForDocument(text => text.includes('[Embed: assets/energy-domain-map.html]'))
     const afterInsert = await editorText()
     assert.ok(afterInsert.includes('Map slide body. Typed before inserting.'), 'the unsaved typing is kept')
     assert.ok(afterInsert.indexOf('[Embed: assets/energy-domain-map.html]') > afterInsert.indexOf('Typed before inserting.'), 'the line lands at the caret, after the typing')
@@ -97,25 +124,61 @@ for (const mode of process.env.TW_TEST_EDITOR_MODE ? [process.env.TW_TEST_EDITOR
     assert.equal(mapRow?.embeds, 1, 'the compiled Map slide has the embed')
     assert.deepEqual(mapRow.warnings.filter((w) => /asset|embed/.test(w)), [], 'no missing or outside-vault warning')
 
+    console.log(`PASS (${mode}) Embed line in document and autosaved outline, byte-identical file; DOM contains literal line=${await page.locator('.cm-content').evaluate(el => el.textContent.includes('[Embed: assets/energy-domain-map.html]'))}`)
+
+    // The actual editor Inspector renders the inserted page, including its sandboxed inner frame.
+    const markerVisible = async (target) => {
+      for (let attempt = 0; attempt < 100; attempt++) {
+        for (const frame of target.frames()) {
+          if (await frame.getByText('ENERGY-MAP-MARKER', { exact: true }).isVisible().catch(() => false)) return
+        }
+        await target.waitForTimeout(150)
+      }
+      throw Error(`inserted page did not render in ${target.url()}; frames: ${target.frames().map(f => f.url()).join(', ')}`)
+    }
+    // A fresh profile starts with Inspector open; its own navigation selects the second slide.
+    if (!(await page.locator('.tw-inspector-title').innerText()).includes('Map slide')) await page.getByRole('button', { name: 'Next slide', exact: true }).click()
+    await markerVisible(page)
+    if (process.env.SHOTS) await page.screenshot({ path: join(resolve(process.env.SHOTS), `editor-${mode}.png`) })
+    const presentResult = await page.evaluate(({ outline, content }) => window.tw.talk.present(outline, content, 'presenter', 'map'), { outline, content: afterInsert })
+    assert.equal(presentResult.success, true, JSON.stringify(presentResult))
+    let presenter
+    for (let attempt = 0; attempt < 100; attempt++) {
+      presenter = app.windows().find(p => p.url().includes('-present.html') && p.url().includes('presenter=1'))
+      if (presenter) break
+      await page.waitForTimeout(150)
+    }
+    assert.ok(presenter, 'actual presenter URL found')
+    await markerVisible(presenter)
+    if (process.env.SHOTS) await presenter.screenshot({ path: join(resolve(process.env.SHOTS), `present-${mode}.png`) })
+    await presenter.close()
+    const exported = await page.evaluate(({ outline, content }) => window.tw.talk.exportHandout(outline, content), { outline, content: afterInsert })
+    assert.equal(exported.success, true, JSON.stringify(exported))
+    assert.match(readFileSync(exported.path, 'utf8'), /ENERGY-MAP-MARKER/, 'export includes the imported HTML')
+    console.log(`PASS (${mode}) inserted HTML renders in editor Inspector and presenter; handout export includes the page`)
+
     // One Undo takes back the line and only the line.
     await page.locator('.cm-content').click()
     await page.locator('.cm-line').filter({ hasText: 'First slide body.' }).click()
     await page.keyboard.press('ControlOrMeta+z')
-    await page.waitForFunction(() => !document.querySelector('.cm-content')?.textContent.includes('[Embed: assets/energy-domain-map.html]'))
+    await waitForDocument(text => !text.includes('[Embed: assets/energy-domain-map.html]'))
     assert.ok((await editorText()).includes('Map slide body. Typed before inserting.'), 'Undo keeps the earlier typing')
 
     // The same page again: reused, not copied twice.
     await page.keyboard.press('ControlOrMeta+Shift+z')
-    await page.waitForFunction(() => document.querySelector('.cm-content')?.textContent.includes('[Embed: assets/energy-domain-map.html]'))
+    await waitForDocument(text => text.includes('[Embed: assets/energy-domain-map.html]'))
     await page.locator('.cm-line').filter({ hasText: 'First slide body.' }).click()
     await page.keyboard.press('End')
     await insertHtmlPage()
-    await page.waitForFunction(() => (document.querySelector('.cm-content')?.textContent.match(/\[Embed: assets\/energy-domain-map\.html\]/g) ?? []).length === 2)
+    await waitForDocument(text => (text.match(/\[Embed: assets\/energy-domain-map\.html\]/g) ?? []).length === 2)
     assert.deepEqual(readdirSync(join(talkDir, 'assets')), ['energy-domain-map.html'], 'one copy for the same page')
 
     assert.deepEqual(errors, [])
     if (process.env.SHOTS) await page.screenshot({ path: join(resolve(process.env.SHOTS), `talkweaver-insert-html-page-${mode}.png`) })
     console.log(`PASS (${mode} view) Insert › HTML page…: menu, Cancel, copy, caret insert, unsaved typing kept, one-step Undo, reuse`)
+  } catch (error) {
+    if (app) for (const page of app.windows()) console.error('FAILURE SNAPSHOT', JSON.stringify(await page.evaluate(() => ({ url: location.href, dom: document.querySelector('.cm-content')?.textContent, model: typeof window.__twSecurityEditorText === 'function' ? window.__twSecurityEditorText() : 'MISSING TEST HOOK' })).catch(() => null)))
+    throw error
   } finally {
     await app?.close()
     rmSync(scratch, { recursive: true, force: true })

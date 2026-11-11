@@ -20,9 +20,10 @@
 // (prepare-talk-utility-process.ts); tests pass a fake, or a plain Node child process. This file
 // imports nothing of Electron, so plain-Node tests load it as it is.
 import type { PrepareTalkJob, PrepareTalkReply } from './prepare-talk-worker'
+import type { PreviewVariant } from './preview-variant'
 
 export type PrepareTalkRequest = Omit<PrepareTalkJob, 'id'>
-export type PrepareTalkAnswer = { model: Record<string, unknown>; rows: Array<Record<string, unknown>> | null; previewKey?: string }
+export type PrepareTalkAnswer = { model: Record<string, unknown>; rows: Array<Record<string, unknown>> | null; previewKey?: string; preview?: PreviewVariant }
 
 const IDLE_MS = 60_000
 const DEADLINE_MS = 180_000
@@ -75,7 +76,7 @@ export function createPrepareTalkOffThread(childPath: string, spawn: SpawnCompil
       const job = slot.jobs.get(reply.id)
       if (!job) return
       slot.jobs.delete(reply.id)
-      if (reply.ok) job.resolve({ model: reply.model, rows: reply.rows, previewKey: reply.previewKey })
+      if (reply.ok) job.resolve({ model: reply.model, rows: reply.rows, previewKey: reply.previewKey, preview: reply.preview })
       else job.reject(new Error(reply.error))
       armIdle()
     })

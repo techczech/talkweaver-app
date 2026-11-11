@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
 export interface Command {
   id: string
@@ -32,7 +32,8 @@ export default function CommandMenu({ isOpen, onClose, commands, initialQuery = 
     (c) => !q || c.title.toLowerCase().includes(q) || (c.hint ?? '').toLowerCase().includes(q) || (c.keywords ?? []).some((keyword) => keyword.toLowerCase().includes(q))
   )
 
-  useEffect(() => {
+  // Forwarded Actions here text must be present in the palette before its first paint.
+  useLayoutEffect(() => {
     if (!isOpen) return
     setQuery(initialQuery)
     setActive(0)

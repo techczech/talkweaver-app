@@ -178,11 +178,11 @@ function runRow(run: PublishedRunSource, site: SiteListing, now: Date): Publishe
   if (sent.includes('pre')) links.push({ kind: 'pre-work', label: 'Pre-work link', url: workPageUrl(url, 'pre') })
   if (sent.includes('post')) {
     const post = run.work?.post
-    // THE open test (run-checklist.ts postWorkWindow): "opens after the session" until it has opened.
+    // THE open test (run-checklist.ts postWorkWindow): "opens after the Run" until it has opened.
     const window = postWorkWindow(run, now)
     const label = !post || window.open ? 'Post-work link'
       : window.past ? 'Post-work link · closed'
-      : post.opens === SESSION_END ? 'Post-work link · opens after the session'
+      : post.opens === SESSION_END ? 'Post-work link · opens after the Run'
       : `Post-work link · opens ${whenLabel(post.opens)}`
     links.push({ kind: 'post-work', label, url: workPageUrl(url, 'post') })
   }

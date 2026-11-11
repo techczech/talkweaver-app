@@ -1,3 +1,4 @@
+import { offlinePageCandidates, type OfflinePageSelection } from '../lib/offlinePage'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react'
 import type { ProjectionRow, TalkInfo } from '../../../preload/index'
@@ -46,6 +47,8 @@ interface Props {
   onOpenLayoutDoctor: () => void
   /** Capture embed…: the capture window for one of the slide's web pages. */
   onCaptureEmbed?: (pageUrl: string) => void
+  onSaveOffline?: (selection: OfflinePageSelection) => void
+  offlineSaving?: boolean
   /** Remove from slide: takes one saved view's {capture} line out of the slide (the picture stays in the
    *  talk folder). `embed`: which embed of that address on the slide it is listed under (index of `of`). */
   onRemoveSavedView?: (pageUrl: string, image: string, embed: { index: number; of: number }) => void
@@ -68,7 +71,7 @@ function triggerLineOf(block: string): string {
 
 export default function Inspector({
   talk, compiledSlides, outlineContent, triggerFindings, activeIndex, headingLine,
-  onPrev, onNext, onEdit, onExplain, onOpenLayoutDoctor, onCaptureEmbed, onRemoveSavedView, onOpenLayoutPicker, onCommitOption, onBoardEdit, picker = null, onChangeLayout
+  onPrev, onNext, onEdit, onExplain, onOpenLayoutDoctor, onCaptureEmbed, onSaveOffline, offlineSaving, onRemoveSavedView, onOpenLayoutPicker, onCommitOption, onBoardEdit, picker = null, onChangeLayout
 }: Props) {
   const row = compiledSlides?.[activeIndex] ?? null
   const block = useMemo(
@@ -406,6 +409,12 @@ export default function Inspector({
                   />
                 ) : section.bindings.filter((binding) => !binding.nestedUnder).map((binding) =>
                   renderGroup(binding, section.bindings.filter((child) => child.nestedUnder === binding.group.key)))}
+              </section>
+            ))}
+            {onSaveOffline && offlinePageCandidates(outlineContent, headingLine).map(candidate => (
+              <section className="tw-inspector-section" key={candidate.line} aria-label="HTML page">
+                <h3 className="tw-inspector-section-heading">HTML page</h3><p>{candidate.source}</p>
+                <button type="button" className="tw-inspector-change" disabled={offlineSaving} onClick={() => onSaveOffline({ line: candidate.line, text: candidate.text })}>{offlineSaving ? 'Saving…' : 'Save offline copy'}</button>
               </section>
             ))}
             {livePages.length > 0 && (

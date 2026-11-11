@@ -409,7 +409,7 @@ Run in its own registry; nothing is registered by talk here.
   a link not pushed yet answer the same 404, so a guessed id learns nothing. The page's footer carries
   the online-content guidelines and the report link (`worker/online-content-guidelines.ts`, generated
   from `resources/online-content-guidelines.md`; the link attaches nothing). Adding it made the build
-  `26-online-content-guidelines`.
+  `27-online-presenter-marks`.
 - Every route takes exactly one method (`405` otherwise): the page is read-only.
 - `POST /results/<id>/close` (Stop sharing) takes the owner token or the admin secret. The content is
   deleted at once and a tombstone keeps answering `410` ("stopped sharing").
@@ -530,7 +530,7 @@ Both coordinates must be finite and in range. The slide id uses the existing non
 rule, capped at 100 characters. The entire frame is limited to 512 UTF-8 bytes.
 
 Only the authenticated, current presenter socket can publish a pointer. The Worker drops messages
-beyond 20 per second per socket, relays accepted messages only to audience sockets with `kind=screen`,
+beyond 20 per second per socket, relays accepted messages to all audience sockets,
 and never echoes or saves them. Pointer is excluded from acknowledged operations and snapshots.
 
 ## Transient Pen ink
@@ -544,12 +544,26 @@ corners). `parseInkMessage` in `protocol.ts` checks every field and range and co
 fields; caps (`INK_LIMITS`): 400 points per stroke, 100 strokes and 2,400 points per layer, 64,000
 UTF-8 bytes per frame, 20 frames a second per socket.
 
-Only the authenticated, current presenter socket can send ink. The Worker relays it only to audience
-sockets with `kind=screen`, never to phones, never echoes it, and keeps the latest frame in the Durable
-Object's memory only (never in storage) so a venue screen that joins or reconnects is sent it after its
+Only the authenticated, current presenter socket can send ink. The Worker relays it to all audience
+sockets, never echoes it, and keeps the latest frame in the Durable
+Object's memory only (never in storage) so a follower that joins or reconnects is sent it after its
 snapshot. Ending the session forgets it; after an eviction the presenter's client sends its latest
 layer again once it is synchronised. Ink is excluded from acknowledged operations and snapshots.
 The presenter preload samples movement and a stationary heartbeat every 67 ms. Venue clients clear
-a pointer after two seconds without another message, on slide changes and on `gone`; phone clients
-ignore it. Build `20-pointer-live` triggers the app's existing Worker version check. This parcel
+a pointer after two seconds without another message, on slide changes and on `gone`. Online pages show
+marks only while following. Build `27-online-presenter-marks` triggers the app's existing Worker version check. This parcel
 does not deploy the Worker.
+
+
+## Live embedded widgets
+
+`embed.live` carries a slide id, frame index and an event description validated by the existing
+sandbox embed protocol. The current authenticated presenter alone can send it, with an 8 KiB
+frame cap and 60 events per second. It cannot be an acknowledged operation. Viewers replay it in
+an active opaque sandbox with their own channel token, only while following. Scroll and availability
+are cached in memory for at most 32 entries and refreshed on sync; clicks and typed values
+are never cached. Leaving a slide clears its cached state; a fresh local frame publishes its initial
+scroll. Presenter reconnects and followers resuming after a pause restore the latest scroll. Arbitrary application state, random outcomes and canvas pixels are not synchronised.
+A browser cannot drive a third-party website across its origin boundary; those pages receive a plain
+availability note. Frozen stills are never sent. The app's existing update-before-use route ships the
+new worker build; there is no manual deployment step.

@@ -1,6 +1,7 @@
 // A small dropdown of groups: the group filter beside the search box, and Move to group….
 // Both end in "New group…", which asks for a name in place.
 import { useEffect, useRef, useState } from 'react'
+import { NameCard } from '../cards'
 
 export interface GroupMenuRow { id: string; label: string; count?: number; current?: boolean }
 
@@ -16,7 +17,6 @@ export function ScratchpadGroupMenu({ heading, rows, startNaming = false, onPick
 }): JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const [naming, setNaming] = useState(startNaming)
-  const [name, setName] = useState('')
   useEffect(() => {
     const away = (e: MouseEvent): void => { if (ref.current && !ref.current.contains(e.target as Node)) onClose() }
     const esc = (e: KeyboardEvent): void => { if (e.key === 'Escape') { e.stopPropagation(); onClose() } }
@@ -24,10 +24,18 @@ export function ScratchpadGroupMenu({ heading, rows, startNaming = false, onPick
     document.addEventListener('keydown', esc, true)
     return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc, true) }
   }, [onClose])
-  const create = async (): Promise<void> => {
-    const clean = name.trim()
+  const create = async (typed: string): Promise<void> => {
+    const clean = typed.trim()
     if (!clean) return
     if (await onNewGroup(clean)) onClose()
+  }
+  // Naming a group is the one name card (house rule R10), not a field inside the menu.
+  if (naming) {
+    return (
+      <div ref={ref}>
+        <NameCard kind="group" mode="new" placeholder="Group name" onCancel={() => { if (startNaming) onClose(); else setNaming(false) }} onSubmit={(value) => void create(value)} />
+      </div>
+    )
   }
   return (
     <div className="sp-menu" ref={ref} role="menu" aria-label={heading ?? 'Groups'}>
@@ -38,14 +46,7 @@ export function ScratchpadGroupMenu({ heading, rows, startNaming = false, onPick
           {row.count !== undefined && <em>{row.count}</em>}
         </button>
       ))}
-      {naming ? (
-        <form className="sp-menu-new" onSubmit={(e) => { e.preventDefault(); void create() }}>
-          <input autoFocus value={name} maxLength={80} placeholder="Group name" aria-label="New group name" onChange={(e) => setName(e.target.value)} />
-          <button type="submit" className="sp-btn sp-btn--sm" disabled={name.trim() === ''}>Create</button>
-        </form>
-      ) : (
-        <button type="button" role="menuitem" className="sp-menu-row sp-menu-row--new" onClick={() => setNaming(true)}>New group…</button>
-      )}
+      <button type="button" role="menuitem" className="sp-menu-row sp-menu-row--new" onClick={() => setNaming(true)}>New group…</button>
     </div>
   )
 }

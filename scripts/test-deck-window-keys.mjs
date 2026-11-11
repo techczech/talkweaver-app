@@ -45,7 +45,7 @@ assert.match(template, /els\.presenterAudienceApp\.addEventListener\("click", op
 
 // ── The registry says the same: presenter F5 = audience; editor F5 / ⇧F5 = present.
 const entry = (id) => SHORTCUT_REGISTRY.find((e) => e.id === id)
-assert.deepEqual(entry('presenter.audience')?.codes, ['F5'], 'the registry binds F5 in the presenter to Launch audience')
+assert.deepEqual(entry('presenter.audience')?.codes, ['F5'], 'the registry binds F5 in the presenter to Open audience window')
 assert.deepEqual(entry('app.present')?.codes, ['F5'], 'the registry binds F5 in the editor to Present from the top')
 assert.deepEqual(entry('app.present-current')?.codes, ['Shift-F5'], 'the registry binds ⇧F5 in the editor to Present from current slide')
 assert.deepEqual(entry('presenter.refresh')?.codes, ['Mod-r', 'Shift-F5'], 'the registry binds ⌘R, and ⇧F5 in a presenter window, to Refresh with latest edits')

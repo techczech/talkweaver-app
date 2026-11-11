@@ -74,7 +74,7 @@ export interface RunChips {
   run: { text: string; runId: string } | null
   /** "Pre-work opens <date>" (the count arrives with ticket 10) or, without a Run, null. */
   prework: { text: string; runId: string } | null
-  /** "No run planned · Plan a run…" when the talk has pre-work and nothing planned. */
+  /** "No Run planned · Plan a Run…" when the talk has pre-work and nothing planned. */
   nudge: { text: string } | null
 }
 
@@ -87,7 +87,7 @@ export interface PreworkProgress { started: number; finished: number }
  * "Pre-work: 14 started". Before it opens it says when it opens.
  */
 export function runChips(run: PlanRunLike | null, talkHasPrework: boolean, now: Date = new Date(), progress: PreworkProgress | null = null): RunChips {
-  if (!run) return { run: null, prework: null, nudge: talkHasPrework ? { text: 'No run planned · Plan a run…' } : null }
+  if (!run) return { run: null, prework: null, nudge: talkHasPrework ? { text: 'No Run planned · Plan a Run…' } : null }
   const event = run.eventTitle || 'Run'
   const window = preworkWindow(run)
   let prework: RunChips['prework'] = null
@@ -129,7 +129,7 @@ export interface PhaseDraft {
   fileId: string
   /** Pre-work: '' or a time. Post-work: `session-end` (default), '' (a set time not yet chosen) or a time. */
   opens: string
-  /** '' = not chosen. Pre-work then closes when the session starts; post-work requires one. */
+  /** '' = not chosen. Pre-work then closes when the Run starts; post-work requires one. */
   closes: string
 }
 
@@ -145,10 +145,10 @@ export interface PlanDraft {
 }
 
 export const NO_WORK_FILE = ''
-/** Post-work with no closing time picked is offered this fix: a fortnight after the session, 17:00. */
+/** Post-work with no closing time picked is offered this fix: a fortnight after the Run, 17:00. */
 export const POST_CLOSE_DAYS = 14
 export const POST_CLOSE_TIME = '17:00'
-/** Pre-work that closes too late is offered this fix: an hour before the session starts. */
+/** Pre-work that closes too late is offered this fix: an hour before the Run starts. */
 export const PRE_CLOSE_LEAD_MINUTES = 60
 
 export function localDateTime(now: Date): string {
@@ -214,7 +214,7 @@ export function moveDraftToDate(draft: PlanDraft, fromDate: string, toDate: stri
 }
 
 /**
- * The draft for "Plan the next run like this": the Run's event, audience, expected people, start time,
+ * The draft for "Plan the next Run like this": the Run's event, audience, expected people, start time,
  * slides and work files with their windows, and nothing the first Run collected or published (answers,
  * pins, handout link, published stamps are not draft fields). The date is left for the presenter; the
  * windows stay where the Run had them until a date is given, then move with it (`moveDraftToDate`).
@@ -296,13 +296,13 @@ export function planIssues(draft: PlanDraft, skip: { pre?: boolean; post?: boole
         : { phase, code: 'post-closes-before-opens', message: 'Post-work must close after it opens', fix: null })
     } else if (found === 'work-pre-closes-after-start') {
       const value = addMinutes(start, -PRE_CLOSE_LEAD_MINUTES)
-      issues.push({ phase, code: 'pre-closes-after-start', message: 'Pre-work must close before the session starts',
+      issues.push({ phase, code: 'pre-closes-after-start', message: 'Pre-work must close before the Run starts',
         fix: { phase, label: value.slice(0, 10) === start.slice(0, 10) ? `Close at ${value.slice(11)}` : `Close ${dayTime(value)}`, set: { closes: value } } })
     } else if (found === 'work-post-closes-before-start') {
       const value = `${addMinutes(`${start.slice(0, 10)}T00:00`, POST_CLOSE_DAYS * 1440).slice(0, 10)}T${POST_CLOSE_TIME}`
-      issues.push({ phase, code: 'post-closes-before-start', message: 'Post-work must close after the session ends', fix: { phase, label: `Close ${dayTime(value)}`, set: { closes: value } } })
+      issues.push({ phase, code: 'post-closes-before-start', message: 'Post-work must close after the Run ends', fix: { phase, label: `Close ${dayTime(value)}`, set: { closes: value } } })
     } else if (found === 'work-post-opens-before-start') {
-      issues.push({ phase, code: 'post-opens-before-start', message: 'Post-work must open after the session starts', fix: { phase, label: 'Open when the session ends', set: { opens: SESSION_END } } })
+      issues.push({ phase, code: 'post-opens-before-start', message: 'Post-work must open after the Run starts', fix: { phase, label: 'Open when the Run ends', set: { opens: SESSION_END } } })
     }
   }
   return issues

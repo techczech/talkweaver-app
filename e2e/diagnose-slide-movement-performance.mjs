@@ -155,7 +155,7 @@ try {
   // Manual rebuilding uses the same progressive route. Reject a late event from another request.
   await page.locator('[data-batch-action="clear"]').click()
   await page.evaluate(() => { window.__refreshUpdates=[]; window.__stopRefreshProbe=window.tw.talk.onThumbnailProgress(p=>window.__refreshUpdates.push({id:p.requestId,count:Object.keys(p.thumbnails).length})) })
-  await page.locator('.toolbar-btn').filter({hasText:'Deck'}).click()
+  await page.locator('.toolbar-btn').filter({hasText:'Talk'}).click()
   const refreshAt=Date.now(), beforeRefresh=await app.evaluate(()=>globalThis.__compileSchedule.length)
   await page.getByText('Rebuild preview',{exact:true}).click()
   await page.waitForFunction(()=>document.querySelectorAll('.grid-cell img').length>0 && document.querySelectorAll('.grid-cell img').length<162)

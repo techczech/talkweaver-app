@@ -101,8 +101,8 @@ export interface OutlineDiskResolverDeps {
   accept(outlinePath: string, hash: string, opts?: { keepPending?: boolean }): Promise<OutlineDiskAccept>
   /** The editor's live text for the talk, or null when the editor does not hold it. */
   readBuffer(outlinePath: string): string | null
-  /** Puts `text` into the editor as one undoable change (no save of its own). False when not ready. */
-  replaceBuffer(outlinePath: string, text: string): boolean
+  /** One undoable change. `fromDisk` establishes a clean baseline with no autosave (Reload only). False when not ready. */
+  replaceBuffer(outlinePath: string, text: string, opts?: { fromDisk?: boolean }): boolean
   /** Saves the editor's buffer as it stands through the file's queue (the D1 seam, forced). */
   saveBuffer(outlinePath: string): Promise<boolean>
   /** The recovery copy for the talk (window.tw.talk.outlineRecovery), and dropping it. */
@@ -139,7 +139,7 @@ export async function reloadFromDisk(outlinePath: string, deps: OutlineDiskResol
   if (!disk) return { ok: false, error: GONE }
   const before = deps.readBuffer(outlinePath)
   if (before === null) return { ok: false, error: NOT_READY }
-  if (before !== disk.text && !deps.replaceBuffer(outlinePath, disk.text)) return { ok: false, error: NOT_READY }
+  if (!deps.replaceBuffer(outlinePath, disk.text, { fromDisk: true })) return { ok: false, error: NOT_READY }
   const accepted = await acceptInQueue(outlinePath, disk.hash, deps)
   if (!accepted.ok) return refused(accepted)
   // The person chose the disk's version: text kept from a refused save is dropped with it.

@@ -1,6 +1,7 @@
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import type { TalkInfo, ProjectionRow } from '../../../preload/index'
+import { layoutDisplayName } from '../../../shared/layout-registry/options'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
 import { triggerWarningPayloadsForSlide } from '../../../shared/layout-doctor'
 import { warningBadgesForSurface, type WarningSurface } from '../../../../compiler/scripts/lib/warning-registry.mjs'
@@ -8,6 +9,7 @@ import type { GhostRow, SlideMarker, SlideMarkers } from '../../../shared/feedba
 import type { SlideRef } from '../../../shared/slide-handling/blocks'
 import { placeAtHeading, type SlidePlace } from '../../../shared/slide-handling/place'
 import { sectionDropBoundary } from '../lib/sectionDrop'
+import { createFocusReporter, thumbnailFocusOrder, visibleCardIndices } from '../lib/thumbnailFocus'
 
 export type SurfaceWarningBadge = ReturnType<typeof warningBadgesForSurface>[number]
 
@@ -529,7 +531,7 @@ function SlideCard({
         <span style={{ fontSize: '9px', color: 'var(--faint)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>{String(slide.index + 1).padStart(2, '0')}</span>
         <span style={{ fontSize: '10px', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{title}</span>
         {layout !== 'default' && (
-          <span style={{ fontSize: '8px', color: 'var(--oxford)', background: 'rgba(11,58,107,0.1)', borderRadius: '2px', padding: '1px 3px', flexShrink: 0, marginLeft: 'auto' }}>{layout}</span>
+          <span style={{ fontSize: '8px', color: 'var(--oxford)', background: 'rgba(11,58,107,0.1)', borderRadius: '2px', padding: '1px 3px', flexShrink: 0, marginLeft: 'auto' }} title={`Layout: ${layoutDisplayName(layout)} (${layout})`}>{layoutDisplayName(layout)}</span>
         )}
       </div>
       {marker?.deletion && <div className="tw-fb-del-note">Proposed deletion</div>}
@@ -805,6 +807,29 @@ export default function SlideStrip({
     }
   }, [activeIndex, slides.length, talk.outlinePath, smoothClick])
 
+  // Tell main which slides are on screen (active first, then the visible range) so this talk's
+  // thumbnails are captured in that order. Only once compiled: the deck indices are the compiled
+  // rows'. Throttled; re-sent on scroll, selection, a new slide list or a section folded.
+  const focusReporterRef = useRef<ReturnType<typeof createFocusReporter> | null>(null)
+  const reportFocusRef = useRef<() => void>(() => {})
+  reportFocusRef.current = () => {
+    if (!usingCompiler || slides.length === 0) return
+    focusReporterRef.current?.report(talk.outlinePath, thumbnailFocusOrder(activeIndex, visibleCardIndices(listRef.current, cardRefs.current), slides.length))
+  }
+  useEffect(() => {
+    const reporter = createFocusReporter((outlinePath, focus) => window.tw.talk.thumbnailFocus?.(outlinePath, focus))
+    focusReporterRef.current = reporter
+    return () => {
+      reporter.dispose()
+      if (focusReporterRef.current === reporter) focusReporterRef.current = null
+    }
+  }, [talk.outlinePath])
+  useEffect(() => {
+    // After layout (and the follow-scroll above) has placed the cards.
+    const frame = requestAnimationFrame(() => reportFocusRef.current())
+    return () => cancelAnimationFrame(frame)
+  }, [activeIndex, slides, usingCompiler, collapsedSections, talk.outlinePath])
+
   useEffect(() => {
     const list = listRef.current
     return () => {
@@ -1078,6 +1103,7 @@ export default function SlideStrip({
       <div
         ref={listRef}
         style={{ overflowY: 'auto', flex: 1, paddingBottom: '8px' }}
+        onScroll={() => reportFocusRef.current()}
         onDragLeave={(e) => {
           // Only clear the target when the pointer leaves the whole list, not when
           // it crosses between two cards inside it.

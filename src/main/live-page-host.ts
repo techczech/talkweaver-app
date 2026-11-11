@@ -77,6 +77,12 @@ export const INTERACT_OFF_SCRIPT = 'window.__twLivePageInteract && window.__twLi
 
 const livePageContentsIds = new Set<number>()
 
+/** Register a separately sandboxed page renderer with its own navigation guard. */
+export function registerLivePageContents(id: number): () => void {
+  livePageContentsIds.add(id)
+  return () => { livePageContentsIds.delete(id) }
+}
+
 export function isLivePageContents(contents: unknown): boolean {
   const id = (contents as { id?: unknown } | null | undefined)?.id
   return typeof id === 'number' && livePageContentsIds.has(id)

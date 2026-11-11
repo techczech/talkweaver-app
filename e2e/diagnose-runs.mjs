@@ -47,8 +47,8 @@ await editor.waitForSelector('.workspace')
 const toolsPromise = app.waitForEvent('window')
 await editor.evaluate(() => window.dispatchEvent(new Event('tw-open-history')))
 const history = await toolsPromise
-await history.waitForSelector('.twhistory')
-await history.locator('.twh-plan-button').click()
+await history.waitForSelector('[data-tools-view="runs"]')
+await history.locator('[data-sessions-plan]').first().click()
 const sheet = history.locator('[data-testid="plan-run-sheet"]')
 await sheet.waitFor()
 
@@ -60,12 +60,12 @@ await sheet.locator('[data-field="audience"]').fill('Continuing Education')
 await sheet.locator('[data-field="slide-set"] option[value="short"]').waitFor({ state: 'attached' })
 await sheet.locator('[data-field="slide-set"]').selectOption('short')
 await sheet.locator('[data-testid="plan-run-save"]').click()
-await history.waitForSelector('[data-planned-run]')
+await history.waitForSelector('[data-sessions-row]')
 
 const files = readdirSync(ledgerDir).filter((name) => name.endsWith('.json') && name !== 'manifest.json')
 const plannedPath = join(ledgerDir, files[0])
 const planned = JSON.parse(readFileSync(plannedPath, 'utf8'))
-record('History plan sheet creates a planned Run', planned.status === 'planned' && planned.eventTitle === 'Dept. seminar')
+record('the Runs view\'s Plan a Run sheet creates a planned Run', planned.status === 'planned' && planned.eventTitle === 'Dept. seminar')
 // Reactions ticket 06 fix round: a live session may already have written into the planned Run before
 // the delivery is saved onto it; the save must keep all of it.
 const seeded = {
@@ -76,12 +76,17 @@ const seeded = {
   questions: [{ id: 'seed:question-1', text: 'Seeded question?', slideId: 's3', tMs: 1500, answered: true }],
 }
 writeFileSync(plannedPath, JSON.stringify({ ...planned, ...seeded }, null, 2), 'utf8')
-record('Planned row renders the pathway slide-set chip', (await history.locator(`[data-planned-run="${planned.id}"] .twh-slide-set`).textContent()).includes('Short route'))
+await history.locator(`[data-sessions-row="${talkSlug}/${planned.id}"]`).click()
+await history.locator('[data-run-action="edit-plan"]').click()
+const planSheet = history.locator('[data-testid="plan-run-sheet"]')
+await planSheet.waitFor()
+record('the planned Run lists under Upcoming and its plan keeps the pathway slide set', await history.locator('[data-sessions-group="upcoming"]').count() === 1 && (await planSheet.locator('[data-field="slide-set"] option:checked').textContent()).includes('Short route'))
+await history.keyboard.press('Escape')
+await planSheet.waitFor({ state: 'detached' })
 
 const presenterPromise = app.waitForEvent('window')
-await history.locator(`[data-planned-run="${planned.id}"] summary`).click()
-await history.locator(`[data-planned-run="${planned.id}"] button`, { hasText: 'Present' }).click()
-const presenter = await presenterPromise
+await history.locator('[data-run-action="go-live"]').click()
+const presenter = await presenterPromise.catch(async (error) => { console.log('go-live notice:', JSON.stringify(await history.locator('[data-run-notice]').allTextContents()), 'disabled:', await history.locator('[data-run-action="go-live"]').isDisabled().catch(() => 'n/a')); throw error })
 await presenter.waitForSelector('#stage .slide', { state: 'attached' })
 await presenter.waitForSelector('#presenterRoot', { state: 'visible' })
 const played = await presenter.evaluate(() => ({
@@ -124,8 +129,8 @@ const published = await history.evaluate(async ({ talkSlug, runId }) => window.t
 const afterPublish = JSON.parse(readFileSync(plannedPath, 'utf8'))
 record('dry-run publish stores an own Run URL without network', published.success && afterPublish.handoutUrl?.startsWith('https://mock-run-handouts.test/'), published.error || '')
 await history.reload()
-await history.waitForSelector(`[data-history-sid="${planned.id}"] .badge-run`)
-record('History lists the published handout against the delivered Run', await history.locator(`[data-history-sid="${planned.id}"] .badge-run`).count() === 1)
+await history.waitForSelector(`[data-sessions-detail="${talkSlug}/${planned.id}"] [data-run-ledger-handout] .rl-url, [data-sessions-detail="${talkSlug}/${planned.id}"] [data-run-handout-status] .rl-url`)
+record('the Run\'s ledger shows the published handout against the delivered Run', await history.locator(`[data-sessions-detail="${talkSlug}/${planned.id}"] .rl-url`).count() >= 1)
 
 const unpublished = await history.evaluate(async ({ talkSlug, runId }) => window.tw.history.unpublishRunHandout(talkSlug, runId), { talkSlug, runId: planned.id })
 const afterUnpublish = JSON.parse(readFileSync(plannedPath, 'utf8'))

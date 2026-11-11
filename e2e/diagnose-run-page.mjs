@@ -70,11 +70,11 @@ async function openSessions(app) {
   await page.waitForLoadState('domcontentloaded')
   await page.waitForTimeout(2000)
   const pending = app.waitForEvent('window')
-  await page.evaluate(() => window.tw.tools.open('sessions'))
+  await page.evaluate(() => window.tw.tools.open('runs'))
   const tools = await pending
   await tools.waitForLoadState('domcontentloaded')
   tools.on('pageerror', (e) => console.log('PAGEERROR:', e.message.slice(0, 150)))
-  await tools.waitForSelector('[data-tools-view="sessions"]', { timeout: 10_000 })
+  await tools.waitForSelector('[data-tools-view="runs"]', { timeout: 10_000 })
   await tools.waitForSelector('[data-sessions-row]', { timeout: 10_000 })
   return { tools, main: page }
 }
@@ -109,7 +109,7 @@ const FOUR = [
   const { app, vault } = await launch(FOUR)
   try {
     const { tools, main } = await openSessions(app)
-    rec('no run selected: no Run page', await tools.locator('[data-run-checklist]').count() === 0)
+    rec('the Runs view opens on its first Run, so its Run page shows (it used to wait for a click)', await tools.locator('[data-run-checklist]').count() === 1)
 
     await select(tools, 'ai-research/med')
     rec('Medical Sciences: 2 of 8, not published', (await counter(tools)) === '2 of 8' && (await tools.locator('[data-run-pill]').innerText()) === 'Not published')
@@ -234,7 +234,7 @@ const FOUR = [
     await tools.keyboard.press('Escape')
     await tools.waitForTimeout(250)
     await press('Meta+Shift+d')
-    rec('Plan the next run like this (⌘⇧D) opens the plan sheet', await tools.locator('[data-testid="plan-run-sheet"]').count() === 1)
+    rec('Plan the next Run like this (⌘⇧D) opens the plan sheet', await tools.locator('[data-testid="plan-run-sheet"]').count() === 1)
     await tools.keyboard.press('Escape')
     await tools.waitForTimeout(250)
 
@@ -255,7 +255,7 @@ const FOUR = [
     await press('Meta+Shift+n')
     rec('⌘⇧N starts a new work file', await tools.locator('[data-wf-draft-row]').count() === 1)
     await press('Meta+4')
-    rec('⌘4 shows Sessions', (await view()) === 'sessions')
+    rec('⌘4 shows Runs', (await view()) === 'runs')
     await press('Meta+Shift+p')
     const offered = await tools.locator('[data-command-menu] [data-command]').evaluateAll((els) => els.filter((el) => el.getAttribute('aria-disabled')).map((el) => el.getAttribute('data-command')).sort().join(' '))
     rec('with no Run selected the Run commands are disabled (and so are Open run and New work file)', offered === 'tools-copy-invitation tools-copy-link tools-edit-plan tools-go-live tools-open-run tools-plan-like-this tools-publish tools-unpublish tools-new-work-file'.split(' ').sort().join(' '), offered)

@@ -1,3 +1,5 @@
+import { recordingDurationMs } from './recording-duration'
+import { resolveFfmpeg, shippedFfmpegCandidates, systemFfmpegCandidates } from './ffmpeg-path'
 // Streaming a recording to disk while it records — the main-process IPC for the presenter's audio
 // capture (src/preload/present-audio-capture.ts). The bridge appends each MediaRecorder chunk as it
 // arrives (recording:stream-*), every call scoped to the window that opened the stream; the
@@ -5,11 +7,11 @@
 // written. A recording that never reaches Stop becomes a Run marked partial: at once when its
 // window goes, else on the next launch (recoverInterruptedRecordings).
 
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { dirname, join } from 'path'
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { normaliseRun, runReservationIsFor, writeNewRunFile, type RunMark, type RunRecord } from './runs'
-import { saveTargets, segmentIndexOfFile, sessionIdRandom, sessionIdTaken, vaultSessionPath } from './recording-paths'
+import { existingRecordedSegmentPath, saveTargets, segmentIndexOfFile, sessionIdRandom, sessionIdTaken, vaultSessionPath } from './recording-paths'
 import { isSafeTalkSlug } from './runs'
 import { createRecordingStreams, type RecordingStreams } from './recording-stream'
 import { audioMsFromSegments, type RunAudioGap, type RunAudioSegment } from '../shared/run-audio'
@@ -23,6 +25,8 @@ export interface StreamLedger {
 }
 
 export interface StreamIpcDeps {
+  configuredFfmpeg?: () => string
+  durationTimeoutMs?: number
   userDataDir: () => string
   vaultRoot: () => string | null
   /**
@@ -40,6 +44,7 @@ export interface StreamIpcDeps {
 
 let streams: RecordingStreams | null = null
 let streamDeps: StreamIpcDeps | null = null
+const recoveryProblems = new Set<string>()
 const watchedSenders = new Set<number>()
 
 export function toBytes(value: unknown): Uint8Array | null {
@@ -149,6 +154,22 @@ export async function recoverInterruptedRecordings(): Promise<number> {
         if (savedRunFor(targets.sessionJson, sessionId, manifest.talkSlug)) { streams.complete(sessionId); continue }
         if (!runReservationIsFor(targets.sessionJson, sessionId, manifest.talkSlug)) continue
       }
+      let recoveryNote: string | undefined
+      for (const seg of found.segments) {
+        const open = manifest.segments.find(s => s.file === seg.file || s.index === segmentIndexOfFile(seg.file))
+        if (open?.endMs !== null || seg.bytes === 0) continue
+        try {
+          const ffmpeg = resolveFfmpeg({ configured: deps.configuredFfmpeg?.() ?? '', shipped: shippedFfmpegCandidates({ platform: process.platform, resourcesPath: process.resourcesPath, appPath: app.getAppPath(), packaged: app.isPackaged }), system: systemFfmpegCandidates(process.platform), exists: existsSync })
+          if (!ffmpeg.found) throw new Error('ffmpeg is unavailable')
+          const path = existingRecordedSegmentPath(deps.userDataDir(), sessionId, open.index, seg.file)
+          if (!path) throw new Error('The recovery audio file is missing')
+          const measured = await recordingDurationMs(ffmpeg.path, path, deps.durationTimeoutMs)
+          seg.endMs = Math.max(seg.endMs, seg.startMs + Math.ceil(measured))
+        } catch (error) {
+          recoveryNote = 'The last audio segment could not be measured. Its checkpointed timing was kept.'
+          console.warn('[recording] recovered with checkpointed timing:', sessionId, error instanceof Error ? error.message : String(error))
+        }
+      }
       const lastEnd = found.segments.reduce((max, seg) => Math.max(max, seg.endMs), 0)
       const recordingMs = Math.max(manifest.recordingMs, lastEnd)
       const rawMarks = Array.isArray(manifest.rawMarks) ? manifest.rawMarks as RunMark[] : []
@@ -169,6 +190,7 @@ export async function recoverInterruptedRecordings(): Promise<number> {
         transcript: null,
         slideTimeIndex: L && rawMarks.length ? L.buildSlideTimeIndex(rawMarks) : []
       }
+      if (recoveryNote) Object.assign(session.audio, { recoveryNote })
       mkdirSync(dirname(targets.sessionJson), { recursive: true })
       if (vault && !vaultSessionPath(vault, manifest.talkSlug, sessionId).ok) continue
       // Created exclusively: a Run that appeared meanwhile is kept as it is, never replaced.
@@ -182,9 +204,11 @@ export async function recoverInterruptedRecordings(): Promise<number> {
         throw e
       }
       streams.complete(sessionId)
+      recoveryProblems.delete(sessionId)
       written += 1
       deps.onSessionSaved?.({ talkSlug: manifest.talkSlug, kind: 'delivery', runId: sessionId, vaultRoot: vault ?? null })
     } catch (e) {
+      recoveryProblems.add(found.manifest.sessionId)
       console.warn('[recording] could not recover an interrupted recording:', e)
     }
   }
@@ -201,14 +225,14 @@ export function listRecordingRecovery(): RecordingRecovery[] {
       : manifest.vaultRoot === null ? null : deps.vaultRoot()
     if (vault === undefined) return [{ ...base, status: 'waiting-for-vault' as const, message: 'Open this recording’s vault to finish recovery. Its audio is safe on this Mac.' }]
     const target = saveTargets(vault, deps.userDataDir(), manifest.talkSlug, manifest.sessionId, false)
-    let blocked = !target.ok
+    let blocked = recoveryProblems.has(manifest.sessionId) || !target.ok
     if (target.ok) {
       try {
         lstatSync(target.sessionJson)
         if (savedRunFor(target.sessionJson, manifest.sessionId, manifest.talkSlug)) return []
-        blocked = !runReservationIsFor(target.sessionJson, manifest.sessionId, manifest.talkSlug)
+        blocked ||= !runReservationIsFor(target.sessionJson, manifest.sessionId, manifest.talkSlug)
       } catch (e) {
-        blocked = (e as NodeJS.ErrnoException).code !== 'ENOENT' || existsSync(`${target.sessionJson}.reservation`)
+        blocked ||= (e as NodeJS.ErrnoException).code !== 'ENOENT' || existsSync(`${target.sessionJson}.reservation`)
       }
     }
     return [{ ...base, status: blocked ? 'needs-attention' as const : 'ready' as const,

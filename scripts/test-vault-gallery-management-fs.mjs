@@ -1,10 +1,11 @@
+import { tmpdir as fixtureTmpdir } from 'node:os'
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import vm from 'node:vm'
 import {transformSync} from 'esbuild'
 const source=fs.readFileSync('src/main/index.ts','utf8')
-const root=fs.mkdtempSync(path.resolve('evidence/vault-gallery/management-final-repairs/.fs-'))
+const root=fs.mkdtempSync(path.join(fixtureTmpdir(),'tw-gallery-fs-'))
 try{
  const handlers=new Map();let held=false
  const outline=path.join(root,'old/old-outline.md');fs.mkdirSync(path.dirname(outline));fs.writeFileSync(outline,'---\ntitle: Old\nhandout_url: https://fixture.invalid/old\n---\nDirty text\n')

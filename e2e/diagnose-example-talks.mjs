@@ -162,7 +162,7 @@ try {
   // The quotation paragraph command and the grid commands added since the original practice walk.
   await caretOn('Try it: move a slide')
   await key('Shift+Enter'); await key('Meta+z')
-  await key('Meta+4', 600)
+  await key('Meta+2', 600) // Grid (R18: ⌘1 Slides, ⌘2 Grid, ⌘3 Strip)
   await page.locator('.grid-cell').filter({ hasText: 'Four stalls' }).first().click()
   await palette('Select section')
   await page.locator('[data-batch-bar]').waitFor()
@@ -172,13 +172,13 @@ try {
   await palette('Clear slide selection')
   await page.waitForSelector('[data-batch-bar]', { state: 'detached' })
   await page.locator('.grid-cell').filter({ hasText: 'Four stalls' }).first().click()
-  await palette('Set aside in Scratchpad')
+  await palette('Set aside in Slide Scratchpad') // PR 326: the command uses the full product name.
   await page.waitForSelector('.sp-card')
   await page.waitForFunction(() => ![...document.querySelectorAll('.grid-cell')].some((node) => node.innerText.includes('Four stalls')))
   await page.locator('.grid-view').focus()
   await key('Meta+z', 600)
   await page.locator('.grid-cell').filter({ hasText: 'Four stalls' }).first().waitFor()
-  await key('Meta+2', 500)
+  await key('Meta+1', 500)
   await page.evaluate(() => window.dispatchEvent(new Event('tw-guide-open')))
   await page.locator('[data-chapter-detail="Write the outline"]').waitFor()
 

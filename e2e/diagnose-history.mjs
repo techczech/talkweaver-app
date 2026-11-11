@@ -1,4 +1,4 @@
-// Real-Electron harness for TalkWeaver History (ADR-0035, Plan 3 C3).
+// Real-Electron harness for the Runs view (house rule R5: History and Sessions merged; was the History harness, ADR-0035, Plan 3 C3).
 //
 // Runs the app in TEST MODE (TW_REC_TEST=1): handout live checks are deterministic
 // (mock-live URLs are live; everything else is offline) and recording upload short-circuits to the
@@ -231,6 +231,8 @@ const sessions = [
     context: 'Delivered without recording'
   })
 ]
+// The first Run was given with a published Run handout (the mock-live URL answers live in test mode).
+sessions[0].handoutUrl = talkA.handout
 const shownAt = Date.parse(isoDaysAgo(1, 16, 50))
 sessions[4].instantSlides = [
   { id: `text-${shownAt}`, kind: 'text', shownAt, afterSlideId: 'opening', text: 'Try it now: ask the person next to you.' },
@@ -263,7 +265,11 @@ const plannedRun = {
 writeFileSync(join(tempVault, '_PRESENTATIONS', plannedRun.talkSlug, `${plannedRun.id}.json`), JSON.stringify(plannedRun, null, 2), 'utf8')
 
 const sessionPath = (s) => join(tempVault, '_PRESENTATIONS', s.talkSlug, `${s.id}.json`)
-const row = (page, id) => page.locator(`[data-history-sid="${id}"]`)
+// The Runs view (R5): a Run is a row of the list (selected by clicking it) and its detail pane carries the ledger.
+const listRow = (page, s) => page.locator(`[data-sessions-row="${s.talkSlug}/${s.id}"]`)
+const selectRun = async (page, s) => { await listRow(page, s).click(); await page.waitForSelector(`[data-sessions-detail="${s.talkSlug}/${s.id}"]`, { timeout: 8000 }); await page.waitForTimeout(500) }
+const detail = (page) => page.locator('[data-sessions-detail]')
+const viewMenu = async (page, open = true) => { const on = (await page.locator('.tw-runs-viewmenu').count()) > 0; if (on !== open) await page.locator('[data-runs-view]').click() }
 
 await ensureFreshBuild(REPO)
 const app = await electron.launch({
@@ -287,145 +293,110 @@ async function openHistoryWindow() {
 
 try {
   let tools = await openHistoryWindow()
-  const opened = await tools.waitForSelector('.twhistory', { timeout: 6000 }).then(() => true).catch(() => false)
-  record('History opens via tw-open-history', opened)
+  const opened = await tools.waitForSelector('[data-tools-view="runs"]', { timeout: 6000 }).then(() => true).catch(() => false)
+  record('the Runs view opens via tw-open-history (the old History command)', opened)
 
-  const rowsReady = await tools.waitForSelector('[data-history-sid]', { timeout: 6000 }).then(() => true).catch(() => false)
-  const rowCount = await tools.locator('[data-history-sid]').count()
-  record('History defaults to Delivery runs only', rowsReady && rowCount === 3, `rows=${rowCount}`)
+  const rowsReady = await tools.waitForSelector('[data-sessions-row]', { timeout: 6000 }).then(() => true).catch(() => false)
+  const rowCount = await tools.locator('[data-sessions-row]').count()
+  record('the Runs view defaults to deliveries and the planned Run', rowsReady && rowCount === 4, `rows=${rowCount}`)
 
-  const dateActive = await tools.locator('.twh-segwrap', { hasText: 'Group' }).locator('button.active').textContent().catch(() => '')
-  const groupCount = await tools.locator('.twh-group').count()
-  record('default grouping is Date and rows are grouped', dateActive?.trim() === 'Date' && groupCount >= 2, `active=${dateActive?.trim()} groups=${groupCount}`)
+  const upcoming = await tools.locator('[data-sessions-group="upcoming"] ~ [data-sessions-row], [data-sessions-group="upcoming"]').count()
+  const groups = await tools.locator('[data-sessions-group]').evaluateAll((els) => els.map((e) => e.getAttribute('data-sessions-group')))
+  record('the list is grouped Upcoming and Past', groups.join(',') === 'upcoming,past' && upcoming > 0, groups.join(','))
+  const plannedRow = listRow(tools, plannedRun)
+  const plannedInUpcoming = await plannedRow.evaluate((el) => { let n = el.parentElement.firstElementChild; return n?.getAttribute('data-sessions-group') === 'upcoming' }).catch(() => false)
+  record('a planned Run is listed under Upcoming, never as a delivered row', plannedInUpcoming)
 
-  const summary = ((await tools.locator('.twh-summary').textContent().catch(() => '')) || '').replace(/\s+/g, ' ').trim()
-  const summaryOk = summary.includes('2 talks delivered') && summary.includes('2 recorded') && await waitFor(async () => {
-    const t = ((await tools.locator('.twh-summary').textContent().catch(() => '')) || '').replace(/\s+/g, ' ').trim()
-    return t.includes('1 still live')
-  }, 6000)
-  const summaryAfterLive = ((await tools.locator('.twh-summary').textContent().catch(() => '')) || '').replace(/\s+/g, ' ').trim()
-  record('summary counts Delivery talks, recordings, and live handouts only', summaryOk, summaryOk ? summaryAfterLive : summary)
+  // Handout badges are on the Run's ledger (checked against the live URL).
+  await selectRun(tools, sessions[0])
+  const liveBadge = await waitFor(async () => (await tools.locator('[data-run-handout-status="live"]').count()) === 1, 6000)
+  await selectRun(tools, sessions[2])
+  const unpubBadge = await waitFor(async () => (await tools.locator('[data-run-handout-status="unpub"]').count()) === 1, 6000)
+  await selectRun(tools, sessions[4])
+  const logUnpub = await waitFor(async () => (await tools.locator('[data-run-handout-status="unpub"]').count()) === 1, 6000)
+  record('the ledger shows live / unpublished handout badges correctly', liveBadge && unpubBadge && logUnpub, `live=${liveBadge} unpub=${unpubBadge} log=${logUnpub}`)
 
-  const badgesReady = await waitFor(async () => {
-    const aLive = await tools.locator(`[data-history-sid="${sessions[0].id}"] .live-badge.live`).count()
-    const bUnpub = await tools.locator(`[data-history-sid="${sessions[2].id}"] .live-badge.unpub`).count()
-    const logUnpub = await tools.locator(`[data-history-sid="${sessions[4].id}"] .live-badge.unpub`).count()
-    return aLive === 1 && bUnpub === 1 && logUnpub === 1
-  }, 6000)
-  record('Delivery rows show live/unpublished handout badges correctly', badgesReady)
+  const rehearsalHidden = await listRow(tools, sessions[1]).count()
+  const recordingHidden = await listRow(tools, sessions[3]).count()
+  record('Rehearsal and Recording Runs are hidden by default', rehearsalHidden === 0 && recordingHidden === 0, `rehearsalRows=${rehearsalHidden} recordingRows=${recordingHidden}`)
 
-  const deliveryChip = await tools.locator('.twh-chip.kind.delivery.on').count()
-  const rehearsalHidden = await row(tools, sessions[1].id).count()
-  const recordingHidden = await row(tools, sessions[3].id).count()
-  record('Delivery kind chip is active by default; Rehearsal/Recording rows are hidden',
-    deliveryChip === 1 && rehearsalHidden === 0 && recordingHidden === 0,
-    `deliveryChip=${deliveryChip} rehearsalRows=${rehearsalHidden} recordingRows=${recordingHidden}`)
-
-  await tools.locator('.twh-chip.kind.rehearsal').click()
-  await tools.locator('.twh-chip.kind.recording').click()
+  await viewMenu(tools, true)
+  await tools.locator('[data-runs-kind="rehearsal"]').click()
+  await tools.locator('[data-runs-kind="recording"]').click()
+  await viewMenu(tools, false)
   await tools.waitForTimeout(300)
-  const widenedRows = await tools.locator('[data-history-sid]').count()
-  const rehearsalTag = await row(tools, sessions[1].id).locator('.twh-kind-tag.rehearsal', { hasText: 'Rehearsal' }).count()
-  const recordingTag = await row(tools, sessions[3].id).locator('.twh-kind-tag.recording', { hasText: 'Recording' }).count()
-  const deliveryTags = await tools.locator('.twh-kind-tag.delivery', { hasText: 'Delivery' }).count()
-  record('kind chips widen the ledger and row kind tags render', widenedRows === 5 && rehearsalTag === 1 && recordingTag === 1 && deliveryTags >= 3, `rows=${widenedRows} rehearsalTag=${rehearsalTag} recordingTag=${recordingTag} deliveryTags=${deliveryTags}`)
+  const widenedRows = await tools.locator('[data-sessions-row]').count()
+  const rehearsalTag = await listRow(tools, sessions[1]).locator('.kd', { hasText: 'Rehearsal' }).count()
+  const recordingTag = await listRow(tools, sessions[3]).locator('.kd', { hasText: 'Recording' }).count()
+  record('the kinds in View widen the list and rows carry their kind', widenedRows === 6 && rehearsalTag === 1 && recordingTag === 1, `rows=${widenedRows} rehearsalTag=${rehearsalTag} recordingTag=${recordingTag}`)
 
-  await row(tools, sessions[1].id).locator('.twh-kebab').click()
-  await tools.locator('.twh-menu button', { hasText: 'Change kind' }).click()
-  await tools.locator('.twh-kind-choice button', { hasText: 'Delivery' }).click()
-  const kindSaved = await waitFor(() => {
-    const onDisk = JSON.parse(readFileSync(sessionPath(sessions[1]), 'utf8'))
-    return onDisk.kind === 'delivery'
-  }, 5000)
-  const changedTag = await waitFor(async () => (await row(tools, sessions[1].id).locator('.twh-kind-tag.delivery', { hasText: 'Delivery' }).count()) === 1, 6000).then((ok) => ok ? 1 : 0)
-  record('Change kind in the kebab persists to disk and updates the row tag', kindSaved && changedTag === 1, `disk=${kindSaved} tag=${changedTag}`)
+  await selectRun(tools, sessions[1])
+  await tools.locator('[data-run-kind] button', { hasText: 'Delivery' }).click()
+  const kindSaved = await waitFor(() => JSON.parse(readFileSync(sessionPath(sessions[1]), 'utf8')).kind === 'delivery', 5000)
+  const changedTag = await waitFor(async () => (await listRow(tools, sessions[1]).locator('.kd').count()) === 0, 6000)
+  record('Change kind in the ledger persists to disk and updates the row', kindSaved && changedTag, `disk=${kindSaved} row=${changedTag}`)
 
-  const logRecText = ((await row(tools, sessions[4].id).locator('.twh-rec').textContent().catch(() => '')) || '').replace(/\s+/g, ' ').trim()
-  const logMuted = await row(tools, sessions[4].id).locator('.wave.muted').count()
-  const logStudioLinks = await row(tools, sessions[4].id).locator('.studio-link').count()
-  const logUploadControls = await row(tools, sessions[4].id).locator('.upl').count()
-  record('audio:null Delivery run renders as not recorded with delivered duration and no Studio/Upload action',
-    /not recorded/i.test(logRecText) && /16m delivered/i.test(logRecText) && logMuted === 1 && logStudioLinks === 0 && logUploadControls === 0,
-    `text=${logRecText} muted=${logMuted} studioLinks=${logStudioLinks} upload=${logUploadControls}`)
+  await selectRun(tools, sessions[4])
+  const logText = ((await tools.locator('[data-run-recording]').textContent().catch(() => '')) || '').replace(/\s+/g, ' ').trim()
+  record('an audio:null delivery renders as not recorded with its delivered duration and no Studio or Upload action',
+    /not recorded/i.test(logText) && /16m delivered/i.test(logText) && await tools.locator('[data-run-open-studio], [data-run-upload]').count() === 0, logText)
 
-  await tools.locator('.twh-chip', { hasText: 'Has recording' }).click()
+  await tools.locator('[data-sessions-filter="recorded"]').click()
   await tools.waitForTimeout(250)
-  const filteredCount = await tools.locator('[data-history-sid]').count()
-  const chipOn = await tools.locator('.twh-chip.on', { hasText: 'Has recording' }).count()
-  const logStillVisible = await row(tools, sessions[4].id).count()
-  record('Has recording filter toggles on, keeps audio runs across kinds, and excludes audio:null runs',
-    chipOn === 1 && filteredCount === 4 && logStillVisible === 0,
-    `chipOn=${chipOn} rows=${filteredCount} logRows=${logStillVisible}`)
+  const filteredCount = await tools.locator('[data-sessions-row]').count()
+  const chipOn = await tools.locator('[data-sessions-filter="recorded"][aria-pressed="true"]').count()
+  const logStillVisible = await listRow(tools, sessions[4]).count()
+  record('the Recorded filter keeps Runs with audio across kinds and drops audio:null Runs', chipOn === 1 && filteredCount === 4 && logStillVisible === 0, `chipOn=${chipOn} rows=${filteredCount} logRows=${logStillVisible}`)
 
-  await tools.locator('.twh-searchfield input').fill('guest seminar')
+  await tools.locator('.tw-runs-search input').fill('guest seminar')
   await tools.waitForTimeout(300)
-  const searchRows = await tools.locator('[data-history-sid]').count()
-  const searchSid = await tools.locator('[data-history-sid]').first().getAttribute('data-history-sid').catch(() => null)
-  record('search narrows History to the matching session', searchRows === 1 && searchSid === sessions[2].id, `rows=${searchRows} sid=${searchSid}`)
+  const searchRows = await tools.locator('[data-sessions-row]').count()
+  const searchRun = await tools.locator('[data-sessions-row]').first().getAttribute('data-sessions-row').catch(() => null)
+  record('search narrows the Runs view to the matching Run', searchRows === 1 && searchRun === `${sessions[2].talkSlug}/${sessions[2].id}`, `rows=${searchRows} run=${searchRun}`)
 
-  await tools.locator('.twh-chip.clear').click()
+  await tools.locator('[data-runs-clear]').click()
   await tools.waitForTimeout(300)
 
-  await row(tools, sessions[1].id).locator('.twh-stamp').click()
+  await selectRun(tools, sessions[1])
   await tools.keyboard.press('E')
-  const editInput = row(tools, sessions[1].id).locator('.ctx-input')
-  await editInput.fill('Edited after audience questions')
+  await tools.locator('.rl-input').fill('Edited after audience questions')
   await tools.keyboard.press('Enter')
-  const contextSaved = await waitFor(() => {
-    const onDisk = JSON.parse(readFileSync(sessionPath(sessions[1]), 'utf8'))
-    return onDisk.context === 'Edited after audience questions'
-  }, 5000)
-  const contextText = await row(tools, sessions[1].id).locator('.ctx-text').textContent().catch(() => '')
+  const contextSaved = await waitFor(() => JSON.parse(readFileSync(sessionPath(sessions[1]), 'utf8')).context === 'Edited after audience questions', 5000)
+  const contextText = await tools.locator('.rl-context .rl-text').textContent().catch(() => '')
   record('context edit persists to the session.json on disk', contextSaved && contextText === 'Edited after audience questions', `disk=${contextSaved} ui=${contextText}`)
 
-  await row(tools, sessions[1].id).locator('.upl.local button', { hasText: 'Upload' }).click()
-  const uploadSaved = await waitFor(() => {
-    const onDisk = JSON.parse(readFileSync(sessionPath(sessions[1]), 'utf8'))
-    return onDisk.audio?.uploaded === true
-  }, 6000)
-  const uploadChip = ((await row(tools, sessions[1].id).locator('.upl.r2').textContent().catch(() => '')) || '').trim()
+  await tools.locator('[data-run-upload]').click()
+  const uploadSaved = await waitFor(() => JSON.parse(readFileSync(sessionPath(sessions[1]), 'utf8')).audio?.uploaded === true, 6000)
+  const uploadChip = ((await tools.locator('[data-run-recording] ~ .rl-actions').textContent().catch(() => '')) || '').trim()
   const mockHasKey = existsSync(mockPath) && readFileSync(mockPath, 'utf8').split('\n').filter(Boolean).some((line) => {
-    try {
-      return JSON.parse(line).r2Key === `presentations/${sessions[1].talkSlug}/${sessions[1].id}/audio.webm`
-    } catch {
-      return false
-    }
+    try { return JSON.parse(line).r2Key === `presentations/${sessions[1].talkSlug}/${sessions[1].id}/audio.webm` } catch { return false }
   })
-  record('local Upload action flips uploaded=true and updates the chip', uploadSaved && /in R2/i.test(uploadChip) && mockHasKey, `uploaded=${uploadSaved} chip=${uploadChip} mockKey=${mockHasKey}`)
+  record('the local Upload action flips uploaded=true and updates the badge', uploadSaved && /uploaded/i.test(uploadChip) && mockHasKey, `uploaded=${uploadSaved} chip=${uploadChip} mockKey=${mockHasKey}`)
 
-  const beforeGroup = await tools.locator('.twh-segwrap', { hasText: 'Group' }).locator('button.active').textContent().catch(() => '')
+  await tools.locator('body').click({ position: { x: 5, y: 5 } }).catch(() => {})
+  const beforeGroup = await tools.locator('[data-sessions-group]').first().getAttribute('data-sessions-group')
   await tools.keyboard.press('G')
   await tools.waitForTimeout(250)
-  const afterGroup = await tools.locator('.twh-segwrap', { hasText: 'Group' }).locator('button.active').textContent().catch(() => '')
-  record('keyboard G cycles grouping', beforeGroup?.trim() === 'Date' && afterGroup?.trim() === 'Month', `before=${beforeGroup?.trim()} after=${afterGroup?.trim()}`)
+  const afterGroup = await tools.locator('[data-sessions-group]').first().getAttribute('data-sessions-group')
+  record('keyboard G cycles grouping', beforeGroup === 'upcoming' && /^month:/.test(afterGroup ?? ''), `before=${beforeGroup} after=${afterGroup}`)
 
   const closed = tools.waitForEvent('close', { timeout: 4000 }).then(() => true).catch(() => false)
   await tools.keyboard.press('Escape').catch(() => {})
-  record('Esc closes the Tools window from History', await closed)
+  record('Esc closes the Tools window from the Runs view', await closed)
 
-  // (q) Work-files ticket 29: Publish and Unpublish live only in the Run checklist in Sessions.
+  // (q) Work-files ticket 29 (ADR-0040 decision 6): the ledger has no Publish or Unpublish and no pre-work column;
+  // Publish and Unpublish live in the Run checklist on the Run's own page, in the same view.
   tools = await openHistoryWindow()
-  await tools.waitForSelector('[data-history-sid]', { timeout: 6000 })
-  await row(tools, sessions[0].id).locator('.twh-kebab').click()
-  await tools.waitForSelector('.twh-menu', { timeout: 3000 }).catch(() => {})
-  const menuButtons = (await tools.locator('.twh-menu button').allTextContents()).map((text) => text.trim())
-  const menuToSessions = await tools.locator('.twh-menu [data-open-in-sessions]').count()
-  record('History menu has no Publish or Unpublish for a Run and offers Open in Sessions',
-    menuButtons.length > 0 && !menuButtons.some((text) => /publish/i.test(text)) && menuToSessions === 1, JSON.stringify(menuButtons))
-  await tools.locator('.twh-menu button', { hasText: 'Run details' }).click()
-  await tools.waitForSelector('.twh-run-detail', { timeout: 3000 }).catch(() => {})
-  const detailButtons = (await tools.locator('.twh-run-detail button').allTextContents()).map((text) => text.trim())
-  record('Run details has no Publish or Unpublish and offers Open in Sessions',
-    detailButtons.length > 0 && !detailButtons.some((text) => /publish/i.test(text)) && detailButtons.includes('Open in Sessions'), JSON.stringify(detailButtons))
-  await tools.locator('.twh-run-detail header button').click()
-  const plannedRow = tools.locator(`[data-planned-run="${plannedRun.id}"]`)
-  const plannedShown = await plannedRow.waitFor({ timeout: 6000 }).then(() => true).catch(() => false)
-  const plannedHead = ((await tools.locator('.twh-plan-grid.head').textContent().catch(() => '')) || '')
-  record('the planned Run is listed with no pre-work column',
-    plannedShown && !/pre-work/i.test(plannedHead) && await tools.locator('[data-plan-prework], [data-review-prework]').count() === 0, plannedHead)
-  await plannedRow.locator('.twh-plan-event').click()
-  const toSessions = await tools.waitForSelector(`[data-tools-view="sessions"][data-run="${plannedRun.talkSlug}/${plannedRun.id}"]`, { timeout: 10_000 }).then(() => true).catch(() => false)
-  record('a planned Run row opens its Run page in Sessions in the same Tools window', toSessions && await tools.locator('.twhistory').count() === 0)
+  await tools.waitForSelector('[data-sessions-row]', { timeout: 6000 })
+  await selectRun(tools, sessions[0])
+  const ledgerButtons = (await tools.locator('[data-run-ledger] button, [data-run-handout-status] button').allTextContents()).map((text) => text.trim()).filter(Boolean)
+  record('the ledger has no Publish or Unpublish for a Run', ledgerButtons.length > 0 && !ledgerButtons.some((text) => /publish/i.test(text)), JSON.stringify(ledgerButtons))
+  record('the Run page beside it carries the Run checklist', await tools.locator('[data-run-checklist]').count() === 1)
+  await selectRun(tools, plannedRun)
+  const planned = tools.locator(`[data-sessions-detail="${plannedRun.talkSlug}/${plannedRun.id}"]`)
+  const plannedPre = await tools.locator('[data-plan-prework], [data-review-prework]').count()
+  record('a planned Run opens its Run page in the same Tools window, with a Publish step and no pre-work column',
+    await planned.count() === 1 && await planned.locator('[data-run-action="publish"]').count() === 1 && plannedPre === 0)
   const stillOneTools = app.windows().filter((w) => w !== page).length
   record('no second Tools window is opened', stillOneTools === 1, `windows=${stillOneTools}`)
   const sessionsClosed = tools.waitForEvent('close', { timeout: 4000 }).then(() => true).catch(() => false)
@@ -436,9 +407,9 @@ try {
   const outlineB = join(talkB.dir, `${talkB.slug}-outline.md`)
   const outlineA = join(talkA.dir, `${talkA.slug}-outline.md`)
   tools = await openHistoryWindow()
-  await tools.waitForSelector('.twhistory', { timeout: 6000 })
-  await row(tools, sessions[4].id).locator('.twh-stamp').click()
-  const isl = row(tools, sessions[4].id).locator('.isl')
+  await tools.waitForSelector('[data-tools-view="runs"] [data-sessions-list]', { timeout: 6000 })
+  await selectRun(tools, sessions[4])
+  const isl = detail(tools).locator('.isl')
   const islRows = await isl.locator('.isl-row').count().catch(() => 0)
   const islHead = ((await isl.locator('.isl-h').textContent().catch(() => '')) || '').replace(/\s+/g, ' ')
   const textRow = isl.locator('.isl-row').nth(0)
@@ -477,9 +448,9 @@ try {
   await tools.keyboard.press('Escape').catch(() => {})
   await closedAgain
   tools = await openHistoryWindow()
-  await tools.waitForSelector('.twhistory', { timeout: 6000 })
-  await row(tools, sessions[4].id).locator('.twh-stamp').click()
-  const survives = await waitFor(async () => /Added after slide 3/.test(((await row(tools, sessions[4].id).locator('.isl-row').nth(0).locator('.isl-add.done').textContent().catch(() => '')) || '')), 6000)
+  await tools.waitForSelector('[data-tools-view="runs"] [data-sessions-list]', { timeout: 6000 })
+  await selectRun(tools, sessions[4])
+  const survives = await waitFor(async () => /Added after slide 3/.test(((await detail(tools).locator('.isl-row').nth(0).locator('.isl-add.done').textContent().catch(() => '')) || '')), 6000)
   record('Added after slide N survives reopening History', survives)
 
   // Editor route: talk A open in the main window with an UNSAVED edit; the slide goes in through the
@@ -491,8 +462,8 @@ try {
   await page.keyboard.type(' UNSAVEDMARK')
   const unsavedOnDisk = readFileSync(outlineA, 'utf8').includes('UNSAVEDMARK')
   await tools.bringToFront()
-  await row(tools, sessions[0].id).locator('.twh-stamp').click()
-  const linkRow = row(tools, sessions[0].id).locator('.isl-row').nth(0)
+  await selectRun(tools, sessions[0])
+  const linkRow = detail(tools).locator('.isl-row').nth(0)
   await linkRow.locator('button.isl-add').click()
   const editorAdded = await waitFor(async () => /Added after slide 3/.test(((await linkRow.locator('.isl-add.done').textContent().catch(() => '')) || '')), 10000)
   const bufferHasBoth = await waitFor(async () => {
@@ -532,7 +503,7 @@ try {
   await page.waitForTimeout(1900) // the 1.5 s autosave has fired and is now held in flight
   const heldInFlight = await app.evaluate(() => globalThis.__twHoldNextWrite === false)
   await tools.bringToFront()
-  const inflightRow = row(tools, sessions[0].id).locator('.isl-row').nth(1)
+  const inflightRow = detail(tools).locator('.isl-row').nth(1)
   await inflightRow.locator('button.isl-add').click()
   const inflightAdded = await waitFor(async () => /Added after slide \d+/.test(((await inflightRow.locator('.isl-add.done').textContent().catch(() => '')) || '')), 12000)
   await page.waitForTimeout(3500) // any stale write would have landed by now
@@ -547,7 +518,7 @@ try {
   // offers "Add to talk" again, the file is untouched, and the slide is in the editor, undoable.
   const beforeFail = readFileSync(outlineA)
   chmodSync(outlineA, 0o444)
-  const failRow = row(tools, sessions[0].id).locator('.isl-row').nth(2)
+  const failRow = detail(tools).locator('.isl-row').nth(2)
   await failRow.locator('button.isl-add').click()
   const failMessage = await waitFor(async () => /could not be saved to disk, so it is not marked as added/i.test(((await failRow.locator('.isl-err').textContent().catch(() => '')) || '')), 12000)
   const failRun = JSON.parse(readFileSync(sessionPath(sessions[0]), 'utf8')).instantSlides?.[2]?.added
@@ -575,15 +546,15 @@ try {
   // insertion planned against the editor's older buffer and its save erased the option from disk.
   await page.bringToFront()
   await page.waitForTimeout(2000) // let the retry's follow-up saves settle
-  await page.keyboard.press('Meta+2')
+  await page.keyboard.press('Meta+1')
   await page.waitForTimeout(500)
   if (await page.locator('.tw-inspector').count() === 0) await page.keyboard.press('Meta+p')
   await page.waitForTimeout(800)
   await page.locator('.cm-content .cm-line', { hasText: 'Thank you.' }).first().click()
   await page.waitForTimeout(600)
-  await page.keyboard.press('Meta+3')
+  // R18: the Inspector is a tab of the right sidebar beside the editor (there is no strip-only Inspector view any more).
   await page.waitForTimeout(800)
-  const stripOnly = await page.locator('.tw-inspector').count() === 1 && !(await page.locator('.cm-content').first().isVisible().catch(() => false))
+  const stripOnly = await page.locator('.tw-inspector').count() === 1
   const inspectedTitle = ((await page.locator('.tw-inspector-title').first().textContent().catch(() => '')) || '').trim()
   const sizeL = page.locator('.tw-inspector-group[data-group="font-body"] button', { hasText: /^L$/ }).first()
   const optionOffered = await sizeL.count() === 1
@@ -591,7 +562,7 @@ try {
   await sizeL.click().catch(() => {})
   const clickedAt = Date.now()
   await tools.bringToFront()
-  const raceRow = row(tools, sessions[0].id).locator('.isl-row').nth(3)
+  const raceRow = detail(tools).locator('.isl-row').nth(3)
   await raceRow.locator('button.isl-add').click()
   const addPressedAfterMs = Date.now() - clickedAt
   const raceAdded = await waitFor(async () => /Added after slide \d+/.test(((await raceRow.locator('.isl-add.done').textContent().catch(() => '')) || '')), 12000)
@@ -603,7 +574,7 @@ try {
   // The editor buffer must hold exactly what is on disk (read with the editor back on screen: the
   // slides-only view detaches it from the page).
   await page.bringToFront()
-  await page.keyboard.press('Meta+2')
+  await page.keyboard.press('Meta+1')
   await page.waitForTimeout(600)
   const bufferText = await page.evaluate(() => {
     const el = document.querySelector('.cm-content')
@@ -622,8 +593,9 @@ try {
   // through WorkspaceLayout.handleReorder → the D1 seam; "Add to talk" goes through main's one writer
   // to the same buffer. Neither may undo the other on disk or in the buffer.
   await page.bringToFront()
-  // (n) left the Inspector in the strip's place: put the strip back (⌘P toggles it).
-  if (await page.locator('.tw-inspector').count() > 0) await page.keyboard.press('Meta+p')
+  // The strip is the second tab of the right sidebar (R11a): bring the sidebar up if needed and pick the tab.
+  if (await page.locator('[data-right-column]').count() === 0) await page.keyboard.press('Meta+p')
+  await page.locator('[data-rc-tab="slides"] button').click()
   await waitFor(async () => (await page.locator('.tw-slide-card').count()) > 0, 8000)
   await page.waitForTimeout(2500) // earlier saves settle; the strip has cards for every slide
   const headingsOf = (text) => text.split('\n').filter((l) => /^#{1,6} /.test(l))
@@ -641,7 +613,7 @@ try {
   })
   const droppedAt = Date.now()
   await tools.bringToFront()
-  const reorderRow = row(tools, sessions[0].id).locator('.isl-row').nth(4)
+  const reorderRow = detail(tools).locator('.isl-row').nth(4)
   await reorderRow.locator('button.isl-add').click()
   const addAfterMs = Date.now() - droppedAt
   const reorderAdded = await waitFor(async () => /Added after slide \d+/.test(((await reorderRow.locator('.isl-add.done').textContent().catch(() => '')) || '')), 12000)
@@ -713,8 +685,8 @@ try {
   await closedAgain
 
   tools = await openHistoryWindow()
-  await tools.waitForSelector('.twhistory', { timeout: 6000 })
-  await row(tools, sessions[2].id).locator('.twh-stamp').click()
+  await tools.waitForSelector('[data-tools-view="runs"] [data-sessions-list]', { timeout: 6000 })
+  await selectRun(tools, sessions[2])
   await tools.keyboard.press('Enter')
   const studioUp = await tools.waitForSelector('.twstudio', { timeout: 6000 }).then(() => true).catch(() => false)
   const activeSid = await tools.locator('.tws-scard.active').getAttribute('data-sid').catch(() => null)

@@ -28,6 +28,7 @@ import { createHash } from 'crypto'
 import { existsSync, statSync } from 'fs'
 import { dirname, isAbsolute, resolve } from 'path'
 import { LayoutVerbError, previewLayout, type LayoutOptionChoice } from '../shared/layout-verbs.ts'
+import type { PreviewVariant } from './preview-variant.ts'
 import type { VariantThumbnail } from '../shared/variant-thumbnail-result.ts'
 import { selectedThumbnailSlide, selectedThumbnailSlideAtLine, type IndexedThumbnailSlide, type ThumbnailProjectionRow } from '../shared/slide-preview.ts'
 
@@ -51,12 +52,16 @@ export interface VariantThumbnailDeps {
     slug: string
     model: { fullHtml?: unknown }
     rows: Array<{ [k: string]: unknown }> | null
+    /** The deck's preview variant (preview-variant.ts), passed on to the render as it is. */
+    preview?: PreviewVariant
+    /** sha256 of the marked deck, worked out where it was compiled: the document id without a pass here. */
+    previewKey?: string
   } | null>
-  render(opts: { fullHtml: string; slides: IndexedThumbnailSlide[]; cacheDir: string; background?: boolean }): Promise<Record<string, string>>
+  render(opts: { fullHtml: string; preview?: PreviewVariant; slides: IndexedThumbnailSlide[]; cacheDir: string; background?: boolean }): Promise<Record<string, string>>
   cacheDirFor(outlinePath: string, slug: string): string
   urlFor(slug: string, cacheName: string, outlinePath: string): string
-  /** Document identity for the cache key (the deck's compiled HTML). */
-  documentId(fullHtml: string): string
+  /** Document identity for the cache key (the deck's compiled HTML; `previewKey` saves hashing it). */
+  documentId(fullHtml: string, previewKey?: string): string
   /** A fingerprint of the files the compile reads besides the text (default: `mediaFingerprint`). */
   inputsFingerprint?(outlinePath: string, outline: string): string
   fileExists?: (path: string) => boolean
@@ -173,11 +178,11 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
     if (!prepared || typeof fullHtml !== 'string' || !prepared.rows) return failed
     const rows = prepared.rows as ThumbnailProjectionRow[]
     const selected = request.headingLine != null
-      ? selectedThumbnailSlideAtLine(rows, request.headingLine, deps.documentId(fullHtml))
-      : selectedThumbnailSlide(rows, request.slideId, deps.documentId(fullHtml))
+      ? selectedThumbnailSlideAtLine(rows, request.headingLine, deps.documentId(fullHtml, prepared.previewKey))
+      : selectedThumbnailSlide(rows, request.slideId, deps.documentId(fullHtml, prepared.previewKey))
     if (!selected) return failed
     const cacheDir = deps.cacheDirFor(request.outlinePath, prepared.slug)
-    const rendered = await deps.render({ fullHtml, slides: [selected], cacheDir, background: true })
+    const rendered = await deps.render({ fullHtml, preview: prepared.preview, slides: [selected], cacheDir, background: true })
     const png = rendered[selected.key]
     if (!png) return failed
     const url = deps.urlFor(prepared.slug, pngName(png), request.outlinePath)

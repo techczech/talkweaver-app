@@ -282,7 +282,12 @@ try {
   await check('capture: each kind is a valid message with a path that resolves', async () => {
     const { context, page, frame, msgs, waitFor, hello, clear, settle } = await host([['sim', FRAME_HTML]])
     const sim = frame('sim')
+    await sim.evaluate(() => window.scrollTo(0, 500))
     await hello('sim', T1, 'capture')
+    await waitFor('sim', 'scroll')
+    assert.ok((await msgs('sim', 'scroll'))[0].fy > 0, 'capture activation publishes the actual initial scroll, not an assumed top position')
+    await sim.evaluate(() => window.scrollTo(0, 0))
+    await settle()
     await clear()
 
     await sim.click('#inc')
@@ -591,6 +596,9 @@ try {
     await settle()
     assert.equal((await msgs('sim', 'ready')).length, 2, 'the second run made the first agent announce itself again')
     await hello('sim', T1, 'capture')
+    await waitFor('sim', 'scroll')
+    await settle()
+    assert.equal((await msgs('sim', 'scroll')).length, 1, 'a single initial position is published after duplicate injection')
     await clear()
     await sim.click('#inc')
     await sim.click('#name')

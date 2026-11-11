@@ -173,7 +173,7 @@ try {
   await hereDeck.evaluate(() => window.close()).catch(() => {})
   await page.waitForTimeout(1500)
   for (const window_ of app.windows()) if (window_ !== page) await window_.close().catch(() => {})
-  // No Run is planned in this test any more (ticket 29 took out the Inspector's Plan a run…), so there is none.
+  // No Run is planned in this test any more (ticket 29 took out the Inspector's Plan a Run…), so there is none.
   const runFiles = readdirSync(join(vault, '_PRESENTATIONS', 'agents-now')).filter((name) => name.endsWith('.json') && name !== 'manifest.json')
   rec('no stray Run file from a closed quick peek', runFiles.length === 0, JSON.stringify(runFiles))
 } finally {

@@ -73,9 +73,10 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.find-talk', '⇧⌘S', ['Mod-Shift-s'], 'Find a talk', 'Opens the slide picker with the cursor in Find a talk, or moves it there when the picker is already open.', 'Find & insert'],
     ['app.context-menu', '⌘K', ['Mod-k'], 'Actions here', 'Opens Actions here: what you can do where the caret, the selected slide or the selected row is.', 'App'],
     ['app.layout-picker', '⌘L', ['Mod-l'], 'Layout picker: Open', 'Opens the layout picker in the Inspector column for the current slide; pressed again, it closes and puts the slide back.', 'Find & insert'],
-    ['app.icon-picker', '⌘I', ['Mod-i'], 'Insert icon', 'Puts an icon on the title, paragraph or list item the cursor is on, in the Plain and the Markdown view.', 'Find & insert'],
+    ['app.edit-image', '— · ⌘⇧P', [], 'Crop and mark up image', 'Opens the editor for the pooled image at the cursor. No default key; rebindable.', 'Find & insert', true],
+    ['app.icon-picker', '⌘I', ['Mod-i'], 'Insert icon', 'Places an icon beside a title, paragraph or list item at the cursor, in Plain or Markdown view.', 'Find & insert'],
     ['app.image-search', '⌘⇧I', ['Mod-Shift-i'], 'Find images', 'Opens or closes the image drawer beside the editor: screenshots, images from old PowerPoints and pictures from your talks.', 'Find & insert'],
-    ['app.set-aside', '⌘⌥S', ['Mod-Alt-s'], 'Set aside in Scratchpad', 'Copies selected slides to the Scratchpad before removing them from the talk. Undo restores the outline.', 'Slides'],
+    ['app.set-aside', '⌘⌥S', ['Mod-Alt-s'], 'Set aside in Slide Scratchpad', 'Copies selected slides to the Slide Scratchpad before removing them from the talk. Undo restores the outline.', 'Slides'],
     ['app.grid-search', '⌘⌥F', ['Mod-Alt-f'], 'Search slides in the grid', 'Shows the grid and moves focus to its search box. The outline search and the grid search are one query.', 'Slides'],
     ['app.search-next', '⌘⌥J', ['Mod-Alt-j'], 'Next search result', 'Moves to the next slide that matches the search in the grid or the outline.', 'Slides'],
     ['app.search-previous', '⌘⌥⇧J', ['Mod-Alt-Shift-j'], 'Previous search result', 'Moves to the previous slide that matches the search in the grid or the outline.', 'Slides'],
@@ -83,20 +84,21 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.where-used', '⌘⇧U', ['Mod-Shift-u'], 'Where used and versions', 'Shows where the current slide is reused and its available versions.', 'Slides'],
     ['app.slide-focus', '⌘⌥⇧F', ['Mod-Alt-Shift-f'], 'Focus current slide', 'Scopes editing and live preview to the current slide.', 'Slides'],
     ['app.command-palette', '⌘⇧P', ['Mod-Shift-p'], 'Command palette', 'Opens the searchable list of application commands.', 'App'],
-    ['app.toggle-inspector', '⌘P', ['Mod-p'], 'Inspector mode (replaces the slide strip)', 'Toggles the Inspector in every pane where the slide strip would appear.', 'View'],
+    ['app.toggle-inspector', '⌘P', ['Mod-p'], 'Show or hide the sidebar', 'Shows or hides the right sidebar (Inspector, Strip, Guide, Research, Images), whichever tab is up.', 'View'],
     ['app.inspector-slides', '⌥↑ / ⌥↓', ['Alt-ArrowUp', 'Alt-ArrowDown'], 'Inspector previous or next slide', 'Moves the Inspector and editor cursor to the adjacent slide while focus is in the Inspector.', 'View'],
     ['app.inspector-steps', '⌥← / ⌥→', ['Alt-ArrowLeft', 'Alt-ArrowRight'], 'Inspector previous or next step', 'Steps reveal, focus, or carousel behaviour in the Inspector preview.', 'View'],
     ['app.new-window', '⌘N', ['Mod-n'], 'New window', 'Opens another TalkWeaver window.', 'App'],
     ['app.help', '⌘/ / ⌃/', ['Mod-/', 'Ctrl-/'], 'Keyboard shortcuts', 'Opens or closes the generated keyboard shortcut sheet.', 'App'],
     ['app.check-for-updates', '— · ⌘⇧P', [], 'Check for Updates', 'Reads talkweaver.app now and says whether a newer version exists. No default key; rebindable.', 'App', true],
     ['app.whats-new', '— · ⌘⇧P', [], 'What\u2019s new in TalkWeaver', 'Opens the notes for the version you are running in the right-hand column. No default key; rebindable.', 'App', true],
-    ['app.view-editor', '⌘1', ['Mod-1'], 'Editor only', 'Switches the workspace to the editor-only view.', 'View'],
-    ['app.view-split', '⌘2', ['Mod-2'], 'Editor and slides', 'Switches the workspace to the split editor and slide view.', 'View'],
-    ['app.view-strip', '⌘3', ['Mod-3'], 'Slide strip', 'Switches the workspace to the slide strip view.', 'View'],
-    ['app.view-grid', '⌘4', ['Mod-4'], 'Grid', 'Switches the workspace to the slide grid view.', 'View'],
+    ['app.view-slides', '⌘1', ['Mod-1'], 'Slides', 'Switches the workspace to the Slides view: the editor, with the right sidebar on or off as it was.', 'View'],
+    ['app.view-grid', '⌘2', ['Mod-2'], 'Grid', 'Switches the workspace to the slide grid view.', 'View'],
+    ['app.view-strip', '⌘3', ['Mod-3'], 'Strip', 'Switches the workspace to the Strip view: the slide strip at full width.', 'View'],
     ['app.present', 'F5', ['F5'], 'Present from the top', 'Opens presenter view at the first slide.', 'Present'],
     ['app.present-current', '⇧F5', ['Shift-F5'], 'Present from current slide', 'Opens presenter view at the selected slide.', 'Present'],
-    ['app.pathways', '⌘⌥P', ['Mod-Alt-p'], 'Open Pathway view', 'Opens the current Talk’s Pathway manager in its own window.', 'Present']
+    ['app.add-to-pathway', '⌘⌥A', ['Mod-Alt-a'], 'Add to pathway…', 'Adds the selected grid slides to a chosen pathway in talk order.', 'Slides'],
+    ['app.present-pathway', '⌘⌥↵', ['Mod-Alt-Enter'], 'Present this pathway', 'Presents the selected pathway from the docked main-window view.', 'Present'],
+    ['app.pathways', '⌘⌥P', ['Mod-Alt-p'], 'Open Pathway view', 'Shows the talk grid and docked pathway list in the main window.', 'Present']
   ]),
   ...entries('editor', [
     ['editor.undo', '⌘Z', ['Mod-z'], 'Undo', 'Reverses the last outline editor change.', 'Editing'],
@@ -228,10 +230,10 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     // Recording (src/preload/present-rec-ui.ts; present in the presenter window TalkWeaver opens).
     ['presenter.record', '⇧R', ['Shift-r'], 'Start, or stop and save, recording', 'Starts recording the talk; while recording or paused, stops and saves it.', 'Recording'],
     ['presenter.record-pause', '⇧P', ['Shift-p'], 'Pause or resume recording', 'Pauses the recording, or resumes a paused one.', 'Recording'],
-    ['presenter.save-run-as', 'L', ['l'], 'Save run as…', 'Opens the run-kind picker (Delivery, Rehearsal, Recording) to save or relabel this run in History.', 'Recording'],
-    ['presenter.save-run', '↵', ['Enter'], 'Save this run as a delivery', 'While the save offer shows at the last slide, saves the run to History as a delivery.', 'Recording'],
+    ['presenter.save-run-as', 'L', ['l'], 'Save run as…', 'Opens the run-kind picker (Delivery, Rehearsal, Recording) to save or relabel this Run in the Runs view.', 'Recording'],
+    ['presenter.save-run', '↵', ['Enter'], 'Save this run as a delivery', 'While the save offer shows at the last slide, saves the Run as a delivery in the Runs view.', 'Recording'],
     ['presenter.reveal', 'R', ['r'], 'Reveal mode', 'Toggles progressive content reveal mode.', 'Modes & display'],
-    ['presenter.focus', 'F', ['f'], 'Focus mode', 'Toggles focus mode for stepping through slide elements.', 'Modes & display'],
+    ['presenter.focus', 'F', ['f'], 'Spotlight', 'Toggles spotlight for stepping through slide elements.', 'Modes & display'],
     ['presenter.rebind', '⌘⇧,', ['Mod-Shift-,'], 'Rebind the highlighted command', 'With a command selected in the palette, records a new shortcut.', 'Help'],
     ['presenter.pointer', 'I', ['i'], 'Pointer', 'Points at the current slide on the audience and venue screens.', 'Modes & display'],
     // The Pen (0.38 ticket 08; ADR-0037): live ink on the current slide or zoomed image, kept per slide until cleared.
@@ -251,7 +253,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['presenter.embed', 'E', ['e'], 'Interact with embed', 'Enters or exits interaction with the current embedded page.', 'Modes & display'],
     ['presenter.font-larger', '+', ['+'], 'Increase text size', 'Increases the shared deck font size.', 'Modes & display'],
     ['presenter.font-smaller', '−', ['-'], 'Decrease text size', 'Decreases the shared deck font size.', 'Modes & display'],
-    ['presenter.audience', 'F5', ['F5'], 'Launch audience', 'Opens the chromeless audience window on another display.', 'Audience'],
+    ['presenter.audience', 'F5', ['F5'], 'Open audience window', 'Opens the chromeless audience window on another display.', 'Audience'],
     ['presenter.live', 'G', ['g'], 'Go or end live', 'Starts or ends the live audience-follow session.', 'Audience'],
     ['presenter.poll-primary', 'Q', ['q'], 'Open or close current poll', 'Opens an armed poll or closes the poll currently collecting responses.', 'Audience'],
     ['presenter.poll-reveal', '⇧ Q', ['Shift-q'], 'Reveal held poll results', 'Reveals a held poll’s current results to the audience.', 'Audience'],
@@ -275,20 +277,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['presenter.close', 'Esc', ['Escape'], 'Close overlay or mode', 'Closes the most local overlay, interaction, or active presentation mode.', 'Help']
   ]),
   ...entries('pathway', [
-    ['pathway.move', '↑ ↓ ← →', ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'], 'Move focus', 'Moves focus through pathway rows, slide cards, or Matrix cells.', 'Navigation'],
-    ['pathway.toggle', 'Space', ['Space'], 'Toggle slide membership', 'Ticks or unticks the focused slide in the selected pathway.', 'Slides'],
-    ['pathway.grid', 'G', ['g'], 'Grid view', 'Shows all outline slides as rendered thumbnail cards.', 'View'],
-    ['pathway.list', 'L', ['l'], 'List view', 'Shows the pathway as a numbered running order with slide previews', 'View'],
-    ['pathway.matrix', 'M', ['m'], 'Matrix view', 'Shows outline rows against every pathway column.', 'View'],
-    ['pathway.previews', 'P', ['p'], 'Toggle previews', 'Show or hide slide previews in List and Matrix.', 'View'],
-    ['pathway.reorder', '⌥R', ['Alt-r'], 'Reorder mode', 'Shows pathway order badges and enables pathway-only reordering.', 'Reorder'],
     ['pathway.move-item', '⌘↑ / ⌘↓', ['Mod-ArrowUp', 'Mod-ArrowDown'], 'Move pathway slide', 'Moves the focused ticked slide within pathway order without changing the outline.', 'Reorder'],
-    ['pathway.present', '↵', ['Enter'], 'Present this pathway', 'Presents only present slide ids, in pathway order, skipping missing ids.', 'Present'],
-    ['pathway.new', '⌘N', ['Mod-n'], 'New pathway', 'Creates and selects a new empty pathway.', 'Manage'],
-    ['pathway.rename', '⌘R', ['Mod-r'], 'Rename pathway', 'Renames the selected pathway without changing its slides.', 'Manage'],
-    ['pathway.delete', '⌘⌫', ['Mod-Backspace'], 'Delete pathway', 'Deletes the selected pathway after confirmation.', 'Manage'],
-    ['pathway.drop-missing', '⌘⇧⌫', ['Mod-Shift-Backspace'], 'Drop missing slides', 'Removes every missing slide id from the selected pathway.', 'Manage'],
-    ['pathway.help', '?', ['?'], 'Keyboard cheat-sheet', 'Opens the Pathway window’s keyboard shortcut sheet.', 'Help']
   ]),
   ...entries('studio', [
     ['studio.sidebar-toggle', '⌘\\', ['Mod-\\'], 'Collapse or expand recordings', 'Toggles the recordings sidebar so the player can use the full width.', 'View']
@@ -305,18 +294,18 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['talktext.close', 'Esc', ['Escape'], 'Close overlay or screen', 'Closes the most local overlay, then Manage notes.', 'Help']
   ]),
   ...entries('tools', [
-    ['tools.view-sessions', '⌘4', ['Mod-4'], 'Sessions', 'Shows the Sessions view. ⌘1 to ⌘3 stay Studio, History and the Importer, so the three views of this build take the next three numbers, in rail order. The numbers belong to this window, as ⌘1 to ⌘3 already are (⌘4 is Grid in the editor, a different window).', 'Views'],
+    ['tools.view-sessions', '⌘4', ['Mod-4'], 'Runs', 'Shows the Runs view (the old Sessions view, now with History in it; the shortcut keeps its id so a changed key stays changed). ⌘1 to ⌘3 stay Studio, History and the Importer, so the three views of this build take the next three numbers, in rail order. The numbers belong to this window, as ⌘1 to ⌘3 already are (⌘4 is Grid in the editor, a different window).', 'Views'],
     ['tools.view-published', '⌘5', ['Mod-5'], 'Published pages', 'Shows the Published pages view (⌘4 to ⌘6 follow ⌘1 to ⌘3, which Studio, History and the Importer hold).', 'Views'],
     ['tools.view-workfiles', '⌘6', ['Mod-6'], 'Work files', 'Shows the Work files view (⌘4 to ⌘6 follow ⌘1 to ⌘3, which Studio, History and the Importer hold).', 'Views'],
-    ['tools.plan-run', '⌘⌥N', ['Mod-Alt-n'], 'Plan a run', 'Opens the plan sheet. N for new, with ⌥ because ⌘N is New window (and New pathway in the Pathways window).', 'Plan'],
+    ['tools.plan-run', '⌘⌥N', ['Mod-Alt-n'], 'Plan a Run', 'Opens the plan sheet. N for new, with ⌥ because ⌘N is New window.', 'Plan'],
     ['tools.edit-plan', '⌘⌥E', ['Mod-Alt-e'], 'Edit plan', 'Edits the plan of the Run on show. E for edit, with ⌥ because ⌘E is Edit in the presenter.', 'Plan'],
-    ['tools.plan-like-this', '⌘⇧D', ['Mod-Shift-d'], 'Plan the next run like this', 'Opens the plan sheet filled in from the Run on show. D for duplicate, with ⇧ because ⌘D is Duplicate talk and ⌘⌥D is the macOS Dock shortcut.', 'Plan'],
+    ['tools.plan-like-this', '⌘⇧D', ['Mod-Shift-d'], 'Plan the next Run like this', 'Opens the plan sheet filled in from the Run on show. D for duplicate, with ⇧ because ⌘D is Duplicate talk and ⌘⌥D is the macOS Dock shortcut.', 'Plan'],
     ['tools.publish', '⌘⌥U', ['Mod-Alt-u'], 'Publish for this run', 'Publishes the Run on show (U for upload). ⌘⇧P is the command palette, so Publish takes ⌥ and a letter nothing else holds.', 'Publish'],
     ['tools.go-live', '⌘⌥L', ['Mod-Alt-l'], 'Go live', 'Starts the Run on show live. L for live, with ⌥ because ⌘⇧L is Insert link in the editor and ⌘L is the layout picker.', 'Publish'],
     ['tools.open-run', '⌘⌥O', ['Mod-Alt-o'], 'Open run', 'Opens the Run of the selected page in Published pages. O for open, with ⌥ because ⌘O is Open talk in the Talks panel and ⌘⇧R opens Research.', 'Views'],
     ['tools.copy-link', '⌘⇧C', ['Mod-Shift-c'], 'Copy link', 'Copies the link of the Run on show, the one its Published step shows with the QR code. C for copy; nothing else holds ⌘⇧C.', 'Publish'],
     ['tools.copy-invitation', '⌘⌥C', ['Mod-Alt-c'], 'Copy invitation text', 'Copies the invitation text of the Run on show (C for copy, ⌥ to tell it from Copy link).', 'Publish'],
-    ['tools.new-work-file', '⌘⇧N', ['Mod-Shift-n'], 'New work file', 'Starts a new work file in the Work files view. N for new; ⇧ because ⌘N is New window and ⌘⌥N is Plan a run.', 'Work files']
+    ['tools.new-work-file', '⌘⇧N', ['Mod-Shift-n'], 'New work file', 'Starts a new work file in the Work files view. N for new; ⇧ because ⌘N is New window and ⌘⌥N is Plan a Run.', 'Work files']
   ]),
   ...entries('importer', [
     ['importer.move', 'J / K', ['j', 'k'], 'Previous or next slide', 'Moves through the visible slide queue in the Inspection Bench.', 'Navigation'],

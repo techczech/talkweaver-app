@@ -15,9 +15,17 @@ export interface ThumbnailQueue<T> {
   /** Stop the owner's render: a running one is aborted (it settles with what it has), a waiting one
    *  settles with nothing. */
   cancel(owner: string): void
+  /** cancel() for every owner whose key starts with this prefix (a closed window's renders). */
+  cancelPrefix(prefix: string): void
+  /** Replace the owner's render: a waiting one settles with nothing; a running one is told through its
+   *  `superseded` signal to take no further slide, but the capture it is on completes and is cached. */
+  supersede(owner: string): void
 }
 
-/** One renderer, one pending document per editor; replaced callers still settle. A `background`
+/** One renderer, one pending document per editor; replaced callers still settle. A newer request
+ *  under the same owner SUPERSEDES the running one rather than aborting it: the slide being captured
+ *  finishes and is written (no work thrown away mid-capture), the rest of the old run is dropped, and
+ *  the replaced caller settles with nothing. cancel() still stops a run at once. A `background`
  *  job (a layout variant: the picker's and the Inspector's pictures of the slide) starts only when no
  *  normal job is pending, so the editor strip and the Slide Browser never wait behind a QUEUED variant;
  *  at most the one render already running (renders are not interrupted) finishes first. The variant's
@@ -29,7 +37,7 @@ export interface ThumbnailQueue<T> {
  *  slides it finished stay written, and the newcomer starts next. Nobody waits behind the prewarm for
  *  longer than one slide. */
 export function createThumbnailQueue<T>(
-  render: (options: T, signal: AbortSignal) => Promise<ThumbnailResult>,
+  render: (options: T, signal: AbortSignal, superseded: AbortSignal) => Promise<ThumbnailResult>,
   now: () => number = () => Date.now()
 ): ThumbnailQueue<T> {
   type Job = {
@@ -37,6 +45,8 @@ export function createThumbnailQueue<T>(
     priority: ThumbnailPriority
     options: T
     controller: AbortController
+    /** Soft stop: take no further slide (see supersede). */
+    replaced: AbortController
     resolve: (result: ThumbnailResult) => void
     reject: (error: unknown) => void
   }
@@ -55,14 +65,30 @@ export function createThumbnailQueue<T>(
     pending.delete(next.key)
     active = next
     try {
-      const result = await render(next.options, next.controller.signal)
-      next.resolve(next.controller.signal.aborted ? {} : result)
+      const result = await render(next.options, next.controller.signal, next.replaced.signal)
+      next.resolve(next.controller.signal.aborted || next.replaced.signal.aborted ? {} : result)
     } catch (error) {
-      if (next.controller.signal.aborted) next.resolve({})
+      if (next.controller.signal.aborted || next.replaced.signal.aborted) next.resolve({})
       else next.reject(error)
     } finally {
       active = null
       void drain()
+    }
+  }
+  const supersede = (key: string | symbol): void => {
+    if (active?.key === key) active.replaced.abort()
+    const waiting = pending.get(key)
+    if (waiting) {
+      pending.delete(key)
+      waiting.resolve({})
+    }
+  }
+  const cancel = (matches: (key: string | symbol) => boolean): void => {
+    if (active && matches(active.key)) active.controller.abort()
+    for (const [key, waiting] of [...pending]) {
+      if (!matches(key)) continue
+      pending.delete(key)
+      waiting.resolve({})
     }
   }
   const enqueue = ((options: T, owner?: string, background: boolean | 'idle' = false): Promise<ThumbnailResult> => {
@@ -73,28 +99,18 @@ export function createThumbnailQueue<T>(
       // Anything anyone is waiting for goes ahead of the prewarm, including the slide it is on.
       if (active && active.priority === 'idle' && active.key !== key) active.controller.abort()
     }
-    if (active?.key === key) active.controller.abort()
-    const replaced = pending.get(key)
-    if (replaced) {
-      pending.delete(key)
-      replaced.resolve({})
-    }
+    supersede(key)
     return new Promise((resolve, reject) => {
-      pending.set(key, { key, priority, options, controller: new AbortController(), resolve, reject })
+      pending.set(key, { key, priority, options, controller: new AbortController(), replaced: new AbortController(), resolve, reject })
       void drain()
     })
   }) as ThumbnailQueue<T>
   enqueue.foregroundBusy = () =>
     (active !== null && active.priority !== 'idle') || [...pending.values()].some((job) => job.priority !== 'idle')
   enqueue.lastForegroundAt = () => lastForeground
-  enqueue.cancel = (owner: string) => {
-    if (active?.key === owner) active.controller.abort()
-    const waiting = pending.get(owner)
-    if (waiting) {
-      pending.delete(owner)
-      waiting.resolve({})
-    }
-  }
+  enqueue.cancel = (owner: string) => cancel((key) => key === owner)
+  enqueue.cancelPrefix = (prefix: string) => cancel((key) => typeof key === 'string' && key.startsWith(prefix))
+  enqueue.supersede = (owner: string) => supersede(owner)
   return enqueue
 }
 
@@ -103,9 +119,9 @@ export function createLatestThumbnailRequestHandler<Input, Prepared, Result>(
   prepare: (input: Input) => Promise<Prepared>,
   render: (input: Input, prepared: Prepared, owner: string, isCurrent: () => boolean) => Promise<Result>,
   cancelledResult: Result
-): (owner: string, input: Input) => Promise<Result> {
+): ((owner: string, input: Input) => Promise<Result>) & { cancel(owner: string): void; cancelPrefix(prefix: string): void } {
   const latest = new Map<string, symbol>()
-  return async (owner, input) => {
+  const handle = async (owner: string, input: Input): Promise<Result> => {
     const token = Symbol()
     latest.set(owner, token)
     const isCurrent = (): boolean => latest.get(owner) === token
@@ -121,4 +137,8 @@ export function createLatestThumbnailRequestHandler<Input, Prepared, Result>(
       if (isCurrent()) latest.delete(owner)
     }
   }
+  return Object.assign(handle, {
+    cancel: (owner: string) => { latest.delete(owner) },
+    cancelPrefix: (prefix: string) => { for (const owner of [...latest.keys()]) if (owner.startsWith(prefix)) latest.delete(owner) }
+  })
 }

@@ -432,7 +432,7 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
       return (await operate('change', state => {
         const base = state.sort === 'manual' ? scratchOrder(state.items, state.order) : [...state.items].sort(newestFirst).map(item => item.id)
         const selected = new Set(visible)
-        if (base.filter(id => selected.has(id)).join('\0') !== visible.join('\0')) throw new Error('The Scratchpad order changed. Try the move again.')
+        if (base.filter(id => selected.has(id)).join('\0') !== visible.join('\0')) throw new Error('The Slide Scratchpad order changed. Try the move again.')
         let at = 0
         const order = base.map(id => selected.has(id) ? next[at++] : id)
         return { state: { ...state, sort: 'manual', order }, result: null }

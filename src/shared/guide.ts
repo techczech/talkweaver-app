@@ -14,7 +14,7 @@ export const GUIDE_TEXT = {
   stepsBar: 'First steps',
   steps: [
     { label: 'Choose your own vault', action: 'Add vault…' },
-    { label: 'Make your first talk', action: 'New presentation…' },
+    { label: 'Make your first talk', action: 'New talk…' },
     { label: 'Open the example talk', action: 'Open' },
   ],
   /** The result a ticked third step shows. */
@@ -146,18 +146,25 @@ export function firstStepsCount(steps: readonly FirstStep[]): string {
   return `${steps.filter((s) => s.done).length} of ${steps.length}`
 }
 
-// ── The right column's tab row ──────────────────────────────────────────────────────────────────
+// ── The right sidebar's tab row ─────────────────────────────────────────────────────────────────
 
-export type RightColumnTab = 'guide' | 'whats-new' | 'slides' | 'inspector'
+export type RightColumnTab = 'inspector' | 'slides' | 'talk' | 'guide' | 'research' | 'images' | 'feedback' | 'whats-new'
 
 /**
- * The tab row. With neither the Guide nor What's new up there is no row (the column is the strip or the
- * Inspector, as before). With either: Guide first, then What's new (opened by the Updated mark or its
- * command, update notices ADR-0041), then Slides and Inspector; with no talk open only the tabs that are
- * up, as there is no slide to show.
+ * The right sidebar's tabs (house rules R11a, R18). One sidebar with tabs: the Inspector first (the default),
+ * the slide strip second ('slides', shown as "Strip"), the Talk tab third (a talk's details and design, house rule R11), then Research and Images, then the tabs that are
+ * only there while they apply: the Guide while it is up, Feedback while the talk is shared, What's new while
+ * it is up (update notices, ADR-0041). With no talk open there is no slide to show, so only the tabs that
+ * are up (Guide, What's new) are listed.
  */
-export function rightColumnTabs(input: { guideUp: boolean; whatsNewUp?: boolean; hasTalk: boolean }): RightColumnTab[] {
+export function rightColumnTabs(input: { guideUp: boolean; whatsNewUp?: boolean; hasTalk: boolean; shared?: boolean }): RightColumnTab[] {
   const up: RightColumnTab[] = [...(input.guideUp ? ['guide' as const] : []), ...(input.whatsNewUp ? ['whats-new' as const] : [])]
-  if (up.length === 0) return []
-  return input.hasTalk ? [...up, 'slides', 'inspector'] : up
+  if (!input.hasTalk) return up
+  return [
+    'inspector', 'slides', 'talk',
+    ...(input.guideUp ? ['guide' as const] : []),
+    'research', 'images',
+    ...(input.shared ? ['feedback' as const] : []),
+    ...(input.whatsNewUp ? ['whats-new' as const] : [])
+  ]
 }

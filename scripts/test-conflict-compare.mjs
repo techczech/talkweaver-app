@@ -99,7 +99,7 @@ try {
     assert.equal(t.log.ledger.at(-1).lineage[0][1], 'bbbbb')
     assert.equal(t.log.activity.length, 1)
     assert.equal(t.log.activity[0].title, 'Merged the conflict copy from MacBook Air')
-    assert.equal(t.log.activity[0].detail, 'Kept Mine; added slide 2 from MacBook Air after slide 2. The copy was moved to the Trash.')
+    assert.equal(t.log.activity[0].detail, 'Kept Mine; added slide 2 from MacBook Air after slide 2. The copy was moved to the Bin.')
     assert.equal(r.summary, 'Merged. 1 slide added after slide 2. The conflict copy was removed.')
     assert.equal(t.log.rescans, 1)
   })
@@ -127,7 +127,7 @@ try {
     assert.equal(trashed['ws-outline (before merge 2026-09-30 0920).md'], MINE)
     assert.deepEqual(Object.keys(t.files()), ['ws-outline.md'])
     noLineLost([MINE, AIR], outline, trashed)
-    assert.match(t.log.activity[0].detail, /^Kept MacBook Air; added slide 2 from Mine after slide 2\. The copy was moved to the Trash\. Your version before the merge was moved to the Trash\.$/)
+    assert.match(t.log.activity[0].detail, /^Kept MacBook Air; added slide 2 from Mine after slide 2\. The copy was moved to the Bin\. Your version before the merge was moved to the Bin\.$/)
   })
 
   await test('Git markers in the outline: both sides compared; the merge leaves no markers and the marked file in the Trash', async () => {
@@ -209,7 +209,7 @@ try {
     assert.equal(readFileSync(t.outlinePath, 'utf8'), AIR)
     assert.equal(t.files()['ws-outline (before merge 2026-09-30 0920).md'], MINE)
     assert.deepEqual(Object.keys(t.trashed()), ['ws-outline-MacBook-Air.md'])
-    assert.equal(t.log.activity[0].detail, 'Kept MacBook Air; added nothing. The copy was moved to the Trash. Your version before the merge was kept beside the talk as “ws-outline (before merge 2026-09-30 0920).md”.')
+    assert.equal(t.log.activity[0].detail, 'Kept MacBook Air; added nothing. The copy was moved to the Bin. Your version before the merge was kept beside the talk as “ws-outline (before merge 2026-09-30 0920).md”.')
     assert.match(r.summary, /kept beside the talk as “ws-outline \(before merge/)
     noLineLost([MINE, AIR], readFileSync(t.outlinePath, 'utf8'), { ...t.trashed(), ...t.files() })
   })

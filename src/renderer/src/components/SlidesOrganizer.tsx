@@ -1,3 +1,4 @@
+import { slideKeys, useSlideSelection } from '../lib/useSlideSelection'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent as ReactClipboardEvent, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { slideRows, talkTitleLine } from '../extensions/slideOutline'
 import { startDragAutoScroll } from '../lib/dragAutoScroll'
@@ -7,12 +8,13 @@ import {
   toggleSectionTree, useOutlineCollapse
 } from '../lib/outlineCollapseStore'
 import { IcCollapse, IcExpand } from './talklist/icons'
+import { layoutDisplayName } from '../../../shared/layout-registry/options'
 import { highlightSegments, isEmptyQuery, parseQuery } from '../../../shared/slide-handling/query.ts'
 import { firstHitFrom, hitPosition, outlineBlocks, outlineItems, runSearch, sectionHitCounts, stepHit } from '../lib/slideSearchModel'
 import { registerSearchSurface, useSlideQuery, usePictureText, useSlideThumbs } from '../lib/slideSearch'
 import { releaseSelectionOutside, setOutlineSelection } from '../lib/outlineSelection'
 import { rowAfterEdit } from '../lib/activeOutlineLine'
-import { getStripNumbers, numbersAreCurrent, outlineNumbers, subscribeStripNumbers } from '../lib/stripNumbers'
+import { getOutlineMarks, getStripNumbers, numbersAreCurrent, outlineNumbers, subscribeStripNumbers, type OutlineMark } from '../lib/stripNumbers'
 import SlideRowMenus, { type SlideMenuRequest } from './SlideRowMenus'
 import type { OutlineOps } from './WorkspaceLayout'
 
@@ -57,7 +59,25 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     }
     return set
   }, [rows])
-  const [selectedLine, setSelectedLine] = useState<number | null>(null)
+  // Collapse keys count same-titled occurrences; selection must follow the authored block
+  // when those occurrences swap. Use the exact source (including descendants), never a title hash.
+  const selectionKeys = useMemo(() => {
+    const lines = content.split('\n')
+    return slideKeys(rows.map((row, i) => {
+      let end = i + 1
+      while (end < rows.length && rows[end].level > row.level) end++
+      return { slide_id: row.id, content_hash: lines.slice(row.line - 1, end < rows.length ? rows[end].line - 1 : lines.length).join('\n').trimEnd() }
+    }), () => true)
+  }, [content, rows])
+  const selection = useSlideSelection(selectionKeys, {
+    focusRows: rows,
+    focusAfterEdit: (rows, line, title, sameCount) => rowAfterEdit(rows, line, title, sameCount)
+  })
+  const selectedLine = selection.focusedIndex == null ? null : rows[selection.focusedIndex].line
+  const setSelectedLine = (line: number | null): void => {
+    if (line == null) selection.clear()
+    else selection.reset(rows.findIndex(r => r.line === line))
+  }
   const [highlightedLine, setHighlightedLine] = useState<number | null>(null)
   // ONE query shared with the grid (lib/slideSearch.ts); the search itself is src/shared/slide-handling/query.ts.
   const [query, setQuery] = useSlideQuery(talkKey ?? '')
@@ -73,9 +93,9 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
   const dragLevelRef = useRef(0)
   const [dropAt, setDropAt] = useState<number | 'end' | null>(null)
   const stopAutoScrollRef = useRef<(() => void) | null>(null)
-  // The dragged slide's text + a pending-jump marker, so after a drag the editor follows the slide
+  // The dragged slide's source identity + a pending-jump marker, so after a drag the editor follows the slide
   // to its NEW position (not the slot it left). Set on drop, consumed when rows re-derive.
-  const draggedTextRef = useRef<string | null>(null)
+  const draggedKeyRef = useRef<string | null>(null)
   const pendingJumpRef = useRef<string | null>(null)
   // Sections a resting drag opened (they return to collapsed when the drag ends unless the slide
   // was dropped inside), and the moment until which a keyboard move should reveal its result.
@@ -101,8 +121,6 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
       if (sel == null) return
       if (selectedLine == null) {
         setSelectedLine(sel)
-        const r = rows.find((x) => x.line === sel)
-        if (r) selTextRef.current = r.text
       }
       // A move done from here reveals the slide where it lands (see the re-find effect below).
       const wasArrow = ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)
@@ -125,46 +143,32 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     return () => window.removeEventListener('tw-search-slides', focus)
   }, [])
 
-  // Step 3: Keep selection on the moved node after an edit
-  const selTextRef = useRef<string | null>(null)
-  // Record the selected row's text whenever selection changes (for re-find after an edit).
-  // Only when the SELECTION changes. (It used to run on every change of the rows as well, and so
-  // took the title of whatever row had come to sit on the selected line number before the re-find
-  // below could look for the selected slide: when a slide of the same length moved past it, the
-  // selection passed to another slide without a word.)
-  useEffect(() => {
-    const r = rows.find((x) => x.line === selectedLine)
-    if (r) selTextRef.current = r.text
-  }, [selectedLine]) // eslint-disable-line react-hooks/exhaustive-deps
+  // The shared selection follows keyed rows through edits and moves.
   const rowCountRef = useRef(rows.length)
-  // After content changes (an op ran), if the selected line no longer matches, re-find by text.
   useEffect(() => {
-    const sameCount = rowCountRef.current === rows.length
-    if (selectedLine == null || !selTextRef.current) return
-    const next = rowAfterEdit(rows, selectedLine, selTextRef.current, sameCount)
-    selTextRef.current = next == null ? selTextRef.current : rows.find((x) => x.line === next)?.text ?? selTextRef.current
-    if (next === selectedLine) return
-    setSelectedLine(next)
-    // The slide moved from here: open the sections it landed in so it can be seen.
-    if (next != null && Date.now() < revealMovedUntilRef.current) {
+    if (selectedLine != null && Date.now() < revealMovedUntilRef.current) {
       revealMovedUntilRef.current = 0
-      revealLine(tk, next, content)
+      revealLine(tk, selectedLine, content)
     }
-  }, [rows]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedLine]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // The keyboard highlight is a line number too. After an edit that line is another row's: follow
   // the row it was on (by its text, as the selection does), or drop the highlight when that row is
   // gone, so a row the person never chose is not drawn as chosen. Declared before the two effects
   // below, whose own choice of row wins.
   const hlTextRef = useRef<string | null>(null)
+  const hlKeyRef = useRef<string | null>(null)
   useEffect(() => {
+    hlKeyRef.current = selectionKeys[rows.findIndex(row => row.line === highlightedLine)] ?? null
     hlTextRef.current = highlightedLine == null ? null : rows.find((x) => x.line === highlightedLine)?.text ?? null
   }, [highlightedLine]) // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     const sameCount = rowCountRef.current === rows.length
     rowCountRef.current = rows.length
     if (highlightedLine == null) return
-    const next = rowAfterEdit(rows, highlightedLine, hlTextRef.current, sameCount)
+    const identityIndex = selectionKeys.indexOf(hlKeyRef.current)
+    const next = identityIndex >= 0 ? rows[identityIndex].line : rowAfterEdit(rows, highlightedLine, hlTextRef.current, sameCount)
+    hlKeyRef.current = selectionKeys[rows.findIndex(row => row.line === next)] ?? null
     hlTextRef.current = next == null ? null : rows.find((x) => x.line === next)?.text ?? null
     if (next !== highlightedLine) setHighlightedLine(next)
   }, [rows]) // eslint-disable-line react-hooks/exhaustive-deps
@@ -175,7 +179,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     const t = pendingJumpRef.current
     if (!t) return
     pendingJumpRef.current = null
-    const match = rows.find((x) => x.text === t)
+    const match = rows[selectionKeys.indexOf(t)]
     if (match) {
       setSelectedLine(match.line)
       // A highlight left on another row would be a second marked row: it goes with the dragged slide.
@@ -193,14 +197,13 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     const row = rows.find((x) => x.line === line)
     if (!row) return
     landedLineRef.current = null
-    selTextRef.current = row.text
     setSelectedLine(line)
     setHighlightedLine(line)
     revealLine(tk, line, content)
     onJump(line)
   }, [rows]) // eslint-disable-line react-hooks/exhaustive-deps
   const landed = (line: number): void => { landedLineRef.current = line }
-  const afterCut = (): void => { selTextRef.current = null; setSelectedLine(null); setHighlightedLine(null) }
+  const afterCut = (): void => { setSelectedLine(null); setHighlightedLine(null) }
 
   // The row a command from the palette acts on when this panel has the keyboard (lib/outlineSelection.ts).
   useEffect(() => { setOutlineSelection(selectedLine ?? highlightedLine) }, [selectedLine, highlightedLine])
@@ -489,6 +492,15 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
   const stripNumbers = useSyncExternalStore(subscribeStripNumbers, getStripNumbers)
   const numbersByLine = useMemo(() => outlineNumbers(rows, stripNumbers), [rows, stripNumbers])
   const numbersCurrent = useMemo(() => numbersAreCurrent(rows, stripNumbers), [rows, stripNumbers])
+  // Section numbers (§1) and layout marks (R7): what the strip and the margin say of the same heading.
+  const outlineMarks = useSyncExternalStore(subscribeStripNumbers, getOutlineMarks)
+  const markOf = (r: { line: number; level: number }): OutlineMark => {
+    const own = outlineMarks.get(r.line)
+    // The talk title stands for the cover, which the compiler places on file line 1.
+    if (r.level === 1 && r.line === titleLine && !own?.layout) return { ...own, layout: outlineMarks.get(1)?.layout }
+    return own ?? {}
+  }
+  const markChips = (mark: OutlineMark): ReactNode => (mark.layout ? <span className="so-layout" data-so-layout title={`Layout: ${layoutDisplayName(mark.layout)} (${mark.layout})`}>{layoutDisplayName(mark.layout)}</span> : null)
   const rowNumber = (r: { line: number }): string => {
     const n = numbersByLine.get(r.line)
     return n != null ? String(n).padStart(2, '0') : ''
@@ -538,10 +550,10 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     stopAutoScrollRef.current?.()
     stopAutoScrollRef.current = null
   }
-  function beginDrag(e: ReactDragEvent<HTMLElement>, line: number, level: number, text: string): void {
+  function beginDrag(e: ReactDragEvent<HTMLElement>, line: number, level: number): void {
     dragLineRef.current = line
     dragLevelRef.current = level
-    draggedTextRef.current = text
+    draggedKeyRef.current = selectionKeys[rows.findIndex(row => row.line === line)] ?? null
     e.dataTransfer.effectAllowed = 'move'
     stopAutoScrollRef.current?.()
     if (panelRef.current) {
@@ -564,7 +576,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     if (target.kind === 'end') ops.moveToEnd(from)
     else if (target.kind === 'into') ops.moveInto(from, target.line)
     else ops.moveTo(from, target.line)
-    pendingJumpRef.current = draggedTextRef.current
+    pendingJumpRef.current = draggedKeyRef.current
   }
   const dropTarget = targetFor(dropAt)
   const dropClass = (line: number): string =>
@@ -639,13 +651,15 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
               style={indent}
               data-line={r.line}
               draggable
-              onDragStart={(e) => beginDrag(e, r.line, r.level, r.text)}
+              onDragStart={(e) => beginDrag(e, r.line, r.level)}
             >
               <span className="so-slide-no" data-so-no>{rowNumber(r)}</span>
               <button type="button" className="so-caret" onClick={(e) => { e.stopPropagation(); toggle(r.line, e.altKey) }} aria-expanded={!isCollapsed} title="Option-click: this section and all inside it">
                 {isCollapsed ? '▸' : '▾'}
               </button>
+              {markOf(r).sectionNumber && <span className="so-section-no" data-so-section-no title={`Section ${markOf(r).sectionNumber}`}>§{markOf(r).sectionNumber}</span>}
               <button type="button" className="so-section-label" onClick={() => select(r.line)}>{renderText(r.text)}</button>
+              {markChips(markOf(r))}
               {searching && (sectionHits.get(r.line) ?? 0) > 0 && <span className="so-hits" data-so-hits title="Hits inside this section">{sectionHits.get(r.line)} hit{sectionHits.get(r.line) === 1 ? '' : 's'}</span>}
               {heldSlides > 0 && <span className="so-count" data-so-count title={`${heldSlides} slide${heldSlides === 1 ? '' : 's'} inside`}>{heldSlides}</span>}
             </div>
@@ -664,7 +678,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
             data-line={r.line}
             onClick={() => select(r.line)}
             draggable
-            onDragStart={(e) => beginDrag(e, r.line, r.level, r.text)}
+            onDragStart={(e) => beginDrag(e, r.line, r.level)}
           >
             <span className="so-slide-no">{rowNumber(r)}</span>
             <span className="so-slide-text">
@@ -672,6 +686,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
               {snippetOf(r.line)}
               {thumbOf(r.line)}
             </span>
+            {markChips(markOf(r))}
           </button>
         )
       })}

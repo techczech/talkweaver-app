@@ -68,6 +68,7 @@ try {
     await page.waitForFunction((w) => JSON.stringify([...document.querySelectorAll('.cm-plain-margin-slide .cm-plain-margin-word')].map((x) => x.textContent.trim().toLowerCase())) === JSON.stringify(w), want, { timeout: 15000 })
       .catch(async () => { throw new Error(`${what}: the margin labels read ${JSON.stringify(await marginSlides())}`) })
   }
+  // PRs 324/326 add the layout chip to each outline row; keep exact title/order and saved-file checks.
   const outlineList = () => page.evaluate(() => [...document.querySelectorAll('.so-slide-no')].map((n) => n.parentElement.textContent.replace(/\s+/g, ' ').trim()))
   // The status bar settles: no in-flight ellipsis, then the count.
   const settledCount = async (n, what) => {
@@ -83,6 +84,15 @@ try {
 
   await page.locator('.toolbar-btn', { hasText: 'Insert' }).first().click()
   await page.getByRole('menuitem', { name: /Slide Scratchpad/ }).click()
+  // The panel floats (it opens beside the right sidebar, over the editor); drag it to the far right so the editor lines this walk clicks stay clear.
+  {
+    const head = await page.locator('.sp-head').boundingBox()
+    const width = (await page.evaluate(() => window.innerWidth))
+    await page.mouse.move(head.x + 120, head.y + 15)
+    await page.mouse.down()
+    await page.mouse.move(head.x + 120 + width, head.y + 15, { steps: 6 })
+    await page.mouse.up()
+  }
   await page.locator('.sp-card', { hasText: 'What is an agent?' }).click()
 
   // Change place: pick "Opening"; the list closes on the pick.
@@ -103,7 +113,7 @@ try {
   await page.waitForFunction(() => [...document.querySelectorAll('.so-slide-no')].some((n) => n.parentElement.textContent.includes('What is an agent?')))
   await settledCount(4, 'after the insert')
   await settledMargin(4, 'after the insert')
-  assert.deepEqual(await outlineList(), ['01Opening', '02What is an agent?', '03Middle', '04Closing'])
+  assert.deepEqual(await outlineList(), ['01OpeningStatement', '02What is an agent?Statement', '03MiddleStatement', '04ClosingStatement'])
   await page.locator('.sp-card', { hasText: 'What is an agent?' }).locator('.sp-inserted').waitFor()
   assert.equal(await page.locator('.sp-card', { hasText: 'What is an agent?' }).locator('.sp-inserted').innerText(), 'Inserted · ‘What is an agent?’')
   const marked = JSON.parse(readFileSync(join(talkDir, 'scratchpad', 'scratchpad-state.json'), 'utf8')).items[0]
@@ -118,7 +128,7 @@ try {
   await page.waitForFunction(() => ![...document.querySelectorAll('.so-slide-no')].some((n) => n.parentElement.textContent.includes('What is an agent?')))
   await settledCount(3, 'after the undo')
   await settledMargin(3, 'after the undo')
-  assert.deepEqual(await outlineList(), ['01Opening', '02Middle', '03Closing'])
+  assert.deepEqual(await outlineList(), ['01OpeningStatement', '02MiddleStatement', '03ClosingStatement'])
   await page.locator('.sp-card', { hasText: 'What is an agent?' }).locator('.sp-inserted').waitFor()
   assert.equal(await page.locator('.sp-card', { hasText: 'What is an agent?' }).locator('.sp-inserted').innerText(), 'Inserted before · not in the talk now')
 
@@ -151,7 +161,7 @@ try {
   await waitSaved(t => t === original, 'the batch can be undone again')
   await page.waitForFunction(() => document.querySelector('.sp-place-where')?.textContent === 'Inserts after slide 1 · ‘Opening’')
 
-  await page.locator('.pane-btn[title="Editor + slide strip"]').click()
+  await page.locator('[data-testid="slides-toggle"]').click()
 
   // An agent's SVG, visual only, at the chosen place: a new slide after Opening, copied into assets/, the card names
   // the slide by its title (a number would go stale), the agent's file untouched.
@@ -173,6 +183,8 @@ try {
   await settledMargin(4, 'after the SVG insert')
   await page.locator('.sp-card', { hasText: 'chart' }).locator('.sp-inserted').waitFor()
   assert.equal(await page.locator('.sp-card', { hasText: 'chart' }).locator('.sp-inserted').innerText(), 'Inserted · ‘Chart’')
+  // markInserted broadcasts the card before its IPC reply advances the chosen place.
+  await page.waitForFunction(() => document.querySelector('.sp-place-where')?.textContent === 'Inserts after slide 2 · ‘Chart’');
   assert.equal(await page.locator('.sp-place-where').innerText(), 'Inserts after slide 2 · ‘Chart’', 'the place moved on to the new slide, numbered as the outline numbers it')
 
   // An agent page cannot leave its own preview address for another app page, and no frame shows a vault file.

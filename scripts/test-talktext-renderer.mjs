@@ -80,7 +80,7 @@ assert.doesNotMatch(studioCss, /\.tws-sc-talk/)
 assert.match(app, /'talktext'/)
 assert.match(app, /<TalkText/)
 // The view list lives in one shared module (tools-views.ts); preload and main take their type from it.
-assert.match(readFileSync(new URL('../src/shared/tools-views.ts', import.meta.url), 'utf8'), /TOOLS_VIEWS = \['studio', 'history', 'pathways', 'talktext'/)
+assert.match(readFileSync(new URL('../src/shared/tools-views.ts', import.meta.url), 'utf8'), /TOOLS_VIEWS = \['studio', 'runs', 'talktext'/)
 assert.match(preload, /type ToolsView/)
 assert.match(preload, /rewrite:open-part/)
 assert.match(preload, /rewrite:discard-part/)

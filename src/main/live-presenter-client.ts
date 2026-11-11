@@ -1,4 +1,5 @@
-import { parseInkMessage, type InkMessage, parsePointerMessage, type PointerMessage, parsePresenterServerMessage, parseInstantSlide, type AudienceQuestion, type InstantSlide, type PollStateMessage, type PresenterAudienceMessage, type PresenterBoardMessage, type PresenterInstantMessage, type PresenterPollMessage, type ReactionCounts, type ReactionRecord, type SlideFocusState, type SlideLightboxState, type SlideState } from '../../worker/protocol'
+import { normaliseLiveEmbed, liveEmbedKey } from '../../compiler/assets/runtime/live-embed.js'
+import { parseInkMessage, type InkMessage, type EmbedMessage, parsePointerMessage, type PointerMessage, parsePresenterServerMessage, parseInstantSlide, type AudienceQuestion, type InstantSlide, type PollStateMessage, type PresenterAudienceMessage, type PresenterBoardMessage, type PresenterInstantMessage, type PresenterPollMessage, type ReactionCounts, type ReactionRecord, type SlideFocusState, type SlideLightboxState, type SlideState } from '../../worker/protocol'
 import { parseRecoveredVoteRecord, parseRecoveryServerMessage, type RecoveredVoteRecord, type SessionSnapshot, type SessionPresence } from '../../worker/recovery-protocol'
 
 export type LiveStatus = 'connecting' | 'live' | 'paused-reconnecting' | 'ending' | 'ended'
@@ -77,6 +78,7 @@ export function createLivePresenterClient(options: {
   let latest: SlideState | null = options.latest ?? null
   // The Pen's latest layer, in memory only: sent again once a reconnect is synchronised.
   let latestInk: InkMessage | null = null
+  const latestEmbeds = new Map<string, EmbedMessage>()
   let cursor = options.afterSequence ?? 0
   const bufferedRecords = new Map<number, RecoveredVoteRecord>()
   let reactionCursor = options.afterReactionSequence ?? 0
@@ -112,6 +114,7 @@ export function createLivePresenterClient(options: {
     if (stopped) return
     stopped = true; generation++
     latestInk = null
+    latestEmbeds.clear()
     disposeSocket()
     setStatus(status)
   }
@@ -222,6 +225,7 @@ export function createLivePresenterClient(options: {
             setStatus('live')
             diagnostic('synchronised')
             if (latestInk) send(latestInk)
+            for (const state of latestEmbeds.values()) if (state.slideId === latest?.slideId) send(state)
             heartbeat(); flush()
             return
           }
@@ -263,8 +267,22 @@ export function createLivePresenterClient(options: {
   return {
     publish(slideId: string, reveal: number, focus: SlideFocusState | null = null, lightbox?: SlideLightboxState, talkQr = false) {
       if (stopped || !slideId || !Number.isInteger(reveal) || reveal < 0) return
+      if (latest?.slideId !== slideId) {
+        for (const [key, state] of latestEmbeds) if (state.slideId === latest?.slideId) latestEmbeds.delete(key)
+      }
       latest = { slideId, reveal, focus, ...(lightbox ? { lightbox } : {}), ...(talkQr ? { talkQr: true } : {}) }
       if (liveStatus === 'live') send({ type: 'slide.publish', ...latest })
+    },
+    embed(value: unknown) {
+      const clean = normaliseLiveEmbed(value)
+      if (stopped || !clean) return
+      if (clean.event.k === 'scroll' || clean.event.k === 'unavailable') {
+        const key = liveEmbedKey(clean)
+        latestEmbeds.delete(key)
+        latestEmbeds.set(key, clean)
+        if (latestEmbeds.size > 32) latestEmbeds.delete(latestEmbeds.keys().next().value!)
+      }
+      if (liveStatus === 'live') send(clean)
     },
     pointer(message: PointerMessage) {
       const clean = parsePointerMessage(message)
@@ -288,7 +306,7 @@ export function createLivePresenterClient(options: {
       return operationId
     },
     end() { terminal('ended') },
-    disconnect() { stopped = true; generation++; disposeSocket() },
+    disconnect() { stopped = true; generation++; latestEmbeds.clear(); disposeSocket() },
     reconnect() { if (!stopped) fail('resume-check') },
     status: () => liveStatus,
   }

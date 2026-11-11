@@ -4,6 +4,7 @@
 // address is re-derived from the source talk's current rows once the talk has been rendered.
 import assert from 'node:assert/strict'
 import { deriveSlidePicture, slidePictureFor, noteSourceThumbUnavailable, onThumbRegen, thumbRegenNonce, resetSourceThumbs } from '../src/renderer/src/lib/scratchpadSourceThumbs.ts'
+import { sourceThumbnailClient } from '../src/renderer/src/lib/slideThumbnails.ts'
 import { thumbUrl } from '../src/renderer/src/lib/thumbUrl.ts'
 
 let checks = 0
@@ -40,5 +41,52 @@ await test('with no fix the saved address is used; after the talk is rendered th
   assert.equal(searched, 1)
   assert.equal(thumbRegenNonce(saved.talkPath), 1)
   assert.deepEqual(slidePictureFor(saved), { talkSlug: 'sample-talk', thumbKey: 'sha256-NEW', vaultId: 'this-machine-vault' })
+})
+await test('portable fallback and Browser source paths stay separate even when the first vault read fails', async () => {
+  resetSourceThumbs()
+  const source = { ...saved, talkPath: 'topic/shared/shared-outline.md', vaultId: 'old-machine' }
+  const a = '/vault-A/' + source.talkPath, b = '/vault-B/' + source.talkPath
+  const calls = [], seen = []
+  let readsA = 0
+  window.tw = {
+    vault: { list: async () => [{ id: 'a', root: '/vault-A' }, { id: 'b', root: '/vault-B' }] },
+    talk: {
+      readOutline: async path => path === a ? (++readsA === 1 ? null : 'A') : path === b ? 'B' : null,
+      thumbnails: async path => { calls.push(path); return { h: path } }
+    },
+    search: { allSlides: async () => [] }
+  }
+  const browser = sourceThumbnailClient((key, map) => seen.push([key, map.h]))
+  try {
+    noteSourceThumbUnavailable(source)
+    browser.note(a)
+    for (let i = 0; i < 15 && (seen.length === 0 || thumbRegenNonce(source.talkPath) === 0); i++) await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(calls, [b, a])
+    assert.deepEqual(seen, [[a, a]])
+    assert.equal(thumbRegenNonce(source.talkPath), 1)
+  } finally { browser.dispose(); resetSourceThumbs() }
+})
+await test('a second missing slide in a rendered Scratchpad talk rederives and notifies once more within the two-attempt budget', async () => {
+  resetSourceThumbs()
+  let renders = 0, notifications = 0
+  const second = { ...saved, slideId: 'second', title: 'A second slide' }
+  window.tw = {
+    vault: { list: async () => vaults },
+    talk: { readOutline: async () => '## source', thumbnails: async () => { renders++; return { h: 'image' } } },
+    search: { allSlides: async () => [row(), row({ slide_id: 'second', render_hash: 'second-NEW' })] }
+  }
+  const unsubscribe = onThumbRegen(() => { notifications++ })
+  const flush = async () => { for (let i = 0; i < 15; i++) await new Promise(resolve => setImmediate(resolve)) }
+  try {
+    noteSourceThumbUnavailable(saved); await flush()
+    assert.equal(thumbRegenNonce(saved.talkPath), 1)
+    noteSourceThumbUnavailable(second); noteSourceThumbUnavailable(second); await flush()
+    assert.equal(thumbRegenNonce(saved.talkPath), 2, 'a later missing slide gets a fresh notification')
+    assert.equal(slidePictureFor(second).thumbKey, 'second-NEW')
+    assert.equal(notifications, 2)
+    noteSourceThumbUnavailable(saved); await flush()
+    assert.equal(renders, 2, 'the third note cannot exceed the per-talk budget')
+    assert.equal(thumbRegenNonce(saved.talkPath), 2)
+  } finally { unsubscribe(); resetSourceThumbs() }
 })
 console.log(`${checks} checks passed`)

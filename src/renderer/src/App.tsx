@@ -1,31 +1,29 @@
+import { LayoutGrid } from 'lucide-react'
+import { NARROW_WINDOW_PX } from '../../shared/window-widths'
 import { flushSync } from 'react-dom'
 import ManagementLayer from './components/vault-gallery/ManagementLayer'
 import { isWorkspaceCovered } from './lib/workspaceCover'
 import { adoptMovedTalk, selectGuardedTalk, type GalleryOpenGuard } from './lib/talkSelection'
 import VaultGallery from './components/vault-gallery/VaultGallery'
 import { useState, useEffect, useCallback, useRef } from 'react'
-import type { PathwayWindowContext, TalkInfo, VaultView } from '../../preload/index'
+import type { TalkInfo, VaultView } from '../../preload/index'
 import VaultSetup from './components/VaultSetup'
 import TalkList, { PromptModal } from './components/talklist/TalkList'
 import WorkspaceLayout, { type OutlineOps } from './components/WorkspaceLayout'
 import NewTalkDialog, { createdTalk } from './components/NewTalkDialog'
 import SlidesOrganizer from './components/SlidesOrganizer'
-import MetadataPanel from './components/MetadataPanel'
 import Studio from './components/Studio'
-import History from './components/History'
-import Pathways from './components/Pathways'
 import TalkText from './components/TalkText'
 import Importer from './components/Importer'
 import Toasts from './components/Toasts'
-import PlanRunSheet, { type PlanRunTalk } from './components/PlanRunSheet'
 import { ToolsRail } from './components/ToolsRail'
 import { ToolsPalette } from './components/ToolsPalette'
 import { useToolsActions } from './lib/toolsActions'
 import { PublishedPagesView } from './components/PublishedPagesView'
 import { WorkFilesView } from './components/WorkFilesView'
-import { SessionsView } from './components/SessionsView'
+import { RunsView } from './components/RunsView'
 import { RESPONSES_SEEN_EVENT } from './components/RunAnswers'
-import { isToolsView, type ToolsRunRef, type ToolsView } from '../../shared/tools-views'
+import { canonicalToolsView, isToolsView, type CanonicalToolsView, type ToolsRunRef, type ToolsView } from '../../shared/tools-views'
 import { runsWithResponses } from '../../shared/sessions-list'
 import ConflictCompare from './components/ConflictCompare'
 import { CONFLICT_COMPARE_EVENT } from './components/talklist/ConflictLine'
@@ -37,6 +35,7 @@ function openSettingsWindow(section?: string): void {
   void window.tw.settingsWindow?.open(section).catch(() => { /* main not answering: nothing to show */ })
 }
 import GuidePane from './components/GuidePane'
+import { AgentSkillStep } from './components/AgentSkillOffer'
 import RemoveExampleConfirm from './components/RemoveExampleConfirm'
 import { EXAMPLE_REMOVAL_TEXT, type ExampleRemovalPreview } from '../../shared/example-vault-removal'
 import { commandRan, onCommandTicked } from './commands/command-ran'
@@ -60,7 +59,10 @@ type SidebarMode = 'talks' | 'slides'
 type SidebarCommandId = 'sidebar.talks' | 'sidebar.outline' | 'sidebar.toggle'
 
 const SIDEBAR_STORAGE_KEY = 'tw-sidebar'
-const SIDEBAR_DEFAULT = 240
+const SIDEBAR_DEFAULT = 220
+// R17: below this window width the left sidebar collapses to its rail so the content keeps its room; the sidebar is never more than this share of the window.
+const SIDEBAR_COLLAPSE_BELOW_PX = NARROW_WINDOW_PX
+const SIDEBAR_MAX_SHARE_VW = 28
 const SIDEBAR_MIN = 160
 const SIDEBAR_MAX = 420
 const SIDEBAR_COMMAND_IDS: SidebarCommandId[] = ['sidebar.talks', 'sidebar.outline', 'sidebar.toggle']
@@ -145,40 +147,28 @@ function useRunsWithResponses(again: unknown): number {
 }
 
 function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
-  const [view, setView] = useState<ToolsView>(initialView)
+  // History and Sessions are the one Runs view (house rule R5): the old names are folded into it.
+  const [view, setView] = useState<CanonicalToolsView>(canonicalToolsView(initialView))
   const [sessionsRun, setSessionsRun] = useState<ToolsRunRef | null>(null)
   const runsWithResponsesNow = useRunsWithResponses(`${view}|${sessionsRun ? `${sessionsRun.vaultId ?? ''}|${sessionsRun.talkSlug}/${sessionsRun.runId}` : ''}`)
+  const [studioVideoRequest,setStudioVideoRequest]=useState<number|null>(null)
+  const studioVideoSerial=useRef(0)
+  const videoRegistered=useCallback(()=>setStudioVideoRequest(null),[])
+  useEffect(()=>{if(view!=='studio')setStudioVideoRequest(null)},[view])
   const [studioInitialSessionId, setStudioInitialSessionId] = useState<string | null>(null)
   const [talkTextSessionId, setTalkTextSessionId] = useState<string | null>(null)
-  const [pathwayContext, setPathwayContext] = useState<PathwayWindowContext | null>(null)
-  // The Plan a run sheet, hosted by this window so it opens over whichever view asked for it (issue 234:
-  // it used to switch to History, whose own header then showed behind the sheet).
-  const [planSheet, setPlanSheet] = useState<{ talks: PlanRunTalk[] } | null>(null)
-  const [planSaved, setPlanSaved] = useState(0)
+  // Plan a Run: the Runs view hosts the one sheet. A command from any view switches to Runs and leaves the request
+  // there until the view has opened the sheet (the Runs view may not be mounted yet).
+  const [planPending, setPlanPending] = useState(false)
+  const planHandled = useCallback(() => setPlanPending(false), [])
   // Asked to show one work file (the Run page's Open file): the Work files view selects it.
   const [workFileRequest, setWorkFileRequest] = useState<{ fileName: string; vaultId: string; nonce: number } | null>(null)
-  // Asked to open a Run's results ('results:<talk slug>/<run id>'; the Run page's Open results).
-  const [resultsRequest, setResultsRequest] = useState<{ talkSlug: string; runId: string; vaultId?: string; nonce: number } | null>(null)
+  // Asked to open a Run's results ('results:<talk slug>/<run id>'; the Run page's Open results): the ledger scrolls into view.
+  const [resultsNonce, setResultsNonce] = useState(0)
 
   const showStudio = useCallback((sessionId?: string): void => {
     setStudioInitialSessionId(sessionId ?? null)
     setView('studio')
-  }, [])
-
-  const openPlanSheet = useCallback(async (): Promise<void> => {
-    let handouts
-    try { handouts = await window.tw.history.talkHandouts() } catch { handouts = {} }
-    const talks = Object.entries(handouts).map(([slug, talk]) => ({ slug, title: talk.title, outlinePath: talk.outlinePath })).filter((talk) => talk.outlinePath)
-    if (talks.length) setPlanSheet({ talks })
-    else notify('No talk to plan a Run for yet', 'info')
-  }, [])
-
-  const showHistory = useCallback((): void => {
-    setView('history')
-  }, [])
-
-  const showImporter = useCallback((): void => {
-    setView('importer')
   }, [])
 
   const showTalkText = useCallback((sessionId: string): void => {
@@ -186,34 +176,35 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
     setView('talktext')
   }, [])
 
+  /** The Runs view, on a Run when one is named. */
+  const showRuns = useCallback((target: ToolsRunRef | null): void => {
+    setSessionsRun(target)
+    setView('runs')
+  }, [])
+
   useEffect(() => {
     document.title = view === 'studio'
       ? 'TalkWeaver Studio'
-      : view === 'history'
-        ? 'TalkWeaver History'
-        : view === 'sessions' || view === 'published' || view === 'workfiles'
-          ? 'TalkWeaver Tools'
-        : view === 'importer'
-          ? 'TalkWeaver Importer'
+      : view === 'importer'
+        ? 'TalkWeaver Importer'
         : view === 'talktext'
           ? 'TalkWeaver — Manage notes'
-          : 'TalkWeaver Pathways'
+          : 'TalkWeaver Tools'
   }, [view])
 
   useEffect(() => {
-    return window.tw.tools.onShow(({ view: nextView, sessionId, pathway, run }) => {
-      if (!isToolsView(nextView)) return
-      if (nextView === 'sessions' || nextView === 'published' || nextView === 'workfiles') {
-        setSessionsRun(nextView === 'sessions' ? run ?? null : null)
+    return window.tw.tools.onShow(({ view: requested, sessionId, run, command }) => {
+      if (!isToolsView(requested)) return
+      const nextView = canonicalToolsView(requested)
+      if (nextView === 'runs') {
+        showRuns(run ?? null)
+        if (sessionId === 'plan-run') setPlanPending(true)
+        else if (sessionId?.startsWith('results:')) setResultsNonce((n) => n + 1)
+      } else if (nextView === 'published' || nextView === 'workfiles') {
+        setSessionsRun(null)
         setView(nextView)
-        if (nextView === 'sessions' && sessionId === 'plan-run') void openPlanSheet()
       }
-      else if (nextView === 'studio') showStudio(sessionId)
-      else if (nextView === 'history') { setView('history'); if (sessionId === 'plan-run') void openPlanSheet()
-        else if (sessionId?.startsWith('results:')) {
-          const slash = sessionId.indexOf('/')
-          if (slash > 8) setResultsRequest((current) => ({ talkSlug: sessionId.slice(8, slash), runId: sessionId.slice(slash + 1), ...(run?.vaultId ? { vaultId: run.vaultId } : {}), nonce: (current?.nonce ?? 0) + 1 }))
-        } }
+      else if (nextView === 'studio') { showStudio(sessionId); setStudioVideoRequest(command?++studioVideoSerial.current:null) }
       else if (nextView === 'importer') setView('importer')
       else if (nextView === 'talktext') {
         if (sessionId) showTalkText(sessionId)
@@ -222,89 +213,72 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
           setView('talktext')
         }
       }
-      else if (nextView === 'pathways') {
-        setPathwayContext(pathway ?? null)
-        setView('pathways')
-      }
+
     })
-  }, [showStudio, showTalkText, openPlanSheet])
+  }, [showRuns, showStudio, showTalkText])
 
-  const shown: ToolsView = view
+  const shown: CanonicalToolsView = view
 
-  // The Tools commands the window itself carries out (work-files ticket 30): the three views and Plan a run.
-  // The Run page's, Published pages' and Work files' own commands are offered by those views.
-  const planRun = (): void => { void openPlanSheet() }
-  const showRail = (next: ToolsView): void => {
+  // The Tools commands the window itself carries out (work-files ticket 30): the views and Plan a Run. The old
+  // History and Sessions commands (`tools-view-sessions`) are aliases of the Runs one. The Run page's, Published
+  // pages' and Work files' own commands are offered by those views.
+  const planRun = (): void => { setView('runs'); setPlanPending(true) }
+  const showRail = (next: CanonicalToolsView): void => {
     if (next === shown) return
     if (next === 'studio') showStudio()
-    else if (next === 'history') showHistory()
     else { setSessionsRun(null); setView(next) }
   }
   useToolsActions({
-    'tools-view-sessions': { enabled: true, run: () => showRail('sessions') },
+    // ⌘1 to ⌘3 (ToolsPalette): the views in rail order; these two have no palette command of their own.
+    'tools-view-studio': { enabled: true, run: () => showRail('studio') },
+    'tools-view-importer': { enabled: true, run: () => showRail('importer') },
+    'tools-view-runs': { enabled: true, run: () => showRail('runs') },
+    'tools-view-sessions': { enabled: true, run: () => showRail('runs') },
     'tools-view-published': { enabled: true, run: () => showRail('published') },
     'tools-view-workfiles': { enabled: true, run: () => showRail('workfiles') },
     'tools-plan-run': { enabled: true, run: planRun }
   })
-  // The palette and the keys belong to the window with the rail (Pathways, Notes and script and the Importer have their own).
-  const toolsKeysOn = (shown === 'studio' || shown === 'history' || shown === 'sessions' || shown === 'published' || shown === 'workfiles')
-
-  if (view === 'pathways') {
-    return <Pathways context={pathwayContext} onClose={() => window.close()} />
-  }
+  // The palette and the keys belong to the window with the rail (Notes and script has its own).
+  const toolsKeysOn = (shown === 'studio' || shown === 'runs' || shown === 'importer' || shown === 'published' || shown === 'workfiles')
 
   if (view === 'talktext') {
     return <TalkText isOpen sessionId={talkTextSessionId} onBackToStudio={showStudio} onClose={() => window.close()} />
   }
 
-  if (view === 'importer') {
-    return <Importer isOpen onClose={() => window.close()} onShowStudio={showStudio} onShowHistory={showHistory} />
-  }
-
-  // Studio and History say why an upload did not go through as a notification with its one action
+  // Studio and the Runs view say why an upload did not go through as a notification with its one action
   // ("Set up recording storage"), so this window shows the notification stack too.
   const body = shown === 'studio' ? (
     <Studio
       isOpen
       onClose={() => window.close()}
       initialSessionId={studioInitialSessionId}
-      onShowHistory={showHistory}
-      onShowImporter={showImporter}
+      videoRequest={studioVideoRequest}
+      onVideoRequestRegistered={videoRegistered}
       onOpenTalkText={showTalkText}
     />
-  ) : shown === 'history' ? (
-    <History
-      isOpen
-      onClose={() => window.close()}
-      onShowStudio={showStudio}
-      onShowImporter={showImporter}
-      resultsRequest={resultsRequest}
+  ) : shown === 'importer' ? (
+    <Importer isOpen onClose={() => window.close()} />
+  ) : shown === 'runs' ? (
+    <RunsView
+      run={sessionsRun}
+      onSelect={setSessionsRun}
+      planPending={planPending}
+      onPlanHandled={planHandled}
+      resultsRequest={resultsNonce}
+      onOpenStudio={showStudio}
+      onOpenNotes={showTalkText}
+      onShowWorkFile={(fileName, vaultId) => { setWorkFileRequest((r) => ({ fileName, vaultId, nonce: (r?.nonce ?? 0) + 1 })); setSessionsRun(null); setView('workfiles') }}
     />
   ) : shown === 'workfiles' ? (
-    <WorkFilesView request={workFileRequest} onOpenRun={(talkSlug, runId, vaultId) => { setSessionsRun({ talkSlug, runId, vaultId }); setView('sessions') }} />
-  ) : shown === 'sessions' ? (
-    <SessionsView key={planSaved} run={sessionsRun} onSelect={setSessionsRun} onPlan={planRun} onShowWorkFile={(fileName, vaultId) => { setWorkFileRequest((r) => ({ fileName, vaultId, nonce: (r?.nonce ?? 0) + 1 })); setSessionsRun(null); setView('workfiles') }} />
+    <WorkFilesView request={workFileRequest} onOpenRun={(talkSlug, runId, vaultId) => showRuns({ talkSlug, runId, vaultId })} />
   ) : (
-    <PublishedPagesView onOpenRun={(talkSlug, runId, vaultId) => { setSessionsRun({ talkSlug, runId, vaultId }); setView('sessions') }} />
+    <PublishedPagesView onOpenRun={(talkSlug, runId, vaultId) => showRuns({ talkSlug, runId, vaultId })} />
   )
-  const selectRail = (next: ToolsView): void => {
-    if (next === 'studio') showStudio()
-    else if (next === 'history') showHistory()
-    else { setSessionsRun(null); setView(next) }
-  }
   return (<>
     <div className="lt tw-tools-shell">
-      <ToolsRail view={shown} onSelect={selectRail} badges={{ sessions: runsWithResponsesNow }} />
+      <ToolsRail view={shown} onSelect={showRail} badges={{ runs: runsWithResponsesNow }} />
       <div className="tw-tools-main">{body}</div>
     </div>
-    {planSheet && (
-      <PlanRunSheet
-        talk={planSheet.talks[0]}
-        talks={planSheet.talks}
-        onClose={() => setPlanSheet(null)}
-        onSaved={() => { setPlanSheet(null); setPlanSaved((n) => n + 1) }}
-      />
-    )}
     <ToolsPalette active={toolsKeysOn} />
     <Toasts />
   </>)
@@ -464,6 +438,19 @@ function MainApp() {
   // the live state for anything else that reads it).
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>('talks')
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
+  // R17: a narrow window gives the content its room by collapsing this sidebar to its rail.
+  useEffect(() => {
+    // Collapse once, on crossing into the narrow range; inside it the person's last choice stands (a height-only resize changes nothing).
+    let wasNarrow = false
+    const collapseWhenNarrow = (): void => {
+      const narrow = window.innerWidth < SIDEBAR_COLLAPSE_BELOW_PX
+      if (narrow && !wasNarrow) setSidebarCollapsed(true)
+      wasNarrow = narrow
+    }
+    collapseWhenNarrow()
+    window.addEventListener('resize', collapseWhenNarrow)
+    return () => window.removeEventListener('resize', collapseWhenNarrow)
+  }, [])
   const sidebarShowsTalksRef = useRef(true)
   sidebarShowsTalksRef.current = sidebarMode === 'talks' && !sidebarCollapsed
   // The current talk's outline, mirrored up from WorkspaceLayout so the Slide-outline
@@ -510,11 +497,9 @@ function MainApp() {
   const leaveGuardRef = useRef<(() => Promise<boolean>) | null>(null)
   const activeTalkRef = useRef<TalkInfo | null>(activeTalk)
   useEffect(() => { activeTalkRef.current = activeTalk }, [activeTalk])
-  // Per-talk Metadata panel (ADR-0036) — opened from the Talks-panel context menu (any talk) or
-  // the tw-open-metadata event (toolbar Deck menu / command palette → the active talk). Its writes go
-  // to main's metadata:edit-frontmatter, which edits an open talk's editor BUFFER (talk-writer.ts →
-  // the window's D1 seam, saved through its queue) and any other talk on disk — nothing to adopt.
-  const [metadataTalk, setMetadataTalk] = useState<TalkInfo | null>(null)
+  // A talk's details live in the Talk tab of the right sidebar (house rule R11); the Talks list's Metadata… opens the
+  // talk (any talk) and then the tab, through the same tw-open-metadata event the Talk menu uses. The tab's writes go
+  // through the open talk's editor buffer (talk-writer.ts, the D1 seam), as the Metadata dialog's did.
   // Ticket 10: the compare screen for a talk's conflict copy (raised by the talk row's or the status
   // bar's "Compare…"). The open talk's pending save is flushed first, so both versions are read as
   // they stand.
@@ -566,6 +551,17 @@ function MainApp() {
       refused: target => notify(`“${target.title}” is already open in another window — brought it to the front.`, 'info')
     })
   }, [])
+
+  useEffect(() => {
+    const open = (event: Event): void => {
+      const talk = (event as CustomEvent<TalkInfo>).detail
+      void selectTalk(talk).then(ok => {
+        if (ok) requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('tw-show-pathways', { detail: talk.outlinePath })))
+      })
+    }
+    window.addEventListener('tw-open-pathways', open)
+    return () => window.removeEventListener('tw-open-pathways', open)
+  }, [selectTalk])
 
   // T29b (2026-09-19): opening a talk from the Talks panel leaves the sidebar on Talks — the user
   // scrolls the editor to see if it is the right file — and the FIRST engagement with the editor
@@ -705,7 +701,7 @@ function MainApp() {
       void window.tw.tools.open('studio', detail?.sessionId)
     }
     const openHistory = (): void => {
-      void window.tw.tools.open('history')
+      void window.tw.tools.open('runs')
     }
     const openImporter = (): void => { void window.tw.tools.open('importer') }
     const newTalk = (): void => { setNewTalkVaultId(null); setNewTalkTopic('') }
@@ -724,7 +720,6 @@ function MainApp() {
       notify('Select a talk or folder in the file list first.', 'info')
     }
     const searchSlides = (): void => { setSidebarMode('slides'); setSidebarCollapsed(false) }
-    const openMetadata = (): void => { if (activeTalkRef.current) setMetadataTalk(activeTalkRef.current) }
     window.addEventListener('tw-vault-gallery', openGallery)
     window.addEventListener('tw-open-settings', openSettings)
     // "Open Settings" on a publish sheet or notice (any window): Settings, at its Cloudflare section.
@@ -741,7 +736,6 @@ function MainApp() {
     window.addEventListener('tw-search-talks', searchTalks)
     window.addEventListener('tw-open-in-new-window', openInNewWindow)
     window.addEventListener('tw-search-slides', searchSlides)
-    window.addEventListener('tw-open-metadata', openMetadata)
     return () => {
       window.removeEventListener('tw-vault-gallery', openGallery)
       window.removeEventListener('tw-open-settings', openSettings)
@@ -757,7 +751,6 @@ function MainApp() {
       window.removeEventListener('tw-search-talks', searchTalks)
       window.removeEventListener('tw-open-in-new-window', openInNewWindow)
       window.removeEventListener('tw-search-slides', searchSlides)
-      window.removeEventListener('tw-open-metadata', openMetadata)
     }
   }, [])
 
@@ -1072,29 +1065,30 @@ function MainApp() {
 
   return (
     <div className="app-shell">
-      {galleryOpen && <VaultGallery revision={state.vaults} onClose={() => setGalleryOpen(false)} onOpen={selectTalk} management={{talks:state.talks,vaults:state.vaults,foldersByVault:state.foldersByVault,activeTalk,
+      {galleryOpen && <VaultGallery revision={state.vaults} talkTitle={activeTalk?.title ?? null} onClose={() => setGalleryOpen(false)} onOpen={selectTalk} management={{talks:state.talks,vaults:state.vaults,foldersByVault:state.foldersByVault,activeTalk,
         leaveActive:async()=>{const guard=leaveGuardRef.current;if(guard)return guard();await flushSaveRef.current?.();return true},
         onRefresh:refreshTalks,onRecheck:()=>loadVaults({force:false}),onSelectTalk:selectTalk,
         onDeletedTalk:path=>{if(activeTalk?.outlinePath===path){setActiveTalk(null);void window.tw.windows?.claimTalk?.(null)}},
         onNewTalk:(topic,id)=>{setNewTalkVaultId(id);setNewTalkTopic(topic)},onAddVault:()=>void addVault(),
         onEditVault:id=>setVaultSheet({mode:'edit',vaultId:id}),onSetVaultOpen:setVaultOpen}} />}
-      <button className="vault-gallery-entry" onClick={() => setGalleryOpen(true)}>Vault Gallery</button>
       {sidebarCollapsed ? (
         <div className="sidebar-rail">
           <button
             className="icon-btn"
             onClick={() => setSidebarCollapsed(false)}
             title="Show sidebar (⌘\\)"
+            aria-label="Show sidebar"
             data-sidebar-expand
           >
             ☰
           </button>
+          <button className="icon-btn vault-gallery-entry" onClick={() => setGalleryOpen(true)} title="Vault Gallery" aria-label="Vault Gallery"><LayoutGrid size={15} aria-hidden /></button>
         </div>
       ) : (
         <div
           className="sidebar-wrap"
           data-sidebar
-          style={{ width: sidebarWidth, ['--sidebar-width' as string]: `${sidebarWidth}px` }}
+          style={{ width: `min(${sidebarWidth}px, ${SIDEBAR_MAX_SHARE_VW}vw)`, ['--sidebar-width' as string]: `min(${sidebarWidth}px, ${SIDEBAR_MAX_SHARE_VW}vw)` }}
         >
           <div className="sidebar-modebar">
             <div className="sidebar-modes" role="tablist">
@@ -1110,10 +1104,12 @@ function MainApp() {
                 </button>
               ))}
             </div>
+            <button className="icon-btn vault-gallery-entry" onClick={() => setGalleryOpen(true)} title="Vault Gallery" aria-label="Vault Gallery"><LayoutGrid size={15} aria-hidden /></button>
             <button
               className="icon-btn"
               onClick={() => setSidebarCollapsed(true)}
               title="Hide sidebar (⌘\\)"
+              aria-label="Hide sidebar"
               data-sidebar-collapse
             >
               ⟨
@@ -1134,7 +1130,7 @@ function MainApp() {
               onRefresh={refreshTalks}
               onChangeVault={() => { void addVault() }}
               onNewTalk={(topic, vaultId) => { setNewTalkVaultId(vaultId ?? null); setNewTalkTopic(topic ?? '') }}
-              onOpenMetadata={(talk) => setMetadataTalk(talk)}
+              onOpenMetadata={(talk) => { void selectTalk(talk).then((opened) => { if (opened) window.setTimeout(() => window.dispatchEvent(new Event('tw-open-metadata')), 150) }) }}
               // Rename safety (ADR-0008): the panel awaits the editor's pending-autosave flush
               // BEFORE renaming the active talk's folder, so no late write recreates the old path.
               flushActive={async () => { await flushSaveRef.current?.() }}
@@ -1195,7 +1191,9 @@ function MainApp() {
       )}
       {newFolderOpen && (
         <PromptModal
-          label="New folder name"
+          label="New folder"
+          kind="folder"
+          mode="new"
           initial=""
           cta="Create"
           onCancel={() => setNewFolderOpen(false)}
@@ -1216,33 +1214,19 @@ function MainApp() {
         activeTalk={activeTalk}
         vaultRoot={activeVault.root}
         onOutlineChange={slidesOutlineVisible ? setOutlineContent : undefined}
+        leftSidebarShown={!sidebarCollapsed}
+        onNeedRoom={() => setSidebarCollapsed(true)}
         registerJump={(fn) => { jumpRef.current = fn }}
         registerOutlineOps={registerOutlineOps}
         onOpenSettings={() => openSettingsWindow()}
         onSelectTalk={selectTalk}
         onEditorEngaged={onEditorEngaged}
         registerFlushSave={(fn) => { flushSaveRef.current = fn }}
+        onMetadataSaved={() => { void refreshTalks() }} // sidebar title/subtitle/event may have changed
         registerLeaveGuard={(fn) => { leaveGuardRef.current = fn }}
         onDiscardTalk={() => { void selectTalk(null) }}
         onActiveLineChange={slidesOutlineVisible ? setActiveOutlineLine : undefined}
         guide={{ open: guideOpen, nonce: guideNonce, body: guideBody, onClose: () => setGuideOpen(false) }}
-      />
-      <MetadataPanel
-        talk={metadataTalk}
-        vaultRoot={activeVault.root}
-        isOpen={metadataTalk !== null}
-        onClose={() => setMetadataTalk(null)}
-        // Flush the live editor buffer to disk before the panel READS the active talk, so it shows
-        // current bytes (other talks have no buffer — the flush is a no-op). Writes need no flush.
-        flushBeforeIO={async () => {
-          if (metadataTalk && activeTalkRef.current?.outlinePath === metadataTalk.outlinePath) {
-            await flushSaveRef.current?.()
-          }
-        }}
-        // The edit is already in the open talk's buffer (or on disk for any other talk).
-        onSaved={() => {
-          void refreshTalks() // sidebar title/subtitle/event may have changed
-        }}
       />
       {removeConfirm && (
         <RemoveExampleConfirm
@@ -1268,6 +1252,7 @@ function MainApp() {
           }}
         />
       )}
+      <AgentSkillStep />
       <Toasts />
     </div>
   )

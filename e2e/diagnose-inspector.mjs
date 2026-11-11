@@ -81,19 +81,24 @@ const previewTap = await page.evaluate(() => {
   } catch { return false }
 })
 
-// 1. Inspector is a mode over the normal strip pane, not a pane state.
-await page.keyboard.press('Meta+2')
+// 1. The Inspector is the default tab of the one right sidebar (R11a); ⌘P shows and hides the whole sidebar and the Strip tab is the second.
+await page.keyboard.press('Meta+1')
 await page.waitForTimeout(800)
-rec('both mode starts with SlideStrip', await page.locator('.pane--strip').count() === 1)
-await page.keyboard.press('Meta+p')
-await page.waitForTimeout(1200)
-rec('⌘P swaps the right strip pane to Inspector',
+rec('Slides view starts with the Inspector tab up, not the strip',
   await page.locator('.tw-inspector').count() === 1 && await page.locator('.pane--strip').count() === 0)
 await page.keyboard.press('Meta+p')
 await page.waitForTimeout(800)
-rec('⌘P swaps Inspector back to SlideStrip',
-  await page.locator('.pane--strip').count() === 1 && await page.locator('.tw-inspector').count() === 0)
+rec('⌘P hides the whole sidebar',
+  await page.locator('[data-right-column]').count() === 0 && await page.locator('.tw-inspector').count() === 0)
 await page.keyboard.press('Meta+p')
+await page.waitForTimeout(1200)
+rec('⌘P shows it again on the Inspector',
+  await page.locator('.tw-inspector').count() === 1)
+await page.locator('[data-rc-tab="slides"] button').click()
+await page.waitForTimeout(800)
+rec('the Strip tab swaps the Inspector for the SlideStrip',
+  await page.locator('.pane--strip').count() === 1 && await page.locator('.tw-inspector').count() === 0)
+await page.locator('[data-rc-tab="inspector"] button').click()
 await page.waitForTimeout(1200)
 const pos = await page.locator('.tw-inspector-pos').textContent().catch(() => null)
 rec('probe compiles to thirteen slides', !!pos && /\/\s*13$/.test(pos.trim()), pos)
@@ -195,7 +200,7 @@ rec('mounted-editor split commit consolidates the exact A1 block to one line',
   exactTriggers.length === 1 && exactTriggers[0] === '{iconlist}{id=uyee5}{split=50}', exactTriggers.join(' | '))
 
 rec('navigates to the editor-less A1 probe', await walkInspectorToTitle('Final question - editor-less'), await inspectorTitle())
-await page.keyboard.press('Meta+3')
+// (The Inspector is only in the right sidebar now, so there is no editor-less Inspector view: the commit goes through the same seam with the editor beside it.)
 await page.waitForTimeout(500)
 exactPlacementGroup = page.locator('.tw-inspector-group[data-group="title-placement"]')
 await exactPlacementGroup.getByRole('button', { name: '50', exact: true }).click()
@@ -207,7 +212,6 @@ exactTriggers = []
 for (let line = exactHeading + 1; /^\s*(\{[^}]*\}\s*)+$/.test(exactLines[line] ?? ''); line += 1) exactTriggers.push(exactLines[line])
 rec('editor-less split commit consolidates the exact A1 block to one line',
   exactTriggers.length === 1 && exactTriggers[0] === '{iconlist}{id=uyef6}{split=50}', exactTriggers.join(' | '))
-await page.keyboard.press('Meta+2')
 await page.waitForTimeout(500)
 
 // 6. Sidebar placement + two-line Trigger integrity.
@@ -302,8 +306,8 @@ if (await page.locator('.lt-focus').count() === 1) {
   await page.waitForTimeout(500)
 }
 
-// 10. Inspector exit remounts the strip at the active late slide, not at scrollTop 0.
-await page.keyboard.press('Meta+p')
+// 10. Leaving the Inspector for the Strip tab remounts the strip at the active late slide, not at scrollTop 0.
+await page.locator('[data-rc-tab="slides"] button').click()
 await page.waitForTimeout(900)
 const activeCardVisibility = await page.locator('.tw-slide-card[data-active="true"]').evaluate((card) => {
   let scroller = card.parentElement

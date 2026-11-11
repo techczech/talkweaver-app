@@ -137,7 +137,7 @@ export function RunAnswers({ source, runPhase, onPulled, onOpenWorkFile, pullTim
     })
   }, [])
 
-  // The parent passes a new onPulled on every render (SessionsView reads its list again after each pull). Held in
+  // The parent passes a new onPulled on every render (RunsView reads its list again after each pull). Held in
   // a ref, so the pull and the opening effect keep their identity: before, each pull re-rendered the parent, gave
   // a new pullPhase, re-ran the opening effect and pulled again, without end, and the strip stayed on "Pulling…".
   const onPulledRef = useRef(onPulled)
@@ -450,7 +450,7 @@ function AnswerSection({ phase, source, runPhase, data, writable, folded, onFold
           <span className="ic"><Lock aria-hidden /></span>
           <h3>Every answer step is Local only</h3>
           <p>Participants work through this page and keep their answers on their own phones. You see no answers, only that the page is open. Change a step to Sent to you in Work files if you want its answers here. Runs already sent keep the version they went out with.</p>
-          {onOpenWorkFile && <div className="acts"><button type="button" className="tw-sess-btn sm" data-run-open-work-file={phase} onClick={onOpenWorkFile}><FileText aria-hidden />Open work file</button></div>}
+          {onOpenWorkFile && <div className="acts"><button type="button" className="tw-btn tw-btn--sm" data-run-open-work-file={phase} onClick={onOpenWorkFile}><FileText aria-hidden />Open work file</button></div>}
         </div>
       )
     }
@@ -460,14 +460,14 @@ function AnswerSection({ phase, source, runPhase, data, writable, folded, onFold
           <span className="ic warm"><CloudOff aria-hidden /></span>
           <h3>Responses need the live service</h3>
           <p>Sent to you answers travel through the live service, the same one live questions use. It is not set up on this Mac, so this Run’s page cannot be published and nothing can reach you. Set it up in Settings → Cloudflare.</p>
-          <div className="acts"><button type="button" className="tw-sess-btn sm pri" data-run-set-up-live onClick={() => { void window.tw.cloudflare.openSettings().catch(() => false) }}>Open Settings</button></div>
+          <div className="acts"><button type="button" className="tw-btn tw-btn--sm tw-btn--primary" data-run-set-up-live onClick={() => { void window.tw.cloudflare.openSettings().catch(() => false) }}>Open Settings</button></div>
           <p className="tw-ans-aside"><Lock aria-hidden /><span>Work files whose steps are all <b>Local only</b> need no live service for answers. They still need Cloudflare to publish the page.</span></p>
         </div>
       )
     }
     if (headerCount.answered > 0 || hasEntries) return null
     if (phase === 'post' && work && !['post-open', 'post-closed'].includes(runPhase)) {
-      const opens = work.opens === 'session-end' ? 'Opens when the session ends' : `Opens ${whenLabel(work.opens)}`
+      const opens = work.opens === 'session-end' ? 'Opens when the Run ends' : `Opens ${whenLabel(work.opens)}`
       return <div className="tw-ans-empty" data-run-answers-wait><Clock aria-hidden />{opens} · closes {whenLabel(work.closes)}</div>
     }
     return (
@@ -475,7 +475,7 @@ function AnswerSection({ phase, source, runPhase, data, writable, folded, onFold
         <span className="ic"><Inbox aria-hidden /></span>
         <h3>No responses yet</h3>
         <p>{closesText ? `The ${word} page closes ${closesText}. ` : ''}When someone sends an answer or a question it is kept on the live service and shows here the next time you open this Run.</p>
-        {writable && link?.row && <div className="acts"><button type="button" className="tw-sess-btn sm" data-run-pull={phase} disabled={pulling} onClick={onPull}><RefreshCw aria-hidden />{pullLabel}</button></div>}
+        {writable && link?.row && <div className="acts"><button type="button" className="tw-btn tw-btn--sm" data-run-pull={phase} disabled={pulling} onClick={onPull}><RefreshCw aria-hidden />{pullLabel}</button></div>}
         {link?.row && <small data-run-pull-state={link.state}>{pulling ? 'Pulling responses from the live service…' : [stateChip, whenText].filter(Boolean).join(' · ')}</small>}
         {section.localSteps > 0 && <small data-run-local-count>Steps marked Local only never appear here: {section.localSteps} of {section.answerSteps} steps.</small>}
       </div>
@@ -491,7 +491,7 @@ function AnswerSection({ phase, source, runPhase, data, writable, folded, onFold
             : link.state === 'outdated' ? <span className="chip warn" data-run-outdated><CloudOff aria-hidden />{stateChip}</span>
               : section.fresh > 0 && <span className="chip new" data-run-new-count>{section.fresh} new since you last looked</span>}
         {!pulling && <span className="when" data-run-pulled data-run-pull-state={link.state}>{whenText}</span>}
-        {canPull && <button type="button" className="tw-sess-btn sm" data-run-pull={phase} disabled={pulling} onClick={onPull}><RefreshCw aria-hidden />{pullLabel}</button>}
+        {canPull && <button type="button" className="tw-btn tw-btn--sm" data-run-pull={phase} disabled={pulling} onClick={onPull}><RefreshCw aria-hidden />{pullLabel}</button>}
       </div>
       {link.state === 'outdated' && (
         <div className="tw-ans-warn" role="status" data-run-outdated-note>
@@ -507,12 +507,12 @@ function AnswerSection({ phase, source, runPhase, data, writable, folded, onFold
       )}
       {!offline && (
         <div className="row">
-          {writable && <button type="button" className="tw-sess-btn sm" data-run-mark-all-read disabled={section.fresh === 0} onClick={() => { void seen({ type: 'all' }) }}><Check aria-hidden />Mark all read</button>}
+          {writable && <button type="button" className="tw-btn tw-btn--sm" data-run-mark-all-read disabled={section.fresh === 0} onClick={() => { void seen({ type: 'all' }) }}><Check aria-hidden />Mark all read</button>}
           <span className="tw-ans-filters" role="group" aria-label="Show">
             {(['all', 'new', 'starred', 'questions'] as const).map((id) => {
               const count = id === 'new' ? section.fresh : id === 'starred' ? starredToCopy : id === 'questions' ? section.steps.reduce((sum, block) => sum + block.questions.length, 0) : null
               return (
-                <button key={id} type="button" className={`tw-sess-chip${filter === id ? ' on' : ''}`} data-run-filter={id} aria-pressed={filter === id} onClick={() => setFilter(id)}>
+                <button key={id} type="button" className="tw-btn tw-btn--chip" data-run-filter={id} aria-pressed={filter === id} onClick={() => setFilter(id)}>
                   {id === 'all' ? 'All' : id === 'new' ? 'New' : id === 'starred' ? 'Starred' : 'Questions'}{count !== null ? ` · ${count}` : ''}
                 </button>
               )
@@ -566,8 +566,8 @@ function AnswerSection({ phase, source, runPhase, data, writable, folded, onFold
         {!folded && data && !empty && (
           <span className="r">
             <span className="tw-ans-menuwrap">
-              <button type="button" className="tw-sess-btn sm" data-run-export="copy" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}><Copy aria-hidden />Copy</button>
-              <button type="button" className="tw-sess-btn sm" data-run-export="export" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}><Download aria-hidden />Export</button>
+              <button type="button" className="tw-btn tw-btn--sm" data-run-export="copy" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}><Copy aria-hidden />Copy</button>
+              <button type="button" className="tw-btn tw-btn--sm" data-run-export="export" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}><Download aria-hidden />Export</button>
               {menu && (
                 <div className="tw-ans-menu" role="menu" data-run-export-menu>
                   <button type="button" role="menuitem" data-run-copy="text" onClick={() => { void copyText(false) }}><Copy aria-hidden /><span><b>Copy as text</b><small>Every answer in this section, one per line under its step. No names.</small></span></button>
@@ -578,7 +578,7 @@ function AnswerSection({ phase, source, runPhase, data, writable, folded, onFold
               )}
             </span>
             {writable && (
-              <button type="button" className="tw-sess-btn sm" data-run-use-starred={phase} disabled={stars === 0} title={stars === 0 ? 'Star answers to use them on a board' : undefined} onClick={() => { void useOnBoard() }}>
+              <button type="button" className="tw-btn tw-btn--sm" data-run-use-starred={phase} disabled={stars === 0} title={stars === 0 ? 'Star answers to use them on a board' : undefined} onClick={() => { void useOnBoard() }}>
                 <LayoutGrid aria-hidden />{stars === 0 ? 'Use starred on a board' : `Use ${stars} starred on a board`}
               </button>
             )}
@@ -642,10 +642,10 @@ function AnswerSection({ phase, source, runPhase, data, writable, folded, onFold
                         <div className="tx"><span>{question.text}</span><small>{stamp(question.at)} · {question.name ? question.name : 'no name'}{question.inTalk ? ' · in the talk' : ''}</small></div>
                         <div className="acts">
                           {question.answered
-                            ? <><span className="was"><Check aria-hidden /> Answered</span>{writable && <button type="button" className="tw-sess-btn sm" data-run-question-undo onClick={() => { void mark(question.id, { answered: false }) }}>Undo</button>}</>
+                            ? <><span className="was"><Check aria-hidden /> Answered</span>{writable && <button type="button" className="tw-btn tw-btn--sm" data-run-question-undo onClick={() => { void mark(question.id, { answered: false }) }}>Undo</button>}</>
                             : writable && <>
-                              {phase === 'pre' && !question.inTalk && <button type="button" className="tw-sess-btn sm" data-run-question-intalk onClick={() => { void mark(question.id, { inTalk: { slideId: feedsForStep(feeds, block.id, source.work?.[phase]?.fileId)[0]?.slideId ?? null } }) }}>Put in the talk’s questions</button>}
-                              <button type="button" className="tw-sess-btn sm" data-run-question-answered onClick={() => { void mark(question.id, { answered: true }) }}><Check aria-hidden />Mark answered</button>
+                              {phase === 'pre' && !question.inTalk && <button type="button" className="tw-btn tw-btn--sm" data-run-question-intalk onClick={() => { void mark(question.id, { inTalk: { slideId: feedsForStep(feeds, block.id, source.work?.[phase]?.fileId)[0]?.slideId ?? null } }) }}>Put in the talk’s questions</button>}
+                              <button type="button" className="tw-btn tw-btn--sm" data-run-question-answered onClick={() => { void mark(question.id, { answered: true }) }}><Check aria-hidden />Mark answered</button>
                             </>}
                         </div>
                       </div>

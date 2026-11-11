@@ -15,10 +15,13 @@ import { commandRan } from '../commands/command-ran'
 
 /** The commands this window carries out, as the registry names them. */
 export const TOOLS_COMMAND_IDS = [
-  'tools-view-sessions', 'tools-view-published', 'tools-view-workfiles', 'tools-plan-run', 'tools-edit-plan',
+  'tools-animated-video',
+  'tools-view-runs', 'tools-view-sessions', 'tools-view-published', 'tools-view-workfiles', 'tools-plan-run', 'tools-edit-plan',
   'tools-plan-like-this', 'tools-publish', 'tools-unpublish', 'tools-go-live', 'tools-open-run', 'tools-copy-link',
   'tools-copy-invitation', 'tools-new-work-file'
 ] as const
+
+const VIEW_CHORDS: Record<string, string> = { Digit1: 'tools-view-studio', Digit2: 'tools-view-runs', Digit3: 'tools-view-importer' }
 
 /** Run a Tools command if it is enabled, and report it to the Guide when it ran. */
 export function runToolsCommand(commandId: string): boolean {
@@ -47,6 +50,7 @@ function pressed(event: KeyboardEvent, shortcutId: string): boolean {
 }
 
 export function ToolsPalette({ active }: { active: boolean }): JSX.Element | null {
+  useEffect(() => !active ? undefined : window.tw.app?.onRunCommand?.(id => { if (TOOLS_COMMAND_IDS.includes(id as typeof TOOLS_COMMAND_IDS[number])) runToolsCommand(id) }), [active])
   const [open, setOpen] = useState(false)
   useEffect(() => {
     if (!active) return
@@ -58,6 +62,14 @@ export function ToolsPalette({ active }: { active: boolean }): JSX.Element | nul
         event.preventDefault()
         event.stopPropagation()
         setOpen(true)
+        return
+      }
+      // ⌘1 Studio, ⌘2 Runs, ⌘3 Importer: the Tools views in rail order, the same in every view (the cheat sheet's "Switch Tools view").
+      const viewAction = !event.altKey && !event.shiftKey && (event.metaKey || event.ctrlKey) ? VIEW_CHORDS[event.code] : undefined
+      if (viewAction && toolsActionEnabled(viewAction)) {
+        event.preventDefault()
+        event.stopPropagation()
+        runToolsAction(viewAction)
         return
       }
       for (const command of commands) {

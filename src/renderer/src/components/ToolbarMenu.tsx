@@ -83,7 +83,7 @@ const PATHS: Record<IconName, string> = {
   action: 'M3 8h18v8H3z M8 12h6 M12 10l2 2-2 2',
   embed: 'M3 4h18v16H3z M3 9h18 M6 6.5h.01 M9 6.5h.01',
   countdown: 'M12 21a8 8 0 1 0 0-16 8 8 0 0 0 0 16z M12 9v4l2.5 2 M9 2h6',
-  // Plan a run: a calendar page.
+  // Plan a Run: a calendar page.
   calendar: 'M3 5h18v16H3z M3 10h18 M8 3v4 M16 3v4',
   // Share for comments: a speech bubble (LOCKED-share-sheet.html frame 1).
   comment: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
@@ -136,6 +136,7 @@ export default function ToolbarMenu({
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
+        aria-label={label}
         title={title ?? label}
       >
         <span className="toolbar-btn-content">

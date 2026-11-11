@@ -12,12 +12,17 @@
 //
 // The kind of run is chosen when saving (the save toast's "Save as…", Change, or L), never when a
 // recording starts (ADR-0031 §3).
+//
+// The microphone (9 Nov 2026 incident): beside Record, the Microphone button opens the Microphone
+// menu with a live level meter, before recording starts. A microphone connected during the talk is
+// offered once in a notice ("Room microphone available: …. Use it?"); nothing switches without Use it.
 
 import { reportGuideCommand } from './present-guide'
 import { showPresentationCloseOffer } from './present-close-flow'
 import { RECORDING_OFFER_VISIBLE_MS } from './present-recording-offer'
 import { recView, fmtClock, kindLabel, type RecButton, type RunKind } from './present-rec-view'
 import type { RecorderController } from './present-recorder'
+import { inputName, microphoneMenu, type AudioInput } from '../shared/microphone-choice.ts'
 import { lossReasonText } from './recording-loss'
 import { dressPresenterButton, presenterControl, presenterControlKeys, presenterIconSvg } from '../shared/presenter-controls.ts'
 import { SHORTCUT_REGISTRY } from '../shared/shortcut-registry.ts'
@@ -26,7 +31,7 @@ import { SHORTCUT_REGISTRY } from '../shared/shortcut-registry.ts'
 export const SAVED_TOAST_VISIBLE_MS = RECORDING_OFFER_VISIBLE_MS
 
 const REC_CSS = `
-  #twrec-module, .twrec-toast { --lt-amber:#a3630e; --lt-amber-bright:#d98a2b; --lt-red-live:#ec5b56;
+  #twrec-module, .twrec-toast, .twrec-mic-panel { --lt-amber:#a3630e; --lt-amber-bright:#d98a2b; --lt-red-live:#ec5b56;
     --twrec-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,monospace;
     --twrec-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
     --rec-text:#f7f3ea; --rec-muted:#a3b3c2; --rec-dim:#71849a; --rec-line:#ffffff1c; --rec-ctl:#1f2c39; --rec-ctl-hover:#283a4c;
@@ -98,6 +103,9 @@ const REC_CSS = `
     box-shadow:0 12px 34px rgba(0,0,0,.55); white-space:nowrap; font-family:var(--rec-ui); color:var(--rec-text);
     -webkit-font-smoothing:antialiased; transform:translateY(-8px); opacity:0; pointer-events:none;
     transition:opacity .22s ease, transform .22s ease; }
+  .twrec-lost-note { left:12px; right:12px; width:max-content; max-width:calc(100vw - 52px);
+    height:auto; min-height:44px; padding:8px 12px; flex-wrap:wrap; white-space:normal; }
+  .twrec-lost-note .rt-text { flex:1 1 320px; line-height:1.4; }
   .twrec-toast.show { transform:translateY(0); opacity:1; pointer-events:auto; }
   .twrec-toast .rt-dot { width:9px; height:9px; border-radius:50%; background:#5d6d7c; flex:none; }
   .twrec-toast .rt-dot.amber { background:var(--rec-amber); }
@@ -139,6 +147,22 @@ const REC_CSS = `
   .twrec-planned b { font-size:.84rem; }
   .twrec-planned span { color:#aab8c6; font-size:.75rem; }
   .twrec-close-panel .danger { color:#ffd6d2; border-color:#7d3b37; background:#2a1618; }
+
+  /* The Microphone button beside Record, and its menu with the level meter. */
+  #twrec-module .rec-btn.rec-mic { width:26px; padding:0; }
+  #twrec-module .rec-btn.rec-mic[aria-expanded="true"] { background:var(--rec-ctl-hover); border-color:#6ea8e6; }
+  .twrec-mic-panel { position:fixed; z-index:196; display:grid; gap:8px; width:340px; box-sizing:border-box; padding:10px 12px 12px;
+    background:#0f1720; border:1px solid #ffffff2a; border-radius:10px; box-shadow:0 12px 34px rgba(0,0,0,.55);
+    font-family:var(--rec-ui); color:var(--rec-text); -webkit-font-smoothing:antialiased; }
+  .twrec-mic-panel[hidden] { display:none !important; }
+  .twrec-mic-panel .mp-title { font:600 13px/1 var(--rec-ui); color:var(--rec-text); }
+  .twrec-mic-panel .mp-row { display:flex; align-items:center; gap:10px; }
+  .twrec-mic-panel select { flex:1 1 auto; min-width:0; height:28px; padding:0 6px; border:1px solid var(--rec-line); border-radius:6px;
+    background:var(--rec-ctl); color:var(--rec-text); font:500 13px/1 var(--rec-ui); }
+  .twrec-mic-panel .mp-meter { flex:0 0 72px; height:8px; border-radius:4px; background:#ffffff14; overflow:hidden; }
+  .twrec-mic-panel .mp-fill { display:block; height:100%; width:0; border-radius:4px; background:var(--rec-ok); transition:width .08s linear; }
+  .twrec-mic-panel .mp-note { font:500 12px/1.35 var(--rec-ui); color:var(--rec-muted); }
+  .twrec-mic-panel .mp-note:empty { display:none; }
 `
 
 // The recording controls this module injects (their rows in src/shared/presenter-controls.ts).
@@ -146,12 +170,18 @@ const RECORDING_CONTROL_IDS = [
   'twrec-primary', 'twrec-change-kind', 'twrec-pause', 'twrec-resume', 'twrec-stop', 'twrec-keep', 'twrec-discard',
   'twrec-toast-yes', 'twrec-toast-no', 'twrec-save-delivery', 'twrec-save-as', 'twrec-save-dismiss',
   'twrec-start-record', 'twrec-start-dismiss', 'twrec-saved-change', 'twrec-saved-dismiss',
-  'twrec-lost-resume', 'twrec-lost-dismiss', 'twrec-back-dismiss', 'twrec-disk-dismiss', 'twrec-export'
+  'twrec-lost-resume', 'twrec-lost-dismiss', 'twrec-back-dismiss', 'twrec-disk-dismiss', 'twrec-export',
+  'twrec-mic', 'twrec-mic-use', 'twrec-mic-dismiss'
 ] as const
 const CLUSTER_BUTTONS: RecButton[] = ['primary', 'pause', 'resume', 'stop', 'change-kind', 'keep', 'export', 'discard']
 const recKeys = (id: string): string => presenterControlKeys(presenterControl(id), SHORTCUT_REGISTRY)
 /** A key cap in a toast button: the registry's text, with Enter drawn as ↵. */
 const kbd = (id: string): string => `<span class="kbd">${recKeys(id).replace(/^Enter$/, '↵')}</span>`
+
+const escapeHtml = (text: string): string => text.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch] as string))
+
+/** A device name for a notice: Chromium's transport suffix, "(Built-in)" or "(2b55:0001)", dropped. */
+const shortName = (name: string): string => name.replace(/\s*\([^)]*\)\s*$/, '').trim() || name
 
 function normaliseKind(value: unknown): RunKind {
   return value === 'rehearsal' || value === 'recording' ? value : 'delivery'
@@ -180,6 +210,7 @@ export function mountRecUi(controller: RecorderController): void {
     <span class="rec-word" id="twrec-label">Not recording</span>
     <span class="rec-clock" id="twrec-clock" hidden>00:00</span>
     <button type="button" class="rec-btn rec-go" id="twrec-primary"><span class="tw-btn-label">Record</span></button>
+    <button type="button" class="rec-btn icon rec-mic" id="twrec-mic" aria-haspopup="dialog" aria-expanded="false" hidden><span class="tw-btn-label">Microphone</span></button>
     <button type="button" class="rec-btn icon" id="twrec-pause" hidden><span class="tw-btn-label">Pause recording</span></button>
     <button type="button" class="rec-btn icon rec-amber" id="twrec-resume" hidden><span class="tw-btn-label">Resume recording</span></button>
     <button type="button" class="rec-btn icon rec-stop" id="twrec-stop" hidden><span class="tw-btn-label">Stop and save recording</span></button>
@@ -250,6 +281,7 @@ export function mountRecUi(controller: RecorderController): void {
     <span class="rt-dot red" aria-hidden="true"></span>
     <span class="rt-text" id="twrec-lost-text"><b>Audio stopped.</b></span>
     <button type="button" class="rec-btn rec-go" id="twrec-lost-resume"><span class="tw-btn-label">Resume recording</span></button>
+    <button type="button" class="rec-btn" id="twrec-lost-switch">Choose microphone</button>
     <button type="button" class="rt-dismiss" id="twrec-lost-dismiss"></button>`)
   lostToast.setAttribute('role', 'alert')
   const backToast = makeToast('twrec-toast twrec-back-note', `
@@ -262,7 +294,29 @@ export function mountRecUi(controller: RecorderController): void {
     <span class="rt-text"><b>Audio is not being saved to disk.</b> It is kept until Stop.</span>
     <button type="button" class="rt-dismiss" id="twrec-disk-dismiss"></button>`)
   diskToast.setAttribute('role', 'alert')
-  const toasts = [toast, saveToast, startToast, savedToast, lostToast, backToast, diskToast]
+  // Another microphone was connected during the talk: offered, never switched to by itself.
+  const micToast = makeToast('twrec-toast twrec-mic-note', `
+    <span class="rt-dot blue" aria-hidden="true"></span>
+    <span class="rt-text" id="twrec-mic-text"><b>Room microphone available.</b> Use it?</span>
+    <button type="button" class="rec-btn rec-primary" id="twrec-mic-use"><span class="tw-btn-label">Use it</span></button>
+    <button type="button" class="rt-dismiss" id="twrec-mic-dismiss"></button>`)
+  const toasts = [toast, saveToast, startToast, savedToast, lostToast, backToast, diskToast, micToast]
+
+  // The Microphone menu: which input recordings use, and its level now.
+  const micPanel = document.createElement('div')
+  micPanel.className = 'twrec-mic-panel'
+  micPanel.id = 'twrec-mic-panel'
+  micPanel.setAttribute('role', 'dialog')
+  micPanel.setAttribute('aria-label', 'Microphone')
+  micPanel.hidden = true
+  micPanel.innerHTML = `
+    <label class="mp-title" for="twrec-mic-select">Microphone</label>
+    <div class="mp-row">
+      <select id="twrec-mic-select"></select>
+      <span class="mp-meter" role="meter" aria-label="Input level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><span class="mp-fill" id="twrec-mic-level"></span></span>
+    </div>
+    <div class="mp-note" id="twrec-mic-panel-note"></div>`
+  document.body.appendChild(micPanel)
 
   // Icons, names and keys for every recording control, from the presenter-controls table; the
   // presenter template's delegated tooltip shows data-tip and data-key.
@@ -286,7 +340,7 @@ export function mountRecUi(controller: RecorderController): void {
   function placeToast(el: HTMLElement): void {
     const strip = document.getElementById('presenterStatus')
     const st = strip && strip.getClientRects().length > 0 ? strip.getBoundingClientRect() : null
-    if (!st) { el.style.top = '86px'; el.style.left = ''; el.style.right = '26px'; return }
+    if (!st) { el.style.top = '86px'; el.style.left = 'auto'; el.style.right = '26px'; return }
     const stage = document.querySelector('.presenter-current-panel')?.getBoundingClientRect()
     const right = stage && stage.width > 0 ? stage.right : window.innerWidth - 10
     el.style.right = ''
@@ -336,19 +390,50 @@ export function mountRecUi(controller: RecorderController): void {
 
   // Audio lost / back notices (present-audio-capture.ts reports; recording-loss.ts says why).
   let lostDismissed = false
+  let lostAlternative: AudioInput | null = null
+  let lostMenuRevision = 0
+  let micPicking = 0
+  async function pickMicrophone(input: Parameters<typeof controller.chooseMicrophone>[0]): Promise<boolean> {
+    micPicking += 1
+    const button = $('twrec-lost-switch') as HTMLButtonElement | null
+    if (button) { button.disabled = true; button.textContent = 'Still reconnecting…' }
+    try { return await controller.chooseMicrophone(input) }
+    finally {
+      micPicking -= 1
+      if (button) {
+        button.disabled = micPicking > 0
+        button.textContent = micPicking ? 'Still reconnecting…' : lostAlternative ? `Use ${inputName(lostAlternative)}` : 'Choose microphone'
+      }
+      if (controller.audioStatus().lost) showLostToast()
+    }
+  }
   const hideLostToast = (): void => lostToast.classList.remove('show')
   const showLostToast = (): void => {
     const audio = controller.audioStatus()
     if (!audio.lost || lostDismissed) return
     if (lostText) {
       const since = audio.lostAtMs !== null ? ` at ${fmtClock(audio.lostAtMs)}` : ''
+      // The microphone went away: recording waits for that one (it never takes another), so say which.
+      const waiting = audio.reason === 'track-ended' || audio.reason === 'device-change' ? shortName(controller.microphoneName()) : ''
       lostText.innerHTML = audio.recovering
-        ? `<b>Audio stopped${since}.</b> Reconnecting the microphone…`
-        : `<b>Audio stopped${since}.</b> ${lossReasonText(audio.reason)}`
+        ? `<b>Audio stopped${since}.</b> Nothing is being recorded. Reconnecting the microphone…`
+        : `<b>Audio stopped${since}.</b> ${waiting ? `Waiting for ${escapeHtml(waiting)}.` : lossReasonText(audio.reason)} Nothing is being recorded.`
     }
     if (lostResume) {
       lostResume.hidden = audio.recovering
     }
+    const revision = ++lostMenuRevision
+    void controller.microphones().then(({ inputs, chosen }) => {
+      if (revision !== lostMenuRevision || !controller.audioStatus().lost) return
+      const alternatives = microphoneMenu(inputs, chosen).filter(r => !r.selected && !r.missing && r.input)
+      lostAlternative = alternatives.length === 1 ? alternatives[0].input : null
+      const button = $('twrec-lost-switch') as HTMLButtonElement | null
+      if (button) {
+        button.hidden = alternatives.length === 0
+        button.disabled = micPicking > 0
+        button.textContent = micPicking ? 'Still reconnecting…' : lostAlternative ? `Use ${inputName(lostAlternative)}` : 'Choose microphone'
+      }
+    })
     showOnly(lostToast)
   }
   let backToastTimer: number | null = null
@@ -362,6 +447,157 @@ export function mountRecUi(controller: RecorderController): void {
     if (backToastTimer !== null) window.clearTimeout(backToastTimer)
     backToastTimer = window.setTimeout(hideBackToast, SAVED_TOAST_VISIBLE_MS)
   }
+
+  // ── The microphone ───────────────────────────────────────────────────────────
+  const micButton = $('twrec-mic')
+  const micSelect = $('twrec-mic-select') as HTMLSelectElement | null
+  const micLevel = $('twrec-mic-level')
+  const micMeter = micLevel?.parentElement ?? null
+  const micPanelNote = $('twrec-mic-panel-note')
+  const micText = $('twrec-mic-text')
+  let micInputs: AudioInput[] = []
+  // The level meter: the input's own stream, only while the menu is open.
+  let meter: { stream: MediaStream; context: AudioContext; frame: number } | null = null
+  let meterToken = 0
+  const setLevel = (level: number): void => {
+    const pct = Math.round(Math.max(0, Math.min(1, level)) * 100)
+    if (micLevel) micLevel.style.width = `${pct}%`
+    micMeter?.setAttribute('aria-valuenow', String(pct))
+  }
+  function stopMeter(): void {
+    meterToken++
+    if (meter) {
+      cancelAnimationFrame(meter.frame)
+      try { meter.stream.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ }
+      void meter.context.close().catch(() => {})
+      meter = null
+    }
+    setLevel(0)
+  }
+  async function startMeter(input: AudioInput | null): Promise<void> {
+    stopMeter()
+    if (micPanelNote) micPanelNote.textContent = ''
+    if (!input) return
+    const token = meterToken
+    let stream: MediaStream
+    try {
+      stream = await controller.previewMicrophone(input)
+    } catch {
+      if (token === meterToken && micPanelNote) micPanelNote.textContent = 'This microphone cannot be heard. Check that it is connected.'
+      return
+    }
+    if (token !== meterToken || micPanel.hidden) { try { stream.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ } return }
+    const Ctor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
+      ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+    if (!Ctor) { try { stream.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ } return }
+    const context = new Ctor()
+    void context.resume?.()
+    const analyser = context.createAnalyser()
+    analyser.fftSize = 1024
+    try {
+      context.createMediaStreamSource(stream).connect(analyser)
+    } catch {
+      try { stream.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ }
+      void context.close().catch(() => {})
+      return
+    }
+    const samples = new Float32Array(analyser.fftSize)
+    meter = { stream, context, frame: 0 }
+    const tick = (): void => {
+      if (!meter || meter.context !== context) return
+      analyser.getFloatTimeDomainData(samples)
+      let sum = 0
+      for (const v of samples) sum += v * v
+      const rms = Math.sqrt(sum / samples.length)
+      // -60 dB (silence) … 0 dB (full scale), so speech sits in the middle of the bar.
+      setLevel(rms > 0 ? (20 * Math.log10(rms) + 60) / 60 : 0)
+      meter.frame = requestAnimationFrame(tick)
+    }
+    tick()
+  }
+  function fillMicMenu(chosen: AudioInput | null): void {
+    if (!micSelect) return
+    const rows = microphoneMenu(micInputs, chosen)
+    micSelect.innerHTML = ''
+    if (!rows.some((r) => r.selected)) {
+      // Nothing chosen and no built-in microphone to fall back to: the presenter picks.
+      const none = document.createElement('option')
+      none.textContent = rows.length ? 'Choose a microphone' : 'No microphone found'
+      none.value = ''
+      none.disabled = true
+      none.selected = true
+      micSelect.appendChild(none)
+    }
+    rows.forEach((row) => {
+      const option = document.createElement('option')
+      option.textContent = row.missing ? `${row.name} (not connected)` : row.name
+      option.value = row.input ? String(micInputs.indexOf(row.input)) : ''
+      option.disabled = row.missing
+      option.selected = row.selected
+      micSelect.appendChild(option)
+    })
+    if (micButton) micButton.dataset.tip = chosen ? `Microphone: ${inputName(chosen)}` : 'Microphone'
+  }
+  async function refreshMicMenu(note = ''): Promise<void> {
+    const { inputs, chosen } = await controller.microphones()
+    micInputs = inputs
+    fillMicMenu(chosen)
+    if (!micPanel.hidden) await startMeter(chosen)
+    if (note && micPanelNote && !micPanelNote.textContent) micPanelNote.textContent = note
+  }
+  function placeMicPanel(): void {
+    const at = micButton?.getBoundingClientRect()
+    if (!at || at.width === 0) { micPanel.style.top = '86px'; micPanel.style.left = '26px'; return }
+    micPanel.style.top = `${Math.round(at.bottom + 10)}px`
+    micPanel.style.left = `${Math.round(Math.max(10, Math.min(window.innerWidth - micPanel.offsetWidth - 10, at.left + at.width / 2 - micPanel.offsetWidth / 2)))}px`
+  }
+  function openMicPanel(note = ''): void {
+    micPanel.hidden = false
+    micButton?.setAttribute('aria-expanded', 'true')
+    placeMicPanel()
+    void refreshMicMenu(note).then(placeMicPanel)
+    micSelect?.focus()
+  }
+  function closeMicPanel(): void {
+    if (micPanel.hidden) return
+    micPanel.hidden = true
+    micButton?.setAttribute('aria-expanded', 'false')
+    stopMeter()
+  }
+  micSelect?.addEventListener('change', () => {
+    const input = micInputs[Number(micSelect.value)]
+    if (!input) return
+    void pickMicrophone(input).then(() => refreshMicMenu())
+  })
+  micPanel.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return
+    e.preventDefault()
+    e.stopPropagation()
+    closeMicPanel()
+    micButton?.focus()
+  })
+  document.addEventListener('pointerdown', (e) => {
+    const t = e.target as Node | null
+    if (!micPanel.hidden && t && !micPanel.contains(t) && !micButton?.contains(t)) closeMicPanel()
+  }, true)
+
+  // A microphone connected during the talk: one notice each, never over an audio alert.
+  let offeredMic: AudioInput | null = null
+  const hideMicToast = (): void => { micToast.classList.remove('show'); offeredMic = null }
+  const alertShowing = (): boolean => lostToast.classList.contains('show') || diskToast.classList.contains('show')
+  function showMicToast(): void {
+    if (!offeredMic || alertShowing()) return
+    if (micText) micText.innerHTML = `<b>Room microphone available:</b> ${escapeHtml(shortName(inputName(offeredMic)))}. Use it?`
+    showOnly(micToast)
+  }
+  // Record could not tell which microphone to use: never a guess, the presenter picks.
+  controller.onNeedMicrophone((missing) => openMicPanel(`${missing ? `${shortName(missing)} isn't connected. ` : ''}Choose the microphone to record with, then press Record.`))
+  controller.onNewMicrophone((input) => {
+    offeredMic = input
+    if (controller.audioStatus().lost) showLostToast()
+    else showMicToast()
+    if (!micPanel.hidden) void refreshMicMenu()
+  })
 
   function chooseKind(initial: RunKind = 'delivery'): Promise<RunKind | null> {
     return new Promise((resolve) => {
@@ -454,6 +690,10 @@ export function mountRecUi(controller: RecorderController): void {
     }
     if (clock) { clock.hidden = view.time === null; if (view.time !== null) clock.textContent = view.time }
     for (const [name, el] of buttons) if (el) el.hidden = !view.buttons.includes(name)
+    // Keep deliberate switching available throughout the talk, including after a loss.
+    const canChooseMic = view.buttons.includes('primary') || st === 'recording' || st === 'paused'
+    if (micButton) micButton.hidden = !canChooseMic
+    if (!canChooseMic) closeMicPanel()
     if (btnKeep) {
       dressPresenterButton(btnKeep, presenterControl('twrec-keep'), SHORTCUT_REGISTRY, view.retrying
         ? { label: 'Retry save', name: 'Retry saving this recording', icon: 'refresh-cw' }
@@ -476,9 +716,10 @@ export function mountRecUi(controller: RecorderController): void {
   controller.onCloseOffer((offer) => { hideSaveToast(); showPresentationCloseOffer(controller, offer) })
   controller.onAudio((_status, event, detail) => {
     if (event === 'disk-failed') { showOnly(diskToast); return }
+    if (event === 'switched') return
     if (event === 'lost') lostDismissed = false
-    if (event === 'restored') { hideLostToast(); showBackToast(detail?.gapMs ?? 0) }
-    else showLostToast()
+    if (event === 'restored') { hideLostToast(); showBackToast(detail?.gapMs ?? 0); return }
+    showLostToast()
   })
   controller.onError((msg) => {
     const n = document.createElement('div')
@@ -509,10 +750,19 @@ export function mountRecUi(controller: RecorderController): void {
   $('twrec-start-dismiss')?.addEventListener('click', hideStartToast)
   $('twrec-saved-change')?.addEventListener('click', () => { void saveWithPicker() })
   $('twrec-saved-dismiss')?.addEventListener('click', hideSavedToast)
+  $('twrec-lost-switch')?.addEventListener('click', () => { if (lostAlternative) void pickMicrophone(lostAlternative); else openMicPanel() })
   lostResume?.addEventListener('click', () => { void controller.reacquireAudio() })
   $('twrec-lost-dismiss')?.addEventListener('click', () => { lostDismissed = true; hideLostToast() })
   $('twrec-back-dismiss')?.addEventListener('click', hideBackToast)
   $('twrec-disk-dismiss')?.addEventListener('click', () => diskToast.classList.remove('show'))
+  micButton?.addEventListener('click', () => { if (micPanel.hidden) openMicPanel(); else closeMicPanel() })
+  $('twrec-mic-use')?.addEventListener('click', () => {
+    const input = offeredMic
+    hideMicToast()
+    if (input) void pickMicrophone(input).then(() => { if (!micPanel.hidden) void refreshMicMenu() })
+  })
+  $('twrec-mic-dismiss')?.addEventListener('click', hideMicToast)
+  window.addEventListener('resize', () => { if (!micPanel.hidden) placeMicPanel() })
 
   // 5) Keyboard — ⇧R record/stop, ⇧P pause/resume. Capture phase so we act before the
   // presenter's own handler; plain P/R stay the presenter's (pacing timer / reveal).

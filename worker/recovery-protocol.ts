@@ -13,7 +13,7 @@ import {
 } from './board-protocol'
 
 export const LIVE_PROTOCOL_VERSION = 2
-export const LIVE_WORKER_BUILD = '26-online-content-guidelines'
+export const LIVE_WORKER_BUILD = '27-online-presenter-marks'
 export interface SessionPresence {
   type: 'session.presence'
   presenterConnected: boolean
@@ -89,7 +89,7 @@ export interface SessionSnapshot {
 export type RecoveryClientMessage =
   | { type: 'session.ping'; nonce: string }
   | { type: 'session.sync'; syncId: string; slideState?: SlideState | null; afterSequence?: number; afterReactionSequence?: number }
-  | { type: 'operation'; operationId: string; action: Exclude<PresenterMessage, { type: 'slide.publish' | 'pointer.live' | 'ink.live' }> }
+  | { type: 'operation'; operationId: string; action: Exclude<PresenterMessage, { type: 'slide.publish' | 'pointer.live' | 'ink.live' | 'embed.live' }> }
   | { type: 'vote.submit'; submissionId: string; pollId: string; choice: PollChoice }
   | ({ type: 'reaction.send'; submissionId: string } & ReactionInput)
   | ({ type: 'question.submit'; submissionId: string } & QuestionInput)
@@ -139,7 +139,7 @@ export function parseRecoveryClientMessage(value: string): RecoveryClientMessage
     }
     if (m.type === 'operation' && validRecoveryId(m.operationId)) {
       const action = parsePresenterMessage(JSON.stringify(m.action))
-      return action && action.type !== 'slide.publish' && action.type !== 'pointer.live' && action.type !== 'ink.live' ? { type: m.type, operationId: m.operationId, action } : null
+      return action && action.type !== 'embed.live' && action.type !== 'slide.publish' && action.type !== 'pointer.live' && action.type !== 'ink.live' ? { type: m.type, operationId: m.operationId, action } : null
     }
     if (m.type === 'vote.submit' && validRecoveryId(m.submissionId)) {
       const vote = parseAudienceMessage(JSON.stringify({ ...m, type: 'poll.vote' }))

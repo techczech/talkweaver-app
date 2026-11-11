@@ -43,10 +43,13 @@ createRoot(document.getElementById('root')).render(<App/>);
 ` }, bundle:true, platform:'browser', format:'iife', jsx:'automatic', outfile:join(temp,'test.js'), loader:{'.css':'css'}, logLevel:'error' })
  writeFileSync(join(temp,'test.html'),'<link rel="stylesheet" href="test.css"><div id="root" style="display:flex"></div><div id="editor"></div><script src="test.js"></script>')
  browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1400,height:1100}})
- const errors=[];page.on('pageerror',e=>errors.push(e.message));await page.goto(pathToFileURL(join(temp,'test.html')).href)
+ const errors=[];page.on('pageerror',e=>errors.push(e.message))
+ // The harness has no sidebars, so the panel is placed where it floats over the right half (the app opens it beside the sidebar).
+ await page.addInitScript(()=>localStorage.setItem('tw-scratchpad-layout-v1',JSON.stringify({mode:'collapsed',restore:'float',box:{x:670,y:90,w:700,h:800}})))
+ await page.goto(pathToFileURL(join(temp,'test.html')).href)
  await page.locator('.grid-cell').first().waitFor()
  await page.getByLabel('Select A',{exact:true}).check();await page.getByLabel('Select B',{exact:true}).check()
- await page.getByRole('button',{name:'Set aside in Scratchpad',exact:true}).click()
+ await page.getByRole('button',{name:'Set aside in Slide Scratchpad',exact:true}).click()
  await page.locator('.sp-card').first().waitFor();assert.equal(await page.locator('.sp-card').count(),2);assert(!await page.evaluate(()=>window.text().includes('Body A')));checks++
  await page.evaluate(()=>window.undo());await page.waitForFunction(()=>window.text().includes('Body A'))
  assert.equal(await page.evaluate(()=>window.text()),original);assert.equal(await page.getByText('In talk',{exact:true}).count(),2);checks++

@@ -11,6 +11,7 @@ import { listedPaletteCommands } from '../../../shared/command-registry'
 import { shortcutById } from '../../../shared/shortcut-registry'
 import { TASK_GROUPS, type TaskGroup } from '../../../shared/task-groups'
 import { keyboardSheet, searchSheet, type SheetRow } from '../../../shared/keyboard-sheet'
+import { viewKeySections, type ViewKeysId } from '../../../shared/view-keys'
 import type { Place, PlaceRow } from '../../../shared/place'
 import type { VaultState } from '../../../shared/actions-here'
 import { liveShortcutLabel, onKeymapChanged } from '../keymap/store'
@@ -28,6 +29,8 @@ interface Props {
   onRun?: (row: SheetRow) => void
   /** Can a carried row (Explain rendering, Present from here) be run from the sheet? */
   canRunCarried?: (key: string) => boolean
+  /** The view the person is in (Studio, History, Manage notes, Importer, Slide Browser…): the sheet opens on that view's keys. */
+  view?: ViewKeysId
 }
 
 const GROUP_ICONS: Readonly<Record<TaskGroup, JSX.Element>> = {
@@ -43,7 +46,7 @@ const GROUP_ICONS: Readonly<Record<TaskGroup, JSX.Element>> = {
   'Set up TalkWeaver': <SlidersHorizontal size={14} />
 }
 
-type Section = { kind: 'here' } | { kind: 'group'; taskGroup: TaskGroup; sub: string | null } | { kind: 'surface'; surface: string }
+type Section = { kind: 'here' } | { kind: 'group'; taskGroup: TaskGroup; sub: string | null } | { kind: 'surface'; surface: string } | { kind: 'view'; view: ViewKeysId }
 
 function defaultChordOf(shortcutId: string): string {
   const shortcut = shortcutById(shortcutId)
@@ -67,7 +70,16 @@ function RowView({ row, onRun }: { row: SheetRow; onRun: (row: SheetRow) => void
   )
 }
 
-export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow = null, quoteSlide = false, vault, onRun, canRunCarried }: Props) {
+function ViewRowView({ label, keys }: { label: string; keys: string }) {
+  return (
+    <div className="kbd-sheet-row" data-sheet-view-row>
+      <span className="kbd-sheet-label">{label}</span>
+      <kbd className="kbd-sheet-chord">{keys}</kbd>
+    </div>
+  )
+}
+
+export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow = null, quoteSlide = false, vault, onRun, canRunCarried, view }: Props) {
   const [revision, setRevision] = useState(0)
   useEffect(() => onKeymapChanged(() => setRevision((value) => value + 1)), [])
   const [query, setQuery] = useState('')
@@ -88,8 +100,16 @@ export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow =
     [place, placeRow, quoteSlide, vault, revision, runnable, canRunCarried]
   )
 
-  const [section, setSection] = useState<Section>(() =>
-    data.opensOn === 'here' ? { kind: 'here' } : { kind: 'group', taskGroup: data.opensOn, sub: null })
+  // The keys of each whole view, from the shortcut registry's scopes (shared/view-keys.ts); a rebound chord shows live.
+  const views = useMemo(() => viewKeySections().map((section) => ({
+    ...section,
+    rows: section.rows.map((row) => ({ ...row, keys: row.shortcutId ? liveShortcutLabel(row.shortcutId) || row.keys : row.keys }))
+  })),
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  [revision])
+  const opening = (): Section => view ? { kind: 'view', view }
+    : data.opensOn === 'here' ? { kind: 'here' } : { kind: 'group', taskGroup: data.opensOn, sub: null }
+  const [section, setSection] = useState<Section>(opening)
 
   // Opening resets the query and puts the sheet on Here, or on the first task group with no talk
   // open. Done while rendering, so the first frame already shows it (no frame of the last query).
@@ -98,7 +118,7 @@ export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow =
     setWasOpen(isOpen)
     if (isOpen) {
       setQuery('')
-      setSection(data.opensOn === 'here' ? { kind: 'here' } : { kind: 'group', taskGroup: data.opensOn, sub: null })
+      setSection(opening())
     }
   }
   useEffect(() => {
@@ -123,6 +143,10 @@ export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow =
   if (!isOpen) return null
 
   const searching = query.trim().length > 0
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean)
+  const viewResults = searching
+    ? views.flatMap((section) => section.rows.filter((row) => words.every((word) => `${row.label} ${section.title}`.toLowerCase().includes(word))).map((row) => ({ section, row })))
+    : []
   const results = searching ? searchSheet(data, query) : []
   const run = (row: SheetRow): void => { onClose(); onRun?.(row) }
 
@@ -130,15 +154,23 @@ export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow =
   let heading = ''
   let body: JSX.Element
   if (searching) {
-    heading = `${results.length} ${results.length === 1 ? 'command matches' : 'commands match'}`
-    body = results.length === 0
+    const total = results.length + viewResults.length
+    heading = `${total} ${total === 1 ? 'command matches' : 'commands match'}`
+    body = total === 0
       ? <div className="kbd-sheet-empty" data-sheet-empty>{`No command matches “${query.trim()}”`}</div>
-      : <>{results.map((row) => <RowView key={`${row.taskGroup}:${row.key}`} row={row} onRun={run} />)}</>
+      : <>
+          {results.map((row) => <RowView key={`${row.taskGroup}:${row.key}`} row={row} onRun={run} />)}
+          {viewResults.map(({ section: found, row }) => <ViewRowView key={`${found.id}:${row.label}:${row.keys}`} label={`${row.label} · ${found.title}`} keys={row.keys} />)}
+        </>
   } else if (section.kind === 'here' && data.here) {
     heading = data.here.heading
     body = <>{withHeadings(data.here.rows, (row) => row.taskGroup ?? '').map((part) => part.heading
       ? <div key={`h:${part.heading}`} className="kbd-sheet-heading" role="presentation">{part.heading}</div>
       : <RowView key={part.row!.key} row={part.row!} onRun={run} />)}</>
+  } else if (section.kind === 'view') {
+    const found = views.find((candidate) => candidate.id === section.view)
+    heading = `${found?.title ?? ''} keys`
+    body = <>{(found?.rows ?? []).map((row) => <ViewRowView key={`${row.label}:${row.keys}`} label={row.label} keys={row.keys} />)}</>
   } else if (section.kind === 'surface') {
     const surface = data.surfaces.find((candidate) => candidate.surface === section.surface)
     heading = section.surface
@@ -215,6 +247,19 @@ export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow =
                 </div>
               )
             })}
+            <hr className="kbd-sheet-rule" />
+            {views.map((found) => (
+              <button
+                key={found.id}
+                type="button"
+                className={`kbd-sheet-item kbd-sheet-item--surface${section.kind === 'view' && section.view === found.id && !searching ? ' kbd-sheet-item--on' : ''}`}
+                data-sheet-section={`view:${found.id}`}
+                onClick={() => { setQuery(''); setSection({ kind: 'view', view: found.id }) }}
+              >
+                <span className="kbd-sheet-item-label">{found.title} keys</span>
+                <span className="kbd-sheet-count">{found.rows.length}</span>
+              </button>
+            ))}
             {data.surfaces.length > 0 && <hr className="kbd-sheet-rule" />}
             {data.surfaces.map((surface) => (
               <button

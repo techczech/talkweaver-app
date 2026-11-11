@@ -329,7 +329,7 @@ export function stampedIdOf(sourceMarkdown?: string): string | null {
 // The ⌘↵ kbd is rendered separately by the component.
 export function propagationSummaryLabel(nReplace: number, nSkip: number): string {
   const head = nReplace > 0
-    ? `Replace in ${nReplace} presentation${nReplace === 1 ? '' : 's'}`
+    ? `Replace in ${nReplace} talk${nReplace === 1 ? '' : 's'}`
     : 'Nothing to replace'
   return head + (nSkip > 0 ? ` · skip ${nSkip}` : '')
 }

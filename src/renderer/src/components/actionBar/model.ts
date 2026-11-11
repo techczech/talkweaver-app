@@ -10,23 +10,16 @@ import type { ToolbarIconToken } from '../../../../shared/command-registry.ts'
  * from this array at resolution time, never restated beside it, so changing the default later is
  * an edit to this array and never a refactor.
  *
- * Section two carries the complete everyday editing set from the 2026-09-23 amendment.
+ * Section two carries the complete everyday editing set from the 2026-09-23 amendment: formatting and
+ * structure only. The bar holds no insert; those are the Insert menu's.
  *
  * `app.command-palette` ("All commands…") is palette-hidden — the palette must not list itself —
  * but it is a registered, runnable command, which is what the bar resolves against.
  */
 export const DEFAULT_ACTION_BAR_ITEMS: readonly string[] = [
-  // Section one — discovery: what someone who does not already know the app cannot find.
-  'layout',
-  'icon-picker',
-  'image',
-  'search',
-  'insert-object-table',
-  'insert-object-chart',
-  'insert-object-diagram',
-  'insert-object-mindmap',
-  'toggle-inspector',
-  'view-strip',
+  // Section one — discovery: what someone who does not already know the app cannot find. Insertion is not
+  // here: the Insert menu (and the palette) own every insert, so a command appears once (house rule R3).
+  // The sidebar and the views are the toolbar's own buttons (R3, R18), so they are not repeated in this bar.
   'present-presenter',
   'handout',
   'publish-handout',

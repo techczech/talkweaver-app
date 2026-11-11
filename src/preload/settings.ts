@@ -24,6 +24,17 @@ const on = <T>(channel: string, listener: (value: T) => void): (() => void) => {
 }
 
 const tw = {
+  // The built-in agent skill (agent-skill-host.ts). Agent ids only; main holds every folder.
+  agentSkill: {
+    status: (): Promise<import('../shared/agent-skill/types').StatusReport> => ipcRenderer.invoke('agent-skill:status'),
+    install: (ids: string[]): Promise<import('../shared/agent-skill/types').ActionReport> => ipcRenderer.invoke('agent-skill:install', ids),
+    remove: (ids: string[]): Promise<import('../shared/agent-skill/types').ActionReport> => ipcRenderer.invoke('agent-skill:remove', ids),
+    replace: (ids: string[]): Promise<import('../shared/agent-skill/types').ActionReport> => ipcRenderer.invoke('agent-skill:replace', ids),
+    offer: (): Promise<import('../shared/agent-skill/types').Offer> => ipcRenderer.invoke('agent-skill:offer'),
+    decline: (ids: string[]): Promise<import('../shared/agent-skill/types').ActionReport> => ipcRenderer.invoke('agent-skill:decline', ids),
+    answerOffer: (answer: { install: string[]; decline: string[] }): Promise<import('../shared/agent-skill/types').ActionReport> => ipcRenderer.invoke('agent-skill:answer-offer', answer),
+    offerShown: (ids: string[]): Promise<void> => ipcRenderer.invoke('agent-skill:offer-shown', ids),
+  },
   updates: {
     get: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:get'),
     /** Check for Updates…: always checks (a Store copy and a development run answer without a request). */

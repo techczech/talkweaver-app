@@ -431,10 +431,10 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     await page.keyboard.type('notes: sidebar'); await settle(page)
     await page.keyboard.press('Enter'); await settle(page)
     check((await reported()).includes('presenter-palette.notes-sidebar'), 'Notes: sidebar reports its palette id')
-    // A menu item reports its command (View → Focus mode).
+    // A menu item reports its command (View → Spotlight).
     await page.click('#presenterMenuView').catch(() => {}); await settle(page, 150)
     await page.click('#viewFocus').catch(() => {}); await settle(page)
-    check((await reported()).includes('presenter.focus'), 'View → Focus mode reports presenter.focus')
+    check((await reported()).includes('presenter.focus'), 'View → Spotlight reports presenter.focus')
     // A key that does nothing here reports nothing (B with no jump to return from).
     await page.keyboard.press('b'); await settle(page)
     check(!(await reported()).includes('presenter.return'), 'B with nothing to return to reports nothing')

@@ -61,3 +61,24 @@ export function slideNumbersByLine(slideLines: ReadonlyArray<number | null>): Ma
   })
   return out
 }
+
+/**
+ * The line of the talk's `# ` title heading (1-based), or null. The compiler places the cover on file line 1; when the
+ * file opens with front matter that line is `---`, so the cover's number would sit on no heading and the title slide
+ * went unnumbered in the gutter while the strip, the outline and the presenter number it (house rule R7). The cover's
+ * number belongs on the title heading.
+ */
+export function titleHeadingLine(doc: { lines: number; line(n: number): { text: string } }): number | null {
+  let n = 1
+  if (doc.lines >= 1 && /^---\s*$/.test(doc.line(1).text)) {
+    n = 2
+    while (n <= doc.lines && !/^(---|\.\.\.)\s*$/.test(doc.line(n).text)) n += 1
+    n += 1
+  }
+  for (; n <= doc.lines; n += 1) {
+    const text = doc.line(n).text
+    if (/^#\s/.test(text)) return n
+    if (/^#{2,6}\s/.test(text)) return null
+  }
+  return null
+}

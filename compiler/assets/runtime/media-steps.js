@@ -71,6 +71,7 @@ export function createMediaStepController(options) {
     const player = playerOf(file);
     if (!player) return;
     file.dataset.mediaStepStarted = '1';
+    if (options && (typeof options.followVideo === 'function' ? options.followVideo() : options.followVideo) && player.tagName === 'VIDEO') return;
     if (!player.paused && !player.ended) return;
     try { if (player.currentTime > 0) player.currentTime = 0; } catch (error) { /* not seekable yet */ }
     attempt(player).catch(function (error) {

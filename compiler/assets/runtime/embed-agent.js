@@ -235,11 +235,12 @@ export function embedAgentMain(win) {
     }
   }
   function onScroll(event) {
-    if (role !== 'capture' || token === '') return;
+    if (role !== 'capture' && token !== '') return;
     const target = event.target;
     if (target !== doc && (!target || target.nodeType !== 1)) return;
     if (!scrolled.has(target) && scrolled.size >= limits.scrollPendingMax) return;
     scrolled.add(target);
+    if (role !== 'capture' || token === '') return;
     if (scrollScheduled) return;
     scrollScheduled = true;
     if (typeof win.requestAnimationFrame === 'function') win.requestAnimationFrame(flushScroll);
@@ -295,6 +296,8 @@ export function embedAgentMain(win) {
         awaitingHello = false;
         token = message.t;
         role = message.role;
+        // A fresh or restored frame reports where it actually starts, including page-script scrolls.
+        if (role === 'capture') { scrolled.add(doc); flushScroll(); } else scrolled.clear();
         return;
       }
       if (token === '' || message.t !== token) return;

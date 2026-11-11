@@ -1,4 +1,5 @@
 import { ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
+import { runTitleAndWhen } from '../shared/sessions-list'
 import { existsSync, mkdirSync, readFileSync, watch } from 'fs'
 import { join } from 'path'
 import {
@@ -140,7 +141,7 @@ export function registerTalkTextIpc(deps: TalkTextIpcDeps): TalkTextIpcControlle
       meta: {
         talkSlug,
         talkTitle: run.talkTitle,
-        event: run.context ?? undefined,
+        event: runTitleAndWhen(run).name || run.context || undefined,
         date: run.startedAt ? run.startedAt.slice(0, 10) : undefined,
         recordedMs: run.recordingMs
       }

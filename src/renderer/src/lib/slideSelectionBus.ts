@@ -3,11 +3,14 @@
 export interface SlideSelectionControls {
   /** The selection's size (talk order not needed here). */
   count: () => number
+  /** Whether the whole ticked selection can participate in an outline edit (no ticks: active slide rules apply). */
+  canEditOutline: () => boolean
   selectSection: () => boolean
   /** Select an inserted batch only when every heading line exists in the current rows. */
   selectLines: (lines: readonly number[]) => boolean
   clear: () => void
   openMove: () => boolean
+  addToPathway?: () => boolean
   setAside?: () => boolean
   remove: () => boolean
 }

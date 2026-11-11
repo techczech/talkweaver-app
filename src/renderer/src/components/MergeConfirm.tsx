@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from 'react'
 import { FolderOpen, GitMerge, ShieldCheck, X } from 'lucide-react'
 import type { LedgerMergeResult } from '../../../preload/index'
 import { notify } from '../lib/notify'
+import { ConfirmCard } from './cards'
 import { type MergeRequest, joinTalkNames, mergeConfirmTitle, mergeSuccessLabel } from './slideBrowserModel'
 
 interface Props {
@@ -109,6 +110,25 @@ export default function MergeConfirm({ isOpen, onClose, request, vaultRoot, onMe
   if (!isOpen) return null
 
   const across = joinTalkNames(request.talkTitles)
+
+  // The question itself is the one confirm card (house rule R10); the panel below stays for what comes
+  // after it: a refusal, or copies that could not be stamped, with their Show in Finder recovery.
+  if (!refused && failures.length === 0) {
+    return (
+      <ConfirmCard
+        title={mergeConfirmTitle(request.count)}
+        itemName={request.title}
+        consequence={`${request.count === 1 ? 'This copy is' : `These ${request.count} copies${across ? ` across ${across}` : ''} are`} identical. Merging gives them one shared id, so they become a single slide: future edits and versions are shared, and searches show it once.`}
+        recovery="Nothing is lost: each copy’s content stays exactly as it is."
+        cta="Merge"
+        busy={busy}
+        onCancel={onClose}
+        onConfirm={() => void confirm()}
+        wide
+        testId="merge-confirm-card"
+      />
+    )
+  }
 
   return (
     <div className="lt lt-merge-root">

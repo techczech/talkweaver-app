@@ -36,6 +36,9 @@ export const SETTINGS_WINDOW_ONLY: readonly string[] = [
   'backup:run-now',
   'backup:set-enrolled',
   'settings-window:editor-action',
+  // The agent skill's Remove and Replace (agent-skill-host.ts): written into other tools' folders, so only from Settings.
+  'agent-skill:remove',
+  'agent-skill:replace',
   // Recording storage: the endpoint and bucket, and the access keys (a secret). The Settings
   // window's own pages write these through the settings store and Accounts and keys; these calls
   // stay for that window only, and the editor window's preload no longer has them.
@@ -53,10 +56,17 @@ export const SHARED_CHANGES: Readonly<Record<string, string>> = {
   'updates:stop-skipping': 'Clears the skipped version.',
   'updates:not-now': 'Snoozes the mark until the next daily check.',
   'updates:set-enabled': 'Writes the boolean checking preference through the shared settings overlay.',
-  'updates:dismiss-whats-new': 'Marks the bundled notes as seen.'
+  'updates:dismiss-whats-new': 'Marks the bundled notes as seen.',
+  // The offer's own buttons (onboarding step and status-bar offer). Each takes agent ids only, never a path; the
+  // service writes only into an agent that was found, only the skill's own folder, and keeps links and unmarked folders.
+  'agent-skill:install': 'Agent ids only; writes the skill into found agents\' skills folders, never through a link.',
+  'agent-skill:decline': 'Agent ids only; records Not now.',
+  'agent-skill:answer-offer': 'Agent ids to install and to decline; the same install and decline.',
+  'agent-skill:offer-shown': 'Agent ids only; records that the one offer was shown.'
 }
 
 export const READS: readonly string[] = [
+  'agent-skill:status', 'agent-skill:offer',
   'updates:get', 'updates:check', 'updates:download', 'updates:open-notes', 'updates:open-store', 'updates:whats-new',
   'cloudflare:status',
   'cloudflare:check',

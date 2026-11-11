@@ -20,6 +20,8 @@ export interface ToastDetail {
 }
 
 export const TOAST_EVENT = 'tw-toast'
+/** The status bar tells the toasts when its notice slot appears or goes (R2: notices live in the status bar). */
+export const STATUS_NOTICE_SLOT_EVENT = 'tw-status-notice-slot'
 export const TOAST_DISMISS_EVENT = 'tw-toast-dismiss'
 
 export function notify(message: string, level: ToastLevel = 'info', key?: string, action?: ToastAction): void {

@@ -7,7 +7,8 @@ anything else on the computer.
 ## What ships here
 
 - `parakeet_to_srt.py`: the transcription script. TalkWeaver runs it as
-  `<python> parakeet_to_srt.py <audio.wav> -o <out.srt>`.
+  `<python> parakeet_to_srt.py <audio.wav> -o <out.srt> --words <out.words.json>` (the word timings
+  are optional: TalkWeaver passes `--words` only to a script whose `--help` lists it).
 - `requirements.txt`: the Python packages the script needs.
 - `ffmpeg` is not needed from you: TalkWeaver ships its own and uses it when no ffmpeg path is set.
 
@@ -16,6 +17,8 @@ anything else on the computer.
 The shipped engine (Parakeet on MLX) runs on a Mac with Apple silicon. On Windows or an Intel Mac,
 `requirements.txt` installs nothing and the script cannot transcribe; tell the person so. An engine
 of their own works if it takes the same arguments (`<audio.wav> -o <out.srt>`) and writes an SRT file.
+It also gives word timings if its `--help` lists `--words` and, given `--words <file.json>`, it writes
+`{"words": [{"text": "Hello,", "start": 0.4, "end": 0.9}]}` (seconds, on the audio's clock).
 
 ## Paths
 

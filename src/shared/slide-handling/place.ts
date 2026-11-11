@@ -12,6 +12,9 @@
 // Scratchpad still names only `start` and `after` places (ScratchPlace) and behaves as before.
 // Pure: no I/O, no React, no CodeMirror. Tests: scripts/test-slide-handling-place.mjs, scripts/test-scratchpad-insert.mjs.
 
+import { headingLevelsOfText, frontmatterEndIndex } from '../heading-lines.ts'
+import { talkTitleIndex } from '../talk-title.ts'
+import { TRIGGER_ONLY_RE } from '../../../compiler/scripts/lib/slide-id.mjs'
 import { readOutline } from '../insert-section.ts'
 
 /** The places the Slide Scratchpad offers (start of the talk, after a slide). */
@@ -61,10 +64,13 @@ export type ResolvedPlace = { kind: 'start' } | { kind: HeadingPlace['kind']; in
 /** The heading line (0-based) a place names in this text: the line when it still has that title, else the
  *  heading with that title nearest to it; null when the slide is not in the talk any more. */
 export function resolvePlace(text: string, place: ScratchPlace): { kind: 'start' } | { kind: 'after'; index: number } | null
-export function resolvePlace(text: string, place: SlidePlace): ResolvedPlace | null
-export function resolvePlace(text: string, place: SlidePlace): ResolvedPlace | null {
+export function resolvePlace(text: string, place: SlidePlace, mode?: 'slide' | 'paste'): ResolvedPlace | null
+export function resolvePlace(text: string, place: SlidePlace, mode: 'slide' | 'paste' = 'slide'): ResolvedPlace | null {
   if (place.kind === 'start') return place
-  const rows = placeRows(text)
+  const lines = text.split('\n')
+  const rows = mode === 'paste'
+    ? headingLevelsOfText(text, lines).flatMap((level, i) => level > 0 ? [{ line: i + 1, title: headingTitle(lines[i]) }] : [])
+    : placeRows(text)
   const exact = rows.find((r) => r.line === place.line && r.title === place.title)
   if (exact) return { kind: place.kind, index: exact.line - 1 }
   const same = rows.filter((r) => r.title === place.title)
@@ -96,7 +102,7 @@ export function settlePlace<P extends SlidePlace>(text: string, chosen: P | null
   return { place: null, earlier: [] }
 }
 
-export type InsertionPoint = { ok: true; at: number; offset: number; level: number } | { ok: false; error: string }
+export type InsertionPoint = { ok: true; at: number; offset: number; level: number; titleClamped?: boolean } | { ok: false; error: string }
 
 export const PLACE_GONE = 'The slide you chose as the place is not in the talk any more. Nothing was inserted; choose the place again.'
 export const UNSAFE_PLACE = 'The talk has a code fence or comment that is never closed, so the slide could not be placed safely. Nothing was inserted.'
@@ -105,13 +111,14 @@ const isBlank = (line: string): boolean => /^\s*$/.test(line)
 
 /** Where a new slide goes for `place`: the line index its first line takes, that line's character offset, and
  *  the heading level it gets. */
-export function insertionPoint(text: string, place: SlidePlace): InsertionPoint {
+export function insertionPoint(text: string, place: SlidePlace, mode: 'slide' | 'paste' = 'slide', options?: { partHeadings: 'body' | 'boundary' }): InsertionPoint {
   const read = readOutline(text)
-  if (read.openFence || read.openComment) return { ok: false, error: UNSAFE_PLACE }
-  const resolved = resolvePlace(text, place)
+  if (mode === 'slide' && (read.openFence || read.openComment)) return { ok: false, error: UNSAFE_PLACE }
+  const resolved = resolvePlace(text, place, mode)
   if (!resolved) return { ok: false, error: PLACE_GONE }
   const lines = text.split('\n')
-  const { levels, bodyStart } = read
+  const levels = mode === 'paste' ? headingLevelsOfText(text, lines) : read.levels
+  const { bodyStart } = read
   let sectionLevel = 7
   let deepest = 0
   for (let i = bodyStart; i < levels.length; i += 1) {
@@ -119,7 +126,27 @@ export function insertionPoint(text: string, place: SlidePlace): InsertionPoint 
   }
   let at: number
   let level: number
-  if (resolved.kind === 'before') {
+  let titleClamped = false
+  if (mode === 'paste') {
+    let tail = lines.length
+    while (tail > 0 && isBlank(lines[tail - 1])) tail -= 1
+    if (resolved.kind === 'start') {
+      const first = firstSlide0(lines, levels)
+      at = first < 0 ? tail : first
+    } else if (resolved.kind === 'before') at = resolved.index
+    else {
+      at = resolved.index + 1
+      while (at < lines.length && !(levels[at] > 0 && levels[at] <= levels[resolved.index])) at += 1
+      at = Math.min(at, tail)
+    }
+    const title = talkTitleIndex(lines, levels)
+    if (title >= 0 && at <= title) {
+      titleClamped = true
+      const first = firstSlide0(lines, levels)
+      at = first < 0 ? tail : first
+    }
+    level = resolved.kind === 'start' ? (levels[at] || 3) : levels[resolved.index]
+  } else if (resolved.kind === 'before') {
     at = resolved.index
     level = levels[at]
   } else if (resolved.kind === 'endOfSection') {
@@ -148,8 +175,9 @@ export function insertionPoint(text: string, place: SlidePlace): InsertionPoint 
     } else {
       end = own
       // The owner's own subtree ends at the next heading at its level or above, a `# ` part heading included: an
-      // insert after slide A never walks past the next part's heading and its intro.
-      while (end < lines.length && !(levels[end] >= 1 && levels[end] <= ownerLevel)) end += 1
+      // insert after slide A stops at the next part heading. Archive insertion historically treats
+      // those headings as body instead; its explicit option preserves that dialect's landing position.
+      while (end < lines.length && !(levels[end] >= (options?.partHeadings === 'body' ? 2 : 1) && levels[end] <= ownerLevel)) end += 1
       while (end > owner + 1 && (levels[end - 1] === 1 || isBlank(lines[end - 1]))) end -= 1
       level = ownerLevel
     }
@@ -164,10 +192,81 @@ export function insertionPoint(text: string, place: SlidePlace): InsertionPoint 
   }
   let offset = 0
   for (let i = 0; i < at && i < lines.length; i += 1) offset += lines[i].length + 1
-  return { ok: true, at, offset: Math.min(offset, text.length), level }
+  return { ok: true, at, offset: Math.min(offset, text.length), level, ...(titleClamped ? { titleClamped: true } : {}) }
 }
 
 /** The place `kind` of the heading a ref names (a card's heading line and text). */
 export function placeAtHeading(kind: HeadingPlace['kind'], heading: { line: number; headingText: string }): HeadingPlace {
   return { kind, line: heading.line, title: headingTitle(heading.headingText.trim()) }
+}
+
+/** Legacy line-addressed inputs are accepted only at the clipboard boundary. */
+export type PastePlace = SlidePlace | { after: number } | { before: number } | 'end'
+
+export function firstSlide0(lines: readonly string[], levels: readonly number[]): number {
+  const floor = Math.max(frontmatterEndIndex(lines), talkTitleIndex(lines, levels))
+  for (let i = floor + 1; i < levels.length; i += 1) if (levels[i] > 1) return i
+  return -1
+}
+
+/**
+ * Where slides put in at the start of the talk go: before the first slide or section under the
+ * title, or at the end of the talk when there is none (firstSlide0, the place "Move … to… Start of
+ * talk" lands).
+ */
+export function startOfTalkPlace(text: string): PastePlace {
+  const lines = text.split('\n')
+  const first0 = firstSlide0(lines, headingLevelsOfText(text, lines))
+  return first0 < 0 ? 'end' : { before: first0 + 1 }
+}
+
+
+export function headingLineAt(text: string, line: number): number | null {
+  const lines = text.split('\n')
+  const levels = headingLevelsOfText(text, lines)
+  let i = line - 1
+  if (i < 0 || i >= lines.length || i <= frontmatterEndIndex(lines)) return null
+  while (i > 0 && levels[i] === 0 && TRIGGER_ONLY_RE.test(lines[i].trim())) i -= 1
+  return levels[i] > 0 ? i + 1 : null
+}
+
+
+export function caretPastePlace(text: string, caretLine: number): PastePlace | null {
+  const lines = text.split('\n')
+  const levels = headingLevelsOfText(text, lines)
+  const i = caretLine - 1
+  if (i < 0 || i >= lines.length || i <= frontmatterEndIndex(lines)) return null
+  const heading = headingLineAt(text, caretLine)
+  if (heading != null) return { after: heading }
+  if (!isBlank(lines[i])) return null
+  for (let j = i + 1; j < lines.length; j += 1) {
+    if (isBlank(lines[j])) continue
+    return levels[j] > 0 ? { before: j + 1 } : null
+  }
+  return 'end'
+}
+
+
+/** Name a clipboard boundary once; all placement arithmetic runs in insertionPoint. */
+export function slidePlaceForPaste(text: string, place: PastePlace): SlidePlace | null {
+  if (typeof place === 'object' && 'kind' in place) return place
+  const lines = text.split('\n')
+  const levels = headingLevelsOfText(text, lines)
+  if (place === 'end') {
+    let last = levels.length - 1
+    while (last >= 0 && levels[last] === 0) last -= 1
+    return last < 0 ? { kind: 'start' } : { kind: 'endOfSection', line: last + 1, title: headingTitle(lines[last]) }
+  }
+  const line = 'after' in place ? place.after : place.before
+  if (!(levels[line - 1] > 0)) return null
+  return { kind: 'after' in place ? 'endOfSection' : 'before', line, title: headingTitle(lines[line - 1]) }
+}
+
+/** Whole-slide caret insertion uses the clipboard boundary, preserving the heading's entire body. */
+export function caretSlidePlace(text: string, pos: number): SlidePlace | null {
+  const line = text.slice(0, pos).split('\n').length
+  const levels = headingLevelsOfText(text)
+  if (!(levels[line - 1] > 0)) return null
+  return slidePlaceForPaste(text, levels[line - 1] === 1 && talkTitleIndex(text.split('\n'), levels) === line - 1
+    ? startOfTalkPlace(text) : { after: line })
 }

@@ -10,7 +10,7 @@ import { preservationMessage } from '../src/main/publication-preservation.ts'
 // talk handout — the REAL bundled compiler, and the REAL publishing sequence (handout-publishing.ts)
 // with leave always given. The upload, the live service and the ledger are fakes.
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { open } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative } from 'node:path'
@@ -32,7 +32,7 @@ import { assetRootsForTalk } from '../src/main/asset-roots.ts'
 import { withoutPreworkSlides } from '../src/shared/run-prework.ts'
 import { handoutHomeDetails, handoutHomePostwork, handoutHomePrework } from '../src/shared/handout-home.ts'
 import { planRunWork, sendRunWork, writeRunWorkPages, runLineFor } from '../src/main/run-work-publish.ts'
-import { RUN_FOLDER_UNCLEAR, runPublishFolder, runSiteFolder } from '../src/main/run-unpublish.ts'
+import { RUN_FOLDER_UNCLEAR, RUN_FOLDER_UNPROVEN, legacyRunUnproven, runPublishFolder, runSiteFolder } from '../src/main/run-unpublish.ts'
 import { runPublicationFixture } from './lib/run-publication-fixture.mjs'
 import { persistRunForTalk, readRunForTalk, normaliseRun, stampRunWork } from '../src/main/runs.ts'
 import { WORK_PAGE_FOLDER } from '../src/shared/run-work.ts'
@@ -176,6 +176,9 @@ function publishDeps(siteDir, trace) {
       siteDir, supersede: trace.supersede ?? 'never',
       live: async () => { trace.liveWorker += 1; return { baseUrl: FAKE_LIVE_ADDRESS, adminSecret: 'x' } },
       onUpload: () => { trace.deploys += 1 },
+      // This computer's short-link registry and link style: the caches the publish keeps in step with the site's record.
+      ...(trace.registry ? { registry: { read: () => ({ ...trace.registry.kept }), write: (next) => { trace.registry.kept = { ...next } } } } : {}),
+      shortLinks: { read: () => config.publishUseShortIds, write: (value) => { config.publishUseShortIds = value } },
     }),
     flushTalkForPublish,
     statSync, basename, join, pathToFileURL, existsSync, mkdirSync, writeFileSync, readdirSync,
@@ -380,6 +383,13 @@ for (const name of ['http:127.0.0.1', 'http:127.0.0.1#']) {
     try {
       const result = await loadHandler('talk:publish-handout', publishDeps(siteDir, trace))(null, path, ed.doc)
       await ed.idle()
+      if (name === 'linked') {
+        // Per-talk publishing: the site is the live one, so a link in this computer's copy does not stop the publish. The copy
+        // is never written through it: the link stays a link and what it points at is byte for byte as it was.
+        assert.equal(result.success, true, result.error)
+        assert.deepEqual([lstatSync(join(siteDir, 'linked')).isSymbolicLink(), all(victim), readFileSync(join(victim, 'deep', 'keep.txt'), 'utf8')], [true, ['deep', join('deep', 'keep.txt')].sort(), 'keep'], 'nothing is written through the link')
+        continue
+      }
       assert.deepEqual([result.success, result.error], [false, SITE_FOLDER_REFUSED], `a talk file named ${JSON.stringify(name)} is refused`)
       assert.deepEqual([[all(join(root, 'site-names')), readFileSync(join(victim, 'deep', 'keep.txt'), 'utf8')], trace.deploys, trace.sealed.length], [before, 0, 0], `${JSON.stringify(name)}: nothing was written inside or outside the site folder`)
     } finally {
@@ -473,7 +483,7 @@ function runDeps(path, built, extra = {}) {
     publishUrl, pathToFileURL, getCompilerPath: () => join(REPO, 'compiler/scripts'), writeHandoutRegistry: () => {}, writeFileSync,
     runHandoutDistPath: () => join(dirname(path), 'dist', 'run.html'), handoutHomeDetails, handoutHomePrework, timerSettings: () => ({}),
     // Publish for this run (work-files ticket 16): with pre-work hidden no work page is sent; the handler still names these.
-    handoutHomePostwork, planRunWork, sendRunWork, writeRunWorkPages, runLineFor, stampRunWork, WORK_PAGE_FOLDER, runSiteFolder, runPublishFolder, RUN_FOLDER_UNCLEAR, listRuns: () => [],
+    handoutHomePostwork, planRunWork, sendRunWork, writeRunWorkPages, runLineFor, stampRunWork, WORK_PAGE_FOLDER, runSiteFolder, runPublishFolder, RUN_FOLDER_UNCLEAR, legacyRunUnproven, RUN_FOLDER_UNPROVEN, listRuns: () => [],
     assetRootsFor: () => [root],
     presenterPublications: { ticket: () => 1, published: () => [] },
     buildHandoutPagesOffThread: async (job) => {

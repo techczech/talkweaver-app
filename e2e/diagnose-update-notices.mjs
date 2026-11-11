@@ -144,6 +144,8 @@ try {
   serving = false
   await checkFromPalette(page)
   const failedNote = await visible(page, '[data-update-note][data-update-note-tone="warn"]', 15000)
+  // AnswerButtons subscribes to its snapshot on mount; assert the loaded button, not the transient shell.
+  if (failedNote) await page.locator('[data-update-note] [data-update-try-again]').waitFor({ state: 'visible', timeout: 4000 })
   const failedText = failedNote ? (await page.locator('[data-update-note]').innerText()).replace(/\s+/g, ' ') : ''
   record('with the site unreachable Check for Updates… says "Could not check for updates." with the reason and Try again', failedNote && /Could not check for updates\./.test(failedText) && /could not be reached/.test(failedText) && /Last successful check/.test(failedText) && (await page.locator('[data-update-note] [data-update-try-again]').count()) === 1, failedText)
   await page.locator('[data-update-note] button[aria-label="Dismiss"]').click()
@@ -166,6 +168,7 @@ try {
   record('a Store copy shows no mark, even for a version it once heard of', (await page.locator('[data-update-mark]').count()) === 0)
   await checkFromPalette(page)
   const store = await visible(page, '[data-update-note][data-update-note-tone="store"]')
+  if (store) await page.locator('[data-update-note] [data-update-open-store]').waitFor({ state: 'visible', timeout: 4000 })
   record('Check for Updates… in a Store copy answers "Updates come from the Microsoft Store." with Open in Microsoft Store', store && /Updates come from the Microsoft Store\./.test(await page.locator('[data-update-note]').innerText()) && (await page.locator('[data-update-open-store]').count()) === 1)
   const storeSettings = await openSettingsWindow(app, page, 'updates')
   await storeSettings.waitForSelector('.bsw-root[data-section="updates"]', { timeout: 6000 })

@@ -214,7 +214,7 @@ export default function ConflictCompare({ outlinePath, vault, onClose, onMerged 
             <p className="cc-p">
               Only the {pullable.length === 1 ? 'slide that differs is' : `${pullable.length} slides that differ are`} listed; {counts.same} {counts.same === 1 ? 'is' : 'are'} the same.
               {' '}Tick a slide to add {other.label}’s version of it after the one you keep, for you to tidy.
-              {loaded.headDiffers ? ` The front matter differs too: ${kept.label}’s is kept, and ${other.label}’s stays in the version moved to the Trash.` : ''}
+              {loaded.headDiffers ? ` The front matter differs too: ${kept.label}’s is kept, and ${other.label}’s stays in the version moved to the Bin.` : ''}
             </p>
             {pullable.length === 0 && <div className="cc-none">No slide differs; only the front matter or spacing does. Merge keeps {kept.label} as it is.</div>}
             <div className="cc-picks">
@@ -266,7 +266,7 @@ export default function ConflictCompare({ outlinePath, vault, onClose, onMerged 
           <>
             <span className="cc-foot-note">
               Each ticked slide is added after the one you keep.<br />
-              {loaded?.kind === 'git' ? 'After the merge the version with the conflict markers goes to the Trash.' : 'After the merge the conflict copy is removed.'}
+              {loaded?.kind === 'git' ? 'After the merge the version with the conflict markers goes to the Bin.' : 'After the merge the conflict copy is removed.'}
             </span>
             {stale
               ? <button type="button" className="cc-btn" onClick={cancel} data-conflict-cancel>Back to the talk</button>

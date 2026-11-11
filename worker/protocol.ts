@@ -1,3 +1,4 @@
+import { normaliseLiveEmbed } from './live-embed-runtime.ts'
 import { parsePollExtras } from './poll-ballots.ts'
 import {
   BOARD_MESSAGE_TYPES, isPresenterBoardMessage, parseBoardSeed, parseBoardSettings, parseBoardStateView, parsePresenterBoardMessage,
@@ -300,10 +301,11 @@ export type PresenterAudienceMessage =
 
 export type AudienceFeedbackServerMessage = ReactionCountsMessage | QuestionsStateMessage | SwitchesStateMessage
 
-export type PresenterMessage = PointerMessage | InkMessage | SlidePublishMessage | PresenterPollMessage | PresenterInstantMessage | PresenterAudienceMessage | PresenterBoardMessage
+export type EmbedMessage = { type: 'embed.live'; slideId: string; index: number; event: any }
+export type PresenterMessage = EmbedMessage | PointerMessage | InkMessage | SlidePublishMessage | PresenterPollMessage | PresenterInstantMessage | PresenterAudienceMessage | PresenterBoardMessage
 export type AudienceMessage = PollVoteMessage | ReactionSendMessage | QuestionSubmitMessage
 export type PresenterServerMessage = PollStateMessage | PollVoteRecordMessage
-export type ServerMessage = PointerMessage | InkMessage | SlideStateMessage | InstantSlideMessage | SessionClosedMessage | PresenterServerMessage | AudienceFeedbackServerMessage
+export type ServerMessage = EmbedMessage | PointerMessage | InkMessage | SlideStateMessage | InstantSlideMessage | SessionClosedMessage | PresenterServerMessage | AudienceFeedbackServerMessage
 
 const END_SOUNDS: readonly string[] = ['none', 'chime', 'alarm']
 
@@ -363,6 +365,7 @@ export function parseInstantSlide(value: unknown): InstantSlide | null {
 export function parsePresenterMessage(value: string): PresenterMessage | null {
   try {
     const message = JSON.parse(value) as Record<string, unknown>
+    if (message.type === 'embed.live') return new TextEncoder().encode(value).length <= 8192 ? normaliseLiveEmbed(message) : null
     if (message.type === 'pointer.live') return new TextEncoder().encode(value).length <= POINTER_LIMITS.bytes ? parsePointerMessage(message) : null
     if (message.type === 'ink.live') return new TextEncoder().encode(value).length <= INK_LIMITS.bytes ? parseInkMessage(message) : null
     if (message.type === 'instant.clear') return { type: 'instant.clear' }

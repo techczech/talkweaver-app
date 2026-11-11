@@ -124,7 +124,9 @@ try {
   await page.keyboard.press('Escape')
   await gone()
 
-  // 7. The strip: ⌘K with a slide card focused, and right-click on a card.
+  // 7. PR 320 puts Strip behind its sidebar tab; select it before exercising its cards.
+  await page.locator('[data-rc-tab="slides"] button').click()
+  // The strip: ⌘K with a slide card focused, and right-click on a card.
   const card = page.locator('[data-place-region="strip"] [data-slide-index]').first()
   await card.waitFor({ timeout: 5000 })
   await card.click({ button: 'right' })

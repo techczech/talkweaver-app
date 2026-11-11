@@ -14,10 +14,14 @@
 //   - apart from blank separator lines, a cut followed by a paste elsewhere leaves the multiset of
 //     lines unchanged, and a copy followed by a paste adds the pasted block with a fresh id;
 //   - moveBlock only reorders lines (it runs the relocate functions of slide-outline.ts).
-import { headingTitle, slideIdsInPrelude, TRIGGER_ONLY_RE } from '../../../compiler/scripts/lib/slide-id.mjs'
+import { headingTitle, slideIdsInPrelude } from '../../../compiler/scripts/lib/slide-id.mjs'
 import { relocateBlock, relocateBlockAfter, relocateBlockInto, relocateBlockToEnd } from './slide-outline.ts'
 import { frontmatterEndIndex, headingLevels, headingLevelsOfText } from '../heading-lines.ts'
 import { talkTitleIndex } from '../talk-title.ts'
+
+import { insertionPoint, slidePlaceForPaste, firstSlide0, startOfTalkPlace, headingLineAt, caretPastePlace, type PastePlace } from './place.ts'
+export { startOfTalkPlace, headingLineAt, caretPastePlace } from './place.ts'
+export type { PastePlace } from './place.ts'
 
 const ID_TOKEN_GLOBAL = /\{id=([A-Za-z0-9_-]+)\}/g
 
@@ -49,23 +53,6 @@ const frontmatterEnd0 = frontmatterEndIndex
  * talk", a paste aimed at or above the title and an insert with the caret on the title all land
  * before this line.
  */
-function firstSlide0(lines: readonly string[], levels: readonly number[]): number {
-  const floor = Math.max(frontmatterEnd0(lines), talkTitleIndex(lines, levels))
-  for (let i = floor + 1; i < levels.length; i += 1) if (levels[i] > 1) return i
-  return -1
-}
-
-/**
- * Where slides put in at the start of the talk go: before the first slide or section under the
- * title, or at the end of the talk when there is none (firstSlide0, the place "Move … to… Start of
- * talk" lands).
- */
-export function startOfTalkPlace(text: string): PastePlace {
-  const lines = text.split('\n')
-  const first0 = firstSlide0(lines, headingLevelsOfText(text, lines))
-  return first0 < 0 ? 'end' : { before: first0 + 1 }
-}
-
 /** Whether `line` (1-based) is the talk's title: its first level-1 heading. */
 export function isTalkTitleLine(text: string, line: number): boolean {
   const lines = text.split('\n')
@@ -95,15 +82,6 @@ export interface SlideBlock {
  * heading directly above when every line between is a layout/trigger/id line (`{…}` groups only).
  * Null anywhere else (body text, notes, blank lines, frontmatter).
  */
-export function headingLineAt(text: string, line: number): number | null {
-  const lines = text.split('\n')
-  const levels = headingLevelsOfText(text, lines)
-  let i = line - 1
-  if (i < 0 || i >= lines.length || i <= frontmatterEnd0(lines)) return null
-  while (i > 0 && levels[i] === 0 && TRIGGER_ONLY_RE.test(lines[i].trim())) i -= 1
-  return levels[i] > 0 ? i + 1 : null
-}
-
 /** The block headed at `headingLine` (1-based), or null when that line is not a heading. */
 export function blockAt(text: string, headingLine: number): SlideBlock | null {
   const lines = text.split('\n')
@@ -270,7 +248,6 @@ export function reIdCollisions(block: readonly string[], taken: Set<string>, min
 }
 
 /** Where a paste of slides goes: after the block headed at a line, before a heading line, or at the end of the talk. */
-export type PastePlace = { after: number } | { before: number } | 'end'
 
 export interface PasteResult {
   /** The talk with the slides in: `before.slice(0, from) + insert + before.slice(from)`. */
@@ -292,30 +269,18 @@ function pasteLf(text: string, clip: string, place: PastePlace, mint: MintId): P
   const what = describeClip(clip)
   if (!what) return null
   const lines = text.split('\n')
-  const levels = headingLevelsOfText(text, lines)
   const tail = tailStart0(lines)
-  let at: number
+  const named = slidePlaceForPaste(text, place)
+  if (!named) return null
+  const point = insertionPoint(text, named, 'paste')
+  if (!point.ok) return null
+  const at = point.at
   let anchor: PasteResult['anchor'] = null
-  if (place === 'end') {
-    at = tail
-  } else if ('after' in place) {
-    const h0 = place.after - 1
-    if (!(levels[h0] > 0)) return null
-    at = Math.min(blockEnd0(levels, h0), tail)
-    anchor = { relation: 'after', title: titleOf(lines[h0]) }
-  } else {
-    const b0 = place.before - 1
-    if (b0 < 0 || !(levels[b0] > 0)) return null
-    at = b0
-    anchor = { relation: 'before', title: titleOf(lines[b0]) }
-  }
-  // Nothing is pasted before the talk's title: a place at or above it becomes the first place after
-  // it, before the first slide or section under the title, or the end of the talk when there is none.
-  const title0 = talkTitleIndex(lines, levels)
-  if (title0 >= 0 && at <= title0) {
-    const next0 = firstSlide0(lines, levels)
-    at = next0 < 0 ? tail : next0
-    anchor = next0 < 0 ? null : { relation: 'before', title: titleOf(lines[next0]) }
+  if (typeof place === 'object' && !('kind' in place)) {
+    const line = 'after' in place ? place.after : place.before
+    anchor = { relation: 'after' in place ? 'after' : 'before', title: titleOf(lines[line - 1]) }
+    // The canonical rule clamps a request above the deck title to the first slide.
+    if (point.titleClamped) anchor = at >= tail ? null : { relation: 'before', title: titleOf(lines[at]) }
   }
   const taken = new Set([...text.matchAll(ID_TOKEN_GLOBAL)].map((m) => m[1]))
   const { lines: block, reIds } = reIdCollisions(clipLines(clip), taken, mint)
@@ -364,21 +329,6 @@ export function pasteSlides(text: string, clip: string, place: PastePlace, mint:
  * layout/trigger/id lines, after that slide (after the whole section when it is a section); on a
  * blank line with the next slide's heading (or the end of the talk) below, between the two.
  */
-export function caretPastePlace(text: string, caretLine: number): PastePlace | null {
-  const lines = text.split('\n')
-  const levels = headingLevelsOfText(text, lines)
-  const i = caretLine - 1
-  if (i < 0 || i >= lines.length || i <= frontmatterEnd0(lines)) return null
-  const heading = headingLineAt(text, caretLine)
-  if (heading != null) return { after: heading }
-  if (!isBlank(lines[i])) return null
-  for (let j = i + 1; j < lines.length; j += 1) {
-    if (isBlank(lines[j])) continue
-    return levels[j] > 0 ? { before: j + 1 } : null
-  }
-  return 'end'
-}
-
 /**
  * A selection [from, to) that holds an entire heading line, widened so each such slide's whole block
  * goes with its title. Null when no heading line lies wholly inside the selection (then the cut or

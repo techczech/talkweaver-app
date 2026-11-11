@@ -111,9 +111,9 @@ try {
   await tools.waitForLoadState('domcontentloaded')
   tools.on('pageerror', (e) => console.log('PAGEERROR:', e.message.slice(0, 150)))
   await tools.waitForSelector('[data-sessions-detail="t-upcoming/said"]', { timeout: 10_000 }).catch(() => {})
-  rec('clicking the chip opens Sessions on that Run', await tools.locator('[data-tools-view="sessions"]').count() === 1 && await tools.locator('[data-sessions-detail="t-upcoming/said"]').count() === 1)
+  rec('clicking the chip opens Sessions on that Run', await tools.locator('[data-tools-view="runs"]').count() === 1 && await tools.locator('[data-sessions-detail="t-upcoming/said"]').count() === 1)
   rec('the Run is selected in the list', await tools.locator('[data-sessions-row="t-upcoming/said"][aria-current="true"]').count() === 1)
-  rec('it is not History', await tools.locator('.twhistory, [data-prework-page]').count() === 0)
+  rec('it is the one Runs view, not a page of its own', await tools.locator('[data-prework-page]').count() === 0)
 } finally { await app.close().catch(() => {}) }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')

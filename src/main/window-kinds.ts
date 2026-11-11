@@ -1,5 +1,5 @@
 // The one list of which window is which, for the rules in main that depend on it:
-//   - an APP window is the editor, Tools or Pathways: the app's own page with the whole bridge. It
+//   - an APP window is the editor (including its Pathways dock) or Tools: the app's own page with the whole bridge. It
 //     may read the clipboard (recording-permissions.ts) and save a download;
 //   - a HIDDEN RENDERER is a window nobody sees or presses in (thumbnail capture): it hands nothing
 //     to the OS, does not navigate away from the file main loaded into it, and downloads nothing;
@@ -10,7 +10,7 @@
 
 type KnownWindow = { webContents: { id: number }; once(event: 'closed', listener: () => void): unknown }
 
-/** Editor, Tools and Pathways windows. Filled through recording.ts `registerAppWindowPermissions`. */
+/** Editor and Tools windows. Filled through recording.ts `registerAppWindowPermissions`. */
 export const appWindowIds = new Set<number>()
 const hiddenRendererIds = new Set<number>()
 

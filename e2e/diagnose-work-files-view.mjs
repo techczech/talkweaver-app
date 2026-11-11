@@ -97,8 +97,8 @@ async function openWorkFiles(app) {
 
     await rti.click()
     await tools.locator('[data-wf-run="ai-for-research-teams/med"] button').click()
-    await tools.waitForSelector('[data-tools-view="sessions"][data-run="ai-for-research-teams/med"]', { timeout: 5000 }).catch(() => {})
-    rec('Open run opens Sessions on that Run', await tools.locator('[data-tools-view="sessions"][data-run="ai-for-research-teams/med"]').count() === 1)
+    await tools.waitForSelector('[data-tools-view="runs"][data-run="ai-for-research-teams/med"]', { timeout: 5000 }).catch(() => {})
+    rec('Open run opens Sessions on that Run', await tools.locator('[data-tools-view="runs"][data-run="ai-for-research-teams/med"]').count() === 1)
   } finally { await app.close().catch(() => {}) }
 }
 

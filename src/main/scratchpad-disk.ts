@@ -104,16 +104,16 @@ function run(job) {
   try { info = fs.lstatSync('scratchpad',{bigint:true}); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   if (!info && job.action === 'scan') return {folder:null, state:{text:null,error:null}, files:[], notices:[]};
   if (!info) { fs.mkdirSync('scratchpad'); info = fs.lstatSync('scratchpad',{bigint:true}); }
-  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('The Scratchpad folder is a link or is not a folder. Nothing was changed.');
-  if (job.folder && !same(info,job.folder)) throw new Error('The Scratchpad folder changed. Nothing was changed.');
+  if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('The Slide Scratchpad folder is a link or is not a folder. Nothing was changed.');
+  if (job.folder && !same(info,job.folder)) throw new Error('The Slide Scratchpad folder changed. Nothing was changed.');
   process.chdir('scratchpad');
   const held = fs.statSync('.',{bigint:true}); const heldPath = fs.realpathSync('.');
   const holds = () => {
     const named = fs.lstatSync(job.folderPath,{bigint:true});
-    if (!named.isDirectory() || named.isSymbolicLink() || !same(named,held) || fs.realpathSync('.') !== heldPath) throw new Error('The Scratchpad folder changed. Nothing was changed.');
+    if (!named.isDirectory() || named.isSymbolicLink() || !same(named,held) || fs.realpathSync('.') !== heldPath) throw new Error('The Slide Scratchpad folder changed. Nothing was changed.');
     if (!same(fs.statSync(job.talk,{bigint:true}),job.talkId) || fs.realpathSync(job.talk) !== job.talk) throw new Error('The talk folder changed. Nothing was changed.');
   };
-  if (!same(info,held)) throw new Error('The Scratchpad folder changed. Nothing was changed.');
+  if (!same(info,held)) throw new Error('The Slide Scratchpad folder changed. Nothing was changed.');
   holds();
   const state = () => {
     try { return {text:readPlain('scratchpad-state.json').bytes.toString('utf8'),error:null}; }
@@ -143,7 +143,7 @@ function run(job) {
         try { sidecar = readPlain(name+'.json',256*1024).bytes.toString('utf8'); } catch {}
         files.push({name,path:copy,mtime:source.info.mtime.toISOString(),sidecar});
       } catch (e) {
-        if (e.message === 'is too large to read safely') notices.push('The Scratchpad file '+JSON.stringify(name)+' is larger than 64 MB, so it was not loaded. The original was left unchanged.');
+        if (e.message === 'is too large to read safely') notices.push('The Slide Scratchpad file '+JSON.stringify(name)+' is larger than 64 MB, so it was not loaded. The original was left unchanged.');
         // Vanished, linked, unreadable or changing: never consume a replacement.
       }
     }
@@ -151,7 +151,7 @@ function run(job) {
     return {folder:identity(held),state:saved,files,notices};
   }
   const before = state();
-  if (before.error || before.text !== job.previous) throw new Error('The Scratchpad saved state changed or could not be read. Nothing was changed.');
+  if (before.error || before.text !== job.previous) throw new Error('The Slide Scratchpad saved state changed or could not be read. Nothing was changed.');
   if (job.action === 'backup') {
     if (!plain(job.name) || !job.name.startsWith('scratchpad-state.broken-') || !job.name.endsWith('.json')) throw new Error('Invalid recovery filename');
     fs.writeFileSync(job.name,job.previous,{flag:'wx',mode:0o600});
@@ -159,8 +159,8 @@ function run(job) {
     const temp = '.scratchpad-state.json.'+process.pid+'.'+crypto.randomBytes(8).toString('hex')+'.tmp';
     try { fs.writeFileSync(temp,job.text,{flag:'wx',mode:0o600}); fs.renameSync(temp,'scratchpad-state.json'); }
     finally { try { fs.unlinkSync(temp); } catch {} }
-    if (readPlain('scratchpad-state.json').bytes.toString('utf8') !== job.text) throw new Error('The Scratchpad write could not be confirmed.');
-  } else { throw new Error('Unknown Scratchpad operation'); }
+    if (readPlain('scratchpad-state.json').bytes.toString('utf8') !== job.text) throw new Error('The Slide Scratchpad write could not be confirmed.');
+  } else { throw new Error('Unknown Slide Scratchpad operation'); }
   holds();
   return null;
 }
@@ -199,18 +199,18 @@ export function createScratchpadDisk(talkDir: string, spawnChild: typeof spawn =
         if (stopped) { reject(stopped); return }
         try {
           const answer = JSON.parse(output) as { ok: boolean; value?: T; error?: string }
-          if (!answer.ok) reject(new Error(answer.error ?? 'The Scratchpad operation failed.'))
+          if (!answer.ok) reject(new Error(answer.error ?? 'The Slide Scratchpad operation failed.'))
           else resolve(answer.value as T)
-        } catch { reject(new Error(`The Scratchpad operation did not answer. ${diagnostic.slice(0, 300)}`)) }
+        } catch { reject(new Error(`The Slide Scratchpad operation did not answer. ${diagnostic.slice(0, 300)}`)) }
       }
-      const timer = setTimeout(() => stop(new Error('The Scratchpad operation did not finish. Nothing was set aside.')), 15_000)
+      const timer = setTimeout(() => stop(new Error('The Slide Scratchpad operation did not finish. Nothing was set aside.')), 15_000)
       child.on('error', stop)
       child.stdin.on('error', stop)
       child.stdout.setEncoding('utf8')
       child.stdout.on('data', (chunk: string) => {
         if (stopped || done) return
         output += chunk
-        if (output.length > 64 * 1024 * 1024) stop(new Error('The Scratchpad answer was too large.'))
+        if (output.length > 64 * 1024 * 1024) stop(new Error('The Slide Scratchpad answer was too large.'))
       })
       child.stderr.on('data', (chunk: Buffer) => { if (diagnostic.length < 1000) diagnostic += chunk.toString() })
       child.on('close', () => { activeChildren.delete(child); finish() })

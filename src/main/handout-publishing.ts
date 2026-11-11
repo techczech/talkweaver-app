@@ -1,12 +1,22 @@
-import { beginPublication, publicationPaths, publicationBinding, publicationOutcome, PreservationRefusal, type PreservationInventory, type PublicationLaunch, type PreservationAttempt, type PublicationOverlay } from './publication-preservation.ts'
+import { beginPublication, candidatePath, preservationMessage, publicationPaths, publicationBinding, PreservationRefusal, readPublicationRecord, type PreservationInventory, type PreservationAttempt, type PublicationLaunch } from './publication-preservation.ts'
 // Publishing handouts to the person's Cloudflare Pages site: the one sequence every publish goes
 // through, and the one place the site is uploaded (spec docs/plans/cloudflare-setup-in-app, D7, D8,
 // D12 and the table "What each user action does when its feature is not ready").
 //
-// EVERY WAY THE SITE IS UPLOADED. Each is a `PublishJob` given to `publish()`; nothing else in the
-// app runs `pages deploy` (scripts/test-handout-publishing.mjs reads the main process to show it).
+// PER-TALK PUBLISHING (spec docs/plans/2026-11-05-per-talk-publishing/spec.md). A deployment is the live manifest with ONE
+// change merged in. A publish reads the production deployment (its id and every path with its hash) and the site record
+// (`/_talkweaver/site.json`, site-record.ts), lays the site out in a private folder of its own (an EMPTY stand-in for every live
+// file: nothing of the other handouts is read or even present), lets the job build there, and sends only what the job wrote:
+// hashed as wrangler hashes, the bytes Cloudflare lacks uploaded, every other path keeping its live hash
+// (pages-direct-upload.ts). `_redirects` is made from the site record, `_headers` is the record's, and the new record goes up in
+// the same deployment. The production deployment is read once more immediately before the deployment is created; when it moved,
+// nothing is created (PUBLISH_REVISION_CHANGED). No copy of the site is needed on this computer, and no publishing tool runs:
+// `wrangler pages deploy` is not used for handouts (scripts/test-per-talk-publishing.mjs holds the five invariants).
 //
-//   Entry point (`PublishEntry`) | Reached from                         | What it does to the site folder      | Live address in its pages
+// EVERY WAY THE SITE IS CHANGED. Each is a `PublishJob` given to `publish()`; nothing else in the
+// app sends to the site (scripts/test-handout-publishing.mjs reads the main process to show it).
+//
+//   Entry point (`PublishEntry`) | Reached from                         | What it does to the site             | Live address in its pages
 //   -----------------------------|--------------------------------------|--------------------------------------|--------------------------
 //   talk                         | Publish handout (`talk:publish-      | writes the talk's pages              | yes, when the live service
 //                                | handout`)                            |                                      | is ready
@@ -35,10 +45,11 @@ import { beginPublication, publicationPaths, publicationBinding, publicationOutc
 //   The Run's folder for `run` and `run-unpublish` is decided from the Run's own facts (its recorded
 //   folder and its link), never from what the site's copy holds (run-unpublish.ts runSiteFolder,
 //   runPublishFolder): a recorded folder missing here is published back into by the same name.
-//   EVERY UPLOAD IS THE WHOLE SITE FOLDER (`uploadSite`): a deploy from an incomplete copy takes other
-//   pages down. Both writers now enforce publication-preservation.ts before upload. So no refusal in this module or in run-unpublish.ts advises publishing again as the way
-//   out of a missing copy; an unpublish that cannot replace the Run's pages here says to unpublish from
-//   the computer that published it. (The preservation guard requires a complete production inventory.)
+//   A CHANGE TOUCHES ONLY ITS OWN FOLDERS: the folders the job builds (`makeFolder`, replaced whole) or unpublishes
+//   (`removalRoots`), and top-level files it writes (the 404 page). Anything else that differs from the live manifest stops the
+//   publish before anything is sent (PUBLISH_UNRELATED_REMOVAL, an assertion: the merge itself cannot drop a path it did not
+//   stage). The preservation guard (publication-preservation.ts) still holds the site lock, the recovery journal and the record
+//   the other writer reads, and needs a complete production inventory.
 //
 // WHAT MUST HOLD, for every row of that table. Each is a test in scripts/test-handout-publishing.mjs
 // (the sequence) or in scripts/test-handout-from-buffer.mjs and test-prework-publish.mjs (the real
@@ -86,33 +97,12 @@ import { beginPublication, publicationPaths, publicationBinding, publicationOutc
 //         author's and is not read; the same marked line twice means the author copied the mark too,
 //         and neither is read. The author always wins, except over a start line: every one is read,
 //         and one that cannot be read refuses the publish (a refusal, never a leak).
-//       Pages of a REPUBLISHED handout are built in the site folder itself, as before this ticket; publishing moves, renames
-//       and deletes nothing there. (Unpublishing a Run removes that Run's folder, or replaces its pages
-//       with the not-available page and takes the rest of it away (run-unpublish.ts); unpublishing a talk
-//       handout removes that talk's own folder (talk-unpublish.ts): that is what they are for.)
-//       A NEW handout folder is built PRIVATELY: `build.makeFolder` hands the job a folder outside the site (a `tw-publish-*`
-//       folder of the app's own data folder) to write ALL of the handout into, and no other writer can put anything in it. The
-//       checks after the build read it there; the preservation check counts it in the candidate under its site name; and it
-//       enters the site only at THE BOUNDARY: the first line of the launch callback, just before the upload tool is asked to
-//       start. The publish creates each folder and file itself, exclusively (an entry already there fails the move, and nothing
-//       is merged into or written over), and lists every one.
-//       A publish that STOPS BEFORE ANYTHING IS SENT (the build failed, a check after the build refused it, the preservation
-//       check refused it, ANY other error before the boundary such as a page or file that cannot be read or copied, the
-//       connection changed after the pages were built and before the upload began, or the upload tool never started or failed in
-//       a way that proves nothing went up) takes away what THIS ATTEMPT created, and only that (`removeOwnedEntries`): before the
-//       boundary that is the private folder (deleted whole: it is the attempt's alone) and the top-level files it created
-//       (`build.writeSiteFile`, `build.claimFile`: exclusive creates, recorded with the identity, device and inode, they were
-//       created with); after the boundary it is each file and folder the move created, from that list. Ownership is never
-//       inferred from a folder's absence in an earlier listing or from a folder "and what is in it", because the site folder can
-//       be shared. Removal looks at each entry again without following links and removes it only if it is still that same entry,
-//       a folder only while it is empty: anything another writer added, or an entry that was replaced, is never touched. An entry
-//       that cannot be removed is named in the failure's Details, so the author knows a retry will use a second folder. The retry
-//       builds into the same folder name, uploads one copy, and Unpublish covers what was published. An unknown outcome (the upload
-//       may have gone up, or the connection changed while the tool ran) keeps its pages, for the recovery check.
-//     Pages an EARLIER version left in the site folder with the dead live address are already
-//     public. They do not stop a publish and are not rewritten: the result carries one sentence
-//     saying how many earlier handouts need publishing again (`earlierHandoutsText`), with their
-//     names in Details. (Those pages have no mark: their one `LIVE_CONFIG` line is read, to count.)
+//       Every publish builds in a PRIVATE folder of its own (`build.dir`, a `tw-site-*` folder of the app's data folder), laid
+//       out from the live manifest; it is deleted whatever happens. A publish that stops before anything is sent leaves nothing
+//       behind. This computer's copy of the site (`siteDir`) takes the change only once the deployment is up (`mirror`): it is a
+//       copy for what reads it here, never what is published.
+//     (Earlier versions counted handouts whose pages still carried a dead live address; that needed every page of the site on
+//     this computer, which per-talk publishing never reads, so `earlierNotice` is always null now.)
 //
 //   LIVE NEVER FAILS A PUBLISH. Any failure, refusal, supersession or absence of the live service
 //   gives a published handout without live features, and a result whose notice is the sentence of
@@ -125,27 +115,26 @@ import { beginPublication, publicationPaths, publicationBinding, publicationOutc
 //
 //   ONE CONNECTION. A publish takes its token, account and site name as ONE authorisation from the
 //   connection (`authorisePublish` in cloudflare-connection.ts: one turn of its queue, one
-//   generation). The token reaches the publishing tool only through `authorisation.run`, which does
+//   generation). The token reaches Cloudflare only through `authorisation.run`, which does
 //   not start a launch, and does not hand back its result, once the token, account or site name has
 //   changed.
 //     A publish superseded before or during its upload uploads nothing further and records nothing.
 //     A publish whose upload completed is recorded, whatever happens to the connection afterwards.
 //   (Once the upload has completed the page exists at that address, so writing the address down is
 //   true.) Before launch a superseded publish reports PUBLISH_SUPERSEDED_ERROR; after launch it
-//   reports an unknown outcome with the superseded flag. Pages a publish superseded BEFORE its upload had built are taken
-//   away again (nothing was sent); those of one superseded DURING its upload stay there, checked, for the recovery check.
+//   reports an unknown outcome with the superseded flag, for the recovery check.
 //
 //   NO RAW TEXT. Every failure shown is a fixed sentence: one of publishing-logic.ts's sorted
-//   failures, a refusal from the connection, or one of this file's. What the publishing tool printed
-//   is `details`, shown only when "Details" is pressed, and the token is taken out of it first
-//   (`authorisation.clean`), before it is cut to its end.
+//   failures, a refusal from the connection, or one of this file's. `details` holds fixed words, the HTTP status and
+//   Cloudflare's error numbers only (pages-direct-upload.ts PagesApiError), never a reply's text, shown only when "Details" is
+//   pressed, and the token is taken out of it all the same (`authorisation.clean`).
 //
 //   ROW STATE FROM A REFUSED PUBLISH. A publish Cloudflare refuses for permission tells the
 //   connection (`refusedForPermission`), which turns the Publishing handouts row to "The token
 //   cannot publish pages"; a publish that goes up tells it too (`published`). The rule for that row
 //   is in cloudflare-connection.ts. It does not start a new generation.
 //
-// ORDER AND TIME. One site, one folder, one upload of the whole folder: so every publish that
+// ORDER AND TIME. One site, one manifest, one deployment at a time: so every publish that
 // writes or removes pages (talk, run, run-unpublish, talk-unpublish) runs ONE AT A TIME, in the order asked for (a
 // keyed queue, the key being the site folder). A job that depends on what an earlier one recorded
 // reads it when its turn BEGINS (`begin`, `prepare`), never when it was asked for: an unpublish
@@ -155,21 +144,25 @@ import { beginPublication, publicationPaths, publicationBinding, publicationOutc
 //   A refused attempt never starts a settling upload.
 //   TIME LIMITS. A job's first step (saving the open talk): BEGIN_LIMIT_MS, one minute. The
 //   connection's own requests: 10 s each. The live service: `LIVE_STEP_LIMIT_MS`
-//   (7 minutes), after which the handout goes up without live features. The upload: the launcher
-//   stops the tool at `PAGES_UPLOAD_TIME_LIMIT_MS`, 30 minutes for a large site (SIGTERM, then SIGKILL
-//   5 s later; the whole process tree on Windows) and answers only once the tool has EXITED, and the queue moves on only then. There is
-//   no second timer here that could let the next upload start while a late one is still sending.
+//   (7 minutes), after which the handout goes up without live features. Each request to Cloudflare: one minute (ten for one
+//   upload of at most 40 MiB), with wrangler's retries (pages-direct-upload.ts). The queue moves on only once the last one
+//   answered.
 //
 // No Electron import and erasable TypeScript only: scripts/test-handout-publishing.mjs imports this
-// file as it is. The main process supplies the connection, the live service, the tool and the pages.
-import { closeSync, constants as fsConstants, copyFileSync, existsSync, fstatSync, ftruncateSync, linkSync, openSync, writeSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+// file as it is. The main process supplies the connection, the live service, Cloudflare's address and the pages.
+import { createHash } from 'node:crypto'
+import { type Stats, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
-import { PUBLISH_SUPERSEDED_ERROR, type DeployCredentials, type PublishAuthorisation, type PublishGrant } from './cloudflare-connection.ts'
-import { LIVE_SETUP_FAILED, LiveServiceError, type ToolRun } from './live-service-deploy.ts'
+import { PUBLISH_SUPERSEDED_ERROR, type PublishAuthorisation, type PublishGrant } from './cloudflare-connection.ts'
+import { LIVE_SETUP_FAILED, LiveServiceError } from './live-service-deploy.ts'
 import { createKeyedQueue } from './owner-tokens.ts'
-import { PUBLISH_FAILED, PUBLISH_UNREACHABLE, pagesDeployFailure, siteFolder } from './publishing-logic.ts'
-import { earlierHandoutsText, publishedWithoutLiveText, type PublishNotReady } from '../shared/publish-status.ts'
+import { PAGES_UPLOAD, PagesApiError, UploadSuperseded, pagesAssetHash, pagesSiteApi, readLiveAsset, siteAssetAddresses, type Blake3, type PagesTransport, type StagedAsset } from './pages-direct-upload.ts'
+import { NO_PRODUCTION_REVISION } from './publishing-inventory.ts'
+import { PUBLISH_FAILED, PUBLISH_FAILURE_TEXT, buildRedirects, siteFolder } from './publishing-logic.ts'
+import { SITE_RECORD_PATH, manifestFolders, parseSiteRecord, registryClashes, sameSite, serialiseSiteRecord, type SiteRecord } from './site-record.ts'
+import { RegistryOriginUnavailable, type RegistryOrigin } from './registry-origin.ts'
+import { publishedWithoutLiveText, type PublishNotReady } from '../shared/publish-status.ts'
 
 export type PublishEntry = 'talk' | 'run' | 'run-unpublish' | 'talk-unpublish' | 'live-short-link'
 
@@ -412,40 +405,6 @@ export function removeSiteFolder(siteDir: string, name: unknown): 'removed' | 'u
   return 'removed'
 }
 
-/**
- * One entry of the site folder that a publish attempt created itself, with the identity it was created with. `label` is the
- * top-level name it is reported under; `folder`: it was made as a folder (and is taken away only while empty).
- */
-type OwnedEntry = { path: string; dev: number; ino: number; label?: string; folder?: true }
-
-/**
- * A publish that stopped BEFORE anything was sent leaves nothing behind that it created: only the entries in `owned` are taken
- * away, so a retry builds into the same folder name instead of a `-2` one and uploads one copy. `owned` lists every file and folder
- * the attempt itself created in the site (the top-level files it wrote, and each file and folder of a new handout when it was moved
- * in), never a folder "and what is in it". Nothing is removed because it is absent from an earlier listing, and nothing is removed
- * recursively: another writer may share the site folder, so a file of theirs inside a folder of this attempt's stays, and the
- * folder with it. Each entry is looked at without following links (`lstat`) and removed only while it is still the entry that was
- * created (same device and inode); a link is unlinked, never what it points at. Answers the names that could not be removed.
- */
-export function removeOwnedEntries(owned: readonly OwnedEntry[]): string[] {
-  const failed = new Set<string>()
-  for (const entry of [...owned].reverse()) {
-    try {
-      const stat = lstatSync(entry.path)
-      if (stat.dev !== entry.dev || stat.ino !== entry.ino) continue // replaced by someone else: not this attempt's any more
-      if (stat.isDirectory() && !stat.isSymbolicLink()) rmdirSync(entry.path) // empty folders only: never what someone else put in
-      else unlinkSync(entry.path)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') continue // gone already
-      failed.add(entry.label ?? basename(entry.path))
-    }
-  }
-  return [...failed]
-}
-
-/** A handout folder this attempt is building privately, outside the site folder, until the upload launches. */
-type StagedFolder = { target: string; dir: string; label: string }
-
 // ── The sequence ────────────────────────────────────────────────────────────────────────────────
 
 /** The live service as a publish found it. `reason`: a sorted sentence when a set-up was tried and failed; null when there simply is none. */
@@ -457,7 +416,7 @@ export type PublishFailure = {
   ok: false
   /** A fixed sentence. */
   error: string
-  /** What the tool printed, cleaned: for "Details" only. */
+  /** What lies behind it (fixed words, statuses and Cloudflare's error numbers, cleaned): for "Details" only. */
   details?: string
   /** Publishing could not start: what is missing, for the sheet. */
   notReady?: PublishNotReady
@@ -484,7 +443,11 @@ export type PublishSuccess<Built> = {
 
 /** What a job is handed to build with. */
 export type PublishBuild = {
-  /** The site folder: the job writes its pages here, as it always has. */
+  /**
+   * The site as this publish sees it: a private folder made for this attempt alone, laid out from the LIVE manifest (every file
+   * of the site there, as an empty stand-in; the redirect file as the site record makes it). The job writes its pages here and
+   * reads the site's folders here, as it always has. Only what the job writes or removes is sent.
+   */
   dir: string
   /**
    * ENTRY FIRST: the whole text of the redirect file, built in memory, goes through here BEFORE the
@@ -501,24 +464,22 @@ export type PublishBuild = {
    */
   link(url: string): string
   /**
-   * The folder a job is about to write a handout into: `path` must be a direct child of `dir`. Gives back the folder the job
-   * writes into, and the job writes ALL of that handout's files there (it keeps `path` for names and links).
-   *   - `path` is not there yet (a new handout): a private folder outside the site, which no other writer can reach. The
-   *     publish checks it there, and moves it into the site, as `path`, only when the upload is launched, creating each folder and
-   *     file itself and keeping a list of them. A publish that stops before that point just deletes the private folder.
-   *   - `path` is there (a republish): `path` itself. The job writes in place, as before, and the folder is never removed.
+   * The folder a job is about to write a handout into: `path` must be a direct child of `dir`. The folder is this publish's: what
+   * the live site holds there is replaced whole by what the job writes (spec: the merge removes the talk's prefix and adds what
+   * was built). Asked twice for the same folder, it gives the same folder back untouched.
    */
   makeFolder(path: string): string
-  /**
-   * Write a top-level file of the site (the redirect file). Created exclusively when it was not there, and then owned as
-   * `makeFolder` does; written over when it was, and then left as it is. `path` must be a direct child of `dir`.
-   */
+  /** Write a top-level file of the site (the redirect file). True when it was not there before. `path` must be a direct child of `dir`. */
   writeSiteFile(path: string, text: string): boolean
-  /**
-   * For a top-level file that something else is about to write (the shared 404 page the page builder writes): when it is not
-   * there, create it empty and own it (true); when it is, leave it alone (false). The writer then fills the same file.
-   */
+  /** For a top-level file that something else is about to write (the shared 404 page): create it empty when it is not there (true). */
   claimFile(path: string): boolean
+  /**
+   * The short links this computer itself gave (its registry before it first followed the site's record): the only registry that
+   * may bind a Run published before its folder was recorded to a folder it replaces or removes. Null when there is none.
+   */
+  trustedRegistry: Readonly<Record<string, string>> | null
+  /** This computer's record of its own short links could not be read or kept (so `trustedRegistry` is null for that reason). */
+  ownShortLinksUnreadable?: boolean
 }
 
 /**
@@ -531,6 +492,7 @@ export interface PublishJob<Built> {
   entry: PublishEntry
   /** Source identity/revision read at the job turn and rechecked before upload. */
   revision?(): string
+  /** The site folders (`/<name>`) this job changes in place without `makeFolder` (an unpublish). */
   removalRoots?(built: Built): string[]
   /**
    * Runs first, when the job's turn begins and before leave is asked. `{ done }` ends the job there
@@ -540,24 +502,28 @@ export interface PublishJob<Built> {
    */
   begin?(): PublishBegin<Built> | Promise<PublishBegin<Built>>
   /**
-   * Build this entry's pages in the site folder. Called only with leave to publish, at the job's
-   * turn. Every link it writes goes through `build.link` FIRST, before it writes anything. A
-   * returned failure is the publish's own (a fixed sentence).
+   * Build this entry's pages in the site as this publish sees it (`build.dir`). Called only with leave to publish, at the job's
+   * turn. Every link it writes goes through `build.link` FIRST, before it writes anything. A returned failure is the publish's
+   * own (a fixed sentence).
    */
   prepare(build: PublishBuild): Promise<{ ok: true; built: Built } | { ok: false; error: string; details?: string }>
   /**
-   * Keep the result on this computer (the Run's link). Called once the upload has completed,
+   * Keep the result on this computer (the Run's link). Called once the deployment is up,
    * whatever has happened to the connection since. Local and quick: it runs inside the queue.
    */
   record?(built: Built): void | Promise<void>
 }
 
 export interface PublishingPorts {
+  /** The production deployment: its id, every path and its hash (publishing-inventory.ts). */
   inventory?(authorisation: PublishAuthorisation): Promise<PreservationInventory | null>
   preservationRoot?: string
-  /** Where an attempt builds a new handout privately until its upload launches (a folder only this app writes). Default: the system temporary folder. */
+  /** Where an attempt lays out the site as it sees it (a folder only this app writes). Default: the system temporary folder. */
   stagingRoot?(): string
-  /** The folder the whole site is kept in. */
+  /**
+   * This computer's copy of what it published: kept up to date after each publish that went up (the pages this publish sent,
+   * what it removed, the redirect file) for what reads it here (the published pages list, the gallery). Never needed to publish.
+   */
   siteDir(): string
   authorise(): Promise<PublishGrant>
   /**
@@ -565,12 +531,32 @@ export interface PublishingPorts {
    * (a LiveServiceError, or anything else) means there is none to use.
    */
   live(): Promise<{ baseUrl: string; accountId?: string | null }>
-  /** The bundled publishing tool is not there: the message and its Details. */
-  toolMissing(): { error: string; details: string } | null
-  /** A message when uploading this folder would make Cloudflare compile code; else null. */
+  /** A message when the change about to be sent would make the site run code; else null. */
   bundlingHazard(siteDir: string): string | null
-  /** Run `pages deploy` with these credentials. Answers only once the tool has exited (`timedOut` when it was stopped at its limit). */
-  upload(args: string[], credentials: DeployCredentials, started?: (pid: number, group?: boolean) => Promise<void>): Promise<ToolRun & { missing?: { error: string; details: string }; timedOut?: true; neverStarted?: true }>
+  /** How Cloudflare's API is reached for the direct upload (no publishing tool runs). */
+  pages(): PagesTransport
+  /** wrangler's own blake3 module, for the Pages hash. */
+  blake3(): Blake3
+  /** This computer's short-link registry: a cache of the site record, and what a site with no record starts from. */
+  registry?: {
+    /** The registry on this computer; null when it is missing or cannot be read (never taken as an empty one). */
+    read(): Record<string, string> | null
+    write(registry: Record<string, string>): void
+    /**
+     * This computer's own registry as it was before it first followed a site's record, recorded once and durably (registry-
+     * origin.ts): what alone may bind a Run published before its folder was recorded. Throws RegistryOriginUnavailable when
+     * that record cannot be written or read. Without this port nothing is trusted.
+     */
+    origin?(): RegistryOrigin
+  }
+  /** This computer's link style (`publishing.shortLinks`): the same. */
+  shortLinks?: { read(): boolean; write(value: boolean): void }
+  /** The text of `_headers` for a site with no record yet (this computer's copy of it), or ''. */
+  headers?(): string
+  /** This computer's name, kept in the site record. */
+  computerName?(): string
+  /** One line for the app's log (a short link of this computer's that the site's record overrides). Never a token. */
+  log?(line: string): void
   /**
    * The app's own test mode (TW_REC_TEST=1): pages are built and checked, and nothing is
    * authorised or uploaded. Null otherwise.
@@ -585,13 +571,26 @@ export interface HandoutPublishing {
   idle(): Promise<void>
 }
 
+export const SITE_RECORD_UNREADABLE = 'Publishing stopped: the site\'s own record of its short links (/_talkweaver/site.json) could not be read, so nothing was uploaded. Check the connection and publish again.'
+export const SITE_RECORD_NEWER = 'Publishing stopped: the site was last published by a newer version of TalkWeaver. Update TalkWeaver on this computer and publish again. Nothing was uploaded.'
+export const REGISTRY_ORIGIN_UNWRITABLE = 'Publishing stopped: this Mac could not write down the short links it gave itself, which it must do before it follows the site\'s. Check that TalkWeaver\'s data folder can be written, and publish again. Nothing was uploaded.'
+export const REGISTRY_ORIGIN_UNAVAILABLE = 'Stopped: this Run was published by an older version, before its folder was recorded, and this Mac\'s record of the short links it gave itself cannot be read, so this one Run cannot be changed from this Mac. Republish or unpublish it from the Mac that originally published it. Nothing was withdrawn, written or removed.'
+export const SITE_BOOTSTRAP_CHANGED = 'Publishing stopped: the site has no shared record of its short links yet, and the short-link list or headers on this computer are no longer the ones it last published, so publishing from here could change the site\'s short links. Nothing was uploaded.'
+export const SITE_BOOTSTRAP_REFUSED = 'Publishing stopped: the site has no shared record of its short links yet, and what is live now was not published from this computer, so publishing from here could change its short links. Publish once from the computer that published last; after that any computer can publish. Nothing was uploaded.'
+
 const SUPERSEDED: PublishFailure = { ok: false, error: PUBLISH_SUPERSEDED_ERROR, superseded: true }
+/** Clocks of this computer and Cloudflare may differ by this much: the search reads back that far before the request. */
+const CLOCK_SKEW_MS = 10 * 60_000
+/** Cloudflare's "unknown error": never a proven refusal. */
+const CLOUDFLARE_UNKNOWN_ERROR = 8000000
 
 class TimeLimit extends Error {}
 /** A link the app was about to write into a page, refused (PUBLISHED OUTPUT (a)). */
 class LinkRefused extends Error {}
 /** The redirect text the app was about to write, refused (its message: the line). */
 class RedirectsRefused extends Error {}
+/** A fixed sentence that stops this publish before anything is sent. */
+class Stop extends Error { readonly failure: PublishFailure; constructor(failure: PublishFailure) { super(failure.error); this.failure = failure } }
 
 /** `work`, or a rejection (a TimeLimit) after `ms`. The work itself is not stopped: its own limit does that. */
 function limited<Result>(work: Promise<Result>, ms: number): Promise<Result> {
@@ -601,10 +600,31 @@ function limited<Result>(work: Promise<Result>, ms: number): Promise<Result> {
   })
 }
 
+/** Names wrangler never sends (validate: `**\/.DS_Store`, `**\/node_modules`, `**\/.git`, `.wrangler`). */
+const IGNORED = (name: string, top: boolean): boolean => name === '.DS_Store' || name === 'node_modules' || name === '.git' || (top && name === '.wrangler')
+/** The site-level files: sent beside the manifest, never as assets. */
+const SITE_FILES = new Set(['/_redirects', '/_headers'])
+const sha256 = (text: string): string => createHash('sha256').update(text).digest('hex')
+const segmentsOf = (path: string): string[] => path.slice(1).split('/')
+
+/** The site as a publish found it: the production deployment's id, its manifest and its record. */
+interface LiveSite {
+  revision: string
+  deploymentUrl?: string
+  /** Path (as Cloudflare keeps it) → asset hash. */
+  manifest: Map<string, string>
+  record: SiteRecord
+  /** The site had a record: false when this publish makes the first one (bootstrap). */
+  hadRecord: boolean
+}
+
+/** An empty stand-in for a live file, and how it was made: if it is still exactly that after the build, the live hash is kept. */
+type Placeholder = { dev: number; ino: number; mtimeMs: number; ctimeMs: number }
+/** A file the build wrote, to be sent. */
+type Written = { path: string; full: string; size: number; hash: string }
+
 export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishing {
   const queue = createKeyedQueue()
-  /** What an earlier page was found to hold, by its size and time of change: an unchanged page is not read again. */
-  const seen = new Map<string, { stamp: string; found: boolean }>()
   let tail: Promise<unknown> = Promise.resolve()
 
   /** LIVE NEVER FAILS A PUBLISH: whatever happens here, the answer is an address or its absence. */
@@ -628,88 +648,253 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
     }
   }
 
-  /** The handouts (folders) already in the site, outside `replaced`, whose pages carry a live address on this computer. */
-  function earlierHandouts(dir: string, replaced: Set<string>): string[] {
-    const names = new Set<string>()
-    for (const file of pagesUnder(dir)) {
-      const top = file.split('/')[0]
-      if (replaced.has(top) || !file.includes('/')) continue
-      const path = join(dir, file)
-      const stat = statSync(path)
-      const stamp = `${stat.size}:${stat.mtimeMs}`
-      const known = seen.get(path)
-      // latin1: one byte, one character, so no file is too odd to be read (the line read is plain ASCII).
-      const found = known && known.stamp === stamp ? known.found : earlierPageLoopback(file, readFileSync(path, 'latin1'))
-      seen.set(path, { stamp, found })
-      if (found) names.add(top)
-    }
-    return [...names].sort()
-  }
-
   /** Every page and redirect file of the site, with its size and time of change: to tell which ones a build wrote. */
   function stamps(dir: string): Map<string, string> {
     return new Map(pagesUnder(dir).map((file) => { const stat = statSync(join(dir, file)); return [file, `${stat.size}:${stat.mtimeMs}:${stat.ino}`] }))
   }
 
   /**
-   * AFTER THE BUILD: the pages this build wrote (new, or changed since it began), read once more.
-   * If one fails, this publish is not uploaded. Nothing is deleted, moved or remembered.
-   * Answers the refusal, or the handouts (folders) this build wrote.
+   * AFTER THE BUILD: the pages this build wrote (new, or changed since it began), read once more. If one fails, this publish
+   * sends nothing. Pages it did not write (the empty stand-ins of the live site) are not read.
    */
-  function checkBuilt(dir: string, before: Map<string, string>, staged: readonly StagedFolder[]): PublishFailure | { written: Set<string> } {
+  function checkBuilt(dir: string, before: Map<string, string>): PublishFailure | null {
     const written = [...stamps(dir)].filter(([file, stamp]) => before.get(file) !== stamp).map(([file]) => ({ file, path: join(dir, file) }))
-    // A new handout is still in its private folder: its pages are read where they are, under the name they will have.
-    for (const folder of staged) for (const file of pagesUnder(folder.dir)) written.push({ file: `${folder.label}/${file}`, path: join(folder.dir, file) })
     const finds = written.flatMap(({ file, path }) => {
       const found = appWrittenLoopback(file, readFileSync(path, 'latin1'))
       return found ? [`${file}: ${found}`] : []
     })
-    if (finds.length) return { ok: false, error: PUBLISH_LOOPBACK_REFUSED, details: finds.slice(0, 20).join('\n') }
-    return { written: new Set(written.map(({ file }) => file.split('/')[0])) }
+    return finds.length ? { ok: false, error: PUBLISH_LOOPBACK_REFUSED, details: finds.slice(0, 20).join('\n') } : null
+  }
+
+  /** This computer's registry and link style, and the `_headers` it has: what a site with no record starts from. */
+  function localDefaults(): SiteRecord {
+    const registry = ports.registry?.read() ?? {}
+    return { registry: { ...registry }, shortLinks: ports.shortLinks?.read() ?? false, headers: ports.headers?.() ?? '' }
+  }
+  /** `publicationBinding([[name, sha256(text)]])`: how the publication record names a site-level file it sent (empty: not sent). */
+  const controlDigest = (name: string, text: string): string | undefined => (text ? publicationBinding([[name, sha256(text)]]) : undefined)
+
+  /**
+   * Step 1, and the site record: the production deployment as the preservation check read it, and `/_talkweaver/site.json` read
+   * through the deployment's own address (its bytes taken only when their hash is the manifest's). No record: the bootstrap rule.
+   */
+  async function readLiveSite(inventory: PreservationInventory, blake3: Blake3): Promise<LiveSite> {
+    const files = inventory.files ?? (inventory.paths.length === 0 ? [] : null)
+    if (!files) throw new PreservationRefusal('PUBLISH_INVENTORY_UNAVAILABLE')
+    const manifest = new Map(files)
+    const revision = inventory.revision
+    const recordHash = manifest.get(SITE_RECORD_PATH)
+    if (recordHash) {
+      const transport = ports.pages()
+      const bytes = await readLiveAsset(transport, blake3, siteAssetAddresses(transport, { id: revision, url: inventory.deploymentUrl }, SITE_RECORD_PATH), SITE_RECORD_PATH, recordHash)
+      if (!bytes) throw new Stop({ ok: false, error: SITE_RECORD_UNREADABLE })
+      const parsed = parseSiteRecord(bytes)
+      if (!parsed.ok) throw new Stop({ ok: false, error: parsed.reason === 'newer' ? SITE_RECORD_NEWER : SITE_RECORD_UNREADABLE })
+      return { revision, deploymentUrl: inventory.deploymentUrl, manifest, record: parsed.record, hadRecord: true }
+    }
+    // BOOTSTRAP: the first record is made from this computer's registry, link style and `_headers`, and only when this computer
+    // made what is live now: its own publication record (written by the preservation guard when its publish was accepted) is for
+    // this site's live production deployment, by its id or by the candidate digest that deployment carries. A site with nothing
+    // deployed has nothing to lose. (A live site with no record holds no name of the computer that published it last.)
+    const mine = readPublicationRecord(inventory.site, ports.preservationRoot)
+    const liveIsMine = mine !== null && (mine.revision === revision || (mine.candidateDigest !== undefined && mine.candidateDigest === inventory.candidateDigest))
+    if (manifest.size === 0) return { revision, deploymentUrl: inventory.deploymentUrl, manifest, record: localDefaults(), hadRecord: false }
+    if (!liveIsMine) {
+      throw new Stop({ ok: false, error: SITE_BOOTSTRAP_REFUSED, details: mine ? `This computer last published the site at deployment ${mine.revision}; the site is now at ${revision}.` : 'This computer has no record of publishing this site.' })
+    }
+    // And what it would send now must be what went live then: the redirect file made from today's registry, and today's
+    // `_headers`, each the very digest the publication record keeps. A registry that is missing or unreadable proves nothing.
+    const registry = ports.registry ? ports.registry.read() : null
+    if (registry === null) throw new Stop({ ok: false, error: SITE_BOOTSTRAP_CHANGED, details: 'This computer\'s short-link list is missing or cannot be read.' })
+    const headers = ports.headers?.() ?? ''
+    const changed = [['/_redirects', buildRedirects(registry, manifestFolders(manifest.keys()))], ['/_headers', headers]]
+      .filter(([name, text]) => controlDigest(name, text) !== mine.controls[name]).map(([name]) => name)
+    if (changed.length) throw new Stop({ ok: false, error: SITE_BOOTSTRAP_CHANGED, details: `Not as this computer last published them: ${changed.join(', ')}.` })
+    return { revision, deploymentUrl: inventory.deploymentUrl, manifest, record: { registry: { ...registry }, shortLinks: ports.shortLinks?.read() ?? false, headers }, hadRecord: false }
+  }
+
+  /** The test mode's site: this computer's copy, as it is (nothing is asked of Cloudflare). */
+  function rehearsalSite(dir: string): LiveSite {
+    const paths = existsSync(dir) ? publicationPaths(dir).filter((path) => !SITE_FILES.has(path)) : []
+    return { revision: 'rehearsal', manifest: new Map(paths.map((path) => [path, ''])), record: localDefaults(), hadRecord: true }
+  }
+
+  /** The live site laid out in `shadow`: an empty file for every live path, recorded so that an untouched one keeps its live hash. */
+  function layOut(shadow: string, site: LiveSite): Map<string, Placeholder> {
+    const placeholders = new Map<string, Placeholder>()
+    for (const path of site.manifest.keys()) {
+      if (path === SITE_RECORD_PATH) continue
+      const full = join(shadow, ...segmentsOf(path))
+      try {
+        mkdirSync(dirname(full), { recursive: true })
+        writeFileSync(full, '', { flag: 'wx' })
+      } catch {
+        // Two live names this computer keeps as one (`A` and `a` on a disk that does not tell them apart), or a name it cannot keep.
+        throw new PreservationRefusal('PUBLISH_INVENTORY_UNAVAILABLE', path)
+      }
+      const stat = lstatSync(full)
+      placeholders.set(path, { dev: stat.dev, ino: stat.ino, mtimeMs: stat.mtimeMs, ctimeMs: stat.ctimeMs })
+    }
+    const redirects = buildRedirects(site.record.registry, manifestFolders(site.manifest.keys()))
+    if (redirects) writeFileSync(join(shadow, '_redirects'), redirects)
+    if (site.record.headers) writeFileSync(join(shadow, '_headers'), site.record.headers)
+    return placeholders
+  }
+
+  /** Every file of `shadow` as `[path, full path, stat]`; anything but files and folders stops the publish. */
+  function filesIn(shadow: string): Array<[string, string, Stats]> {
+    const found: Array<[string, string, Stats]> = []
+    const walk = (folder: string, prefix: string): void => {
+      for (const name of readdirSync(folder).sort()) {
+        if (IGNORED(name, prefix === '')) continue
+        const full = join(folder, name)
+        const stat = lstatSync(full)
+        const path = `${prefix}/${name}`
+        if (stat.isDirectory()) walk(full, path)
+        else if (stat.isFile()) found.push([path, full, stat])
+        else throw new PreservationRefusal('PUBLISH_CANDIDATE_CHANGED')
+      }
+    }
+    walk(shadow, '')
+    return found
   }
 
   /**
-   * THE choke point, part two: the one place the site folder is uploaded. Nothing goes up when the
-   * connection is no longer the one this publish was authorised for. Answers only once the tool has
-   * exited, so the queue never starts the next upload while this one may still be sending.
+   * After a deployment went up (or a rehearsal built its pages): this computer's copy of the site takes the same change, for what
+   * reads it here. It never writes, removes or follows through a link or anything but a real folder: such an entry (another
+   * writer's) is left as it is and the rest goes on. Never a reason for the publish to fail: it went up.
    */
-  const outcomes = new WeakMap<PublishFailure, 'accepted' | 'failed' | 'unknown'>()
-
-  async function uploadSite(authorisation: PublishAuthorisation, dir: string, rehearsal: boolean, context?: PublicationLaunch): Promise<{ ok: true } | PublishFailure> {
-    const hazard = ports.bundlingHazard(dir)
-    if (hazard) { const failure = { ok: false as const, error: hazard }; outcomes.set(failure, publicationOutcome({ accepted: false, neverStarted: true })); return failure }
-    if (rehearsal) return { ok: true }
-    let launched: { superseded: true } | { superseded: false; result: Uploaded }
-    // Whether the tool was ever asked to start: a failure before that is proven to precede deployment.
-    let invoked = false
-    const beforeLaunch = (failure: PublishFailure): PublishFailure => { if (!invoked) outcomes.set(failure, publicationOutcome({ accepted: false, neverStarted: true })); return failure }
+  function mirror(dir: string, change: { folders: readonly string[]; written: readonly Written[]; removed: readonly string[]; redirects: string }): void {
+    const kind = (full: string): 'none' | 'folder' | 'file' | 'other' => {
+      try { const stat = lstatSync(full); return stat.isSymbolicLink() ? 'other' : stat.isDirectory() ? 'folder' : stat.isFile() ? 'file' : 'other' } catch { return 'none' }
+    }
+    /** Every folder on the way to `segments` that is there is a real folder (missing ones are made fresh). */
+    const realWay = (segments: readonly string[]): boolean => {
+      let at = dir
+      for (const segment of segments.slice(0, -1)) {
+        at = join(at, segment)
+        const found = kind(at)
+        if (found === 'none') return true
+        if (found !== 'folder') return false
+      }
+      return true
+    }
+    let skipped = 0
     try {
-      launched = await authorisation.run((credentials) => { invoked = true; return ports.upload(
-        ['pages', 'deploy', dir, '--project-name', authorisation.project, '--branch', authorisation.productionBranch, '--commit-dirty=true', ...(context ? ['--commit-message', 'tw-candidate:' + context.candidateDigest] : [])], credentials, context?.started,
-      ) })
+      mkdirSync(dir, { recursive: true })
+      for (const folder of change.folders) {
+        const found = kind(join(dir, folder))
+        if (found === 'folder') removeSiteFolder(dir, folder)
+        else if (found !== 'none') skipped++
+      }
+      for (const path of change.removed) {
+        const segments = segmentsOf(path)
+        const full = join(dir, ...segments)
+        if (!realWay(segments) || kind(full) !== 'file') continue
+        unlinkSync(full)
+        for (let parent = dirname(full); parent !== resolve(dir) && parent.startsWith(resolve(dir)); parent = dirname(parent)) {
+          try { rmdirSync(parent) } catch { break }
+        }
+      }
+      for (const file of change.written) {
+        if (file.path === SITE_RECORD_PATH) continue
+        const segments = segmentsOf(file.path)
+        const target = join(dir, ...segments)
+        if (!realWay(segments) || !['none', 'file'].includes(kind(target))) { skipped++; continue }
+        mkdirSync(dirname(target), { recursive: true })
+        if (!realWay(segments)) { skipped++; continue }
+        copyFileSync(file.full, target)
+      }
+      const redirects = join(dir, '_redirects')
+      const found = kind(redirects)
+      if (found === 'file' || (found === 'none' && change.redirects)) writeFileSync(redirects, change.redirects)
+      else if (found !== 'none') skipped++
     } catch (error) {
-      if (!authorisation.current()) return beforeLaunch({ ...SUPERSEDED })
-      // The launch itself threw: its text is Details, never the message.
-      const text = authorisation.clean(error instanceof Error ? error.message : String(error)).trim().slice(-DETAILS_CHARS)
-      return beforeLaunch(text ? { ok: false, error: PUBLISH_FAILED, details: text } : { ok: false, error: PUBLISH_FAILED })
+      ports.log?.(`[publish] this computer's copy of the site could not be brought up to date: ${error instanceof Error ? error.name : 'error'}`)
     }
-    if (launched.superseded) return beforeLaunch({ ...SUPERSEDED })
-    const run = launched.result
-    if (run.missing || run.neverStarted) {
-      const failure = { ok: false as const, error: run.missing?.error ?? PUBLISH_FAILED, details: run.missing?.details ?? authorisation.clean(run.stderr) }
-      outcomes.set(failure, publicationOutcome({ accepted: false, neverStarted: true })); return failure
+    if (skipped) ports.log?.(`[publish] this computer's copy of the site: ${skipped} entr${skipped === 1 ? 'y was' : 'ies were'} left alone (a link or not a plain file or folder)`)
+  }
+
+  /**
+   * Steps 4 to 8, THE one place anything is sent: the bytes Cloudflare lacks, the revision checked again, the deployment, its
+   * confirmation. The token reaches Cloudflare only inside `authorisation.run`. The connection is asked again between uploads
+   * and immediately before the one deployment request (superseded: nothing further is sent), and the production revision is read
+   * again immediately before it. The request is never repeated: one that may have made a deployment is an unknown outcome, which
+   * the next publish reconciles (`reconcile`) before it sends anything. `outcome`: whether a deployment may exist.
+   */
+  async function send(authorisation: PublishAuthorisation, change: { revision: string; manifest: Record<string, string>; staged: StagedAsset[]; redirects: string; headers: string; candidateDigest: string }, context: PublicationLaunch): Promise<{ outcome: 'accepted' | 'failed' | 'unknown'; value: { ok: true } | PublishFailure }> {
+    const sorted = (error: unknown): PublishFailure => {
+      const kind = error instanceof PagesApiError ? error.kind : 'failed'
+      if (kind === 'permission') authorisation.refusedForPermission()
+      const details = authorisation.clean(error instanceof PagesApiError ? error.message : 'Cloudflare: the request could not be made').slice(-DETAILS_CHARS)
+      return { ok: false, error: PUBLISH_FAILURE_TEXT[kind], details }
     }
-    if (run.ok && !run.timedOut) return { ok: true }
-    const output = `${run.stdout}\n${run.stderr}`
-    // The token comes out of the WHOLE of what was printed, and only then is the end kept.
-    const details = authorisation.clean(output).trim().slice(-DETAILS_CHARS)
-    if (run.timedOut) return details ? { ok: false, error: PUBLISH_TIMED_OUT, details } : { ok: false, error: PUBLISH_TIMED_OUT }
-    // Asset counts are not HTTP statuses. Keep Details intact.
-    const sorted = pagesDeployFailure(output.replace(/\bUploaded\s+\d+\s+files\b/gi, 'Uploaded files'))
-    if (sorted.kind === 'permission') authorisation.refusedForPermission()
-    const failure: PublishFailure = details ? { ok: false, error: sorted.error, details } : { ok: false, error: sorted.error }
-    outcomes.set(failure, publicationOutcome({ accepted: false, output }))
-    return failure
+    type Step = { kind: 'superseded' } | { kind: 'upload-failed'; error: unknown } | { kind: 'revision-changed' } | { kind: 'deploy-failed'; error: unknown } | { kind: 'sent'; confirmed: boolean }
+    /** Set the moment the deployment request is about to go: from then on a deployment may exist. */
+    let posted = false
+    let launched: { superseded: true } | { superseded: false; result: Step }
+    try {
+      launched = await authorisation.run(async (credentials): Promise<Step> => {
+        const api = pagesSiteApi(ports.pages(), { token: credentials.CLOUDFLARE_API_TOKEN, accountId: authorisation.accountId, project: authorisation.project })
+        try {
+          await api.uploadAssets(change.staged, Object.values(change.manifest), () => authorisation.current())
+          if (!authorisation.current()) return { kind: 'superseded' }
+          // Step 6, immediately before the deployment is created.
+          const now = (await api.productionId()) ?? NO_PRODUCTION_REVISION
+          if (now !== change.revision) return { kind: 'revision-changed' }
+        } catch (error) {
+          return error instanceof UploadSuperseded ? { kind: 'superseded' } : { kind: 'upload-failed', error }
+        }
+        if (!authorisation.current()) return { kind: 'superseded' }
+        context.posting?.() // its time is journalled before it can make anything (the settlement window below)
+        posted = true
+        let id: string
+        try {
+          id = (await api.createDeployment({ manifest: change.manifest, branch: authorisation.productionBranch, commitMessage: `tw-candidate:${change.candidateDigest}`, redirects: change.redirects, headers: change.headers })).id
+        } catch (error) { return { kind: 'deploy-failed', error } }
+        context.deployed?.(id)
+        return { kind: 'sent', confirmed: await api.confirm(id, change.manifest) }
+      })
+    } catch (error) {
+      // The launch itself threw: nothing of it is shown but Details.
+      const failure: PublishFailure = { ok: false, error: PUBLISH_FAILED, details: authorisation.clean(error instanceof Error ? error.name : 'error') }
+      return { outcome: posted ? 'unknown' : 'failed', value: failure }
+    }
+    if (launched.superseded) return { outcome: posted ? 'unknown' : 'failed', value: { ...SUPERSEDED } }
+    const step = launched.result
+    if (step.kind === 'superseded') return { outcome: 'failed', value: { ...SUPERSEDED } }
+    if (step.kind === 'upload-failed') return { outcome: 'failed', value: sorted(step.error) }
+    if (step.kind === 'revision-changed') return { outcome: 'failed', value: { ok: false, error: 'PUBLISH_REVISION_CHANGED' } }
+    if (step.kind === 'deploy-failed') {
+      // Only a refusal Cloudflare stated, and not its "unknown error" (wrangler retries that one: it may have made a deployment).
+      const definite = step.error instanceof PagesApiError && step.error.definite && !step.error.codes.includes(CLOUDFLARE_UNKNOWN_ERROR)
+      return { outcome: definite ? 'failed' : 'unknown', value: sorted(step.error) }
+    }
+    if (!step.confirmed) return { outcome: 'unknown', value: { ok: false, error: 'PUBLISH_OUTCOME_UNKNOWN' } }
+    return { outcome: 'accepted', value: { ok: true } }
+  }
+
+  /**
+   * What became of an earlier attempt whose outcome is unknown (the preservation guard asks before anything else is sent): its
+   * deployment by id, or by its candidate digest searched page by page back to just before its request was sent. Found: its own
+   * state decides. Not found proves nothing was made ONLY when the journal proves the request was never sent (`sent: false`);
+   * otherwise, however long ago, it stays unknown until the deployment shows up and settles, or the manual recovery in the spec
+   * clears the journal. Cloudflare gives no bound on when a request it received can still become a deployment.
+   */
+  async function reconcile(authorisation: PublishAuthorisation, attempt: { candidateDigest: string; deploymentId?: string; postedAt?: number; sent: boolean }): Promise<{ state: 'deployed'; id: string } | { state: 'not-deployed' | 'pending' | 'unknown' }> {
+    try {
+      const read = await authorisation.run((credentials) => pagesSiteApi(ports.pages(), { token: credentials.CLOUDFLARE_API_TOKEN, accountId: authorisation.accountId, project: authorisation.project })
+        .findDeployment({ ...(attempt.deploymentId ? { id: attempt.deploymentId } : {}), candidateDigest: attempt.candidateDigest,
+          ...(attempt.postedAt !== undefined ? { notBefore: attempt.postedAt - CLOCK_SKEW_MS } : {}) }))
+      if (read.superseded) return { state: 'unknown' }
+      const found = read.result
+      if (found.state === 'failure') return { state: 'not-deployed' }
+      if (found.state === 'pending') return { state: 'pending' }
+      if (found.state === 'success') return { state: 'deployed', id: found.id }
+      return attempt.sent ? { state: 'unknown' } : { state: 'not-deployed' }
+    } catch {
+      return { state: 'unknown' }
+    }
   }
 
   async function run<Built>(job: PublishJob<Built>): Promise<PublishSuccess<Built> | PublishFailure> {
@@ -740,204 +925,215 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
       const granted = await ports.authorise()
       if (!granted.ok) return { ok: false, error: granted.error, ...(granted.notReady ? { notReady: granted.notReady } : {}), ...(granted.superseded ? { superseded: true as const } : {}) }
       authorisation = granted.authorisation
-      const missing = ports.toolMissing()
-      if (missing) return { ok: false, error: missing.error, details: missing.details }
     }
     const live = PUBLISH_ENTRY_POINTS[job.entry].live ? await liveForPages(authorisation, rehearsal !== null) : null
     if (!authorisation.current()) return SUPERSEDED
     const dir = ports.siteDir()
     let attempt: PreservationAttempt | null = null
-    let baseline: string[] = []
     try {
       if (!rehearsal) {
         const site = `cf-pages:${authorisation.accountId}:${authorisation.project}`
-        const revision = job.revision?.() ?? (existsSync(dir) ? publicationBinding(publicationPaths(dir)) : 'empty-local-site')
+        const revision = job.revision?.() ?? 'per-talk-merge'
         const binding = () => publicationBinding([site, authorisation.productionBranch, authorisation.current(), job.revision?.() ?? revision])
         attempt = await beginPublication({ site, inventory: () => ports.inventory?.(authorisation) ?? Promise.resolve(null),
-          binding, approvedBinding: binding(), candidateDigest: null, storageRoot: ports.preservationRoot })
-        baseline = existsSync(dir) ? publicationPaths(dir) : []
+          binding, approvedBinding: binding(), candidateDigest: null, storageRoot: ports.preservationRoot,
+          reconcile: (earlier) => reconcile(authorisation, earlier) })
       }
     } catch (error) {
       attempt?.close()
       return { ok: false, error: error instanceof PreservationRefusal ? error.reason : 'PUBLISH_CANDIDATE_CHANGED', ...(error instanceof PreservationRefusal ? { details: error.message } : {}) }
     }
-    /** New handout folders, built privately (see makeFolder), and everything this attempt created in the site (see removeOwnedEntries). */
-    const staged: StagedFolder[] = []
-    const owned: OwnedEntry[] = []
+    const stagingRoot = ports.stagingRoot?.() ?? tmpdir()
+    let shadow: string | null = null
     try {
-      const before = stamps(dir)
+      // ── The site as it is ──────────────────────────────────────────────────────────────────────────────────────────────
+      const blake3 = rehearsal ? null : ports.blake3()
+      let site: LiveSite
+      try {
+        site = attempt && blake3 ? await readLiveSite(attempt.live, blake3) : rehearsalSite(dir)
+      } catch (error) {
+        if (error instanceof Stop) return error.failure
+        if (error instanceof PreservationRefusal) return { ok: false, error: error.reason, details: error.message }
+        throw error
+      }
+      // The short links this computer itself gave, recorded before it first follows a site's record (see PublishBuild). When that
+      // record cannot be read or kept, nothing is trusted: only what needs it (a Run published before its folder was recorded)
+      // is refused, everything else goes on. No record is made from what is synced below (registry-origin.ts).
+      let trustedRegistry: Record<string, string> | null = null
+      let ownShortLinksUnreadable = false
+      try {
+        const origin = ports.registry?.origin?.()
+        trustedRegistry = origin?.state === 'registry' ? origin.registry : null
+      } catch (error) {
+        if (!(error instanceof RegistryOriginUnavailable)) throw error
+        // No record, and none can be made: following the site's record now would let a later attempt record the copy as its own.
+        if (error.kind === 'unwritable' && !rehearsal) return { ok: false, error: REGISTRY_ORIGIN_UNWRITABLE, details: authorisation.clean(error.message) }
+        ownShortLinksUnreadable = true
+        ports.log?.(`[publish] short links: ${error.message}; Runs published before their folder was recorded cannot be changed from here`)
+      }
+      // This computer's registry and link style become the site's (the live record wins; each difference is logged).
+      if (!rehearsal) {
+        if (ports.registry) {
+          const local = ports.registry.read()
+          if (local === null) ports.log?.('[publish] short links: this computer\'s list was missing or unreadable; the site\'s is kept')
+          for (const clash of registryClashes(local ?? {}, site.record.registry)) ports.log?.(`[publish] short links: ${clash}`)
+          if (local === null || JSON.stringify(Object.entries(local).sort()) !== JSON.stringify(Object.entries(site.record.registry).sort())) ports.registry.write({ ...site.record.registry })
+        }
+        if (ports.shortLinks && ports.shortLinks.read() !== site.record.shortLinks) ports.shortLinks.write(site.record.shortLinks)
+      }
+      mkdirSync(stagingRoot, { recursive: true })
+      shadow = mkdtempSync(join(stagingRoot, 'tw-site-'))
+      const root = shadow
+      const placeholders = layOut(root, site)
+      const before = stamps(root)
+
+      // ── The build: into the site as this publish sees it ───────────────────────────────────────────────────────────────
+      /** Folders the job builds with `makeFolder`: replaced whole. */
+      const folders = new Set<string>()
       const directChild = (path: string): string => {
         const full = resolve(path)
-        if (dirname(full) !== resolve(dir)) throw new Error('A publish creates only top-level entries of the site folder.')
+        if (dirname(full) !== resolve(root)) throw new Error('A publish creates only top-level entries of the site folder.')
         return full
       }
-      const own = (full: string, label = basename(full), folder?: true): void => { const stat = lstatSync(full); owned.push({ path: full, dev: stat.dev, ino: stat.ino, label, ...(folder ? { folder } : {}) }) }
       const present = (full: string): boolean => { try { lstatSync(full); return true } catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return false; throw error } }
-      /** An entry of the site that the publish writes in place must be what it looks like: a link, or anything but a plain file (folder), is refused, not followed. */
       const plain = (full: string, folder?: true): void => {
         let stat; try { stat = lstatSync(full) } catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return; throw error }
         if (folder ? !stat.isDirectory() : !stat.isFile()) throw new PreservationRefusal('PUBLISH_CANDIDATE_CHANGED')
       }
       const makeFolder = (path: string): string => {
         const full = directChild(path)
-        mkdirSync(dir, { recursive: true })
-        // Rehearsal builds in the site and removes nothing; a folder that is there is a republish, written in place and never removed.
-        if (rehearsal) { plain(full, true); mkdirSync(full, { recursive: true }); return full }
-        if (present(full)) { plain(full, true); return full }
-        const again = staged.find((folder) => folder.target === full)
-        if (again) return again.dir
-        const root = ports.stagingRoot?.() ?? tmpdir()
-        mkdirSync(root, { recursive: true })
-        const folder: StagedFolder = { target: full, dir: mkdtempSync(join(root, 'tw-publish-')), label: basename(full) }
-        staged.push(folder)
-        return folder.dir
+        const name = basename(full)
+        if (folders.has(name)) return full
+        if (present(full)) { plain(full, true); rmSync(full, { recursive: true, force: true }) } // the live folder's stand-ins: replaced whole
+        mkdirSync(full)
+        folders.add(name)
+        return full
       }
       const writeSiteFile = (path: string, text: string): boolean => {
         const full = directChild(path)
-        mkdirSync(dir, { recursive: true })
-        try { writeFileSync(full, text, { encoding: 'utf8', flag: 'wx' }) } catch (error) {
-          if ((error as NodeJS.ErrnoException)?.code !== 'EEXIST') throw error
-          plain(full)
-          // Windows rejects O_NOFOLLOW. Open without truncating, then verify the held file
-          // against both path observations before writing; a raced link must never lose bytes.
-          const expected = lstatSync(full)
-          const noFollow = process.platform === 'win32' ? 0 : fsConstants.O_NOFOLLOW
-          const handle = openSync(full, fsConstants.O_WRONLY | noFollow)
-          try {
-            const held = fstatSync(handle), current = lstatSync(full)
-            if (!expected.isFile() || !held.isFile() || !current.isFile() ||
-                held.dev !== expected.dev || held.ino !== expected.ino ||
-                held.dev !== current.dev || held.ino !== current.ino) throw new PreservationRefusal('PUBLISH_CANDIDATE_CHANGED')
-            ftruncateSync(handle, 0)
-            writeSync(handle, text)
-          } finally { closeSync(handle) }
-          return false
-        }
-        own(full)
-        return true
+        const fresh = !present(full)
+        if (!fresh) plain(full)
+        writeFileSync(full, text, 'utf8')
+        return fresh
       }
       const claimFile = (path: string): boolean => {
         const full = directChild(path)
-        mkdirSync(dir, { recursive: true })
-        try { writeFileSync(full, '', { encoding: 'utf8', flag: 'wx' }) } catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') { plain(full); return false }; throw error }
-        own(full)
+        if (present(full)) { plain(full); return false }
+        writeFileSync(full, '', 'utf8')
         return true
       }
-      /**
-       * Move a privately built folder into the site, creating each folder and file here itself (exclusively: an entry that is
-       * already there makes this fail, nothing of anyone else's is merged into or written over) and listing each in `owned`.
-       */
-      const moveIn = (from: string, to: string, label: string): void => {
-        for (const entry of readdirSync(from, { withFileTypes: true })) {
-          const source = join(from, entry.name), target = join(to, entry.name)
-          if (entry.isDirectory()) { mkdirSync(target); own(target, label, true); moveIn(source, target, label) }
-          else if (entry.isFile()) {
-            try { linkSync(source, target) } catch (error) {
-              if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') throw error
-              copyFileSync(source, target, fsConstants.COPYFILE_EXCL) // another disk, or a disk that does not link
-            }
-            own(target, label)
-          } else throw new Error('A handout folder holds only files and folders.')
-        }
-      }
-      /** Null once every new folder is in the site; else the failure (nothing was sent: the tool has not been asked to start). */
-      const moveStagedIn = (): PublishFailure | null => {
-        try {
-          for (const folder of staged) {
-            mkdirSync(folder.target) // exclusive: a folder another writer made under this name meanwhile is theirs
-            own(folder.target, folder.label, true)
-            moveIn(folder.dir, folder.target, folder.label)
-          }
-          return null
-        } catch {
-          const failure: PublishFailure = { ok: false, error: 'PUBLISH_CANDIDATE_CHANGED' }
-          outcomes.set(failure, publicationOutcome({ accepted: false, neverStarted: true }))
-          return failure
-        }
-      }
-      /**
-       * Nothing was sent: what this attempt created in the site goes again, so a retry builds into the same folder name. A failure to
-       * take an entry away is not hidden: it is named in the failure's Details (a retry then uses a second folder).
-       */
-      const withdraw = (): string[] => (rehearsal ? [] : removeOwnedEntries(owned))
-      const withdrawn = <Failure extends PublishFailure>(failure: Failure): Failure => {
-        const failed = withdraw()
-        if (!failed.length) return failure
-        const sentence = `Pages this publish had built could not be removed from the site folder, so the next publish will make a second copy: ${failed.join(', ')}. Remove ${failed.length === 1 ? 'that folder' : 'those folders'} from the site folder first.`
-        return { ...failure, details: failure.details ? `${failure.details}\n${sentence}` : sentence }
-      }
-
-      // ── BEFORE THE BOUNDARY ───────────────────────────────────────────────────────────────────────────────────────────────
-      // Everything up to the moment the upload is launched happens before anything could have been sent: the build, the checks
-      // after it, the listing of earlier handouts, the preservation check, the frozen copy. Whatever stops it there, a refusal or
-      // an ordinary error (a page that cannot be read, a file that cannot be copied), takes away what this attempt created and
-      // nothing else. (The boundary is the first line of the launch callback below.)
       let prepared: Awaited<ReturnType<PublishJob<Built>['prepare']>>
-      let earlier: string[]
       try {
-        try {
-          prepared = await job.prepare({
-            dir, project: authorisation.project, live: live?.ready ? live.address : '',
-            // ENTRY FIRST: refused before the job has written anything.
-            link: (url) => { if (!liveAddressForPages(url)) throw new LinkRefused(); return url },
-            redirects: (text) => { const bad = redirectsRefusal(text); if (bad !== null) throw new RedirectsRefused(bad); return text },
-            makeFolder, writeSiteFile, claimFile,
-          })
-        } catch (error) {
-          if (error instanceof LinkRefused) return withdrawn({ ok: false, error: PUBLISH_LINK_REFUSED })
-          if (error instanceof PreservationRefusal) return withdrawn({ ok: false, error: error.reason, details: error.message })
-          if (error instanceof RedirectsRefused) return withdrawn({ ok: false, error: PUBLISH_REDIRECTS_REFUSED, details: error.message.replace(/[^\x20-\x7e]/g, ' ').slice(0, 200) })
-          throw error // taken away below, as for every error before the boundary
-        }
-        if (!prepared.ok) return withdrawn(prepared)
-        const checked = checkBuilt(dir, before, staged)
-        if ('ok' in checked) return withdrawn(checked)
-        earlier = earlierHandouts(dir, checked.written)
-        // Superseded after the pages were built and before the upload began: nothing was sent, so what was built goes again.
-        if (!authorisation.current()) return withdrawn(SUPERSEDED)
+        prepared = await job.prepare({
+          dir: root, project: authorisation.project, live: live?.ready ? live.address : '',
+          // ENTRY FIRST: refused before the job has written anything.
+          link: (url) => { if (!liveAddressForPages(url)) throw new LinkRefused(); return url },
+          redirects: (text) => { const bad = redirectsRefusal(text); if (bad !== null) throw new RedirectsRefused(bad); return text },
+          makeFolder, writeSiteFile, claimFile, trustedRegistry, ownShortLinksUnreadable,
+        })
       } catch (error) {
-        // A build that fails leaves no half-written new folder for a retry to find. The failure itself is the caller's own, as before.
-        const failed = withdraw()
-        if (failed.length && error instanceof Error) error.message += ` (Pages this publish had built could not be removed from the site folder: ${failed.join(', ')}.)`
+        if (error instanceof LinkRefused) return { ok: false, error: PUBLISH_LINK_REFUSED }
+        if (error instanceof PreservationRefusal) return { ok: false, error: error.reason, details: error.message }
+        if (error instanceof RedirectsRefused) return { ok: false, error: PUBLISH_REDIRECTS_REFUSED, details: error.message.replace(/[^\x20-\x7e]/g, ' ').slice(0, 200) }
         throw error
       }
-      let uploaded: { ok: true } | PublishFailure
+      if (!prepared.ok) return prepared
+      const refused = checkBuilt(root, before)
+      if (refused) return refused
+      if (!authorisation.current()) return SUPERSEDED
+
+      // ── The change: what the build wrote and removed, and nothing else ─────────────────────────────────────────────────
+      const merged = new Map<string, string>()
+      const written: Written[] = []
+      const tooLarge: string[] = []
+      for (const [raw, full, stat] of filesIn(root)) {
+        if (SITE_FILES.has(raw)) continue
+        const standIn = placeholders.get(raw)
+        if (standIn && stat.size === 0 && stat.dev === standIn.dev && stat.ino === standIn.ino && stat.mtimeMs === standIn.mtimeMs && stat.ctimeMs === standIn.ctimeMs) {
+          merged.set(raw, site.manifest.get(raw) as string)
+          continue
+        }
+        const path = candidatePath(raw) // %, ? or #, or a name Cloudflare could not keep: refused before anything is sent
+        if (path === SITE_RECORD_PATH) throw new PreservationRefusal('PUBLISH_CANDIDATE_CHANGED')
+        if (stat.size > PAGES_UPLOAD.maxAssetBytes) { tooLarge.push(raw); continue }
+        written.push({ path: raw, full, size: Number(stat.size), hash: blake3 ? pagesAssetHash(blake3, readFileSync(full), raw) : '' })
+      }
+      if (tooLarge.length) return { ok: false, error: PUBLISH_FAILURE_TEXT['too-large'], details: tooLarge.slice(0, 20).join('\n') }
+      const kept = new Set([...merged.keys(), ...written.map((file) => file.path)])
+      const removed = [...site.manifest.keys()].filter((path) => path !== SITE_RECORD_PATH && !kept.has(path))
+      // INVARIANT: nothing outside the folders this job builds or unpublishes changes, apart from top-level files it wrote.
+      const scopes = new Set([...folders, ...(job.removalRoots?.(prepared.built) ?? []).map((root) => segmentsOf(root)[0])])
+      const outside = [...written.map((file) => file.path).filter((path) => segmentsOf(path).length > 1 && !scopes.has(segmentsOf(path)[0])),
+        ...removed.filter((path) => segmentsOf(path).length === 1 || !scopes.has(segmentsOf(path)[0]))]
+      if (outside.length) return { ok: false, error: 'PUBLISH_UNRELATED_REMOVAL', details: `${preservationMessage('PUBLISH_UNRELATED_REMOVAL')}\n${outside.slice(0, 20).join('\n')}` }
+      for (const file of written) merged.set(file.path, file.hash)
+
+      // ── The site record and the site-level files, made from it ─────────────────────────────────────────────────────────
+      const registry = rehearsal ? site.record.registry : sanitisedRegistry(ports.registry?.read() ?? site.record.registry)
+      const record: SiteRecord = { registry, shortLinks: site.record.shortLinks, headers: site.record.headers, ...(ports.computerName ? { publishedBy: ports.computerName() } : {}) }
+      const redirects = buildRedirects(record.registry, manifestFolders(merged.keys()))
+      const badRedirect = redirectsRefusal(redirects)
+      if (badRedirect !== null) return { ok: false, error: PUBLISH_REDIRECTS_REFUSED, details: badRedirect.replace(/[^\x20-\x7e]/g, ' ').slice(0, 200) }
+      const headersChanged = existsSync(join(root, '_headers')) ? readFileSync(join(root, '_headers'), 'utf8') !== record.headers : record.headers !== ''
+      if (headersChanged) return { ok: false, error: 'PUBLISH_UNRELATED_REMOVAL', details: `${preservationMessage('PUBLISH_UNRELATED_REMOVAL')}\n/_headers` }
+      const hazard = ports.bundlingHazard(root)
+      if (hazard) return { ok: false, error: hazard }
+      const change = { folders: [...folders], written, removed, redirects }
+
+      const succeed = async (): Promise<PublishSuccess<Built>> => {
+        await job.record?.(prepared.built)
+        const without = live && !live.ready ? live : null
+        return { ok: true, built: (prepared as { ok: true; built: Built }).built, live,
+          notice: without ? publishedWithoutLiveText(without.reason) : null, noticeDetails: without?.details ?? null, earlierNotice: null, earlierDetails: null }
+      }
+      if (rehearsal || !attempt || !blake3) {
+        mirror(dir, change)
+        return await succeed()
+      }
+
+      const recordText = serialiseSiteRecord(record)
+      const recordBytes = Buffer.from(recordText, 'utf8')
+      const manifest: Record<string, string> = Object.fromEntries([...merged].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
+      manifest[SITE_RECORD_PATH] = pagesAssetHash(blake3, recordBytes, SITE_RECORD_PATH)
+      // Nothing would change (a republish of the same bytes, a short link the site already has): nothing is sent.
+      const liveWithout = [...site.manifest].filter(([path]) => path !== SITE_RECORD_PATH)
+      if (site.hadRecord && sameSite(record, site.record) && liveWithout.length === merged.size && liveWithout.every(([path, hash]) => merged.get(path) === hash)) {
+        mirror(dir, change)
+        return await succeed()
+      }
+      const staged: StagedAsset[] = [
+        ...written.map((file) => ({ path: file.path, hash: file.hash, size: file.size, read: () => readFileSync(file.full) })),
+        { path: SITE_RECORD_PATH, hash: manifest[SITE_RECORD_PATH], size: recordBytes.byteLength, read: () => recordBytes },
+      ]
+      const controls: Record<string, string> = {
+        ...(redirects ? { '/_redirects': publicationBinding([['/_redirects', sha256(redirects)]]) } : {}),
+        ...(record.headers ? { '/_headers': publicationBinding([['/_headers', sha256(record.headers)]]) } : {}),
+      }
+      const candidateDigest = publicationBinding([Object.entries(manifest), sha256(redirects), sha256(record.headers)])
       let uncertain: PublishFailure | null = null
-      /** Set on the first line of the launch callback: from there on the tool may have been asked to start. */
-      let launchReached = false
+      let sent: { ok: true } | PublishFailure
       try {
-        uploaded = attempt ? await attempt.upload(dir, baseline, job.removalRoots?.(prepared.built) ?? [], async (frozen, context) => {
-          launchReached = true
-          // THE BOUNDARY. The new folders enter the site now (the frozen copy that goes up already holds them), before the tool is
-          // asked to start, so that pages which may have gone up are in the site for the recovery check.
-          const refusal = moveStagedIn()
-          const value = refusal ?? await uploadSite(authorisation, frozen, false, context)
-          uncertain = value.ok ? null : value
-          return { outcome: value.ok ? publicationOutcome({ accepted: true }) : outcomes.get(value) ?? publicationOutcome({ accepted: false }), value }
-        }, staged.map((folder) => ({ name: folder.label, dir: folder.dir }))) : await uploadSite(authorisation, dir, true)
+        sent = await attempt.deploy({ candidateDigest, paths: Object.keys(manifest), controls }, async (context) => {
+          const result = await send(authorisation, { revision: site.revision, manifest, staged, redirects, headers: record.headers, candidateDigest }, context)
+          uncertain = result.value.ok ? null : result.value
+          return result
+        })
       } catch (error) {
-        const refused: PublishFailure = { ...(uncertain ?? {}), ok: false, error: error instanceof PreservationRefusal ? error.reason : 'PUBLISH_CANDIDATE_CHANGED', ...(error instanceof PreservationRefusal && error.reason !== 'PUBLISH_OUTCOME_UNKNOWN' ? { details: error.message } : {}) }
-        // Before the boundary nothing was sent, whatever stopped it (a refusal, an unreadable or uncopyable file): its pages go again.
-        // After it the outcome might be unknown, so its pages stay for the recovery check.
-        return launchReached ? refused : withdrawn(refused)
+        if (!(error instanceof PreservationRefusal)) throw error
+        const known = uncertain as PublishFailure | null
+        return { ...(known ?? {}), ok: false, error: error.reason, ...(error.reason !== 'PUBLISH_OUTCOME_UNKNOWN' ? { details: error.message } : known?.details ? { details: known.details } : {}) }
       }
-      // An upload that is known not to have gone up (the tool never started, the bundling check refused it, or it failed in a way
-      // that is definite) is proven to precede deployment: its pages go again. An unknown outcome keeps them.
-      if (!uploaded.ok) return outcomes.get(uploaded) === 'failed' ? withdrawn(uploaded) : uploaded
-      // The upload completed: the pages are at their address, and that is recorded whatever the connection is now.
+      if (!sent.ok) return sent
+      // The deployment is up and confirmed: recorded, whatever the connection is now.
       authorisation.published()
-      await job.record?.(prepared.built)
-      const without = live && !live.ready ? live : null
-      return {
-        ok: true, built: prepared.built, live,
-        notice: without ? publishedWithoutLiveText(without.reason) : null,
-        noticeDetails: without?.details ?? null,
-        earlierNotice: earlier.length ? earlierHandoutsText(earlier.length) : null,
-        earlierDetails: earlier.length ? earlier.join('\n') : null,
-      }
+      mirror(dir, change)
+      return await succeed()
+    } catch (error) {
+      // A refusal before anything was sent (a live name this computer cannot lay out, a written name Cloudflare could not keep).
+      if (error instanceof PreservationRefusal) return { ok: false, error: error.reason, details: error.message }
+      throw error
     } finally {
-      // The private build folders are this attempt's alone: whatever happened, they go (what was moved into the site is in `owned`).
-      for (const folder of staged) rmSync(folder.dir, { recursive: true, force: true })
+      if (shadow) rmSync(shadow, { recursive: true, force: true })
       attempt?.close()
     }
   }
@@ -966,4 +1162,14 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
   }
 }
 
-type Uploaded = Awaited<ReturnType<PublishingPorts['upload']>>
+/** Entries the record can hold (`parseSiteRecord`'s rule), first come first kept for a short id given twice. */
+function sanitisedRegistry(registry: Record<string, string>): Record<string, string> {
+  const ids = new Set<string>()
+  const kept: Record<string, string> = {}
+  for (const [folder, id] of Object.entries(registry ?? {})) {
+    if (typeof id !== 'string' || !/^[A-Za-z0-9_-]{1,64}$/u.test(id) || !/^[^/\\\x00-\x1f\x7f]{1,255}$/u.test(folder) || ids.has(id)) continue
+    ids.add(id)
+    kept[folder] = id
+  }
+  return kept
+}

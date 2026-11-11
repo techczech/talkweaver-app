@@ -13,6 +13,7 @@ import { STRANDED_TITLE_ICON_ACTION } from '../../../shared/title-icon-restore'
 import { MOVE_PREWORK_ACTION } from '../../../shared/prework-move'
 import { warningsForSurface } from '../../../../compiler/scripts/lib/warning-registry.mjs'
 import { usePausedScan } from '../lib/pausedScan'
+import { plainTalkTitle } from '../../../shared/plain-title'
 
 interface Props {
   isOpen: boolean
@@ -250,9 +251,9 @@ function FindingGroups({
 type EmptyStateScope = 'talk' | 'compiler' | 'vault'
 
 const EMPTY_STATE_COPY: Record<EmptyStateScope, string> = {
-  talk: 'All clear — every trigger in this talk resolves through the registry.',
-  compiler: 'All clear — this talk has no compiler notes.',
-  vault: 'All clear — every trigger in the vault resolves through the registry.'
+  talk: 'All clear — no layout problems in this talk.',
+  compiler: 'All clear — nothing else to report for this talk.',
+  vault: 'All clear — no layout problems in any talk.'
 }
 
 function EmptyState({ scope, detail }: { scope: EmptyStateScope; detail: string }) {
@@ -380,21 +381,20 @@ export default function LayoutDoctorPanel({
 
   return (
     <div style={S.backdrop} onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <div ref={modalRef} tabIndex={-1} style={S.modal} role="dialog" aria-modal="true" aria-label={`Layout Doctor — ${talk.title}`}>
+      <div ref={modalRef} tabIndex={-1} style={S.modal} role="dialog" aria-modal="true" aria-label={`Layout Doctor — ${plainTalkTitle(talk.title)}`}>
         <div style={S.header}>
           <div style={{ minWidth: 0 }}>
-            <span style={S.title}>{talk.title}</span>
+            <span style={S.title} title={talk.outlinePath}>{plainTalkTitle(talk.title)}</span>
             <span style={S.headLabel}>Layout Doctor</span>
           </div>
           <span style={S.registryNote}>
-            {talkFindings.length} trigger finding{talkFindings.length === 1 ? '' : 's'} · {compilerNotes.length} compiler note{compilerNotes.length === 1 ? '' : 's'}
+            {talkFindings.length} layout problem{talkFindings.length === 1 ? '' : 's'} · {compilerNotes.length} other note{compilerNotes.length === 1 ? '' : 's'}
           </span>
           <button type="button" onClick={onClose} style={S.closeBtn} aria-label="Close Layout Doctor" title="Close (Esc)">
             <X size={16} />
           </button>
         </div>
-        <div style={S.srcPath}>{talk.outlinePath}</div>
-
+        
         <div style={S.body}>
           <section style={S.section}>
             <div style={S.sectionHeader}>
@@ -405,7 +405,7 @@ export default function LayoutDoctorPanel({
               // Nothing found so far, and the title icons are still to be read: not yet "all clear".
               <div style={S.loading}>Checking where this talk’s title icons are written…</div>
             ) : talkFindings.length === 0 ? (
-              <EmptyState scope="talk" detail="0 trigger findings in the live outline buffer." />
+              <EmptyState scope="talk" detail="" />
             ) : (
               <>
                 <div style={S.sectionNote}>
@@ -433,11 +433,11 @@ export default function LayoutDoctorPanel({
 
           <section style={S.section}>
             <div style={S.sectionHeader}>
-              <span style={S.sectionTitle}>Compiler notes</span>
+              <span style={S.sectionTitle}>Other notes</span>
               <span style={S.sectionCount}>{compilerNotes.length}</span>
             </div>
             {compilerNotes.length === 0 ? (
-              <EmptyState scope="compiler" detail="0 doctor-surfaced compiler notes in the current projection." />
+              <EmptyState scope="compiler" detail="" />
             ) : (
               compilerNotes.map((note) => {
                 if (note.code === RETIRED_PREWORK_CODE) return <MovePreworkRow key={note.key} note={note} outlinePath={talk.outlinePath} onJump={note.line == null ? undefined : () => jump(note.line!)} />
@@ -472,13 +472,13 @@ export default function LayoutDoctorPanel({
             <div style={S.sectionHeader}>
               <span style={S.sectionTitle}>Whole vault</span>
               <span style={S.sectionCount}>
-                {vaultReport == null ? '…' : `${vaultReport.length} talk${vaultReport.length === 1 ? '' : 's'} · ${vaultFindingCount} findings`}
+                {vaultReport == null ? '…' : `${vaultReport.length} talk${vaultReport.length === 1 ? '' : 's'} · ${vaultFindingCount} problem${vaultFindingCount === 1 ? '' : 's'}`}
               </span>
             </div>
             {vaultError ? <div style={S.errorBox}>{vaultError}</div> : null}
             {vaultReport == null && !vaultError ? <div style={S.loading}>Scanning the vault…</div> : null}
             {vaultReport?.length === 0 ? (
-              <EmptyState scope="vault" detail="0 findings across the vault scan." />
+              <EmptyState scope="vault" detail="" />
             ) : null}
             {(vaultReport ?? []).map((entry) => {
               const expanded = expandedTalks.has(entry.outlinePath)
@@ -492,10 +492,10 @@ export default function LayoutDoctorPanel({
                     aria-expanded={expanded}
                   >
                     {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                    <span style={S.vaultTalkTitle}>{entry.talk}</span>
+                    <span style={S.vaultTalkTitle}>{plainTalkTitle(entry.talk)}</span>
                     {isCurrentTalk ? <span style={S.currentBadge}>current</span> : null}
                     <span style={S.vaultTalkCount}>
-                      {entry.findings.length} finding{entry.findings.length === 1 ? '' : 's'}
+                      {entry.findings.length} problem{entry.findings.length === 1 ? '' : 's'}
                     </span>
                   </button>
                   {expanded ? (
@@ -515,8 +515,8 @@ export default function LayoutDoctorPanel({
         <div style={S.footer}>
           <span style={S.footerNote}>
             {onRestoreTitleIcon && talkFindings.some((finding) => finding.kind === 'stranded-title-icon')
-              ? 'An icon can be moved to its title from here. Every other fix is made in the outline.'
-              : 'Report only — fixes remain authored in the outline.'}
+              ? 'An icon can be moved to its title from here.'
+              : ''}
           </span>
           <button type="button" onClick={onClose} style={S.closeAction}>Close</button>
         </div>

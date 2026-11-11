@@ -1,4 +1,4 @@
-// Plan a run, change a planned Run and take one away (history:create-planned-run, history:update-planned-run,
+// Plan a Run, change a planned Run and take one away (history:create-planned-run, history:update-planned-run,
 // history:delete-planned-run). A planned Run lives in the vault of its talk (multi-vault architecture: "runs …
 // take a root; pass the talk's vault root"):
 //   - a request that names a vault (`vaultId`: the plan sheet sends its talk's) is written into that vault only,
@@ -62,7 +62,7 @@ export function readRoot(deps: { vaultRoot(): string | null; readVault?(vaultId:
 
 const failed = (cause: unknown): { ok: false; error: string } => ({ ok: false, error: cause instanceof Error ? cause.message : String(cause) })
 
-/** `history:create-planned-run`: the plan (and "Plan the next run like this", which sends a new plan) with an optional `vaultId`. */
+/** `history:create-planned-run`: the plan (and "Plan the next Run like this", which sends a new plan) with an optional `vaultId`. */
 export function createPlannedRunIn(deps: PlannedRunsDeps, payload: unknown): PlannedRunReply {
   try {
     const { vaultId, ...input } = (payload && typeof payload === 'object' ? payload : {}) as PlannedRunInput & { vaultId?: unknown }

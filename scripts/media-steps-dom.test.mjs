@@ -1,7 +1,7 @@
 // "Play as a step" (0.38 ticket 05) in a real browser: presenter, projector and venue screen.
 // The presenter is driven with the keyboard. After every press the test reads each file on the
 // slide in four places: the projector window (the live display, which plays), the presenter's own
-// window and its current-slide preview (both silent; the preview carries the "plays on Next"
+// window and its current-slide preview (muted video players; the preview carries the "plays on Next"
 // mark), and the venue screen, which is handed ONLY the fields worker/protocol.ts SlideState
 // carries ({ slideId, reveal, focus, lightbox }) and must play the same file at the same step.
 //
@@ -220,7 +220,11 @@ async function pair(deck) {
       && document.documentElement.dataset.twLiveLightbox === want.lightbox
       && (document.documentElement.dataset.twLiveFocus || '') === want.focus
       && (Number(document.documentElement.dataset.twLiveReveal) || 0) === want.reveal, sent, { timeout: 5000 })
-    await projector.waitForFunction(settled, null, { timeout: 8000, polling: 50 })
+    try { await projector.waitForFunction(settled, null, { timeout: 8000, polling: 50 }) }
+    catch (error) {
+      console.error('Playback settlement', JSON.stringify({ key, sent, presenter: await presenter.evaluate(readSlide, false), projector: await projector.evaluate(readSlide, false), current: await presenter.evaluate(readSlide, true) }));
+      throw error;
+    }
     const shown = await projector.evaluate(readSlide, false)
     const at = `press ${presses} (${key}) on ${shown.slide}`
     // The venue screen: exactly the fields worker/protocol.ts SlideState carries.
@@ -240,8 +244,8 @@ async function pair(deck) {
     assert.deepEqual(audible(onVenue), audible(shown), `${at}: the venue screen plays what the projector plays`)
     assert.deepEqual([onVenue.blocks, onVenue.emphasis], [shown.blocks, shown.emphasis], `${at}: the venue screen shows the projector's step`)
     assert.equal(onVenue.files.filter((file) => !file.option).some((file) => file.playing), false, `${at}: the venue screen plays no file without the option`)
-    // The presenter: its own window never plays, and its preview shows the step without sound.
-    assert.equal(await presenter.evaluate(() => [...document.querySelectorAll('video, audio')].every((m) => m.paused && m.currentTime === 0)), true, `${at}: the presenter's window plays nothing`)
+    // The presenter owns muted video playback, and its preview shows the step without sound.
+    assert.equal(await presenter.evaluate(() => [...document.querySelectorAll('video, audio')].every((m) => m.tagName === 'VIDEO' ? m.muted : m.paused && m.currentTime === 0)), true, `${at}: the presenter's window stays silent`)
     let pane = null
     for (const deadline = Date.now() + 5000; Date.now() < deadline;) {
       pane = await presenter.evaluate(readSlide, true)
@@ -251,7 +255,7 @@ async function pair(deck) {
     assert.deepEqual(steps(pane), steps(shown).map((step, i) => (shown.files[i].option ? step : null)), `${at}: the presenter's preview shows each file's step`)
     assert.equal(await presenter.evaluate(() => {
       const doc = document.querySelector('#currentPreview iframe').contentDocument
-      return doc.querySelectorAll('audio').length === 0 && [...doc.querySelectorAll('video')].every((v) => v.paused)
+      return doc.querySelectorAll('audio').length === 0 && [...doc.querySelectorAll('video')].every((v) => v.muted)
     }), true, `${at}: the presenter's preview is silent`)
     return { ...shown, lightbox: JSON.parse(sent.lightbox), focus: message.focus, preview: pane, venue: onVenue }
   }
@@ -270,7 +274,7 @@ try {
     assert.equal((await projector.evaluate(readSlide, false)).slide, 'start')
 
     // ── a video ─────────────────────────────────────────────────────────────────────────────
-    await check('video: arrives paused on its first frame; Next plays it on the projector only; Next stops it and moves on', async () => {
+    await check('video: arrives paused on its first frame; Next plays both video copies; Next stops it and moves on', async () => {
       let shown = await next('video-waiting')
       assert.equal(shown.slide, 'video')
       assert.deepEqual(shown.files, [{ kind: 'video', option: true, step: 'waiting', playing: false, rewound: true, atEnd: false, muted: false, chip: null, block: null, mark: null, tap: null }])
@@ -507,7 +511,11 @@ try {
       if (id === 'video') { await next(); await projector.waitForFunction(() => document.querySelector('.slide.active .slide-audio')?.dataset.audioState === 'playing') }
       await presenter.evaluate((target) => { location.hash = target }, id)
       await projector.waitForFunction((target) => document.querySelector('.slide.active')?.dataset.id === target, id, { timeout: 5000 })
-      await projector.waitForFunction(settled, null, { timeout: 8000, polling: 50 })
+      try { await projector.waitForFunction(settled, null, { timeout: 8000, polling: 50 }) }
+      catch (error) {
+        console.error('Playback settlement', JSON.stringify({ target: id, presenter: await presenter.evaluate(readSlide, false), projector: await projector.evaluate(readSlide, false), current: await presenter.evaluate(readSlide, true) }))
+        throw error
+      }
       const shown = await projector.evaluate(readSlide, false)
       assert.deepEqual([shown.slide, steps(shown), playing(shown)], [id, shown.files.map(() => 'waiting'), shown.files.map(() => false)], `${id}: at its start`)
     }

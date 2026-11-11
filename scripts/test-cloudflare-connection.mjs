@@ -971,7 +971,7 @@ const label = (t) => connectionLabel(t.connection.status().connection, NINE_FOUR
   }
   console.log('PASS 4.11: the set-up sequence stops before anything is sent, before the first write, between writes, in the last write and before its own write')
 
-  // A failed Run handout publish in History (D12): the sentence; the tool's output only behind Details.
+  // A failed Run handout publish (D12): the sentence; the tool's output only behind Details.
   const shown = []
   const toast = publishFailureToast('Could not publish Run handout', { error: 'Publishing to Cloudflare did not finish.', details: `raw ${REPLY_TEXT_MARK}` }, 'run-handout-publish-failed', (...args) => shown.push(args))
   assert.deepEqual([toast.message, toast.level, toast.key, toast.action.label], ['Could not publish Run handout: Publishing to Cloudflare did not finish.', 'error', 'run-handout-publish-failed', 'Details'])
@@ -979,7 +979,7 @@ const label = (t) => connectionLabel(t.connection.status().connection, NINE_FOUR
   toast.action.onAction()
   assert.deepEqual(shown, [[`raw ${REPLY_TEXT_MARK}`, 'info', 'run-handout-publish-failed-details']])
   assert.equal(publishFailureToast('Could not publish Run handout', {}, 'k', () => {}).action, undefined, 'no Details button with nothing behind it')
-  const history = readFileSync(join(repo, 'src/renderer/src/components/History.tsx'), 'utf8')
+  const history = readFileSync(join(repo, 'src/renderer/src/components/RunLedger.tsx'), 'utf8')
   // Work-files ticket 29: History publishes no Run handout (Publish and Unpublish are in the Run checklist in Sessions).
   assert.ok(!/Details: \$\{result\.details\}/.test(history) && !/Could not (?:un)?publish Run handout|publishRunHandout|unpublishRunHandout/.test(history), 'History has no Run handout publish to fail')
   console.log('PASS 4.12: a failed Run handout publish shows its sentence, with the tool\'s output behind Details')

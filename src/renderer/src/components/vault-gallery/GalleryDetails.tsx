@@ -1,4 +1,5 @@
 import { Clipboard, FileText, Folder, HardDrive, Ruler } from 'lucide-react'
+import { plainTalkTitle } from '../../../../shared/plain-title'
 import type { GalleryFacts, GalleryTalk } from '../../../../shared/vault-gallery'
 import { formatBytes, formatBytesAtLeast, plural, talkDirectory } from '../../../../shared/vault-gallery-browse'
 import { galleryIdentity } from '../../../../shared/vault-gallery'
@@ -39,8 +40,8 @@ export default function GalleryDetails({ target, known, previewUrl, onPreview, c
     const talk = item.talk, f: GalleryFacts | undefined = known.facts[galleryIdentity(talk)], size = scanSize(known.scans, talkDirectory(talk))
     const h = known.handouts[galleryIdentity(talk)], display = where(talkDirectory(talk))
     return <aside className="vg-details" aria-label="Details">
-      {previewUrl ? <button className="vg-thumb vg-thumbbtn" aria-label={`Preview title slide: ${talk.title}`} onClick={onPreview}><img src={previewUrl} alt={`Title slide of ${talk.title}`} /></button> : <span className="vg-thumb"><span className="vg-nopreview"><FileText size={20} aria-hidden />{f?.preview === 'unavailable' ? 'Title preview unavailable' : 'Title preview pending'}</span></span>}
-      <h2 className="vg-dtitle">{talk.title}</h2>
+      {previewUrl ? <button className="vg-thumb vg-thumbbtn" aria-label={`Preview title slide: ${plainTalkTitle(talk.title)}`} onClick={onPreview}><img src={previewUrl} alt={`Title slide of ${talk.title}`} /></button> : <span className="vg-thumb"><span className="vg-nopreview"><FileText size={20} aria-hidden />{f?.preview === 'unavailable' ? 'Title preview unavailable' : 'Title preview pending'}</span></span>}
+      <h2 className="vg-dtitle">{plainTalkTitle(talk.title)}</h2>
       <dl className="vg-facts">
         <Fact label="Slides" value={f ? (f.slideCount == null ? 'Unknown' : String(f.slideCount)) : 'Reading…'} />
         <Fact label="Images used" value={f ? (f.imageCount == null ? 'Unknown' : String(f.imageCount)) : 'Reading…'} />

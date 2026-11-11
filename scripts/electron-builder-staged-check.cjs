@@ -56,4 +56,14 @@ function createStagedCheck(deps = {}) {
   }
 }
 
-module.exports = { afterPack: createStagedCheck(), createStagedCheck }
+async function afterPack(context) {
+  await createStagedCheck()(context)
+  if (!['darwin', 'mas'].includes(context.electronPlatformName)) return
+  const plist = require('plist')
+  const infoPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Info.plist')
+  const info = plist.parse(readFileSync(infoPath, 'utf8'))
+  delete info.NSBluetoothAlwaysUsageDescription
+  delete info.NSBluetoothPeripheralUsageDescription
+  writeFileSync(infoPath, plist.build(info))
+}
+module.exports = { afterPack, createStagedCheck }

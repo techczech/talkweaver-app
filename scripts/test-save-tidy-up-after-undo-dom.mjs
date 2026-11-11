@@ -404,7 +404,8 @@ try {
       await open(TIDY, mode)
       await save()
       assert.equal(await doc(), TIDY); assert.deepEqual(await depths(), { undo: 0, redo: 0 }, 'a tidy text: the save changes nothing and leaves no step')
-      // flushSave on a talk nobody touched (a talk switch): it tidies, as before; one undoable step.
+      // Direct tidy/adoption primitive: it still normalises once. The actual Editor now skips
+      // untouched flushes before reaching this primitive (test-rich-editor-roundtrip-dom.mjs).
       await open(ISSUE_IDS, mode)
       await save()
       assert.equal(await doc(), TIDY, 'a save of an untouched talk tidies it')

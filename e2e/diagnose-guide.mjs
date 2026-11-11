@@ -49,11 +49,11 @@ try {
   await page.waitForSelector('.cm-content', { timeout: 8000 })
 
   await button.waitFor({ timeout: 5000 })
-  record('the sidebar foot has Add vault… and a Guide button (closed)', (await page.locator('[data-add-vault]').count()) === 1 && /^Guide$/.test((await button.innerText()).trim()) && (await page.locator('[data-right-column-tabs]').count()) === 0)
+  record('the sidebar foot has Add vault… and a Guide button (closed)', (await page.locator('[data-add-vault]').count()) === 1 && /^Guide$/.test((await button.innerText()).trim()) && (await tabNames()) === 'inspector,slides,talk,research,images')
 
   await button.click()
   await page.waitForSelector('[data-guide]', { timeout: 4000 })
-  record('click the button: the Guide is the first tab of the right column (Guide, Slides, Inspector)', (await tabNames()) === 'guide,slides,inspector' && (await page.locator('[data-rc-tab="guide"].rc-tab--on').count()) === 1, await tabNames())
+  record('click the button: the Guide is a tab of the one right sidebar (Inspector, Strip, Talk, Guide, Research, Images)', (await tabNames()) === 'inspector,slides,talk,guide,research,images' && (await page.locator('[data-rc-tab="guide"].rc-tab--on').count()) === 1, await tabNames())
   record('the button reads "Guide open" while the tab is up', /Guide\s*open/.test((await button.innerText()).replace(/\s+/g, ' ')))
   const steps = await page.locator('[data-guide-step]').evaluateAll((els) => els.map((e) => e.getAttribute('data-guide-step') + ':' + e.getAttribute('data-done')))
   record('First steps shows three steps, a talk exists but only in the one vault, so step 1 is ticked and step 2 too', steps.join(',') === 'own-vault:true,first-talk:true,example-talk:false', steps.join(','))
@@ -69,7 +69,7 @@ try {
   record('the segments switch (How it works selected)', (await page.locator('[data-guide-slot="how-it-works"]').count()) === 1)
 
   await button.click()
-  record('click the button again: the Guide closes and the column is as before (no tab row)', await gone('[data-guide]') && (await page.locator('[data-right-column-tabs]').count()) === 0 && !/open/.test(await button.innerText()))
+  record('click the button again: the Guide closes and the sidebar keeps its other tabs', await gone('[data-guide]') && (await tabNames()) === 'inspector,slides,talk,research,images' && !/open/.test(await button.innerText()))
 
   // Settings → Get started: the switch.
   // A hidden thumbnail window can open at the same time as Settings. Force that ordering
@@ -131,7 +131,7 @@ try {
         const names = (await p2.locator('[data-right-column-tabs] [data-rc-tab]').evaluateAll((els) => els.map((e) => e.getAttribute('data-rc-tab')))).join(',')
         await p2.waitForSelector('[data-guide-step="example-talk"][data-done="true"]', { timeout: 8000 }).catch(() => {})
         const done = await p2.locator('[data-guide-step]').evaluateAll((els) => els.map((e) => e.getAttribute('data-done')))
-        record('Open example vault: the Guide opens, first of the right column, with only the example talk step ticked', names === 'guide,slides,inspector' && done.join(',') === 'false,false,true', `${names} ${done}`)
+        record('Open example vault: the Guide opens as a tab of the right sidebar, with only the example talk step ticked', names === 'inspector,slides,talk,guide,research,images' && done.join(',') === 'false,false,true', `${names} ${done}`)
         await shot(p2, 'guide-example-open.png')
         record('the progress is kept in app config, outside the vault', JSON.parse(readFileSync(join(userData, 'config.json'), 'utf8')).guideProgress?.exampleTalkOpened === true)
       } else {

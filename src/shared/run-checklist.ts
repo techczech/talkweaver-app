@@ -140,7 +140,7 @@ export function runPublication(run: Pick<ChecklistRun, 'handoutUrl' | 'unpublish
 
 /**
  * THE post-work open test (ticket 19), read by the checklist and by Published pages (ticket 22).
- * Post-work that opens when the session ends has opened once the app pushed its opening and noted it on
+ * Post-work that opens when the Run ends has opened once the app pushed its opening and noted it on
  * the Run (`openedAt`), from that instant on; post-work at a set time opens at that time, delivered or
  * not, once the Run has been published (its window went out with the publish). It is open only while the
  * Run is not unpublished (participants are shown "not available" then), and closed from its closing
@@ -221,7 +221,7 @@ export function runChecklist(run: ChecklistRun, nowInstant: Date, options: Check
     const base = run.handoutUrl ?? ''
     const links: ChecklistLink[] = [{ kind: 'handout', label: 'Handout', url: base }]
     if (pre) links.push({ kind: 'pre-work', url: workPageUrl(base, 'pre'), label: preOpen ? 'Pre-work' : preNow < pre.opens ? `Pre-work · opens ${whenLabel(pre.opens)}` : 'Pre-work · closed' })
-    if (post) links.push({ kind: 'post-work', url: workPageUrl(base, 'post'), label: postOpen ? 'Post-work · open' : postClosed ? 'Post-work · closed' : post.opens === SESSION_END ? 'Post-work · opens after the session' : `Post-work · opens ${whenLabel(post.opens)}` })
+    if (post) links.push({ kind: 'post-work', url: workPageUrl(base, 'post'), label: postOpen ? 'Post-work · open' : postClosed ? 'Post-work · closed' : post.opens === SESSION_END ? 'Post-work · opens after the Run' : `Post-work · opens ${whenLabel(post.opens)}` })
     add({ id: 'published', state: 'done', title: 'Published', detail: lastPublished ? `Since ${whenLabel(lastPublished)}` : 'Published', links, qr })
   }
 
@@ -258,9 +258,9 @@ export function runChecklist(run: ChecklistRun, nowInstant: Date, options: Check
     } else {
       // Delivered, but its opening not pushed yet: the app opens it on its next pull (or once the Run is published).
       const when = post.opens !== SESSION_END ? whenLabel(post.opens)
-        : delivered && publication === 'published' ? 'Opening now the session has ended'
+        : delivered && publication === 'published' ? 'Opening now the Run has ended'
         : delivered ? 'Opens once this run is published'
-        : 'When the session ends'
+        : 'When the Run ends'
 
       add({ id: 'post-open', state: 'todo', title: 'Post-work open', detail: `${when} · ${fileDetail(post, file)}`, actions: [{ id: 'open-post-file', label: 'Open file' }] })
     }
@@ -280,7 +280,7 @@ export function runChecklist(run: ChecklistRun, nowInstant: Date, options: Check
       : postOpen ? 'Board and polls kept · post-work answers still coming in' : 'Board, polls and answers',
     actions: [resultsOpen
       ? { id: 'open-results', label: 'Open results', primary: resultsDone }
-      : { id: 'open-results', label: 'Open results', disabled: true, reason: 'Available after the session' }]
+      : { id: 'open-results', label: 'Open results', disabled: true, reason: 'Available after the Run' }]
   })
 
   // The first step that is neither done, live nor warn is the current one; the rest wait.

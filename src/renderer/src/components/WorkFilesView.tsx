@@ -11,6 +11,8 @@ import {
 import { buildWorkFileItems } from '../../../shared/work-files-view.ts'
 import { useToolsActions } from '../lib/toolsActions'
 import '../work-files.css'
+import '../ui-kit.css'
+import { StateBadge } from './StateBadge'
 
 type Item = WorkFileItem & { absPath: string; vaultId?: string }
 type Listing = { folder: string; items: Item[]; vaults?: Array<{ id: string; name: string }>; newFileVaultId?: string } | null
@@ -116,7 +118,7 @@ function StepRows({ steps, onRoute }: { steps: WorkFileStepRow[]; onRoute?: (ste
               </div>
               <RouteTag route={step.route} />
               {onRoute && step.id && (
-                <button type="button" className="tw-wf-btn sm" data-wf-step-edit={step.id} aria-expanded={open} onClick={() => { setEditing(open ? null : key); setError(null) }}>
+                <button type="button" className="tw-btn tw-btn--sm" data-wf-step-edit={step.id} aria-expanded={open} onClick={() => { setEditing(open ? null : key); setError(null) }}>
                   <Pencil aria-hidden /><span>Edit</span>
                 </button>
               )}
@@ -141,13 +143,13 @@ function AddRow({ onAdd, disabled }: { onAdd: (add: WorkFileAdd) => void; disabl
         const Icon = ADD_ICONS[kind]
         if (kind === 'question') {
           return (
-            <button type="button" key={kind} className="tw-wf-btn sm" data-wf-add="question" aria-expanded={asking} disabled={disabled} onClick={() => setAsking((v) => !v)}>
+            <button type="button" key={kind} className="tw-btn tw-btn--sm" data-wf-add="question" aria-expanded={asking} disabled={disabled} onClick={() => setAsking((v) => !v)}>
               <Icon aria-hidden /><span>{ADD_LABELS[kind]}</span><ChevronDown aria-hidden />
             </button>
           )
         }
         return (
-          <button type="button" key={kind} className="tw-wf-btn sm" data-wf-add={kind} disabled={disabled} onClick={() => onAdd({ kind })}>
+          <button type="button" key={kind} className="tw-btn tw-btn--sm" data-wf-add={kind} disabled={disabled} onClick={() => onAdd({ kind })}>
             <Icon aria-hidden /><span>{ADD_LABELS[kind]}</span>
           </button>
         )
@@ -156,7 +158,7 @@ function AddRow({ onAdd, disabled }: { onAdd: (add: WorkFileAdd) => void; disabl
         <div className="tw-wf-polltypes" data-wf-polltypes>
           <span className="lbl">Question type</span>
           {WORK_FILE_POLL_TYPES.map((pollType) => (
-            <button type="button" key={pollType} className="tw-wf-btn sm" data-wf-add-poll={pollType} disabled={disabled}
+            <button type="button" key={pollType} className="tw-btn tw-btn--sm" data-wf-add-poll={pollType} disabled={disabled}
               onClick={() => { setAsking(false); onAdd({ kind: 'question', pollType }) }}>
               <span>{POLL_TYPE_LABELS[pollType]}</span>
             </button>
@@ -199,8 +201,8 @@ function NewFile({ onCancel, onSaved, vault, showVault }: { onCancel: () => void
           />
         </form>
         <span className="sp" />
-        <button type="button" className="tw-wf-btn" data-wf-cancel onClick={onCancel}><X aria-hidden /><span>Cancel</span></button>
-        <button type="button" className="tw-wf-btn primary" data-wf-save disabled={!title.trim() || saving} onClick={() => { void save() }}><Check aria-hidden /><span>Save file</span></button>
+        <button type="button" className="tw-btn" data-wf-cancel onClick={onCancel}><X aria-hidden /><span>Cancel</span></button>
+        <button type="button" className="tw-btn tw-btn--primary" data-wf-save disabled={!title.trim() || saving} onClick={() => { void save() }}><Check aria-hidden /><span>Save file</span></button>
       </div>
       <div className="tw-wf-cols">
         <div className="tw-wf-main">
@@ -245,7 +247,7 @@ function RunRow({ run, note, vaultId, onOpenRun }: { run: WorkFileUsedRun; note:
     <div className="tw-wf-r1" data-wf-run={`${run.talkSlug}/${run.runId}`}>
       <CalendarDays className="soft" aria-hidden />
       <div className="t"><b>{run.name}</b><small>{note}</small></div>
-      <button type="button" className="tw-wf-btn sm" onClick={() => onOpenRun(run.talkSlug, run.runId, vaultId)}><ArrowUpRight aria-hidden /><span>Open run</span></button>
+      <button type="button" className="tw-btn tw-btn--sm" onClick={() => onOpenRun(run.talkSlug, run.runId, vaultId)}><ArrowUpRight aria-hidden /><span>Open run</span></button>
     </div>
   )
 }
@@ -290,7 +292,7 @@ function Detail({ item, vaultName, onOpenRun, onAdd, onRoute }: { item: Item; va
               <div className="tw-wf-r1" key={`${t.slug}/${t.role}`} data-wf-talk={`${t.slug}/${t.role}`}>
                 <Presentation className="soft" aria-hidden />
                 <div className="t"><b>{t.title}</b><small>{phaseWord(t.role)}, in its metadata</small></div>
-                <button type="button" className="tw-wf-btn sm" onClick={() => { void window.tw.windows.openInNewWindow({ kind: 'talk', outlinePath: t.outlinePath }) }}>
+                <button type="button" className="tw-btn tw-btn--sm" onClick={() => { void window.tw.windows.openInNewWindow({ kind: 'talk', outlinePath: t.outlinePath }) }}>
                   <ArrowUpRight aria-hidden /><span>Open talk</span>
                 </button>
               </div>
@@ -362,11 +364,11 @@ export function WorkFilesView({ onOpenRun, request }: { onOpenRun: (talkSlug: st
       <section className="tw-tools-list" aria-label="Work files">
         <header>
           <h2>Work files</h2>
-          <button type="button" className="tw-wf-btn primary sm" data-wf-new-file onClick={() => { setDrafting(true); setAddError(null) }}><Plus aria-hidden /><span>New file</span></button>
+          <button type="button" className="tw-btn tw-btn--sm tw-btn--primary" data-wf-new-file onClick={() => { setDrafting(true); setAddError(null) }}><Plus aria-hidden /><span>New file</span></button>
         </header>
         {drafting && (
           <div className="tw-wf-row sel draft" data-wf-draft-row>
-            <span className="l1"><span className="nm">Untitled work file</span><span className="tw-wf-pill amber">Not saved</span></span>
+            <span className="l1"><span className="nm">Untitled work file</span><StateBadge state="notset">Not saved</StateBadge></span>
             <span className="l3">Not in the list until saved</span>
           </div>
         )}
@@ -388,9 +390,9 @@ export function WorkFilesView({ onOpenRun, request }: { onOpenRun: (talkSlug: st
                 <span className="l1">
                   <span className="nm">{item.title}</span>
                   {item.findings.length > 0 && (
-                    <span className={`tw-wf-pill ${item.blocking ? 'red' : 'amber'}`} data-wf-findings-pill>
+                    <StateBadge state="notset" data-wf-findings-pill data-blocking={item.blocking ? 'true' : undefined}>
                       {item.findings.length} finding{item.findings.length === 1 ? '' : 's'}
-                    </span>
+                    </StateBadge>
                   )}
                   <span className="when">{item.steps.length} step{item.steps.length === 1 ? '' : 's'}</span>
                 </span>

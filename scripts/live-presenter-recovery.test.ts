@@ -244,3 +244,32 @@ describe('live presenter recovery', () => {
     expect(h.timers.size).toBe(0)
   })
 })
+
+
+test('widget scroll during a reconnect is restored once live; clicks never become history', () => {
+  const h = harness()
+  h.client.publish('widget', 0)
+  const scroll = (fy: number) => ({ type: 'embed.live', slideId: 'widget', index: 0, event: { k: 'scroll', el: { path: [], tag: '' }, fx: 0, fy } })
+  h.client.embed(scroll(0.2))
+  h.hello(); h.snapshot()
+  expect(h.sockets[0].sent.filter(m => m.type === 'embed.live')).toEqual([scroll(0.2)])
+  h.sockets[0].drop()
+  h.client.embed(scroll(0.5)); h.client.embed(scroll(0.8))
+  h.client.embed({ type: 'embed.live', slideId: 'widget', index: 0, event: { k: 'click', el: { path: [1,0], tag: 'button' } } })
+  h.advance(10000); h.hello(); h.snapshot()
+  expect(h.sockets.at(-1)!.sent.filter(m => m.type === 'embed.live')).toEqual([scroll(0.8)])
+  expect(h.operations).toEqual([])
+  h.client.disconnect()
+})
+
+
+test('recovery retains each independent widget scroll target', () => {
+  const h = harness()
+  h.client.publish('widget', 0)
+  const documentScroll = { type: 'embed.live', slideId: 'widget', index: 0, event: { k: 'scroll', el: { path: [], tag: '' }, fx: 0, fy: 0.5 } }
+  const panelScroll = { type: 'embed.live', slideId: 'widget', index: 0, event: { k: 'scroll', el: { path: [1,0], tag: 'div', id: 'panel' }, fx: 0, fy: 0.8 } }
+  h.client.embed(documentScroll); h.client.embed(panelScroll)
+  h.hello(); h.snapshot()
+  expect(h.sockets[0].sent.filter(m => m.type === 'embed.live')).toEqual([documentScroll, panelScroll])
+  h.client.disconnect()
+})

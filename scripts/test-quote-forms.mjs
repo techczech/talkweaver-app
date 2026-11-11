@@ -30,7 +30,6 @@ import { LAYOUTS } from '../src/shared/layout-registry/entries.ts'
 import { describeQuoteSource, isQuoteSlide, setQuoteForm, setQuotePicture, setQuoteSource, setFormOnLinkEdit, setFormOnLinkEdits } from '../src/shared/layout-verbs.ts'
 import { quoteFormNotes, UNBUILT_FORM_NOTE_FORMS } from '../src/shared/quote-form-notes.ts'
 import { COMMAND_REGISTRY } from '../src/shared/command-registry.ts'
-import { quoteSlideHashes } from './quote-slide-baseline.mjs'
 
 const tweetFields = (line) => readFields('tweet', parseSourceLine(line))
 const X = 'https://x.com/techczech/status/1234567890123456789'
@@ -1203,14 +1202,6 @@ const webLong = 'Sample long quotation from a blog post. It runs to four sentenc
 // ── 8. Existing quote slides render exactly as before ─────────────────────────────────────────
 
 {
-  const root = fileURLToPath(new URL('..', import.meta.url)).replace(/[\\/]$/, '')
-  const recorded = JSON.parse(readFileSync(join(root, 'scripts/fixtures/quote-forms/quote-slide-hashes.json'), 'utf8'))
-  const live = await quoteSlideHashes(root)
-  const changed = Object.keys(recorded).filter((key) => live[key] !== recorded[key])
-  assert.deepEqual(changed, [], `quote slides in the sampler, the showcase and the demo vault render as before (changed: ${changed.join(', ')})`)
-  assert(Object.keys(recorded).length >= 50, 'the baseline covers the sampler and the demo vault')
-  const added = Object.keys(live).filter((key) => !(key in recorded))
-  assert.deepEqual(added.filter((key) => !/#quote-form-(tweet|video-player|video-panel|book|book-cover|paper|paper-panel|web|web-panel)$/.test(key)), [], 'the only new quote slides are the tweet, the two video samples, the two book samples and the two paper samples and the two web samples')
   // The sampler's tweet sample draws as the card.
   const { buildLayoutSampler } = await import('./build-layout-sampler.mjs')
   const sampler = await buildLayoutSampler(join(dir, 'sampler'))

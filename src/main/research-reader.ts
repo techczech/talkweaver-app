@@ -10,7 +10,7 @@ import { pickOutlineEntry } from './talk-scan.mjs'
 import { inReservedFolder } from './vault-paths.ts'
 import type { ResearchItem, ResearchArtefact, ResearchListResult, ResearchUsedResult, ResearchUse, ResearchFailure } from '../shared/research.ts'
 
-export interface ResearchDeps extends CaptureDeps { vaultRoots?: string[]; signal?: AbortSignal; activeTalkDir?: () => string | null; insertResearch?: (file: string, slide: boolean) => Promise<{ ok: true } | ResearchFailure> }
+export interface ResearchDeps extends CaptureDeps { offlinePage?: import('./offline-page.ts').OfflinePageDeps; vaultRoots?: string[]; signal?: AbortSignal; activeTalkDir?: () => string | null; insertResearch?: (file: string, slide: boolean) => Promise<{ ok: true } | ResearchFailure> }
 const TEXT_CAP = 256 * 1024
 const ARTEFACT_CAP = 8 * 1024 * 1024
 const LIST_CAP = 200

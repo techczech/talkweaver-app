@@ -23,7 +23,7 @@ The picture for this slide has not been added yet.
 ### Tools and windows
 {id=h3}
 
-> **Try it.** In All commands (<kbd>⌘⇧P</kbd>): **TalkWeaver Studio…**, **TalkWeaver History…** and **TalkWeaver Importer…**.
+> **Try it.** In All commands (<kbd>⌘⇧P</kbd>): **TalkWeaver Studio…**, **TalkWeaver Runs…** and **TalkWeaver Importer…**.
 
 > **Try it.** In Studio, <kbd>⌘\</kbd> hides the recordings. In the Importer: <kbd>F</kbd> flagged slides, <kbd>⌘F</kbd> search, <kbd>⌘↵</kbd> apply, <kbd>⌥R</kbd> reset, <kbd>⌘1</kbd> views.
 
@@ -32,7 +32,7 @@ The picture for this slide has not been added yet.
 ### The Talks panel
 {id=h4}
 
-> **Try it.** In All commands (<kbd>⌘⇧P</kbd>): **New presentation…**, **New folder…** and **Refresh talk list**.
+> **Try it.** In All commands (<kbd>⌘⇧P</kbd>): **New talk…**, **New folder…** and **Refresh talk list**.
 
 > **Try it.** Click a talk in the Talks panel. <kbd>V</kbd> switches the view, <kbd>N</kbd> shows titles or file names, <kbd>/</kbd> filters, <kbd>S</kbd> sorts, <kbd>⌘O</kbd> opens.
 
@@ -54,7 +54,7 @@ The picture for this slide has not been added yet.
 
 > **Try it.** In All commands (<kbd>⌘⇧P</kbd>), **Optimise images to WebP** makes pictures smaller, **Index image text** makes words in pictures searchable, **Check embeds** tests videos and sites.
 
-> **Try it.** **Layout Doctor** (<kbd>⌘⇧P</kbd>) lists two problems in this talk: the missing picture and the empty slide. **Normalize trigger lines** tidies the layout lines under titles.
+> **Try it.** **Layout Doctor** (<kbd>⌘⇧P</kbd>) lists two problems in this talk: the missing picture and the empty slide. **Tidy slide layout lines** tidies the layout lines under titles.
 
 ## 10 Set up TalkWeaver
 {id=10-set-up-talkweaver}

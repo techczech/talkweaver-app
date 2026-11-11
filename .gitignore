@@ -37,3 +37,6 @@ worker-dist.staged-*/
 
 # Scout capture runtime lock; evidence and manifest remain versioned.
 /research/.manifest.lock
+agent-skill-dist/
+
+/release-security-test/

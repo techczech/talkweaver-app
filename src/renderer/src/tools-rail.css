@@ -1,30 +1,65 @@
-/* The Tools window's rail and the empty states of its pre-work views (locked mockup: prework-sessions-mockup.html). */
-.tw-tools-shell { position: fixed; inset: 0; display: flex; background: var(--lt-paper-deep, #ece5d4); font: 15px/1.4 var(--lt-sans); color: var(--lt-ink); -webkit-font-smoothing: antialiased; }
+/* The Tools window's shell: the rail, the one shared header and toolbar, and the empty states (house rules R9 and R14).
+   The window uses the writing window's own tokens (styles.css): its sans type, cream surfaces and navy primary.
+   Buttons and badges are the one set in ui-kit.css. */
+.tw-tools-shell { position: fixed; inset: 0; display: flex; background: var(--paper); font: 13px/1.4 var(--font-ui); color: var(--ink); -webkit-font-smoothing: antialiased; }
 :where(.tw-tools-shell) button { font: inherit; }
 .tw-tools-main { flex: 1; min-width: 0; position: relative; }
-/* Studio and History are fixed full-window surfaces; beside the rail they fill the rest. */
-.tw-tools-shell .tw-tools-main > .twstudio, .tw-tools-shell .tw-tools-main > .twhistory { position: absolute; }
-.tw-tools-shell .twstudio .tws-topbar, .tw-tools-shell .twhistory .twh-topbar { padding-left: 14px; }
+/* Studio and the Importer are full-window surfaces of their own; beside the rail they fill the rest. */
+.tw-tools-shell .tw-tools-main > .twstudio, .tw-tools-shell .tw-tools-main > .twi { position: absolute; }
 
-.tw-tools-rail { width: 84px; flex: none; box-sizing: border-box; background: #eee6d5; border-right: 1px solid #cdbfa4; padding: 40px 7px 10px; display: flex; flex-direction: column; gap: 3px; -webkit-app-region: drag; z-index: 1000; }
-.tw-tools-rail-item { -webkit-app-region: no-drag; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 2px 8px; border: 0; background: none; border-radius: 8px; font-family: var(--lt-sans); font-size: 12.5px; font-weight: 500; line-height: 1.1; color: var(--lt-ink-soft); text-align: center; cursor: pointer; }
-.tw-tools-rail .tw-tools-rail-item span { text-align: center; font-size: 12.5px; line-height: 1.1; }
+.tw-tools-rail { width: 84px; flex: none; box-sizing: border-box; background: var(--panel); border-right: 1px solid var(--line); padding: 40px 7px 10px; display: flex; flex-direction: column; gap: 3px; -webkit-app-region: drag; z-index: 1000; }
+.tw-tools-rail-item { -webkit-app-region: no-drag; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 9px 2px 8px; border: 0; background: none; border-radius: 8px; font-family: var(--font-ui); font-size: 11.5px; font-weight: 500; line-height: 1.1; color: var(--muted); text-align: center; cursor: pointer; }
+.tw-tools-rail .tw-tools-rail-item span { text-align: center; font-size: 11.5px; line-height: 1.1; }
 .tw-tools-rail-item svg { width: 20px; height: 20px; stroke-width: 1.7; }
-.tw-tools-rail-item:hover { background: #e4dbc7; }
-.tw-tools-rail-item.on { background: var(--lt-oxford-soft, #e6ecf4); color: var(--lt-oxford, #0b3a6b); font-weight: 700; box-shadow: inset 0 0 0 1px #c5d3e5; }
-.tw-tools-rail-item:focus-visible { outline: 1.5px solid var(--lt-oxford-mid, #3a608c); outline-offset: -1.5px; }
+.tw-tools-rail-item:hover { background: var(--hover); }
+.tw-tools-rail-item.on { background: var(--tw-delivered-bg); color: var(--oxford); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line); }
+.tw-tools-rail-item:focus-visible { outline: 1.5px solid var(--oxford); outline-offset: -1.5px; }
 
-.tw-tools-view { position: absolute; inset: 0; display: flex; background: #e8e0ce; }
-.tw-tools-list { width: 320px; flex: none; border-right: 1px solid #cdbfa4; background: var(--lt-paper, #f3eee2); display: flex; flex-direction: column; min-height: 0; }
-.tw-tools-list > header { flex: none; height: 46px; box-sizing: border-box; padding: 0 10px 0 14px; display: flex; align-items: center; background: #ddd2bc; border-bottom: 1px solid #cdbfa4; -webkit-app-region: drag; }
-.tw-tools-list h2 { margin: 0; font: 600 17px var(--lt-serif); }
-.tw-tools-empty { padding: 46px 20px; display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--lt-ink-soft); text-align: center; }
-.tw-tools-empty svg { width: 30px; height: 30px; color: var(--lt-ink-faint); stroke-width: 1.5; }
-.tw-tools-empty b { color: var(--lt-ink); font-size: 16px; }
-.tw-tools-empty p { text-wrap: balance; margin: 0; font-size: 14px; line-height: 1.4; }
-.tw-tools-detail { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; }
-.tw-tools-none { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--lt-ink-faint); font-size: 14px; }
+.tw-tools-view { position: absolute; inset: 0; display: flex; background: var(--paper); }
+.tw-tools-view.tw-runs { flex-direction: column; }
+.tw-runs-body { flex: 1; min-height: 0; display: flex; }
+.tw-tools-list { width: 320px; flex: none; border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+.tw-tools-list > header { flex: none; height: 46px; box-sizing: border-box; padding: 0 10px 0 14px; display: flex; align-items: center; background: var(--panel); border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+.tw-tools-list h2 { margin: 0; font: 600 15px var(--font-ui); }
+.tw-tools-list > header .tw-btn { margin-left: auto; -webkit-app-region: no-drag; }
+
+/* The one shared header of a Tools view: its name, then its own buttons, then the settings link and help. */
+.tw-tools-bar { flex: none; height: 46px; box-sizing: border-box; padding: 0 12px 0 16px; display: flex; align-items: center; gap: 8px; background: var(--panel); border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+.tw-tools-bar > button, .tw-tools-bar > a, .tw-tools-bar input { -webkit-app-region: no-drag; }
+.tw-tools-bar h2 { margin: 0; font: 600 15px var(--font-ui); color: var(--ink); white-space: nowrap; }
+.tw-tools-bar .tw-runs-count { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+/* The one toolbar under it: search, filters, view. */
+.tw-tools-toolbar { flex: none; height: 40px; box-sizing: border-box; padding: 0 12px 0 16px; display: flex; align-items: center; gap: 8px; background: var(--paper); border-bottom: 1px solid var(--line); min-width: 0; }
+.tw-tools-toolbar > * { flex: none; }
+.tw-runs-search { flex: 0 1 190px !important; min-width: 110px; height: 28px; display: flex; align-items: center; gap: 6px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--faint); }
+.tw-runs-search:focus-within { border-color: var(--oxford); box-shadow: 0 0 0 1px var(--oxford); }
+.tw-runs-search svg { width: 14px; height: 14px; stroke-width: 1.9; flex: none; }
+.tw-runs-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: 13px var(--font-ui); color: var(--ink); }
+.tw-runs-chips { display: flex; gap: 6px; flex: 0 1 auto !important; min-width: 0; }
+.tw-runs-viewwrap { position: relative; }
+.tw-runs-viewwrap > .tw-btn { position: relative; z-index: 42; }
+.tw-runs-viewmenu { right: 0; min-width: 280px; padding: 10px 12px; display: flex; flex-direction: column; gap: 10px; }
+.tw-runs-vgroup { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tw-runs-vgroup > span { width: 44px; color: var(--muted); font-size: 12px; font-weight: 600; }
+
+.tw-tools-empty { padding: 46px 20px; display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--muted); text-align: center; }
+.tw-tools-empty svg { width: 30px; height: 30px; color: var(--faint); stroke-width: 1.5; }
+.tw-tools-empty b { color: var(--ink); font-size: 15px; }
+.tw-tools-empty p { text-wrap: balance; margin: 0; font-size: 13px; line-height: 1.4; }
+.tw-tools-detail { flex: 1; min-width: 0; display: flex; align-items: center; justify-content: center; background: var(--paper); }
+.tw-tools-detail > .tw-sess-detail { align-self: stretch; }
+.tw-tools-none { display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--faint); font-size: 13px; }
 .tw-tools-none svg { width: 32px; height: 32px; stroke-width: 1.5; }
 /* A count on a rail item (2026-10-19 prework-responses, mockup 05: Runs with responses waiting). */
 .tw-tools-rail .tw-tools-rail-icon { position: relative; display: inline-flex; }
-.tw-tools-rail .tw-tools-rail-badge { position: absolute; top: -7px; right: -12px; min-width: 17px; height: 17px; box-sizing: border-box; padding: 0 4px; border-radius: 9px; background: var(--lt-oxford, #0b3a6b); color: #fff; font: 700 11px/17px var(--lt-sans); text-align: center; box-shadow: 0 0 0 2px #eee6d5; }
+.tw-tools-rail .tw-tools-rail-badge { position: absolute; top: -7px; right: -12px; min-width: 17px; height: 17px; box-sizing: border-box; padding: 0 4px; border-radius: 9px; background: var(--oxford); color: #fff; font: 700 11px/17px var(--font-ui); text-align: center; box-shadow: 0 0 0 2px var(--panel); }
+
+/* R17: when the window narrows the toolbar gives up words before it gives up controls: the filter chips drop their
+   icons and the longer labels shorten, and the search field shrinks first. */
+@media (max-width: 1180px) {
+  .tw-runs-chips .tw-chip-more, .tw-tools-toolbar .tw-chip-more { display: none; }
+  .tw-runs-chips .tw-btn.tw-btn--chip svg { display: none; }
+  .tw-runs-chips .tw-btn.tw-btn--chip { padding: 0 8px; }
+  .tw-runs-search { min-width: 90px; }
+  .tw-tools-toolbar { gap: 6px; padding: 0 10px 0 12px; }
+}

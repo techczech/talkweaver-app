@@ -138,7 +138,7 @@ export const PRESENTER_PALETTE: Group[] = [
   ]],
   ['Slide on every screen', [
     { id: 'reveal', name: 'Reveal mode', icon: 'layers', shortcut: 'presenter.reveal', controls: ['#viewReveal', '#presenterReveal'] },
-    { id: 'focus', name: 'Focus mode', icon: 'focus', shortcut: 'presenter.focus', controls: ['#presenterFocus', '#viewFocus'] },
+    { id: 'focus', name: 'Spotlight', icon: 'focus', shortcut: 'presenter.focus', controls: ['#presenterFocus', '#viewFocus'] },
     { id: 'pointer', name: 'Pointer', icon: 'mouse-pointer-2', shortcut: 'presenter.pointer', controls: ['#presenterPointer', '#viewPointer', '#morePointer'] },
     { id: 'pen', name: 'Pen', icon: 'pen-tool', shortcut: 'presenter.pen', controls: ['#presenterPen', '#viewPen', '#morePen'] },
     { id: 'pen-freehand', name: 'Pen tool: Freehand', icon: 'pen-line', controls: ['#penToolFreehand', '#penStripFreehand'], words: ['draw'] },

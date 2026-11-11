@@ -4,7 +4,7 @@
 // the heading positions ride document edits, so typing never makes the numbers jump or blink.
 import { EditorView, GutterMarker, gutter } from '@codemirror/view'
 import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
-import { slideNumbersByLine } from '../../../shared/slide-lines.ts'
+import { slideNumbersByLine, titleHeadingLine } from '../../../shared/slide-lines.ts'
 
 type Anchor = { pos: number; number: number }
 
@@ -52,8 +52,12 @@ export const slideNumberGutterExtension: Extension = [
 export function setSlideNumberLines(view: EditorView, slideLines: ReadonlyArray<number | null>): void {
   const doc = view.state.doc
   const anchors: Anchor[] = []
+  const title = titleHeadingLine(doc)
   for (const [line, number] of slideNumbersByLine(slideLines)) {
-    if (line >= 1 && line <= doc.lines) anchors.push({ pos: doc.line(line).from, number })
+    if (line < 1 || line > doc.lines) continue
+    // The cover (number 1, on file line 1) is numbered on the title heading when line 1 is not a heading.
+    const at = number === 1 && line === 1 && title != null && !HEADING.test(doc.line(1).text.slice(0, 8)) ? title : line
+    anchors.push({ pos: doc.line(at).from, number })
   }
   view.dispatch({ effects: setAnchors.of(anchors) })
 }

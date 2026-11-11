@@ -77,4 +77,14 @@ assert.deepEqual(placeForLine(TALK, lineOf('body B')), { kind: 'after', line: li
 assert.deepEqual(placeForLine(TALK, 1), { kind: 'start' })
 cases += 1
 
+// A deleted slide destination must not reattach to a deck title that happens to share its name.
+{
+  const chosen = { kind: 'after', line: 3, title: 'Shared' }
+  const text = '# Shared\n\n### Other\nbody\n'
+  assert.equal(resolvePlace(text, chosen), null)
+  assert.deepEqual(settlePlace(text, chosen, []), { place: null, earlier: [] })
+  assert.equal(insertionPoint(text, chosen).ok, false)
+  cases += 1
+}
+
 console.log(`slide-handling place: ${cases} cases passed`)

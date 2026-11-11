@@ -11,14 +11,21 @@ export interface ScratchLayout {
 }
 
 export const DOCK_WIDTH = 560
+/** The narrowest window that can dock the panel and still leave the editor its share (R17): below it the panel floats. */
+export const DOCK_MIN_WINDOW = 1700
 export const MIN_BOX = { w: 420, h: 320 } as const
 /** The panel's header stays below the window's own title bar. */
 export const TOP_INSET = 28
 
+/** What the right sidebar takes of the window (its default width and the divider): the floating panel opens beside it, not over it. */
+export const SIDEBAR_RESERVE = 340
+/** The floating panel opens below the window's two bars (title and editor toolbar), so it covers no toolbar button. */
+export const FLOAT_TOP = 112
+
 export function defaultLayout(viewport: { w: number; h: number }): ScratchLayout {
-  const w = Math.min(700, Math.max(MIN_BOX.w, viewport.w - 80))
-  const h = Math.min(800, Math.max(MIN_BOX.h, viewport.h - 140))
-  return { mode: 'collapsed', restore: 'float', box: clampBox({ x: viewport.w - w - 30, y: 90, w, h }, viewport) }
+  const w = Math.min(700, Math.max(MIN_BOX.w, viewport.w - SIDEBAR_RESERVE - 80))
+  const h = Math.min(800, Math.max(MIN_BOX.h, viewport.h - FLOAT_TOP - 50))
+  return { mode: 'collapsed', restore: 'float', box: clampBox({ x: viewport.w - SIDEBAR_RESERVE - w - 20, y: FLOAT_TOP, w, h }, viewport) }
 }
 
 /** Keeps the box inside the window: at least the minimum size, no larger than the window, header reachable. */

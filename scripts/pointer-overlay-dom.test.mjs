@@ -397,7 +397,7 @@ try {
         assert.match(await presenter.locator('.tw-tip').innerText(), /Y/);
         await presenter.keyboard.press('Escape');
         await presenter.keyboard.press('Meta+Shift+p');
-        await presenter.locator('#presenterCommandSearch').fill('Focus mode');
+        await presenter.locator('#presenterCommandSearch').fill('Spotlight');
         await presenter.keyboard.press('Meta+Shift+,');
         await presenter.keyboard.press(',');
         await presenter.waitForSelector('#presenterRebind', { state: 'detached' });
@@ -411,7 +411,7 @@ try {
         assert.equal(await presenter.locator('#presenterFocus').getAttribute('aria-pressed'), 'true');
         await presenter.keyboard.press('f');
         await presenter.keyboard.press('?');
-        assert.match(await presenter.locator('.tw-shortcuts-row').filter({ hasText: 'Focus mode' }).innerText(), /,/);
+        assert.match(await presenter.locator('.tw-shortcuts-row').filter({ hasText: 'Spotlight' }).innerText(), /,/);
         await presenter.keyboard.press('Escape');
         await presenter.keyboard.press('k');
         await presenter.locator('#quickPollQuestion').fill('Select this whole question');

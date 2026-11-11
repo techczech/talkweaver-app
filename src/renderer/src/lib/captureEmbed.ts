@@ -1,10 +1,55 @@
+import { parseHeadingAttrs, parseTriggerLine } from '../../../../compiler/scripts/lib/02-triggers-layout.mjs'
+import { preContentWindow, resolveSlideId } from '../../../../compiler/scripts/lib/slide-id.mjs'
 // Capture embed… (src/main/live-page-capture-window.ts): what the inspector says about a slide's web
 // pages and their saved views, and the request that opens the capture window for one of them.
 // The saved views are the slide's {capture} lines (compiler/scripts/lib/live-page-capture-markup.mjs),
 // read from the slide's text as it is in the editor now, so the count changes with every edit and
 // with every capture the writer adds. Views recorded before the markup (alpha.14/15) are not counted
 // here: the presentation still shows them for a page with no {capture} line.
+import { readOutlineSlides } from '../../../shared/feedback-accept.ts'
 import { captureMarkupOfSlideText, removeCaptureLine } from '../../../../compiler/scripts/lib/live-page-capture-markup.mjs'
+
+/** Structural identity across the save's heading/trigger relocation; all authored body bytes count. */
+function captureBlockIdentity(source: string): string {
+  const lines = source.split(/\r?\n/)
+  const heading = parseHeadingAttrs(lines[0] ?? '')
+  const prelude = preContentWindow(lines, 0)
+  const attrs: Record<string, unknown> = {}
+  const warnings: string[] = []
+  for (const line of lines.slice(1, prelude.end)) {
+    const parsed = parseTriggerLine(line)
+    if (!parsed) { if (line.trim()) warnings.push('unparsed:' + line); continue }
+    Object.assign(attrs, parsed.attrs)
+    warnings.push(...parsed.warnings)
+  }
+  Object.assign(attrs, heading.attrs)
+  delete attrs.id
+  warnings.push(...heading.warnings)
+  return JSON.stringify([heading.title, Object.keys(attrs).sort().map(key => [key, attrs[key]]), warnings.sort(), lines.slice(prelude.end).join('\n').replace(/\n+$/, '')])
+}
+
+/** An explicit ID survives edits; a derived ID requires the exact current compile snapshot. */
+export function captureSourceBlock(text: string, row: { slide_id?: string; source_markdown?: string } | null, compiledSource: string | null = null): string | null {
+  if (!row) return null
+  const read = readOutlineSlides(text)
+  const block = (slide: (typeof read.slides)[number]) => read.lines.slice(slide.start, slide.blockEnd).join('\n')
+  let matches = read.slides.filter(slide => slide.id && slide.id === row.slide_id)
+  if (!matches.length) {
+    // A matching block after an edit may be a copy whose original was deleted. Only a fresh
+    // compile can name an unstamped slide; stable explicit IDs remain valid across edits.
+    if (text !== compiledSource) return null
+    const source = row.source_markdown ?? ''
+    if (!source || !compiledSource || resolveSlideId(source.split(/\r?\n/), 0)) return null
+    const identity = captureBlockIdentity(source)
+    const original = readOutlineSlides(compiledSource)
+    const raw = (value: string) => value.replace(/\r\n/g, '\n').replace(/\n+$/, '')
+    if (original.slides.filter(slide => raw(original.lines.slice(slide.start, slide.blockEnd).join('\n')) === raw(source)).length !== 1) return null
+    const originalMatches = original.slides.filter(slide => captureBlockIdentity(original.lines.slice(slide.start, slide.blockEnd).join('\n')) === identity)
+    if (originalMatches.length !== 1) return null
+    matches = read.slides.filter(slide => captureBlockIdentity(block(slide)) === identity)
+  }
+  return matches.length === 1 ? block(matches[0]) : null
+}
 
 export type SlideLivePage = { pageUrl: string; host: string; count: number; images: string[]; alts: string[] }
 
@@ -40,9 +85,11 @@ export async function openCaptureEmbed(
   if (!slide.outlinePath) { deps.notify('Open a talk first.', 'info'); return false }
   const pages = slideLivePages(slide.text)
   const page = pageUrl ? pages.find((p) => p.pageUrl === pageUrl) : pages[0]
-  if (!page || !slide.slideId) { deps.notify('This slide shows no web page to capture. Choose a slide with an [Embed: https://…] line.', 'info'); return false }
+  const lines = (slide.text ?? '').split(/\r?\n/)
+  const slideId = lines.length ? resolveSlideId(lines, 0)?.id ?? slide.slideId : slide.slideId
+  if (!page || !slideId) { deps.notify('This slide shows no web page to capture. Choose a slide with an [Embed: https://…] line.', 'info'); return false }
   try {
-    const result = await deps.open({ outlinePath: slide.outlinePath, slideId: slide.slideId, pageUrl: page.pageUrl, title: slide.title, images: page.images, alts: page.alts })
+    const result = await deps.open({ outlinePath: slide.outlinePath, slideId, pageUrl: page.pageUrl, title: slide.title, images: page.images, alts: page.alts })
     if (!result.ok) { deps.notify(result.message, 'warning'); return false }
     return true
   } catch {

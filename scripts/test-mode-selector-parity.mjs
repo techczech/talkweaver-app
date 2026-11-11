@@ -87,7 +87,7 @@ for (const name of ['MODE_SELECTOR', 'CARD_UNIT_SELECTOR']) {
   const presenterSrc = readFileSync(PRESENTER_PATH, 'utf8')
   const audienceSrc = readFileSync(AUDIENCE_PATH, 'utf8')
   const wired = {
-    presenter: presenterSrc.includes('<!--MEDIA_STEPS_RUNTIME-->') && /mediaSteps\.apply\(slide, plan\.files, plan\.media\(/.test(presenterSrc) && /mediaStepStates\(units, kind, step, movedOn\)/.test(presenterSrc),
+    presenter: presenterSrc.includes('<!--MEDIA_STEPS_RUNTIME-->') && /mediaSteps\.apply\(slide, (plan|playbackPlan)\.files, \1\.media\(/.test(presenterSrc) && /mediaStepStates\(units, kind, step, movedOn\)/.test(presenterSrc),
     audience: audienceSrc.includes('${mediaStepsRuntimeSource()}') && /venueMediaSteps\.apply\(slide, mediaStepFiles\(found\.els\), mediaStepStates\(found\.units, at\.mode, at\.step, movedOn\)\)/.test(audienceSrc),
   }
   for (const [runtime, ok] of Object.entries(wired)) {

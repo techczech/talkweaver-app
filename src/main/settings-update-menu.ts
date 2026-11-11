@@ -3,6 +3,7 @@
 import { toAccelerator, buildMenuTemplate } from '@app-patterns/commands'
 import type { MenuItemConstructorOptions } from 'electron'
 import { MENUS, UPDATE_CHECK_ID, registry } from '../shared/bridle-commands.ts'
+import { withProductRoleLabels } from './app-menu.ts'
 
 export interface UpdateMenuInput {
   platform: string
@@ -45,5 +46,8 @@ export function updateCheckMenuTemplate(input: UpdateMenuInput): MenuItemConstru
   if (index < 0) return null
   const [item] = items.splice(index, 1)
   if (item) items.splice(1, 0, item)
+  // The App Patterns template labels about, hide and quit with app.name ("talk-weaver"); give them the product name.
+  const app = template[0]
+  if (app) app.submenu = withProductRoleLabels(items)
   return template
 }

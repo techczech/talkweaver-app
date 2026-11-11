@@ -4,7 +4,7 @@
 // No dialog; the talk stays usable in every view, and saves wait (refused by the main process) until a
 // choice is made. OutlineDiskChangeSheet is the same choice when the person leaves the talk.
 // lib/outlineDiskChange.ts carries out the choice.
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { describeDiskChange, type OutlineDiskChange, type OutlineDiskChoice } from '../lib/outlineDiskChange';
 export default function OutlineDiskChangeBar({ change, busy, onChoose }: {
@@ -20,6 +20,31 @@ export default function OutlineDiskChangeBar({ change, busy, onChoose }: {
       <button type="button" className="disk-change-bar__action" disabled={busy} title={action.title} onClick={() => onChoose(action.choice)}>{action.label}</button>
     </span>))}
   </div>);
+}
+/**
+ * R2: the same notice as a warning chip in the status bar. It opens by itself when the change arrives (it signals an
+ * external change and must not be missed) and shows the whole text with every action in a popover; the chip closes
+ * and opens it again, and choosing an action ends the notice.
+ */
+export function OutlineDiskChangeChip({ change, busy, onChoose }: {
+  change: OutlineDiskChange;
+  busy: boolean;
+  onChoose: (choice: Exclude<OutlineDiskChoice, 'stay'>) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const { text } = describeDiskChange(change);
+  // A newer version of the change, or a change that becomes a removal, opens the popover again even if it was closed.
+  useEffect(() => { setOpen(true); }, [change.hash, change.kind]);
+  return (
+    <span className="tw-disk-chip" data-testid="outline-disk-change-chip">
+      {/* The announcement does not depend on the popover: it stays while the popover is closed and follows every new change. */}
+      <span role="status" aria-live="polite" data-testid="outline-disk-change-live" style={{ position: 'absolute', width: 1, height: 1, overflow: 'hidden', clip: 'rect(0 0 0 0)', whiteSpace: 'nowrap' }}>{text}</span>
+      <button type="button" className="tw-disk-chip-btn" aria-expanded={open} title={text} onClick={() => setOpen((v) => !v)} onKeyDown={(e) => { if (e.key === 'Escape') setOpen(false); }}>
+        <span aria-hidden="true">⚠</span> Changed on disk
+      </button>
+      {open && <span className="tw-disk-chip-pop"><OutlineDiskChangeBar change={change} busy={busy} onChoose={onChoose} /></span>}
+    </span>
+  );
 }
 /** The sheet that holds a talk switch or a window close until the person has chosen. */
 export function OutlineDiskChangeSheet({ change, onAnswer }: {

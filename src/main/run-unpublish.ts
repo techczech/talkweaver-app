@@ -71,7 +71,7 @@
 // real publishing sequence against the fake Cloudflare API.
 import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { publishedFolders, removeSiteFolder, writableSiteFolder, type PublishBegin, type PublishBuild, type PublishJob } from './handout-publishing.ts'
+import { REGISTRY_ORIGIN_UNAVAILABLE, publishedFolders, removeSiteFolder, writableSiteFolder, type PublishBegin, type PublishBuild, type PublishJob } from './handout-publishing.ts'
 import { buildRedirects, siteFolder } from './publishing-logic.ts'
 import type { RunWorkWithdraw } from './run-prework.ts'
 import { clearRunHandoutUrl, stampRunUnpublished, stampRunWork, type RunRecord } from './runs.ts'
@@ -139,6 +139,23 @@ export function runSiteFolder(run: Pick<RunRecord, 'handoutUrl' | 'handoutFolder
     name = segment
   }
   return published.includes(name) ? { kind: 'found', name } : { kind: 'missing', name, recorded: recorded !== null }
+}
+
+export const RUN_FOLDER_UNPROVEN = 'Stopped: this Run was published before its folder was recorded, and the folder its short link leads to is known here only from the site\'s own record, which cannot prove that folder is this Run\'s. Nothing was withdrawn, written or removed. Publish or unpublish it from the computer that first published it.'
+
+/**
+ * Per-talk publishing: a Run published before its folder was recorded, linked by a short id, is bound to the folder the site's
+ * record gives that id (`runSiteFolder`). The site's record is not this computer's to trust for a folder it replaces or removes:
+ * true (refuse) unless `trusted`, the short links this computer itself gave, gives that same folder that same id.
+ */
+export function legacyRunUnproven(run: Pick<RunRecord, 'handoutUrl' | 'handoutFolder'>, registry: Readonly<Record<string, string>>, trusted: Readonly<Record<string, string>> | null): boolean {
+  if (typeof run.handoutFolder === 'string' && run.handoutFolder) return false
+  let segment: string
+  try { segment = decodeURIComponent(new URL(String(run.handoutUrl)).pathname.split('/').filter(Boolean).at(-1) ?? '') } catch { return false }
+  if (!segment) return false
+  const mapped = [...new Set(Object.entries(registry).filter(([, id]) => id === segment).map(([folder]) => folder))]
+  if (mapped.length !== 1) return false // none: the segment is the folder's own name; several: already unclear
+  return !trusted || trusted[mapped[0]] !== segment
 }
 
 /** A folder name a Run publish makes (runs.ts runHandoutSlug): lower-case letters and digits in hyphenated parts. */
@@ -346,11 +363,12 @@ export function runUnpublishJob(deps: RunUnpublishDeps): Omit<PublishJob<RunUnpu
       forget(false)
       return { done: { ...nothing, phases: withdrawn.phases } }
     },
-    prepare: async ({ dir: siteDir, redirects, writeSiteFile }: PublishBuild) => {
+    prepare: async ({ dir: siteDir, redirects, writeSiteFile, trustedRegistry, ownShortLinksUnreadable }: PublishBuild) => {
       const run = deps.run()
       if (!run.handoutUrl) return { ok: true, built: nothing }
       const published = publishedFolders(siteDir)
       const registry = deps.readRegistry()
+      if (legacyRunUnproven(run, registry, trustedRegistry ?? null)) return { ok: false, error: ownShortLinksUnreadable ? REGISTRY_ORIGIN_UNAVAILABLE : RUN_FOLDER_UNPROVEN }
       // Bound BEFORE anything is withdrawn or written (D2).
       const bound = runSiteFolder(run, published, registry)
       if (bound.kind === 'unclear') return { ok: false, error: RUN_FOLDER_UNCLEAR }

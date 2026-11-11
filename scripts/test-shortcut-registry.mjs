@@ -144,32 +144,15 @@ assert.deepEqual(
 )
 assert.deepEqual(
   SHORTCUT_REGISTRY.filter((entry) => entry.scope === 'pathway').map((entry) => entry.id),
-  ['pathway.move', 'pathway.toggle', 'pathway.grid', 'pathway.list', 'pathway.matrix', 'pathway.previews', 'pathway.reorder', 'pathway.move-item', 'pathway.present', 'pathway.new', 'pathway.rename', 'pathway.delete', 'pathway.drop-missing', 'pathway.help'],
+  ['pathway.move-item'],
   'Pathway window keyboard parity is fully registered'
 )
 assert.deepEqual(
   SHORTCUT_REGISTRY.filter((entry) => entry.unbound).map((entry) => entry.id),
-  ['research.copy-reference', 'research.reveal', 'research.source', 'research.used-in', 'research.scope-talk', 'research.scope-research', 'research.scope-everything', 'research.rename', 'research.change-kind', 'research.delete', 'research.move', 'research.copy', 'research.insert-here', 'research.retry', 'app.check-for-updates', 'app.whats-new', 'editor.new-slide', 'editor.bulleted-list', 'editor.numbered-list', 'editor.italic', 'editor.inline-code', 'editor.highlight', 'editor.strikethrough', 'editor.underline', 'editor.object-expand', 'editor.object-discard', 'editor.delete-comment', 'editor.insert-notes'],
+  ['research.copy-reference', 'research.reveal', 'research.source', 'research.used-in', 'research.scope-talk', 'research.scope-research', 'research.scope-everything', 'research.rename', 'research.change-kind', 'research.delete', 'research.move', 'research.copy', 'research.insert-here', 'research.retry', 'app.edit-image', 'app.check-for-updates', 'app.whats-new', 'editor.new-slide', 'editor.bulleted-list', 'editor.numbered-list', 'editor.italic', 'editor.inline-code', 'editor.highlight', 'editor.strikethrough', 'editor.underline', 'editor.object-expand', 'editor.object-discard', 'editor.delete-comment', 'editor.insert-notes'],
   'unbound commands include the new slide and list actions alongside the existing text-formatting residents'
 )
-assert.deepEqual(
-  SHORTCUT_REGISTRY.find((entry) => entry.id === 'pathway.list'),
-  {
-    id: 'pathway.list', keys: 'L', codes: ['l'], scope: 'pathway', label: 'List view',
-    explanation: 'Shows the pathway as a numbered running order with slide previews', group: 'View',
-    taskGroup: 'Shape the talk', subgroup: 'Pathways', surface: null
-  },
-  'Pathway List command uses the locked L binding and description'
-)
-assert.deepEqual(
-  SHORTCUT_REGISTRY.find((entry) => entry.id === 'pathway.previews'),
-  {
-    id: 'pathway.previews', keys: 'P', codes: ['p'], scope: 'pathway', label: 'Toggle previews',
-    explanation: 'Show or hide slide previews in List and Matrix.', group: 'View',
-    taskGroup: 'Shape the talk', subgroup: 'Pathways', surface: null
-  },
-  'Pathway Previews command uses the free pathway-scope P binding'
-)
+assert.equal(SHORTCUT_REGISTRY.some(entry => entry.id === 'pathway.reorder'), false, 'the deleted window Reorder mode has no binding')
 
 let failures = 0
 const fail = (message) => { failures += 1; console.error(`  ✗ ${message}`) }
@@ -358,7 +341,7 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/components/GridView.tsx', ['browser.move', 'browser.open']],
   // The docked layout picker (ADR-0032): its own scope, the keyboard map of the locked mockup.
   ['src/renderer/src/components/LayoutPickerColumn.tsx', ['layout-picker.try', 'layout-picker.along', 'layout-picker.next-group', 'layout-picker.keep', 'layout-picker.keep-starter', 'layout-picker.put-back']],
-  ['src/renderer/src/components/History.tsx', ['browser.move', 'browser.open', 'browser.close']],
+  ['src/renderer/src/components/RunsView.tsx', ['browser.move', 'browser.open', 'browser.close']],
   ['src/renderer/src/components/Importer.tsx', ['importer.move', 'importer.flagged', 'importer.search', 'importer.apply', 'importer.reset', 'importer.views', 'importer.help', 'importer.close']],
   ['src/renderer/src/components/IconPicker.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   ['src/renderer/src/components/Inspector.tsx', ['app.inspector-slides', 'app.inspector-steps']],
@@ -367,7 +350,7 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/components/InsertViewer.tsx', ['browser.move', 'browser.open', 'browser.close', 'browser.insert', 'browser.toggle-selection']],
   ['src/renderer/src/components/MergeConfirm.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   ['src/renderer/src/components/MetadataPanel.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
-  ['src/renderer/src/components/Pathways.tsx', ['pathway.move', 'pathway.toggle', 'pathway.grid', 'pathway.list', 'pathway.matrix', 'pathway.previews', 'pathway.reorder', 'pathway.move-item', 'pathway.present', 'pathway.new', 'pathway.rename', 'pathway.delete', 'pathway.drop-missing', 'pathway.help']],
+  ['src/renderer/src/components/PathwaysView.tsx', ['pathway.move-item']],
   // The Plain view's Command-I icon picker (ticket 13): ←↑↓→ move, ↵ inserts, esc closes; Tab is held in the field (no move out).
   ['src/renderer/src/components/PlainIconPicker.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   ['src/renderer/src/components/PropagationChecklist.tsx',['picker.navigate', 'picker.choose', 'picker.close', 'picker.toggle']],
@@ -381,7 +364,7 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/components/ToolsPalette.tsx', ['app.command-palette', 'tools.view-sessions', 'tools.view-published', 'tools.view-workfiles', 'tools.plan-run', 'tools.edit-plan', 'tools.plan-like-this', 'tools.publish', 'tools.go-live', 'tools.open-run', 'tools.copy-link', 'tools.copy-invitation', 'tools.new-work-file']],
   ['src/renderer/src/components/TalkText.tsx', ['talktext.notes', 'talktext.script', 'talktext.rewrite', 'talktext.show-slide', 'talktext.previous-slide', 'talktext.next-slide', 'talktext.copy', 'talktext.help', 'talktext.close']],
   ['src/renderer/src/components/TagPicker.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
-  ['src/renderer/src/components/WorkspaceLayout.tsx', ['app.research-panel', 'app.research-find', 'app.slide-search', 'app.find-talk', 'app.context-menu', 'app.layout-picker', 'app.icon-picker', 'app.image-search', 'app.where-used', 'app.slide-focus', 'app.command-palette', 'app.new-window', 'app.help', 'app.toggle-inspector', 'app.view-editor', 'app.view-split', 'app.view-strip', 'app.view-grid', 'app.present', 'app.present-current']],
+  ['src/renderer/src/components/WorkspaceLayout.tsx', ['app.research-panel', 'app.research-find', 'app.slide-search', 'app.find-talk', 'app.context-menu', 'app.layout-picker', 'app.icon-picker', 'app.image-search', 'app.where-used', 'app.slide-focus', 'app.command-palette', 'app.new-window', 'app.help', 'app.toggle-inspector', 'app.view-slides', 'app.view-strip', 'app.view-grid', 'app.present', 'app.present-current']],
   ['src/renderer/src/components/talklist/TalkList.tsx', ['browser.open']],
   // Talk search completion (ADR-0029 §2): ↑↓ move, ↵/Tab complete, Esc dismisses — a picker.
   ['src/renderer/src/components/talklist/SearchAssist.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
@@ -391,7 +374,7 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/components/talklist/menus.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
   // Plain margin menus (plain view ticket 04): Esc closes the menu and puts the caret back on the heading.
   ['src/renderer/src/components/MarginMenu.tsx', ['picker.close']],
-  ['src/renderer/src/components/talklist/modals.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
+  ['src/renderer/src/components/cards.tsx', ['picker.choose', 'picker.close']],
   ['src/renderer/src/components/talklist/useKeyboard.ts', ['browser.move', 'browser.open', 'browser.close', 'browser.talk-view', 'browser.talk-names', 'browser.filter', 'browser.sort', 'browser.open-talk', 'browser.up-level', 'browser.fold-all', 'browser.rename', 'browser.duplicate', 'browser.move-talk', 'browser.delete-talk']],
   ['src/renderer/src/extensions/triggerComplete.ts', ['picker.navigate', 'picker.choose', 'picker.close', 'picker.back', 'picker.digit']],
   ['src/renderer/src/extensions/idProtect.ts', ['editor.protect-heading-delete']],
@@ -404,6 +387,8 @@ const BINDING_MAP = new Map([
 // Generic handlers are deliberately not shortcut commands. Each ignored file must still produce a
 // scan hit, so deleting the handler makes this list fail as stale.
 const SCAN_IGNORE = new Map([
+  ['src/renderer/src/components/AnimatedVideoSheet.tsx', 'Dialog-local Escape dismissal and Tab focus containment; no app command or shortcut.'],
+  ['src/renderer/src/components/AgentSkillOffer.tsx', 'Escape-only dismissal of the agent-skill onboarding dialog (Not now); local modal behaviour, no shortcut is bound'],
   ['src/renderer/src/components/vault-gallery/GalleryHandoutSheet.tsx', 'Local handout dialog Tab wrap and Escape dismissal.'],
   ['src/renderer/src/components/vault-gallery/GalleryManagement.tsx', 'Local move dialog Escape dismissal.'],
   ['src/renderer/src/components/vault-gallery/GalleryList.tsx', 'Arrow, Home, End, Enter and Space move, open and preview within the focused file list of the open gallery; local grid behaviour, no shortcut is bound'],
@@ -417,11 +402,9 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/scratchpad/ScratchpadCard.tsx', 'Enter opens the big preview and Space selects while a Slide Scratchpad card has focus (native button-like card behaviour); no shortcut is bound'],
   ['src/renderer/src/components/slide-handling/BatchBar.tsx', '↑ ↓ and Enter move through the destinations of the open Move to… list and Escape closes it (the same local list behaviour as the Move slide to… panel); no shortcut is bound'],
   ['src/renderer/src/components/scratchpad/ScratchpadGroupMenu.tsx', 'Escape-only dismissal of the open group menu; no shortcut is bound'],
-  ['src/renderer/src/components/ResearchTidySheet.tsx', 'Escape dismisses this confirmation and Tab contains focus inside it; local modal behaviour, no shortcut is bound'],
   ['src/renderer/src/components/EditorTabs.tsx', 'Arrow keys, Home and End move between the two editor tabs (WAI-ARIA tablist) while a tab has focus; the commands are view-plain and view-markdown and have no shortcut'],
   ['src/renderer/src/components/actionBar/ActionBar.tsx', 'Escape only dismisses the visible tooltip or overflow menu; no shortcut is bound'],
   ['src/renderer/src/components/AbstractPanel.tsx', 'Escape-only modal dismissal and Enter on a native form control'],
-  ['src/renderer/src/components/DeckDesignPanel.tsx', 'Escape-only modal dismissal'],
   ['src/renderer/src/components/RemoveExampleConfirm.tsx', 'Escape-only dismissal of the Remove the example vault? confirmation (onboarding ticket 12, modal, local); no shortcut is bound'],
   ['src/renderer/src/components/InspectorBoard.tsx', 'The Board section’s fields keep their own typing (Enter stays in the one-line instructions; ↑ ↓ on a column’s handle moves that column, ADR-0032 round-3 A2); ⌥↑/⌥↓ still reach the Inspector’s slide navigation; no shortcut is bound'],
   ['src/renderer/src/components/ReactionsControl.tsx', 'Enter on the native custom-labels field commits it (ticket 04); no shortcut is bound'],
@@ -440,18 +423,17 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/SlideRowMenus.tsx', '↑ ↓ Enter inside the open Move slide to… / Move section to… destination list (modal, local list keys, as Actions here); the opening commands are move-slide-to and move-section-to, which have no shortcut'],
   ['src/renderer/src/components/ActionsHerePanel.tsx', '↑ ↓ Enter and Escape inside the open Actions here panel (modal, local menu keys, as the row menus); the opening command is app.context-menu'],
   ['src/renderer/src/components/LayoutDoctorPanel.tsx', 'Escape-only panel dismissal and a Tab focus trap inside the open panel (modal, local); no shortcut is bound'],
-  ['src/renderer/src/components/NewTalkDialog.tsx', 'Escape dismissal and native form Enter submission'],
   ['src/renderer/src/components/OutlineDiskChangeBar.tsx', 'Escape-only dismissal of the changed-on-disk sheet (answers Stay here); no shortcut is bound'],
   ['src/preload/present-close-flow.ts', 'Escape-only dismissal and a Tab focus trap inside the close-presentation dialog; no app shortcut is bound'],
   ['src/renderer/src/components/ToolbarMenu.tsx', 'Escape-only generic toolbar-menu dismissal'],
-  ['src/renderer/src/components/slide-browser/TopBar.tsx', 'Enter on the settings-glimpse gear (a role=button div) toggles its popover; no shortcut is bound'],
   ['src/renderer/src/components/talklist/VaultSheet.tsx', 'Escape dismissal and Cmd+Enter to submit the Add vault / Edit this vault sheet (several-vaults ticket 04, modal, local); no shortcut is bound'],
   ['src/renderer/src/components/ConflictCompare.tsx', 'Escape-only dismissal of the conflict compare screen (several-vaults ticket 10; same as Cancel, writes nothing); no shortcut is bound'],
   ['src/renderer/src/components/talklist/ShowFilter.tsx', 'Escape-only dismissal of the Show menu popover (several-vaults ticket 07); no shortcut is bound'],
   ['src/renderer/src/components/PlanRunSheet.tsx', 'Escape dismissal, Enter in the event field and Cmd+Enter to save in the plan sheet (modal, local)'],
   ['src/renderer/src/components/RunExtras.tsx', 'Escape cancels and Cmd+Enter keeps the inline edit box of Extras for this run on the Run page (work-files ticket 24, the drawn Esc and ⌘↩ on its Cancel and Done, local to the box)'],
   ['src/renderer/src/components/UnpublishRunConfirm.tsx', 'Escape cancels, Return confirms only on the focused Unpublish button, and Tab stays inside the Unpublish confirmation of the Run page (work-files ticket 17, modal, local, the drawn Esc and ↩ on its two buttons); no shortcut is bound'],
-  ['src/renderer/src/components/HistoryRunBoard.tsx', 'Escape-only dismissal of the Copy as Markdown popover and the share-link dialog (feedback-boards ticket 06); no shortcut is bound'],
+  ['src/renderer/src/components/RunLedger.tsx', 'Enter commits and Escape cancels the context field of a Run\'s ledger (local to the field, as the History row\'s was); no shortcut is bound'],
+  ['src/renderer/src/components/RunLedgerBoard.tsx', 'Escape-only dismissal of the Copy as Markdown popover and the share-link dialog (feedback-boards ticket 06); no shortcut is bound'],
   ['src/preload/present-live-setup.ts', 'A key on the Going live prompt\'s button only blurs the button, so Space and Enter go on to the slides (ticket 05); no shortcut is bound'],
   ['src/preload/present-end-live-boards.ts', 'Escape cancels and Enter confirms the End live board question (D20, modal, local); no app shortcut is bound'],
   ['src/renderer/src/components/ShareSheet.tsx', 'Escape-only share-sheet dismissal (share for comments)'],
@@ -819,7 +801,7 @@ const SURFACE_KEY_IDS = Object.fromEntries(
   [...(surfaceKeysSource.match(/export const SURFACE_KEYS = \{([\s\S]*?)\}/)?.[1] ?? '').matchAll(/'([^']+)':\s*'([^']+)'/g)]
     .map((match) => [match[1], match[2]])
 )
-assert.equal(Object.keys(SURFACE_KEY_IDS).length, 34, 'the rebindable talk-search and research surface keys are read from surfaceKeys.ts')
+assert.equal(Object.keys(SURFACE_KEY_IDS).length, 37, 'the rebindable talk-search and research surface keys are read from surfaceKeys.ts')
 const SURFACE_KEY_COMPARISON = /\be\.key\s*[!=]==|\.includes\(e\.key\)|\.test\(e\.key\)|surfaceKey\(|findBoxOwnsKey\(e\.key/
 const PICKER_REGIONS = [
   ['picker', slideBrowserSource, 'function handleKey(e: KeyboardEvent): void {', "window.addEventListener('keydown', handleKey, { capture: true })"],

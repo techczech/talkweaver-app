@@ -53,9 +53,11 @@ export function readLayoutMetrics(raw: unknown): { cssWidth: number; pageHeight:
   const pageHeight = num(content.height, 1, 10_000_000)
   const contentCssWidth = num(content.width, 1, 10_000_000)
   if (!cssWidth || !pageHeight || !contentCssWidth) return null
-  // contentSize is the same size in device pixels (the deprecated field): their ratio is the DPR.
+  // The deprecated contentSize includes page zoom, but captureScreenshot clip output does not.
+  // Remove that zoom to recover the display density used by the screenshot.
   const deviceWidth = num(device.width, 1, 40_000_000)
-  const dpr = deviceWidth ? Math.min(4, Math.max(1, deviceWidth / contentCssWidth)) : 1
+  const zoom = num(rec(m.cssVisualViewport).zoom, 0.1, 10) ?? 1
+  const dpr = deviceWidth ? Math.min(4, Math.max(1, deviceWidth / contentCssWidth / zoom)) : 1
   return { cssWidth: Math.floor(cssWidth), pageHeight: Math.ceil(pageHeight), dpr }
 }
 

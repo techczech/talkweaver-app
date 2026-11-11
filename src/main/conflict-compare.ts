@@ -294,7 +294,7 @@ export function createConflictCompare(deps: ConflictCompareDeps) {
     })
     if (!written.ok) {
       // The outline was not written. The set-aside file is only a duplicate while the outline still
-      // holds exactly that text: then it goes to the Trash. Otherwise (or if the Trash refuses) it is
+      // holds exactly that text: then it goes to the Bin. Otherwise (or if the Trash refuses) it is
       // left beside the talk and named: it may be the only copy of that text. Never unlinked.
       let setAsideLeft: string | undefined
       if (beforeMerge) {
@@ -313,7 +313,7 @@ export function createConflictCompare(deps: ConflictCompareDeps) {
     // 3. Ledger save of the text now in the talk.
     try { await deps.ledgerSave(s.outlinePath, written.text, lineage) } catch { /* a ledger failure never fails a merge */ }
 
-    // 4. The version not kept goes to the Trash, under the talk's file lock. The merge is written by
+    // 4. The version not kept goes to the Bin, under the talk's file lock. The merge is written by
     // now: whatever fails here is reported honestly (left beside the talk), never as a failed merge.
     const trashed: string[] = []
     let copyLeft = false
@@ -350,10 +350,10 @@ export function createConflictCompare(deps: ConflictCompareDeps) {
     const setAsideTrashed = !!beforeMerge && !setAsideLeft
     const leftBeside = setAsideLeft ? ` beside the talk as “${setAsideLeft}”` : ''
     const removed = s.kind === 'git'
-      ? setAsideTrashed ? 'The version with the conflict markers was moved to the Trash.' : `The version with the conflict markers was kept${leftBeside}.`
-      : copyTrashed ? 'The copy was moved to the Trash.' : 'The copy could not be moved or changed meanwhile, so it was left in the folder.'
+      ? setAsideTrashed ? 'The version with the conflict markers was moved to the Bin.' : `The version with the conflict markers was kept${leftBeside}.`
+      : copyTrashed ? 'The copy was moved to the Bin.' : 'The copy could not be moved or changed meanwhile, so it was left in the folder.'
     const setAside = s.kind === 'copy' && pick.keep === 'theirs'
-      ? setAsideTrashed ? ' Your version before the merge was moved to the Trash.' : ` Your version before the merge was kept${leftBeside}.`
+      ? setAsideTrashed ? ' Your version before the merge was moved to the Bin.' : ` Your version before the merge was kept${leftBeside}.`
       : ''
     const entry: ActivityEntry = {
       at: now().toISOString(),

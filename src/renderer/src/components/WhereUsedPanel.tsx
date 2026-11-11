@@ -58,14 +58,14 @@ export default function WhereUsedPanel({ slideId, onClose }: Props) {
       <div style={modal} role="dialog" aria-modal="true" aria-label="Where used and versions">
         <div style={titleBar}>
           <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--ink)' }}>
-            Slide <code style={code}>{`{id=${slideId}}`}</code> — where used &amp; versions
+            Where this slide is used, and its versions
           </span>
           <button onClick={onClose} aria-label="Close" style={closeBtn}>×</button>
         </div>
 
         <div style={body}>
           <div style={sectionHead}>
-            Used in {hits ? hits.length : '…'} presentation{hits?.length === 1 ? '' : 's'}
+            Used in {hits ? hits.length : '…'} talk{hits?.length === 1 ? '' : 's'}
           </div>
           {hits && hits.length === 0 && (
             <div style={emptyNote}>No outline currently contains this slide id.</div>
@@ -73,8 +73,7 @@ export default function WhereUsedPanel({ slideId, onClose }: Props) {
           <ul style={hitList}>
             {(hits ?? []).map((h) => (
               <li key={h.outline} style={hitRow}>
-                <code style={code}>{h.talk}</code>
-                <span style={pathText}> — {h.outline}</span>
+                <span title={h.outline}>{h.talk}</span>
               </li>
             ))}
           </ul>
@@ -89,9 +88,9 @@ export default function WhereUsedPanel({ slideId, onClose }: Props) {
             {(versions ?? []).map((v) => (
               <li key={v.file} style={versionRow}>
                 <div style={versionMeta}>
-                  {new Date(v.savedAt).toLocaleString()} · <code style={code}>{v.talk}</code>
+                  {new Date(v.savedAt).toLocaleString()} · <span title={v.file}>{v.talk}</span>
                   {v.sealed ? ` · sealed (${v.sealedBy})` : ''}
-                  {v.lineage ? ` · from {id=${v.lineage}}` : ''}
+                  {v.lineage ? ' · copied from another slide' : ''}
                 </div>
                 <pre style={versionMd}>{v.markdown}</pre>
               </li>
@@ -99,10 +98,6 @@ export default function WhereUsedPanel({ slideId, onClose }: Props) {
           </ol>
         </div>
 
-        <div style={footer}>
-          Read-only — the full slide history surface arrives with the Slide Browser.{' '}
-          <kbd style={kbd}>Esc</kbd> to close.
-        </div>
       </div>
     </>
   )

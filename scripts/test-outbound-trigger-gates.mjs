@@ -111,30 +111,32 @@ for (const [channel, args, expectedResult] of cases) {
   assert.deepEqual(result, expectedResult, `${channel}: refuses unresolved content with its real failure shape`)
 }
 
-const historySource = readFileSync(new URL('../src/renderer/src/components/History.tsx', import.meta.url), 'utf8')
-const pathwaysSource = readFileSync(new URL('../src/renderer/src/components/Pathways.tsx', import.meta.url), 'utf8')
+// The old History's Present is now the Run page's Go live: one function (lib/present-run.ts) gates both presentations.
+const historySource = readFileSync(new URL('../src/renderer/src/lib/present-run.ts', import.meta.url), 'utf8')
+const ledgerSource = readFileSync(new URL('../src/renderer/src/components/RunLedger.tsx', import.meta.url), 'utf8')
+const pathwaysSource = readFileSync(new URL('../src/renderer/src/components/PathwaysView.tsx', import.meta.url), 'utf8')
 const workspaceSource = readFileSync(new URL('../src/renderer/src/components/WorkspaceLayout.tsx', import.meta.url), 'utf8')
 
 assert.match(
   historySource,
-  /const presentPlanned[\s\S]*?unresolvedTriggerBlock\(source\)[\s\S]*?window\.tw\.pathways\.present/,
-  'History gates planned-Run pathway presentation before its outbound call'
+  /function presentRun[\s\S]*?unresolvedTriggerBlock\(source\)[\s\S]*?window\.tw\.pathways\.present/,
+  'Go live gates planned-Run pathway presentation before its outbound call'
 )
 assert.match(
   historySource,
-  /const presentPlanned[\s\S]*?unresolvedTriggerBlock\(source\)[\s\S]*?window\.tw\.talk\.present/,
-  'History gates planned-Run full-talk presentation before its outbound call'
+  /function presentRun[\s\S]*?unresolvedTriggerBlock\(source\)[\s\S]*?window\.tw\.talk\.present/,
+  'Go live gates planned-Run full-talk presentation before its outbound call'
 )
 // Work-files ticket 29: History publishes no Run handout (Publish lives in the Run checklist in
 // Sessions); the main-process 'run:publish-handout' case above is the gate every caller goes through.
 assert.equal(
-  /window\.tw\.history\.(publishRunHandout|unpublishRunHandout)/.test(historySource),
+  /window\.tw\.history\.(publishRunHandout|unpublishRunHandout)/.test(ledgerSource),
   false,
-  'History has no Run-handout publish or unpublish call'
+  'The Run ledger (History\'s content in the Runs view) has no Run-handout publish or unpublish call'
 )
 assert.match(
   pathwaysSource,
-  /const present =[\s\S]*?unresolvedTriggerBlock\(content\)[\s\S]*?window\.tw\.pathways\.present/,
+  /const present =[\s\S]*?unresolvedTriggerBlock\(source\)[\s\S]*?window\.tw\.pathways\.present/,
   'Pathways gates presentation before its outbound call'
 )
 assert.match(

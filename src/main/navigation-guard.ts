@@ -198,6 +198,8 @@ type GuardOpts = {
   refuseHandOut?: (contents: unknown, link: string, from: string) => string | null
   /** A window nobody sees or presses in: it navigates nowhere and hands nothing out. */
   isHiddenRenderer?: (contents: unknown) => boolean
+  /** Editor/Tools authoring surfaces keep local widget navigations blocked. */
+  isAuthoringContents?: (contents: unknown) => boolean
   /**
    * A live web page's own view (live-page-host.ts): another site shown as the top-level page of a
    * view with no preload and no bridge. Its main-frame navigations are judged by the live page's own
@@ -306,8 +308,18 @@ export function guardWebContents(contents: GuardedContents, opts: GuardOpts, ope
     const isMainFrame = event?.isMainFrame ?? (event?.frame ? event.frame.parent == null : true)
     if (isMainFrame) return
     const to = typeof event.url === 'string' ? event.url : ''
+    // A widget may create nested frames. Check the ancestry as well as the navigating frame.
+    // Otherwise a new about:blank child could navigate to an app scheme after losing the widget CSP.
     let top = ''
     try { top = contents.getURL() } catch { /* destroyed */ }
+    let authoring = true
+    try { authoring = parse(top)?.hostname === 'preview' && parse(top)?.protocol === 'twpresent:'
+      || !!opts.isHiddenRenderer?.(contents) || !!opts.isAuthoringContents?.(contents) } catch { /* fail closed */ }
+    if (isLocalEmbedFrame(event.frame) && to !== 'about:blank' && to !== 'about:srcdoc'
+      && (authoring || !/^https?:\/\//i.test(to))) {
+      event.preventDefault()
+      return
+    }
     if (opts.frameRule) {
       let frameUrl = ''
       let rule: 'deny' | null = 'deny'
@@ -322,6 +334,24 @@ export function guardWebContents(contents: GuardedContents, opts: GuardOpts, ope
     event.preventDefault()
     log(`[navigation] refused frame navigation to ${to.slice(0, 200)} in ${top.slice(0, 200)}`)
   })
+}
+
+const localEmbedFrames = new WeakSet<object>()
+
+/** Retain srcdoc ancestry across navigation without classifying independent video frames as widgets. */
+export function isLocalEmbedFrame(frame: unknown): boolean {
+  let current = frame as { url?: unknown; parent?: unknown } | null
+  try {
+    for (let depth = 0; current && depth < 32; depth++) {
+      if (current.url === 'about:srcdoc' || localEmbedFrames.has(current)) {
+        if (frame && typeof frame === 'object') localEmbedFrames.add(frame)
+        localEmbedFrames.add(current)
+        return true
+      }
+      current = current.parent as typeof current
+    }
+    return current !== null && current !== undefined
+  } catch { return true }
 }
 
 /** Install once, before the first window: guards every webContents the app ever creates. */

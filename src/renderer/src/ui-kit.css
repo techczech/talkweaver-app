@@ -1,0 +1,58 @@
+/* The one button set and the one badge (house rule R15, consistency batch 3), in the writing window's own tokens
+   (styles.css: --paper, --panel, --hover, --line, --ink, --muted, --oxford, --crimson, --green, --amber).
+   Buttons: .tw-btn with one of --primary, --secondary (the default), --quiet, --danger; a toggle is any of them
+   with aria-pressed="true". Sizes: --sm. (Selectors are doubled so a view's own `.lt button` reset never wins.) Badges: .tw-badge[data-state] with one of planned, published, delivered,
+   live, notset; the colour belongs to the state, never to the view that shows it.
+   The Tools window, the Importer and the Slide Browser use these; the Settings window carries the same values
+   through its own variables (settings-page.css). */
+:root {
+  --tw-btn-radius: 6px;
+  --tw-planned-bg: var(--hover, #ede8dc);   --tw-planned-fg: var(--muted, #5d6875);
+  --tw-published-bg: #e2ecdf;                --tw-published-fg: var(--green, #166534);
+  --tw-delivered-bg: #e2e9f2;                --tw-delivered-fg: var(--oxford, #0b3a6b);
+  --tw-live-bg: #f7dfe5;                     --tw-live-fg: var(--crimson, #9f1239);
+  --tw-notset-bg: var(--amber-bg, #f6ead2);  --tw-notset-fg: var(--amber, #92600a);
+}
+
+.tw-btn.tw-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px; flex: none; white-space: nowrap;
+  height: 30px; padding: 0 12px; border-radius: var(--tw-btn-radius); border: 1px solid var(--line, #d9d0c1);
+  background: var(--hover, #ede8dc); color: var(--ink, #17202a);
+  font: 500 13px/1 var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif); cursor: pointer;
+}
+.tw-btn.tw-btn:hover:not(:disabled) { background: var(--active, #e4ddd0); border-color: color-mix(in srgb, var(--oxford, #0b3a6b) 40%, transparent); }
+.tw-btn.tw-btn:focus-visible { outline: 2px solid var(--oxford, #0b3a6b); outline-offset: 1px; }
+.tw-btn.tw-btn:disabled, .tw-btn[aria-disabled="true"] { opacity: .5; cursor: default; }
+.tw-btn.tw-btn svg { width: 15px; height: 15px; stroke-width: 1.9; flex: none; }
+.tw-btn.tw-btn--sm { height: 26px; padding: 0 9px; font-size: 12.5px; }
+.tw-btn.tw-btn--icon { width: 30px; padding: 0; }
+.tw-btn.tw-btn--icon.tw-btn--sm { width: 26px; }
+.tw-btn.tw-btn--primary { background: var(--oxford, #0b3a6b); border-color: var(--oxford, #0b3a6b); color: #fff; font-weight: 600; }
+.tw-btn.tw-btn--primary:hover:not(:disabled) { background: color-mix(in srgb, var(--oxford, #0b3a6b) 85%, black); border-color: color-mix(in srgb, var(--oxford, #0b3a6b) 85%, black); }
+.tw-btn.tw-btn--secondary { }
+.tw-btn.tw-btn--quiet { background: transparent; border-color: transparent; color: var(--muted, #5d6875); }
+.tw-btn.tw-btn--quiet:hover:not(:disabled) { background: var(--hover, #ede8dc); border-color: transparent; color: var(--ink, #17202a); }
+.tw-btn.tw-btn--danger { background: var(--crimson, #9f1239); border-color: var(--crimson, #9f1239); color: #fff; font-weight: 600; }
+.tw-btn.tw-btn--danger:hover:not(:disabled) { background: color-mix(in srgb, var(--crimson, #9f1239) 85%, black); border-color: color-mix(in srgb, var(--crimson, #9f1239) 85%, black); }
+/* A toggle (a filter chip, a view switch): the secondary look when off, the navy primary when on. */
+.tw-btn.tw-btn[aria-pressed="true"], .tw-btn.is-on { background: var(--oxford, #0b3a6b); border-color: var(--oxford, #0b3a6b); color: #fff; }
+.tw-btn.tw-btn[aria-pressed="true"]:hover:not(:disabled) { background: color-mix(in srgb, var(--oxford, #0b3a6b) 85%, black); }
+.tw-btn.tw-btn--chip { height: 26px; padding: 0 10px; border-radius: 13px; font-size: 12.5px; }
+.tw-btn.tw-btn--text { background: none; border: 0; padding: 0; height: auto; color: var(--oxford, #0b3a6b); text-decoration: underline; font-weight: 500; }
+.tw-btn.tw-btn--text:hover:not(:disabled) { background: none; }
+
+.tw-badge {
+  display: inline-flex; align-items: center; gap: 5px; height: 20px; padding: 0 8px; border-radius: 10px; flex: none; white-space: nowrap;
+  font: 600 11.5px/1 var(--font-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif);
+  background: var(--tw-planned-bg); color: var(--tw-planned-fg);
+}
+.tw-badge[data-state="planned"] { background: var(--tw-planned-bg); color: var(--tw-planned-fg); }
+.tw-badge[data-state="published"] { background: var(--tw-published-bg); color: var(--tw-published-fg); }
+.tw-badge[data-state="delivered"] { background: var(--tw-delivered-bg); color: var(--tw-delivered-fg); }
+.tw-badge[data-state="live"] { background: var(--tw-live-bg); color: var(--tw-live-fg); }
+.tw-badge[data-state="notset"] { background: var(--tw-notset-bg); color: var(--tw-notset-fg); }
+.tw-badge svg { width: 12px; height: 12px; stroke-width: 2; flex: none; }
+.tw-badge .tw-badge-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: none; animation: tw-badge-pulse 1.4s infinite; }
+@keyframes tw-badge-pulse { 50% { opacity: .25; } }
+@media (prefers-reduced-motion: reduce) { .tw-badge .tw-badge-dot { animation: none; } }
+.tw-badge--sm { height: 18px; padding: 0 7px; font-size: 11px; }

@@ -41,7 +41,7 @@ assert.equal(runChips({ ...runs[1], expectedPeople: 22 }, true, now, { started: 
 assert.equal(runChips({ ...runs[1], expectedPeople: undefined }, true, now, { started: 14, finished: 9 }).prework.text, 'Pre-work: 14 started', 'without expected people it is only a count')
 assert.equal(runChips({ ...runs[1], expectedPeople: 22, preworkOpens: '2026-10-01T09:00' }, true, now, { started: 0, finished: 0 }).prework.text, 'Pre-work opens 1 Oct', 'before it opens the chip says when')
 assert.equal(runChips({ ...runs[1], preworkOpens: undefined }, false, now).prework, null, 'no pre-work, no pre-work chip')
-assert.deepEqual(runChips(null, true, now), { run: null, prework: null, nudge: { text: 'No run planned · Plan a run…' } })
+assert.deepEqual(runChips(null, true, now), { run: null, prework: null, nudge: { text: 'No Run planned · Plan a Run…' } })
 assert.deepEqual(runChips(null, false, now), { run: null, prework: null, nudge: null }, 'no pre-work and no Run shows nothing')
 
 // The sheet's draft (work-files ticket 11): empty date and time as the mockup draws them; each phase
@@ -81,8 +81,8 @@ assert.equal(planFromDraft({ ...filled, pre: { ...filled.pre, opens: '' } }, ctx
 assert.equal(planFromDraft({ ...filled, post: { ...filled.post, closes: '' } }, ctx).error, 'Choose when post-work closes.', 'Closes is required')
 assert.equal(planFromDraft({ ...filled, post: { ...filled.post, opens: '' } }, ctx).error, 'Choose when post-work opens.', 'a set time with no time chosen')
 assert.equal(planFromDraft({ ...filled, post: { ...filled.post, opens: '2026-10-21T16:00' } }, ctx).fields.work.post.opens, '2026-10-21T16:00', 'At a set time…')
-assert.equal(planFromDraft(filled, ctx).fields.work.post.opens, 'session-end', 'When the session ends is the default')
-assert.equal(planFromDraft({ ...filled, post: { ...filled.post, opens: '2026-10-21T13:00' } }, ctx).error, 'Post-work must open after the session starts')
+assert.equal(planFromDraft(filled, ctx).fields.work.post.opens, 'session-end', 'When the Run ends is the default')
+assert.equal(planFromDraft({ ...filled, post: { ...filled.post, opens: '2026-10-21T13:00' } }, ctx).error, 'Post-work must open after the Run starts')
 // "None" leaves the phase off: a new Run carries no attachment for it, an edited Run has it removed.
 {
   const noPre = planFromDraft({ ...filled, pre: { fileId: '', opens: '', closes: '' } }, ctx)
@@ -121,26 +121,26 @@ assert.equal(planFromDraft({ ...filled, post: { ...filled.post, opens: '2026-10-
 {
   const late = { ...filled, pre: { ...filled.pre, closes: '2026-10-21T14:30' } }
   const [issue] = planIssues(late)
-  assert.equal(issue.message, 'Pre-work must close before the session starts')
+  assert.equal(issue.message, 'Pre-work must close before the Run starts')
   assert.equal(issue.phase, 'pre')
   assert.equal(issue.fix.label, 'Close at 13:00', 'an hour before the session starts, on the same day')
   assert.equal(applyFix(late, issue.fix).pre.closes, '2026-10-21T13:00')
   assert.equal(planIssues(applyFix(late, issue.fix)).length, 0, 'the fix clears the message')
-  assert.equal(planFromDraft(late, ctx).error, 'Pre-work must close before the session starts', 'and Save is refused with the same words')
+  assert.equal(planFromDraft(late, ctx).error, 'Pre-work must close before the Run starts', 'and Save is refused with the same words')
   const across = planIssues({ ...late, startTime: '00:30', pre: { ...late.pre, closes: '2026-10-21T01:00' } })[0]
   assert.equal(across.fix.label, 'Close Tue 20 Oct 23:30', 'the fix keeps the day when the hour before is yesterday')
   assert.equal(planIssues({ ...filled, pre: { ...filled.pre, closes: '2026-10-21T14:00' } }).length, 0, 'pre-work may close as the session starts')
 
   const early = { ...filled, post: { ...filled.post, closes: '2026-10-20T17:00' } }
   const [post] = planIssues(early)
-  assert.equal(post.message, 'Post-work must close after the session ends')
+  assert.equal(post.message, 'Post-work must close after the Run ends')
   assert.equal(post.phase, 'post')
   assert.equal(post.fix.label, 'Close Wed 4 Nov 17:00', 'a fortnight after the session, 17:00')
   assert.equal(applyFix(early, post.fix).post.closes, '2026-11-04T17:00')
   assert.equal(planIssues(applyFix(early, post.fix)).length, 0)
   assert.equal(planIssues({ ...filled, post: { ...filled.post, closes: '2026-10-21T14:00' } }).length, 1, 'closing at the session start is too early for post-work')
   const setBefore = planIssues({ ...filled, post: { fileId: 'feedback', opens: '2026-10-21T13:00', closes: '2026-11-04T17:00' } })[0]
-  assert.equal(setBefore.fix.label, 'Open when the session ends')
+  assert.equal(setBefore.fix.label, 'Open when the Run ends')
   assert.equal(applyFix({ ...filled, post: { fileId: 'feedback', opens: '2026-10-21T13:00', closes: '2026-11-04T17:00' } }, setBefore.fix).post.opens, 'session-end')
   assert.equal(planIssues({ ...filled, pre: { ...filled.pre, closes: '2026-10-14T08:00' } })[0].message, 'Pre-work must close after it opens')
   // Nothing is judged until the values are complete, or for a phase left off.
@@ -154,8 +154,8 @@ assert.equal(planFromDraft({ ...filled, post: { ...filled.post, opens: '2026-10-
   assert.deepEqual(planIssues(early, {}, { delivered: true }), [], 'nor post-work closing before it')
   assert.equal(planFromDraft(late, given).ok, true, 'and the sheet saves it')
   assert.equal(planFromDraft(early, given).ok, true)
-  assert.equal(planFromDraft(late, { phases: true, editing: true }).error, 'Pre-work must close before the session starts', 'a planned Run being edited is still refused')
-  assert.equal(planFromDraft(late, { ...given, delivered: false }).error, 'Pre-work must close before the session starts')
+  assert.equal(planFromDraft(late, { phases: true, editing: true }).error, 'Pre-work must close before the Run starts', 'a planned Run being edited is still refused')
+  assert.equal(planFromDraft(late, { ...given, delivered: false }).error, 'Pre-work must close before the Run starts')
   assert.equal(planIssues({ ...filled, pre: { ...filled.pre, closes: '2026-10-14T08:00' } }, {}, { delivered: true })[0].message, 'Pre-work must close after it opens')
   assert.equal(planIssues({ ...filled, post: { fileId: 'feedback', opens: '2026-10-21T13:00', closes: '2026-11-04T17:00' } }, {}, { delivered: true })[0].code, 'post-opens-before-start')
 }
@@ -243,7 +243,7 @@ assert.deepEqual(lastDeliveredBySlug(sessions), { a: Date.UTC(2026, 8, 28, 14), 
   assert.equal(chipOf([done], '2026-10-14T10:00:00Z').ref.runId, 'done', 'post-work open alone')
 }
 
-// Plan the next run like this (work-files ticket 26).
+// Plan the next Run like this (work-files ticket 26).
 {
   const source = {
     id: 'said', talkSlug: 'ai-research', status: 'delivered', plannedDate: '2026-10-21', startTime: '14:00', eventTitle: 'Saïd workshop', audience: 'Research teams', expectedPeople: 18,

@@ -628,6 +628,29 @@ try {
     assert.equal(gateApp(signed.app, { requireSigned: true, run: signedBy(`Developer ID Application: Test Person (${team})`, team) }), null, 'a Developer ID Application signature of the team in build.mac.identity: accepted')
     assert.deepEqual(requirements, [`-R=${developerIdRequirement(team)}`], 'once codesign accepts the Apple-anchored Developer ID requirement for that team')
     assert.equal(developerIdRequirement(team), `anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "${team}"`, 'Apple\'s Developer ID designated requirement')
+    // The full release verifier must compose the security gate after its FFmpeg/signature checks.
+    // OS signing is simulated at the existing runner seam; the gate's policy assertions are real.
+    const { assertWire, assertEntitlements } = require('./verify-electron-security.cjs')
+    const safeWire = { version: '1', 0: 49, 2: 48, 3: 48, 4: 48, 5: 48 }
+    const safeEntitlements = '<plist><dict><key>com.apple.security.cs.allow-jit</key><true/></dict></plist>'
+    const releaseFixture = (wire, entitlements) => {
+      let securityCalls = 0
+      const signer = signedBy(`Developer ID Application: Test Person (${team})`, team)
+      const result = gate(signed.app, { requireSigned: true, run: (command, args) => {
+        if (command !== process.execPath) return signer(command, args)
+        securityCalls++
+        assert.equal(args[0], join(repo, 'scripts/verify-electron-security.cjs'))
+        assert.equal(args[1], signed.app)
+        try { assertWire(wire); assertEntitlements(entitlements); return { status: 0 } }
+        catch (error) { return { status: 1, stderr: error.message } }
+      } })
+      assert.equal(securityCalls, 1, 'release verifier must execute the Electron security gate')
+      return result.problems.join('\n')
+    }
+    assert.equal(releaseFixture(safeWire, safeEntitlements), '')
+    assert.match(releaseFixture({ ...safeWire, 2: 49 }, safeEntitlements), /security gate failed: EnableNodeOptionsEnvironmentVariable/)
+    assert.match(releaseFixture(safeWire, '<plist><dict><key>unexpected.entitlement</key><true/></dict></plist>'), /security gate failed: forbidden entitlement/)
+    ok('release verifier invokes security gate and refuses bad fuse wire and forbidden entitlement fixtures')
     // A counterfeit: the certificate is named "Developer ID Application: … (team)" and the TeamIdentifier
     // is the team, but the signature is not anchored to Apple (here the real ad-hoc signature): refused.
     assert.match(gateApp(signed.app, { requireSigned: true, run: signedBy(`Developer ID Application: Test Person (${team})`, team, { anchored: false }) }), new RegExp(`does not satisfy Apple's Developer ID requirement for team ${team}[^]*failed to satisfy specified code requirement`), 'a Developer ID name and team without Apple\'s anchor: refused by codesign -R')

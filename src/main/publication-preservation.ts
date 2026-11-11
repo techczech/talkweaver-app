@@ -18,7 +18,7 @@ const messages: Record<PreservationReason, string> = {
   PUBLISH_REVISION_CHANGED: 'The published site changed during this attempt. Review the current site and publish again.',
   PUBLISH_INVENTORY_UNAVAILABLE: 'The complete published site could not be checked. Check the connection and try again.',
   PUBLISH_BUSY: 'Another publish is running, or its lock cannot be checked safely. Wait for it to finish and try again.',
-  PUBLISH_OUTCOME_UNKNOWN: 'The last publish could not be confirmed. Try publishing again to check it without repeating that upload; if it stays unresolved, reconcile the publication record described in the specification.',
+  PUBLISH_OUTCOME_UNKNOWN: 'The result of the earlier publish is still unknown: Cloudflare can take a while to show it. Try again later; nothing is sent until it is known. If it stays like this, follow "Recovering a stuck publish" in the publishing specification (docs/plans/2026-11-05-per-talk-publishing/spec.md).',
 }
 export function preservationMessage(reason: PreservationReason, path?: string): string {
   return `${path ? `Publishing stopped because the published path ${JSON.stringify(path)} cannot be compared safely. This app cannot repair an existing remote name. Follow the manual remote-path recovery in the publication specification before trying again.` : messages[reason]} (${reason})`
@@ -28,7 +28,13 @@ export class PreservationRefusal extends Error {
   readonly missingCount?: number
   constructor(reason: PreservationReason, path?: string, missingCount?: number) { super(preservationMessage(reason, path)); this.reason = reason; this.missingCount = missingCount }
 }
-export interface PreservationInventory { complete: true; site: string; revision: string; paths: string[]; candidateDigest?: string; rawPaths?: string[] }
+export interface PreservationInventory {
+  complete: true; site: string; revision: string; paths: string[]; candidateDigest?: string; rawPaths?: string[]
+  /** The production deployment's manifest as Cloudflare keeps it, `[path, asset hash]` with the path exactly as stored (per-talk merge). */
+  files?: Array<[string, string]>
+  /** The production deployment's own address (`https://<short id>.<site>.pages.dev`), when Cloudflare gave one. */
+  deploymentUrl?: string
+}
 export interface PreservationOptions {
   site: string
   inventory(): Promise<PreservationInventory | null>
@@ -38,6 +44,12 @@ export interface PreservationOptions {
   /** Explicit null only for authoring, which approves the bytes just built. */
   candidateDigest: string | null
   storageRoot?: string
+  /**
+   * Per-talk publishing: what became of an earlier in-process attempt whose outcome is unknown, asked of Cloudflare by its
+   * deployment id (kept the moment the request answered) or, its answer lost, by its candidate digest. `deployed` with the id;
+   * `pending` and `unknown` keep the journal (the publish is refused until it settles); `not-deployed` discards it.
+   */
+  reconcile?(attempt: { revision: string; candidateDigest: string; deploymentId?: string; postedAt?: number; sent: boolean }): Promise<{ state: 'deployed'; id: string } | { state: 'not-deployed' | 'pending' | 'unknown' }>
 }
 const refuse = (reason: PreservationReason, path?: string): never => { throw new PreservationRefusal(reason, path) }
 // Deployment file-map keys are opaque names, NOT URLs. Never percent-decode them.
@@ -45,6 +57,8 @@ export function publicationPath(value: string): string {
   if (typeof value !== 'string' || /[%?#]/u.test(value) || !value.startsWith('/') || value.endsWith('/') || value.startsWith('//') || /[\\\x00-\x1f\x7f-\x9f\uD800-\uDFFF]/u.test(value) || value.slice(1).split('/').some(p => !p || p === '.' || p === '..')) return refuse('PUBLISH_INVENTORY_UNAVAILABLE', value)
   return value.normalize('NFC')
 }
+/** A path of the candidate as it will be kept: refused (PUBLISH_CANDIDATE_CHANGED) when it holds %, ? or # or is no plain path. */
+export function candidatePath(path: string): string { return localPath(path) }
 function localPath(path: string): string {
   if (/[%?#]/u.test(path)) {
     const error = new PreservationRefusal('PUBLISH_CANDIDATE_CHANGED')
@@ -167,20 +181,66 @@ function durable(path: string, value: unknown, exclusive = false): void {
   try { writeFileSync(fd, JSON.stringify(value)); fsyncSync(fd) } finally { closeSync(fd) }
   if (!exclusive) renameSync(temp, path)
 }
-interface Journal { version: 2; site: string; revision: string; candidateDigest: string; paths: string[]; controls: Record<string, string>; holder: Holder; child?: Holder; launch: 'pending' | 'running' | 'settled'; outcome: 'unknown' }
+/**
+ * `sendsRecorded`: this journal records the moment its deployment request is sent (`postedAt`, written before the request): its
+ * absence then proves no request was sent. A journal without it (written before that was recorded) proves nothing either way.
+ * `inProcess`: the deployment was created by this app's own requests (the per-talk merge), not by a tool in a process of its
+ * own. Its launch is over once the app's call returned (`settled`) or the app that made it is gone; a writer that does not know
+ * the field finds no `child` and refuses, as it must.
+ */
+interface Journal { version: 2; site: string; revision: string; candidateDigest: string; paths: string[]; controls: Record<string, string>; holder: Holder; child?: Holder; inProcess?: true; deploymentId?: string; postedAt?: number; sendsRecorded?: true; launch: 'pending' | 'running' | 'settled'; outcome: 'unknown' }
 export interface PublicationLaunch {
   candidateDigest: string
   started(pid: number, group?: boolean): Promise<void>
+  /** In-process launches: the deployment request is about to be sent (its time is kept in the journal first). */
+  posting?(): void
+  /** In-process launches: the deployment request answered with this id (kept in the journal at once). */
+  deployed?(id: string): void
+}
+/** One merged deployment (per-talk publishing): what will be live, described without any local site folder. */
+export interface MergedDeployment {
+  /** The digest carried in the deployment's commit message (`tw-candidate:<digest>`): the recovery check reads it back. */
+  candidateDigest: string
+  /** Every path of the new deployment's manifest, as Cloudflare will keep it. */
+  paths: readonly string[]
+  /** The site-level files sent beside the manifest (`/_redirects`, `/_headers`), each as `publicationBinding([[name, sha256]])`. */
+  controls: Record<string, string>
 }
 export interface PreservationAttempt {
   recovered: boolean
+  /** The complete production inventory this attempt began with (checked; `files` and `deploymentUrl` when the reader gave them). */
+  live: PreservationInventory
+  /**
+   * Per-talk publishing: the production deployment is read again (PUBLISH_REVISION_CHANGED when it moved), the source binding is
+   * checked, the recovery journal is written, and only then `launch` runs: the app's own requests that upload missing bytes and
+   * create the deployment. Nothing of a local site folder is read. The record of what went up is the same file `upload` writes.
+   */
+  deploy<T>(plan: MergedDeployment, launch: (context: PublicationLaunch) => Promise<{ outcome: 'accepted' | 'failed' | 'unknown'; value: T }>): Promise<T>
   upload<T>(dir: string, before: readonly string[], removalRoots: readonly string[], launch: (frozenDir: string, context: PublicationLaunch) => Promise<{ outcome: 'accepted' | 'failed' | 'unknown'; value: T }>, overlays?: readonly PublicationOverlay[]): Promise<T>
   close(): void
 }
-export async function beginPublication(options: PreservationOptions): Promise<PreservationAttempt> {
-  const root = options.storageRoot ?? (process.platform === 'win32'
+/** Where this computer keeps its publication coordination files (shared by both writers). */
+export function publicationStorageRoot(storageRoot?: string): string {
+  return storageRoot ?? (process.platform === 'win32'
     ? join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'TalkWeaver Publication', 'v1')
     : join(homedir(), 'Library/Application Support/TalkWeaver Publication/v1'))
+}
+/**
+ * This computer's record of its last accepted publish to `site` (`<binding>.controls.json`, written by `upload` and `deploy`):
+ * the production revision it was made against or recovered at, and the candidate digest it carried. Null when there is none or
+ * it does not read. Read only: per-talk publishing uses it to decide whether this computer may write a site's first record.
+ */
+export function readPublicationRecord(site: string, storageRoot?: string): { revision: string; candidateDigest?: string; controls: Record<string, string> } | null {
+  try {
+    const value = JSON.parse(readFileSync(join(publicationStorageRoot(storageRoot), publicationBinding(site) + '.controls.json'), 'utf8'))
+    if (!value || value.site !== site || value.published !== true || typeof value.revision !== 'string' || !value.revision) return null
+    const controlsOk = value.controls && typeof value.controls === 'object' && !Array.isArray(value.controls) && Object.values(value.controls).every((digest) => typeof digest === 'string')
+    if (!controlsOk) return null
+    return { revision: value.revision, controls: value.controls as Record<string, string>, ...(typeof value.candidateDigest === 'string' && /^[0-9a-f]{64}$/u.test(value.candidateDigest) ? { candidateDigest: value.candidateDigest } : {}) }
+  } catch { return null }
+}
+export async function beginPublication(options: PreservationOptions): Promise<PreservationAttempt> {
+  const root = publicationStorageRoot(options.storageRoot)
   const key = publicationBinding(options.site), lock = join(root, key + '.lock'), journal = join(root, key + '.json'), record = join(root, key + '.controls.json')
   const token = randomUUID(), started = await processStart(process.pid)
   if (!started) return refuse('PUBLISH_BUSY')
@@ -236,9 +296,23 @@ export async function beginPublication(options: PreservationOptions): Promise<Pr
       let old: Journal
       try { old = JSON.parse(readFileSync(journal, 'utf8')) } catch { return refuse('PUBLISH_OUTCOME_UNKNOWN') }
       if (old.version !== 2 || old.site !== options.site || !old.revision || !/^[0-9a-f]{64}$/u.test(old.candidateDigest) || !Array.isArray(old.paths)) refuse('PUBLISH_OUTCOME_UNKNOWN')
-      // Returning from a runner is not proof of exit (its kill deadline may have expired).
-      if (!(old.child && await childGone(old.child))) refuse('PUBLISH_OUTCOME_UNKNOWN')
-      if (first.revision === old.revision) rmSync(journal)
+      // Returning from a runner is not proof of exit (its kill deadline may have expired). An in-process launch is over once its
+      // call returned (`settled`) or once the app that made it has gone.
+      const over = old.inProcess === true ? (old.launch === 'settled' || await gone(old.holder)) : !!(old.child && await childGone(old.child))
+      if (!over) refuse('PUBLISH_OUTCOME_UNKNOWN')
+      if (old.inProcess === true && options.reconcile) {
+        // An unchanged production revision does not prove the earlier deployment cannot still become production: ask Cloudflare.
+        // Sent, unless the journal proves otherwise: it records sends and records none.
+        const sent = !(old.sendsRecorded === true && typeof old.postedAt !== 'number' && !old.deploymentId)
+        const found = await options.reconcile({ revision: old.revision, candidateDigest: old.candidateDigest, ...(old.deploymentId ? { deploymentId: old.deploymentId } : {}), ...(typeof old.postedAt === 'number' ? { postedAt: old.postedAt } : {}), sent })
+        if (found.state === 'pending' || found.state === 'unknown') refuse('PUBLISH_OUTCOME_UNKNOWN')
+        if (found.state === 'deployed' && first.revision === found.id) {
+          durable(record, { site: options.site, revision: first.revision, candidateDigest: old.candidateDigest, controls: old.controls, published: true })
+          recovered = true
+        }
+        // Not deployed, failed, or deployed and since replaced by a later production deployment: it is over.
+        rmSync(journal)
+      } else if (first.revision === old.revision) rmSync(journal)
       else if (first.candidateDigest === old.candidateDigest && publicationBinding([...first.paths].sort()) === publicationBinding([...old.paths].sort())) {
         durable(record, { site: options.site, revision: first.revision, candidateDigest: old.candidateDigest, controls: old.controls, published: true })
         rmSync(journal); recovered = true
@@ -247,7 +321,28 @@ export async function beginPublication(options: PreservationOptions): Promise<Pr
     if (!options.approvedBinding || await options.binding() !== options.approvedBinding) refuse('PUBLISH_IDENTITY_CHANGED')
     let used = false
     return {
-      close, recovered,
+      close, recovered, live: first,
+      async deploy(plan, launch) {
+        if (used) refuse('PUBLISH_OUTCOME_UNKNOWN')
+        used = true
+        if (!/^[0-9a-f]{64}$/u.test(plan.candidateDigest) || !Array.isArray(plan.paths) || plan.paths.length > 100_000) refuse('PUBLISH_CANDIDATE_CHANGED')
+        const paths = plan.paths.map(publicationPath)
+        if (Object.entries(plan.controls).some(([name, digest]) => !controls.includes(name) || !/^[0-9a-f]{64}$/u.test(digest))) refuse('PUBLISH_CANDIDATE_CHANGED')
+        const last = checked(await options.inventory(), options.site)
+        if (last.revision !== first.revision || publicationBinding([...last.paths].sort()) !== publicationBinding([...first.paths].sort())) refuse('PUBLISH_REVISION_CHANGED')
+        if (await options.binding() !== options.approvedBinding) refuse('PUBLISH_IDENTITY_CHANGED')
+        const entry: Journal = { version: 2, site: options.site, revision: first.revision, candidateDigest: plan.candidateDigest,
+          paths, controls: plan.controls, holder, inProcess: true, sendsRecorded: true, launch: 'running', outcome: 'unknown' }
+        durable(journal, entry, true)
+        let result
+        try { result = await launch({ candidateDigest: plan.candidateDigest, started: async () => {}, posting: () => { entry.postedAt = Date.now(); durable(journal, entry) }, deployed: (id) => { entry.deploymentId = id; durable(journal, entry) } }) }
+        catch { entry.launch = 'settled'; durable(journal, entry); return refuse('PUBLISH_OUTCOME_UNKNOWN') }
+        entry.launch = 'settled'; durable(journal, entry)
+        if (result.outcome === 'unknown') refuse('PUBLISH_OUTCOME_UNKNOWN')
+        if (result.outcome === 'accepted') durable(record, { site: options.site, revision: first.revision, candidateDigest: plan.candidateDigest, controls: plan.controls, published: true })
+        rmSync(journal)
+        return result.value
+      },
       async upload(dir, before, removalRoots, launch, overlays = []) {
         if (used) refuse('PUBLISH_OUTCOME_UNKNOWN')
         used = true

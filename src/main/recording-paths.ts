@@ -1,3 +1,4 @@
+import { headerOnlyWebm, recordingDurationMs } from './recording-duration.ts'
 // Where the recording handlers may read, write and delete. Every talk slug and session id the
 // recording IPC receives comes from a renderer, and each becomes a path segment; these functions
 // are the only place recording.ts turns them into paths. Unsafe input is refused (a named error,
@@ -13,6 +14,7 @@ import { readdir, stat } from 'fs/promises'
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'path'
 import { isSafeRunId, isSafeTalkSlug, normaliseRun, runPathForTalk, talkRunFolderForTalk, type RunRecord } from './runs.ts'
 import { pathStaysInside } from './path-containment.ts'
+import { audibleSegments } from '../shared/recording-clock.ts'
 
 export type RecordingPathError = 'unsafe-talk-slug' | 'unsafe-session-id' | 'unsafe-path'
 export type RecordingPath = { ok: true; path: string } | { ok: false; error: RecordingPathError }
@@ -209,10 +211,11 @@ export function existingRecordedSegmentPath(userDataDir: string, sessionId: unkn
 }
 
 type RecordingRecord = {
+  recordingMs?: unknown
   id?: unknown
   sessionId?: unknown
   talkSlug?: unknown
-  audio?: { segments?: unknown } | null
+  audio?: { segments?: unknown; partial?: boolean } | null
   segments?: unknown
 }
 
@@ -258,6 +261,34 @@ export function recordedSegmentPaths(userDataDir: string, sessionId: unknown, so
     const path = index === null ? null : existingRecordedSegmentPath(userDataDir, sessionId, index, seg.file)
     return path ? [{ path, startMs: Number(seg.startMs) || 0, endMs: Number(seg.endMs) || 0 }] : []
   })
+}
+
+/**
+ * The segments transcription and video export hear: the Run's own files (recordedSegmentPaths)
+ * less empty files and verified header-only WebM files. File packet times repair zero spans. Deleting a Run and checking that
+ * every listed file is present still use recordedSegmentPaths, which keeps them.
+ */
+export async function audibleSegmentPaths(userDataDir: string, sessionId: unknown, source: RecordingSource | null, ffmpeg?: string): Promise<Array<{ path: string; startMs: number; endMs: number }>> {
+  const segments = []
+  const listed = recordedSegmentPaths(userDataDir, sessionId, source)
+  const legacy = listed.every(s => s.startMs === 0 && s.endMs === 0)
+  for (const [index, seg] of listed.entries()) {
+    let bytes: number
+    try { bytes = lstatSync(seg.path).size; if (bytes === 0) continue } catch { continue }
+    if (ffmpeg && await headerOnlyWebm(seg.path)) continue
+    // Positive spans already have a clock: reading/probing them cannot improve it.
+    if (ffmpeg && !legacy && seg.endMs === seg.startMs) {
+      let duration: number
+      try { duration = await recordingDurationMs(ffmpeg, seg.path) }
+      catch { continue /* A failed zero-span repair keeps the old omission. */ }
+      if (duration <= 0) continue
+      const runEnd = Number(source?.record.recordingMs)
+      seg.endMs = Math.min(seg.startMs + Math.ceil(duration), listed[index + 1]?.startMs ?? Infinity, !source?.record.audio?.partial && Number.isFinite(runEnd) ? runEnd : Infinity)
+      if (seg.endMs <= seg.startMs) continue
+    }
+    segments.push({ ...seg, bytes })
+  }
+  return audibleSegments(segments)
 }
 
 /** `<vault>/_PRESENTATIONS/<talkSlug>/<sessionId>.json`, guarded by `runPathForTalk`. */
@@ -337,6 +368,24 @@ function resolvesInside(parent: string, child: string): boolean {
  * transcript file must itself resolve inside its folder (a link to a file elsewhere is refused).
  */
 export function transcriptPath(vaultRoot: string | null, userDataDir: string, talkSlug: unknown, sessionId: unknown): RecordingPath {
+  return transcriptSidecarPath(vaultRoot, userDataDir, talkSlug, sessionId, 'transcript')
+}
+
+/**
+ * Legacy sidecar name, retained for path validation. Current timings are embedded in the transcript
+ * JSON; no new sidecar is written. This location keeps the transcript's path rules and refusals.
+ */
+export function wordsPath(vaultRoot: string | null, userDataDir: string, talkSlug: unknown, sessionId: unknown): RecordingPath {
+  return transcriptSidecarPath(vaultRoot, userDataDir, talkSlug, sessionId, 'words')
+}
+
+function transcriptSidecarPath(
+  vaultRoot: string | null,
+  userDataDir: string,
+  talkSlug: unknown,
+  sessionId: unknown,
+  kind: 'transcript' | 'words'
+): RecordingPath {
   const error = nameError(talkSlug, sessionId)
   if (error) return refuse(error)
   let folder: string
@@ -356,7 +405,7 @@ export function transcriptPath(vaultRoot: string | null, userDataDir: string, ta
     if (!local.ok) return local
     folder = dirname(local.path)
   }
-  const path = join(folder, `${sessionId as string}.transcript.json`)
+  const path = join(folder, `${sessionId as string}.${kind}.json`)
   if (dirname(path) !== folder) return refuse('unsafe-path')
   if (lexists(path) && !resolvesInside(folder, path)) return refuse('unsafe-path')
   return { ok: true, path }

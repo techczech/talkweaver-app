@@ -40,6 +40,9 @@ await check('the 1 Oct case: 34 s of audio in a 2 h 57 min recording', () => {
 await check('segments with a gap: audio is the sum of the segments', () => {
   const segments = [{ file: 'a', bytes: 1, startMs: 0, endMs: 30 * 60_000 }, { file: 'b', bytes: 1, startMs: 31 * 60_000, endMs: 60 * 60_000 }]
   assert.equal(audioMsFromSegments(segments), 59 * 60_000)
+  // A microphone switch: the new segment starts 120 ms before the old one stops; that time counts once.
+  assert.equal(audioMsFromSegments([{ startMs: 0, endMs: 10_000 }, { startMs: 9_880, endMs: 20_000 }]), 20_000)
+  assert.equal(audioMsFromSegments([{ startMs: 5_000, endMs: 8_000 }, { startMs: 0, endMs: 10_000 }]), 10_000, 'one inside another, in any order')
   const s = runAudioSummary({ recordingMs: H, audio: { segments, gaps: [{ startMs: 30 * 60_000, endMs: 31 * 60_000, reason: 'track-ended' }] } })
   assert.equal(s.label, 'Audio 59 min of 1 h · 1 gap')
 })
@@ -65,6 +68,12 @@ mkdirSync(userData, { recursive: true })
 const bundled = await build({
   entryPoints: [join(repo, 'src/main/recording.ts')], bundle: true, write: false, format: 'cjs', platform: 'node', packages: 'external', logLevel: 'silent',
   plugins: [{ name: 'electron-test-boundary', setup(b) {
+    // This suite writes arbitrary byte chunks to test ownership and recovery. Its packet-clock
+    // boundary returns the fixture checkpoint; test-recording-recovery-real exercises real ffmpeg.
+    b.onResolve({ filter: /recording-duration$/ }, () => ({ path: 'duration', namespace: 'clock-fixture' }))
+    b.onLoad({ filter: /.*/, namespace: 'clock-fixture' }, () => ({ contents:
+      "const fs=require('node:fs');exports.recordingDurationMs=async(_,path)=>JSON.parse(fs.readFileSync(path.replace(/\\.webm$/,'.recording.json'),'utf8')).recordingMs", loader:'js' }))
+
     b.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'test' }))
     b.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'module.exports = globalThis.__runAudioElectron', loader: 'js' }))
   } }]
@@ -74,6 +83,7 @@ function launchMain() {
   const handlers = new Map()
   const trashed = []
   globalThis.__runAudioElectron = {
+    app: { getAppPath: () => repo, isPackaged: false },
     ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
     BrowserWindow: { fromWebContents: () => null },
     shell: { trashItem: async (p) => { trashed.push(p) } },

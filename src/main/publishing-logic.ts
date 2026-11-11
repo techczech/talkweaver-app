@@ -53,7 +53,7 @@ export const PUBLISH_FAILED = 'Publishing to Cloudflare did not finish.'
  */
 export type PublishFailureKind = 'permission' | 'token' | 'no-site' | 'unreachable' | 'too-large' | 'failed'
 
-const PUBLISH_FAILURE_TEXT: Record<PublishFailureKind, string> = {
+export const PUBLISH_FAILURE_TEXT: Record<PublishFailureKind, string> = {
   permission: PUBLISH_REFUSED, token: PUBLISH_TOKEN_REJECTED, 'no-site': PUBLISH_NO_SITE,
   unreachable: PUBLISH_UNREACHABLE, 'too-large': PUBLISH_TOO_LARGE, failed: PUBLISH_FAILED,
 }

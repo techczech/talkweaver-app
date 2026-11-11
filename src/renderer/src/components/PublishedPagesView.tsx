@@ -77,7 +77,7 @@ export function PublishedPagesView({ onOpenRun }: { onOpenRun: (talkSlug: string
           <div className="tw-tools-empty" role="alert" data-published-error>
             <TriangleAlert aria-hidden />
             <b>{loadError}</b>
-            <button type="button" className="tw-sess-btn" data-published-retry onClick={() => { void load() }}><RotateCw aria-hidden />Retry</button>
+            <button type="button" className="tw-btn" data-published-retry onClick={() => { void load() }}><RotateCw aria-hidden />Retry</button>
           </div>
         ) : empty ? (
           <div className="tw-tools-empty" data-published-empty>
@@ -88,7 +88,7 @@ export function PublishedPagesView({ onOpenRun }: { onOpenRun: (talkSlug: string
           <div className="tw-sess-body" data-published-list>
             {list.notice && (
               <p className="tw-pub-site-missing" role="status" data-published-notice-list>
-                {list.notice} <button type="button" className="tw-sess-btn sm" data-published-retry onClick={() => { void load() }}><RotateCw aria-hidden />Retry</button>
+                {list.notice} <button type="button" className="tw-btn tw-btn--sm" data-published-retry onClick={() => { void load() }}><RotateCw aria-hidden />Retry</button>
               </p>
             )}
             {input !== null && !input.site.exists && list.total > 0 && (
@@ -107,7 +107,7 @@ export function PublishedPagesView({ onOpenRun }: { onOpenRun: (talkSlug: string
                         <span className="l2">{item.linkShown}</span>
                         <span className="l3">{item.published}{item.note && <span className="tw-pub-flag" title={item.note}><TriangleAlert aria-hidden />{item.site === 'unclear' ? 'Link unclear' : item.site === 'not-a-folder' ? 'Not a folder' : 'Not on this computer'}</span>}</span>
                       </button>
-                      <button type="button" className="tw-sess-btn sm dng tw-pub-unpub" data-published-unpublish={item.key}
+                      <button type="button" className="tw-btn tw-btn--sm tw-btn--danger tw-pub-unpub" data-published-unpublish={item.key}
                         disabled={busy || item.unpublish.blocked !== null} title={item.unpublish.blocked ?? undefined} onClick={() => ask(item)}>
                         <EyeOff aria-hidden />Unpublish
                       </button>
@@ -144,9 +144,9 @@ function PageDetail({ row, notice, onCopy, onOpenRun }: { row: PublishedPageRow;
           <div className="sub">{row.kind === 'run' ? <CalendarDays aria-hidden /> : <FileText aria-hidden />}<span>{row.sub}</span></div>
         </div>
         {how.kind === 'run'
-          ? <button type="button" className="tw-sess-btn" data-published-open="run" onClick={() => onOpenRun(how.talkSlug, how.runId, how.vaultId)}><ArrowUpRight aria-hidden />Open run</button>
+          ? <button type="button" className="tw-btn" data-published-open="run" onClick={() => onOpenRun(how.talkSlug, how.runId, how.vaultId)}><ArrowUpRight aria-hidden />Open run</button>
           : row.outlinePath
-            ? <button type="button" className="tw-sess-btn" data-published-open="talk" onClick={() => { void window.tw.windows.openInNewWindow({ kind: 'talk', outlinePath: row.outlinePath as string }) }}><ArrowUpRight aria-hidden />Open talk</button>
+            ? <button type="button" className="tw-btn" data-published-open="talk" onClick={() => { void window.tw.windows.openInNewWindow({ kind: 'talk', outlinePath: row.outlinePath as string }) }}><ArrowUpRight aria-hidden />Open talk</button>
             : null}
       </div>
       <div className="tw-pub-cols">
@@ -158,7 +158,7 @@ function PageDetail({ row, notice, onCopy, onOpenRun }: { row: PublishedPageRow;
             <div className="tw-pub-r1" key={link.kind} data-published-link={link.kind}>
               <LinkIcon className="soft" aria-hidden />
               <div className="t"><b>{link.label}</b><small className="mono">{shownLink(link.url)}</small></div>
-              <button type="button" className="tw-sess-btn sm" title="Copy link" onClick={() => onCopy(link.url)}><Copy aria-hidden />Copy</button>
+              <button type="button" className="tw-btn tw-btn--sm" title="Copy link" onClick={() => onCopy(link.url)}><Copy aria-hidden />Copy</button>
             </div>
           ))}
           <div className="tw-pub-r1" data-published-date>

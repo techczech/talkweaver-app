@@ -721,7 +721,7 @@ describe('feedback boards through actual Worker handlers', () => {
 
 
 describe('Pointer through the actual Worker socket seam', () => {
-  test('authenticated presenter only, venue only, no echo, rate capped and never persisted', async () => {
+  test('authenticated presenter only, all followers, no echo, rate capped and never persisted', async () => {
     const h = harness()
     const presenter = h.socket('presenter', 'pointer-owner')
     const screen = h.socket('audience', 'pointer-screen', 2, 'screen-user', 'screen')
@@ -732,7 +732,7 @@ describe('Pointer through the actual Worker socket seam', () => {
     expect(screen.sent.filter((m:any)=>m.type==='pointer.live')).toHaveLength(0)
     for(let i=0;i<25;i++) await deliver(h.worker,presenter,message)
     expect(screen.sent.filter((m:any)=>m.type==='pointer.live')).toHaveLength(20)
-    expect(phone.sent.filter((m:any)=>m.type==='pointer.live')).toHaveLength(0)
+    expect(phone.sent.filter((m:any)=>m.type==='pointer.live')).toHaveLength(20)
     expect(presenter.sent).toHaveLength(0)
     expect(presenter.closed).toBe(false)
     expect(h.state()).toEqual(before)
@@ -801,7 +801,7 @@ describe('Pen ink through the actual Worker socket seam', () => {
   const stroke = { tool: 'arrow', ink: 'red', width: 'thick', points: [[640, 360], [900, 500]] }
   const message = { type: 'ink.live', ink: { slideId: 'text', space: 'slide', strokes: [stroke], draft: null } }
   const inkSent = (socket: any) => socket.sent.filter((m: any) => m.type === 'ink.live')
-  test('authenticated presenter only, venue screens only, rate capped, never written to session storage', async () => {
+  test('authenticated presenter only, all followers, rate capped, never written to session storage', async () => {
     const h = harness()
     const presenter = h.socket('presenter', 'ink-owner')
     const screen = h.socket('audience', 'ink-screen', 2, 'ink-screen-user', 'screen')
@@ -813,13 +813,13 @@ describe('Pen ink through the actual Worker socket seam', () => {
     for (let i = 0; i < 25; i++) await deliver(h.worker, presenter, message)
     expect(inkSent(screen)).toHaveLength(20)
     expect(inkSent(screen).at(-1)).toEqual(message)
-    expect(inkSent(phone)).toHaveLength(0)
+    expect(inkSent(phone)).toHaveLength(20)
     expect(presenter.sent).toHaveLength(0)
     expect(h.state()).toEqual(before)
     expect(h.feedback()).toBeUndefined()
     expect(JSON.stringify([...h.ctx.storage.sql.exec('SELECT', 'session')])).not.toContain('ink')
   })
-  test('a venue screen that joins or reconnects gets the current drawing; a phone does not; ending the session forgets it', async () => {
+  test('every follower that joins or reconnects gets the current drawing; ending the session forgets it', async () => {
     const h = harness()
     const presenter = h.socket('presenter', 'ink-late-owner')
     await deliver(h.worker, presenter, message)
@@ -829,7 +829,7 @@ describe('Pen ink through the actual Worker socket seam', () => {
     expect(late.sent.at(-1)).toEqual(message)
     const phone = h.socket('audience', 'ink-late-phone', 2, 'ink-late-phone')
     await deliver(h.worker, phone, { type: 'session.sync', syncId: 'ink-phone-sync' })
-    expect(inkSent(phone)).toHaveLength(0)
+    expect(inkSent(phone)).toEqual([message])
     // Cleared by the presenter: the empty layer replaces the drawing for screens that join later.
     const cleared = { type: 'ink.live', ink: { slideId: 'text', space: 'slide', strokes: [], draft: null } }
     await deliver(h.worker, presenter, cleared)
@@ -847,7 +847,7 @@ describe('Pen ink through the actual Worker socket seam', () => {
     await deliver(reloaded, afterReload, { type: 'session.sync', syncId: 'ink-reload-sync' })
     expect(inkSent(afterReload)).toHaveLength(0)
     expect(presenter.sent.at(-1)).toEqual({ type: 'ink.request' })
-    // A second screen within the second does not ask again; a phone never asks.
+    // Other followers within the second do not repeat the ink request.
     const second = h.socket('audience', 'ink-reload-screen-2', 2, 'ink-reload-2', 'screen')
     await deliver(reloaded, second, { type: 'session.sync', syncId: 'ink-reload-sync-2' })
     const reloadPhone = h.socket('audience', 'ink-reload-phone', 2, 'ink-reload-phone')
@@ -856,7 +856,7 @@ describe('Pen ink through the actual Worker socket seam', () => {
     await deliver(reloaded, presenter, message)
     expect(inkSent(afterReload)).toEqual([message])
     expect(inkSent(second)).toEqual([message])
-    expect(inkSent(reloadPhone)).toHaveLength(0)
+    expect(inkSent(reloadPhone)).toEqual([message])
     // Held in memory again; never written to storage.
     const third = h.socket('audience', 'ink-reload-screen-3', 2, 'ink-reload-3', 'screen')
     await deliver(reloaded, third, { type: 'session.sync', syncId: 'ink-reload-sync-3' })
@@ -912,4 +912,78 @@ describe('Pen ink through the actual Worker socket seam', () => {
     await deliver(reconnected, next, message)
     expect(inkSent(screen)).toEqual([message])
   })
+})
+
+
+describe('Embedded widget live relay', () => {
+  const scroll = { type: 'embed.live', slideId: 'text', index: 0, event: { k: 'scroll', el: { path: [], tag: '' }, fx: 0, fy: 0.7 } }
+  test('only the authenticated presenter can drive viewer copies, without changing durable operations', async () => {
+    const h = harness(), p = h.socket('presenter', 'embed-owner'), v = h.socket('audience', 'embed-viewer')
+    const before = h.state()
+    await deliver(h.worker, v, scroll)
+    expect(v.sent.filter((m: any) => m.type === 'embed.live')).toEqual([])
+    await deliver(h.worker, p, scroll)
+    expect(v.sent.at(-1)).toEqual(scroll)
+    expect(p.sent.filter((m: any) => m.type === 'embed.live')).toEqual([])
+    expect(h.state()).toEqual(before)
+    await deliver(h.worker, p, { type: 'operation', operationId: 'embed-persist', action: scroll })
+    expect(h.state()).toEqual(before)
+  })
+  test('caps traffic, refuses code and images, and restores current scroll on sync', async () => {
+    const h = harness(), p = h.socket('presenter', 'embed-rate'), v = h.socket('audience', 'embed-rate-viewer')
+    await deliver(h.worker, p, { type: 'slide.publish', slideId: 'text', reveal: 0, focus: null })
+    await deliver(h.worker, p, { ...scroll, event: { k: 'script', code: 'alert(1)' } })
+    await deliver(h.worker, p, { ...scroll, event: { k: 'image', src: 'data:image/jpeg;base64,test' } })
+    expect(v.sent.filter((m: any) => m.type === 'embed.live')).toHaveLength(0)
+    for (let i = 0; i < 65; i++) await deliver(h.worker, p, scroll)
+    expect(v.sent.filter((m: any) => m.type === 'embed.live')).toHaveLength(60)
+    const late = h.socket('audience', 'embed-late', 2, 'embed-late-user')
+    await deliver(h.worker, late, { type: 'session.sync', syncId: 'embed-scroll-sync' })
+    expect(late.sent.filter((m: any) => m.type === 'embed.live')).toEqual([scroll])
+    await deliver(h.worker, p, { type: 'slide.publish', slideId: 'other', reveal: 0, focus: null })
+    await deliver(h.worker, p, { type: 'slide.publish', slideId: 'text', reveal: 0, focus: null })
+    const revisited = h.socket('audience', 'embed-revisit', 2, 'embed-revisit-user')
+    await deliver(h.worker, revisited, { type: 'session.sync', syncId: 'embed-revisit-sync' })
+    expect(revisited.sent.filter((m: any) => m.type === 'embed.live')).toEqual([])
+  })
+})
+
+
+test('worker reconnect restores independent scroll elements of the current frame', async () => {
+  const h = harness(), p = h.socket('presenter', 'scroll-elements-owner')
+  await deliver(h.worker, p, { type: 'slide.publish', slideId: 'widget', reveal: 0, focus: null })
+  const state = (id: string, index: number, fy: number) => ({ type: 'embed.live', slideId: 'widget', index: 0, event: { k: 'scroll', el: { path: [1,index], tag: 'div', id }, fx: 0, fy } })
+  const one = state('one', 0, 0.3), two = state('two', 1, 0.7)
+  await deliver(h.worker, p, one); await deliver(h.worker, p, two)
+  const viewer = h.socket('audience', 'scroll-elements-viewer', 2, 'scroll-elements-user')
+  await deliver(h.worker, viewer, { type: 'session.sync', syncId: 'scroll-elements-sync' })
+  expect(viewer.sent.filter((m: any) => m.type === 'embed.live')).toEqual([one, two])
+})
+
+test('hibernation restores bounded widget positions and availability while the presenter stays connected', async () => {
+  const h = harness(), p = h.socket('presenter', 'hibernating-embed-owner')
+  await deliver(h.worker, p, { type: 'slide.publish', slideId: 'widget', reveal: 2, focus: { kind: 'reveal', step: 2 } })
+  const documentScroll = { type: 'embed.live', slideId: 'widget', index: 0, event: { k: 'scroll', el: { path: [], tag: '' }, fx: 0, fy: 0.5 } }
+  const panelScroll = { ...documentScroll, event: { k: 'scroll', el: { path: [1, 0], tag: 'div', id: 'panel' }, fx: 0, fy: 0.8 } }
+  const unavailable = { type: 'embed.live', slideId: 'widget', index: 0, event: { k: 'unavailable', reason: 'frozen' } }
+  await deliver(h.worker, p, documentScroll)
+  await deliver(h.worker, p, panelScroll)
+  await deliver(h.worker, p, unavailable)
+  await deliver(h.worker, p, { type: 'embed.live', slideId: 'widget', index: 0, event: { k: 'click', el: { path: [1, 1], tag: 'button' } } })
+  const awake = h.reload(), viewer = h.socket('audience', 'hibernating-embed-viewer')
+  await deliver(awake, viewer, { type: 'session.sync', syncId: 'hibernating-embed-sync' })
+  expect(viewer.sent.find((m: any) => m.type === 'session.snapshot')).toMatchObject({
+    presence: { presenterConnected: true }, slideState: { slideId: 'widget', reveal: 2, focus: { kind: 'reveal', step: 2 } },
+  })
+  expect(viewer.sent.filter((m: any) => m.type === 'embed.live')).toEqual([documentScroll, panelScroll, unavailable])
+  for (let i = 0; i < 35; i++) await deliver(awake, p, { ...panelScroll, event: { ...panelScroll.event, el: { path: [1, i], tag: 'div', id: 'panel-' + i } } })
+  const bounded = h.socket('audience', 'hibernating-embed-bounded')
+  await deliver(h.reload(), bounded, { type: 'session.sync', syncId: 'hibernating-embed-bounded-sync' })
+  expect(bounded.sent.filter((m: any) => m.type === 'embed.live')).toHaveLength(32)
+  await deliver(awake, p, { type: 'slide.publish', slideId: 'other', reveal: 0, focus: null })
+  const nextWake = h.reload()
+  await deliver(nextWake, p, { type: 'slide.publish', slideId: 'widget', reveal: 0, focus: null })
+  const returning = h.socket('audience', 'hibernating-embed-return')
+  await deliver(h.reload(), returning, { type: 'session.sync', syncId: 'hibernating-embed-return-sync' })
+  expect(returning.sent.filter((m: any) => m.type === 'embed.live')).toEqual([])
 })

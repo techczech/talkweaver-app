@@ -47,12 +47,10 @@ assert.equal(defaultSections.length, 2, 'the default resolves to two sections â€
 assert.deepEqual(
   defaultSections[0].items.map((item) => item.commandId),
   [
-    'layout', 'icon-picker', 'image', 'search',
-    'insert-object-table', 'insert-object-chart', 'insert-object-diagram', 'insert-object-mindmap',
-    'toggle-inspector', 'view-strip', 'present-presenter', 'handout', 'publish-handout',
+    'present-presenter', 'handout', 'publish-handout',
     'app.command-palette'
   ],
-  'section one carries the discovery commands in the drawn order'
+  'section one carries the present and share commands in the drawn order: no insert (the Insert menu owns those), no view or sidebar switch (the toolbar owns those)'
 )
 assert.deepEqual(
   defaultSections[1].items.map((item) => item.commandId),

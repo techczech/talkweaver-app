@@ -17,7 +17,6 @@ import { hasSearchTerms } from '../../../shared/talk-query'
 import { findChips } from './browser-rail/findTalkModel'
 import { agoLabel } from './browser-rail/railModel'
 import InsertViewer from './InsertViewer'
-import SlidePickerHints from './SlidePickerHints'
 import TagPicker from './TagPicker'
 import { parseSearchQuery } from './slideBrowserModel'
 import { type PickerMain, RESULTS_ONLY, besideAvailable } from './talkBesideModel'
@@ -63,7 +62,7 @@ export type { SearchResult } from './slide-browser/types'
 export default function SlideBrowser({
   isOpen, onClose, onInsert, onInsertMany, currentTalkSlug, vaultRoot, onOpenHelp, suspendKeys,
   onAdoptVersion, registerFocusSearch, registerCommands, onRequestMerge, refreshNonce,
-  currentOutlinePath, currentTalkVaultId
+  currentOutlinePath, currentTalkVaultId, currentTalkTitle
 }: SlideBrowserProps) {
   // The COMMITTED query: the search field keeps what is typed and reports it once typing pauses
   // (SlideSearchInput). The shell only learns when a typing burst starts or finishes; cards stay memoised.
@@ -74,10 +73,6 @@ export default function SlideBrowser({
   const [density, setDensityState] = useState<number>(readDensity)
   const [railCollapsed, setRailCollapsed] = useState(false)
   const [openPop, setOpenPop] = useState<string | null>(null)
-  // settings-glimpse local state (real settings land in Task 11)
-  const [glimpseDensity, setGlimpseDensity] = useState<number>(readDensity)
-  const [glimpseLastFilters, setGlimpseLastFilters] = useState(true)
-  const [glimpseScoped, setGlimpseScoped] = useState(false)
   // Near-cluster keys the user has UNcollapsed (variants shown inline) — the display model reads them.
   const [nearExpanded, setNearExpanded] = useState<Set<string>>(() => new Set())
   // A result's talk beside the results (talk search 06; ADR-0029 §4; frame K5): results only, or
@@ -188,7 +183,7 @@ export default function SlideBrowser({
     if (!isOpen) return
     prevFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null
     setQuery(''); setQueryPending(false); search.setUnavailable(false); selection.clearSelection(); setActivePos(0)
-    setPreview(false); setOpenPop(null); rail.resetRail(); selection.anchorRef.current = 0
+    setPreview(false); setOpenPop(null); rail.resetRail(); selection.setAnchor(0)
     ex.resetExpansions(); setNearExpanded(new Set())
     tagging.setTagPickerOpen(false)
     viewer.setViewer(null)
@@ -245,8 +240,8 @@ export default function SlideBrowser({
     isOpen, suspendKeys, tagPickerOpen: tagging.tagPickerOpen, viewer: viewer.viewer, vCards, vRows,
     activePos, density, gridMode, scope: rail.scope, preview, openPop, openStrip: ex.openStrip,
     openLoc: ex.openLoc, query, selected, onClose, main, splitLayout: beside.splitLayout, leftCount,
-    fullRows, besideOn: model.besideOn, inputRef, rootRef, anchorRef: selection.anchorRef,
-    setOpenPop, setPreview, setQuery: setQueryNow, setSelected: selection.setSelected, setActivePos, setRailCollapsed,
+    fullRows, besideOn: model.besideOn, inputRef, rootRef, setAnchor: selection.setAnchor,
+    setOpenPop, setPreview, setQuery: setQueryNow, clearSelection: selection.clearSelection, setActivePos, setRailCollapsed,
     setDensity, closeBesideNow: beside.closeBesideNow, closeStrip: ex.closeStrip, closeLoc: ex.closeLoc,
     clearScope: rail.clearScope, selectWholeSectionAt, openBesideAt: beside.openBesideAt,
     doInsert: insert.doInsert, extendTo: selection.extendTo, toggleAt: selection.toggleAt,
@@ -368,12 +363,9 @@ export default function SlideBrowser({
         onDensity={setDensity}
         openPop={openPop}
         setOpenPop={setOpenPop}
-        glimpse={{
-          density: glimpseDensity, setDensity: setGlimpseDensity,
-          lastFilters: glimpseLastFilters, setLastFilters: setGlimpseLastFilters,
-          scoped: glimpseScoped, setScoped: setGlimpseScoped
-        }}
         onOpenHelp={onOpenHelp}
+        talkTitle={currentTalkTitle}
+        onBack={onClose}
       />
 
       {/* ================= browser view ================= */}
@@ -490,17 +482,6 @@ export default function SlideBrowser({
             }}
           />
 
-          {/* ---------- action tray (A4, insert context; mockup 545-561/1506-1516) ---------- */}
-          {selected.size > 0 && (
-            <SelectionTray
-              count={selected.size}
-              onClear={selection.clearSelection}
-              onTag={tagging.openTagPicker}
-              onInsert={insert.doInsert}
-              onAddToScratchpad={insert.doAddToScratchpad}
-            />
-          )}
-
           {/* ---------- tag picker (ADR-0037) — anchored above the tray it came from ---------- */}
           <TagPicker
             isOpen={tagging.tagPickerOpen && selected.size > 0}
@@ -513,8 +494,18 @@ export default function SlideBrowser({
           />
         </div>
 
+        {/* ---------- action tray: its own row under the grid, never over it ---------- */}
+        {selected.size > 0 && (
+          <SelectionTray
+            count={selected.size}
+            onClear={selection.clearSelection}
+            onTag={tagging.openTagPicker}
+            onInsert={insert.doInsert}
+            onAddToScratchpad={insert.doAddToScratchpad}
+          />
+        )}
+
         {/* ---------- keyboard hint footer (mockup 1532-1542), keys from the registry ---------- */}
-        <SlidePickerHints />
       </section>
 
       {/* Insert-decision viewer (↵ on a card): a self-contained layer inside the Browser —

@@ -1,7 +1,7 @@
 // Work-files-and-sessions ticket 01: the Tools window's one rail, in the real app.
 // Hidden-window Electron runs against a fresh, isolated temp userData (a new vault, nothing else); no network.
 // Pre-work is on for everyone (ticket 32): no environment switch is set.
-//   (a) the rail shows Studio, History, Sessions, Published pages, Work files;
+//   (a) the rail shows Studio, Runs, Importer, Published pages, Work files (History and Sessions are one Runs view; the old names open it);
 //       each opens its view; the three new views show their drawn empty states;
 //   (b) the Tools window can be asked to open Sessions on a Run (talk slug + Run id);
 //   (c) an unknown view and a malformed Run are refused;
@@ -56,26 +56,29 @@ async function openTools(app, page, view, ...rest) {
     const page = await app.firstWindow()
     await page.waitForLoadState('domcontentloaded')
     await page.waitForTimeout(2000)
-    const { tools, result } = await openTools(app, page, 'history')
-    rec('Tools opens on History', result.success)
+    const { tools, result } = await openTools(app, page, 'history') /* the old name: it opens the Runs view */
+    rec('Tools opens on the Runs view when asked for History', result.success)
     tools.on('pageerror', (e) => console.log('PAGEERROR:', e.message.slice(0, 150)))
     await tools.waitForSelector('[data-tools-rail]', { timeout: 10_000 }).catch(() => {})
     const labels = async () => (await tools.locator('[data-tools-rail]').allTextContents()).map((t) => t.trim())
-    const want = ['Studio', 'History', 'Sessions', 'Published pages', 'Work files']
+    const want = ['Studio', 'Runs', 'Importer', 'Published pages', 'Work files']
     const got = await labels()
     rec('rail shows five items in order', JSON.stringify(got) === JSON.stringify(want), got.join(' | '))
     rec('Work files uses the files icon', (await tools.locator('[data-tools-rail="workfiles"] svg').getAttribute('class') ?? '').includes('lucide-files'))
-    rec('History is the current item', await tools.locator('[data-tools-rail="history"][aria-current="page"]').count() === 1)
+    rec('Runs is the current item', await tools.locator('[data-tools-rail="runs"][aria-current="page"]').count() === 1)
 
     await tools.locator('[data-tools-rail="studio"]').click()
     await tools.waitForSelector('.twstudio', { timeout: 8000 })
     rec('Studio item opens Studio', await tools.locator('[data-tools-rail="studio"][aria-current="page"]').count() === 1)
-    await tools.locator('[data-tools-rail="history"]').click()
-    await tools.waitForSelector('.twhistory', { timeout: 8000 })
-    rec('History item opens History', true)
+    await tools.locator('[data-tools-rail="runs"]').click()
+    await tools.waitForSelector('[data-tools-view="runs"]', { timeout: 8000 })
+    rec('Runs item opens the Runs view', true)
+    await tools.locator('[data-tools-rail="importer"]').click()
+    await tools.waitForSelector('.twi', { timeout: 8000 })
+    rec('Importer item opens the Importer inside the rail', await tools.locator('[data-tools-rail="importer"][aria-current="page"]').count() === 1 && await tools.locator('[data-tools-rail]').count() === 5)
 
     const empty = {
-      sessions: ['No runs yet', 'No run selected'],
+      runs: ['No Runs yet', 'No Run selected'],
       published: ['Nothing is published', 'No page selected'],
       workfiles: ['No work files', 'A work file holds the steps of a pre-work or a post-work.', 'No work file selected']
     }
@@ -91,8 +94,8 @@ async function openTools(app, page, view, ...rest) {
 
     // (b) a Run, by talk and Run id, through the one open call
     const asked = await page.evaluate(() => window.tw.tools.openRun('agents-now', '2026-10-21-said'))
-    await tools.waitForSelector('[data-tools-view="sessions"][data-run="agents-now/2026-10-21-said"]', { timeout: 5000 }).catch(() => {})
-    rec('asking for a Run opens Sessions on it', asked.success && await tools.locator('[data-tools-view="sessions"][data-run="agents-now/2026-10-21-said"]').count() === 1)
+    await tools.waitForSelector('[data-tools-view="runs"][data-run="agents-now/2026-10-21-said"]', { timeout: 5000 }).catch(() => {})
+    rec('asking for a Run opens Sessions on it', asked.success && await tools.locator('[data-tools-view="runs"][data-run="agents-now/2026-10-21-said"]').count() === 1)
 
     // (c) refusals
     const unknown = await page.evaluate(() => window.tw.tools.open('settings'))
@@ -118,11 +121,11 @@ async function openTools(app, page, view, ...rest) {
     await tools.waitForSelector('.twstudio', { timeout: 10_000 }).catch(() => {})
     await tools.waitForSelector('[data-tools-rail]', { timeout: 10_000 }).catch(() => {})
     const got = (await tools.locator('[data-tools-rail]').allTextContents()).map((t) => t.trim())
-    rec('the rail on Studio shows Sessions, Published pages and Work files', JSON.stringify(got) === JSON.stringify(['Studio', 'History', 'Sessions', 'Published pages', 'Work files']), got.join(' | '))
-    for (const view of ['sessions', 'published', 'workfiles']) {
-      const opened = await page.evaluate((v) => window.tw.tools.open(v), view)
+    rec('the rail on Studio shows every Tools view', JSON.stringify(got) === JSON.stringify(['Studio', 'Runs', 'Importer', 'Published pages', 'Work files']), got.join(' | '))
+    for (const [asked, view] of [['sessions', 'runs'], ['history', 'runs'], ['runs', 'runs'], ['published', 'published'], ['workfiles', 'workfiles']]) {
+      const opened = await page.evaluate((v) => window.tw.tools.open(v), asked)
       await tools.waitForSelector(`[data-tools-view="${view}"]`, { timeout: 5000 }).catch(() => {})
-      rec(`${view} opens through the Tools route`, opened.success && await tools.locator(`[data-tools-view="${view}"]`).count() === 1)
+      rec(`${asked} opens through the Tools route${asked !== view ? ' (an old name for the Runs view)' : ''}`, opened.success && await tools.locator(`[data-tools-view="${view}"]`).count() === 1)
     }
     rec('the bridge has no pre-work question left', await page.evaluate(() => !(('prework' + 'Enabled') in window.tw.tools)))
   } finally { await app.close().catch(() => {}) }

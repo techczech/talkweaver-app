@@ -65,6 +65,9 @@ export function createPointerOverlay({ document, surface, onMove = undefined, st
     && (s.space !== 'image' || inkView.image === (s.image ?? 0)) && (s.space !== 'still' || inkView.still === s.still)
     && (inkView.strokes.length || inkView.draft));
   function refresh() {
+    // A browser full-screen element excludes siblings of its subtree. Keep the marks with it.
+    const host = document.fullscreenElement || document.body;
+    if (root.parentElement !== host) host.append(root);
     const s = surface();
     const rect = s?.rect;
     if ((armed || penArmed || point !== 'gone' || inkView) && s?.element && s.element !== observed) {
@@ -129,6 +132,7 @@ export function createPointerOverlay({ document, surface, onMove = undefined, st
     frame = win.requestAnimationFrame(refresh);
   });
   document.addEventListener('load', refresh, true);
+  document.addEventListener('fullscreenchange', refresh);
   refresh();
   return {
     show, refresh, strokes, root,
@@ -151,6 +155,7 @@ export function createPointerOverlay({ document, surface, onMove = undefined, st
       watch.disconnect();
       win.removeEventListener('resize', refresh);
       document.removeEventListener('load', refresh, true);
+      document.removeEventListener('fullscreenchange', refresh);
       root.remove();
       style.remove();
     }

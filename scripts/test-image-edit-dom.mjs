@@ -1,0 +1,30 @@
+import assert from 'node:assert/strict'
+import {build} from 'esbuild'
+import {chromium} from 'playwright'
+const bundle=await build({stdin:{contents:`import React from 'react';import {createRoot} from 'react-dom/client';import ImageEditDialog from './src/renderer/src/components/ImageEditDialog';window.saved=[];window.tw={asset:{readImageEdit:async()=>({originalId:'img-1234567',previewUrl:'twasset://img-1234567?vault=secondary-vault',width:400,height:300,recipe:{version:1,crop:{x:0,y:0,width:400,height:300},marks:[]}}),saveImageEdit:async(p,id,r)=>{window.saved.push(r);if(window.holdSave)await new Promise(resolve=>window.finishSave=resolve);return window.fail?{ok:false,message:'Try again'}:{ok:true,id:'img-7654321'}}}};createRoot(document.getElementById('root')).render(<ImageEditDialog imageId="img-1234567" outlinePath="/vault/talk.md" onClose={()=>window.__closed=true} onSaved={id=>window.result=id}/>);`,resolveDir:process.cwd(),loader:'tsx'},bundle:true,write:false,format:'iife',jsx:'automatic',loader:{'.css':'empty'}})
+const browser=await chromium.launch({headless:true})
+try{
+ const page=await browser.newPage({viewport:{width:1200,height:850}})
+ await page.setContent('<div id="root"></div>');await page.addScriptTag({content:bundle.outputFiles[0].text})
+ await page.getByRole('heading',{name:'Crop and mark up image'}).waitFor()
+ assert.equal(await page.getByAltText('Original image with editable marks').getAttribute('src'),'twasset://img-1234567?vault=secondary-vault')
+ await page.getByLabel('Width',{exact:true}).fill('200')
+ await page.getByRole('button',{name:'Apply crop',exact:true}).click()
+ await page.getByLabel('Tool',{exact:true}).selectOption('box')
+ await page.getByRole('button',{name:'Add mark',exact:true}).click()
+ await page.evaluate(()=>window.holdSave=true)
+ await page.getByRole('button',{name:'Save edited copy',exact:true}).click()
+ await page.waitForFunction(()=>typeof window.finishSave==='function')
+ assert.equal(await page.getByRole('button',{name:'Remove mark 1',exact:true}).isDisabled(),true,'Remove is disabled while the save is pending')
+ await page.evaluate(()=>{window.holdSave=false;window.finishSave()})
+ await page.getByRole('status').waitFor()
+ assert.deepEqual(await page.evaluate(()=>[window.saved[0].crop.width,window.saved[0].marks[0].kind,window.result]),[200,'box','img-7654321'])
+ await page.getByRole('button',{name:'Undo change'}).click()
+ await page.evaluate(()=>window.fail=true)
+ await page.getByRole('button',{name:'Save edited copy',exact:true}).click()
+ await page.getByRole('alert').waitFor()
+ assert.equal(await page.getByRole('alert').textContent(),'Try again')
+ assert.equal(await page.evaluate(()=>document.querySelector('dialog').open),true)
+ await page.keyboard.press('Escape');assert.equal(await page.evaluate(()=>window.__closed),true)
+ console.log('image-edit DOM: 6 assertions passed (talk-scoped preview, crop, markup, pending-save lock, save failure, Escape)')
+}finally{await browser.close()}

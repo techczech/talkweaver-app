@@ -3,7 +3,8 @@
 // opens it (opt-in). A deck opened as a plain portable file has no preload, so it has no
 // REC control and stays fully portable (spec, ADR-0035). Running here, the bridge:
 //   • records the presenter's mic (present-audio-capture.ts: MediaRecorder, loss detection and
-//     reacquiring the input, chunks streamed to disk through main as they arrive),
+//     reacquiring the input, chunks streamed to disk through main as they arrive), always exactly
+//     the microphone chosen in the Microphone menu (shared/microphone-choice.ts; 9 Nov incident),
 //   • builds the slide-time index by watching which slide id is in the URL hash,
 //   • hands the audio + raw marks + session metadata to main on stop (recording:save).
 //
@@ -32,6 +33,7 @@ import { shouldOfferRecordingStart } from './present-recording-offer'
 import { mountRecUi } from './present-rec-ui'
 import type { RunKind } from './present-rec-view'
 import { createAudioCapture, type AudioCapture, type AudioEvent, type AudioStatus, type CapturedAudio } from './present-audio-capture'
+import { audioInputs, createNewInputWatch, exactInputConstraints, findSameInput, inputForRecording, inputName, isPseudoInput, needsPermission, type AudioInput } from '../shared/microphone-choice.ts'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -74,6 +76,11 @@ export interface RecContext {
   // Main sets this from an env flag for the e2e harness — synthesise audio instead of
   // opening a real mic, so the capture path is exercised headlessly. Never set in production.
   testMode: boolean
+  // How long reopening a microphone may take (default 8 s). Main never sends it; tests shorten it.
+  streamTimeoutMs?: number
+  // The microphone chosen on this Mac, by name (Settings › Recording › Microphone). Empty: the
+  // Mac's built-in microphone.
+  microphone: string
 }
 
 export interface SaveResult {
@@ -132,8 +139,21 @@ export interface RecorderController {
   closeWindow(liveAction?: LiveCloseAction): Promise<void>
   /** Whether audio is still arriving while recording (lost, reconnecting, gaps so far). */
   audioStatus(): AudioStatus
-  /** Open the default input again after the audio was lost ("Resume recording" on the notice). */
+  /** Open the chosen input again after the audio was lost ("Resume recording" on the notice). */
   reacquireAudio(): Promise<boolean>
+  /** The Mac's audio inputs and the one recordings use (before recording: refreshed from the remembered choice). */
+  microphones(): Promise<{ inputs: AudioInput[]; chosen: AudioInput | null }>
+  /** Use this input from now on, remembered on this Mac; while recording, a new segment begins on it. */
+  chooseMicrophone(input: AudioInput): Promise<boolean>
+  /** A stream of this input for the level meter; the caller stops its tracks. */
+  previewMicrophone(input: AudioInput): Promise<MediaStream>
+  /** The name of the input recordings use, or ''. */
+  microphoneName(): string
+  /** Fired once per session for each input connected while the presenter is open. */
+  onNewMicrophone(cb: (input: AudioInput) => void): void
+  /** Fired when Record cannot tell which input to use (no chosen or built-in one): the presenter picks. */
+  /** Record found no microphone it may use; `missing` names the chosen one when it is not connected. */
+  onNeedMicrophone(cb: (missing: string) => void): void
   /** A failed save: write the held audio (and any of it already on disk) to a folder the presenter picks. */
   exportHeldAudio(): Promise<boolean>
   /** Fired when audio is lost, being reconnected, restored, or a reconnect fails. */
@@ -152,11 +172,13 @@ async function loadContext(): Promise<RecContext> {
       pathwayId: typeof c?.pathwayId === 'string' ? c.pathwayId : null,
       preferredPlannedRunId: typeof c?.preferredPlannedRunId === 'string' ? c.preferredPlannedRunId : null,
       discardThresholdMs: typeof c?.discardThresholdMs === 'number' ? c.discardThresholdMs : 20000,
-      testMode: !!c?.testMode
+      testMode: !!c?.testMode,
+      microphone: typeof c?.microphone === 'string' ? c.microphone : '',
+      ...(typeof c?.streamTimeoutMs === 'number' && c.streamTimeoutMs > 0 ? { streamTimeoutMs: c.streamTimeoutMs } : {})
     }
   } catch {
     // Handler not registered (older main / non-recording present) — degrade to inert defaults.
-    return { talkSlug: 'talk', talkTitle: 'talk', timerTargetMin: 0, pathwayId: null, preferredPlannedRunId: null, discardThresholdMs: 20000, testMode: false }
+    return { talkSlug: 'talk', talkTitle: 'talk', timerTargetMin: 0, pathwayId: null, preferredPlannedRunId: null, discardThresholdMs: 20000, testMode: false, microphone: '' }
   }
 }
 
@@ -211,6 +233,10 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   const capture: AudioCapture = createAudioCapture({
     invoke: (channel, payload) => ipcRenderer.invoke(channel, payload),
     getStream: () => getStream(),
+    inputReturned: (devices) => ctx.testMode || findSameInput(audioInputs(devices), mic) !== null,
+    // The one place an input becomes the one in use: a stream the capture accepted.
+    accepted: (stream) => { const input = streamInputs.get(stream); if (input) mic = input },
+    streamTimeoutMs: ctx.streamTimeoutMs,
     clock: () => displayMs()
   })
   capture.onStatus((s, e, d) => {
@@ -439,18 +465,136 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     pushRunState()
   }
 
-  async function getStream(): Promise<MediaStream> {
-    if (ctx.testMode) return syntheticStream()
-    // Lazy — the mic is only opened on the first Record, so opening the presenter never
-    // prompts. Permission is granted for THIS window by main (setupRecordingPermissions).
-    return navigator.mediaDevices.getUserMedia({ audio: true })
+  // ── The microphone ──────────────────────────────────────────────────────────
+  // `mic` is the input in use: a real device (never Chromium's "default" entry) that the presenter
+  // picked in the menu, or the one the capture last accepted a stream of. `wanted` is the input an
+  // acquisition in flight is opening; it becomes `mic` only when the capture accepts that stream
+  // (`accepted`), so an acquisition that times out or is overtaken never changes it. Record uses the
+  // chosen input, else the built-in microphone with a notice, else nothing: the presenter picks
+  // (shared/microphone-choice.ts). A resume or a reconnect opens exactly `mic`, or nothing.
+  let mic: AudioInput | null = null
+  let wanted: AudioInput | null = null
+  let micOp = 0
+  let rememberedMic = ctx.microphone
+  const streamInputs = new WeakMap<MediaStream, AudioInput>()
+  const micCbs: Array<(input: AudioInput) => void> = []
+  const needMicCbs: Array<(missing: string) => void> = []
+  const micWatch = createNewInputWatch()
+  const stopStream = (s: MediaStream | null | undefined): void => { try { s?.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ } }
+
+  async function listDevices(): Promise<MediaDeviceInfo[]> {
+    const md = navigator.mediaDevices
+    if (!md || typeof md.enumerateDevices !== 'function') return []
+    try { return await md.enumerateDevices() } catch { return [] }
   }
 
+  // The device list with names and ids. Without the microphone permission Chromium hides them: the
+  // permission is asked once, its stream is stopped at once and never recorded, and the list is read
+  // again. Discovery only — which input is recorded is chosen from the list, by name.
+  async function listNamedDevices(): Promise<MediaDeviceInfo[]> {
+    const devices = await listDevices()
+    if (ctx.testMode || !needsPermission(devices)) return devices
+    try {
+      stopStream(await navigator.mediaDevices.getUserMedia({ audio: true }))
+    } catch {
+      return devices
+    }
+    return listDevices()
+  }
+
+  async function microphones(): Promise<{ inputs: AudioInput[]; chosen: AudioInput | null }> {
+    const devices = await listNamedDevices()
+    const inputs = audioInputs(devices)
+    // While recording: the input in use. Before: what Record would use now.
+    const chosen = isAudioArmed() ? mic : inputForRecording(devices, rememberedMic, mic)?.input ?? null
+    return { inputs, chosen }
+  }
+
+  // Opens exactly the input being acquired (`wanted`, else `mic`), found again in the current list
+  // by id, group or name; never another one and never a "default" entry.
+  async function getStream(): Promise<MediaStream> {
+    if (ctx.testMode) return syntheticStream()
+    const target = wanted ?? mic
+    const input = findSameInput(audioInputs(await listDevices()), target)
+    if (!input) throw new Error('input-gone')
+    const stream = await navigator.mediaDevices.getUserMedia(exactInputConstraints(input))
+    const track = typeof stream.getAudioTracks === 'function' ? stream.getAudioTracks()[0] : undefined
+    const settings = track && typeof track.getSettings === 'function' ? track.getSettings() : {}
+    // The stream must be that device (the browser reports the physical device it opened).
+    if (settings.deviceId && settings.deviceId !== input.deviceId) { stopStream(stream); throw new Error('input-mismatch') }
+    streamInputs.set(stream, { ...input, label: input.label || track?.label || '' })
+    return stream
+  }
+
+  async function chooseMicrophone(input: AudioInput): Promise<boolean> {
+    if (isPseudoInput(input)) return false
+    const op = ++micOp
+    if (state === 'recording' || state === 'paused') {
+      // A new segment on the new input; if it cannot be opened, recording carries on as it was.
+      const previous = mic
+      if (capture.status().recovering) {
+        await capture.reacquire()
+        if (op !== micOp) return false
+      }
+      wanted = input
+      await capture.switchInput()
+      if (op !== micOp) return false // overtaken by a later pick: that one decides
+      wanted = null
+      if (capture.status().lost || !findSameInput([input], mic)) {
+        emitError(`${inputName(input) || 'That microphone'} could not be opened. ${capture.status().lost ? 'Nothing is being recorded.' : `Recording carries on${previous ? ` with ${inputName(previous) || 'the microphone it had'}` : ''}.`}`)
+        emitChange()
+        return false
+      }
+    } else {
+      mic = input
+    }
+    rememberedMic = inputName(input)
+    void ipcRenderer.invoke('recording:set-microphone', rememberedMic).catch(() => {})
+    emitChange()
+    return true
+  }
+
+  async function previewMicrophone(input: AudioInput): Promise<MediaStream> {
+    if (ctx.testMode) return syntheticStream()
+    if (isPseudoInput(input)) throw new Error('not-a-device')
+    return navigator.mediaDevices.getUserMedia(exactInputConstraints(input))
+  }
+
+  // A newly connected input is offered once per session (never the one in use).
+  async function noteInputs(): Promise<void> {
+    const fresh = micWatch.observe(audioInputs(await listDevices()), mic)
+    for (const input of fresh) for (const cb of micCbs) { try { cb(input) } catch { /* a UI failure never stops recording */ } }
+  }
+  void noteInputs()
+  try { navigator.mediaDevices?.addEventListener?.('devicechange', () => { void noteInputs() }) } catch { /* no device events here */ }
+
+  // One start at a time (⇧R twice, or Record and the offer's Record): the second does nothing.
+  let starting = false
   async function start(): Promise<void> {
+    if (starting) return
+    starting = true
+    try { await startRecording() } finally { starting = false }
+  }
+
+  async function startRecording(): Promise<void> {
     // Allowed from idle and from the terminal states of a previous run (saved/error) so
     // ⇧R can begin a fresh recording without reloading the presenter. Not while a run is live
     // or waiting on a Keep/Discard choice.
     if (isAudioArmed() || state === 'saving') return
+    // Which input to record, before anything starts: the chosen one, else the identified built-in
+    // microphone (and the presenter is told), else none — the Microphone menu opens for a pick.
+    let substituted = ''
+    if (!ctx.testMode) {
+      const pick = inputForRecording(await listNamedDevices(), rememberedMic, mic)
+      if (isAudioArmed()) return
+      if (!pick) {
+        const missing = (mic && inputName(mic)) || inputName({ label: rememberedMic })
+        for (const cb of needMicCbs) { try { cb(missing) } catch { /* a UI failure never stops presenting */ } }
+        return
+      }
+      wanted = pick.input
+      substituted = pick.missing
+    }
     frozenDisplayMs = null
     saveResult = null
     savedRunSessionId = null
@@ -479,15 +623,21 @@ export function createRecorderController(ctx: RecContext): RecorderController {
       })
     } catch (e) {
       state = 'error'
-      emitError(e instanceof Error && e.message === 'codec'
+      const missing = e instanceof Error && ['input-gone', 'input-mismatch'].includes(e.message)
+      const name = inputName(wanted ?? mic) || 'That microphone'
+      if (missing) for (const cb of needMicCbs) { try { cb(name) } catch { /* UI only */ } }
+      emitError(missing ? `${name} isn't connected.` : e instanceof Error && e.message === 'codec'
         ? 'Recording could not start on this machine (codec unsupported). Presenting is unaffected.'
         : 'Microphone unavailable — enable mic access for TalkWeaver to record. Presenting is unaffected.')
       emitChange()
       // Reset to idle so a later attempt (after granting) can retry without reload.
       state = 'idle'
       frozenDisplayMs = null
+      wanted = null
       return
     }
+    wanted = null
+    if (substituted) emitError(`${substituted} isn't connected; recording with the built-in microphone (${inputName(mic)}).`)
     t0 = origin.perf
     startedAtIso = origin.iso
     frozenDisplayMs = null
@@ -876,6 +1026,12 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     audioStatus: () => capture.status(),
     exportHeldAudio,
     reacquireAudio: () => capture.reacquire(),
+    microphones,
+    chooseMicrophone,
+    previewMicrophone,
+    microphoneName: () => inputName(mic),
+    onNewMicrophone: (cb) => { micCbs.push(cb) },
+    onNeedMicrophone: (cb) => { needMicCbs.push(cb) },
     onAudio: (cb) => { audioCbs.push(cb) },
     closeWindow: async (liveAction) => {
       if (isAudioArmed()) throw new Error('Save the recording before closing the presentation.')

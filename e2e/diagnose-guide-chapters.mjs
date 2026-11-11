@@ -124,7 +124,8 @@ try {
     const ticked = await waitFor(async () => (await row.getAttribute('data-ticked')) === 'true', 4000)
     record('⌘⇧↓ ticks its row', ticked)
     record(`the count rises from 6 to 7 of ${N}`, (await count()) === `7 of ${N} tried`, await count())
-    record('the ticked row flashes', (await row.getAttribute('class')).includes('guide-vrow--flash'))
+    // The learn-change broadcast can arrive before commandRan's reply triggers the local flash.
+    record('the ticked row flashes', await waitFor(async () => (await row.getAttribute('class')).includes('guide-vrow--flash'), 4000))
     const toast = await page.waitForFunction(() => document.body.innerText.includes('Ticked · Move slide or item down'), null, { timeout: 4000 }).then(() => true).catch(() => false)
     record('a toast reads "Ticked · Move slide or item down ⌘⇧↓"', toast && (await page.evaluate(() => document.body.innerText)).includes('Ticked · Move slide or item down ⌘⇧↓'))
     await shot(page, '08-tick.png')

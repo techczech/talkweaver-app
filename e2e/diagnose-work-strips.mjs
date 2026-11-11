@@ -3,7 +3,7 @@
 // table, which is the Markdown view (Plain view has its own Talk details panel), so the run starts there.
 //   (a) a talk naming no file: "No pre-work" / "No post-work", at 14px, with the Attach buttons;
 //   (b) Attach a pre-work file opens the picker, choosing a file writes ONLY `prework:` to the outline
-//       (every other byte kept, on disk too) and the strip reads "not sent to anyone" with Plan a run;
+//       (every other byte kept, on disk too) and the strip reads "not sent to anyone" with Plan a Run;
 //   (c) a talk with two published Runs: "sent to 2 runs", the Open run list names both, and choosing one
 //       opens Sessions on that Run;
 //   (d) the Pre-work row is a picker of file names;
@@ -113,7 +113,7 @@ try {
   await page.locator('[data-strip-menu="attach-pre"] button', { hasText: 'Research teams intake' }).click()
   await page.waitForFunction(() => document.querySelector('[data-work-strip="pre"]')?.textContent?.includes('not sent to anyone'), null, { timeout: 8000 }).catch(() => {})
   const attached = await text('pre')
-  rec('attached, not sent: the drawn text', attached.startsWith('Pre-work · Research teams intake · 4 steps · not sent to anyone') && attached.includes('Plan a run'), attached)
+  rec('attached, not sent: the drawn text', attached.startsWith('Pre-work · Research teams intake · 4 steps · not sent to anyone') && attached.includes('Plan a Run'), attached)
   rec('the post-work strip is untouched', (await text('post')).startsWith('No post-work'))
   rec('the Pre-work row is now a picker of file names', await page.locator('.cm-fm-row[data-fm-key="prework"] select option', { hasText: 'Research teams intake' }).count() === 1)
   await all14('attached, not sent', '[data-work-strip="pre"]')
@@ -143,8 +143,8 @@ try {
   await page.locator('[data-strip-menu="runs-pre"] button', { hasText: 'Medical Sciences' }).click()
   const tools = await pending
   await tools.waitForLoadState('domcontentloaded')
-  await tools.waitForSelector('[data-tools-view="sessions"][data-run="strip-sent/med"]', { timeout: 8000 }).catch(() => {})
-  rec('Open run opens Sessions on that Run', await tools.locator('[data-tools-view="sessions"][data-run="strip-sent/med"]').count() === 1)
+  await tools.waitForSelector('[data-tools-view="runs"][data-run="strip-sent/med"]', { timeout: 8000 }).catch(() => {})
+  rec('Open run opens Sessions on that Run', await tools.locator('[data-tools-view="runs"][data-run="strip-sent/med"]').count() === 1)
   rec('choosing a Run closes the menu', await page.locator('[data-strip-menu]').count() === 0)
 
   // A menu left open closes when the strip data is read again (no click anywhere: MENU), and when the

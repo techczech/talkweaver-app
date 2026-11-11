@@ -1,3 +1,4 @@
+import { normaliseLiveEmbed, liveEmbedRuntimeSource, liveEmbedKey } from './live-embed.js'
 import { validPointer, createPointerOverlay, pointerOverlayRuntimeSource } from './pointer-overlay.js'
 import { penInkView, penDraw, penInkRuntimeSource } from './pen-ink.js'
 import { isExtendedPoll, normaliseExtendedPollFields, normaliseExtendedPollAggregates, normaliseBallotChoice, samePollChoice, renderExtendedPollResults, createExtendedBallot, extendedPollRuntimeSource } from './poll-extended.js'
@@ -7,7 +8,7 @@ import { createAudienceAsk, audienceAskRuntimeSource } from './audience-ask.js'
 import { createQuestionLog, pollAnswerRecord, myNotesPollAnswerKey, audienceMyNotesRuntimeSource } from './audience-my-notes.js'
 import { createAudienceBoard, audienceBoardRuntimeSource, audienceBoardIcons, normaliseBoardPoll, normaliseOwnBoards, normaliseCardAck } from './audience-board.js'
 
-/** @typedef {import('../../../worker/protocol').SlideStateMessage | import('../../../worker/protocol').InstantSlideMessage | import('../../../worker/protocol').SessionClosedMessage | import('../../../worker/protocol').PollStateMessage | import('../../../worker/recovery-protocol').SessionPresence | import('../../../worker/protocol').PointerMessage | import('../../../worker/protocol').InkMessage} FollowServerMessage */
+/** @typedef {import('../../../worker/protocol').EmbedMessage | import('../../../worker/protocol').SlideStateMessage | import('../../../worker/protocol').InstantSlideMessage | import('../../../worker/protocol').SessionClosedMessage | import('../../../worker/protocol').PollStateMessage | import('../../../worker/recovery-protocol').SessionPresence | import('../../../worker/protocol').PointerMessage | import('../../../worker/protocol').InkMessage} FollowServerMessage */
 
 export function normaliseFocus(value) {
   if (!value || typeof value !== 'object') return null
@@ -132,6 +133,7 @@ export function parseServerMessage(value) {
       return { type: 'session.presence', presenterConnected: message.presenterConnected, venueScreens: message.venueScreens }
     }
     if (message?.type === 'poll.state') return normalisePollState(message)
+    if (message?.type === 'embed.live') return normaliseLiveEmbed(message)
     if (message?.type === 'pointer.live') return validPointer(message.pointer) ? { type: 'pointer.live', pointer: message.pointer } : null
     if (message?.type === 'ink.live') {
       // The Pen's ink (ticket 08): checked field by field again here, drawn only by venue screens.
@@ -653,6 +655,17 @@ export function createAudienceFollowRuntime(options) {
   let sessionId = ''
   let client = null
   let latestState = null
+  const latestEmbeds = new Map()
+  function resetEmbeds() {
+    latestEmbeds.clear()
+    options.resetLiveEmbeds?.()
+    pointer?.ink(null)
+    pointer?.show('gone')
+  }
+  function applyEmbeds() {
+    if (!following || !latestState) return
+    for (const state of latestEmbeds.values()) if (state.slideId === latestState.slideId) options.onEmbed?.(state)
+  }
   let sessionLive = false
   let following = false
   let diverged = false
@@ -664,7 +677,8 @@ export function createAudienceFollowRuntime(options) {
     onAnswered: () => options.onPollAnswered?.(),
     sendVote: (pollId, choice) => client?.sendVote(pollId, choice) || false,
   }) : null
-  const pointer = options.venue && document.body ? createPointerOverlay({ document, staleMs: 2000, drawInk: penDraw, surface: () => {
+  const pointer = document.body ? createPointerOverlay({ document, staleMs: 2000, drawInk: penDraw, surface: () => {
+    if (!following) return null
     const image = document.getElementById('lightboxImg')
     const box = document.getElementById('lightbox')
     const zoomed = box?.classList.contains('open')
@@ -756,6 +770,8 @@ export function createAudienceFollowRuntime(options) {
   }
 
   function renderControls() {
+    if (!following) pointer?.show('gone')
+    pointer?.refresh()
     button.hidden = !sessionLive || diverged
     returnButton.hidden = !sessionLive || !diverged
     button.classList.toggle('is-on', following)
@@ -781,8 +797,7 @@ export function createAudienceFollowRuntime(options) {
     following = false
     diverged = false
     latestState = null
-    // The talk's drawings end with it.
-    pointer?.ink(null)
+    resetEmbeds()
     options.releaseLiveSlideState?.()
     presenterConnected = true
     currentInstant = null
@@ -806,6 +821,9 @@ export function createAudienceFollowRuntime(options) {
       if (pollRuntime?.selectSlide) pollRuntime.selectSlide(message.slideId)
       else pollRuntime?.hideForSlideChange()
     }
+    if (latestState?.slideId !== message.slideId) {
+      for (const [key, state] of latestEmbeds) if (state.slideId === latestState?.slideId) latestEmbeds.delete(key)
+    }
     latestState = message
     if (!following) {
       if (diverged) diverged = !audiencePositionsMatch(options.getViewerPosition(), message)
@@ -814,6 +832,7 @@ export function createAudienceFollowRuntime(options) {
     }
     const applied = options.applyLiveSlideState(message)
     following = Boolean(applied)
+    applyEmbeds()
     diverged = !applied
     renderControls()
   }
@@ -836,6 +855,14 @@ export function createAudienceFollowRuntime(options) {
           : status === 'expired' ? 'the live session has expired'
           : status === 'incompatible' ? 'This handout needs a compatible live service.'
           : 'live paused · reconnecting'
+      },
+      onEmbed: (value) => {
+        if (value.event.k === 'scroll' || value.event.k === 'unavailable') {
+          const key = liveEmbedKey(value)
+          latestEmbeds.delete(key); latestEmbeds.set(key, value)
+          if (latestEmbeds.size > 32) latestEmbeds.delete(latestEmbeds.keys().next().value)
+        }
+        if (following) options.onEmbed?.(value)
       },
       onPointer: (value) => { if (following) pointer?.show(value) },
       // The Pen's ink: kept for its own layer; the overlay draws it only while that layer is on screen.
@@ -881,6 +908,7 @@ export function createAudienceFollowRuntime(options) {
       instantSurface.show(null)
       diverged = true
     }
+    applyEmbeds()
     renderControls()
   }
   function viewerMoved() {
@@ -925,6 +953,9 @@ export function createAudienceFollowRuntime(options) {
         client?.end()
         client = null
         latestState = null
+        // A direct live-to-live handover reuses slide IDs, but none of the old session's
+        // scroll/availability state (including the page's not-ready-frame buffer) may cross it.
+        resetEmbeds()
         following = true
         diverged = false
         ensureClient()
@@ -1270,8 +1301,9 @@ export function createAudienceFollowClient(options) {
           if (parsed?.type === 'poll.state') options.onPollState?.(parsed)
           else if (parsed?.type === 'slide.state') applySlide(parsed)
           else if (parsed?.type === 'session.presence') options.onPresence?.(parsed)
-          else if (parsed?.type === 'pointer.live') { if (options.kind === 'screen') options.onPointer?.(parsed.pointer) }
-          else if (parsed?.type === 'ink.live') { if (options.kind === 'screen') options.onInk?.(parsed.ink) }
+          else if (parsed?.type === 'embed.live') options.onEmbed?.(parsed)
+          else if (parsed?.type === 'pointer.live') { options.onPointer?.(parsed.pointer) }
+          else if (parsed?.type === 'ink.live') { options.onInk?.(parsed.ink) }
           else if (parsed?.type === 'instant.state') applyInstant(parsed)
         } catch { fail() }
       }
@@ -1372,7 +1404,7 @@ export function createAudienceFollowClient(options) {
 }
 
 export function liveFollowRuntimeSource() {
-  return pointerOverlayRuntimeSource() + '\n' + penInkRuntimeSource() + '\n' + extendedPollRuntimeSource() + '\n' + instantSlideRuntimeSource() + '\n' + audienceReactionsRuntimeSource() + '\n' + audienceAskRuntimeSource() + '\n' + audienceBoardRuntimeSource() + '\n' + audienceMyNotesRuntimeSource() + '\n' + [normaliseFocus, normaliseLightbox, audienceSocketUrl, normaliseBoardPollState, normalisePollState, normaliseInstantSlide, parseServerMessage, escapePollHtml,
+  return liveEmbedRuntimeSource() + '\n' + pointerOverlayRuntimeSource() + '\n' + penInkRuntimeSource() + '\n' + extendedPollRuntimeSource() + '\n' + instantSlideRuntimeSource() + '\n' + audienceReactionsRuntimeSource() + '\n' + audienceAskRuntimeSource() + '\n' + audienceBoardRuntimeSource() + '\n' + audienceMyNotesRuntimeSource() + '\n' + [normaliseFocus, normaliseLightbox, audienceSocketUrl, normaliseBoardPollState, normalisePollState, normaliseInstantSlide, parseServerMessage, escapePollHtml,
     pollTypeLabel, submissionLimit, renderAudiencePollMarkup, shouldRenderAudiencePollUpdate, createAudiencePollRuntime, reconnectDelay,
     audiencePositionsMatch, createAudienceFollowRuntime, normaliseVoteReceipt, normaliseReactionAck, normaliseSwitches, probeAudienceSession, createAudienceFollowClient]
     .map((fn) => fn.toString()).join('\n')

@@ -323,7 +323,7 @@ console.log('ok: variants render, differ by layout and option, cache, and say wh
   const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   const wiring = main.slice(main.indexOf('const renderVariantThumbnail = createVariantThumbnailRenderer('), main.indexOf("ipcMain.handle('layout:variant-thumbnail'"))
   assert(wiring.includes("'variant')"), 'the variant renderer compiles on the variant route')
-  assert(main.includes('return routePreparation(lane, key, group, load)'), 'prepareTalk goes through the tested route')
+  assert(main.includes('return routePreparation(lane, key, group, load, supersedeKey)'), 'prepareTalk goes through the tested route')
   assert(main.includes("ipcMain.handle('layout:variant-thumbnail', createVariantThumbnailHandler(outlineRefused, renderVariantThumbnail))"),
     'main registers the handler tested above')
   console.log('ok: variant compiles stay out of the live prepared-talk cache')

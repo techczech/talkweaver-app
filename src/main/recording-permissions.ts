@@ -4,7 +4,11 @@
 //
 //   permission                  granted to
 //   media                       the main frame of an open presenter window, audio only (the recorder
-//                               bridge's getUserMedia({ audio: true }); never the camera)
+//                               bridge's getUserMedia on the chosen microphone; never the camera).
+//                               And the Settings window's main frame, audio, CHECKS only: Chromium
+//                               shows a page the names of the microphones only when this check
+//                               passes, and Settings › Recording › Microphone lists them. A request
+//                               from it (opening a microphone) is refused
 //   clipboard-sanitized-write   the main frame of any window (navigator.clipboard.writeText: the
 //                               editor's copy buttons, the deck's "copy" courtesy)
 //   fullscreen                  ANY frame of any window, main frame or embedded: the deck's own
@@ -50,6 +54,10 @@ export interface PermissionQuestion {
   presenterIds: ReadonlySet<number>
   /** `webContents.id` of every open editor, Tools and Pathways window. */
   appWindowIds: ReadonlySet<number>
+  /** `webContents.id` of the window that may list the microphones by name (the Settings window). */
+  deviceListIds?: ReadonlySet<number>
+  /** True for a check (setPermissionCheckHandler), false or absent for a request. */
+  check?: boolean
 }
 
 /** The table above. */
@@ -59,9 +67,10 @@ export function decidePermission(question: PermissionQuestion): boolean {
   if (permission === 'fullscreen') return true // any frame of a known window
   if (question.isMainFrame !== true) return false
   if (permission === 'media') {
-    if (!question.presenterIds.has(contentsId)) return false
     const types = question.mediaTypes
-    return Array.isArray(types) && types.length > 0 && types.every((type) => type === 'audio')
+    const audioOnly = Array.isArray(types) && types.length > 0 && types.every((type) => type === 'audio')
+    if (question.presenterIds.has(contentsId)) return audioOnly
+    return question.check === true && question.deviceListIds?.has(contentsId) === true && audioOnly
   }
   if (permission === 'clipboard-sanitized-write') return true
   if (permission === 'clipboard-read') return question.appWindowIds.has(contentsId)
@@ -99,24 +108,31 @@ export interface RecordingPermissions {
   appWindowIds(): ReadonlySet<number>
 }
 
-/** `sets.appWindowIds`: the app's one list of editor-kind windows (window-kinds.ts), shared, not copied. */
-export function createRecordingPermissions(sets: { appWindowIds?: Set<number> } = {}): RecordingPermissions {
+/**
+ * `sets.appWindowIds`: the app's one list of editor-kind windows (window-kinds.ts), shared, not copied.
+ * `sets.deviceListWindow`: the `webContents.id` of the Settings window while it is open, else null.
+ */
+export function createRecordingPermissions(sets: { appWindowIds?: Set<number>; deviceListWindow?: () => number | null } = {}): RecordingPermissions {
   const presenters = new Set<number>()
   const appWindows = sets.appWindowIds ?? new Set<number>()
-  const decide = (contents: { id?: unknown } | null, permission: unknown, isMainFrame: unknown, mediaTypes: unknown): boolean => {
+  const deviceListIds = (): ReadonlySet<number> => {
+    const id = sets.deviceListWindow?.()
+    return new Set(typeof id === 'number' ? [id] : [])
+  }
+  const decide = (contents: { id?: unknown } | null, permission: unknown, isMainFrame: unknown, mediaTypes: unknown, check: boolean): boolean => {
     try {
-      return decidePermission({ permission, contentsId: contents?.id, isMainFrame, mediaTypes, presenterIds: presenters, appWindowIds: appWindows }) === true
+      return decidePermission({ permission, contentsId: contents?.id, isMainFrame, mediaTypes, presenterIds: presenters, appWindowIds: appWindows, deviceListIds: deviceListIds(), check }) === true
     } catch { return false }
   }
   const handler: RequestHandler = (contents, permission, callback, details) => {
     let granted = false
-    try { granted = decide(contents, permission, details?.isMainFrame, details?.mediaTypes) } catch { granted = false }
+    try { granted = decide(contents, permission, details?.isMainFrame, details?.mediaTypes, false) } catch { granted = false }
     callback(granted)
   }
   const checkHandler: CheckHandler = (contents, permission, _requestingOrigin, details) => {
     try {
       const mediaType = details?.mediaType
-      return decide(contents, permission, details?.isMainFrame, mediaType === undefined ? undefined : [mediaType])
+      return decide(contents, permission, details?.isMainFrame, mediaType === undefined ? undefined : [mediaType], true)
     } catch { return false }
   }
   const track = (ids: Set<number>, window: PermissionWindow): void => {

@@ -16,3 +16,44 @@ html, body, #root { height: 100%; margin: 0; }
 
 /* About is supplied by the app; keep its sole navigation row pinned below Changes. */
 .bsw-navwrap [data-section="updates"] { display: none; }
+
+/* House rule R14 (consistency batch 3): the Settings window wears the writing window's tokens: cream surfaces, the navy
+   primary, the app's sans face. The shared package (@app-patterns/settings-react, vendored) is not forked: its own hooks
+   (--bsw-accent*, --bsw-ink2, --bsw-line on .bsw-root) carry the colours it lets an app set, and the few surface greys
+   it fixes in its stylesheet are overridden here by class. */
+:root { --paper: #f7f3ea; --active: #e4ddd0; --hairline: #e3e2dc; --crimson: #9f1239; --green: #166534; --amber: #92600a; }
+.bsw-root {
+  --bsw-accent: var(--oxford); --bsw-accent-hover: #e2e9f2; --bsw-accent-dark: color-mix(in srgb, var(--oxford) 85%, black);
+  --bsw-accent-ink: var(--oxford); --bsw-accent-tint: #e2e9f2; --bsw-accent-wash: var(--paper);
+  --bsw-ink2: var(--muted); --bsw-line: var(--line);
+  background: var(--paper); color: var(--ink); font-family: var(--font-ui);
+}
+.bsw-side { background: var(--panel); border-right-color: var(--line); padding-top: 28px; } /* the native close buttons (hiddenInset) sit over the top-left; keep the search field clear of them */
+.bsw-sidefoot { background: var(--paper); border-top-color: var(--line); }
+.bsw-pane { background: var(--paper); }
+.bsw-phead { background: var(--panel); border-bottom-color: var(--line); }
+.bsw-search input { background: var(--panel); border-color: var(--line); }
+.bsw-nav:hover { background: var(--hover); }
+.bsw-nav .bsw-cnt { background: var(--hover); color: var(--muted); }
+/* R14: the chosen section is the app's one selected-row look (the Tools rail's): dark navy text on the navy tint, whether
+   or not the pointer is over it (the hover rule above would otherwise turn the shared white text pale on cream). */
+.bsw-nav.bsw-sel, .bsw-nav.bsw-sel:hover { background: var(--bsw-accent-tint); color: var(--oxford); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line); }
+.bsw-nav.bsw-sel .bsw-cnt { background: var(--panel); color: var(--oxford); }
+.bsw-grp, .bsw-phead .bsw-meta { color: var(--muted); }
+.bsw-card { background: var(--panel); border-color: var(--line); }
+.bsw-card > .bsw-ch { background: var(--paper); border-bottom-color: var(--line); color: var(--muted); }
+.bsw-row { border-bottom-color: var(--hairline); }
+.bsw-tag.bsw-app { background: var(--hover); color: var(--muted); }
+.bsw-btn { border-color: var(--line); background: var(--hover); color: var(--ink); border-radius: 6px; font-weight: 500; box-shadow: none; }
+.bsw-btn:hover { background: var(--active); }
+.bsw-btn.bsw-pri { background: var(--oxford); border-color: var(--oxford); color: #fff; font-weight: 600; }
+.bsw-btn.bsw-pri:hover { background: color-mix(in srgb, var(--oxford) 85%, black); }
+.bsw-btn.bsw-dng { color: var(--crimson); }
+.bsw-btn.bsw-dngp { background: var(--crimson); border-color: var(--crimson); color: #fff; }
+.bsw-tg.bsw-on { background: var(--oxford); }
+.bsw-insp { background: var(--panel); border-left-color: var(--line); }
+.bsw-insp > h4 { background: var(--paper); border-bottom-color: var(--line); color: var(--muted); }
+.bsw-tag.bsw-none { background: var(--hover); color: var(--muted); }
+.bsw-nav svg, .bsw-phead > svg { color: var(--muted); }
+.bsw-nav.bsw-sel svg { color: var(--oxford); }
+.bsw-rcfoot { background: var(--paper); border-top-color: var(--line); }

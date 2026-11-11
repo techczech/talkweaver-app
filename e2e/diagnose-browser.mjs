@@ -278,7 +278,7 @@ try {
   const label = () => page.locator('.lt-prop-scrim .lt-btn.primary').textContent().then((t) => (t || '').trim())
   const repCount = (t) => { const m = t.match(/Replace in (\d+)/); return m ? Number(m[1]) : 0 }
   const before = await label()
-  record('primary recounts replace/skip', /Replace in \d+ presentation/.test(before) && / · skip \d+/.test(before), before)
+  record('primary recounts replace/skip', /Replace in \d+ talk/.test(before) && / · skip \d+/.test(before), before)
   // diff drawer on demand
   await dRow.locator('.lt-pr-diff').click(); await page.waitForTimeout(400)
   record('View diff opens the two-column drawer with honest del/add lines', await page.evaluate(() => {
@@ -300,7 +300,7 @@ try {
   await page.keyboard.press('Meta+Enter'); await page.waitForTimeout(1500)
   record('confirm closes the checklist (Browser stays open)',
     (await page.locator('.lt-prop-scrim').count()) === 0 && (await page.locator('.lt-browser-root').count()) === 1)
-  record('success toast reads Replaced in N presentations',
+  record('success toast reads Replaced in N talks',
     ((await page.locator('[role="status"]').allTextContents()).join(' ')).includes('Replaced in'))
   const gammaNow = readFileSync(gammaOutline, 'utf8'); const deltaNow = readFileSync(deltaOutline, 'utf8')
   record('behind target replaced on disk with the adopted version',
@@ -390,15 +390,16 @@ try {
   // the nudge action opens the confirm even though the Browser is closed
   await page.locator('[role="status"] button', { hasText: 'Merge into one' }).click(); await page.waitForTimeout(700)
   record('the nudge Merge action opens the confirm above everything',
-    (await page.locator('.lt-merge-scrim .lt-panel').count()) === 1)
+    (await page.locator('[data-testid="merge-confirm-card"]').count()) === 1)
   record('confirm title + byte-identical body name both talks', await page.evaluate(() => {
-    const h = document.querySelector('.lt-merge-scrim .lt-panel-head h2')?.textContent || ''
-    const sub = document.querySelector('.lt-merge-scrim .lt-panel-sub')?.textContent || ''
+    const card = document.querySelector('[data-testid="merge-confirm-card"]')
+    const h = card?.getAttribute('aria-label') || ''
+    const sub = card?.textContent || ''
     return h === 'Merge 2 identical copies into one slide?' && sub.includes('Zeta Talk') && sub.includes('Eta Talk')
   }))
-  await page.locator('.lt-merge-scrim .lt-btn.primary', { hasText: 'Merge' }).click(); await page.waitForTimeout(1500)
+  await page.locator('[data-testid="merge-confirm-card"] button', { hasText: 'Merge' }).click(); await page.waitForTimeout(1500)
   record('merge closes the confirm and toasts the count',
-    (await page.locator('.lt-merge-scrim').count()) === 0 &&
+    (await page.locator('[data-testid="merge-confirm-card"]').count()) === 0 &&
     ((await page.locator('[role="status"]').allTextContents()).join(' ')).includes('Merged 2 copies into one slide'))
 
   // disk: both outlines now carry ONE shared id; every bullet is unchanged

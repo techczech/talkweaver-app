@@ -39,6 +39,9 @@ export const REBINDABLE: Readonly<Record<string, string>> = {
   'app.whats-new': 'whats-new',
   'app.research-panel': 'research-panel',
   'app.research-find': 'research-find',
+  'app.pathways': 'pathways',
+  'app.add-to-pathway': 'add-to-pathway',
+  'app.present-pathway': 'present-pathway',
   'app.set-aside': 'set-aside-slides',
   'app.grid-search': 'search-slides-grid',
   'app.search-next': 'search-next',
@@ -125,7 +128,7 @@ export function appCommandIdOf(bridleId: string): string {
 
 /** The Tools window's own commands (0.41): scope 'tools' is shared with editor-window commands that open a tool, so the id says it. */
 function isToolsWindowCommand(c: CommandDefinition): boolean {
-  return c.id.startsWith('tools-')
+  return c.id.startsWith('tools-') && c.id !== 'tools-animated-video'
 }
 
 /** Holders of an estate or system chord that ARE that chord's job here: fixed, so nothing else can take the chord. */

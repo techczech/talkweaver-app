@@ -560,12 +560,18 @@ export function embedFieldState(element) {
   return null;
 }
 
+/** A validated scroll target's canonical identity, independent of object property order. */
+export function embedScrollAddressKey(event) {
+  const el = event && event.el;
+  return JSON.stringify([el && el.path || [], el && el.tag || '', el && el.id || null]);
+}
+
 /** The functions above as script text, for inlining beside the agent or the channel. */
 export function embedProtocolSource() {
   return [
     embedLimits, embedKindFields, embedPlainFields, embedIsToken, embedTokenFromBytes, embedIsText, embedIsTagName,
     embedIsIdText, embedReadFraction, embedReadPath, embedReadAddress, embedReadMessage, embedValidateMessage,
-    embedBuildMessage, embedEventDescription, embedMessageFromDescription, embedAcceptsFromFrame, embedSendsToFrame,
+    embedBuildMessage, embedEventDescription, embedMessageFromDescription, embedScrollAddressKey, embedAcceptsFromFrame, embedSendsToFrame,
     embedRoleForWindow, embedKeyDecision, embedCreateLimiter, embedLimiterDrop, embedLimiterTake, embedElementTag,
     embedElementsWithId, embedDescribeElement, embedResolveElement, embedScrollFractions, embedApplyScroll,
     embedInputType, embedIsSensitiveField, embedIsTextField, embedKeepsKeys, embedFieldState

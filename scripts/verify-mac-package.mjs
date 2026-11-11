@@ -280,7 +280,14 @@ export function verifyMacPackage(target, options = {}) {
   if (!stat) return { problems: [`refused: ${path} does not exist`], checked: [] }
   const one = (app, label) => {
     const problem = macAppProblem(app, options)
-    return { problems: problem ? [`${label}: ${problem}`] : [], checked: [label] }
+    if (problem) return { problems: [`${label}: ${problem}`], checked: [label] }
+    // Release mode composes the Electron gate with the existing FFmpeg verifier. Functional
+    // unsigned jobs run the standalone Electron gate explicitly in packaged.yml.
+    if (options.requireSigned) {
+      const security = (options.run ?? run)(process.execPath, [join(dirname(PACKAGE_JSON), 'scripts/verify-electron-security.cjs'), app])
+      if (security.status !== 0) return { problems: [`${label}: security gate failed: ${security.stderr || security.stdout}`], checked: [] }
+    }
+    return { problems: [], checked: [label] }
   }
   if (path.endsWith('.app')) {
     const layout = packageLayoutProblem(path, { app: path })

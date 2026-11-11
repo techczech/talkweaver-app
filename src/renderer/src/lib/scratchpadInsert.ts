@@ -219,7 +219,7 @@ export async function runScratchBatch(host: ScratchBatchHost, ids: string[], pla
         const marked = await host.api.markInsertedMany(records, talk)
         if (!marked.ok) host.notify(INSERT_TEXT.notMarked(marked.error), 'warning', 'scratchpad-insert-mark')
       } catch (error) { host.notify(INSERT_TEXT.notMarked(String(error)), 'warning', 'scratchpad-insert-mark') }
-      host.notify(`Inserted ${selectionLines.length || ids.length} slides from ${ids.length} Scratchpad items.`, 'success', 'scratchpad-insert')
+      host.notify(`Inserted ${selectionLines.length || ids.length} slides from ${ids.length} Slide Scratchpad items.`, 'success', 'scratchpad-insert')
     }
     return { ok: true, newSlide, lines, selectionLines, sourceText }
   } catch (error) {

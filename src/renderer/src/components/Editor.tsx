@@ -1,3 +1,4 @@
+declare const __TW_SECURITY_TEST__: boolean
 import { scratchDropExtension } from '../extensions/scratchDrop'
 import type { SlidePlace } from '../../../shared/slide-handling/place'
 import { runActionBarEditing } from './actionBar/editing-command'
@@ -240,6 +241,8 @@ interface Props {
     // detach awaits this before calling ledger.detach so the engine reads the just-typed text, not
     // a stale on-disk copy (the progress ledger flagged this detach-vs-autosave race).
     flushSave: () => Promise<void>
+    /** Await pending writes and stamped-text adoption; reject a refused save. */
+    settleSave: () => Promise<void>
     // Scroll the editor to reveal the current cursor (selection head) WITHOUT changing the selection,
     // and focus it. Used when a view switch re-shows the editor so it lands on the slide you're on
     // (the cursor is wherever strip/grid/outline navigation last put it) instead of snapping to the top.
@@ -276,8 +279,9 @@ interface Props {
   // loaded. Without it the result is the buffer text and the normal autosave follows.
   // With `savedFrom` the text is what a save wrote for that sent text (tidied, ids stamped): it is
   // adopted as the save's own undo step (extensions/savedTextAdoption.ts), and only while the buffer is
-  // still the text the save was made from.
-  registerReplaceDoc?: (fn: (text: string, opts?: { save?: boolean; savedFrom?: string; ownUndoStep?: boolean }) => string | null) => void
+  // still the text the save was made from. `fromDisk` adopts Reload text as the clean baseline
+  // without autosave; undoing that adoption is an ordinary edit.
+  registerReplaceDoc?: (fn: (text: string, opts?: { save?: boolean; savedFrom?: string; ownUndoStep?: boolean; fromDisk?: boolean }) => string | null) => void
   // The buffer's live text, the talk it belongs to and the caret (selection head offset), or null
   // while that talk's text is not loaded (one-writer spec D1: a mutation of the open talk reads THIS,
   // never the React mirror of it; the section insert places itself from the caret).
@@ -314,7 +318,7 @@ interface Props {
   compiledLayoutAt?: (headingLine: number) => string | undefined
   /** Plain view, Command-I: where the caret is, and the one write of a verified icon change. */
   registerPlainIconTools?: (tools: PlainIconTools) => void
-  /** The pre-work and post-work strips' "Plan a run": opens the plan sheet for this talk. */
+  /** The pre-work and post-work strips' "Plan a Run": opens the plan sheet for this talk. */
   onPlanRun?: () => void
 }
 
@@ -442,6 +446,10 @@ export default function Editor({
     onLayoutMenu: (line, anchor) => marginMenusRef.current.onMarginLayoutMenu?.(line, anchor)
   }).current
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // A debounce is only scheduled work, not evidence that a write succeeded. Keep the last
+  // acknowledged text independently; replace this object on load/Reload to invalidate old replies.
+  const cleanDocumentRef = useRef<{ text: string | null; dirty: boolean; pending?: Promise<boolean> & { text: string } }>({ text: null, dirty: false })
+  const adoptingDiskRef = useRef(false)
   // The replace seam's last save (`save: true`): the text it returned to be written, and the editor's
   // text it was tidied from, so the adoption of what was written (`savedFrom`) replaces the latter.
   const seamSaveRef = useRef<{ sent: string; source: string } | null>(null)
@@ -521,44 +529,62 @@ export default function Editor({
   // every editor save does. Resolves true only when the main process confirms the bytes were written.
   // `source` is the editor's text the save was made from (`text` is it tidied, textForSave); what was
   // written is adopted in its place while the editor still holds it.
-  const writeQueued = useCallback(async (outlinePath: string, text: string, source: string = text): Promise<boolean> => {
-    // The person discarded this talk (removed on disk): it is never saved again from this editor.
-    if (outlineDiskChanges.isDiscarded(outlinePath)) return false
-    const res = await queueOutlineWrite(outlinePath, () => window.tw.talk.writeOutline(outlinePath, text))
-    // Save-indicator honesty (2026-07-05): only stamp "saved" on a REAL write. If the main-process
-    // backstop refused (structurally-empty over a non-empty file), the disk is unchanged — say so
-    // instead of a false "saved just now". `res === false` is an IO failure (also not a save).
-    if (res && res.ok === true) {
-      onSaved?.()
-      // Stamped-id adoption (see adoptStampedContent). On the talk-switch flush path the view may
-      // already be torn down or repointed — the helper's viewRef/doc-unchanged guards make that a
-      // safe no-op (disk is stamped either way; the reload will read the stamped file).
-      adoptStampedContent(source, text, res)
-      return true
-    }
-    // External-change guard: the file differs from what this editor holds. The bar at the top of the
-    // talk offers the choice; the typing stays in the editor (and in main's recovery copy). A talk
-    // switch or a close waits for that choice (useOutlineDiskChange), so a save for a talk this editor
-    // no longer shows is rare; it gets words of its own.
-    if (noteOutlineSaveReply(res)) {
-      if (currentTalkRef.current !== outlinePath || !viewRef.current) {
-        notify('Your last edits to the talk you left were not saved: its file differs on disk. They are kept as unsaved text; open the talk again to restore them.', 'warning', 'changed-on-disk')
+  const writeQueued = useCallback((outlinePath: string, text: string, source: string = text): Promise<boolean> => {
+    // Every immediate write supersedes the debounce, including a settle continuation after IPC.
+    if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+    const baseline = cleanDocumentRef.current
+    if (baseline.pending?.text === text) return baseline.pending
+    // Track the entire write, including synchronous stamped-content adoption, on the same
+    // acknowledged-document state that load/Reload invalidates. The queue alone ends before adoption.
+    const pending = Object.assign((async () => {
+      // The person discarded this talk (removed on disk): it is never saved again from this editor.
+      if (outlineDiskChanges.isDiscarded(outlinePath)) return false
+      const res = await queueOutlineWrite(outlinePath, () => window.tw.talk.writeOutline(outlinePath, text))
+      // Save-indicator honesty (2026-07-05): only stamp "saved" on a REAL write. If the main-process
+      // backstop refused (structurally-empty over a non-empty file), the disk is unchanged — say so
+      // instead of a false "saved just now". `res === false` is an IO failure (also not a save).
+      if (res && res.ok === true) {
+        onSaved?.()
+        // Stamped-id adoption (see adoptStampedContent). On the talk-switch flush path the view may
+        // already be torn down or repointed — the helper's viewRef/doc-unchanged guards make that a
+        // safe no-op (disk is stamped either way; the reload will read the stamped file).
+        if (cleanDocumentRef.current === baseline && loadedPathRef.current === outlinePath) {
+          adoptStampedContent(source, text, res)
+          const saved = typeof res.content === 'string' ? res.content : text
+          baseline.text = viewRef.current?.state.toText(saved).toString() ?? saved
+          baseline.dirty = viewRef.current?.state.doc.toString() !== baseline.text
+          onDirtyRef.current?.(baseline.dirty)
+        }
+        return true
+      }
+      // External-change guard: the file differs from what this editor holds. The bar at the top of the
+      // talk offers the choice; the typing stays in the editor (and in main's recovery copy). A talk
+      // switch or a close waits for that choice (useOutlineDiskChange), so a save for a talk this editor
+      // no longer shows is rare; it gets words of its own.
+      if (noteOutlineSaveReply(res)) {
+        if (currentTalkRef.current !== outlinePath || !viewRef.current) {
+          notify('Your last edits to the talk you left were not saved: its file differs on disk. They are kept as unsaved text; open the talk again to restore them.', 'warning', 'changed-on-disk')
+        }
+        return false
+      }
+      if (res && res.ok === false && res.refused === 'outside-vault') {
+        // The talk is not in the current vault (the vault root changed while this window held it).
+        notify(res.error || 'This talk is not in your current vault; it was not saved. Switch back to that vault to keep editing it.', 'error', 'save-failed')
+      } else if (res && res.ok === false && res.refused === 'ownership') {
+        notify('This talk’s editing access changed, so it was not saved. Your edits remain in the editor. Reopen the talk when its vault is available to continue saving.', 'warning', 'save-ownership')
+      } else if (res && res.ok === false) {
+        notify('Save skipped — the app refused to overwrite the outline with empty content. Your file on disk is unchanged.', 'warning', 'save-refused')
+      } else {
+        // IO failure (write threw: permissions, disk, file vanished). Without this the status
+        // bar keeps ageing "Saved Xm ago" while every keystroke is silently lost.
+        notify('Save FAILED — the outline could not be written to disk. Your recent edits are not saved.', 'error', 'save-failed')
       }
       return false
-    }
-    if (res && res.ok === false && res.refused === 'outside-vault') {
-      // The talk is not in the current vault (the vault root changed while this window held it).
-      notify(res.error || 'This talk is not in your current vault; it was not saved. Switch back to that vault to keep editing it.', 'error', 'save-failed')
-    } else if (res && res.ok === false && res.refused === 'ownership') {
-      notify('This talk’s editing access changed, so it was not saved. Your edits remain in the editor. Reopen the talk when its vault is available to continue saving.', 'warning', 'save-ownership')
-    } else if (res && res.ok === false) {
-      notify('Save skipped — the app refused to overwrite the outline with empty content. Your file on disk is unchanged.', 'warning', 'save-refused')
-    } else {
-      // IO failure (write threw: permissions, disk, file vanished). Without this the status
-      // bar keeps ageing "Saved Xm ago" while every keystroke is silently lost.
-      notify('Save FAILED — the outline could not be written to disk. Your recent edits are not saved.', 'error', 'save-failed')
-    }
-    return false
+    })(), { text })
+    baseline.pending = pending
+    const finished = () => { if (baseline.pending === pending) baseline.pending = undefined }
+    void pending.then(finished, finished)
+    return pending
   }, [onSaved, adoptStampedContent])
 
   const scheduleAutosave = useCallback(
@@ -571,6 +597,7 @@ export default function Editor({
       saveTimerRef.current = setTimeout(async () => {
         saveTimerRef.current = null
         const view = viewRef.current
+        if (!cleanDocumentRef.current.dirty) return
         // Tidied, except straight after an undo or a redo (extensions/saveTidyUp.ts), here and at the
         // two saves below. The editor is not tidied first: the tidy-up comes back with the save's ids.
         const normalized = textForSave(view?.state, content)
@@ -832,7 +859,7 @@ export default function Editor({
           textFitWarningExtension,
           // YAML frontmatter rendered as a typed table (raw ↔ table toggle).
           frontmatterTableExtension(),
-          // The strips' buttons (ticket 08): Plan a run opens the workspace's plan sheet; Open run goes to Sessions.
+          // The strips' buttons (ticket 08): Plan a Run opens the workspace's plan sheet; Open run goes to Sessions.
           workStripHandlersFacet.of({
             planRun: () => onPlanRunRef.current?.(),
             openRun: (ref) => { void window.tw.tools.openRun(ref.talkSlug, ref.runId, ref.vaultId) }
@@ -923,6 +950,7 @@ export default function Editor({
               // replaceDoc, undo) carry no 'input' userEvent and never fire this.
               if (update.transactions.some((tr) => tr.isUserEvent('input'))) onEditorEngagedRef.current?.()
               const content = update.state.doc.toString()
+              if (adoptingDiskRef.current) { onContentChange(content); return }
               if (rollingBackProvisionalRef.current) {
                 rollingBackProvisionalRef.current = false
                 return
@@ -956,6 +984,7 @@ export default function Editor({
               // active talk — never during the fresh-mount `doc:''` transient or the load's own initial
               // content dispatch (data-loss guard, 2026-07-05). scheduleAutosave also skips empty text.
               if (loadedPathRef.current && loadedPathRef.current === currentTalkRef.current) {
+                cleanDocumentRef.current.dirty = true
                 onDirtyRef.current?.(true)
                 scheduleAutosave(currentTalkRef.current, content)
               }
@@ -1022,6 +1051,10 @@ export default function Editor({
     })
 
     viewRef.current = view
+    // Supported EditorView reference; compiled out of production builds.
+    const testWindow = window as Window & { __twSecurityEditorText?: () => string }
+    const readTestDocument = (): string => view.state.doc.toString()
+    if (__TW_SECURITY_TEST__) testWindow.__twSecurityEditorText = readTestDocument
 
     return () => {
       // Cancel any pending autosave from THIS instance before it unmounts. A stale timer that fired
@@ -1030,6 +1063,7 @@ export default function Editor({
       // flows persist their own content, so the editor's pending save is redundant here (data-loss
       // guard, 2026-07-05).
       if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+      if (__TW_SECURITY_TEST__ && testWindow.__twSecurityEditorText === readTestDocument) delete testWindow.__twSecurityEditorText
       view.destroy()
       viewRef.current = null
     }
@@ -1152,6 +1186,7 @@ export default function Editor({
     // from the previous talk/instance is cancelled — so neither the empty transient nor a stale save
     // can write during the load (data-loss guard, 2026-07-05).
     loadedPathRef.current = null
+    cleanDocumentRef.current = { text: null, dirty: false }
     if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
     const pathAtLoad = talk.outlinePath
     const movedBuffer = movedBufferRef.current
@@ -1170,6 +1205,7 @@ export default function Editor({
         // Preserve the mounted document only when the destination still holds the move's bytes.
         // A newer destination uses the existing explicit recovery choice instead.
         if (movedBuffer?.to === pathAtLoad && movedBuffer.diskText === content && viewRef.current.state.doc.toString() === movedBuffer.text) {
+          cleanDocumentRef.current = { text: viewRef.current.state.toText(content).toString(), dirty: viewRef.current.state.doc.toString() !== viewRef.current.state.toText(content).toString() }
           loadedPathRef.current = pathAtLoad
           loadFrozenRef.current = false
           moveFrozenRef.current = false
@@ -1186,6 +1222,7 @@ export default function Editor({
         // in this one. ⌘Z in a freshly opened talk must be a no-op, never a revert-to-empty.
         viewRef.current.dispatch({ effects: historyCompartment.reconfigure([]) })
         viewRef.current.dispatch({ effects: historyCompartment.reconfigure(history({ minDepth: 200 })) })
+        cleanDocumentRef.current = { text: viewRef.current.state.doc.toString(), dirty: false }
         loadedPathRef.current = pathAtLoad
         loadFrozenRef.current = false
         moveFrozenRef.current = false
@@ -1350,9 +1387,9 @@ export default function Editor({
       // Cancel the pending debounce and write the CURRENT doc immediately, so a caller that reads the
       // file straight after (detach) never races the 1.5s autosave. No-op-safe when nothing is pending.
       flushSave: async () => {
-        // A pending edit is written immediately. Even without a pending debounce, this boundary applies
-        // ADR-0020 D4's silent position-only normalisation before talk-switch/IO consumers proceed.
-        const hadPendingSave = saveTimerRef.current !== null
+        // Opening, reading or switching views is not an edit. In particular, do not tidy layout
+        // lines (and thereby stamp ids) in an untouched file when leaving it or pressing Save.
+        // Position normalisation still runs for actual pending edits, as it does for autosave.
         if (saveTimerRef.current) {
           clearTimeout(saveTimerRef.current)
           saveTimerRef.current = null
@@ -1360,14 +1397,35 @@ export default function Editor({
         const v = viewRef.current
         if (!v) return
         const current = v.state.doc.toString()
+        if (!cleanDocumentRef.current.dirty) return
         const text = textForSave(v.state, current)
-        // Nothing pending and nothing to tidy: nothing to write. (The tidy-up comes back into the
-        // editor with the save's ids, after the write: writeQueued.)
-        if (text === current && !hadPendingSave) return
         // Never flush an empty doc (a fresh-mount transient before load) or one whose content isn't the
         // loaded talk's yet — the caller (detach / switch) only needs the just-typed real text.
         if (text.trim() === '' || loadedPathRef.current !== currentTalkRef.current) return
         await writeQueued(currentTalkRef.current, text, current)
+      },
+      // Capture binds its slide identity only after the acknowledged bytes (including minted IDs)
+      // are adopted. Reuse dirty/acknowledged tracking: a timer is not a save receipt.
+      settleSave: async () => {
+        const path = currentTalkRef.current
+        const baseline = cleanDocumentRef.current
+        for (;;) {
+          if (saveTimerRef.current) {
+            clearTimeout(saveTimerRef.current)
+            saveTimerRef.current = null
+          }
+          const pending = baseline.pending
+          if (pending && !await pending) throw new Error('The talk was not saved')
+          if (baseline.pending && baseline.pending !== pending) continue
+          const v = viewRef.current
+          if (!v || cleanDocumentRef.current !== baseline || loadedPathRef.current !== path || currentTalkRef.current !== path)
+            throw new Error('The open talk changed while saving')
+          if (!baseline.dirty) return
+          const current = v.state.doc.toString()
+          if (!current.trim() || !await writeQueued(path, textForSave(v.state, current), current))
+            throw new Error('The talk was not saved')
+          // Typing during the IPC can defer adoption. Save that newer buffer before binding an ID.
+        }
       },
       scrollCursorIntoView: () => {
         const v = viewRef.current
@@ -1575,7 +1633,17 @@ export default function Editor({
       const loaded = !!loadedPathRef.current && loadedPathRef.current === currentTalkRef.current
       // A save-bound change needs the talk's real text in the doc: before the load lands the doc is a
       // transient the load will replace, so the change (and its save) would be lost or wrong.
-      if (opts?.save && !loaded) return null
+      if ((opts?.save || opts?.fromDisk) && !loaded) return null
+      if (opts?.fromDisk) {
+        if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+        seamSaveRef.current = null
+        const spec = replaceDocTransaction(view.state.doc.toString(), text, { ownUndoStep: true })
+        adoptingDiskRef.current = true
+        try { if (spec) view.dispatch(spec) } finally { adoptingDiskRef.current = false }
+        cleanDocumentRef.current = { text: view.state.doc.toString(), dirty: false }
+        onDirtyRef.current?.(false)
+        return view.state.doc.toString()
+      }
       // The text a save wrote for `savedFrom`: adopted as the save's undo step, and only while the
       // buffer is still the text that save was made from (savedTextAdoption.ts). When this seam's
       // save branch below sent `savedFrom` tidied, that is the text before the tidy-up.
@@ -1584,6 +1652,9 @@ export default function Editor({
         const source = pending && pending.sent === opts.savedFrom ? pending.source : opts.savedFrom
         if (pending && pending.sent === opts.savedFrom) seamSaveRef.current = null
         adoptSavedText(view, source, text)
+        cleanDocumentRef.current.text = view.state.toText(text).toString()
+        cleanDocumentRef.current.dirty = view.state.doc.toString() !== cleanDocumentRef.current.text
+        onDirtyRef.current?.(cleanDocumentRef.current.dirty)
         return view.state.doc.toString()
       }
       const spec = replaceDocTransaction(view.state.doc.toString(), text, { ownUndoStep: opts?.ownUndoStep })

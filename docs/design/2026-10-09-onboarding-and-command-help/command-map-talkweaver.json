@@ -416,7 +416,7 @@
   },
   {
    "id": "toggle-inspector",
-   "label": "Inspector mode",
+   "label": "Show or hide the sidebar",
    "chord": "⌘P",
    "scope": "app",
    "currentGroup": "View",
@@ -730,7 +730,7 @@
   },
   {
    "id": "search-talks",
-   "label": "Search presentations…",
+   "label": "Search talks…",
    "chord": "⌘⇧T",
    "scope": "app",
    "currentGroup": "Sidebar",
@@ -844,7 +844,7 @@
    "paletteToday": true,
    "task": "See the talk",
    "taskNo": 4,
-   "subgroup": "Views (editor, strip, grid)",
+   "subgroup": "Views (slides, grid, strip)",
    "class": "command",
    "readsBetterAs": "Rebuild the slide preview"
   },
@@ -862,51 +862,39 @@
    "readsBetterAs": "Focus on this slide"
   },
   {
-   "id": "view-editor",
-   "label": "View: Editor only",
+   "id": "view-slides",
+   "label": "View: Slides",
    "chord": "⌘1",
    "scope": "app",
    "currentGroup": "View",
    "paletteToday": true,
    "task": "See the talk",
    "taskNo": 4,
-   "subgroup": "Views (editor, strip, grid)",
-   "class": "command"
-  },
-  {
-   "id": "view-both",
-   "label": "View: Editor + slides",
-   "chord": "⌘2",
-   "scope": "app",
-   "currentGroup": "View",
-   "paletteToday": true,
-   "task": "See the talk",
-   "taskNo": 4,
-   "subgroup": "Views (editor, strip, grid)",
+   "subgroup": "Views (slides, grid, strip)",
    "class": "command"
   },
   {
    "id": "view-strip",
-   "label": "View: Slide strip",
+   "label": "View: Strip",
    "chord": "⌘3",
    "scope": "app",
    "currentGroup": "View",
    "paletteToday": true,
    "task": "See the talk",
    "taskNo": 4,
-   "subgroup": "Views (editor, strip, grid)",
+   "subgroup": "Views (slides, grid, strip)",
    "class": "command"
   },
   {
    "id": "view-grid",
    "label": "View: Grid",
-   "chord": "⌘4",
+   "chord": "⌘2",
    "scope": "app",
    "currentGroup": "View",
    "paletteToday": true,
    "task": "See the talk",
    "taskNo": 4,
-   "subgroup": "Views (editor, strip, grid)",
+   "subgroup": "Views (slides, grid, strip)",
    "class": "command"
   },
   {
@@ -1002,14 +990,14 @@
   },
   {
    "id": "deck-design",
-   "label": "Deck design…",
+   "label": "Talk design…",
    "chord": "—",
    "scope": "deck",
    "currentGroup": null,
    "paletteToday": true,
    "task": "Shape the talk",
    "taskNo": 5,
-   "subgroup": "Deck design",
+   "subgroup": "Talk design",
    "class": "command"
   },
   {
@@ -1039,76 +1027,6 @@
    "readsBetterAs": "Edit the talk abstract"
   },
   {
-   "id": "pathway.grid",
-   "label": "Grid view",
-   "chord": "G",
-   "scope": "pathway",
-   "currentGroup": "View",
-   "paletteToday": false,
-   "task": "Shape the talk",
-   "taskNo": 5,
-   "subgroup": "Pathways",
-   "class": "command",
-   "readsBetterAs": "Pathways: grid view",
-   "inSurface": "Pathways"
-  },
-  {
-   "id": "pathway.list",
-   "label": "List view",
-   "chord": "L",
-   "scope": "pathway",
-   "currentGroup": "View",
-   "paletteToday": false,
-   "task": "Shape the talk",
-   "taskNo": 5,
-   "subgroup": "Pathways",
-   "class": "command",
-   "readsBetterAs": "Pathways: list view",
-   "inSurface": "Pathways"
-  },
-  {
-   "id": "pathway.matrix",
-   "label": "Matrix view",
-   "chord": "M",
-   "scope": "pathway",
-   "currentGroup": "View",
-   "paletteToday": false,
-   "task": "Shape the talk",
-   "taskNo": 5,
-   "subgroup": "Pathways",
-   "class": "command",
-   "readsBetterAs": "Pathways: matrix view",
-   "inSurface": "Pathways"
-  },
-  {
-   "id": "pathway.previews",
-   "label": "Toggle previews",
-   "chord": "P",
-   "scope": "pathway",
-   "currentGroup": "View",
-   "paletteToday": false,
-   "task": "Shape the talk",
-   "taskNo": 5,
-   "subgroup": "Pathways",
-   "class": "command",
-   "readsBetterAs": "Pathways: show or hide previews",
-   "inSurface": "Pathways"
-  },
-  {
-   "id": "pathway.reorder",
-   "label": "Reorder mode",
-   "chord": "⌥R",
-   "scope": "pathway",
-   "currentGroup": "Reorder",
-   "paletteToday": false,
-   "task": "Shape the talk",
-   "taskNo": 5,
-   "subgroup": "Pathways",
-   "class": "command",
-   "readsBetterAs": "Pathways: reorder mode",
-   "inSurface": "Pathways"
-  },
-  {
    "id": "pathway.move-item",
    "label": "Move pathway slide",
    "chord": "⌘↑ / ⌘↓",
@@ -1120,76 +1038,6 @@
    "subgroup": "Pathways",
    "class": "command",
    "readsBetterAs": "Pathways: move this slide",
-   "inSurface": "Pathways"
-  },
-  {
-   "id": "pathway.present",
-   "label": "Present this pathway",
-   "chord": "↵",
-   "scope": "pathway",
-   "currentGroup": "Present",
-   "paletteToday": false,
-   "task": "Shape the talk",
-   "taskNo": 5,
-   "subgroup": "Pathways",
-   "class": "command",
-   "readsBetterAs": "Pathways: present this pathway",
-   "inSurface": "Pathways"
-  },
-  {
-   "id": "pathway.new",
-   "label": "New pathway",
-   "chord": "⌘N",
-   "scope": "pathway",
-   "currentGroup": "Manage",
-   "paletteToday": false,
-   "task": "Shape the talk",
-   "taskNo": 5,
-   "subgroup": "Pathways",
-   "class": "command",
-   "readsBetterAs": "Pathways: new pathway",
-   "inSurface": "Pathways"
-  },
-  {
-   "id": "pathway.rename",
-   "label": "Rename pathway",
-   "chord": "⌘R",
-   "scope": "pathway",
-   "currentGroup": "Manage",
-   "paletteToday": false,
-   "task": "Shape the talk",
-   "taskNo": 5,
-   "subgroup": "Pathways",
-   "class": "command",
-   "readsBetterAs": "Pathways: rename",
-   "inSurface": "Pathways"
-  },
-  {
-   "id": "pathway.delete",
-   "label": "Delete pathway",
-   "chord": "⌘⌫",
-   "scope": "pathway",
-   "currentGroup": "Manage",
-   "paletteToday": false,
-   "task": "Shape the talk",
-   "taskNo": 5,
-   "subgroup": "Pathways",
-   "class": "command",
-   "readsBetterAs": "Pathways: delete",
-   "inSurface": "Pathways"
-  },
-  {
-   "id": "pathway.drop-missing",
-   "label": "Drop missing slides",
-   "chord": "⌘⇧⌫",
-   "scope": "pathway",
-   "currentGroup": "Manage",
-   "paletteToday": false,
-   "task": "Shape the talk",
-   "taskNo": 5,
-   "subgroup": "Pathways",
-   "class": "command",
-   "readsBetterAs": "Pathways: drop missing slides",
    "inSurface": "Pathways"
   },
   {
@@ -1231,7 +1079,7 @@
   },
   {
    "id": "present-audience",
-   "label": "Audience view",
+   "label": "Open audience window",
    "chord": "—",
    "scope": "deck",
    "currentGroup": null,
@@ -1509,7 +1357,7 @@
   },
   {
    "id": "presenter.focus",
-   "label": "Focus mode",
+   "label": "Spotlight",
    "chord": "F",
    "scope": "presenter",
    "currentGroup": "Modes & display",
@@ -1680,7 +1528,7 @@
   },
   {
    "id": "presenter.audience",
-   "label": "Launch audience",
+   "label": "Open audience window",
    "chord": "F5",
    "scope": "presenter",
    "currentGroup": "Audience",
@@ -2370,7 +2218,7 @@
   },
   {
    "id": "new-window",
-   "label": "New window (work on another presentation)",
+   "label": "New window (work on another talk)",
    "chord": "⌘N",
    "scope": "app",
    "currentGroup": "App",
@@ -2395,7 +2243,7 @@
   },
   {
    "id": "new-talk",
-   "label": "New presentation…",
+   "label": "New talk…",
    "chord": "—",
    "scope": "app",
    "currentGroup": null,
@@ -2404,7 +2252,7 @@
    "taskNo": 8,
    "subgroup": "Talks panel",
    "class": "command",
-   "readsBetterAs": "New presentation…"
+   "readsBetterAs": "New talk…"
   },
   {
    "id": "new-folder",
@@ -2788,7 +2636,7 @@
   },
   {
    "id": "normalize-triggers",
-   "label": "Normalize trigger lines",
+   "label": "Tidy slide layout lines",
    "chord": "—",
    "scope": "editor",
    "currentGroup": null,
@@ -2835,20 +2683,6 @@
    "subgroup": "Settings",
    "class": "command",
    "readsBetterAs": "Settings"
-  },
-  {
-   "id": "pathway.help",
-   "label": "Keyboard cheat-sheet",
-   "chord": "?",
-   "scope": "pathway",
-   "currentGroup": "Help",
-   "paletteToday": false,
-   "task": "Set up TalkWeaver",
-   "taskNo": 10,
-   "subgroup": "Shortcuts",
-   "class": "command",
-   "readsBetterAs": "Pathways: keyboard cheat-sheet",
-   "inSurface": "Pathways"
   },
   {
    "id": "talktext.help",
@@ -3344,30 +3178,6 @@
    "task": null,
    "subgroup": null,
    "surface": "Presenter window",
-   "class": "key-inside-a-surface"
-  },
-  {
-   "id": "pathway.move",
-   "label": "Move focus",
-   "chord": "↑ ↓ ← →",
-   "scope": "pathway",
-   "currentGroup": "Navigation",
-   "paletteToday": false,
-   "task": null,
-   "subgroup": null,
-   "surface": "Pathways",
-   "class": "key-inside-a-surface"
-  },
-  {
-   "id": "pathway.toggle",
-   "label": "Toggle slide membership",
-   "chord": "Space",
-   "scope": "pathway",
-   "currentGroup": "Slides",
-   "paletteToday": false,
-   "task": null,
-   "subgroup": null,
-   "surface": "Pathways",
    "class": "key-inside-a-surface"
   },
   {

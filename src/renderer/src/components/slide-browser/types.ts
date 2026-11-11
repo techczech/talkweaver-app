@@ -22,6 +22,8 @@ export interface SlideBrowserProps {
   onInsert: (markdown: string, fromSlug: string, sourceOutlinePath: string) => void
   onInsertMany?: (items: { markdown: string; fromSlug: string; sourceOutlinePath: string }[]) => void
   currentTalkSlug: string
+  /** The open talk's title, for the one back control ("Back to <talk>", house rule R16). */
+  currentTalkTitle?: string | null
   /** Absolute vault root — resolves a version's vault-relative `outline` for asset
    *  materialisation on version-insert (the ledger stores POSIX-relative paths). */
   vaultRoot: string

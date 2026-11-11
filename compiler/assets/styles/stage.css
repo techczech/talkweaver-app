@@ -148,8 +148,6 @@
     align-content: center;
     grid-column: 1 !important;
     grid-row: 1 / span 99 !important;
-    align-self: stretch !important;
-    min-height: 100%;
     place-content: center;
   }
   /* @order 1348 */
@@ -159,6 +157,12 @@
   /* @order 1349 */
   .slide[data-title-layout="left"] > .slide-content > .slide-head:not(.slide-head-quiet) {
     position: relative;
+    /* Only this VISIBLE rail stretches to the column's full height. A quiet head used to get the
+       same `min-height: 100%` (rule 1347 covered every head), which made a nav-only, paint-nothing
+       header a slide-tall box: in a block-flow body (a media slide with a local embed) it pushed
+       the embed down to y = slide height, off the stage, the audience screen, Current and Next. */
+    align-self: stretch !important;
+    min-height: 100%;
     padding: clamp(24px, 4cqh, 48px) clamp(28px, 2.6cqw, 72px);
     /* ADR-0028 §4: a visible rail title sits on the rail's left inset whatever its length —
        `place-content: center` (1347) centred a short title's column across the rail. Vertical

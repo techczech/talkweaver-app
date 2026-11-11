@@ -1,20 +1,32 @@
-import { BrowserWindow } from 'electron'
+import { withRemoteEmbedArtwork } from './embed-preview-artwork'
+import { containCaptureSession, containCaptureContents, captureNetworkReady } from './capture-network'
+import { app, BrowserWindow, session } from 'electron'
+import { hardenLivePageSession, livePageWebPreferences, type LivePageSession } from './live-page-host'
 import { markHiddenRenderer } from './window-kinds'
 import type { NativeImage } from 'electron'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { existsSync, mkdirSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs'
 import { rename, unlink, writeFile } from 'fs/promises'
 import { randomBytes, webcrypto } from 'crypto'
 import { createThumbnailQueue } from './thumbnail-queue'
+import { cleanThumbnailFocus, createCapturePlan } from './thumbnail-plan'
 import { markSlidePreviewHtml } from '../shared/slide-preview'
+import { regularVariantFile, usablePreviewVariant, type PreviewVariant } from './preview-variant'
+import { pruneThumbnailArtwork, thumbnailArtworkNamespace } from './thumbnail-artwork-prune'
 
 export interface RenderThumbnailsOptions {
+  /** A caller-owned staging folder must still have its original identity before each write. */
+  beforeWrite?: () => void
   /** Full compiled single-file presentation HTML (the presenter-popup runtime). */
   fullHtml: string
-  /** sha256 (hex) of markSlidePreviewHtml(fullHtml), when the caller has it (prepareTalk's worker
-   *  thread works it out): an unchanged deck is then recognised without touching the HTML here. */
+  /** Legacy conservative preview hint. Kept for callers; live-widget identity hashes preserved HTML. */
   deckKey?: string
+  /** The deck already marked, hashed and written to a file where it was compiled (preview-variant.ts),
+   *  made from THIS fullHtml. Given (and its file still there), the main process neither looks for
+   *  remote pages (the variant exists only for a deck without any) nor marks, encodes, hashes or writes
+   *  the deck: the window loads that file. */
+  preview?: PreviewVariant
   /** Replaces obsolete pending renders from the same editor. */
   requestKey?: string
   /** A layout variant's render (the picker's and the Inspector's pictures of the slide): it starts only
@@ -76,10 +88,9 @@ const nextTurn = (): Promise<void> => new Promise((resolve) => setTimeout(resolv
 
 /** The deck's identity (sha256 of the marked HTML, as before) and its bytes for the temp file. The
  *  hash runs on the thread pool (WebCrypto); only the string-to-bytes copy runs here. */
-async function deckBytesAndKey(fullHtml: string, knownKey?: string): Promise<{ bytes: Buffer; key: string }> {
+async function deckBytesAndKey(fullHtml: string): Promise<{ bytes: Buffer; key: string }> {
   const bytes = Buffer.from(fullHtml, 'utf8')
   await nextTurn()
-  if (knownKey) return { bytes, key: knownKey }
   const digest = await webcrypto.subtle.digest('SHA-256', bytes)
   return { bytes, key: Buffer.from(digest).toString('hex') }
 }
@@ -126,7 +137,8 @@ async function encodePng(img: NativeImage): Promise<Buffer> {
 
 /** Write a picture by temp file + rename: with the write no longer synchronous, nothing that reads
  *  the cache (the existence check above, the thumbnail protocol) can see a half-written PNG. */
-async function writePicture(path: string, bytes: Buffer): Promise<void> {
+async function writePicture(path: string, bytes: Buffer, beforeWrite?:()=>void): Promise<void> {
+  if(beforeWrite){beforeWrite();writeFileSync(path,bytes,{flag:'wx'});return}
   const temp = `${path}.${randomBytes(4).toString('hex')}.tmp`
   try {
     await writeFile(temp, bytes)
@@ -137,15 +149,31 @@ async function writePicture(path: string, bytes: Buffer): Promise<void> {
   }
 }
 
-async function ensureDeckLoaded(fullHtml: string, knownKey?: string): Promise<BrowserWindow> {
-  // The deck this window already shows: nothing of the HTML is touched.
-  if (knownKey && renderWin && !renderWin.isDestroyed() && renderWinHtmlKey === knownKey) return renderWin
-  fullHtml = markSlidePreviewHtml(fullHtml)
-  await nextTurn()
-  const { bytes, key } = await deckBytesAndKey(fullHtml, knownKey)
+async function ensureDeckLoaded(deck: string | PreviewVariant, signal: AbortSignal, shouldYield?: () => boolean): Promise<BrowserWindow> {
+  let bytes: Uint8Array | null = null
+  let key: string
+  if (typeof deck === 'string') {
+    // knownKey strips widget documents and cannot identify the live local-page render.
+    const marked = markSlidePreviewHtml(deck, { localPages: true })
+    await nextTurn()
+    ;({ bytes, key } = await deckBytesAndKey(marked))
+  } else {
+    // The same document, marked, hashed and written off this thread: same bytes, same key, its own file.
+    key = deck.key
+  }
   if (renderWin && !renderWin.isDestroyed() && renderWinHtmlKey === key) return renderWin
   let win = renderWin
   if (!win || win.isDestroyed()) {
+    // A fresh memory-only session: embedded widgets share no cookies, permissions or app schemes.
+    const isolated = session.fromPartition(`tw-thumbnail:${randomBytes(12).toString('hex')}`)
+    const allowance = new Set<string>()
+    hardenLivePageSession(isolated as unknown as LivePageSession, { allowance, userAgent: isolated.getUserAgent() })
+    isolated.webRequest.onBeforeRequest({ urls: ['<all_urls>'] }, (details, callback) => {
+      // Only main loads the self-contained temporary deck file. A child gets no filesystem URL.
+      if (details.resourceType === 'mainFrame' && details.url.startsWith('file:')) { callback({}); return }
+      // No DNS lookup or external request is needed by this self-contained local deck.
+      callback({ cancel: !/^(data|blob):/.test(details.url) && details.url !== 'about:blank' && details.url !== 'about:srcdoc' })
+    })
     // A real (not offscreen) hidden window — offscreen rendering is unreliable for capturePage.
     win = new BrowserWindow({
       show: false,
@@ -153,12 +181,19 @@ async function ensureDeckLoaded(fullHtml: string, knownKey?: string): Promise<Br
       height: 720,
       // disableDialogs: an alert / confirm / prompt from a page in a slide would otherwise put a
       // dialog on screen from a window nobody sees and hold the capture until it is dismissed.
-      webPreferences: { offscreen: false, backgroundThrottling: false, disableDialogs: true }
+      webPreferences: { ...livePageWebPreferences(isolated, false), offscreen: false, disableDialogs: true }
     })
     // Nobody sees or presses in this window: it hands nothing to the OS, navigates nowhere but the
     // file loaded into it, and downloads nothing (window-kinds.ts, navigation-guard.ts).
     markHiddenRenderer(win)
-    win.on('closed', () => { renderWin = null; renderWinHtmlKey = null })
+    let releaseProxy = (): void => {}
+    try { releaseProxy = await containCaptureSession(isolated, { denyAll: true }); await containCaptureContents(win.webContents) }
+    catch (error) { releaseProxy(); win.destroy(); throw error }
+    win.on('closed', () => {
+      releaseProxy()
+      renderWin = null; renderWinHtmlKey = null
+      void Promise.allSettled([isolated.clearStorageData(), isolated.clearCache()])
+    })
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' })) // a hidden renderer opens nothing
     win.webContents.on('will-prevent-unload', (event) => event.preventDefault()) // a beforeunload handler never holds the next deck back
     win.webContents.setAudioMuted(true)
@@ -167,10 +202,14 @@ async function ensureDeckLoaded(fullHtml: string, knownKey?: string): Promise<Br
   renderWinHtmlKey = null // not valid until the load below succeeds
   // Large HTML loads far more reliably from a temp file than a data: URL. The deck is fully
   // self-contained (assets inlined), so the file can be deleted as soon as the load finishes.
-  const tmpHtmlPath = join(tmpdir(), `talk-weaver-thumb-${randomBytes(8).toString('hex')}.html`)
+  // A preview variant is loaded from its own file, which belongs to the variant folder and stays.
+  const tmpHtmlPath = bytes ? join(tmpdir(), `talk-weaver-thumb-${randomBytes(8).toString('hex')}.html`) : null
   try {
-    await writeFile(tmpHtmlPath, bytes)
-    await win.loadFile(tmpHtmlPath)
+    if (tmpHtmlPath && bytes) await writeFile(tmpHtmlPath, bytes)
+    // A variant's folder and file are checked again right before the load; refused, the caller loads fullHtml.
+    if (!tmpHtmlPath && !regularVariantFile(deck as PreviewVariant)) throw new Error('The preview variant is gone or refused.')
+    await win.loadFile(tmpHtmlPath ?? (deck as PreviewVariant).path)
+    if (!await captureNetworkReady(win.webContents)) throw Error('Thumbnail capture containment unavailable')
     renderWinHtmlKey = key
     return win
   } catch (err) {
@@ -178,7 +217,7 @@ async function ensureDeckLoaded(fullHtml: string, knownKey?: string): Promise<Br
     throw err
   } finally {
     try {
-      if (existsSync(tmpHtmlPath)) unlinkSync(tmpHtmlPath)
+      if (tmpHtmlPath && existsSync(tmpHtmlPath)) unlinkSync(tmpHtmlPath)
     } catch {
       /* best-effort temp cleanup */
     }
@@ -233,6 +272,33 @@ export function cancelThumbnailRender(requestKey: string): void {
   enqueueRender.cancel(requestKey)
 }
 
+/** cancelThumbnailRender for every request key starting with `prefix` (all of a window's talks). */
+export function cancelThumbnailRenders(prefix: string): void {
+  enqueueRender.cancelPrefix(prefix)
+}
+
+/** A newer request is on its way under this key: a waiting render is dropped, and a running one
+ *  finishes the slide it is capturing (written and cached as usual) and takes no further slide. */
+export function supersedeThumbnailRender(requestKey: string): void {
+  enqueueRender.supersede(requestKey)
+}
+
+// The slides the author is looking at, per request key (the active slide first, then the strip's
+// visible range), as the renderer last reported them. A render under that key captures these first.
+const thumbnailFocus = new Map<string, number[]>()
+
+/** Record which slides (deck indices) are on screen for renders under this request key. */
+export function setThumbnailFocus(requestKey: string, indices: unknown): void {
+  const clean = cleanThumbnailFocus(indices)
+  if (clean.length) thumbnailFocus.set(requestKey, clean)
+  else thumbnailFocus.delete(requestKey)
+}
+
+/** Forget the focus of every request key starting with `prefix` (a closed window, a switched talk). */
+export function clearThumbnailFocus(prefix: string): void {
+  for (const key of [...thumbnailFocus.keys()]) if (key.startsWith(prefix)) thumbnailFocus.delete(key)
+}
+
 /** Whether a render somebody is waiting for (anything but the prewarm) is running or queued, and when
  *  one was last asked for (Date.now() clock, 0 if never). */
 export function thumbnailForeground(): { busy: boolean; lastAt: number } {
@@ -258,33 +324,46 @@ export function renderWindowProcessId(): number | null {
 
 async function renderThumbnailsSerialized(
   opts: RenderThumbnailsOptions & { onInterrupted?: () => void },
-  signal: AbortSignal
+  signal: AbortSignal,
+  superseded: AbortSignal
 ): Promise<Record<string, string>> {
   rendering = true
   try {
-    return await renderThumbnailsInWindow(opts, signal)
+    return await renderThumbnailsInWindow(opts, signal, superseded)
   } finally {
     rendering = false
-    if (signal.aborted) opts.onInterrupted?.()
+    if (signal.aborted || superseded.aborted) opts.onInterrupted?.()
   }
 }
 
 async function renderThumbnailsInWindow(
   opts: RenderThumbnailsOptions,
-  signal: AbortSignal
+  signal: AbortSignal,
+  superseded?: AbortSignal
 ): Promise<Record<string, string>> {
-  const { fullHtml, deckKey, slides, cacheDir } = opts
+  const { slides, cacheDir } = opts
+  // A prepared variant exists only for a deck with no remote page: no artwork to fetch or name.
+  // Its file may have been pruned since (preview-variant.ts): then mark fullHtml here, as before.
+  const given = usablePreviewVariant(opts.preview)
+  const preview = given && regularVariantFile(given) ? given : undefined
+  const fullHtml = preview ? opts.fullHtml : await withRemoteEmbedArtwork(opts.fullHtml, signal, opts.shouldYield)
+  // Public-page pictures can refresh without a compiler model change. Preserve the model-key
+  // suffix for thumbnail protocol lookups, but include actual remote artwork in persisted names.
+  const artwork = preview ? '' : [...fullHtml.matchAll(/<img data-tw-embed-artwork[^>]*>/g)].map(match => match[0]).join('')
+  const artworkKey = artwork ? (await deckBytesAndKey(artwork)).key.slice(0, 16) + '-' : ''
   const pace = opts.paceMs && opts.paceMs > 0
     ? (): Promise<void> => new Promise((resolve) => setTimeout(resolve, opts.paceMs))
     : nextTurn
   const result: Record<string, string> = {}
 
+  opts.beforeWrite?.()
   if (!existsSync(cacheDir)) mkdirSync(cacheDir, { recursive: true })
 
   // Decide up front which slides actually need rendering; if all are cached, skip the window.
   const pending: Array<{ index: number; key: string; cacheKey: string; layout?: string; pngPath: string }> = []
   slides.forEach((slide, arrayIndex) => {
-    const cacheKey = slide.cacheKey ?? slide.key
+    const baseKey = slide.cacheKey ?? slide.key
+    const cacheKey = artworkKey ? artworkKey + baseKey.replace(/^[0-9a-f]{16}-/, '') : baseKey
     const pngPath = join(cacheDir, `${cacheKey}.png`)
     if (existsSync(pngPath)) {
       result[slide.key] = pngPath
@@ -300,18 +379,38 @@ async function renderThumbnailsInWindow(
   })
 
   if (!signal.aborted && Object.keys(result).length) opts.onProgress?.({ ...result })
-  if (signal.aborted || pending.length === 0) return result
+  const pruneOlderArtwork = async (): Promise<void> => {
+    if (!artworkKey || signal.aborted) return
+    const verified = new Set(slides.filter(slide => result[slide.key]).map(slide => (slide.cacheKey ?? slide.key).replace(/^[0-9a-f]{16}-/, '')))
+    await pruneThumbnailArtwork(cacheDir, thumbnailArtworkNamespace(cacheDir, app.getPath('userData')), artworkKey, verified, console.warn)
+  }
+  if (signal.aborted || superseded?.aborted || pending.length === 0) { await pruneOlderArtwork(); return result }
 
   if (renderWinIdleTimer) { clearTimeout(renderWinIdleTimer); renderWinIdleTimer = null }
 
   try {
-    const win = await ensureDeckLoaded(fullHtml, deckKey)
+    let win: BrowserWindow
+    try {
+      win = await ensureDeckLoaded(preview ?? fullHtml, signal, opts.shouldYield)
+    } catch (error) {
+      // The variant's file was pruned or refused between the check above and the load: load the deck
+      // from fullHtml instead, as without a variant (no remote page on it, so it is the same document).
+      if (!preview) throw error
+      console.warn('[thumbnails] the preview variant could not be loaded; loading the deck itself', error)
+      win = await ensureDeckLoaded(fullHtml, signal, opts.shouldYield)
+    }
 
-    for (const item of pending) {
+    // Still one slide at a time in this one window; only the choice of the next slide changes: the
+    // slides on screen first (re-read before every pick), then the rest in deck order.
+    const requestKey = opts.requestKey
+    const plan = createCapturePlan(pending, requestKey ? () => thumbnailFocus.get(requestKey) : undefined)
+    for (let item = plan.next(); item; item = plan.next()) {
       // One slide at a time, with a turn of the event loop between them: the queue never holds the
       // main process for more than one short step (or the caller's pace, a longer pause).
       await pace()
-      if (signal.aborted || opts.shouldYield?.()) break
+      // Superseded: the newer request takes over from here. Checked only BETWEEN slides, so the
+      // capture under way below always completes and is cached (cancellation still stops at once).
+      if (signal.aborted || superseded?.aborted || opts.shouldYield?.()) break
       try {
         await navigateToSlide(win, item.index)
         const { pending: stillPending } = await settle(win)
@@ -340,7 +439,7 @@ async function renderThumbnailsInWindow(
         }
         const img: NativeImage = await win.webContents.capturePage()
         if (signal.aborted || opts.shouldYield?.()) break
-        await writePicture(item.pngPath, await encodePng(img))
+        await writePicture(item.pngPath, await encodePng(img),opts.beforeWrite)
         result[item.key] = item.pngPath
 
         // ADR-0022: ONLY a carousel (the active slide carries .card-gallery[data-exclusive]) gets
@@ -349,7 +448,7 @@ async function renderThumbnailsInWindow(
           const parts = await captureCarouselSubSlides(win)
           for (let i = 0; i < parts.length; i += 1) {
             const p = join(cacheDir, `${item.cacheKey}__${i}.png`)
-            await writePicture(p, await encodePng(parts[i]))
+            await writePicture(p, await encodePng(parts[i]),opts.beforeWrite)
             result[`${item.key}__${i}`] = p
           }
         }
@@ -371,6 +470,7 @@ async function renderThumbnailsInWindow(
     renderWinIdleTimer = setTimeout(destroyRenderWin, RENDER_WIN_IDLE_MS)
   }
 
+  await pruneOlderArtwork()
   return result
 }
 
@@ -448,7 +548,8 @@ async function settle(win: BrowserWindow): Promise<{ pending: number }> {
         const src = v.getAttribute('poster'); if (!src) return Promise.resolve();
         const im = new Image(); im.src = src; return im.decode ? im.decode().catch(() => {}) : Promise.resolve();
       });
-      const done = () => Promise.all(posterDecodes).then(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve({ pending: stillPending() }))));
+      const pagePaint = document.querySelector('.slide.active figure[data-embed="local"] iframe[srcdoc]') ? new Promise(r => setTimeout(r, 700)) : Promise.resolve();
+      const done = () => Promise.all([...posterDecodes, pagePaint]).then(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve({ pending: stillPending() }))));
       const imgs = collect();
       const pending = imgs.filter((i) => !(i.complete && i.naturalWidth > 0));
       if (pending.length === 0) { done(); return; }

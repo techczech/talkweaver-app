@@ -8,7 +8,7 @@
 //   3. The command palette, opened above the picker, runs "Show the focused result's talk beside"
 //      and "Close the talk beside the results"; Esc closes the talk beside too.
 //   4. Rebound in the keymap store (what Settings writes), talk beside answers ⌘⌥O and no longer O,
-//      and the hint bar shows ⌘⌥O. A plain O typed in the editor is still an O.
+//      and the cheat sheet shows ⌘⌥O. A plain O typed in the editor is still an O.
 //   5. The cheat sheet (⌘/, else ⌃/) lists the Slide picker keys.
 // Fixture vault and a throwaway --user-data-dir; set TW_SHOTS=<dir> to save screenshots (the ticket's
 // build shots: the picker hint bar and the cheat sheet).
@@ -107,7 +107,16 @@ async function runFromPalette(words, label) {
   await page.locator('.command-menu').waitFor({ state: 'detached' })
   return hint
 }
-const hintKeys = (id) => page.locator(`${B} .lt-hintbar [data-hint="${id}"] kbd`).allTextContents()
+// The Slide Browser lists its keys in the cheat sheet (its ? button), not in a resident hint bar.
+const hintKeys = async (label) => {
+  await page.locator(`${B} .lt-help-btn`).click()
+  const row = page.locator('[data-keyboard-sheet] [data-sheet-view-row]').filter({ hasText: label }).first()
+  await row.waitFor()
+  const keys = await row.locator('kbd').allTextContents()
+  await page.keyboard.press('Escape')
+  await page.locator('[data-keyboard-sheet]').waitFor({ state: 'detached' })
+  return keys
+}
 
 try {
   await openTalkByTitle(page, 'Working talk')
@@ -137,15 +146,8 @@ try {
   const selSec = page.locator(`${B} .lt-sec-head`, { hasText: 'More examples' }).locator('.lt-sel-sec')
   await selSec.waitFor()
   await settle()
-  assert.deepEqual(await hintKeys('slide-picker.select-whole-section'), ['⇧⌘↵'], 'the hint bar names ⇧⌘↵ for select whole section')
-  assert.equal((await page.locator(`${B} .lt-hintbar [data-hint="slide-picker.select-whole-section"] b`).textContent())?.trim(), 'select whole section')
-  assert.deepEqual(await hintKeys('slide-picker.talk-beside'), ['O'], 'and O for talk beside')
-  assert.deepEqual(await hintKeys('app.find-talk'), ['⇧⌘S'], 'and ⇧⌘S for Find a talk')
-  if (shots) {
-    await page.waitForTimeout(1200)
-    await page.screenshot({ path: join(shots, 'picker-with-hint-bar.png') })
-    await page.locator(`${B} .lt-hintbar`).screenshot({ path: join(shots, 'picker-hint-bar.png') })
-  }
+  assert.deepEqual(await hintKeys('Select whole section'), ['⇧⌘↵'], 'the cheat sheet names ⇧⌘↵ for select whole section')
+  assert.deepEqual(await hintKeys('Show the result’s talk beside'), ['O'], 'and O for talk beside')
   await focusCard('Example one')
   await page.keyboard.press('Meta+Shift+Enter')
   await page.locator(`${B} .lt-tray .lt-n`).waitFor()
@@ -186,19 +188,19 @@ try {
   await beside.waitFor({ state: 'detached' })
   console.log('PASS the palette runs talk beside and close beside above the picker; O and Esc do the same')
 
-  // ── 4. Rebound: ⌘⌥O opens the talk beside, O no longer does; the hint bar follows ──
+  // ── 4. Rebound: ⌘⌥O opens the talk beside, O no longer does; the cheat sheet follows ──
   await page.evaluate(() => {
     window.localStorage.setItem('tw-keymap-overrides', JSON.stringify({ 'talk-beside': 'Mod-Alt-o' }))
     window.dispatchEvent(new Event('tw-keymap-changed'))
   })
-  await page.waitForFunction(() => document.querySelector('.lt-browser-root .lt-hintbar [data-hint="slide-picker.talk-beside"] kbd')?.textContent === '⌘⌥O')
+  assert.deepEqual(await hintKeys('Show the result’s talk beside'), ['⌘⌥O'], 'the cheat sheet follows the rebind')
   await focusCard('Example one')
   await page.keyboard.press('o')
   await page.waitForTimeout(600)
   assert.equal(await beside.count(), 0, 'the old O no longer opens the talk beside')
   await page.keyboard.press('Meta+Alt+o')
   await beside.waitFor()
-  console.log('PASS rebound to ⌘⌥O: the new key opens the talk beside, O does not, the hint bar shows ⌘⌥O')
+  console.log('PASS rebound to ⌘⌥O: the new key opens the talk beside, O does not, the cheat sheet shows ⌘⌥O')
   await page.evaluate(() => {
     window.localStorage.setItem('tw-keymap-overrides', '{}')
     window.dispatchEvent(new Event('tw-keymap-changed'))

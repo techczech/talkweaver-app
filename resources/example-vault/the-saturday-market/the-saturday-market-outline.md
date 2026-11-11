@@ -108,6 +108,8 @@ Saturdays, eight until one.
 
 > **Try it.** On Flowers, press <kbd>⌘I</kbd> to pick an icon. <kbd>⌘⇧I</kbd> searches pictures recovered from earlier PowerPoint files.
 
+> **Try it.** Place the caret on an image, then choose **Crop and mark up image…** in All commands (<kbd>⌘⇧P</kbd>) to save an edited copy.
+
 > **Try it.** In All commands (<kbd>⌘⇧P</kbd>), **Delete comment at caret** removes a comment.
 
 ### Stall fees
@@ -133,7 +135,7 @@ Saturdays, eight until one.
 
 > **Try it.** In All commands (<kbd>⌘⇧P</kbd>) choose **Insert table**, **Insert mindmap**, **Insert Chart**, **Insert Mermaid diagram**, **Insert diagram…** or **Insert SVG**.
 
-> **Try it.** The same list (<kbd>⌘⇧P</kbd>) has **Insert Code**, **Insert QR code**, **Insert Action button**, **Insert embed / simulation**, **Insert HTML page…**, **Insert auto-embed** or **Insert countdown**, **Insert speaker notes** or **Capture embed…**. **Insert speaker notes** adds notes.
+> **Try it.** The same list (<kbd>⌘⇧P</kbd>) has **Insert Code**, **Insert QR code**, **Insert Action button**, **Insert embed / simulation**, **Insert HTML page…**, **Insert auto-embed** or **Insert countdown**, **Insert speaker notes** or **Capture embed…**. **Save offline HTML snapshot…** saves a sanitised local copy of a slide’s HTML page and its supporting data. **Insert speaker notes** adds notes.
 
 ### Notes and saved page views
 {id=practice-page-capture}

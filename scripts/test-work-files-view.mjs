@@ -258,7 +258,7 @@ assert.deepEqual(readTalkWorkNames('﻿---\r\nprework: x\r\n---\r\n'), { prework
   const actions = read('src/renderer/src/components/talklist/actions.ts')
   assert.ok(!/openPath/.test(actions), 'the talk list never calls shell.openPath')
   assert.match(actions, /action === 'open-file'\) \{ onSelectTalk\(talk\)/, 'Open outline file opens the talk in the editor')
-  const sessions = read('src/renderer/src/components/SessionsView.tsx')
+  const sessions = read('src/renderer/src/components/RunsView.tsx')
   assert.match(sessions, /openWorkFile\(ref, effect\.phase\)[\s\S]{0,120}onShowWorkFile\(result\.fileName, result\.vaultId\)/, 'the Run page shows the file in the Work files view')
   assert.match(read('src/renderer/src/App.tsx'), /<WorkFilesView request=\{workFileRequest\}/, 'the Tools window passes the request to the Work files view')
   assert.match(read('src/renderer/src/components/WorkFilesView.tsx'), /if \(request\) \{ setSelected\(workFileKey\(request\.vaultId, request\.fileName\)\)/, 'the Work files view selects the file asked for')

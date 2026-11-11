@@ -107,7 +107,9 @@ try {
 
   // --- UI layer: the SlideStrip renders the badge on the failing slide ---
   await selectTalk('Warn Fixture')
-  // The strip lives in the default pane; its cards are .tw-slide-card and the badge
+  // The strip is the second tab of the right sidebar (the Inspector is the default tab, R11a).
+  await page.locator('[data-rc-tab="slides"] button').click()
+  // The strip lives in the sidebar; its cards are .tw-slide-card and the badge
   // is [data-slide-warning]. The strip first renders a client-side parse (no compiler
   // warnings), then re-renders from compiled rows once talk:compile resolves — wait for
   // the badge to appear. Exactly one slide (the all-fail one) should carry it.

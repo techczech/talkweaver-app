@@ -10,7 +10,7 @@ import type { Phase } from './run-work.ts'
 /** What an action does. `null` (see runActionEffect) means it is not wired yet. */
 export type RunPageEffect =
   | { kind: 'plan-sheet' }
-  /** The Run page header's "Plan the next run like this" (not a checklist action). */
+  /** The Run page header's "Plan the next Run like this" (not a checklist action). */
   | { kind: 'plan-like-this' }
   | { kind: 'open-work-file'; phase: Phase }
   | { kind: 'go-live' }

@@ -2,7 +2,7 @@
 // The scripts/test-shortcut-registry.mjs "key truth" check reads this file's handleKey region:
 // every key comparison in it is claimed there by a registry id, and every key the registry lists
 // for the slide picker is bound here.
-import { type Dispatch, type MutableRefObject, type RefObject, type SetStateAction, useEffect } from 'react'
+import { type Dispatch, type RefObject, type SetStateAction, useEffect } from 'react'
 import { notify } from '../../lib/notify'
 import { commandRan } from '../../commands/command-ran'
 import { isTypingKey, surfaceKey } from '../../keymap/surfaceKeys'
@@ -37,12 +37,12 @@ export interface SlideBrowserKeyState {
   besideOn: boolean
   inputRef: RefObject<HTMLInputElement | null>
   rootRef: RefObject<HTMLDivElement | null>
-  anchorRef: MutableRefObject<number>
+  setAnchor: (index: number) => void
   setOpenPop: Dispatch<SetStateAction<string | null>>
   setPreview: Dispatch<SetStateAction<boolean>>
   /** Sets the query at once (the field and the search together). */
   setQuery: (q: string) => void
-  setSelected: Dispatch<SetStateAction<Set<string>>>
+  clearSelection: () => void
   setActivePos: Dispatch<SetStateAction<number>>
   setRailCollapsed: Dispatch<SetStateAction<boolean>>
   setDensity: (d: number) => void
@@ -67,7 +67,7 @@ export function useSlideBrowserKeys(k: SlideBrowserKeyState): void {
   const {
     isOpen, suspendKeys, tagPickerOpen, viewer, vCards, vRows, activePos, density, gridMode, scope,
     preview, openPop, openStrip, openLoc, query, selected, onClose, main, splitLayout, leftCount,
-    fullRows, besideOn, inputRef, rootRef, anchorRef, setOpenPop, setPreview, setQuery, setSelected,
+    fullRows, besideOn, inputRef, rootRef, setAnchor, setOpenPop, setPreview, setQuery, clearSelection,
     setActivePos, setRailCollapsed, setDensity, closeBesideNow, closeStrip, closeLoc, clearScope,
     selectWholeSectionAt, openBesideAt, doInsert, extendTo, toggleAt, selectActiveSection,
     openTagPicker, toggleLocations, toggleStrip, toggleNear, openViewer
@@ -139,7 +139,7 @@ export function useSlideBrowserKeys(k: SlideBrowserKeyState): void {
         if (besideOn) { closeBesideNow(); return }
         // The field's own text: it may hold words not yet searched (the field debounces typing).
         if (inSearch && (inputRef.current?.value || query)) { setQuery(''); return }
-        if (selected.size > 0) { setSelected(new Set()); return }
+        if (selected.size > 0) { clearSelection(); return }
         onClose(); return
       }
       // ⇧⌘↵ selects the focused slide's whole section; ⌘↵ inserts the selected slides.
@@ -166,7 +166,7 @@ export function useSlideBrowserKeys(k: SlideBrowserKeyState): void {
             ? splitNavigate(p, e.key, splitLayout)
             : gridNavigate(p, e.key, gridMode === 'side' ? 2 : density, vRows.length)
           if (e.shiftKey) extendTo(next)
-          else anchorRef.current = next
+          else setAnchor(next)
           return next
         })
         return

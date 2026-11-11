@@ -13,7 +13,7 @@ import {
   FolderOpen, FolderPlus, FolderSearch, Focus, Globe, HardDrive, Heading, Heading2, Highlighter, IndentDecrease,
   IndentIncrease, Image, Italic, Layers, LayoutDashboard, LayoutList, LayoutTemplate, Link, List, ListFilter, ListOrdered,
   MousePointerClick, Network, Palette, PanelRight, Pencil, PenTool, Presentation, QrCode, RefreshCw, Scissors, Search, Settings2,
-  Shapes, Share2, Sparkles, SquareArrowOutUpRight, Stethoscope, Strikethrough, Table, Tag, Timer, Trash2, Type, Underline,
+  Crop, Shapes, Share2, Sparkles, SquareArrowOutUpRight, Stethoscope, Strikethrough, Table, Tag, Timer, Trash2, Type, Underline,
   Workflow, Wrench, type LucideIcon
 } from 'lucide-react'
 import { useClamped, useDismiss } from './talklist/menus'
@@ -30,7 +30,7 @@ const ICON_COMPONENTS: Record<ActionIconName, LucideIcon> = {
   FolderOpen, FolderPlus, FolderSearch, Focus, Globe, HardDrive, Heading, Heading2, Highlighter, IndentDecrease,
   IndentIncrease, Image, Italic, Layers, LayoutDashboard, LayoutList, LayoutTemplate, Link, List, ListFilter, ListOrdered,
   MousePointerClick, Network, Palette, PanelRight, Pencil, PenTool, Presentation, QrCode, RefreshCw, Scissors, Search, Settings2,
-  Shapes, Share2, Sparkles, SquareArrowOutUpRight, Stethoscope, Strikethrough, Table, Tag, Timer, Trash2, Type, Underline,
+  Crop, Shapes, Share2, Sparkles, SquareArrowOutUpRight, Stethoscope, Strikethrough, Table, Tag, Timer, Trash2, Type, Underline,
   Workflow, Wrench
 }
 

@@ -87,7 +87,7 @@ const CHECKS = [
   'a slide about a local server (its text, its link, its code with localhost and 127.0.0.1) publishes, and is in the published pages as written',
   'a page an earlier version left with the dead live address does not stop a publish and is not rewritten; the result says "1 earlier handout…" with its name behind Details',
   'every toast action button (Copy link, Open Settings, Details; success, warning, error) has a label that can be read: a name, and a colour that stands out from its fill and from the toast',
-  'a talk that names a pre-work and a post-work file: Publish first says "Pre-work and post-work are not included…" with their titles and Plan a run; Cancel sends nothing; Publish carries on; Plan a run opens the plan sheet',
+  'a talk that names a pre-work and a post-work file: Publish first says "Pre-work and post-work are not included…" with their titles and Plan a Run; Cancel sends nothing; Publish carries on; Plan a Run opens the plan sheet',
 ]
 const ledger = createCheckLedger(CHECKS)
 const record = (index, ok, detail) => ledger.record(CHECKS[index], Boolean(ok), detail)
@@ -469,7 +469,7 @@ try {
   await notReadySheet.waitFor({ state: 'detached' })
   await pressPublish2()
   await noticeSheet.waitFor({ state: 'visible', timeout: 20_000 })
-  await noticeSheet.getByRole('button', { name: 'Plan a run' }).click()
+  await noticeSheet.getByRole('button', { name: 'Plan a Run' }).click()
   await page2.locator('[data-testid="plan-run-sheet"]').waitFor({ state: 'visible', timeout: 20_000 })
   record(17, sentence === 'Pre-work and post-work are not included. The talk’s pre-work file, Research teams intake, and post-work file, After the session, go out with a run.'
     && cancelledSent && await noticeSheet.count() === 0, sentence)

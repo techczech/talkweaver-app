@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CalendarClock, CircleAlert, Clock, Gauge, Layers, ListChecks, MessageCircleQuestion, MessageSquareHeart, PencilLine, Presentation, Video, type LucideIcon } from 'lucide-react'
-import type { Pathway, RecordingSession } from '../../../preload/index'
+import type { Pathway, ProjectionRow, RecordingSession } from '../../../preload/index'
 import {
   applyFix, blankDraft, copyDraftFromRun, draftFromRun, longDate, markedPhases, moveDraftToDate, planFromDraft, planIssues, sheetTimeZone, workDefaults, zoneToSend,
   type PhaseDraft, type PlanDraft, type PlanIssue
@@ -9,6 +9,9 @@ import { LEGACY_SECTION_FILE_ID, SESSION_END, type Phase } from '../../../shared
 import { readTalkWorkNames, type WorkFileItem, type WorkFileStepIcon } from '../../../shared/work-files-view'
 import { talkWorkFile } from '../../../shared/work-file-name'
 import '../plan-run.css'
+import { useSlideSelection } from '../lib/useSlideSelection'
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
+import '../ui-kit.css'
 
 // The plan sheet (ADR-0032 point 5, work-files ticket 11): one sheet for planning a Run: the slides,
 // and for each of pre-work and post-work a work file with its window. Opened from Present › Plan a
@@ -25,9 +28,9 @@ const ERROR_TEXT: Record<string, string> = {
   'prework-opens-invalid': 'Choose when pre-work opens.',
   'prework-closes-invalid': 'Choose when pre-work closes.',
   'prework-closes-before-opens': 'Pre-work must close after it opens',
-  'work-pre-closes-after-start': 'Pre-work must close before the session starts',
-  'work-post-closes-before-start': 'Post-work must close after the session ends',
-  'work-post-opens-before-start': 'Post-work must open after the session starts',
+  'work-pre-closes-after-start': 'Pre-work must close before the Run starts',
+  'work-post-closes-before-start': 'Post-work must close after the Run ends',
+  'work-post-opens-before-start': 'Post-work must open after the Run starts',
   'work-closes-before-opens': 'A work file must close after it opens',
   'work-post-closes-required': 'Choose when post-work closes.',
   'work-pre-opens-required': 'Choose when pre-work opens.',
@@ -67,11 +70,19 @@ export default function PlanRunSheet({ talk, talks, run, copyFrom, onClose, onSa
   const [files, setFiles] = useState<Item[] | null>(null)
   const [outline, setOutline] = useState<string | null>(null)
   const [pathways, setPathways] = useState<Array<Pathway & { count: number }>>([])
+  const [pathwaySlides, setPathwaySlides] = useState<ProjectionRow[]>([])
+  const [pathwaySlidesPath, setPathwaySlidesPath] = useState<string | null>(null)
+  const talkPathRef = useRef(activeTalk.outlinePath)
+  talkPathRef.current = activeTalk.outlinePath
+  const pathwaySelection = useSlideSelection(pathwaySlides.map(row => row.slide_id))
   const [fullCount, setFullCount] = useState<number | null>(null)
   const [draft, setDraft] = useState<PlanDraft>(() => run ? draftFromRun(run, new Date()) : copyFrom ? copyDraftFromRun(copyFrom) : blankDraft())
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   /** The pathway ids there were when the person went to the Pathway view to make one; set while we wait for them to come back. */
+  const [newPathwayName, setNewPathwayName] = useState<string | null>(null)
+  const [creatingPathway, setCreatingPathway] = useState(false)
+  const creatingPathwayRef = useRef(false)
   const awaitingPathway = useRef<Set<string> | null>(null)
   /** The date the copied windows currently sit around; they move when the date is chosen or changed. */
   const windowsAnchor = useRef<string>(copyFrom?.plannedDate ?? '')
@@ -86,6 +97,10 @@ export default function PlanRunSheet({ talk, talks, run, copyFrom, onClose, onSa
 
   useEffect(() => {
     let cancelled = false
+    setNewPathwayName(null)
+    pathwaySelection.clear()
+    setPathwaySlides([])
+    setPathwaySlidesPath(null)
     void (async () => {
       const source = await window.tw.talk.readOutline(activeTalk.outlinePath)
       if (cancelled || source === null) return
@@ -109,6 +124,8 @@ export default function PlanRunSheet({ talk, talks, run, copyFrom, onClose, onSa
       if ('error' in snapshot) { setPathways([]); setFullCount(null) } else {
         setPathways(snapshot.pathways.map((pathway) => ({ id: pathway.id, name: pathway.name, note: pathway.note, slideIds: pathway.slideIds, count: pathway.present.length })))
         setFullCount(snapshot.slides.length)
+        setPathwaySlides(snapshot.slides)
+        setPathwaySlidesPath(activeTalk.outlinePath)
         // A copied pathway that has since gone is not carried over; the copy starts from the full talk.
         if (copyFrom && !run) setDraft((current) => current.slideSet === 'full' || snapshot.pathways.some((pathway) => pathway.id === current.slideSet) ? current : { ...current, slideSet: 'full' })
       }
@@ -157,23 +174,48 @@ export default function PlanRunSheet({ talk, talks, run, copyFrom, onClose, onSa
   }), [files, talkNames])
 
   const readPathways = async (): Promise<Array<Pathway & { count: number }> | null> => {
+    const targetPath = activeTalk.outlinePath
     const source = await window.tw.talk.readOutline(activeTalk.outlinePath)
-    if (source === null) return null
+    if (source === null || talkPathRef.current !== targetPath) return null
     setOutline(source)
     const snapshot = await window.tw.pathways.read(activeTalk.outlinePath, source)
-    if ('error' in snapshot) return null
+    if ('error' in snapshot || talkPathRef.current !== targetPath) return null
     setFullCount(snapshot.slides.length)
     const list = snapshot.pathways.map((pathway) => ({ id: pathway.id, name: pathway.name, note: pathway.note, slideIds: pathway.slideIds, count: pathway.present.length }))
     setPathways(list)
     return list
   }
 
-  // New pathway… opens the talk's Pathway view (its own window); the sheet and its draft stay as they are.
-  // When the person comes back, the pathway they made is read and chosen.
-  async function newPathway(): Promise<void> {
-    awaitingPathway.current = new Set(pathways.map((pathway) => pathway.id))
-    const opened = await window.tw.tools.openPathways({ outlinePath: activeTalk.outlinePath, talkSlug: activeTalk.slug, talkTitle: activeTalk.title })
-    if (!opened.success) { awaitingPathway.current = null; setError(`Could not open the Pathway view: ${opened.error ?? 'unknown error'}`) }
+  // The separate Pathways window is gone; create in this sheet without losing the run draft.
+  async function newPathway(): Promise<void> { pathwaySelection.clear(); setNewPathwayName('') }
+  async function createPathway(): Promise<void> {
+    if (creatingPathwayRef.current || !newPathwayName?.trim() || pathwaySlidesPath !== activeTalk.outlinePath) return
+    const targetPath = activeTalk.outlinePath
+    creatingPathwayRef.current = true
+    setCreatingPathway(true)
+    try {
+      const source = await window.tw.talk.readOutline(activeTalk.outlinePath)
+      if (talkPathRef.current !== targetPath) return
+      if (source === null) { setError('The outline could not be read.'); return }
+      const before = new Set(pathways.map(p => p.id))
+      const result = await window.tw.pathways.create(activeTalk.outlinePath, source, newPathwayName.trim())
+      if ('error' in result) { if (talkPathRef.current === targetPath) setError(result.error); return }
+      const made = result.pathways.find(p => !before.has(p.id))
+      if (made && pathwaySelection.count) {
+        const populated = await window.tw.pathways.setSlideIds(activeTalk.outlinePath, source, made.id, pathwaySelection.indices.map(i => pathwaySlides[i].slide_id))
+        if ('error' in populated) { if (talkPathRef.current === targetPath) setError(populated.error); return }
+      }
+      if (talkPathRef.current !== targetPath) return
+      await readPathways()
+      if (talkPathRef.current !== targetPath) return
+      if (made) set('slideSet', made.id)
+      setNewPathwayName(null)
+    } catch (error) {
+      if (talkPathRef.current === targetPath) setError(error instanceof Error ? error.message : String(error))
+    } finally {
+      creatingPathwayRef.current = false
+      setCreatingPathway(false)
+    }
   }
   const comeBack = async (): Promise<void> => {
     const before = awaitingPathway.current
@@ -234,7 +276,7 @@ export default function PlanRunSheet({ talk, talks, run, copyFrom, onClose, onSa
     ))
     // A talk's own `{prework}` section is no longer offered (work-files ticket 29): only a Run being edited
     // that was planned with it before work files shows it, so editing its times leaves it unchanged. A copy
-    // ("Plan the next run like this") and a new Run never offer it.
+    // ("Plan the next Run like this") and a new Run never offer it.
     if (phase === 'pre' && current === LEGACY_SECTION_FILE_ID && run && run.work?.pre?.fileId === LEGACY_SECTION_FILE_ID) {
       out.push(<option key={LEGACY_SECTION_FILE_ID} value={LEGACY_SECTION_FILE_ID}>The talk’s old pre-work section</option>)
     }
@@ -249,7 +291,7 @@ export default function PlanRunSheet({ talk, talks, run, copyFrom, onClose, onSa
       <div className="pr-issue" role="alert" data-issue={phase} data-code={issue.code}>
         <div className="pr-issue-line"><CircleAlert aria-hidden /><span>{issue.message}</span></div>
         {issue.fix && (
-          <button type="button" className="pr-fix" data-fix={phase} onClick={() => { setDraft((current) => applyFix(current, issue.fix!)); setError(null) }}>
+          <button type="button" className="tw-btn tw-btn--sm" data-fix={phase} onClick={() => { setDraft((current) => applyFix(current, issue.fix!)); setError(null) }}>
             <Clock aria-hidden />{issue.fix.label}
           </button>
         )}
@@ -296,7 +338,7 @@ export default function PlanRunSheet({ talk, talks, run, copyFrom, onClose, onSa
                   {phase === 'post' ? (
                     <>
                       <select data-field="post-opens-mode" value={setOpensMode} onChange={(event) => setPhase('post', { opens: event.target.value === 'end' ? SESSION_END : '' })}>
-                        <option value="end">When the session ends</option>
+                        <option value="end">When the Run ends</option>
                         <option value="set">At a set time…</option>
                       </select>
                       {setOpensMode === 'set' && <input type="datetime-local" data-field="post-opens" value={w.opens === SESSION_END ? '' : w.opens} onChange={(event) => setPhase('post', { opens: event.target.value })} />}
@@ -308,7 +350,7 @@ export default function PlanRunSheet({ talk, talks, run, copyFrom, onClose, onSa
                 <label className="pr-field"><span className="pr-label">Closes{phase === 'post' ? <em> · required</em> : null}</span>
                   <input type="datetime-local" data-field={`${phase}-closes`} value={w.closes} aria-invalid={badClosing || undefined} className={badClosing ? 'is-error' : undefined}
                     onChange={(event) => setPhase(phase, { closes: event.target.value })} />
-                  {phase === 'pre' && !w.closes && <small className="pr-hint" data-field="pre-closes-at">When the session starts</small>}
+                  {phase === 'pre' && !w.closes && <small className="pr-hint" data-field="pre-closes-at">When the Run starts</small>}
                 </label>
               </div>
               {issueBox(phase)}
@@ -325,12 +367,12 @@ export default function PlanRunSheet({ talk, talks, run, copyFrom, onClose, onSa
         onKeyDown={(event) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void save() } }}>
         <div className="pr-head">
           <CalendarClock aria-hidden />
-          <h2 id="plan-run-title">{given ? 'Change time' : run ? 'Edit plan' : copyFrom ? 'Plan the next run' : 'Plan a run'}</h2>
+          <h2 id="plan-run-title">{given ? 'Change time' : run ? 'Edit plan' : copyFrom ? 'Plan the next Run' : 'Plan a Run'}</h2>
         </div>
         <div className="pr-body">
           <div className="pr-row pr-row-2">
             <label className="pr-field"><span className="pr-label">Talk</span>
-              <select value={talkSlug} data-field="talk" disabled={Boolean(run) || !talks || talks.length < 2} onChange={(event) => { setTalkSlug(event.target.value); set('slideSet', 'full'); touched.current = { pre: false, post: false } }}>
+              <select value={talkSlug} data-field="talk" disabled={Boolean(run) || !talks || talks.length < 2} onChange={(event) => { setNewPathwayName(null); pathwaySelection.clear(); setPathwaySlides([]); setPathwaySlidesPath(null); setTalkSlug(event.target.value); set('slideSet', 'full'); touched.current = { pre: false, post: false } }}>
                 {(talks ?? [talk]).map((candidate) => <option key={candidate.slug} value={candidate.slug}>{candidate.title}</option>)}
               </select>
             </label>
@@ -357,22 +399,24 @@ export default function PlanRunSheet({ talk, talks, run, copyFrom, onClose, onSa
           <section className="pr-block pr-slides" data-testid="plan-run-slides">
             <header className="pr-block-head"><Layers aria-hidden /><b>Slides</b></header>
             <div className="pr-block-body">
-              <select data-field="slide-set" aria-label="Slides" disabled={given} value={hasPathway ? draft.slideSet : 'full'}
+              <select data-field="slide-set" aria-label="Slides" disabled={given || creatingPathway} value={hasPathway ? draft.slideSet : 'full'}
                 onChange={(event) => { if (event.target.value === NEW_PATHWAY) void newPathway(); else { awaitingPathway.current = null; set('slideSet', event.target.value) } }}>
                 <option value="full">Full talk{fullCount !== null ? ` · ${slides(fullCount)}` : ''}</option>
                 {pathways.map((pathway) => <option key={pathway.id} value={pathway.id}>{pathway.name} · {slides(pathway.count)}</option>)}
                 <option value={NEW_PATHWAY}>New pathway…</option>
               </select>
+              {newPathwayName !== null && <div role="group" aria-label="New pathway"><label>Name<input autoFocus disabled={creatingPathway} value={newPathwayName} onChange={e => setNewPathwayName(e.target.value)} /></label><div aria-label="Pathway slides" style={{ maxHeight: 220, overflow: 'auto' }}>{pathwaySlides.map((row, i) => <label key={row.slide_id} style={{ display: 'flex', gap: 6 }}><input type="checkbox" disabled={creatingPathway} checked={pathwaySelection.isSelected(i)} onChange={() => pathwaySelection.toggle(i)} />{plainInlineText(row.title || row.nav_title) || row.slide_id}</label>)}</div><button type="button" disabled={creatingPathway || pathwaySlidesPath !== activeTalk.outlinePath} onClick={() => void createPathway()}>Create pathway</button><button type="button" disabled={creatingPathway} onClick={() => setNewPathwayName(null)}>Cancel</button></div>}
+
             </div>
           </section>
           {showWork && <div className="pr-work">{PHASES.map(phaseBlock)}</div>}
         </div>
         <div className="pr-foot">
           <span className={`pr-foot-note ${error ? 'is-error' : ''}`} role={error ? 'alert' : undefined} data-testid="plan-run-message">
-            {error ?? (given ? 'This run has been given: only the pre-work and post-work times can change.' : draft.date ? `${longDate(draft.date)}. You can change any of this from Sessions.` : '')}
+            {error ?? (given ? 'This run has been given: only the pre-work and post-work times can change.' : draft.date ? `${longDate(draft.date)}. You can change any of this from Runs.` : '')}
           </span>
-          <button type="button" className="pr-btn pr-btn-plain" onClick={onClose} data-testid="plan-run-cancel">Cancel</button>
-          <button type="button" className={`pr-btn ${plan.ok ? '' : 'is-pending'}`} disabled={busy} onClick={() => { void save() }} data-testid="plan-run-save">{busy ? 'Saving…' : 'Save'}</button>
+          <button type="button" className="tw-btn" onClick={onClose} data-testid="plan-run-cancel">Cancel</button>
+          <button type="button" className={`tw-btn tw-btn--primary${plan.ok ? '' : ' is-pending'}`} disabled={busy} onClick={() => { void save() }} data-testid="plan-run-save">{busy ? 'Saving…' : 'Save'}</button>
         </div>
       </div>
     </div>

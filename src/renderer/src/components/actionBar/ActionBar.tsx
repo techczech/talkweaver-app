@@ -1,10 +1,11 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactElement } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { Icon, type IconName } from '../ToolbarMenu'
 import type { ToolbarIconToken } from '../../../../shared/command-registry'
 import { planButtonOverflow } from './overflow'
 import type { ActionBarSection, ResolvedActionBarItem } from './model'
 
-export type ActionBarProps = { sections: ActionBarSection[] }
+/** `lead`: the compact control that opens the editor's toolbar (the Plain / Markdown switch, R1), kept before the buttons whatever their count. */
+export type ActionBarProps = { sections: ActionBarSection[]; lead?: ReactNode }
 type TokenIsIconName = ToolbarIconToken extends IconName ? true : false
 const tokenVocabularyIsCovered: TokenIsIconName = true
 void tokenVocabularyIsCovered
@@ -12,8 +13,9 @@ const iconFor = (token: ToolbarIconToken): IconName => token
 
 type BarItem = { item: ResolvedActionBarItem; section: number }
 
-export default function ActionBar({ sections }: ActionBarProps): ReactElement {
+export default function ActionBar({ sections, lead }: ActionBarProps): ReactElement {
   const barRef = useRef<HTMLDivElement | null>(null)
+  const leadRef = useRef<HTMLDivElement | null>(null)
   const measureRef = useRef<HTMLDivElement | null>(null)
   const menuRef = useRef<HTMLDivElement | null>(null)
   const overflowButtonRef = useRef<HTMLButtonElement | null>(null)
@@ -39,7 +41,8 @@ export default function ActionBar({ sections }: ActionBarProps): ReactElement {
       const lastRight = left + widths[widths.length - 1]
       const overflowRight = measure.querySelector<HTMLElement>('[data-measure-overflow]')?.getBoundingClientRect().right ?? lastRight
       const style = getComputedStyle(bar)
-      const available = bar.getBoundingClientRect().width - parseFloat(style.paddingLeft || '0') - parseFloat(style.paddingRight || '0')
+      const leadWidth = leadRef.current ? leadRef.current.getBoundingClientRect().width + 10 : 0
+      const available = bar.getBoundingClientRect().width - parseFloat(style.paddingLeft || '0') - parseFloat(style.paddingRight || '0') - leadWidth
       setVisibleCount(planButtonOverflow({ available, prefixWidths: widths, overflowChunk: overflowRight - lastRight, tailChunk: 0 }).visible)
     }
     replan()
@@ -93,6 +96,7 @@ export default function ActionBar({ sections }: ActionBarProps): ReactElement {
 
   return (
     <div className="tw-action-bar" role="toolbar" aria-label="Action bar" ref={barRef} onMouseLeave={() => setTip(null)}>
+      {lead && <div className="tw-action-bar-lead" ref={leadRef}>{lead}</div>}
       {shown.map((entry, index) => (
         <Fragment key={entry.item.commandId}>
           {index > 0 && entry.section !== shown[index - 1].section && <span className="tw-action-bar-sep" aria-hidden="true" />}

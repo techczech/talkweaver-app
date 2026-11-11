@@ -32,7 +32,7 @@ try {
  await page.getByRole('row',{name:'First twin'}).click()
  await page.getByRole('button',{name:'Open talk',exact:true}).click()
  assert.equal(await page.getByRole('dialog').count(),1)
- await page.getByRole('button',{name:'Return to talk'}).click()
+ await page.getByRole('button',{name:/^Back( to .+)?$/}).click()
  assert.equal(await editor.inputValue(),'Dirty buffer preserved')
  assert.deepEqual(await editor.evaluate(el=>[el===window.savedEditor,el.selectionStart,el.selectionEnd,el.scrollTop===window.savedScroll]),[true,2,8,true])
  console.log('PASS mounted editor buffer, selection and scroll; folder destination; List; refused open retains gallery')

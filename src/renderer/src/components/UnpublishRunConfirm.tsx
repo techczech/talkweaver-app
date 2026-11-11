@@ -3,7 +3,7 @@ import { EyeOff, X } from 'lucide-react'
 
 // The Unpublish confirmation of the Run page (work-files ticket 17; locked mockup state 12 "From the Run
 // page"): a sheet hanging from the top of the Tools window, its title and one sentence (shared/run-page.ts
-// unpublishConfirmText), Cancel and Unpublish. Presentational: SessionsView owns the call.
+// unpublishConfirmText), Cancel and Unpublish. Presentational: RunsView owns the call.
 //
 // A MODAL, kept as one (ticket 17 fix round): while it is open everything else in the window is `inert`
 // (no focus, no click, hidden from assistive technology), and Tab and Shift+Tab go round its own buttons
@@ -76,13 +76,14 @@ export function UnpublishRunConfirm({ title, body, busy = false, onCancel, onCon
   return (
     <div className="tw-unpub-layer" ref={layerRef} data-unpublish-layer>
       <div className="tw-unpub-scrim" data-unpublish-scrim onMouseDown={() => { if (!busy) onCancel() }} />
-      <div className="tw-unpub-sheet" ref={sheetRef} tabIndex={-1} role="alertdialog" aria-modal="true" aria-labelledby="tw-unpub-title" aria-describedby="tw-unpub-body" data-unpublish-confirm>
+      <div className="tw-unpub-sheet" ref={sheetRef} tabIndex={-1} role="alertdialog" aria-modal="true" aria-labelledby="tw-unpub-title" aria-describedby="tw-unpub-body tw-unpub-recovery" data-unpublish-confirm>
         <div className="shh"><EyeOff aria-hidden /><h2 id="tw-unpub-title">{title}</h2></div>
         <div className="shb" id="tw-unpub-body">{body}</div>
+        <div className="shb" id="tw-unpub-recovery" style={{ paddingTop: 0, color: 'var(--muted)' }}>You can publish it again whenever you like.</div>
         <div className="shf">
           <span className="sp" />
-          <button type="button" ref={cancelRef} className="tw-sess-btn" data-unpublish-action="cancel" disabled={busy} onClick={onCancel}><X aria-hidden />Cancel</button>
-          <button type="button" ref={confirmRef} className="tw-sess-btn dng solid" data-unpublish-action="confirm" disabled={busy} onClick={onConfirm}><EyeOff aria-hidden />Unpublish</button>
+          <button type="button" ref={cancelRef} className="tw-btn" data-unpublish-action="cancel" disabled={busy} onClick={onCancel}><X aria-hidden />Cancel</button>
+          <button type="button" ref={confirmRef} className="tw-btn tw-btn--danger" data-unpublish-action="confirm" disabled={busy} onClick={onConfirm}><EyeOff aria-hidden />Unpublish</button>
         </div>
       </div>
     </div>

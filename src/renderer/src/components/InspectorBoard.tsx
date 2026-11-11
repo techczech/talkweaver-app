@@ -5,6 +5,7 @@
 // ordinary option commit. A field keeps what the user is typing while the source catches up, and
 // takes the source again the moment it changes from anywhere else (the editor, undo).
 import { useEffect, useRef, useState } from 'react'
+import InfoTip from './InfoTip'
 import { EyeOff, GripVertical, MonitorSmartphone, Plus, Smartphone, X } from 'lucide-react'
 import type { BoardEdit } from '../../../../compiler/scripts/lib/board-slide.mjs'
 import {
@@ -215,7 +216,7 @@ export default function InspectorBoard({ board, slideKey, onEdit, settings }: Pr
             </span>
           )}
         </div>
-        <p className="tw-board-note"><MonitorSmartphone aria-hidden="true" /> Shown under the question on the big screen and above the tabs on phones and laptops.</p>
+        <InfoTip text="Shown under the question on the big screen and above the tabs on phones and laptops." icon={<MonitorSmartphone size={13} aria-hidden="true" />} />
       </div>
 
       <div className="tw-inspector-group tw-board-group" data-group="board-columns">
@@ -277,15 +278,15 @@ export default function InspectorBoard({ board, slideKey, onEdit, settings }: Pr
         </div>
         {fewColumns && <p className="tw-board-finding" role="status">A board needs at least two columns.</p>}
         {manyColumns && <p className="tw-board-finding" role="status">A board shows only its first four columns.</p>}
-        <p className="tw-board-note">A name is a tab on the phone, so keep it short. The hint is the card box’s placeholder on phones and shows in an empty column on the big screen.</p>
+        <InfoTip text="A name is a tab on the phone, so keep it short. The hint is the card box’s placeholder on phones and shows in an empty column on the big screen." />
       </div>
 
       <div className="tw-inspector-group tw-board-group tw-board-settings" data-group="board-settings">
         <span className="tw-inspector-group-label">Settings</span>
         {settings}
-        <p className="tw-board-note"><EyeOff aria-hidden="true" /> Names are off unless you allow them; a name is always optional and only you see it. A board left open after the talk closes by itself, and you can close it sooner in History.</p>
+        <InfoTip text="Names are off unless you allow them; a name is always optional and only you see it. A board left open after the talk closes by itself, and you can close it sooner in History." icon={<EyeOff size={13} aria-hidden="true" />} />
         <p className="tw-board-trigger"><span>Trigger line</span><code>{board.triggerText || '{poll=board}'}</code></p>
-        <p className="tw-board-note">Only settings that differ from the defaults are written (24, 140, 5, off, 7 days).</p>
+        <InfoTip text="Only settings that differ from the defaults are written (24, 140, 5, off, 7 days)." />
       </div>
 
       <div className="tw-inspector-group tw-board-group" data-group="board-preview">

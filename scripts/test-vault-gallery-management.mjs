@@ -1,8 +1,9 @@
+import { tmpdir as fixtureTmpdir } from 'node:os'
 import assert from 'node:assert/strict'
 import { build } from 'esbuild'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-const dir=mkdtempSync(resolve('evidence/vault-gallery/management-final-repairs/.actions-'))
+const dir=mkdtempSync(resolve(fixtureTmpdir(),'tw-gallery-actions-'))
 try {
  await build({entryPoints:['src/renderer/src/components/talklist/actions.ts'],outfile:join(dir,'actions.mjs'),bundle:true,platform:'node',format:'esm'})
  const {useTalkActions}=await import(join(dir,'actions.mjs'))

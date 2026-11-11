@@ -78,7 +78,7 @@ await test('zero chord collisions, every default the shortcut registry gives a m
     assert.ok(!seen.has(scoped), `${scoped}: ${seen.get(scoped)} and ${id}`)
     seen.set(scoped, id)
   }
-  for (const id of ['new-window', 'view-editor', 'undo', 'redo']) assert.ok(b[id], `${id} keeps its key`)
+  for (const id of ['new-window', 'view-slides', 'undo', 'redo']) assert.ok(b[id], `${id} keeps its key`)
 })
 
 await test('menu items show the effective chord, overrides included, and never register it', () => {
@@ -840,7 +840,7 @@ await test('Sol review 4: Create site and setting up going live are Settings-win
     assert.match(main, new RegExp(`handleFromSettingsWindow\\(\\s*'${ch}'`), `${ch} goes through the guard`)
     assert.equal((main.match(new RegExp(`'${ch}'`, 'g')) ?? []).length, 1, `${ch}: one handler`)
   }
-  assert.deepEqual(Object.keys(SHARED_CHANGES).filter((ch) => !ch.startsWith('updates:')), [], 'only update-notice preferences and state are shared with the editor')
+  assert.deepEqual(Object.keys(SHARED_CHANGES).filter((ch) => !ch.startsWith('updates:') && !ch.startsWith('agent-skill:')), [], 'only update-notice preferences and state are shared with the editor')
   assert.ok(!/setUpAllowedFrom|sharedChangeAllowed/.test(main), 'no editor exception is left in main')
   // The editor entry points open Settings → Cloudflare instead of asking main to do it.
   const component = (name) => readFileSync(new URL(`../src/renderer/src/components/${name}`, import.meta.url), 'utf8')

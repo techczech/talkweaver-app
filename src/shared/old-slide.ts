@@ -17,6 +17,7 @@
 
 import type { ImportPictureShape, ImportSlideSource, ImportTextShape } from './importer.ts'
 import { classifySlide, effectiveSlideMarkdown, markdownText } from '../main/importer/mapping.ts'
+import { insertionPoint, placeForLine } from './slide-handling/place.ts'
 import { readOutline, readSlides } from './insert-section.ts'
 import { isBareUrl } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
 
@@ -196,61 +197,11 @@ export function insertSlideAfterCaret(input: { text: string; caret: number; slid
   if (slideLines.length === 0 || !/^#{2,6}\s/.test(slideLines[0])) {
     return { ok: false, error: 'The slide does not start with a heading. Nothing was inserted.' }
   }
-  const read = readOutline(text)
-  if (read.openFence || read.openComment) {
-    return { ok: false, error: 'The talk has a code fence or comment that is never closed, so the slide could not be placed safely. Nothing was inserted.' }
-  }
   const lines = text.split('\n')
-  const { levels, bodyStart } = read
-  let caretLine = 0
-  for (let i = 0, off = 0; i < lines.length; i += 1) {
-    if (off > input.caret) break
-    caretLine = i
-    off += lines[i].length + 1
-  }
-
-  let owner = -1
-  for (let i = Math.min(caretLine, lines.length - 1); i >= bodyStart; i -= 1) {
-    if (levels[i] >= 2) { owner = i; break }
-  }
-  let sectionLevel = 7
-  let deepest = 0
-  for (let i = bodyStart; i < levels.length; i += 1) {
-    if (levels[i] >= 2) { sectionLevel = Math.min(sectionLevel, levels[i]); deepest = Math.max(deepest, levels[i]) }
-  }
-
-  // Where the new slide's lines go: `at` is a line index, lines before it stay, lines from it follow.
-  let at: number
-  let level: number
-  if (owner >= 0) {
-    const ownerLevel = levels[owner]
-    // The slide's own text and notes end at the next heading or `#` title line.
-    let own = owner + 1
-    while (own < lines.length && levels[own] === 0) own += 1
-    const firstUnder = own < lines.length && levels[own] > ownerLevel ? levels[own] : 0
-    let end: number
-    if (ownerLevel === sectionLevel && deepest > sectionLevel) {
-      // A section heading: the new slide is the section's first slide. It takes the level of the slide
-      // that was first (so that slide stays the section's own), one level down when the section is empty.
-      end = own
-      level = firstUnder || Math.min(ownerLevel + 1, 6)
-    } else {
-      // Any other slide: after it and every slide under it, before the next heading at its level or
-      // shallower, so no slide under it is taken by the new one. `#` title lines closing it stay after.
-      end = own
-      while (end < lines.length && !(levels[end] >= 2 && levels[end] <= ownerLevel)) end += 1
-      while (end > owner + 1 && (levels[end - 1] === 1 || /^\s*$/.test(lines[end - 1]))) end -= 1
-      level = ownerLevel
-    }
-    while (end > owner + 1 && /^\s*$/.test(lines[end - 1])) end -= 1
-    at = end
-  } else {
-    let first = -1
-    for (let i = bodyStart; i < lines.length; i += 1) if (levels[i] >= 2) { first = i; break }
-    at = first >= 0 ? first : lines.length
-    level = first >= 0 ? levels[first] : 3
-    while (first < 0 && at > bodyStart && /^\s*$/.test(lines[at - 1])) at -= 1
-  }
+  const caretLine = text.slice(0, input.caret).split('\n').length
+  const point = insertionPoint(text, placeForLine(text, caretLine), 'slide', { partHeadings: 'body' })
+  if (!point.ok) return point
+  const { at, level } = point
 
   slideLines[0] = slideLines[0].replace(/^#+/, '#'.repeat(level))
   const before = lines.slice(0, at).join('\n')

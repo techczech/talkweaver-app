@@ -46,6 +46,9 @@ export function parseFrontmatter(state: Pick<EditorState, 'doc'>): Parsed | null
   return { from, to, text, pairs: parseFrontmatterPairs(text) }
 }
 
+/** The event that shows the Talk tab of the right sidebar (the Talk menu's Metadata… sends it too): a talk's details are edited there (house rule R11). */
+export const OPEN_TALK_TAB_EVENT = 'tw-open-metadata'
+
 // ── raw ↔ table toggle (StateField) ───────────────────────────────────────────
 export const toggleRawEffect = StateEffect.define<boolean>()
 export const rawField = StateField.define<boolean>({
@@ -113,7 +116,13 @@ export class FrontmatterWidget extends WidgetType {
       e.preventDefault()
       view.dispatch({ effects: toggleRawEffect.of(true) })
     })
-    header.appendChild(rawBtn)
+    const editBtn = el('button', 'cm-fm-raw-btn cm-fm-edit-btn', 'Edit in the Talk tab ›')
+    editBtn.type = 'button'
+    editBtn.title = 'Edit this talk’s details in the Talk tab of the sidebar'
+    editBtn.dataset.fmEditInTab = 'true'
+    editBtn.addEventListener('mousedown', (e) => e.preventDefault())
+    editBtn.addEventListener('click', () => window.dispatchEvent(new Event(OPEN_TALK_TAB_EVENT)))
+    header.append(editBtn, rawBtn)
     wrap.appendChild(header)
 
     // One edit through the shared byte-preserving editor: comments, nested maps and unrelated
@@ -274,11 +283,11 @@ function makeRow(field: SurfaceFieldModel, setKey: SetKey, appDefault = '', requ
   helpBlock.tabIndex = -1
   helpBlock.appendChild(el('div', 'cm-fm-help', field.explanation))
   if (appDefault && field.options) {
-    helpBlock.appendChild(el('div', 'cm-fm-note', `Your default: ${appDefault} — set in Settings → Presenter identity and deck defaults.`))
+    helpBlock.appendChild(el('div', 'cm-fm-note', `Your default: ${appDefault} — set in Settings › New talks.`))
   }
   if (field.note) helpBlock.appendChild(el('div', 'cm-fm-note', field.note))
   if (field.control === 'map' && !field.readOnly) {
-    helpBlock.appendChild(el('div', 'cm-fm-note', 'Structured value — edit it in Deck settings or the raw view.'))
+    helpBlock.appendChild(el('div', 'cm-fm-note', 'Structured value — edit it in Talk design or the raw view.'))
   }
   if (field.custom) {
     helpBlock.appendChild(el('div', 'cm-fm-note', `This outline holds “${field.custom.value}”, which is not one of the documented choices. Pick one to return to them.`))

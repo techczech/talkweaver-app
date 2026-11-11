@@ -1,4 +1,5 @@
-import { ArrowLeft, ChevronRight, FolderOpen, LayoutGrid, List, PanelLeft, PanelRight, RefreshCw, Ruler, Search, Settings, Unplug, X, Library, FolderClosed } from 'lucide-react'
+import ModeBack from '../ModeBack'
+import { ChevronRight, FolderOpen, LayoutGrid, List, PanelLeft, PanelRight, RefreshCw, Ruler, Search, Settings, Unplug, X, Library, FolderClosed } from 'lucide-react'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { TalkInfo } from '../../../../preload'
 import { acceptsGalleryReply, galleryIdentity, type GalleryCatalogue, type GalleryTalk } from '../../../../shared/vault-gallery'
@@ -22,6 +23,8 @@ interface Props {
   management?: GalleryManagementProps
   revision: unknown
   onClose(): void
+  /** The open talk's title: the one back control says where it returns ("Back to <talk>", house rule R16). */
+  talkTitle?: string | null
   onOpen(talk: TalkInfo, guard?: GalleryOpenGuard<TalkInfo>): Promise<boolean>
 }
 const VIEW_KEY = 'tw.vaultGallery.view', DETAILS_KEY = 'tw.vaultGallery.details'
@@ -30,7 +33,7 @@ const remember = (key: string, value: string) => { try { window.localStorage.set
 const NARROW = 900
 const VAULT_CHANGED = 'The vault changed while opening this talk. Choose it again from the current catalogue.'
 
-export default function VaultGallery({ revision, onClose, onOpen, management }: Props) {
+export default function VaultGallery({ revision, onClose, onOpen, management, talkTitle }: Props) {
   const [managementRevision, setManagementRevision] = useState(0)
   const [reloads, setReloads] = useState(0)
   const [catalogue, setCatalogue] = useState<GalleryCatalogue | null>(null)
@@ -287,7 +290,7 @@ export default function VaultGallery({ revision, onClose, onOpen, management }: 
     }
   }}>
     <header className="vg-titlebar">
-      <div className="vg-tbleft"><button className="vg-return" disabled={busy} onClick={onClose}><ArrowLeft size={16} aria-hidden />{UI.returnToTalk}</button></div>
+      <div className="vg-tbleft"><ModeBack className="vg-return" talkTitle={talkTitle} disabled={busy} onBack={onClose} /></div>
       <nav className="vg-crumbs" aria-label="Location">
         {browsing && vault ? <>
           <button className="vg-crumb top" onClick={chooseOverview}>{UI.allVaults}</button>

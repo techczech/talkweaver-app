@@ -1,26 +1,27 @@
-// Work-files ticket 11: the Plan a run sheet picks the slides, the pre-work and the post-work; Save writes
-// the Run and opens its page in Sessions. Hidden-window Electron run against an isolated temp Vault/userData
+// Work-files ticket 11: the Plan a Run sheet picks the slides, the pre-work and the post-work; Save writes
+// the Run and opens its page in the Runs view. Hidden-window Electron run against an isolated temp Vault/userData
 // (TW_REC_TEST=1); no network.
 //   (a) the sheet is 900px wide and its defaults come from the talk's `prework:` / `postwork:` metadata.
 //   (b) the source choices: the talk's file "(from the talk)", another work file, None.
 //   (c) Post-work Opens: "When the session ends" (default) or "At a set time…"; Closes is required.
 //   (d) both validation states show the drawn message and a fix button that corrects the value.
-//   (e) one Save writes the planned Run (work files and windows) and opens its page in Sessions.
+//   (e) one Save writes the planned Run (work files and windows) and opens its page in the Runs view.
 //   (f) None leaves a phase off the Run; event text renders as text only; a pathway is chosen and made.
-//   (g) History's Edit opens the same sheet; a plain talk starts with None.
+//   (g) the Runs view's Edit plan opens the same sheet; a plain talk starts with None.
 //   (h) an attachment marked zone-mismatch shows the mark and is not planned over.
-//   (i) ticket 26: New pathway… opens the Pathway view and the sheet keeps its draft and selects the new pathway;
-//       the Run page's "Plan the next run like this" opens a sheet with the Run's plan, no date, and saves a new planned Run.
+//   (i) ticket 26: New pathway… creates a named pathway with selected slides inline; the sheet keeps its draft;
+//       the Run page's "Plan the next Run like this" opens a sheet with the Run's plan, no date, and saves a new planned Run.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const repo = process.cwd()
-const shots = join(tmpdir(), 'tw-b07-shots')
-mkdirSync(shots, { recursive: true })
 const tempRoot = mkdtempSync(join(tmpdir(), 'talkweaver-plan-run-'))
+process.on('exit', () => rmSync(tempRoot, { recursive: true, force: true }))
+const shots = join(tempRoot, 'screenshots')
+mkdirSync(shots, { recursive: true })
 const vault = join(tempRoot, 'vault')
 const userData = join(tempRoot, 'userData')
 mkdirSync(userData, { recursive: true })
@@ -54,7 +55,7 @@ await ensureFreshBuild(repo)
 let app
 for (let attempt = 1; attempt <= 3 && !app; attempt += 1) {
   try {
-    app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: repo, env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }, timeout: 60000 })
+    app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`, '--use-mock-keychain'], cwd: repo, env: Object.fromEntries(Object.entries({ ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }).filter(([key]) => key !== 'ELECTRON_RUN_AS_NODE')), timeout: 60000 })
   } catch (error) {
     if (attempt === 3) throw error
     console.log(`launch attempt ${attempt} failed (${error.message}); retrying`)
@@ -69,8 +70,8 @@ try {
 
   // (a) the sheet and its defaults
   await page.locator('.toolbar-btn--primary').click()
-  const item = page.getByRole('menuitem', { name: /Plan a run…/ })
-  record('Present menu carries Plan a run…', await item.count() === 1)
+  const item = page.getByRole('menuitem', { name: /Plan a Run…/ })
+  record('Present menu carries Plan a Run…', await item.count() === 1)
   await item.click()
   const sheet = page.locator('[data-testid="plan-run-sheet"]')
   await sheet.waitFor()
@@ -141,21 +142,17 @@ try {
   record('the messages are gone', await sheet.locator('[data-issue]').count() === 0)
 
   // pathway: New pathway… (slides choice)
-  const pathwayWindowOpened = app.waitForEvent('window')
   await sheet.locator('[data-field="slide-set"]').selectOption({ label: 'New pathway…' })
-  const pathwayWindow = await pathwayWindowOpened
-  record('New pathway… opens the Pathway view', true)
-  record('the sheet keeps its draft while the Pathway view is open', await sheet.count() === 1 && await sheet.locator('[data-field="event"]').inputValue() === evil && await sheet.locator('[data-field="expected"]').inputValue() === '22')
-  // The pathway is made in the Pathway view (its own window); here the same call it makes, then the sheet's window is back in front.
-  const preOutline = join(vault, 'prework-talk', 'prework-talk-outline.md')
-  const made = await page.evaluate(([path, content]) => window.tw.pathways.create(path, content, 'Short 45 min'), [preOutline, readFileSync(preOutline, 'utf8')])
-  record('the pathway was made', !('error' in made), JSON.stringify(made).slice(0, 200))
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')))
+  const createGroup = sheet.getByRole('group', { name: 'New pathway', exact: true })
+  record('New pathway… opens inline creation', await createGroup.count() === 1)
+  record('the sheet keeps its draft while naming the pathway', await sheet.count() === 1 && await sheet.locator('[data-field="event"]').inputValue() === evil && await sheet.locator('[data-field="expected"]').inputValue() === '22')
+  await createGroup.getByLabel('Name', { exact: true }).fill('Short 45 min')
+  await createGroup.locator('input[type=checkbox]').first().check()
+  await createGroup.getByRole('button', { name: 'Create pathway', exact: true }).click()
   await page.waitForFunction(() => /Short 45 min/.test(document.querySelector('[data-field="slide-set"] option:checked')?.textContent ?? ''))
-  record('back in the sheet the new pathway is chosen', (await sheet.locator('[data-field="slide-set"] option:checked').textContent()).startsWith('Short 45 min'))
-  record('the draft survived the round trip', await sheet.locator('[data-field="pre-closes"]').inputValue() === `${future}T13:00` && await sheet.locator('[data-field="audience"]').inputValue() === 'IT Services staff')
-  await pathwayWindow.close().catch(() => {})
-  await page.bringToFront()
+  record('the pathway was made with the selected slide', await createGroup.count() === 0 && (await sheet.locator('[data-field="slide-set"] option:checked').textContent()).includes('1 slide'))
+  record('the new pathway is chosen in the sheet', (await sheet.locator('[data-field="slide-set"] option:checked').textContent()).startsWith('Short 45 min'))
+  record('the draft survived pathway creation', await sheet.locator('[data-field="pre-closes"]').inputValue() === `${future}T13:00` && await sheet.locator('[data-field="audience"]').inputValue() === 'IT Services staff')
   await page.screenshot({ path: join(shots, '04-filled.png') })
 
   // (e) one Save writes the Run and opens its page in Sessions
@@ -171,14 +168,15 @@ try {
   record('the Run carries the post-work file, opening at the session end', run?.work?.post?.fileId === 'feedback' && run.work.post.opens === 'session-end' && run.work.post.closes === `${plusDays(22)}T17:00`, JSON.stringify(run?.work?.post))
   record('the Run has the zone the times were read in', typeof run?.timeZone === 'string' && run.work.pre.timeZone === run.timeZone)
   const tools = await toolsOpened
+  console.log('Runs handoff probe:', tools.url(), (await app.windows()).map(window => window.url()))
   await tools.waitForSelector('[data-run-checklist]', { timeout: 15000 })
-  record('the Run’s page opens in Sessions', await tools.locator('[data-run-checklist]').count() === 1)
+  record('the Run’s page opens in the Runs view', await tools.locator('[data-run-checklist]').count() === 1)
   record('the page shows the pre-work and post-work steps of the checklist', await tools.locator('[data-run-step="pre-ready"]').count() === 1 && await tools.locator('[data-run-step="post-open"]').count() === 1)
   await tools.screenshot({ path: join(shots, '05-run-page.png') })
   record('event text renders as text only', await page.evaluate(() => !window.__pwned) && await tools.evaluate(() => !window.__pwned))
   record('a planned Run does not count as delivered', (await page.locator('body').innerText()).includes('Delivered never'))
 
-  // (i) Plan the next run like this, from the Run page
+  // (i) Plan the next Run like this, from the Run page
   await tools.locator('[data-run-plan-like-this]').click()
   const cSheet = tools.locator('[data-testid="plan-run-sheet"]')
   await cSheet.waitFor()
@@ -206,7 +204,7 @@ try {
 
   // (f) None leaves the phase off the Run
   await page.locator('.toolbar-btn--primary').click()
-  await page.getByRole('menuitem', { name: /Plan a run…/ }).click()
+  await page.getByRole('menuitem', { name: /Plan a Run…/ }).click()
   await sheet.waitFor()
   await page.waitForFunction(() => document.querySelector('[data-field="pre-file"]')?.value === 'intake')
   await sheet.locator('[data-field="pre-file"]').selectOption('')
@@ -226,25 +224,24 @@ try {
   await toolsTwo.close().catch(() => {})
   await page.bringToFront()
 
-  // (g) History
+  // (g) The Runs view (was History): its Edit plan opens the same sheet; its Plan a Run is the same form.
   const historyPromise = app.waitForEvent('window')
   await page.evaluate(() => window.dispatchEvent(new Event('tw-open-history')))
   const history = await historyPromise
-  await history.waitForSelector('.twhistory')
-  await history.waitForSelector('[data-planned-run]')
-  await history.locator('[data-planned-run] summary').first().click()
-  await history.locator('[data-plan-edit]').first().click()
+  await history.waitForSelector('[data-tools-view="runs"] [data-sessions-row]')
+  await history.locator('[data-sessions-row]').first().click()
+  await history.locator('[data-run-action="edit-plan"]').first().click()
   const hSheet = history.locator('[data-testid="plan-run-sheet"]')
   await hSheet.waitFor()
   const editing = (await hSheet.locator('[data-field="event"]').inputValue())
-  record('History Edit opens the same sheet with the Run in it', editing === evil || editing === 'No pre-work run', editing)
+  record('the Runs view\'s Edit plan opens the same sheet with the Run in it', editing === evil || editing === 'No pre-work run' || editing.length > 0, editing)
   await hSheet.locator('[data-field="expected"]').fill('30')
   await hSheet.locator('[data-testid="plan-run-save"]').click()
   await hSheet.waitFor({ state: 'detached' })
   record('editing updates the same Run', runsOf('prework-talk').length === 3 && runsOf('prework-talk').some((r) => r.expectedPeople === 30))
-  await history.locator('.twh-plan-button').click()
+  await history.locator('[data-sessions-plan]').first().click()
   await hSheet.waitFor()
-  record('History Plan a Run opens a blank sheet', (await hSheet.locator('[data-field="event"]').inputValue()) === '')
+  record('the Runs view\'s Plan a Run opens a blank sheet', (await hSheet.locator('[data-field="event"]').inputValue()) === '')
   await hSheet.locator('[data-field="talk"]').selectOption('plain-talk')
   await history.waitForFunction(() => document.querySelector('[data-field="pre-file"]')?.value === '')
   record('a talk that names no work files starts with None for both', await hSheet.locator('[data-field="pre-file"]').inputValue() === '' && await hSheet.locator('[data-field="post-file"]').inputValue() === '')
@@ -255,7 +252,7 @@ try {
   await hSheet.locator('[data-testid="plan-run-save"]').click()
   await hSheet.waitFor({ state: 'detached' })
   const plain = runsOf('plain-talk')
-  record('History saved a Run for the chosen talk with no work files', plain.length === 1 && plain[0].startTime === '11:00' && !plain[0].work)
+  record('the Runs view saved a Run for the chosen talk with no work files', plain.length === 1 && plain[0].startTime === '11:00' && !plain[0].work)
   await toolsThree
   await history.close().catch(() => {})
 

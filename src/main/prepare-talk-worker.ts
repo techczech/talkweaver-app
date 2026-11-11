@@ -15,7 +15,8 @@ import { galleryAcquiredAssets } from './vault-gallery-assets.ts'
 //
 // One long-lived process, started on the first compile and ended after a quiet minute: each job is
 // { id, compilerDir, outlinePath, text, slug, defaults, options }; the answer is
-// { id, ok: true, model, rows, previewKey } or { id, ok: false, error }. Jobs arrive and answers leave
+// { id, ok: true, model, rows, previewKey, preview } or { id, ok: false, error }. A rowsOnly job (the search
+// index) is answered with its rows and an empty model. Jobs arrive and answers leave
 // through process.parentPort. The compiler's modules are loaded here from the compiler folder the job
 // names, as the main process loaded them.
 //
@@ -32,6 +33,7 @@ import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 import { markSlidePreviewHtml } from '../shared/slide-preview.ts'
 import { requireCompileOptionsWithRoots } from './compile-roots.ts'
+import { writePreviewVariant, type PreviewVariant, type VariantFolder } from './preview-variant.ts'
 
 export type PrepareTalkJob = {
   id: number
@@ -42,7 +44,15 @@ export type PrepareTalkJob = {
   slug: string
   defaults?: Record<string, unknown>
   options: Record<string, unknown>
+  /** Only the per-slide rows are wanted (the search index, with options.projectionsOnly): the reply's
+   *  model is empty and no preview is made, so nothing of the deck crosses to the main process. */
+  rowsOnly?: boolean
+  /** Write the preview variant (preview-variant.ts) of the deck into this folder: asked for by the
+   *  compiles whose deck the Inspector preview or the thumbnails load; a presenter or export compile
+   *  does without it. Only the variant's descriptor comes back, never its bytes. */
+  previewDir?: VariantFolder
 }
+
 
 export type PrepareTalkReply =
   | {
@@ -54,6 +64,7 @@ export type PrepareTalkReply =
        *  thumbnails' document id and the render window's deck key, worked out here rather than on the
        *  main process's thread (each took 70-90 ms there on a deck of large photographs). */
       previewKey?: string
+      preview?: PreviewVariant
     }
   | { id: number; ok: false; error: string }
 
@@ -87,10 +98,14 @@ async function prepare(job: PrepareTalkJob): Promise<PrepareTalkReply> {
     model = await prepareSource(job.outlinePath, job.text, job.slug, authority ? {mtimeMs:0,size:Buffer.byteLength(job.text),isDirectory:()=>false,isFile:()=>true} : statSync(job.outlinePath), job.defaults, {...compileOptions,...(acquired ? {galleryAcquiredAssets:acquired} : {})})
   } finally {await acquired?.close()}
   const rows = buildPerSlideProjections(model, job.slug) ?? null
-  const previewKey = typeof model.fullHtml === 'string'
-    ? createHash('sha256').update(markSlidePreviewHtml(model.fullHtml)).digest('hex')
+  if (job.rowsOnly) return { id: job.id, ok: true, model: {}, rows }
+  const fullHtml = typeof model.fullHtml === 'string' ? model.fullHtml : undefined
+  const previewKey = fullHtml !== undefined
+    ? createHash('sha256').update(markSlidePreviewHtml(fullHtml)).digest('hex')
     : undefined
-  return { id: job.id, ok: true, model, rows, previewKey }
+  // A variant that cannot be written is no failure of the compile: its consumers mark fullHtml instead.
+  const preview = fullHtml && job.previewDir ? await writePreviewVariant(fullHtml, job.previewDir).catch(() => undefined) : undefined
+  return { id: job.id, ok: true, model, rows, previewKey, ...(preview ? { preview } : {}) }
 }
 
 // A utility process's port (process.parentPort): jobs arrive as message events carrying the job as

@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import CloudflareSettings from './CloudflareSettings'
 import TranscriptionStatusRow from './TranscriptionStatusRow'
+import AgentSkillSettings from './AgentSkillSettings'
 import type { BackupSettings } from '../../../preload/index'
 import { GUIDE_TEXT } from '../../../shared/guide'
 import { EXAMPLE_REMOVAL_TEXT } from '../../../shared/example-vault-removal'
@@ -72,6 +73,7 @@ export function GetStartedRows({ exampleRemoved, onAction }: { exampleRemoved: b
         </div>
         <button style={look.btn} data-add-vault onClick={() => run('add-vault')}>Add vault…</button>
       </div>
+      <AgentSkillSettings look={look} />
       <div style={look.sectionHead}>Transcription</div>
       <div style={look.hint}>
         Optional. TalkWeaver can transcribe recorded Runs on this computer with a speech engine you set up once. The paths are under
@@ -110,7 +112,7 @@ export function BackupsPage({ version }: { version: number }): React.JSX.Element
   useEffect(() => window.tw.backup.onStatus((run) => setBackup((b) => (b ? { ...b, lastRun: run } : b))), [])
   return (
     <div style={page} data-settings-page="backups">
-      <div style={look.sectionHead}>Presentation backup</div>
+      <div style={look.sectionHead}>Talk backup</div>
       <div style={look.hint}>
         Each talk you work on is saved as one presenter file in the backup folder, so you can present from any browser without your
         laptop. Turn it on and choose the folder under Presenting › Present from anywhere.

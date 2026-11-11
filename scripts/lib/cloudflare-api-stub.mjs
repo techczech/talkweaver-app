@@ -40,6 +40,15 @@
 //     none answers `canonical_deployment: null`, as a Direct Upload site never deployed to does. Seed an
 //     earlier publish with `pagesDeployments: { [account]: { [site]: { files: { '/old/index.html': '<32 hex>' } } } }`; a site made and never deployed to: `{ neverDeployed: true }`.
 //     Without the option the earlier behaviour (one made-up deployment, no files) is unchanged.
+//     With it the stand-in also keeps Pages' ASSETS as per-talk publishing sends them (pages-direct-upload.ts): every hash of a
+//     deployment counts as held; `check-missing` answers only the hashes it does not hold; `assets/upload` keeps each payload's
+//     bytes and content type by hash (`api.model.assets`, `api.model.uploads`); a deployment keeps the `_redirects` and
+//     `_headers` it was sent (as `redirects` and `headers`, stand-in fields), and its production branch is the site's
+//     (`productionBranch` in a seed, default `main`). Seed bytes with `pagesAssets: { [hash]: Buffer | string }`. A deployment's
+//     asset is served at `GET /__pages-assets/<deployment id>/<path>` (the stand-in's own address for the deployment's site,
+//     so no request leaves this computer). `GET …/deployments` lists them, newest first, paged (`model.deploymentsPerPage`), leaving out those in
+//     `model.hiddenFromList`. With `model.pendingDeployments`, a new
+//     deployment stays in progress, and not production, until `api.settle(account, site, id, status)`.
 // Anything else is answered 404 (no such route) and listed in `api.unknown`: a caller cannot pass
 // by asking for something the fake does not model.
 //
@@ -92,9 +101,19 @@ export function createFakeCloudflare(options = {}) {
     workerDomains: new Map(Object.entries(options.workerDomains ?? {}).map(([account, hosts]) => [account, hosts.map((hostname) => ({ id: workerDomainId(hostname), hostname, service: 'talkweaver-live', environment: 'production' }))])),
     /** Whether Pages sites keep deployments (see the header); off unless `pagesDeployments` is an option. */
     trackDeployments: options.pagesDeployments !== undefined && options.pagesDeployments !== null,
+    /** Pages assets held, by hash: { bytes, contentType }. */
+    assets: new Map(Object.entries(options.pagesAssets ?? {}).map(([hash, bytes]) => [hash, { bytes: Buffer.from(bytes), contentType: null }])),
+    /** Every asset upload, in order: the hashes of its payload. */
+    uploads: [],
     hang: null,
     answer: null,
     delay: null,
+    /** New deployments stay in progress (not production) until `settle` (as Cloudflare's do for a while). */
+    pendingDeployments: false,
+    /** Deployments made but not yet shown in the list (Cloudflare's list can lag). */
+    hiddenFromList: new Set(),
+    /** The most deployments one page of the list holds (Cloudflare: 25). */
+    deploymentsPerPage: 25,
   }
   for (const [account, names] of Object.entries(options.accountSites ?? {})) model.sites.set(account, new Map(names.map((name) => [name, { domains: [] }])))
   // A site's custom domains as Cloudflare lists them (GET …/pages/projects/<name>/domains): { account: { site: [{ name, status }] } }.
@@ -106,20 +125,21 @@ export function createFakeCloudflare(options = {}) {
   }
 
   /** Record a deployment of a site as Cloudflare keeps it: UUID id, 8-hex short id, files, trigger. A production one is the site's canonical one. */
-  const recordDeployment = (found, name, { files, branch = 'main', commitMessage = '', ago = 1000 }) => {
+  const recordDeployment = (found, name, { files, branch = 'main', commitMessage = '', ago = 1000, redirects, headers, pending = false }) => {
     const id = randomUUID()
-    const environment = branch === 'main' ? 'production' : 'preview'
+    const environment = branch === (found.productionBranch ?? 'main') ? 'production' : 'preview'
     const shortId = id.slice(0, 8)
     const body = {
       id, short_id: shortId, project_name: name, environment, url: `https://${shortId}.${name}.pages.dev`, aliases: [],
       created_on: new Date(Date.now() - ago).toISOString(),
-      latest_stage: { name: 'deploy', status: 'success' }, stages: [{ name: 'deploy', status: 'success' }],
+      latest_stage: { name: 'deploy', status: pending ? 'active' : 'success' }, stages: [{ name: 'deploy', status: pending ? 'active' : 'success' }],
       deployment_trigger: { type: 'ad_hoc', metadata: { branch, commit_hash: '', commit_message: commitMessage, commit_dirty: true } },
       files,
+      ...(redirects !== undefined ? { redirects } : {}), ...(headers !== undefined ? { headers } : {}),
     }
     found.deployments ??= new Map()
     found.deployments.set(id, body)
-    if (environment === 'production') found.production = id
+    if (environment === 'production' && !pending) found.production = id
     return body
   }
   for (const [account, bySite] of Object.entries(options.pagesDeployments ?? {})) {
@@ -127,11 +147,18 @@ export function createFakeCloudflare(options = {}) {
       if (!model.sites.has(account)) model.sites.set(account, new Map())
       const sites = model.sites.get(account)
       if (!sites.has(name)) sites.set(name, { domains: [] })
+      if (seed.productionBranch) sites.get(name).productionBranch = seed.productionBranch
       // `{ neverDeployed: true }`: the site exists (as one just made in Settings does) and has no deployment: `canonical_deployment: null`.
       if (seed.neverDeployed !== true) recordDeployment(sites.get(name), name, { files: seed.files ?? {}, commitMessage: seed.commitMessage ?? '', ago: 86_400_000 })
     }
   }
   const productionOf = (found) => (found?.production ? found.deployments.get(found.production) : null)
+  /** Whether the stand-in holds an asset: uploaded, seeded, or part of a deployment it keeps. */
+  const held = (hash) => {
+    if (model.assets.has(hash)) return true
+    for (const sites of model.sites.values()) for (const found of sites.values()) for (const deployment of found.deployments?.values() ?? []) if (Object.values(deployment.files ?? {}).includes(hash)) return true
+    return false
+  }
 
   const sitesOf = (account) => {
     if (!model.sites.has(account)) model.sites.set(account, new Map())
@@ -143,7 +170,7 @@ export function createFakeCloudflare(options = {}) {
     return model.workers.get(account)
   }
   const projectBody = (name, found) => ({
-    id: `site-${name}`, name, subdomain: `${name}.pages.dev`, production_branch: 'main', domains: [`${name}.pages.dev`], deployment_configs: { production: {}, preview: {} },
+    id: `site-${name}`, name, subdomain: `${name}.pages.dev`, production_branch: found?.productionBranch ?? 'main', domains: [`${name}.pages.dev`], deployment_configs: { production: {}, preview: {} },
     ...(model.trackDeployments ? { canonical_deployment: productionOf(found) ?? null } : {}),
   })
   const deploymentBody = (name) => ({ id: 'dep00000001', url: `https://dep00000001.${name}.pages.dev`, environment: 'production', aliases: [], project_name: name, latest_stage: { name: 'deploy', status: 'success' }, stages: [{ name: 'deploy', status: 'success' }] })
@@ -157,8 +184,29 @@ export function createFakeCloudflare(options = {}) {
     const grant = open ? { status: 'active', accounts: null, pages: true, workers: true, zones: true, routes: true } : model.tokens.get(bearer)
     // Uploads are authorised with the upload token the API itself issued, not the person's token.
     if (path.startsWith('/pages/assets/')) {
-      if (path === '/pages/assets/check-missing') return ok(JSON.parse(body.toString() || '{}').hashes ?? [])
+      if (path === '/pages/assets/check-missing') {
+        const hashes = JSON.parse(body.toString() || '{}').hashes ?? []
+        return ok(model.trackDeployments ? hashes.filter((hash) => !held(hash)) : hashes)
+      }
+      if (path === '/pages/assets/upload' && model.trackDeployments) {
+        const payload = JSON.parse(body.toString() || '[]')
+        model.uploads.push(payload.map((entry) => entry.key))
+        for (const entry of payload) model.assets.set(entry.key, { bytes: Buffer.from(entry.value, entry.base64 ? 'base64' : 'utf8'), contentType: entry.metadata?.contentType ?? null })
+        return ok(null)
+      }
       return ok(null)
+    }
+    const served = /^\/__pages-assets\/([^/]+)(\/.*)$/.exec(path)
+    if (served && method === 'GET') {
+      const id = decodeURIComponent(served[1])
+      for (const sites of model.sites.values()) {
+        for (const found of sites.values()) {
+          const deployment = found.deployments?.get(id)
+          const hash = deployment?.files?.[decodeURIComponent(served[2])]
+          if (hash && model.assets.has(hash)) return { status: 200, raw: model.assets.get(hash).bytes }
+        }
+      }
+      return { status: 404, raw: Buffer.from('not found') }
     }
     if (path === '/user/tokens/verify') {
       if (!grant) return failure(401, 1000, 'Invalid API Token')
@@ -224,7 +272,16 @@ export function createFakeCloudflare(options = {}) {
           const field = (part) => request.parts?.find((entry) => entry.name === part)?.bytes.toString('utf8')
           let files = {}
           try { files = JSON.parse(field('manifest') ?? '{}') } catch { /* no manifest: an empty site */ }
-          return ok(recordDeployment(found, name, { files, branch: field('branch') || 'main', commitMessage: field('commit_message') ?? '' }))
+          return ok(recordDeployment(found, name, { files, branch: field('branch') || 'main', commitMessage: field('commit_message') ?? '', redirects: field('_redirects') ?? '', headers: field('_headers') ?? '', pending: model.pendingDeployments === true }))
+        }
+        if (tail === '/deployments' && method === 'GET' && model.trackDeployments) {
+          // Newest first, a page at a time, as Cloudflare lists them; a deployment the test hides is not listed (yet).
+          const query = new URLSearchParams(request.search ?? '')
+          const perPage = Math.max(1, Math.min(Number(query.get('per_page')) || 25, model.deploymentsPerPage ?? 25))
+          const page = Math.max(Number(query.get('page')) || 1, 1)
+          const listed = [...(found.deployments?.values() ?? [])].reverse().filter((deployment) => !model.hiddenFromList.has(deployment.id))
+          const slice = listed.slice((page - 1) * perPage, page * perPage)
+          return ok(slice, { result_info: { page, per_page: perPage, count: slice.length, total_count: listed.length, total_pages: Math.max(1, Math.ceil(listed.length / perPage)) } })
         }
         const recorded = /^\/deployments\/([^/]+)$/.exec(tail)
         if (recorded && method === 'GET' && found.deployments?.has(decodeURIComponent(recorded[1]))) return ok(found.deployments.get(decodeURIComponent(recorded[1])))
@@ -377,7 +434,25 @@ export function createFakeCloudflare(options = {}) {
   }).map((request) => `${request.method} ${request.path}`)
   /** The production deployment of a site as Cloudflare would answer it (only with `pagesDeployments`), or null. */
   const production = (account, name) => productionOf(siteOf(account, name))
-  return { requests, unknown, model, handle, namingSigningSecret, production, reached: () => requests.map((request) => `${request.method} ${request.path}`) }
+  /**
+   * Tests: make `files` (path → hash) the site's production deployment, as if another computer had deployed it, with `bytes`
+   * (hash → bytes) held. Not a request: nothing is recorded in `requests`.
+   */
+  const seed = (account, name, { files, bytes = {}, redirects = '', headers = '', branch = 'main', commitMessage = '' }) => {
+    for (const [hash, content] of Object.entries(bytes)) model.assets.set(hash, { bytes: Buffer.from(content), contentType: null })
+    const found = siteOf(account, name) ?? (sitesOf(account).set(name, { domains: [] }), siteOf(account, name))
+    return recordDeployment(found, name, { files, redirects, headers, branch, commitMessage, ago: 2000 })
+  }
+  /** Tests: a deployment in progress finishes (`success`, it becomes production) or fails. */
+  const settle = (account, name, id, status = 'success') => {
+    const found = siteOf(account, name)
+    const deployment = found?.deployments?.get(id)
+    if (!deployment) return
+    deployment.latest_stage = { name: 'deploy', status }
+    deployment.stages = [{ name: 'deploy', status }]
+    if (status === 'success' && deployment.environment === 'production') found.production = id
+  }
+  return { requests, unknown, model, handle, namingSigningSecret, production, seed, settle, reached: () => requests.map((request) => `${request.method} ${request.path}`) }
 }
 
 /** The parts of a multipart/form-data body: [{ name, filename, type, bytes }]. Empty when it is not one. */
@@ -435,6 +510,7 @@ export function fakeCloudflareFetch(fake, { honourAbort = false } = {}) {
     }
     if (reply.throws) throw reply.throws
     if (reply.wait) await reply.wait
+    if (reply.raw) return new Response(reply.raw, { status: reply.status, headers: { 'content-type': 'application/octet-stream' } })
     return new Response(typeof reply.body === 'string' ? reply.body : JSON.stringify(reply.body), { status: reply.status, headers: { 'content-type': 'application/json' } })
   }
 }
@@ -452,6 +528,7 @@ export function startCloudflareApiStub(options = {}) {
       const reply = fake.handle({ method: request.method, path, search: url.search, headers: { ...request.headers }, authorization: request.headers.authorization ?? '', contentType, body, parts: multipartParts(body, contentType) })
       if (reply === null) return
       if (reply.wait) await reply.wait
+      if (reply.raw) { response.writeHead(reply.status, { 'content-type': 'application/octet-stream' }); response.end(reply.raw); return }
       const text = typeof reply.body === 'string' ? reply.body : JSON.stringify(reply.body)
       response.writeHead(reply.status, { 'content-type': reply.contentType ?? 'application/json', ...(reply.headers ?? {}) })
       response.end(text)

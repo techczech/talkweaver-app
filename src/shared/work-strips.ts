@@ -135,12 +135,12 @@ function sentText(phase: Phase, sent: Array<{ run: StripRun; phase: RunPhase }>)
     const work = run.work?.post
     if (runPhase === 'post-open' && work) return `${nameOf(run)} · ${count(run, 'post')} · closes ${dayLabel(work.closes.slice(0, 10))}`
     if (runPhase === 'post-closed') return `sent to ${nameOf(run)} · closed ${count(run, 'post')}`
-    const opens = work?.opens && work.opens !== SESSION_END ? `opens ${dayLabel(work.opens.slice(0, 10))}` : 'opens after the session'
+    const opens = work?.opens && work.opens !== SESSION_END ? `opens ${dayLabel(work.opens.slice(0, 10))}` : 'opens after the Run'
     return `sent to ${nameOf(run)} · ${opens}`
   }
   const head = `sent to ${plural(sent.length, 'run')}`
   if (open.length > 0) return `${head} · ${open.length} open`
-  return sent.every((item) => item.run.work?.post?.opens === SESSION_END) ? `${head} · opens after each session` : head
+  return sent.every((item) => item.run.work?.post?.opens === SESSION_END) ? `${head} · opens after each Run` : head
 }
 
 function stripFor(phase: Phase, input: WorkStripsInput): WorkStrip {
@@ -164,7 +164,7 @@ function stripFor(phase: Phase, input: WorkStripsInput): WorkStrip {
     const status = 'could not read Runs'
     return {
       phase, state: 'runs-unknown', tone: 'not-sent', lead: LABEL[phase], fileName: file.title, steps, status,
-      text: [LABEL[phase], file.title, steps, status].join(' · '), action: { kind: 'plan-run', label: 'Plan a run' }
+      text: [LABEL[phase], file.title, steps, status].join(' · '), action: { kind: 'plan-run', label: 'Plan a Run' }
     }
   }
   const carriers = input.runs
@@ -181,7 +181,7 @@ function stripFor(phase: Phase, input: WorkStripsInput): WorkStrip {
   const compose = (status: string) => [LABEL[phase], file.title, steps, status, ...(mark ? [STRIP_MARK_TEXT[mark]] : [])].join(' · ')
   if (sent.length === 0) {
     const status = 'not sent to anyone'
-    return { ...base, state: 'not-sent', tone: 'not-sent', status, text: compose(status), action: { kind: 'plan-run', label: 'Plan a run' } }
+    return { ...base, state: 'not-sent', tone: 'not-sent', status, text: compose(status), action: { kind: 'plan-run', label: 'Plan a Run' } }
   }
   const status = sentText(phase, sent)
   const rows = sent.map((item) => menuRow(item.run, phase))

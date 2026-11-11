@@ -68,19 +68,19 @@ for (const shortcut of SHORTCUT_REGISTRY) {
 const expectedPaletteIds = [
   'research-panel', 'research-find', 'research-rename', 'research-change-kind', 'research-delete', 'research-move', 'research-copy', 'research-insert-here', 'research-insert', 'research-make-slide', 'research-open', 'research-previous', 'research-next', 'research-scope', 'research-close', 'research-copy-reference', 'research-reveal', 'research-source', 'research-used-in', 'research-scope-talk', 'research-scope-research', 'research-scope-everything', 'research-retry',
   'refresh', 'optimize-images', 'ocr-index', 'check-embeds', 'layout-doctor', 'research-capture', 'research-reveal-folder', 'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place', 'scratchpad-move-up', 'scratchpad-move-down', 'where-used', 'focus-slide',
-  'toggle-inspector', 'studio', 'history', 'importer', 'plan-run', 'attach-prework', 'attach-postwork', 'pathways', 'new-window', 'open-in-new-window', 'new-talk', 'new-folder',
+  'toggle-inspector', 'studio', 'runs', 'history', 'importer', 'plan-run', 'attach-prework', 'attach-postwork', 'pathways', 'add-to-pathway', 'present-pathway', 'new-window', 'open-in-new-window', 'new-talk', 'new-folder',
   'refresh-talks', 'change-vault', 'vault-gallery', 'search-talks',
   'find-talk', 'add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section',
   'present-window', 'present-presenter',
   'present-from-here', 'present-audience', 'handout', 'build', 'publish-handout', 'share-for-comments', 'copy-venue-screen-link', 'layout',
   'quote-form-auto', 'quote-form-plain', 'quote-form-tweet', 'quote-form-video', 'quote-form-book', 'quote-form-paper', 'quote-form-web',
-  'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
+  'image', 'search', 'insert-board-slide', 'edit-image', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
   'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg',
   'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes',
-  'insert-html-page', 'capture-embed',
+  'insert-html-page', 'save-offline-page', 'capture-embed',
   'format-bold', 'format-italic', 'format-inline-code', 'format-highlight', 'format-strikethrough', 'format-underline', 'format-link',
   'deck-design', 'metadata', 'tag-slide', 'abstract',
-  'view-editor', 'view-both', 'view-plain', 'view-markdown', 'change-heading-level', 'change-slide-layout', 'view-strip', 'view-grid', 'fold-all', 'unfold-all', 'outline-collapse-all', 'outline-expand-all',
+  'view-slides', 'view-plain', 'view-markdown', 'change-heading-level', 'change-slide-layout', 'view-strip', 'view-grid', 'fold-all', 'unfold-all', 'outline-collapse-all', 'outline-expand-all',
   'move-slide-to', 'move-section-to', 'select-section', 'clear-slide-selection', 'set-aside-slides', 'move-selected-slides-to',
   'search-slides-grid', 'search-next', 'search-previous',
   'normalize-triggers', 'undo', 'redo', 'new-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings', 'check-for-updates', 'whats-new',
@@ -120,7 +120,7 @@ assert.deepEqual(
 const insertToolbar = toolbarCommands('insert').map((command) => command.id)
 assert.deepEqual(
   insertToolbar,
-  ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
+  ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'save-offline-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
   'the Insert toolbar menu is the five built-ins, then the six objects, then the components with HTML page… after Embed and speaker notes last, in order'
 )
 
@@ -217,14 +217,14 @@ assert.equal(
 
 assert.deepEqual(
   menuCommands().map((command) => [command.menu.path.join('/'), command.id]),
-  [['Deck', 'toggle-inspector'], ['Deck', 'pathways'], ['Help', 'check-for-updates'], ['Help', 'whats-new'], ['Help', 'help'], ['Slides', 'set-aside-slides'], ['View', 'vault-gallery'], ['View', 'research-panel'], ['View', 'research-find'], ['View', 'scratchpad-panel']],
+  [['Help', 'check-for-updates'], ['Help', 'whats-new'], ['Help', 'help'], ['Insert', 'edit-image'], ['Slides', 'set-aside-slides'], ['Talk', 'toggle-inspector'], ['Talk', 'pathways'], ['Tools', 'tools-animated-video'], ['View', 'vault-gallery'], ['View', 'research-panel'], ['View', 'research-find'], ['View', 'scratchpad-panel']],
   'native custom menu keeps its existing structure'
 )
 
 const expectedToolbarIds = {
-  insert: ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
-  deck: ['deck-design', 'toggle-inspector', 'pathways', 'metadata', 'abstract', 'refresh', 'normalize-triggers', 'delete-slide'],
-  tools: ['studio', 'history', 'importer', 'settings', 'app.command-palette', 'help'],
+  insert: ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'save-offline-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
+  deck: ['deck-design', 'pathways', 'metadata', 'abstract', 'refresh', 'normalize-triggers', 'delete-slide'],
+  tools: ['studio', 'runs', 'importer', 'settings', 'app.command-palette', 'help'],
   present: ['present-window', 'present-presenter', 'present-from-here', 'present-audience', 'plan-run']
 }
 for (const [menu, expectedIds] of Object.entries(expectedToolbarIds)) {
@@ -234,7 +234,7 @@ for (const [menu, expectedIds] of Object.entries(expectedToolbarIds)) {
 const workspace = readFileSync(join(root, 'src/renderer/src/components/WorkspaceLayout.tsx'), 'utf8')
 assert(!workspace.includes("{ id: 'toggle-inspector', title:"), 'WorkspaceLayout must not hand-maintain palette entries')
 assert(workspace.includes('runRegisteredCommand'), 'renderer uses the shared command dispatch channel')
-for (const menu of ['Insert', 'Deck', 'Tools', 'Present']) {
+for (const menu of ['Insert', 'Talk', 'Tools', 'Present']) {
   const block = workspace.match(new RegExp(`<ToolbarMenu(?:(?!<ToolbarMenu)[\\s\\S])*?label="${menu}"(?:(?!<ToolbarMenu)[\\s\\S])*?/>`))?.[0] ?? ''
   assert(block, `${menu} ToolbarMenu exists`)
   assert(!/items=\{\[\s*\{[\s\S]*?label:/.test(block), `${menu} ToolbarMenu must not contain a literal inline item array`)
@@ -314,7 +314,6 @@ try {
         "import { renderToStaticMarkup } from 'react-dom/server'",
         "import KeyboardHelp from './src/renderer/src/components/KeyboardHelp.tsx'",
         "import SlideContextMenu from './src/renderer/src/components/SlideContextMenu.tsx'",
-        "import SlidePickerHints from './src/renderer/src/components/SlidePickerHints.tsx'",
         "export * from './src/renderer/src/keymap/surfaceKeys.ts'",
         "export { EDITOR_COMMANDS } from './src/renderer/src/keymap/registry.ts'",
         "export * from './src/renderer/src/components/SlideContextMenu.tsx'",
@@ -323,8 +322,8 @@ try {
         "export function renderKeyboardHelp() {",
         "  return renderToStaticMarkup(React.createElement(KeyboardHelp, { isOpen: true, onClose() {} }))",
         "}",
-        "export function renderSlidePickerHints() {",
-        "  return renderToStaticMarkup(React.createElement(SlidePickerHints))",
+        "export function renderSlidePickerKeys() {",
+        "  return renderToStaticMarkup(React.createElement(KeyboardHelp, { isOpen: true, onClose() {}, view: 'slide-picker' }))",
         "}",
         "export function renderSlideContextMenu() {",
         "  return renderToStaticMarkup(React.createElement(SlideContextMenu, {",
@@ -477,18 +476,17 @@ try {
   const sheetHeadings = sheetRows().data.groups.map((group) => group.taskGroup)
   assert(sheetHeadings.includes('Reuse slides'), 'the cheat sheet has a Reuse slides section (a task group) for the talk-search keys; the old Slide picker · Talks name is no longer shown')
   assert(!sheetHeadings.includes('Slide picker · Talks'), 'the old group name is not shown')
+  // The Slide Browser's keys are listed in the cheat sheet (no resident hint bar): its view section, from the registry.
   const hintKeys = (markup, id) => {
-    const span = markup.match(new RegExp(`data-hint="${id.replace('.', '\\.')}">([\\s\\S]*?)<b>`))?.[1] ?? ''
-    return [...span.matchAll(/<kbd>([^<]*)<\/kbd>/g)].map((match) => match[1]).join(' ')
+    const label = SHORTCUT_REGISTRY.find((entry) => entry.id === id)?.label ?? id
+    const row = markup.match(new RegExp(`<span class="kbd-sheet-label">${label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</span><kbd class="kbd-sheet-chord">([^<]*)</kbd>`))
+    return row ? row[1] : ''
   }
-  const hints = shortcutUi.renderSlidePickerHints()
-  assert.equal(hintKeys(hints, 'slide-picker.talk-beside'), 'O', 'the hint bar shows O for talk beside')
-  assert.equal(hintKeys(hints, 'slide-picker.select-whole-section'), '⇧⌘↵', 'the hint bar shows ⇧⌘↵ for select whole section')
-  assert.match(hints, /data-hint="slide-picker\.select-whole-section">[\s\S]*?<b>select whole section<\/b>/, 'the hint bar names it select whole section')
-  assert.doesNotMatch(hints, /insert section/i, 'no hint still says insert section')
-  assert.equal(hintKeys(hints, 'slide-picker.select-section'), 'S', 'the hint bar shows S for select section')
-  assert.equal(hintKeys(hints, 'slide-picker.move'), '↑ ↓ ← →', 'the hint bar shows the four arrows as four keys')
-  assert.equal(hintKeys(hints, 'app.find-talk'), '⇧⌘S', 'the hint bar shows ⇧⌘S for Find a talk')
+  const hints = shortcutUi.renderSlidePickerKeys()
+  assert.equal(hintKeys(hints, 'slide-picker.talk-beside'), 'O', 'the sheet shows O for talk beside')
+  assert.equal(hintKeys(hints, 'slide-picker.select-whole-section'), '⇧⌘↵', 'the sheet shows ⇧⌘↵ for select whole section')
+  assert.equal(hintKeys(hints, 'slide-picker.select-section'), 'S', 'the sheet shows S for select section')
+  assert.equal(hintKeys(hints, 'slide-picker.move'), '↑ ↓ ← →', 'the sheet shows the four arrows')
 
   const surface = shortcutUi.EDITOR_COMMANDS.filter((command) => command.surface)
   assert.deepEqual(
@@ -498,6 +496,9 @@ try {
       ['whats-new', 'app.whats-new', 'Set up TalkWeaver'],
       ['research-panel', 'app.research-panel', 'Shape the talk'],
       ['research-find', 'app.research-find', 'Shape the talk'],
+      ['pathways', 'app.pathways', 'Shape the talk'],
+      ['add-to-pathway', 'app.add-to-pathway', 'Shape the talk'],
+      ['present-pathway', 'app.present-pathway', 'Shape the talk'],
       ['set-aside-slides', 'app.set-aside', 'Write the outline'],
       ['search-slides-grid', 'app.grid-search', 'See the talk'],
       ['search-next', 'app.search-next', 'See the talk'],
@@ -561,8 +562,8 @@ try {
   assert.equal(shortcutUi.liveCommandShortcutLabel(paletteCommands().find((command) => command.id === 'talk-beside')), '⌘⌥O', 'the palette row shows the rebind')
   assert.equal(sheetRowOf('slide-picker.talk-beside').chord, '⌘⌥O', 'the cheat sheet shows the rebind')
   assert.equal(sheetRowOf('slide-picker.talk-beside').was, 'O', 'and marks it rebound with what it was')
-  assert.equal(hintKeys(shortcutUi.renderSlidePickerHints(), 'slide-picker.talk-beside'), '⌘⌥O', 'the hint bar shows the rebind')
-  assert.equal(hintKeys(shortcutUi.renderSlidePickerHints(), 'slide-picker.select-whole-section'), '⌥↵', 'the hint bar shows the rebound select whole section')
+  assert.equal(hintKeys(shortcutUi.renderSlidePickerKeys(), 'slide-picker.talk-beside'), '⌘⌥O', 'the sheet shows the rebind')
+  assert.equal(hintKeys(shortcutUi.renderSlidePickerKeys(), 'slide-picker.select-whole-section'), '⌥↵', 'the sheet shows the rebound select whole section')
   assert.equal(shortcutUi.buildEditorKeyBindings().some((binding) => binding.key === 'Mod-Alt-o'), false, 'a rebound surface key is still not an editor binding')
 
   window.localStorage.setItem('tw-keymap-overrides', '{}')
@@ -622,8 +623,9 @@ console.log(`command registry parity: ${COMMAND_REGISTRY.length} commands, ${exp
 // palette with keywords, has a Tools-scope key (or says it has none), and no chord is held twice.
 {
   const WANTED = {
-    'tools-view-sessions': ['Sessions', 'Mod-4'], 'tools-view-published': ['Published pages', 'Mod-5'], 'tools-view-workfiles': ['Work files', 'Mod-6'],
-    'tools-plan-run': ['Plan a run…', 'Mod-Alt-n'], 'tools-edit-plan': ['Edit plan', 'Mod-Alt-e'], 'tools-plan-like-this': ['Plan the next run like this', 'Mod-Shift-d'],
+    'tools-animated-video': ['Animated video…', null],
+    'tools-view-runs': ['Runs', 'Mod-4'], 'tools-view-published': ['Published pages', 'Mod-5'], 'tools-view-workfiles': ['Work files', 'Mod-6'],
+    'tools-plan-run': ['Plan a Run…', 'Mod-Alt-n'], 'tools-edit-plan': ['Edit plan', 'Mod-Alt-e'], 'tools-plan-like-this': ['Plan the next Run like this', 'Mod-Shift-d'],
     'tools-publish': ['Publish for this run', 'Mod-Alt-u'], 'tools-unpublish': ['Unpublish', null], 'tools-go-live': ['Go live', 'Mod-Alt-l'],
     'tools-open-run': ['Open run', 'Mod-Alt-o'], 'tools-copy-link': ['Copy link', 'Mod-Shift-c'], 'tools-copy-invitation': ['Copy invitation text', 'Mod-Alt-c'],
     'tools-new-work-file': ['New work file…', 'Mod-Shift-n']

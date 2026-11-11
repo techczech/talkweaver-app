@@ -132,16 +132,16 @@ Every walk is led by a volunteer.
 
 This talk runs an hour. Its pathway, Ten minutes, keeps eight slides for a short version.
 
-> **Try it.** In All commands (<kbd>⌘⇧P</kbd>), **Plan a run…** plans a date to give this talk. <kbd>⌘⌥P</kbd> opens Pathways in its own window.
+> **Try it.** In All commands (<kbd>⌘⇧P</kbd>), **Plan a Run…** plans a date to give this talk. <kbd>⌘⌥P</kbd> opens the talk grid with a docked Pathways list.
 
-### In the Pathways window
+### In the Pathways dock
 {id=w23}
 
-> **Try it.** <kbd>G</kbd>, <kbd>L</kbd> and <kbd>M</kbd> show the grid, list and matrix; <kbd>P</kbd> shows or hides previews. <kbd>⌥R</kbd> lets you reorder: <kbd>⌘↑</kbd> moves a ticked slide up.
+> **Try it.** Select grid slides; <kbd>⌘⌥A</kbd> runs **Add to pathway…** in talk order. Drag into the list or within it to reorder; <kbd>⌘↑</kbd> and <kbd>⌘↓</kbd> move the focused slide.
 
-> **Try it.** <kbd>↵</kbd> presents only the pathway's slides. <kbd>⌘N</kbd> makes a pathway, <kbd>⌘R</kbd> renames it, <kbd>⌘⌫</kbd> deletes it, <kbd>⌘⇧⌫</kbd> drops slides that are gone.
+> **Try it.** <kbd>⌘⌥↵</kbd> runs **Present this pathway**. Use New, Rename or Drop missing. For **Delete pathway**, choose Delete and confirm. List and Matrix switch views.
 
 ### The look and the details
 {id=w24}
 
-> **Try it.** In All commands (<kbd>⌘⇧P</kbd>), **Deck design…** sets the look of the talk, **Metadata…** its title and other details, and **Edit abstract** its summary.
+> **Try it.** In All commands (<kbd>⌘⇧P</kbd>), **Talk design…** sets the look of the talk, **Metadata…** its title and other details, and **Edit abstract** its summary.

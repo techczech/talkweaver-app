@@ -12,7 +12,7 @@ export interface SetAsideHost {
   notify(message: string): void
 }
 const busy = new WeakSet<SetAsideHost>()
-const kept = 'The slides were copied to the Scratchpad, but could not be removed from the talk. The Scratchpad copies have been kept.'
+const kept = 'The slides were copied to the Slide Scratchpad, but could not be removed from the talk. The Slide Scratchpad copies have been kept.'
 
 export async function runSetAside(host: SetAsideHost, refs: readonly SlideRef[], source: Omit<ScratchSlideInput, 'slideId' | 'title' | 'markdown'>): Promise<boolean> {
   if (busy.has(host)) return false
@@ -40,26 +40,26 @@ export async function runSetAside(host: SetAsideHost, refs: readonly SlideRef[],
       inputs.push({ ...source, slideId, title: block.title, markdown })
     }
     const reply = await host.copy(inputs, before.path)
-    if (!reply.ok) { host.notify(`Nothing was removed from the talk: the Scratchpad copy failed. ${reply.error}`); return false }
+    if (!reply.ok) { host.notify(`Nothing was removed from the talk: the Slide Scratchpad copy failed. ${reply.error}`); return false }
     copied = true
     if (host.read()?.path !== before.path) { host.notify(kept); return false }
     const result = await host.apply(before.path, (current) => {
       // Check the entire snapshot too: unchanged heading text alone cannot protect a body edited during the copy.
-      if (current !== before.text || !refs.every(ref => refHolds(current, ref))) throw new Error('The talk changed while the Scratchpad copy was being saved.')
+      if (current !== before.text || !refs.every(ref => refHolds(current, ref))) throw new Error('The talk changed while the Slide Scratchpad copy was being saved.')
       const removal = cutBlocks(current, refs)
       if ('refused' in removal) throw new Error(removal.refused)
       return removal.text
     }, { base: before.text, ownUndoStep: true })
     if (!result.ok) {
       host.notify(result.applied
-        ? `The slides are out of the talk in the editor and copied in the Scratchpad, but the talk file could not be saved yet. The Scratchpad copies have been kept. Undo restores them to the talk. ${result.error}`
+        ? `The slides are out of the talk in the editor and copied in the Slide Scratchpad, but the talk file could not be saved yet. The Slide Scratchpad copies have been kept. Undo restores them to the talk. ${result.error}`
         : `${kept} ${result.error}`)
       return false
     }
-    host.notify(`${cut.count === 1 ? 'Slide or section' : `${cut.count} slides or sections`} set aside in the Scratchpad. Undo restores them to the talk.`)
+    host.notify(`${cut.count === 1 ? 'Slide or section' : `${cut.count} slides or sections`} set aside in the Slide Scratchpad. Undo restores them to the talk.`)
     return true
   } catch (error) {
-    host.notify(`${copied ? kept : 'Nothing was removed from the talk: the Scratchpad copy failed.'} ${error instanceof Error ? error.message : String(error)}`)
+    host.notify(`${copied ? kept : 'Nothing was removed from the talk: the Slide Scratchpad copy failed.'} ${error instanceof Error ? error.message : String(error)}`)
     return false
   } finally { busy.delete(host) }
 }

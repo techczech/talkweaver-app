@@ -55,7 +55,7 @@ const MENUS = {
   },
   presenterMenuView: {
     name: 'View menu', label: 'View', sections: ['Layout', 'Slide on every screen'],
-    items: [['notesPlacementBtn', 'Notes placement and scrolling…'], ['viewOutline', 'Outline'], ['viewFontDown', 'Smaller'], ['viewFontUp', 'Larger'], ['viewReveal', 'Reveal mode'], ['viewFocus', 'Focus mode'],
+    items: [['notesPlacementBtn', 'Notes placement and scrolling…'], ['viewOutline', 'Outline'], ['viewFontDown', 'Smaller'], ['viewFontUp', 'Larger'], ['viewReveal', 'Reveal mode'], ['viewFocus', 'Spotlight'],
       ['viewHighlight', 'Highlight text'], ['viewPointer', 'Pointer'], ['viewPen', 'Pen'], ['viewInkClear', 'Clear drawing on this slide'], ['viewInkClearAll', 'Clear all drawings'], ['viewHighlightClear', 'Clear highlights'], ['viewShortcuts', 'Keyboard shortcuts'], ['viewCommands', 'All commands…']]
   }
 }
@@ -446,7 +446,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
   await compare('Slide text smaller', { menu: 'presenterMenuView', item: 'viewFontDown', old: (p) => p.keyboard.press('-'), fields: ['fontSize'] })
   await compare('Slide text larger', { menu: 'presenterMenuView', item: 'viewFontUp', old: (p) => p.keyboard.press('+'), fields: ['fontSize'] })
   await compare('Reveal mode', { menu: 'presenterMenuView', item: 'viewReveal', old: (p) => p.keyboard.press('r'), fields: ['mode'] })
-  await compare('Focus mode', { menu: 'presenterMenuView', item: 'viewFocus', old: (p) => p.keyboard.press('f'), fields: ['mode'] })
+  await compare('Spotlight', { menu: 'presenterMenuView', item: 'viewFocus', old: (p) => p.keyboard.press('f'), fields: ['mode'] })
   await compare('Highlight text', { menu: 'presenterMenuView', item: 'viewHighlight', old: (p) => p.keyboard.press('h'), fields: ['highlightArmed'] })
   const highlightSomething = async (p) => {
     await p.keyboard.press('h'); await settle(p)

@@ -149,7 +149,7 @@ try {
   let m = await ev(() => window.margin())
   assert.deepEqual(m.map((x) => [x.kind, x.line]), [['talk', 1], ['section', 3], ['slide', 6], ['slide', 14], ['slide', 18]], 'one marker per heading, by depth before any compile')
   assert.equal(m[0].text, 'Talk')
-  assert.equal(m[1].text, 'Section 1 L1 \u00b7 3 slides', 'a section: its number, its level and the slides inside it')
+  assert.equal(m[1].text, '§1 L1 \u00b7 3 slides', 'a section: its number, its level and the slides inside it')
   assert.equal(m[2].word, 'Slide 1', 'number from the order of slide headings while nothing is compiled')
   assert.equal(m[2].layout, 'Icon list', 'the written {iconlist} names the slide')
   assert.equal(m[3].layout, 'Auto', 'a slide with no layout reads Auto')

@@ -210,3 +210,76 @@ console.log('PASS single flight: strict ordering, own values, failure releases t
   assert.equal(gate.foregroundBusy(), false)
 }
 console.log('PASS ungated compiles: synchronous release, counted busy scope, throw cleanup, prewarm start guard')
+
+// Live-preview supersede: a newer `latest` request drops an older QUEUED one with the same key, and
+// nothing else. The running job runs to the end; unkeyed and other-key jobs keep their turn.
+{
+  const { isSuperseded, SupersededError } = await import('../src/main/single-flight.ts')
+  const gate = createSingleFlight({ beforeRequest: () => {} })
+  const order = []
+  let finishRunning
+  const running = gate.latest('w1\0talk', () => { order.push('running'); return new Promise((resolve) => { finishRunning = resolve }) })
+  await wait(5) // started
+  const plain = gate(async () => { order.push('plain'); return 'plain' })
+  const older = gate.latest('w1\0talk', async () => { order.push('older'); return 'older' })
+  const otherKey = gate.latest('w2\0talk', async () => { order.push('other'); return 'other' })
+  const background = gate.background(async () => { order.push('background'); return 'background' })
+  assert.equal(gate.waiting(), 5)
+  const newer = gate.latest('w1\0talk', async () => { order.push('newer'); return 'newer' })
+  const olderOutcome = await older.then(() => 'resolved', (error) => error)
+  assert.ok(olderOutcome instanceof SupersededError && isSuperseded(olderOutcome), 'the dropped caller is settled with SupersededError')
+  assert.equal(gate.waiting(), 5, 'a dropped job no longer counts as waiting')
+  finishRunning('running')
+  assert.deepEqual(await Promise.all([running, plain, otherKey, newer, background]), ['running', 'plain', 'other', 'newer', 'background'],
+    'the running job, unkeyed, other-key and background jobs all keep their own values')
+  assert.deepEqual(order, ['running', 'plain', 'other', 'newer', 'background'], 'the dropped job never ran; order is otherwise unchanged')
+  assert.equal(gate.waiting(), 0)
+  assert.equal(gate.foregroundBusy(), false)
+}
+
+// A running keyed job is never dropped; a job whose droppable() says no is never dropped; a failing
+// keyed job releases the gate for the next.
+{
+  const gate = createSingleFlight()
+  let finish
+  const first = gate.latest('k', () => new Promise((resolve) => { finish = resolve }))
+  await wait(1)
+  const pinned = gate.latest('k', async () => 'pinned', { droppable: () => false })
+  const failing = gate.latest('j', async () => { throw Error('bad deck') })
+  const second = gate.latest('k', async () => 'second')
+  finish('first')
+  assert.equal(await first, 'first', 'the running job finishes and keeps its value')
+  assert.equal(await pinned, 'pinned', 'a job that is not droppable (shared with another caller) still runs')
+  await assert.rejects(failing, /bad deck/, 'the failing caller keeps its real error')
+  assert.equal(await second, 'second', 'and the gate is released for the next one')
+  assert.equal(gate.waiting(), 0)
+  // Unkeyed requests are never dropped, however many queue behind a running one.
+  let hold
+  const head = gate(() => new Promise((resolve) => { hold = resolve }))
+  await wait(1)
+  const tail = [gate(async () => 1), gate(async () => 2)]
+  gate.latest('k', async () => 'keyed')
+  hold('head')
+  assert.deepEqual(await Promise.all([head, ...tail]), ['head', 1, 2])
+}
+console.log('PASS supersede: only same-key queued jobs dropped and settled, running and unkeyed jobs untouched, gate released on failure')
+
+// A background job that yields to foreground scopes (the search index's rows) is held like the
+// prewarm while a direct compile scope is open, while other background work still runs; it starts
+// as soon as the scope ends.
+{
+  const gate = createSingleFlight({ beforeRequest: () => {} })
+  let finish
+  const foreground = gate.withPrewarmYield(() => new Promise((resolve) => { finish = resolve }))
+  let searchStarted = false
+  const search = gate.background(async () => { searchStarted = true; return 'rows' }, { yieldToForeground: true })
+  await wait(10)
+  assert.equal(searchStarted, false, 'a yielding background job does not start during a foreground compile scope')
+  assert.equal(await gate.background(async () => 'share'), 'share', 'ordinary background work is not held behind it')
+  assert.equal(searchStarted, false)
+  finish('export')
+  assert.equal(await foreground, 'export')
+  assert.equal(await search, 'rows', 'it starts once the scope has ended')
+  assert.equal(gate.foregroundBusy(), false)
+}
+console.log('PASS yielding background: held during foreground compile scopes, released after')

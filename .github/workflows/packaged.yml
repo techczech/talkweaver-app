@@ -30,17 +30,17 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
       - name: Cache Bun packages
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
@@ -107,7 +107,11 @@ jobs:
       # Unpacked build only (release/win-unpacked): no installer, no signing, nothing uploaded.
       - name: Package (unpacked)
         run: npx electron-builder --win --dir --publish never
-      - name: Scratchpad safety on the packaged Windows runtime
+      - name: Verify packaged Electron security policy
+        run: node scripts/verify-electron-security.cjs release/win-unpacked/TalkWeaver.exe
+      - name: Scratchpad filesystem fault injection on host Node
+        run: npm run test:scratchpad-disk
+      - name: Scratchpad functional pass on the packaged Windows runtime
         shell: pwsh
         run: |
           $env:ELECTRON_RUN_AS_NODE = '1'
@@ -116,7 +120,7 @@ jobs:
             # direct invocation can return before it finishes and leave LASTEXITCODE unset.
             $scratchpadSafetyProcess = Start-Process `
               -FilePath (Resolve-Path './release/win-unpacked/TalkWeaver.exe').Path `
-              -ArgumentList @('--experimental-strip-types', 'scripts/test-scratchpad-disk.mjs') `
+              -ArgumentList @('--experimental-strip-types', 'scripts/test-packaged-scratchpad.mjs') `
               -WorkingDirectory (Get-Location).Path `
               -NoNewWindow -Wait -PassThru -ErrorAction Stop
             if ($null -eq $scratchpadSafetyProcess.ExitCode) { throw 'Scratchpad disk safety did not return an exit code' }
@@ -133,21 +137,21 @@ jobs:
 
   macos:
     if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
-    runs-on: ${{ inputs.hosted && 'macos-14' || fromJSON('["self-hosted","macOS","ARM64"]') }}
+    runs-on: ${{ inputs.hosted && 'macos-15' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 24
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version-file: .bun-version
       - name: Cache Bun packages
         if: ${{ inputs.hosted }}
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
@@ -190,8 +194,12 @@ jobs:
         run: npx electron-builder --mac --dir --publish never -c.mac.identity=null -c.mac.notarize=false
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-      - name: Scratchpad safety on the packaged macOS runtime
-        run: ELECTRON_RUN_AS_NODE=1 release/mac-arm64/TalkWeaver.app/Contents/MacOS/TalkWeaver --experimental-strip-types scripts/test-scratchpad-disk.mjs
+      - name: Verify packaged Electron security policy
+        run: node scripts/verify-electron-security.cjs --allow-unsigned release/mac-arm64/TalkWeaver.app
+      - name: Scratchpad filesystem fault injection on host Node
+        run: npm run test:scratchpad-disk
+      - name: Scratchpad functional pass on the packaged macOS runtime
+        run: ELECTRON_RUN_AS_NODE=1 release/mac-arm64/TalkWeaver.app/Contents/MacOS/TalkWeaver --experimental-strip-types scripts/test-packaged-scratchpad.mjs
       # The release gate on this unsigned build (docs/RELEASING.md): the afterPack attestation for the
       # committed pin is in the app and its ffmpeg has the pinned SHA-256. Independent of electron-builder.
       - name: Verify the Mac package (ffmpeg pin, attestation)

@@ -9,8 +9,9 @@ import { fixtureSource, FIXTURE_TALKS } from './lib/vault-gallery-redesign-fixtu
 const root = resolve(import.meta.dirname, '..')
 const src = resolve(root, process.env.VG_SRC ?? 'src')
 const dir = mkdtempSync(join(tmpdir(), 'tw-vg-redesign-'))
-// Screenshots stay in this run's temporary folder unless VG_OUT names a place in the evidence folder to keep them.
-const out = process.env.VG_OUT ? join(root, 'evidence/vault-gallery/redesign-repairs', process.env.VG_OUT) : join(dir, 'shots')
+// Keep ordinary test runs disposable; allow a review run to retain captures beside the locked design.
+const out = process.env.VG_SCREENSHOTS ? resolve(root, process.env.VG_SCREENSHOTS)
+  : process.env.VG_OUT ? join(root, 'evidence/vault-gallery/redesign-repairs', process.env.VG_OUT) : join(dir, 'shots')
 mkdirSync(out, { recursive: true })
 let browser
 try {

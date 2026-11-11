@@ -70,6 +70,7 @@ import { rememberSlideClip } from './src/renderer/src/extensions/slideBlockOps.t
 import { writeSlideClipboard } from './src/renderer/src/components/SlideRowMenus.tsx'
 import { notify } from './src/renderer/src/lib/notify.ts'
 import { isolateHistory } from '@codemirror/commands'
+import { moveNode } from './src/renderer/src/extensions/outliner.ts'
 
 const TALK_KEY = ${JSON.stringify(TALK_KEY)}
 window.toasts = []
@@ -172,7 +173,7 @@ window.mountOutline = (doc) => {
     if (follow === 'new') reporter.report(activeHeadingLine(slideLines, caretLine()))
   }
   const view = makeEditor(doc, (text) => { setContent(text); if (follow) setTimeout(() => onCompiled(text), 60) }, follow ? () => onCursor() : null)
-  const ops = { move: () => {}, reLevel: () => {}, moveTo: () => {}, moveToEnd: () => {}, moveInto: () => {}, slides: slideOpsOf(view) }
+  const ops = { move: (line, dir) => { view.dispatch({ selection: EditorSelection.cursor(view.state.doc.line(line).from) }); moveNode(view, dir) }, reLevel: () => {}, moveTo: () => {}, moveToEnd: () => {}, moveInto: () => {}, slides: slideOpsOf(view) }
   window.jumps = []
   const jump = (line) => {
     window.jumps.push(line)
@@ -1050,6 +1051,21 @@ try {
   assert.deepEqual(await page.locator(`${ORG} .so-slide:not(.so-row--dim) .so-slide-title`).allTextContents(), ['Slide 4.4'])
   await search.fill('')
   pass('outline: the search box matches titles, text and pictures and dims the rest in place')
+
+  // Same heading, different authored text: a second move must still act on the chosen block.
+  const twins = '# Talk\n\n## Section\n\n### Title\nfirst body\n\n### Title\nsecond body\n\n### End\nlast body\n'
+  await page.evaluate(d => { window.followCaret = undefined; window.mountOutline(d) }, twins)
+  await row('Title').nth(1).locator('.so-slide-title').click()
+  await key('Meta+ArrowUp')
+  const movedTwin = await doc()
+  assert.ok(movedTwin.indexOf('second body') < movedTwin.indexOf('first body'), 'the second duplicate moves before the first')
+  assert.deepEqual(words(movedTwin), words(twins), 'moving the duplicate preserves every source line')
+  const selectedTwinLine = Number(await page.locator(`${ORG} .so-row--sel`).getAttribute('data-line'))
+  assert.equal(movedTwin.split('\n')[selectedTwinLine], 'second body', 'focus follows the second duplicate, not the old occurrence key')
+  assert.equal(Number(await page.locator(`${ORG} .so-row--kbd`).getAttribute('data-line')), selectedTwinLine, 'keyboard menus follow the same moved duplicate')
+  await key('Meta+ArrowDown')
+  assert.equal(await doc(), twins, 'the next move acts on that same second block and restores the exact text')
+  pass('outline: duplicate id-less titles retain the moved block identity across subsequent writes')
 
   assert.deepEqual(errors, [], 'no page errors')
   console.log(`slide move-to DOM: ${passed} checks passed`)

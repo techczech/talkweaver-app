@@ -1,5 +1,7 @@
+// The talk-wide design settings and the identity fields, as the Talk tab of the right sidebar draws them (house rule R11: they
+// were a modal, "Talk design"; the modal is gone and the command ids open the tab). Details = TALK_DETAILS_KEYS, Design = the rest.
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Search, Save, X, Lock, Wand2 } from 'lucide-react'
+import { Search, Save, Lock, Wand2 } from 'lucide-react'
 import { METADATA_REGISTRY } from '../../../shared/metadata-registry'
 import {
   applyMetadataDefaults,
@@ -9,18 +11,22 @@ import {
   type SurfaceOptionModel
 } from '../../../shared/metadata-surfaces'
 import { ensureMetadataDefaults } from '../lib/metadata-defaults'
+import { discardedNotice, keepDraft, restoreDraft, setStoredNotice, storedNotice } from '../lib/talkDrafts'
+import { plainTalkTitle } from '../../../shared/plain-title'
 import { parseFrontmatterPairs, type FrontmatterEdit } from '../../../shared/frontmatter-editor'
 
 interface Props {
   isOpen: boolean
   outlineContent: string
   activeTalk: { title: string; outlinePath: string } | null
-  onClose: () => void
   /** The frontmatter edits to make. The host applies them to the talk's text as it stands (the
    *  editor buffer, one-writer spec D1) — never a whole outline worked out from `outlineContent`,
    *  which can be older than the buffer. */
   onSave: (edits: FrontmatterEdit[]) => void
 }
+
+/** The keys the Talk tab lists under Details (what the talk is called and who gave it where); every other field is Design. */
+export const TALK_DETAILS_KEYS: readonly string[] = ['title', 'subtitle', 'event', 'author', 'hide_email', 'date', 'series', 'affiliation', 'web']
 
 /** Everything searchable about a field: its own words AND every choice's words. */
 function haystack(groupLabel: string, field: SurfaceFieldModel): string {
@@ -28,11 +34,12 @@ function haystack(groupLabel: string, field: SurfaceFieldModel): string {
   return `${groupLabel} ${field.key} ${field.aliases.join(' ')} ${field.label} ${field.explanation} ${choices}`.toLowerCase()
 }
 
-export default function DeckDesignPanel({ isOpen, outlineContent, activeTalk, onClose, onSave }: Props) {
+export default function DeckDesignPanel({ isOpen, outlineContent, activeTalk, onSave }: Props) {
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [baseline, setBaseline] = useState<Record<string, string>>({})
   const [saved, setSaved] = useState(false)
+  const [notice, setNotice] = useState('')
   // Settings → Presenter identity and deck defaults. Shown as placeholder text and offered
   // through "Use default"; NOTHING here is written without a click.
   const [appDefaults, setAppDefaults] = useState<MetadataDefaults>({})
@@ -53,32 +60,52 @@ export default function DeckDesignPanel({ isOpen, outlineContent, activeTalk, on
   }, [model, query])
   const dirty = Object.keys(draft).some((key) => draft[key] !== baseline[key])
 
+  // The dialog could not change under its own draft; the sidebar can (the editor is live beside it). So when the text
+  // changes while the panel is up, a field still at what was last read takes the new text and a field being edited keeps
+  // its draft. A different talk, or the panel coming up, starts clean.
+  const presenceRef = useRef<Record<string, boolean>>({})
+  const baselineRef = useRef(baseline)
+  baselineRef.current = baseline
+  const shownForRef = useRef<string | null>(null)
+  const talkPath = activeTalk?.outlinePath ?? null
   useEffect(() => {
-    if (!isOpen) return
+    if (!isOpen) { shownForRef.current = null; return }
+    // A talk's text has not arrived yet (the editor starts a newly opened talk empty): nothing to compare a kept draft with.
+    if (outlineContent === '') return
     const next: Record<string, string> = {}
-    for (const field of editableFields) next[field.key] = field.value
-    setDraft(next)
-    setBaseline(next)
-    setQuery('')
-    setSaved(false)
-    void ensureMetadataDefaults().then(setAppDefaults).catch(() => {})
-    requestAnimationFrame(() => searchRef.current?.focus())
-  }, [isOpen, editableFields])
-
-  useEffect(() => {
-    if (!isOpen) return
-    function onKeyDown(event: globalThis.KeyboardEvent) {
-      if (event.key === 'Escape') { event.preventDefault(); onClose(); return }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
-        event.preventDefault(); searchRef.current?.focus(); searchRef.current?.select()
-      }
-      if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && dirty) {
-        event.preventDefault(); handleSave()
-      }
+    const present: Record<string, boolean> = {}
+    for (const field of editableFields) { next[field.key] = field.value; present[field.key] = field.present }
+    presenceRef.current = present
+    if (shownForRef.current !== talkPath) {
+      shownForRef.current = talkPath
+      const restored = talkPath ? restoreDraft('design', talkPath, next, present) : { draft: next, discarded: [] }
+      setDraft(restored.draft)
+      const fresh = discardedNotice(restored.discarded.map((key) => editableFields.find((field) => field.key === key)?.label ?? key))
+      if (talkPath && fresh) setStoredNotice('design', talkPath, fresh)
+      setNotice(fresh || (talkPath ? storedNotice('design', talkPath) : ''))
+      setQuery('')
+      setSaved(false)
+      void ensureMetadataDefaults().then(setAppDefaults).catch(() => {})
+    } else {
+      const was = baselineRef.current
+      setDraft((current) => {
+        const merged: Record<string, string> = {}
+        for (const key of Object.keys(next)) merged[key] = key in current && current[key] !== was[key] ? current[key] : next[key]
+        return merged
+      })
     }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  })
+    setBaseline(next)
+  }, [isOpen, editableFields, talkPath, outlineContent])
+
+  // Kept per talk while the tab is away (lib/talkDrafts.ts); not before the first read has set the baseline.
+  useEffect(() => {
+    if (isOpen && talkPath && Object.keys(baseline).length > 0) keepDraft('design', talkPath, draft, baseline, presenceRef.current)
+  }, [isOpen, talkPath, draft, baseline])
+
+  function dismissNotice() {
+    setNotice('')
+    if (talkPath) setStoredNotice('design', talkPath, '')
+  }
 
   function setValue(key: string, value: string) {
     setDraft((current) => ({ ...current, [key]: value }))
@@ -114,101 +141,120 @@ export default function DeckDesignPanel({ isOpen, outlineContent, activeTalk, on
         raw: field.control === 'map'
       }))
     onSave(edits)
+    dismissNotice()
     setBaseline({ ...draft })
     setSaved(true)
   }
 
   if (!isOpen || !activeTalk) return null
 
-  return (
-    <div style={S.backdrop} onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
-      <div style={S.modal} role="dialog" aria-modal="true" aria-label={`Deck settings — ${activeTalk.title}`}>
-        <header style={S.header}>
-          <div>
-            <div style={S.title}>Deck settings</div>
-            <div style={S.subtitle}>{activeTalk.title} · {model.fieldCount} registered settings</div>
-          </div>
-          <div style={S.headerActions}>
-            <button
-              type="button"
-              onClick={fillMissingFromDefaults}
-              disabled={fillableCount === 0}
-              style={{ ...S.button, ...S.secondary, ...(fillableCount === 0 ? S.disabled : {}) }}
-              title="Fill every empty identity and house-style field from Settings → Presenter identity and deck defaults. Nothing you have written is changed."
-            >
-              <Wand2 size={13} /> Fill missing from defaults{fillableCount > 0 ? ` (${fillableCount})` : ''}
-            </button>
-            <button type="button" onClick={onClose} style={S.iconButton} aria-label="Close deck settings" title="Close (Esc)">
-              <X size={17} />
-            </button>
-          </div>
-        </header>
-
-        <div style={S.searchWrap}>
-          <Search size={15} aria-hidden="true" />
-          <input
-            ref={searchRef}
-            type="search"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search deck options…"
-            aria-label="Search deck options"
-            style={S.search}
-          />
-          {query && <button type="button" onClick={() => setQuery('')} style={S.clear}>Clear</button>}
+  const detailsKeys = new Set(TALK_DETAILS_KEYS)
+  const groupBlock = (group: (typeof visibleGroups)[number], fields: SurfaceFieldModel[]) => fields.length === 0 ? null : (
+    <section key={group.key} style={S.group}>
+      <h3 style={S.groupTitle}>{group.label}</h3>
+      {fields.map((field) => (
+        <FieldRow
+          key={field.key}
+          field={field}
+          value={field.readOnly ? field.value : (draft[field.key] ?? field.value)}
+          appDefault={appDefaults[field.key] ?? ''}
+          showKey={false}
+          onChange={(value) => setValue(field.key, value)}
+        />
+      ))}
+    </section>
+  )
+  const unknownBlock = model.unknown.length > 0 && (!query || 'other unknown frontmatter'.includes(query.toLowerCase())) ? (
+    <section style={{ ...S.group, opacity: 0.72 }}>
+      <h3 style={S.groupTitle}>Other</h3>
+      <p style={S.otherNote}>Settings you wrote by hand that TalkWeaver does not know are shown read-only and kept as they are.</p>
+      {model.unknown.map((pair) => (
+        <div key={pair.key} style={S.otherRowNarrow}>
+          <code style={S.code}>{pair.key}</code>
+          <pre style={S.otherValue}>{pair.value || '(structured value)'}</pre>
         </div>
-
-        <div style={S.body}>
-          {visibleGroups.map((group) => (
-            <section key={group.key} style={S.group}>
-              <h2 style={S.groupTitle}>{group.label}</h2>
-              {group.fields.map((field) => (
-                <FieldRow
-                  key={field.key}
-                  field={field}
-                  value={field.readOnly ? field.value : (draft[field.key] ?? field.value)}
-                  appDefault={appDefaults[field.key] ?? ''}
-                  onChange={(value) => setValue(field.key, value)}
-                />
-              ))}
-            </section>
-          ))}
-          {visibleGroups.length === 0 && <div style={S.empty}>No registered deck options match “{query}”.</div>}
-
-          {model.unknown.length > 0 && (!query || 'other unknown frontmatter'.includes(query.toLowerCase())) && (
-            <section style={{ ...S.group, opacity: 0.72 }}>
-              <h2 style={S.groupTitle}>Other</h2>
-              <p style={S.otherNote}>Hand-authored keys not in the deck register are shown read-only and will be preserved.</p>
-              {model.unknown.map((pair) => (
-                <div key={pair.key} style={S.otherRow}>
-                  <code style={S.code}>{pair.key}</code>
-                  <pre style={S.otherValue}>{pair.value || '(structured value)'}</pre>
-                </div>
-              ))}
-            </section>
-          )}
-        </div>
-
-        <footer style={S.footer}>
-          <span style={S.status}>{saved ? 'Saved' : dirty ? 'Unsaved changes' : 'All changes saved'}</span>
-          <button type="button" onClick={onClose} style={{ ...S.button, ...S.secondary }}>Close</button>
-          <button type="button" onClick={handleSave} disabled={!dirty} style={{ ...S.button, ...S.primary, ...(!dirty ? S.disabled : {}) }}>
-            <Save size={14} /> Save <span style={S.shortcut}>⌘↵</span>
-          </button>
-        </footer>
-      </div>
+      ))}
+    </section>
+  ) : null
+  const fillButton = (
+    <button
+      type="button"
+      onClick={fillMissingFromDefaults}
+      disabled={fillableCount === 0}
+      style={{ ...S.button, ...S.secondary, ...(fillableCount === 0 ? S.disabled : {}) }}
+      title="Fill every empty identity and house-style field from your defaults in Settings. Nothing you have written is changed."
+    >
+      <Wand2 size={13} /> Fill missing from defaults{fillableCount > 0 ? ` (${fillableCount})` : ''}
+    </button>
+  )
+  const searchBox = (
+    <div style={{ ...S.searchWrap, margin: '0 0 6px' }}>
+      <Search size={15} aria-hidden="true" />
+      <input
+        ref={searchRef}
+        type="search"
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+        placeholder="Search talk design options…"
+        aria-label="Search talk design options"
+        style={S.search}
+      />
+      {query && <button type="button" onClick={() => setQuery('')} style={S.clear}>Clear</button>}
     </div>
   )
+  const saveFooter = (
+    <footer style={{ ...S.footer, ...S.footerEmbedded }} data-deck-design-footer>
+      <span style={S.status}>{saved ? 'Saved' : dirty ? 'Unsaved changes' : 'All changes saved'}</span>
+      <button type="button" onClick={handleSave} disabled={!dirty} style={{ ...S.button, ...S.primary, ...(!dirty ? S.disabled : {}) }} data-deck-design-save>
+        <Save size={14} /> Save
+      </button>
+    </footer>
+  )
+
+  {
+    const detailGroups = visibleGroups.map((group) => ({ group, fields: group.readOnly ? [] : group.fields.filter((field) => detailsKeys.has(field.key)) }))
+    // The keys TalkWeaver manages (a read-only group) are listed under Advanced, with what removing each one costs.
+    const designGroups = visibleGroups.map((group) => ({ group, fields: group.readOnly ? [] : group.fields.filter((field) => !detailsKeys.has(field.key)) }))
+    const hasDetails = detailGroups.some((entry) => entry.fields.length > 0)
+    const hasDesign = designGroups.some((entry) => entry.fields.length > 0)
+    return (
+      <div style={S.embeddedRoot} data-talk-design-embedded>
+        <div style={S.embeddedTools}>{searchBox}<div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>{fillableCount > 0 && fillButton}</div></div>
+        <div style={S.embeddedBody}>
+          {notice && (
+            <div role="status" style={S.notice} data-draft-notice="true">
+              {notice} <button type="button" style={S.noticeDismiss} onClick={dismissNotice}>Dismiss</button>
+            </div>
+          )}
+          {hasDetails && (
+            <div data-talk-section="details">
+              <h2 style={S.sectionTitle}>Details</h2>
+              {detailGroups.map(({ group, fields }) => groupBlock(group, fields))}
+            </div>
+          )}
+          {hasDesign && (
+            <div data-talk-section="design">
+              <h2 style={S.sectionTitle}>Design</h2>
+              {designGroups.map(({ group, fields }) => groupBlock(group, fields))}
+            </div>
+          )}
+          {visibleGroups.length === 0 && <div style={S.empty}>No talk design options match “{query}”.</div>}
+          {unknownBlock}
+        </div>
+        {saveFooter}
+      </div>
+    )
+  }
 }
 
-function FieldRow({ field, value, appDefault, onChange }: { field: SurfaceFieldModel; value: string; appDefault: string; onChange: (value: string) => void }) {
+function FieldRow({ field, value, appDefault, showKey, onChange }: { field: SurfaceFieldModel; value: string; appDefault: string; showKey: boolean; onChange: (value: string) => void }) {
   const id = `deck-${field.key}`
   const canUseDefault = !field.readOnly && appDefault !== '' && value.trim() !== appDefault
   return (
     <div style={S.field}>
       <div style={S.fieldHeader}>
         <label htmlFor={id} style={S.label}>{field.label}</label>
-        <code style={S.key}>{field.key}</code>
+        {showKey && <code style={S.key}>{field.key}</code>}
         {field.readOnly && <span style={S.lock}><Lock size={11} aria-hidden="true" /> read-only</span>}
         {canUseDefault && (
           <button
@@ -244,7 +290,7 @@ function FieldRow({ field, value, appDefault, onChange }: { field: SurfaceFieldM
                     value={value}
                     placeholder={appDefault ? `${appDefault} (your default)` : field.placeholder}
                     onChange={(event) => onChange(event.target.value)}
-                    style={S.input}
+                    style={{ ...S.input, ...S.inputEmbedded }}
                   />
                   {field.unit && <span style={S.unit}>{field.unit}</span>}
                 </div>
@@ -261,7 +307,7 @@ function Picker({ id, field, value, onChange }: { id: string; field: SurfaceFiel
     <div>
       {field.control === 'select'
         ? (
-            <select id={id} value={value} onChange={(event) => onChange(event.target.value)} style={S.input}>
+            <select id={id} value={value} onChange={(event) => onChange(event.target.value)} style={{ ...S.input, ...S.inputEmbedded }}>
               {!chosen && <option value={value}>custom: {value}</option>}
               {options.map((option) => (
                 <option key={option.value || '(default)'} value={option.value} title={option.explanation}>{option.label}</option>
@@ -297,7 +343,7 @@ function Picker({ id, field, value, onChange }: { id: string; field: SurfaceFiel
         <summary style={S.choicesSummary}>What each choice does</summary>
         <dl style={S.choiceList}>
           {options.map((option) => (
-            <div key={option.value || '(default)'} style={S.choiceRow}>
+            <div key={option.value || '(default)'} style={S.choiceRowNarrow}>
               <dt style={S.choiceTerm}>{option.label}</dt>
               <dd style={S.choiceBody}>{option.explanation}</dd>
             </div>
@@ -309,17 +355,22 @@ function Picker({ id, field, value, onChange }: { id: string; field: SurfaceFiel
 }
 
 const S: Record<string, React.CSSProperties> = {
-  backdrop: { position: 'fixed', inset: 0, zIndex: 1100, background: 'rgba(12,18,26,.48)', display: 'grid', placeItems: 'center' },
-  modal: { width: 760, maxWidth: '94vw', height: '82vh', display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--panel, #f5f0e8)', border: '1px solid var(--line, #c8b89a)', borderRadius: 8, boxShadow: '0 18px 54px rgba(0,0,0,.3)', color: 'var(--ink, #1a1410)' },
-  header: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 18px', borderBottom: '1px solid var(--line, #c8b89a)' },
   title: { fontSize: 17, fontWeight: 700 }, subtitle: { marginTop: 3, color: 'var(--ink-faint, #746b60)', fontSize: 12 },
   iconButton: { display: 'grid', placeItems: 'center', width: 32, height: 32, border: '1px solid var(--line, #c8b89a)', borderRadius: 5, background: 'transparent', color: 'inherit', cursor: 'pointer' },
   searchWrap: { margin: '12px 18px 4px', display: 'flex', alignItems: 'center', gap: 8, padding: '7px 10px', border: '1px solid var(--line, #c8b89a)', background: 'var(--paper-light, #fffdf8)', borderRadius: 5 },
   search: { flex: 1, border: 0, outline: 0, background: 'transparent', fontSize: 14, color: 'inherit' }, clear: { border: 0, background: 'transparent', color: 'var(--oxford, #0b3a6b)', cursor: 'pointer' },
-  body: { flex: 1, minHeight: 0, overflowY: 'auto', padding: '8px 18px 24px' },
   group: { marginTop: 16 }, groupTitle: { margin: 0, paddingBottom: 6, borderBottom: '1px solid var(--line, #c8b89a)', fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--ink-faint, #746b60)' },
   field: { padding: '12px 0', borderBottom: '1px solid color-mix(in srgb, var(--line, #c8b89a) 55%, transparent)' }, fieldHeader: { display: 'flex', alignItems: 'baseline', gap: 8 }, label: { fontSize: 14, fontWeight: 650 }, key: { fontSize: 10, color: 'var(--ink-faint, #746b60)' }, description: { maxWidth: 680, margin: '4px 0 9px', color: 'var(--ink-faint, #746b60)', fontSize: 12, lineHeight: 1.45 },
-  headerActions: { display: 'flex', alignItems: 'center', gap: 8 },
+  notice: { margin: '10px 0 0', padding: '7px 9px', border: '1px solid #b45309', borderRadius: 4, background: 'rgba(180,83,9,.08)', fontSize: 12, lineHeight: 1.45 },
+  noticeDismiss: { marginLeft: 6, border: 0, background: 'transparent', color: 'var(--oxford, #0b3a6b)', cursor: 'pointer', fontSize: 12, textDecoration: 'underline' },
+  embeddedRoot: { display: 'flex', flexDirection: 'column', minHeight: 0, color: 'var(--ink, #1a1410)' },
+  embeddedTools: { padding: '10px 12px 4px' },
+  embeddedBody: { padding: '0 12px 8px' },
+  sectionTitle: { margin: '14px 0 0', fontSize: 13, fontWeight: 700, letterSpacing: '.02em', color: 'var(--ink, #1a1410)' },
+  inputEmbedded: { minWidth: 0, width: '100%', boxSizing: 'border-box' },
+  footerEmbedded: { position: 'sticky', bottom: 0, background: 'var(--panel, #f5f0e8)', padding: '8px 12px' },
+  choiceRowNarrow: { display: 'grid', gridTemplateColumns: '1fr', gap: 2, padding: '3px 0' },
+  otherRowNarrow: { display: 'grid', gridTemplateColumns: '1fr', gap: 2, padding: '8px 0', borderBottom: '1px solid var(--line, #c8b89a)' },
   useDefault: { marginLeft: 'auto', padding: '2px 7px', border: '1px solid var(--line, #c8b89a)', borderRadius: 4, background: 'transparent', color: 'var(--oxford, #0b3a6b)', fontSize: 11, cursor: 'pointer' },
   defaultNote: { margin: '-4px 0 8px', fontSize: 11, color: 'var(--ink-faint, #746b60)' },
   lock: { display: 'inline-flex', alignItems: 'center', gap: 3, fontSize: 10, textTransform: 'uppercase', letterSpacing: '.06em', color: 'var(--ink-faint, #746b60)' },

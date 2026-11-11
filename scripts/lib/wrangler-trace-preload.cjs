@@ -53,7 +53,7 @@ if (out) {
     for (const name of names) {
       const onCall = (op) => (args) => {
         const first = asPath(args[0])
-        if (first) record({ kind: 'file', op, path: first, ...(write ? { write: true } : {}) })
+        if (first) record({ kind: 'file', op, path: first, ...(op === 'readFileSync' && path.basename(first) === 'package.json' ? { stack: new Error().stack } : {}), ...(write ? { write: true } : {}) })
         // rename/copy/link take a second path.
         if (/^(?:rename|cp|copyFile|symlink|link)/.test(name)) { const second = asPath(args[1]); if (second) record({ kind: 'file', op, path: second, write: true }) }
       }

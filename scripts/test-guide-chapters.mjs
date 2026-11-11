@@ -116,7 +116,7 @@ try {
       // Slide Scratchpad: a panel and its item actions; no practice row yet.
       'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place', 'scratchpad-move-up', 'scratchpad-move-down',
       // Work files ticket 30: the Tools window's commands, held back with pre-work.
-      'tools-copy-invitation', 'tools-copy-link', 'tools-edit-plan', 'tools-go-live', 'tools-new-work-file', 'tools-open-run', 'tools-plan-like-this', 'tools-plan-run', 'tools-publish', 'tools-unpublish', 'tools-view-published', 'tools-view-sessions', 'tools-view-workfiles',
+      'history', 'tools-copy-invitation', 'tools-copy-link', 'tools-edit-plan', 'tools-go-live', 'tools-new-work-file', 'tools-open-run', 'tools-plan-like-this', 'tools-plan-run', 'tools-publish', 'tools-unpublish', 'tools-view-published', 'tools-view-runs', 'tools-view-sessions', 'tools-view-workfiles',
       'view-markdown', 'view-plain'].sort())
     for (const id of CHAPTER_EXCLUDED) {
       assert.ok(chapterCommands().some((c) => c.id === id), `${id} is still a command (palette, menus)`)

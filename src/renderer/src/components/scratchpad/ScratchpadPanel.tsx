@@ -4,6 +4,7 @@
 // and card drags ask the workspace to change the outline (`insert`, ScratchpadInsert.tsx);
 // no agent file is ever touched. Spec: docs/design/2026-10-27-slide-scratchpad/.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { GripVertical, Search } from 'lucide-react'
 import {
   LISTS, LIST_LABEL, TYPE_LABEL, scratchOrder, batchSections, groupCounts, listCounts, parseQuery, toggleTypeInQuery, typeCounts, visibleItems,
@@ -46,8 +47,10 @@ export const COMPARE_MAX = 4
 const TYPE_CHIPS: ScratchTypeKey[] = ['slide', 'svg', 'html', 'pic']
 const plural = (n: number): string => (n === 1 ? '1 item' : `${n} items`)
 
-export default function ScratchpadPanel({ data, layoutApi, registerActions, onOpenSlideBrowser, insert, outlineText = '' }: {
+export default function ScratchpadPanel({ data, layoutApi, registerActions, onOpenSlideBrowser, insert, outlineText = '', pillHost }: {
   outlineText?: string
+  /** Where the collapsed pill sits (R17): a slot in the status bar, so it never floats over the strip or the controls. Without a host it is drawn in place. */
+  pillHost?: HTMLElement | null
   data: ScratchpadData
   layoutApi: ScratchpadLayoutApi
   registerActions: (actions: ScratchpadActions) => void
@@ -254,11 +257,12 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
   }
 
   if (layout.mode === 'collapsed') {
-    return (
-      <button type="button" className="sp-pill" onClick={layoutApi.expand} title="Show the Slide Scratchpad">
+    const pill = (
+      <button type="button" className={`sp-pill${pillHost ? ' sp-pill--status' : ''}`} onClick={layoutApi.expand} title="Show the Slide Scratchpad" aria-label={`Slide Scratchpad, ${data.activeCount}. Expand`}>
         Slide Scratchpad · {data.activeCount} <span>Expand</span>
       </button>
     )
+    return pillHost ? createPortal(pill, pillHost) : pill
   }
 
   const docked = layout.mode === 'docked'
@@ -310,7 +314,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
         <b>Slide Scratchpad</b>
         <span className="sp-count">{data.activeCount}</span>
         <span className="sp-flex" />
-        <button type="button" className="sp-btn sp-btn--sm" onClick={docked ? layoutApi.float : layoutApi.dock}>{docked ? 'Float' : 'Dock to the right'}</button>
+        {(docked || layoutApi.canDock) && <button type="button" className="sp-btn sp-btn--sm" onClick={docked ? layoutApi.float : layoutApi.dock}>{docked ? 'Float' : 'Dock to the right'}</button>}
         <button type="button" className="sp-btn sp-btn--sm" onClick={layoutApi.collapse}>Collapse</button>
       </div>
 
@@ -338,7 +342,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
         <>
           <div className="sp-top">
             <div className="sp-order-controls">
-              <label>Order <select aria-label="Scratchpad sort order" value={manual ? 'manual' : 'newest'} disabled={insert?.busy} onChange={event => void data.setSort(event.target.value as 'manual' | 'newest')}><option value="newest">Newest first</option><option value="manual">Your order</option></select></label>
+              <label>Order <select aria-label="Slide Scratchpad sort order" value={manual ? 'manual' : 'newest'} disabled={insert?.busy} onChange={event => void data.setSort(event.target.value as 'manual' | 'newest')}><option value="newest">Newest first</option><option value="manual">Your order</option></select></label>
               <button type="button" className="sp-btn sp-btn--sm" aria-label="Move selected items up" disabled={insert?.busy || targetIds().length === 0} onClick={() => moveSelected(false)}>Move up</button>
               <button type="button" className="sp-btn sp-btn--sm" aria-label="Move selected items down" disabled={insert?.busy || targetIds().length === 0} onClick={() => moveSelected(true)}>Move down</button>
             </div>
@@ -459,7 +463,6 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
                 </div>
               ) : (
                 <>
-                  <div className="sp-idle">Click an item to see what you can do with it. Tick several to act on them together or compare them side by side.</div>
                   {placeNote(null)}
                 </>
               )}

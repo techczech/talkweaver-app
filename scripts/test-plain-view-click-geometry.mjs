@@ -138,21 +138,17 @@ try {
     assert.ok(blocks.length >= 6, 'the lines are on screen')
     for (const b of blocks) assert.ok(Math.abs(b.model - b.drawn) <= 1, `"${b.text}" is drawn at ${b.drawn}, measured at ${b.model}`)
   })
-  await check('the same with the panel open', async () => {
+  await check('the same after the line\'s summary changes with an edit under it (house rule R11: the line is one line and never opens)', async () => {
     await open(TALK)
-    await page.click('.cm-td-toggle')
+    await ev(() => window.__v.dispatch({ changes: { from: 0, insert: '' } }))
     await settle()
     const blocks = await ev(() => window.blocks())
     for (const b of blocks) assert.ok(Math.abs(b.model - b.drawn) <= 1, `"${b.text}" is drawn at ${b.drawn}, measured at ${b.model}`)
-    await page.click('.cm-td-more-toggle')
-    await settle()
-    for (const b of await ev(() => window.blocks())) assert.ok(Math.abs(b.model - b.drawn) <= 1, `with More open, "${b.text}" is drawn at ${b.drawn}, measured at ${b.model}`)
     const offset = TALK.indexOf('station') + 2
     const row = await ev((p) => window.rowOf(p), offset)
     await page.mouse.click(row.x, row.top + row.height * 0.75)
-    assert.equal(await ev(() => window.head()), offset, 'a click on the body line with the panel open')
+    assert.equal(await ev(() => window.head()), offset, 'a click on the body line under the line')
   })
-  await ev(() => document.querySelector('.cm-td-toggle').click())
   await check('the same in a talk with no front matter (the panel above the first line)', async () => {
     await open(TALK.slice(TALK.indexOf('# Ten')))
     await settle()

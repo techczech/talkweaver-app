@@ -59,6 +59,16 @@ export function layoutEntryFor(layoutName?: string): LayoutDef | undefined {
 }
 
 /**
+ * The name a person sees for a layout: the one the layout picker shows ("Statement + list" for `stmt-list`, "Section divider"
+ * for the compiled `section-title`). The id stays in tooltips and Details only (house rule R6). A name the registry does not
+ * know is returned as it came, so a hand-written layout still shows.
+ */
+export function layoutDisplayName(layoutName?: string | null): string {
+  if (!layoutName) return ''
+  return layoutEntryFor(layoutName)?.label ?? layoutEntryFor(layoutName.toLowerCase())?.label ?? layoutName
+}
+
+/**
  * One clause of an `appliesTo` declaration.
  *
  * Every declared facet must hold. A fact the context does not know never excludes a group: an

@@ -1,4 +1,5 @@
 import './AboutUpdatesSettings.css'
+import { BUILD_SHA, BUILD_TIME } from '../buildInfo'
 import { useEffect, useState } from 'react'
 import {
   SETTING_HINT, aboutLines, answerView, cardView,
@@ -61,6 +62,7 @@ export default function AboutUpdatesSettings({ look, record, onShowWhatsNew }: {
           <div style={{ minWidth: 0 }}>
             <div style={look.folderLabel} data-about-version>{about.version}</div>
             <div style={sub} data-about-where>{about.where}</div>
+            <div style={sub} data-about-build>Build {BUILD_SHA}{BUILD_TIME ? ` · built ${new Date(BUILD_TIME).toLocaleString('en-GB')}` : ''}</div>
           </div>
           {hasNotes && <button style={look.btn} data-about-whats-new onClick={onShowWhatsNew}>What&rsquo;s new in {snap.running}</button>}
         </div>

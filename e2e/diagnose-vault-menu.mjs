@@ -220,9 +220,9 @@ try {
   const paletteNew = async () => {
     await page.keyboard.press('Meta+Shift+p')
     await page.waitForSelector('.command-menu', { timeout: 4000 })
-    await page.locator('.command-menu-input').fill('New presentation')
+    await page.locator('.command-menu-input').fill('New talk')
     await page.waitForTimeout(200)
-    await page.locator('.command-menu-item', { hasText: 'New presentation' }).first().click()
+    await page.locator('.command-menu-item', { hasText: 'New talk' }).first().click()
     await page.waitForTimeout(600)
   }
   await paletteNew()
@@ -232,7 +232,7 @@ try {
     await page.keyboard.press('Enter')
     await page.waitForTimeout(1200)
   }
-  record('palette New presentation… with the first vault unavailable does not re-create its folder', !existsSync(personal), `dialog=${dialogUp}`)
+  record('palette New talk… with the first vault unavailable does not re-create its folder', !existsSync(personal), `dialog=${dialogUp}`)
   const paletteTalk = (await vaultList()).length && readdirSync(tempRoot, { recursive: true }).filter((p) => String(p).endsWith('palette-talk-outline.md'))
   record('…and the new talk lands in an available vault', Array.isArray(paletteTalk) && paletteTalk.length === 1 && !String(paletteTalk[0]).startsWith('Personal'), JSON.stringify(paletteTalk))
   if (await page.locator('.dialog-card').count()) { await page.keyboard.press('Escape'); await page.waitForTimeout(300) }

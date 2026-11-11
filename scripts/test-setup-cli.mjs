@@ -473,7 +473,7 @@ try {
   const indexSource = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   const top = indexSource.slice(0, indexSource.indexOf('// Renderer heap headroom'))
   // (0.42: `settings` takes no lock, as the settings file has its own; setup still takes the app's.)
-  assert.match(top, /const holdsInstanceLock = SETTINGS_ARGS \? false : app\.requestSingleInstanceLock\(SETUP_ARGS \? SETUP_LOCK_DATA : undefined\)/, 'setup takes the same lock as the app')
+  assert.match(top, /const holdsInstanceLock = SETTINGS_ARGS \|\| AGENT_ARGS \? false : app\.requestSingleInstanceLock\(SETUP_ARGS \? SETUP_LOCK_DATA : undefined\)/, 'setup takes the same lock as the app')
   assert.match(top, /const SETTINGS_ARGS = SETUP_ARGS \? null :/, 'a setup command is never a settings command')
   const setupBranch = top.slice(top.indexOf('if (SETUP_ARGS) {'), top.indexOf('} else if (!holdsInstanceLock)'))
   assert.match(setupBranch, /if \(!holdsInstanceLock\) \{[\s\S]*?appOpenRefusal\(SETUP_ARGS\)[\s\S]*?app\.exit\(1\)\n  \}/, 'no lock: the refusal, exit 1')

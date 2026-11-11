@@ -1,14 +1,12 @@
-// test:plain-view-talk-details — plain editing view ticket 06 (spec T11, empty-slide placeholders).
+// test:plain-view-talk-details — plain editing view ticket 06 (spec T11, empty-slide placeholders), changed by house rule R11.
 //
 // The real extensions (the table's own, plus the Plain view), bundled for chrome-headless-shell:
-//   - Plain: the front matter is the Talk details panel, closed to one line by default ("event · date",
-//     else the first two set fields, "Talk details" alone with none); no table, no `---` lines;
-//   - open: Subtitle, Speaker, Event, Date as fields; a field edit rewrites its line, one undo takes it back;
-//     clearing removes the line; a key with no field (title, outline_version) stays and is listed read-only;
-//   - an alias spelling in the file (accent:) is edited in place; the panel keeps focus across a commit;
-//   - no front matter: the closed panel reads "Talk details"; adding a field writes a block at the top;
-//   - the caret cannot rest in the front matter (so typing cannot land in it); Backspace at the title's start does nothing; Escape in a field returns focus;
-//   - Markdown mode shows today's table (and no panel); switching modes swaps them;
+//   - Plain: the front matter is the Talk details LINE, one line ("event · date", else the first two set fields, "Talk details"
+//     alone with none) that links to the Talk tab of the right sidebar, where a talk's details are edited; it holds no field and
+//     writes nothing; no table, no `---` lines; the link sends the event the Talk menu's Metadata… sends;
+//   - the caret cannot rest in the front matter (so typing cannot land in it); Backspace at the title's start does nothing; Escape in the line returns focus;
+//   - the raw button shows the front matter as text; the table button flips back;
+//   - Markdown mode shows the table (with its "Edit in the Talk tab" action) and no line; switching modes swaps them;
 //   - placeholders: "Slide title" after an empty heading; the body hint on the slide's empty body; they vanish
 //     with the first character, are never text, and do not exist in Markdown mode.
 import { strict as assert } from 'node:assert'
@@ -29,12 +27,10 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { history, historyKeymap, defaultKeymap, undo } from '@codemirror/commands'
 import { languages } from '@codemirror/language-data'
 import { viewModeExtension } from './src/renderer/src/extensions/plainView/index.ts'
-import { setTalkDetailsOpen } from './src/renderer/src/extensions/plainView/talkDetails.ts'
 import { frontmatterTableExtension } from './src/renderer/src/extensions/frontmatterTable.ts'
 
 const compartment = new Compartment()
 window.mount = (doc, mode) => {
-  setTalkDetailsOpen(false)
   document.getElementById('host').innerHTML = ''
   return window.__v = new EditorView({ parent: document.getElementById('host'), state: EditorState.create({
     doc, selection: EditorSelection.cursor(0),
@@ -79,16 +75,15 @@ try {
   const q = (sel) => ev((s) => document.querySelectorAll(s).length, sel)
   const panelText = (sel) => ev((s) => document.querySelector(s)?.textContent ?? null, sel)
   const visible = (sel) => ev((s) => { const e = document.querySelector(s); return !!e && e.getClientRects().length > 0 }, sel)
-  const fill = async (key, value) => { const loc = page.locator(`[data-td-key="${key}"] .cm-td-input`); await loc.fill(value); await loc.press('Enter') }
-
-  // Closed by default, one line, no table.
+  // One line, a link, no fields, no table.
   await open(FM)
-  assert.equal(await q('.cm-talk-details'), 1, 'the panel shows in Plain')
+  assert.equal(await q('.cm-talk-details'), 1, 'the line shows in Plain')
   assert.equal(await q('.cm-frontmatter-table'), 0, 'no table in Plain')
   assert.equal(await panelText('.cm-td-title'), 'Talk details:')
   assert.equal(await panelText('.cm-td-summary'), 'Regional transport forum · 14 May 2026')
-  assert.equal(await visible('.cm-td-body'), false, 'closed: fields not shown')
+  assert.equal(await q('.cm-talk-details input, .cm-talk-details select, .cm-td-body'), 0, 'no field in the line')
   assert.equal(await ev(() => document.body.textContent.includes('---')), false, 'no --- lines appear')
+  assert.equal(await panelText('.cm-td-go'), 'Edit in the Talk tab ›')
 
   // Summary falls back to the first two set fields; none = "Talk details" alone.
   await open('---\nsubtitle: A\nauthor: B\ndate: C\n---\n# T\n')
@@ -97,47 +92,19 @@ try {
   assert.equal(await panelText('.cm-td-title'), 'Talk details')
   assert.equal(await panelText('.cm-td-summary'), '')
 
-  // Open: fields; Speaker is the author line.
+  // The link opens the Talk tab: it sends tw-open-metadata (what the Talk menu's Metadata… sends) and changes no text.
   await open(FM)
-  await page.locator('.cm-td-toggle').click()
-  assert.equal(await visible('.cm-td-body'), true, 'opened')
-  assert.equal(await panelText('.cm-td-title'), 'Talk details')
-  assert.deepEqual(await ev(() => [...document.querySelectorAll('.cm-td-body > .cm-td-row')].map((r) => r.querySelector('.cm-td-label').textContent + '=' + r.querySelector('input').value)),
-    ['Subtitle=What a decade of trip data shows', 'Speaker=City Transport Team', 'Event=Regional transport forum', 'Date=14 May 2026'])
-  assert.equal(await visible('.cm-td-more'), false, 'More is closed')
-  await page.locator('.cm-td-more-toggle').click()
-  assert.equal(await ev(() => document.querySelector('[data-td-key="colour"] select').value), 'cobalt', 'the accent spelling shows as Colour')
-  assert.deepEqual(await ev(() => [...document.querySelectorAll('.cm-td-other')].map((e) => e.textContent)), ['title"Ten years of public bike hire"'.replace('"Ten years of public bike hire"', 'Ten years of public bike hire'), 'outline_version2'], 'keys without a field are listed read-only')
-
-  // Edit: one change, the line rewritten, the rest untouched; one undo reverses it.
-  await fill('event', 'Annual forum')
-  assert.equal(await text(), FM.replace('event: Regional transport forum', 'event: Annual forum'))
-  await ev(() => window.undo())
-  assert.equal(await text(), FM, 'one undo takes the edit back')
-  assert.equal(await page.locator('[data-td-key="event"] input').inputValue(), 'Regional transport forum', 'the field follows the undo')
-  // Alias edited in place; clearing removes the line.
-  await page.locator('[data-td-key="colour"] select').selectOption('emerald')
-  assert.ok((await text()).includes('\naccent: emerald\n') && !(await text()).includes('colour:'), 'accent edited in place')
-  await fill('subtitle', '')
-  assert.ok(!(await text()).includes('subtitle:'), 'clearing a field removes its line')
-  assert.ok((await text()).includes('title: "Ten years of public bike hire"') && (await text()).includes('outline_version: 2'), 'other keys kept')
-  // Tab after a commit lands in the next field (the panel is not rebuilt under focus).
-  await open(FM)
-  await page.locator('.cm-td-toggle').click()
-  await page.locator('[data-td-key="author"] input').fill('Someone Else')
-  await page.keyboard.press('Tab')
-  assert.equal(await ev(() => document.activeElement?.closest('[data-td-key]')?.dataset.tdKey), 'event', 'Tab moved on to Event')
-  assert.ok((await text()).includes('author: Someone Else'))
-  // Escape returns focus to the editor; the panel stays open.
+  await ev(() => { window.__opened = 0; window.addEventListener('tw-open-metadata', () => { window.__opened += 1 }) })
+  await page.locator('[data-talk-details-link]').click()
+  assert.equal(await ev(() => window.__opened), 1, 'the link sends the open-the-Talk-tab event once')
+  assert.equal(await text(), FM, 'the line writes nothing')
+  // The summary follows the text under it.
+  await ev(([from, to]) => window.__v.dispatch({ changes: { from, to, insert: 'Annual forum' } }), [FM.indexOf('Regional'), FM.indexOf('Regional') + 'Regional transport forum'.length])
+  assert.equal(await panelText('.cm-td-summary'), 'Annual forum · 14 May 2026')
+  // Escape returns focus to the editor.
+  await page.locator('[data-talk-details-link]').focus()
   await page.keyboard.press('Escape')
   assert.equal(await ev(() => window.__v.hasFocus), true, 'Escape returns focus to the editor')
-  assert.equal(await visible('.cm-td-body'), true)
-  // Keyboard: Enter on the summary toggles.
-  await page.locator('.cm-td-toggle').focus()
-  await page.keyboard.press('Enter')
-  assert.equal(await visible('.cm-td-body'), false, 'Enter closes the panel')
-  await page.keyboard.press('Space')
-  assert.equal(await visible('.cm-td-body'), true, 'Space opens it again')
 
   // Caret and Backspace keep out of the front matter.
   await open(FM)
@@ -153,25 +120,22 @@ try {
   await ev(() => window.undo())
   assert.equal(await text(), FM)
 
-  // No front matter: closed panel; adding a field writes a block at the top.
+  // No front matter: the line says "Talk details".
   await open('# Talk\n\n## One\n')
   assert.equal(await q('.cm-talk-details'), 1)
   assert.equal(await panelText('.cm-td-title'), 'Talk details')
-  await page.locator('.cm-td-toggle').click()
-  await fill('event', 'Forum')
-  assert.equal(await text(), '---\nevent: Forum\n---\n\n# Talk\n\n## One\n')
-  assert.equal(await q('.cm-talk-details'), 1)
+  assert.equal(await text(), '# Talk\n\n## One\n', 'the line writes nothing, with or without front matter')
 
   // Raw toggle: the panel gives way to the text; table button flips back.
   await open(FM)
-  await page.locator('.cm-td-toggle').click()
   await page.locator('.cm-td-raw').dispatchEvent('mousedown')
   assert.equal(await q('.cm-talk-details'), 0, 'raw: no panel')
   assert.equal(await ev(() => window.lineText(1)).then((t) => t.startsWith('---')), true, 'raw: the lines show')
 
-  // Markdown mode keeps today's table; modes swap without a document change.
+  // Markdown mode keeps the table (and gives it the Edit action); modes swap without a document change.
   await open(FM, 'markdown')
   assert.equal(await q('.cm-frontmatter-table'), 1, 'Markdown: the table')
+  assert.equal(await q('[data-fm-edit-in-tab]'), 1, 'Markdown: the table\'s Edit in the Talk tab action')
   assert.equal(await q('.cm-talk-details'), 0, 'Markdown: no panel')
   await ev(() => window.setMode('plain'))
   assert.equal(await q('.cm-talk-details'), 1)

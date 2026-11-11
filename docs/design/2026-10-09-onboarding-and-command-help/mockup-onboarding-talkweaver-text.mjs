@@ -35,7 +35,7 @@ export const TEXT = {
     bar: 'First steps',
     rows: [
       { label: 'Choose your own vault', action: 'Add vault…', done: 'Personal' },
-      { label: 'Make your first talk', action: 'New presentation…', done: 'Metaphor talk 2026' },
+      { label: 'Make your first talk', action: 'New talk…', done: 'Metaphor talk 2026' },
       { label: 'Open the example talk', action: 'Open', done: 'Opened' },
     ],
   },

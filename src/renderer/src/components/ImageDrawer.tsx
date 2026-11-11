@@ -345,11 +345,6 @@ export default function ImageDrawer({ currentTalkPath, onInsert, onInsertOldSlid
           <div className="image-drawer__choice-foot"><kbd>Esc</kbd> {CHOICE_COPY.cancels}</div>
         </div>
       )}
-      <div className="image-drawer__foot">
-        <span>Drag onto the slide</span><span>·</span>
-        <span><kbd>⌘⏎</kbd> insert at caret</span><span>·</span>
-        <span><kbd>Esc</kbd> close</span>
-      </div>
     </aside>
   )
 }

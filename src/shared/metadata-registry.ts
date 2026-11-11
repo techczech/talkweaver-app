@@ -566,7 +566,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Frame defaults',
     group: 'Appearance',
     explanation:
-      'Deck-level frame defaults (image side, title placement…) applied to every slide. Edited on the Deck design panel — shown here for completeness.',
+      'Deck-level frame defaults (image side, title placement…) applied to every slide. Edited in Talk design — shown here for completeness.',
     ownership: 'user'
   },
   {
@@ -812,7 +812,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
       { value: '30d', label: '30 days', explanation: 'A board left open closes after 30 days.' }
     ] },
     label: 'Left open, closes',
-    explanation: 'On a board slide, how long a board left open after the talk keeps taking cards; you can close it sooner in History.',
+    explanation: 'On a board slide, how long a board left open after the talk keeps taking cards; you can close it sooner in the Runs view.',
     ownership: 'user'
   },
   {
@@ -849,42 +849,42 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     ownership: 'user'
   },
 
-  // ── Pre-work (ADR-0032 amendment point 5, ticket 08): the talk's "Before the session" form ──
+  // ── Pre-work (ADR-0032 amendment point 5, ticket 08): the talk's "Before the Run" form ──
   {
     key: 'prework', location: 'frontmatter', type: 'text',
     vocabulary: { kind: 'open' },
     label: 'Pre-work',
     group: 'Pre-work and post-work',
-    explanation: 'Names the work file for before the session, by its id (the picker shows file names). The strip under this table says whether a published Run has sent that file to anyone. Plan a run starts from it: a new Run offers this file for the phase, and you can pick another file or None there.',
+    explanation: 'Names the work file for before the Run (the picker shows file names). The line under the Talk details says whether a published Run has sent that file to anyone. Plan a Run starts from it: a new Run offers this file for the phase, and you can pick another file or None there.',
     ownership: 'user',
-    outsideDeck: 'names the work file sent before the session; its effect is the editor strip (test:work-strips) and the Work files view (test:work-files-view)'
+    outsideDeck: 'names the work file sent before the Run; its effect is the editor strip (test:work-strips) and the Work files view (test:work-files-view)'
   },
   {
     key: 'postwork', location: 'frontmatter', type: 'text',
     vocabulary: { kind: 'open' },
     label: 'Post-work',
     group: 'Pre-work and post-work',
-    explanation: 'Names the work file for after the session, by its id (the picker shows file names). The strip under this table says whether a published Run has sent that file to anyone. Plan a run starts from it: a new Run offers this file for the phase, and you can pick another file or None there.',
+    explanation: 'Names the work file for after the Run (the picker shows file names). The line under the Talk details says whether a published Run has sent that file to anyone. Plan a Run starts from it: a new Run offers this file for the phase, and you can pick another file or None there.',
     ownership: 'user',
-    outsideDeck: 'names the work file sent after the session; its effect is the editor strip (test:work-strips) and the Work files view (test:work-files-view)'
+    outsideDeck: 'names the work file sent after the Run; its effect is the editor strip (test:work-strips) and the Work files view (test:work-files-view)'
   },
   {
     // The trigger token is {prework}; this entry is keyed prework-section so that `prework` stays free for the front-matter key above.
     key: 'prework-section', location: 'trigger', type: 'boolean',
     vocabulary: { kind: 'closed', options: [
-      { value: 'true', label: 'Pre-work section', explanation: 'Written {prework} on a ## section: its slides are the pre-work form’s steps, answered on the handout link before the session, and are not presented in the talk.' }
+      { value: 'true', label: 'Pre-work section', explanation: 'Written {prework} on a ## section: its slides are the pre-work form’s steps, answered on the handout link before the Run, and are not presented in the talk.' }
     ] },
     label: 'Pre-work section',
-    explanation: 'Marks the talk’s “Before the session” section. The planned Run decides when its form opens and closes.',
+    explanation: 'Marks the talk’s “Before the Run” section. The planned Run decides when its form opens and closes.',
     ownership: 'user'
   },
   {
     key: 'task', location: 'trigger', type: 'boolean',
     vocabulary: { kind: 'closed', options: [
-      { value: 'true', label: 'Pre-task', explanation: 'Written {task} on a pre-work step: a task participants do before the session and mark as done; the slide’s list is the instructions.' }
+      { value: 'true', label: 'Pre-task', explanation: 'Written {task} on a pre-work step: a task participants do before the Run and mark as done; the slide’s list is the instructions.' }
     ] },
     label: 'Pre-task',
-    explanation: 'A step of the pre-work form that asks participants to do something before the session.',
+    explanation: 'A step of the pre-work form that asks participants to do something before the Run.',
     ownership: 'user'
   },
   {
@@ -930,7 +930,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
   {
     key: 'noask', location: 'trigger', type: 'boolean',
     vocabulary: { kind: 'closed', options: [
-      { value: '', label: 'On', explanation: 'Participants can ask about this step; you read the questions on the planned Run in History (the default).' },
+      { value: '', label: 'On', explanation: 'Participants can ask about this step; you read the questions on the planned Run in the Runs view (the default).' },
       { value: 'true', label: 'Off', explanation: 'Written {noask}: participants cannot ask about this step.' }
     ] },
     label: 'Questions about it',
@@ -1049,7 +1049,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     type: 'text',
     vocabulary: { kind: 'freeform' },
     label: 'Event',
-    explanation: 'The event or delivery name shown in History and printed beneath the talk title on this Run’s handout cover.',
+    explanation: 'The event or delivery name shown in the Runs view and printed beneath the talk title on this Run’s handout cover.',
     ownership: 'user'
   },
   {

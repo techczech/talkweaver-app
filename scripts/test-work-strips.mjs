@@ -1,10 +1,10 @@
 // Work-files ticket 08: the editor's pre-work and post-work strips as a pure model (src/shared/work-strips.ts),
 // one case per drawn state (hifi shots 1-*), with today = Wed 14 Oct 2026.
 //   1. no file: "No pre-work" / "No post-work" with Attach a pre-work / post-work file;
-//   2. attached, not sent: "Pre-work · Research teams intake · 4 steps · not sent to anyone" with Plan a run;
+//   2. attached, not sent: "Pre-work · Research teams intake · 4 steps · not sent to anyone" with Plan a Run;
 //      a Run that carries the file but is not published has sent it to no one;
 //   3. sent to 1 run: the Run, its count and Open run; sent to 2 runs: "sent to 2 runs" and Open run listing both;
-//   4. post-work: opens after the session, open ("Saïd workshop · 5/18 · closes Wed 4 Nov"), closed;
+//   4. post-work: opens after the Run, open ("Saïd workshop · 5/18 · closes Wed 4 Nov"), closed;
 //   5. the zone-mismatch mark (ticket 03 review) on the strip and on that Run's row;
 //   6. a file the talk names that is not in the vault; a file named by its file name; a Run of another talk is not counted;
 //   7. (review round 1) sent is per phase (S1); Runs of the open talk's vault only, and Open run names that vault (S3);
@@ -49,7 +49,7 @@ const strips = (metadata, runs, over = {}) => workStrips({ talkSlug: T, metadata
   assert.equal(s.pre.text, 'Pre-work · Research teams intake · 4 steps · not sent to anyone')
   assert.equal(s.post.text, 'Post-work · Session feedback · 3 steps · not sent to anyone')
   assert.equal(s.pre.state, 'not-sent'); assert.equal(s.pre.tone, 'not-sent')
-  assert.deepEqual(s.pre.action, { kind: 'plan-run', label: 'Plan a run' })
+  assert.deepEqual(s.pre.action, { kind: 'plan-run', label: 'Plan a Run' })
   // A Run that carries the file but is not published has sent it to no one.
   const unpublished = run({ handoutUrl: undefined, work: { pre: pre(), post: post() } })
   const u = strips(both, [unpublished])
@@ -66,11 +66,11 @@ const strips = (metadata, runs, over = {}) => workStrips({ talkSlug: T, metadata
   assert.equal(s.pre.text, 'Pre-work · Research teams intake · 4 steps · sent to Saïd workshop · 7/18')
   assert.equal(s.pre.tone, 'sent'); assert.equal(s.pre.state, 'sent')
   assert.deepEqual(s.pre.action, { kind: 'open-run', label: 'Open run', ref: { talkSlug: T, runId: 'said' } })
-  assert.equal(s.post.text, 'Post-work · Session feedback · 3 steps · sent to Saïd workshop · opens after the session')
+  assert.equal(s.post.text, 'Post-work · Session feedback · 3 steps · sent to Saïd workshop · opens after the Run')
 
   const two = strips(both, [med({ work: { pre: pre({ publishedAt: pubd, closes: '2026-11-04T13:00' }), post: post({ publishedAt: pubd }) } }), run()])
   assert.equal(two.pre.text, 'Pre-work · Research teams intake · 4 steps · sent to 2 runs')
-  assert.equal(two.post.text, 'Post-work · Session feedback · 3 steps · sent to 2 runs · opens after each session')
+  assert.equal(two.post.text, 'Post-work · Session feedback · 3 steps · sent to 2 runs · opens after each Run')
   assert.equal(two.pre.action.kind, 'open-run-menu')
   assert.deepEqual(two.pre.action.rows.map((r) => [r.name, r.detail]), [['Saïd workshop', 'Wed 21 Oct · 7/18'], ['Medical Sciences', 'Wed 4 Nov · 0/24']], 'listed by date, with the drawn detail')
   assert.deepEqual(two.pre.action.rows.map((r) => r.ref.runId), ['said', 'med'])
@@ -95,7 +95,7 @@ const strips = (metadata, runs, over = {}) => workStrips({ talkSlug: T, metadata
   const closed = strips(both, [delivered()], { now: new Date('2026-11-05T10:00:00Z') })
   assert.equal(closed.post.status, 'sent to Saïd workshop · closed 5/18')
   // Before the session is delivered the post-work is not open, whatever the date.
-  assert.equal(strips(both, [run()], { now: new Date('2026-11-01T10:00:00Z') }).post.status, 'sent to Saïd workshop · opens after the session')
+  assert.equal(strips(both, [run()], { now: new Date('2026-11-01T10:00:00Z') }).post.status, 'sent to Saïd workshop · opens after the Run')
   // A fixed opening time is named.
   const timed = run({ work: { pre: pre({ publishedAt: pubd }), post: post({ opens: '2026-10-22T09:00', publishedAt: pubd }) } })
   assert.equal(strips(both, [timed]).post.status, 'sent to Saïd workshop · opens Thu 22 Oct')
@@ -111,7 +111,7 @@ const strips = (metadata, runs, over = {}) => workStrips({ talkSlug: T, metadata
   assert.equal(s.pre.mark, 'zone-mismatch')
   assert.equal(s.pre.text, 'Pre-work · Research teams intake · 4 steps · sent to Saïd workshop · 7/18 · time zone does not match the Run')
   assert.equal(s.post.mark, undefined, 'the mark belongs to the phase whose attachment carries it')
-  assert.equal(s.post.text, 'Post-work · Session feedback · 3 steps · sent to Saïd workshop · opens after the session')
+  assert.equal(s.post.text, 'Post-work · Session feedback · 3 steps · sent to Saïd workshop · opens after the Run')
   const two = strips(both, [marked, med({ work: { pre: pre({ publishedAt: pubd }) } })])
   assert.deepEqual(two.pre.action.rows.map((r) => r.mark), ['zone-mismatch', undefined], 'the mark is on that Run’s row only')
   // A marked attachment on a Run that is not published still shows the mark; it is not "sent".

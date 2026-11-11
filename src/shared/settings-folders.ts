@@ -24,6 +24,8 @@ export const LOCAL_ONLY = 'Set on this Mac only'
 export const LOCAL_ONLY_KEYS: readonly string[] = [
   // a folder the app reads its data from
   'general.imageArchive',
+  // a device of this Mac (another Mac's microphone names mean nothing here)
+  'recording.microphone',
   // something to run
   'recording.transcriptionPython',
   'recording.transcriptionScript',

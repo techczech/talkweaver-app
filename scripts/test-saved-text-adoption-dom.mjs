@@ -423,7 +423,7 @@ try {
     const editorSource = readFileSync(join(root, 'src/renderer/src/components/Editor.tsx'), 'utf8')
     assert.equal(editorSource.match(/historyCompartment\.reconfigure\(\[\]\)/g).length, 1, 'the history is dropped in one place only')
     // The save simulated in this file decides on the tidy-up with the function every save of Editor.tsx calls.
-    assert.equal((editorSource.match(/textForSave\(/g) ?? []).length, 3, 'the autosave, flushSave and the replace seam each ask textForSave')
+    assert.equal((editorSource.match(/textForSave\(/g) ?? []).length, 4, 'autosave, flushSave, acknowledged capture settleSave and the replace seam each ask textForSave')
     assert.ok(!editorSource.includes('normalizePositions('), 'and none of them calls the tidy-up directly')
     pass('a talk loaded into the same editor starts clean: an undo there undoes its own edit and brings nothing of the talk before')
   }

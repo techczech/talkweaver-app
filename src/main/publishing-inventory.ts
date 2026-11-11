@@ -28,11 +28,13 @@ export async function readPublishingInventory(authorisation: PublishAuthorisatio
     }))
     if (read.superseded) return null
     if (read.result.outcome === 'incomplete' && read.result.noProductionDeployment === true) {
-      return { complete: true, site: `cf-pages:${authorisation.accountId}:${authorisation.project}`, revision: NO_PRODUCTION_REVISION, paths: [] }
+      return { complete: true, site: `cf-pages:${authorisation.accountId}:${authorisation.project}`, revision: NO_PRODUCTION_REVISION, paths: [], files: [] }
     }
     if (read.result.outcome === 'incomplete' && read.result.unsupportedPath) throw new PreservationRefusal('PUBLISH_INVENTORY_UNAVAILABLE', read.result.unsupportedPath)
     if (read.result.outcome !== 'complete') return null
     return { complete: true, site: `cf-pages:${authorisation.accountId}:${authorisation.project}`,
-      revision: read.result.production.deploymentId, candidateDigest: read.result.production.candidateDigest, paths: read.result.files.map(([path]) => path) }
+      revision: read.result.production.deploymentId, candidateDigest: read.result.production.candidateDigest, paths: read.result.files.map(([path]) => path),
+      // Per-talk publishing merges into this manifest: the hashes as Cloudflare keeps them, and where its site record can be read.
+      files: read.result.files, ...(read.result.production.url ? { deploymentUrl: read.result.production.url } : {}) }
   } catch (error) { if (error instanceof PreservationRefusal) throw error; return null }
 }

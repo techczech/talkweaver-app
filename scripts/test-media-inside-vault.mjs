@@ -431,8 +431,11 @@ await check('no compile in the main process or its worker threads is left withou
   const index = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
   assert.match(index, /const compileOptions = \{ \.\.\.\(options \?\? \{\}\), allowedAssetRoots: assetRootsFor\(outlinePath\) \}/)
   // The live compile's job carries those options to the worker.
-  assert.match(index, /prepareTalkOffThread\(\{ compilerDir, outlinePath, text: resolved, slug, defaults, options: compileOptions \}\)/)
-  assert.equal((index.match(/prepareTalkOffThread\(\{/g) ?? []).length, 1, 'one place posts the live compile, and it is the one above')
+  assert.match(index, /prepareTalkOffThread\(\{ compilerDir, outlinePath, text: resolved, slug, defaults, options: compileOptions, previewDir \}\)/)
+  // The search index's rows-only compile (search-rows-off-process.ts) is the only other job, and it too
+  // carries the talk's roots. Every job posted is one of these two.
+  assert.match(index, /prepareTalkOffThread\(\{\s*compilerDir, outlinePath: talk\.outlinePath, text: source\.resolved, slug: talk\.slug, rowsOnly: true,\s*options: \{ projectionsOnly: true, allowedAssetRoots: assetRootsFor\(talk\.outlinePath\) \}\s*\}\)/)
+  assert.equal((index.match(/prepareTalkOffThread\(\{/g) ?? []).length, 2, 'two places post a compile job, and they are the two above')
   // Both handout builds are handed the talk's roots.
   assert.equal((index.match(/buildHandoutPagesOffThread\(\{[\s\S]*?\n\s*\}\)/g) ?? []).filter((job) => /assetRoots: assetRootsFor\((?:talk\.)?outlinePath\)/.test(job)).length, 2)
   assert.match(readFileSync(join(process.cwd(), 'src/main/shared-talk-build.ts'), 'utf8'), /const compileOptions = input\.allowedAssetRoots \? \{ allowedAssetRoots: input\.allowedAssetRoots \} : \{\}/)

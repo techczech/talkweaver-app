@@ -164,7 +164,8 @@ try {
   const reloaded = await waitFor(async () => (await editorText()) === theirs, 3000)
   const barGone = await waitFor(async () => !(await barVisible()), 2000)
   record('Reload replaces the editor text with the version on disk', reloaded !== null && barGone !== null, `reloaded=${reloaded !== null}, bar gone=${barGone !== null}`)
-  await page.locator('.cm-content').first().click()
+  // A caret in the text (the middle of the content element can land on an inline control in a narrower editor).
+  await page.locator('.cm-content .cm-line', { hasText: 'Written by the other TalkWeaver.' }).first().click({ position: { x: 24, y: 8 } })
   await page.keyboard.press('Meta+z')
   const undone = await waitFor(async () => {
     const text = await editorText()
@@ -204,7 +205,7 @@ try {
   record('Grid view shows the bar for a rename-replace change within 2 s', gridBar !== null && inGrid, `after ${gridBar}ms, grid=${inGrid}, "${await barText()}"`)
   await page.locator(BAR).getByRole('button', { name: 'Reload' }).click()
   await waitFor(async () => !(await barVisible()), 3000)
-  await page.locator('.pane-toggle .pane-btn').nth(1).click()
+  await page.locator('[data-testid="slides-toggle"]').click()
   await page.waitForTimeout(600)
 
   // (W) Switching talks with the bar up: the sheet holds the switch.

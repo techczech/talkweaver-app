@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { boardPanelModelSource } from "../../assets/runtime/board-panel-model.js";
 import { boardPanelRuntimeSource } from "../../assets/runtime/board-panel.js";
+import { videoPlaybackRuntimeSource } from "../../assets/runtime/video-playback.js";
 import { scriptDir, slugify, escapeHtml, makeQrSvg, timerRuntimeSource, overviewRuntimeSource, slideFitRuntimeSource, stageFitRuntimeSource, pollDisplayRuntimeSource, pollExtendedSource, markmapVendorSource, mermaidVendorSource } from "./01-cli-utils.mjs";
 import { accentForSectionIndex, accentForSectionName, accentForDeckColour, extraHuesForAccent, titlePlacementFor, titleRegimeForLayout, renderInline, withRenderedClaims, quoteCiteEqualsTitle } from "./02-triggers-layout.mjs";
 import { findSlideSections, updateDeckTitle, withoutScripts } from "./04-html-extraction.mjs";
@@ -687,7 +688,7 @@ export async function buildDeckHtmlFromModel(model) {
   html = html.replace("<!--SIM_TYPING_RUNTIME-->", () => simTypingRuntimeSource());
   // Playback of a {play-on-next} file from its step (0.38 ticket 05): the same source the venue
   // page inlines.
-  html = html.replace("<!--MEDIA_STEPS_RUNTIME-->", () => mediaStepsRuntimeSource());
+  html = html.replace("<!--MEDIA_STEPS_RUNTIME-->", () => mediaStepsRuntimeSource() + "\n" + videoPlaybackRuntimeSource());
   // Embedded local pages (0.38 ticket 11): the deck side of the channel to a sandboxed page, and
   // the protocol it shares with the page's agent. Inlined only into a deck that has such a page
   // (as the mermaid vendor is); without it the template's embed code finds no channel and no frame.

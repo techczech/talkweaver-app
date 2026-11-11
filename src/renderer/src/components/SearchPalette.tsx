@@ -1,9 +1,11 @@
+import { useSlideSelection } from '../lib/useSlideSelection'
+import { layoutDisplayName } from '../../../shared/layout-registry/options'
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { thumbUrl } from '../lib/thumbUrl'
 import { insertItemsFor } from '../../../shared/slide-insert-source'
 import type { ProjectionRow, TalkInfo } from '../../../preload/index'
-import { selRowKey, rangeKeys, sectionKeysAt, isSingleTalk, groupBySection } from './searchPaletteSelection'
+import { selRowKey, sectionKeysAt, isSingleTalk, groupBySection } from './searchPaletteSelection'
 
 type SearchResult = ProjectionRow & {
   talkSlug: string
@@ -109,7 +111,6 @@ export default function SearchPalette({ isOpen, onClose, onInsert, onInsertMany,
   const [loading, setLoading] = useState(false)
   const [talks, setTalks] = useState<TalkInfo[]>([])
   const [preview, setPreview] = useState(false)
-  const [selected, setSelected] = useState<Set<string>>(() => new Set())
   // Filters
   const [folderQ, setFolderQ] = useState('')
   const [talkQ, setTalkQ] = useState('')
@@ -125,11 +126,10 @@ export default function SearchPalette({ isOpen, onClose, onInsert, onInsertMany,
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLUListElement>(null)
   const reqIdRef = useRef(0)
-  const anchorRef = useRef<number>(0)
 
   useEffect(() => {
     if (!isOpen) return
-    setQuery(''); setActiveIndex(0); setUnavailable(false); setPreview(false); setSelected(new Set()); anchorRef.current = 0
+    setQuery(''); setActiveIndex(0); setUnavailable(false); setPreview(false); selection.clear(); selection.setAnchor(0)
     setFolderQ(''); setTalkQ(''); setSectionQ(''); setMetaQ(''); setLayoutSet(new Set())
     setHasImage(false); setHasIcons(false); setExcludeSections(false); setExcludeTitleOnly(false); setModifiedDays(0)
     requestAnimationFrame(() => inputRef.current?.focus())
@@ -181,6 +181,8 @@ export default function SearchPalette({ isOpen, onClose, onInsert, onInsertMany,
     })
   }, [results, folderQ, talkQ, sectionQ, metaQ, layoutSet, hasImage, hasIcons, excludeSections, excludeTitleOnly, modifiedDays, folderBySlug])
 
+  const selection = useSlideSelection(shown.map((_, i) => selRowKey(shown, i)), { preserveAnchorOnClear: true })
+  const selected = selection.selectedKeys
   useEffect(() => { if (activeIndex > shown.length - 1) setActiveIndex(Math.max(0, shown.length - 1)) }, [shown.length, activeIndex])
   useEffect(() => {
     listRef.current?.querySelector<HTMLLIElement>('[data-active="true"]')?.scrollIntoView({ block: 'nearest' })
@@ -210,31 +212,13 @@ export default function SearchPalette({ isOpen, onClose, onInsert, onInsertMany,
     const chosen = shown.filter((r, i) => selected.has(selRowKey(shown, i)))
     void insertRows(chosen.length > 0 ? chosen : (shown[activeIndex] ? [shown[activeIndex]] : []))
   }
-  function toggleAt(idx: number): void {
-    const k = selRowKey(shown, idx)
-    setSelected((prev) => { const n = new Set(prev); if (n.has(k)) n.delete(k); else n.add(k); return n })
-    anchorRef.current = idx
-  }
-  function extendTo(idx: number): void {
-    const keys = rangeKeys(shown, anchorRef.current, idx)
-    setSelected((prev) => { const n = new Set(prev); for (const k of keys) n.add(k); return n })
-  }
+  const toggleAt = selection.toggle
+  const extendTo = (idx: number): void => selection.extendTo(idx, 0, undefined, true)
   function selectActiveSection(): void {
-    const keys = sectionKeysAt(shown, activeIndex)
-    setSelected((prev) => { const n = new Set(prev); for (const k of keys) n.add(k); return n })
-    anchorRef.current = activeIndex
+    selection.addKeys(sectionKeysAt(shown, activeIndex))
+    selection.setAnchor(activeIndex)
   }
-  // Toggle-select every shown slide in a section (clicking a section header). If all are already
-  // selected, deselect them; else select them all.
-  function toggleSectionIndices(indices: number[]): void {
-    const keys = indices.map((i) => selRowKey(shown, i))
-    setSelected((prev) => {
-      const n = new Set(prev)
-      const allSel = keys.every((k) => n.has(k))
-      for (const k of keys) { if (allSel) n.delete(k); else n.add(k) }
-      return n
-    })
-  }
+  const toggleSectionIndices = selection.toggleMany
 
   useEffect(() => {
     if (!isOpen) return
@@ -253,7 +237,7 @@ export default function SearchPalette({ isOpen, onClose, onInsert, onInsertMany,
         setActiveIndex((i) => {
           const next = Math.max(0, Math.min(i + delta, shown.length - 1))
           if (e.shiftKey) extendTo(next)
-          else anchorRef.current = next
+          else selection.setAnchor(next)
           return next
         })
         return
@@ -331,7 +315,7 @@ export default function SearchPalette({ isOpen, onClose, onInsert, onInsertMany,
                     {row.content_hash && (
                       <img src={thumbUrl(row.talkSlug, row.render_hash || row.content_hash, row.vaultId)} alt="" onError={(e) => { (e.currentTarget as HTMLImageElement).style.visibility = 'hidden' }} />
                     )}
-                    {isNonDefaultLayout && <span className="search-result-layout">{layout}</span>}
+                    {isNonDefaultLayout && <span className="search-result-layout" title={`Layout id: ${layout}`}>{layoutDisplayName(layout)}</span>}
                   </div>
                   <div className="search-result-foot">
                     <span className="search-result-num">{slideNum}</span>
@@ -364,7 +348,7 @@ export default function SearchPalette({ isOpen, onClose, onInsert, onInsertMany,
           {selected.size > 0 ? (
             <>
               <button style={insertBtn} onClick={doInsert}>Insert {selected.size} selected (⌘↵)</button>
-              <button style={clearBtn} onClick={() => setSelected(new Set())}>Clear</button>
+              <button style={clearBtn} onClick={() => selection.clear()}>Clear</button>
               <span style={{ marginLeft: 'auto' }}><kbd style={kbdStyle}>⌘↵</kbd> insert selected</span>
             </>
           ) : (

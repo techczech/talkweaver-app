@@ -75,11 +75,11 @@ try {
   const found = await page.$$eval('[data-sheet-row]', (nodes) => nodes.map((node) => node.getAttribute('data-sheet-row')))
   record('the filter finds a command by its label', found.includes('where-used'), found.join(','))
   // Work files ticket 30: the Tools window's keys are on the sheet with their chords (Unpublish and the two Attach commands have none).
-  const TOOLS_KEYS = { 'tools-view-sessions': '⌘4', 'tools-view-published': '⌘5', 'tools-view-workfiles': '⌘6', 'tools-plan-run': '⌘⌥N', 'tools-edit-plan': '⌘⌥E', 'tools-plan-like-this': '⌘⇧D', 'tools-publish': '⌘⌥U', 'tools-go-live': '⌘⌥L', 'tools-open-run': '⌘⌥O', 'tools-copy-link': '⌘⇧C', 'tools-copy-invitation': '⌘⌥C', 'tools-new-work-file': '⌘⇧N' }
+  const TOOLS_KEYS = { 'tools-view-runs': '⌘4', 'tools-view-published': '⌘5', 'tools-view-workfiles': '⌘6', 'tools-plan-run': '⌘⌥N', 'tools-edit-plan': '⌘⌥E', 'tools-plan-like-this': '⌘⇧D', 'tools-publish': '⌘⌥U', 'tools-go-live': '⌘⌥L', 'tools-open-run': '⌘⌥O', 'tools-copy-link': '⌘⇧C', 'tools-copy-invitation': '⌘⌥C', 'tools-new-work-file': '⌘⇧N' }
   const chordsOnSheet = {}
   for (const [id, chord] of Object.entries(TOOLS_KEYS)) {
     // A word each row's label or keywords hold; the row is found by its id whatever else matches.
-    await page.locator('input[aria-label="Filter all commands"]').fill({ 'tools-view-sessions': 'sessions', 'tools-view-published': 'published', 'tools-view-workfiles': 'work files', 'tools-plan-run': 'plan a run', 'tools-edit-plan': 'edit plan', 'tools-plan-like-this': 'like this', 'tools-publish': 'publish for', 'tools-go-live': 'go live', 'tools-open-run': 'open run', 'tools-copy-link': 'copy link', 'tools-copy-invitation': 'invitation', 'tools-new-work-file': 'new work file' }[id])
+    await page.locator('input[aria-label="Filter all commands"]').fill({ 'tools-view-runs': 'runs', 'tools-view-published': 'published', 'tools-view-workfiles': 'work files', 'tools-plan-run': 'plan a run', 'tools-edit-plan': 'edit plan', 'tools-plan-like-this': 'like this', 'tools-publish': 'publish for', 'tools-go-live': 'go live', 'tools-open-run': 'open run', 'tools-copy-link': 'copy link', 'tools-copy-invitation': 'invitation', 'tools-new-work-file': 'new work file' }[id])
     chordsOnSheet[id] = await page.locator(`[data-sheet-row="${id}"] .kbd-sheet-chord`).first().innerText().catch(() => null)
   }
   record('the sheet lists every Tools-window key', Object.entries(TOOLS_KEYS).every(([id, chord]) => chordsOnSheet[id] === chord), JSON.stringify(chordsOnSheet))

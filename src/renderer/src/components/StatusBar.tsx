@@ -1,10 +1,18 @@
+import { AgentSkillMark } from './AgentSkillOffer'
 import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { MapPin } from 'lucide-react'
 import type { Place } from '../../../shared/place.ts'
 import { placeChipView } from './placeChipModel'
-import { APP_VERSION, BUILD_SHA, BUILD_TIME } from '../buildInfo'
+import { APP_VERSION } from '../buildInfo'
 import { formatTalkDates, type TalkDates } from '../lib/talkFacts'
 import { UpdateAnswerNote, UpdateMarks } from './UpdateNotices'
+import { STATUS_NOTICE_SLOT_EVENT } from '../lib/notify'
+
+// The bar's widths (px) at which an item drops (R17).
+const STATUS_DATES_FROM_PX = 900
+const STATUS_WORDS_FROM_PX = 780
+const STATUS_AGENT_FULL_FROM_PX = 860
+const STATUS_AGENT_FROM_PX = 560
 
 interface Props {
   slideCount?: number | null
@@ -27,6 +35,15 @@ interface Props {
   shared?: { label: string; title?: string; error?: boolean; paused?: boolean; ended?: boolean; onClick?: () => void } | null
   /** The place chip (onboarding ticket 02): where the caret is and how many actions apply there. */
   placeChip?: { place: Place; count: number; chord: string; visible: boolean; onActivate: () => void } | null
+  /** The slot at the bar's right end where the collapsed Slide Scratchpad pill is drawn (R17). */
+  pillSlot?: (el: HTMLElement | null) => void
+  /** The disk-change notice as a warning chip (R2), in front of the notice slot. */
+  diskNotice?: ReactNode
+}
+
+/** The notice slot: notices (toasts) are drawn here, in the bar, instead of floating over the content (R2, R17). */
+function noticeSlot(el: HTMLElement | null): void {
+  window.dispatchEvent(new CustomEvent<HTMLElement | null>(STATUS_NOTICE_SLOT_EVENT, { detail: el }))
 }
 
 function formatAge(d: Date): string {
@@ -56,6 +73,8 @@ export default function StatusBar({
   runChips = null,
   runChip = null,
   placeChip = null,
+  pillSlot,
+  diskNotice = null,
 }: Props) {
   const [, tick] = useState(0)
   // The bar's width, for the chip's absorption steps (placeChipModel).
@@ -70,6 +89,13 @@ export default function StatusBar({
     return () => observer.disconnect()
   }, [])
   const chip = placeChip ? placeChipView({ ...placeChip, minimal, barWidth }) : null
+  // R17: items give way in a fixed order as the bar narrows: the dates, the word count, the agent notice's words (a
+  // short chip), then the notice itself; the place chip's own two steps (placeChipModel) and the saved state stay.
+  const wide = barWidth ?? Number.POSITIVE_INFINITY
+  const showDates = wide >= STATUS_DATES_FROM_PX
+  const showWords = wide >= STATUS_WORDS_FROM_PX
+  const agentCompact = wide < STATUS_AGENT_FULL_FROM_PX
+  const agentHidden = wide < STATUS_AGENT_FROM_PX
 
   useEffect(() => {
     const id = setInterval(() => tick((n) => n + 1), 1000)
@@ -141,16 +167,17 @@ export default function StatusBar({
         )}
         <span
           style={styles.build}
-          title={`TalkWeaver ${APP_VERSION} · build ${BUILD_SHA}${BUILD_TIME ? ` · built ${new Date(BUILD_TIME).toLocaleString('en-GB')}` : ''}`}
+          title={`TalkWeaver ${APP_VERSION}`}
         >
-          v{APP_VERSION} · {BUILD_SHA}
+          v{APP_VERSION}
         </span>
         <UpdateMarks />
+        <AgentSkillMark compact={agentCompact} hidden={agentHidden} />
         {!minimal && (
           <>
             <span style={styles.sep}>|</span>
             <span style={styles.item}>{slideLabel}</span>
-            {dateParts.length > 0 && (
+            {showDates && dateParts.length > 0 && (
               <>
                 <span style={styles.sep}>|</span>
                 <span style={styles.item}>
@@ -164,8 +191,12 @@ export default function StatusBar({
               </>
             )}
             {runChips}
-            <span style={styles.sep}>|</span>
-            <span style={styles.item}>{wordLabel}</span>
+            {showWords && (
+              <>
+                <span style={styles.sep}>|</span>
+                <span style={styles.item}>{wordLabel}</span>
+              </>
+            )}
             <span style={styles.sep}>|</span>
             <span style={styles.item}>{savedLabel}</span>
           </>
@@ -209,6 +240,9 @@ export default function StatusBar({
           )}
         </div>
       )}
+      {!minimal && diskNotice}
+      <span ref={noticeSlot} style={styles.noticeSlot} data-status-notice-slot />
+      {pillSlot && <span ref={pillSlot} style={styles.pillSlot} data-status-pill-slot />}
       <UpdateAnswerNote />
     </div>
   )
@@ -219,7 +253,6 @@ const styles: Record<string, React.CSSProperties> = {
     height: '24px',
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'space-between',
     padding: '0 12px',
     fontSize: '11px',
     color: 'var(--faint)',
@@ -233,9 +266,28 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: '0',
     overflow: 'hidden',
+    minWidth: 0,
+    flex: '1 1 0',
+    whiteSpace: 'nowrap',
   },
   right: {
     display: 'flex',
+    alignItems: 'center',
+    flexShrink: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+    whiteSpace: 'nowrap',
+    marginLeft: '8px',
+  },
+  noticeSlot: {
+    position: 'relative',
+    display: 'inline-flex',
+    alignItems: 'center',
+    flexShrink: 0,
+    marginLeft: '8px',
+  },
+  pillSlot: {
+    display: 'inline-flex',
     alignItems: 'center',
     flexShrink: 0,
     marginLeft: '8px',

@@ -1,0 +1,14 @@
+# Verbs that are deliberately not described in the hand-written skill, one per line: <verb> | <reason>.
+# The coverage test (scripts/test-agent-skill-coverage.mjs) fails for a verb that is neither described nor listed here,
+# and for a line here that names no verb or a verb the skill does describe.
+research.list | In-process verb; no external route.
+research.whereUsed | In-process verb; no external route.
+research.search | In-process verb; no external route.
+research.insert | In-process verb acting on the live editor caret; no external route.
+research.makeSlide | In-process verb acting on the live editor caret; no external route.
+research.rename | In-process verb; no external route.
+research.kind | In-process verb; no external route.
+research.delete | In-process verb; needs approval in the app; no external route.
+research.move | In-process verb; needs approval in the app; no external route.
+research.copy | In-process verb; no external route.
+research.insertHere | In-process verb acting on the live editor caret; no external route.

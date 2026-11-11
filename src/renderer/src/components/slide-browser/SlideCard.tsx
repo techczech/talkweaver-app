@@ -3,6 +3,7 @@
 import React, { useState } from 'react'
 import { Check, ChevronsDownUp, ChevronsUpDown, GitBranch, Layers, PanelRight } from 'lucide-react'
 import { liveShortcutLabel } from '../../keymap/store'
+import { layoutDisplayName } from '../../../../shared/layout-registry/options'
 import {
   type DisplayCard, inTalksLabel, layoutOf, nearCountLabel, stampedIdOf, versionBadgeParts
 } from '../slideBrowserModel'
@@ -110,7 +111,7 @@ export const SlideCard = React.memo(function SlideCard({
       <div className="lt-label">
         <div className="lt-l-title">{rowTitle(row)}</div>
         <div className="lt-l-meta">
-          {showTag && <span className="lt-tag">{layout}</span>}
+          {showTag && <span className="lt-tag" title={`Layout: ${layoutDisplayName(layout)} (${layout})`}>{layoutDisplayName(layout)}</span>}
           {isVariant && <span className="lt-tag lt-variant-tag">variant {c.variantIndex}</span>}
           {/* Curated tags (ADR-0037): small filled mono chips, mockup grammar. */}
           {(tagsKey === '' ? [] : tagsKey.split('\n')).map((t) => (

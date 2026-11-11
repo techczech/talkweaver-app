@@ -51,10 +51,10 @@ export interface MarginLabel {
   layoutLabel?: string
 }
 
-/** The margin word of a label, as the gutter draws it ("Section 2.1", "Slide 3.1"; CSS upper-cases it). */
+/** The margin word of a label, as the gutter draws it ("§2.1", "Slide 3.1"; CSS upper-cases it). */
 export function marginWord(label: Pick<MarginLabel, 'kind' | 'number' | 'item' | 'sectionNumber'>): string {
   if (label.kind === 'talk') return 'Talk'
-  if (label.kind === 'section') return label.sectionNumber ? `Section ${label.sectionNumber}` : 'Section'
+  if (label.kind === 'section') return label.sectionNumber ? `§${label.sectionNumber}` : 'Section'
   if (label.number == null) return 'Slide'
   return label.item != null ? `Slide ${label.number}.${label.item}` : `Slide ${label.number}`
 }

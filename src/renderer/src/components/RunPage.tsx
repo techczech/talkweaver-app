@@ -1,10 +1,13 @@
 import { useEffect, useRef } from 'react'
+import { plainTalkTitle } from '../../../shared/plain-title'
 import { Check, CircleCheck, CircleDot, ClipboardCopy, Clock, Copy, CopyPlus, Eye, EyeOff, FolderOpen, Globe, LayoutGrid, ListChecks, LoaderCircle, Pencil, Presentation, Radio } from 'lucide-react'
 import type { ActionId, ChecklistAction, ChecklistStep, RunChecklist } from '../../../shared/run-checklist'
 import { runActionEffect, type RunPageEffect } from '../../../shared/run-page'
 import type { SessionSource } from '../../../shared/sessions-list'
 import { RunAnswers } from './RunAnswers'
 import { RunExtrasSection } from './RunExtras'
+import { StateBadge, badgeStateOfPill } from './StateBadge'
+import type { ReactNode } from 'react'
 
 const ACTION_ICONS: Partial<Record<ActionId, typeof Check>> = {
   'edit-plan': Pencil, 'open-pre-file': FolderOpen, 'open-post-file': FolderOpen, publish: Globe, 'publish-again': Globe,
@@ -42,7 +45,7 @@ function ActionButton({ action, onEffect, busy }: { action: ChecklistAction; onE
   const disabled = action.disabled === true || effect === null || busy
   const secondary = action.id === 'mark-delivered'
   return (
-    <button type="button" className={`tw-sess-btn sm${action.primary ? ' pri' : ''}${secondary ? ' quiet' : ''}`} data-run-action={action.id}
+    <button type="button" className={`tw-btn tw-btn--sm${action.primary ? ' tw-btn--primary' : secondary ? ' tw-btn--quiet' : ''}`} data-run-action={action.id}
       disabled={disabled} title={action.reason ?? (effect === null ? 'Not available yet' : undefined)}
       onClick={() => { if (effect) onEffect(effect, action) }}>
       {Icon && <Icon aria-hidden className={Icon === LoaderCircle ? 'tw-spin' : undefined} />}{action.label}
@@ -81,8 +84,8 @@ function StepRow({ step, onEffect, onCopy, busy, publishing, block }: { step: Ch
               <span className="qcap">QR · {QR_FOR[step.qr]}</span>
             </div>
             <div className="col">
-              <button type="button" className="tw-sess-btn sm" data-run-action="copy-invitation" disabled={busy} onClick={() => block.onInvitation?.()}><ClipboardCopy aria-hidden />Copy invitation text</button>
-              <button type="button" className="tw-sess-btn sm dng" data-run-action="unpublish" disabled={busy} onClick={() => block.onUnpublish?.()}><EyeOff aria-hidden />Unpublish</button>
+              <button type="button" className="tw-btn tw-btn--sm" data-run-action="copy-invitation" disabled={busy} onClick={() => block.onInvitation?.()}><ClipboardCopy aria-hidden />Copy invitation text</button>
+              <button type="button" className="tw-btn tw-btn--sm tw-btn--danger" data-run-action="unpublish" disabled={busy} onClick={() => block.onUnpublish?.()}><EyeOff aria-hidden />Unpublish</button>
             </div>
           </div>
         )}
@@ -97,15 +100,15 @@ function StepRow({ step, onEffect, onCopy, busy, publishing, block }: { step: Ch
 /**
  * One Run's page (locked mockup S3): the Run header, the left column with its section places (Answers and
  * Extras are filled by their own features), and the Run checklist rendered from the checklist model.
- * Presentational: the checklist, the effect handler and the notice come from SessionsView.
+ * Presentational: the checklist, the effect handler and the notice come from RunsView.
  */
-export function RunPage({ source, checklist, onEffect, onCopy, onPlanLikeThis, onExtrasSaved, onAnswersPulled, busy = false, notice, block = {} }: {
+export function RunPage({ source, checklist, onEffect, onCopy, onPlanLikeThis, onExtrasSaved, onAnswersPulled, busy = false, notice, block = {}, ledger, footer }: {
   source: SessionSource
   checklist: RunChecklist
   /** `action` is the checklist action pressed; none for an effect asked from the answers section. */
   onEffect: (effect: RunPageEffect, action?: ChecklistAction) => void
   onCopy: (url: string) => void
-  /** "Plan the next run like this": opens the plan sheet prefilled from this Run. */
+  /** "Plan the next Run like this": opens the plan sheet prefilled from this Run. */
   onPlanLikeThis?: () => void
   /** Extras for this run were kept on the Run: the list is read again. */
   onExtrasSaved?: () => void
@@ -115,6 +118,10 @@ export function RunPage({ source, checklist, onEffect, onCopy, onPlanLikeThis, o
   notice?: string | null
   /** The Published step's block: its QR code, Copy invitation text and Unpublish. */
   block?: PublishedBlockHandlers
+  /** What a Run that has been given adds above its answers: the delivery, the handout and what happened (RunLedger). */
+  ledger?: ReactNode
+  /** What closes the main column (Delete this Run for a plan). */
+  footer?: ReactNode
 }): JSX.Element {
   const side = useRef<HTMLDivElement>(null)
   const phase = checklist.phase
@@ -133,15 +140,17 @@ export function RunPage({ source, checklist, onEffect, onCopy, onPlanLikeThis, o
     <div className="tw-sess-detail" data-sessions-detail={`${source.talkSlug}/${source.runId}`} data-run-phase={phase}>
       <div className="tw-sess-dhead">
         <div className="tw-sess-dtitle">
-          <h1>{source.eventTitle || source.talkTitle}</h1>
-          <div className="sub"><Presentation aria-hidden /><span>{source.talkTitle}</span><span className={`tw-sess-pill ${checklist.pill.kind}`} data-run-pill>{checklist.pill.label}</span></div>
+          <h1>{plainTalkTitle(source.eventTitle || source.talkTitle)}</h1>
+          <div className="sub"><Presentation aria-hidden /><span>{plainTalkTitle(source.talkTitle)}</span><StateBadge state={checklist.phase === 'publishing' ? 'planned' : badgeStateOfPill(checklist.pill.kind)} data-run-pill data-pill-kind={checklist.pill.kind}>{checklist.pill.label}</StateBadge></div>
         </div>
-        {onPlanLikeThis && <button type="button" className="tw-sess-btn" data-run-plan-like-this disabled={busy} onClick={onPlanLikeThis}><CopyPlus aria-hidden />Plan the next run like this</button>}
+        {onPlanLikeThis && <button type="button" className="tw-btn" data-run-plan-like-this disabled={busy} onClick={onPlanLikeThis}><CopyPlus aria-hidden />Plan the next Run like this</button>}
       </div>
       <div className="tw-run-cols">
         <div className="tw-run-main">
+          {ledger}
           <RunAnswers source={source} runPhase={phase} onPulled={onAnswersPulled} onOpenWorkFile={(workPhase) => onEffect({ kind: 'open-work-file', phase: workPhase })} />
           <RunExtrasSection source={source} busy={busy} onSaved={() => onExtrasSaved?.()} />
+          {footer}
         </div>
         <div className="tw-run-side" ref={side}>
           <section className="tw-run-sec tw-run-check" data-run-checklist>

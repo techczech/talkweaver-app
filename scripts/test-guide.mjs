@@ -57,7 +57,7 @@ try {
     const steps = firstSteps({ vaults: [example], talks: [{ vaultId: 'e', title: 'The Saturday market' }], progress: noProgress })
     assert.deepEqual(steps.map((s) => [s.id, s.done, s.result]), [['own-vault', false, null], ['first-talk', false, null], ['example-talk', false, null]])
     assert.equal(firstStepsCount(steps), '0 of 3')
-    assert.deepEqual(steps.map((s) => s.action), ['Add vault…', 'New presentation…', 'Open'])
+    assert.deepEqual(steps.map((s) => s.action), ['Add vault…', 'New talk…', 'Open'])
   })
 
   await test('first steps: a vault of one’s own ticks step 1 with its name; a talk in the example does not tick step 2', () => {
@@ -128,10 +128,12 @@ try {
     assert.ok(app.includes("'tw-guide-open'") && app.includes("'tw-guide-show-button'"))
   })
 
-  await test('the right column’s tabs: none without the Guide; Guide first with it; only the Guide with no talk', () => {
-    assert.deepEqual(rightColumnTabs({ guideUp: false, hasTalk: true }), [])
-    assert.deepEqual(rightColumnTabs({ guideUp: true, hasTalk: true }), ['guide', 'slides', 'inspector'])
+  await test('the right sidebar’s tabs (R11a): Inspector first, then Strip, Guide while up, Research, Images; only what is up with no talk', () => {
+    assert.deepEqual(rightColumnTabs({ guideUp: false, hasTalk: true }), ['inspector', 'slides', 'talk', 'research', 'images'])
+    assert.deepEqual(rightColumnTabs({ guideUp: true, hasTalk: true }), ['inspector', 'slides', 'talk', 'guide', 'research', 'images'])
+    assert.deepEqual(rightColumnTabs({ guideUp: true, hasTalk: true, shared: true, whatsNewUp: true }), ['inspector', 'slides', 'talk', 'guide', 'research', 'images', 'feedback', 'whats-new'])
     assert.deepEqual(rightColumnTabs({ guideUp: true, hasTalk: false }), ['guide'])
+    assert.deepEqual(rightColumnTabs({ guideUp: false, hasTalk: false }), [])
   })
 
   // ── render ──
@@ -170,17 +172,20 @@ const CHAPTERS_STUB = { chapters: [], learn: { version: 1, ran: [], opened: [], 
 const HOW_STUB = { learn: CHAPTERS_STUB.learn, openId: null, onOpen: noop, onBack: noop, onTry: noop }
 const FEATURES_STUB = { learn: CHAPTERS_STUB.learn, onRead: noop, readConnections: async () => [], onAction: noop }
 
-  await test('tab row: with the Guide it reads Guide, Slides, Inspector with a close mark on the Guide; without it nothing is drawn', () => {
+  await test('tab row: always drawn with a talk (Inspector, Strip, Research, Images; Guide too while up, with a close mark on it only); with no talk and nothing up nothing is drawn', () => {
     const base = { hasTalk: true, active: 'guide', onSelect: noop, onCloseGuide: noop }
     const html = m.tabs({ ...base, guideUp: true })
-    assert.deepEqual([...html.matchAll(/data-rc-tab="(\w+)"/g)].map((x) => x[1]), ['guide', 'slides', 'inspector'])
-    assert.equal(text(html).replace(/\s+/g, ' ').trim(), 'Guide Slides Inspector')
+    assert.deepEqual([...html.matchAll(/data-rc-tab="([\w-]+)"/g)].map((x) => x[1]), ['inspector', 'slides', 'talk', 'guide', 'research', 'images'])
+    assert.equal(text(html).replace(/\s+/g, ' ').trim(), 'Inspector Strip Talk Guide Research Images')
     assert.ok(html.includes('data-guide-close') && html.includes('aria-label="Close the Guide"'))
     assert.equal((html.match(/data-guide-close/g) ?? []).length, 1, 'one close mark, on the Guide only')
-    assert.ok(/data-rc-tab="guide"/.test(html) && /rc-tab rc-tab--on" data-rc-tab="guide"/.test(html), 'the Guide is the one showing')
+    assert.ok(/rc-tab rc-tab--on" data-rc-tab="guide"/.test(html), 'the Guide is the one showing')
     assert.ok(/rc-tab rc-tab--on" data-rc-tab="inspector"/.test(m.tabs({ ...base, guideUp: true, active: 'inspector' })))
-    assert.equal(m.tabs({ ...base, guideUp: false }), '')
-    assert.deepEqual([...m.tabs({ ...base, guideUp: true, hasTalk: false }).matchAll(/data-rc-tab="(\w+)"/g)].map((x) => x[1]), ['guide'])
+    const without = m.tabs({ ...base, guideUp: false, active: 'inspector' })
+    assert.deepEqual([...without.matchAll(/data-rc-tab="([\w-]+)"/g)].map((x) => x[1]), ['inspector', 'slides', 'talk', 'research', 'images'])
+    assert.ok(!without.includes('data-guide-close'))
+    assert.deepEqual([...m.tabs({ ...base, guideUp: true, hasTalk: false }).matchAll(/data-rc-tab="([\w-]+)"/g)].map((x) => x[1]), ['guide'])
+    assert.equal(m.tabs({ ...base, guideUp: false, hasTalk: false }), '')
   })
 
   await test('sidebar foot: Add vault… with the Guide button on, open, and off', () => {
@@ -203,7 +208,7 @@ const FEATURES_STUB = { learn: CHAPTERS_STUB.learn, onRead: noop, readConnection
     for (const s of TEXT.segments) assert.ok(t.includes(s), s)
     assert.ok(t.includes('First steps') && t.includes('0 of 3'))
     assert.equal((html.match(/data-guide-step-action/g) ?? []).length, 3)
-    for (const a of ['Add vault…', 'New presentation…', 'Open']) assert.ok(t.includes(a), a)
+    for (const a of ['Add vault…', 'New talk…', 'Open']) assert.ok(t.includes(a), a)
     assert.ok(html.includes('data-guide-slot="chapters"'), 'ticket 08’s slot')
     assert.equal((html.match(/guide-segment--on/g) ?? []).length, 1, 'one segment showing')
     assert.ok(/guide-segment guide-segment--on" data-guide-segment="commands"/.test(html), 'Learn the commands first')

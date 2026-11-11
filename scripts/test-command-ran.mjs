@@ -182,7 +182,7 @@ await test('the presenter template reports through one function, from its four r
 
 await test('the routes outside the main window report through the same preload: Pathways, notes, Importer, Studio, the Talks panel', () => {
   const need = {
-    'src/renderer/src/components/Pathways.tsx': ['pathway.new', 'pathway.rename', 'pathway.delete', 'pathway.drop-missing', 'pathway.move-item', 'pathway.present', 'pathway.reorder', 'pathway.previews', 'pathway.help', 'pathway.grid', 'pathway.list', 'pathway.matrix'],
+    'src/renderer/src/components/PathwaysView.tsx': ['add-to-pathway', 'present-pathway', 'pathway.move-item'],
     'src/renderer/src/components/TalkText.tsx': ['talktext.notes', 'talktext.script', 'talktext.rewrite', 'talktext.copy', 'talktext.help'],
     'src/renderer/src/components/Importer.tsx': ['importer.flagged', 'importer.search', 'importer.apply', 'importer.reset', 'importer.views', 'importer.help'],
     'src/renderer/src/components/Studio.tsx': ['studio.sidebar-toggle'],
@@ -194,8 +194,8 @@ await test('the routes outside the main window report through the same preload: 
     assert.ok(importsNotifier(source), `${file} imports the notifier`)
     for (const id of ids) assert.ok(source.includes(`'${id}'`), `${file} reports ${id}`)
   }
-  const pathways = read('src/renderer/src/components/Pathways.tsx')
-  assert.ok(pathways.includes('outlinePath: context?.outlinePath'), 'the Pathways window says which talk it is in (decision 12)')
+  const pathways = read('src/renderer/src/components/PathwaysView.tsx')
+  assert.ok(pathways.includes('talk.outlinePath'), 'the docked Pathways view uses its owning talk')
   const actions = read('src/renderer/src/components/talklist/actions.ts')
   assert.ok(actions.includes("commandRan('browser.delete-talk', { outlinePath: talk.outlinePath })"), 'Move talk to Bin reports the talk’s path, once it has moved')
 })

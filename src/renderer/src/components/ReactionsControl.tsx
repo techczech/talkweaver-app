@@ -3,8 +3,9 @@
 // the group's ordinary commit path; the Trigger line stays the truth. The model is
 // reactionsControlModel.ts; this file only draws it and remembers a mode opened but not yet written.
 import React, { useState } from 'react'
+import InfoTip from './InfoTip'
 import {
-  Bookmark, Check, Frown, Info, Lightbulb, MessageCircleMore, Snail, ThumbsDown, ThumbsUp, X, type LucideIcon
+  Bookmark, Check, Frown, Lightbulb, MessageCircleMore, Snail, ThumbsDown, ThumbsUp, X, type LucideIcon
 } from 'lucide-react'
 import type { OptionGroup } from '../data/layouts'
 import {
@@ -82,7 +83,7 @@ export default function ReactionsControl({ group, selectedToken, onSelect }: {
               return entry ? <span key={id}><ReactionIcon name={entry.icon} />{entry.short}</span> : null
             })}
           </div>
-          <p className="tw-reactions-note"><Info aria-hidden />Every slide offers these unless it says otherwise. The phone shows them under the slide with Ask.</p>
+          <InfoTip text="Every slide offers these unless it says otherwise. The phone shows them under the slide with Ask." />
         </>
       )}
 
@@ -109,7 +110,7 @@ export default function ReactionsControl({ group, selectedToken, onSelect }: {
               )
             })}
           </div>
-          <p className="tw-reactions-note"><Info aria-hidden />Up to four, in the order chosen. Bookmark stays only if you choose it.</p>
+          <InfoTip text="Up to four, in the order chosen. Bookmark stays only if you choose it." />
         </>
       )}
 
@@ -129,12 +130,12 @@ export default function ReactionsControl({ group, selectedToken, onSelect }: {
             }}
           />
           {problem && <p className="tw-reactions-problem" role="alert">{problem}</p>}
-          <p className="tw-reactions-note"><Info aria-hidden />Up to four, separated by commas. Shown in words on the phone, with no icon.</p>
+          <InfoTip text="Up to four, separated by commas. Shown in words on the phone, with no icon." />
         </>
       )}
 
       {view.mode === 'off' && (
-        <p className="tw-reactions-note"><Info aria-hidden />No reactions on this slide. The phone still shows Ask, and questions still arrive.</p>
+        <InfoTip text="No reactions on this slide. The phone still shows Ask, and questions still arrive." />
       )}
 
       {view.token && (

@@ -19,12 +19,17 @@
 .pane--tabs { background: var(--panel); }
 .pane-tabs-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .workspace-panes--strip .pane--tabs { flex: 1; }
-.rc-tabs { flex: 0 0 auto; display: flex; gap: 4px; padding: 8px 10px 6px; border-bottom: 1px solid var(--line); background: var(--panel); border-left: 1px solid var(--line); }
-.rc-tab { flex: 1 1 0; min-width: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius); position: relative; }
-.rc-tab--on { background: var(--active); }
-.rc-tab-btn { flex: 1 1 auto; min-width: 0; padding: 6px 8px; border: 0; background: none; font: 600 12px var(--font-ui); color: var(--muted); cursor: pointer; border-radius: var(--radius); }
+.rc-tabs { flex: 0 0 auto; display: flex; gap: 2px; padding: 6px 8px 5px; border-bottom: 1px solid var(--line); background: var(--panel); border-left: 1px solid var(--line); container-type: inline-size; overflow: hidden; }
+.rc-tab { flex: 0 1 auto; min-width: 0; display: flex; align-items: center; justify-content: center; border-radius: var(--radius); position: relative; }
+.rc-tab--on { background: var(--active); flex-shrink: 0; }
+.rc-tab-btn { flex: 1 1 auto; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 5px 7px; border: 0; background: none; font: 600 12px var(--font-ui); color: var(--muted); cursor: pointer; border-radius: var(--radius); white-space: nowrap; }
 .rc-tab--on .rc-tab-btn { color: var(--ink); }
 .rc-tab-btn:hover { color: var(--ink); }
+/* A narrow sidebar: only the tab that is up keeps its word. */
+.rc-tab-btn svg { flex: none; }
+/* Words showing: no tab shrinks, so a row that cannot hold them all overflows and RightColumnTabs sees it (then it switches to icons). */
+.rc-tabs:not([data-compact]) .rc-tab { flex: 0 0 auto; }
+.rc-tabs[data-compact] .rc-tab:not(.rc-tab--on) .rc-tab-label { display: none; }
 .rc-tab-btn:focus-visible, .rc-tab-close:focus-visible { outline: 1.5px solid var(--oxford); outline-offset: -1px; }
 .rc-tab-close { flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-right: 6px; border: 0; border-radius: 4px; background: none; color: var(--faint); cursor: pointer; }
 .rc-tab-close:hover { background: var(--hover); color: var(--ink); }
@@ -32,8 +37,8 @@
 /* The Guide itself. */
 .pane--guide { background: var(--panel); border-left: 1px solid var(--line); overflow: hidden; }
 .guide { display: flex; flex-direction: column; min-height: 0; flex: 1 1 auto; font-family: var(--font-ui); color: var(--ink); }
-.guide-segments { flex: 0 0 auto; display: flex; gap: 2px; margin: 10px 10px 0; padding: 3px; border-radius: 8px; background: var(--hover); }
-.guide-segment { flex: 1 1 0; min-width: 0; padding: 6px 6px; border: 0; border-radius: 6px; background: none; font: 600 11.5px/1.25 var(--font-ui); color: var(--muted); cursor: pointer; }
+.guide-segments { flex: 0 0 auto; display: flex; flex-wrap: wrap; gap: 2px; margin: 10px 10px 0; padding: 3px; border-radius: 8px; background: var(--hover); }
+.guide-segment { flex: 1 1 auto; min-width: 0; white-space: nowrap; padding: 6px 8px; border: 0; border-radius: 6px; background: none; font: 600 11.5px/1.25 var(--font-ui); color: var(--muted); cursor: pointer; }
 .guide-segment--on { background: var(--panel); color: var(--oxford); box-shadow: 0 1px 2px #17202a1f; }
 .guide-segment:hover { color: var(--ink); }
 .guide-segment:focus-visible { outline: 1.5px solid var(--oxford); outline-offset: 1px; }
@@ -157,3 +162,19 @@
 .guide-online-content summary { cursor: pointer; font-weight: 600; }
 .guide-online-content .tw-online-content-body { line-height: 1.5; }
 .guide-online-content a { color: inherit; text-decoration: underline; }
+
+/* Research and Images as tabs of the right sidebar (R11a): the panels fill the tab, with no column edge of their own. */
+.pane--research { overflow: hidden; }
+.pane-tabs-body .research-panel { width: auto; max-width: none; flex: 1 1 auto; border-left: 0; min-width: 0; }
+.pane-tabs-body .image-drawer { width: auto; flex: 1 1 auto; border-left: 0; box-shadow: none; min-width: 0; }
+.pane-tabs-body .image-drawer__head { height: 36px; padding: 0 12px; box-sizing: border-box; -webkit-app-region: no-drag; }
+.pane-tabs-body .research-head { min-height: 36px; padding: 6px 10px; }
+
+/* The Talk tab (house rules R11, R11a): a talk's details and design in the right sidebar. It scrolls itself (the tab body clips). */
+/* Block, not the pane's flex column: its children (the design fields, the Advanced disclosure) keep their height and the pane scrolls, they are not squeezed into it. */
+.pane.pane--talk { display: block; flex: 1 1 auto; height: auto; min-height: 0; overflow-y: auto; overflow-x: hidden; background: var(--panel); border-left: 1px solid var(--line); }
+.talk-tab-head { padding: 12px 12px 4px; }
+.talk-tab-title { font-size: 14px; font-weight: 700; color: var(--ink); overflow-wrap: anywhere; }
+.talk-tab-sub { margin-top: 2px; font-size: 11.5px; color: var(--muted); }
+.talk-tab-advanced { margin: 6px 0 14px; border-top: 1px solid var(--line); }
+.talk-tab-advanced > summary { cursor: pointer; padding: 10px 12px; font-size: 12.5px; font-weight: 650; color: var(--ink); }

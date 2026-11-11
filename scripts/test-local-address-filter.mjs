@@ -5,7 +5,7 @@
 // `details.frame` is the frame that loads; for everything else the frame that asks; a shared worker's
 // and main's own requests carry no frame and no window; every hop of a redirect asks again).
 import assert from 'node:assert/strict'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -355,7 +355,7 @@ const sources = (dir) => readdirSync(dir).flatMap((name) => {
   return statSync(path).isDirectory() ? sources(path) : /\.(ts|mts|mjs|js)$/.test(name) ? [path] : []
 })
 
-await test('wiring: the filter is the session\'s only onBeforeRequest listener, and every window uses the default session', () => {
+await test('wiring: default and explicitly isolated windows each retain their request filter', () => {
   const index = readFileSync(join(mainDir, 'index.ts'), 'utf8')
   assert.match(index, /installLocalAddressFilter\(session\.defaultSession, \{ appLocalHosts: \[appLocalHostOf\(process\.env\['ELECTRON_RENDERER_URL'\]\)\]/)
   // Main asks for no web address through the session itself: its one net.fetch serves a file.
@@ -369,13 +369,34 @@ await test('wiring: the filter is the session\'s only onBeforeRequest listener, 
     if (path.endsWith('local-address-filter.ts')) continue
     if (path.endsWith('update-notices.ts')) continue // the one allowed partition, checked below
     if (path.endsWith('live-page-host.ts')) continue // the live page's own session, checked below
+    if (['offline-page-capture.ts', 'embed-preview-artwork.ts', 'thumbnails.ts'].some(name => path.endsWith('/' + name)) && /\bfromPartition\(/.test(code)) {
+      assert.match(text, /hardenLivePageSession\(isolated/, `${path}: deny permissions and filter remote requests`)
+      assert.match(text, /livePageWebPreferences\(isolated, false\)/, `${path}: no preload/Node, sandbox and context isolation`)
+      assert.match(text, /fromPartition\(`tw-(?:offline|embed-preview|thumbnail):/, `${path}: a memory-only isolated partition`)
+      assert.ok(!text.includes('persist:'), `${path}: never a persistent partition`)
+      if (path.endsWith('offline-page-capture.ts')) {
+        assert.match(text, /if \(source\.kind === 'local'\)\s*\{[\s\S]*isolated\.webRequest\.onBeforeRequest/, 'only local mode replaces the remote request filter')
+        assert.ok(text.includes("new URL(details.url).origin !== origin && !/^(data|blob):/.test(details.url)"), 'local mode denies every external origin and file/app schemes')
+        assert.match(text, /isolated\.protocol\.handle\('https'/, 'local bytes use the checked synthetic origin')
+        assert.match(text, /constants\.O_RDONLY \| 0x20000000/, 'local resource reads refuse links in every component')
+      }
+      if (path.endsWith('thumbnails.ts')) {
+        assert.match(text, /callback\(\{ cancel: !\/\^\(data\|blob\):\//, 'self-contained thumbnails deny all external requests before DNS')
+        assert.match(text, /containCaptureSession\(isolated, \{ denyAll: true \}\)/, 'non-webRequest transports also use the deny-all proxy')
+        assert.match(text, /await containCaptureContents\(win.webContents\)/, 'the all-target gate runs before the deck')
+        assert.match(text, /details\.resourceType === 'mainFrame' && details\.url\.startsWith\('file:'\)/, 'only the main deck may load a file')
+      }
+      continue
+    }
     // A live web page's view (live-page-host.ts): its own in-memory session, hardened there with the
     // same local-address rule, every request treated as embedded (scripts/test-live-page.mjs).
     const withoutLivePage = path.endsWith('/index.ts') ? code.replace(/sessionFor: \(partition\) => session\.fromPartition\(partition\)/, '') : code
     assert.ok(!/\bfromPartition\(|\bpartition\s*:/.test(withoutLivePage), `${path} gives a window another session, which this filter does not cover`)
   }
-  // No onHeadersReceived: no response header is rewritten for any frame (2026-10-27 review; e2e/check-remote-page-framing.mjs).
-  assert.deepEqual(registrations.sort(), ['index.ts:onBeforeSendHeaders', 'live-page-host.ts:onBeforeRequest', 'local-address-filter.ts:onBeforeRequest'])
+  // Only capture-network adds restrictive capture headers. Existing CSP/framing headers are retained, tested below; the live presenter host never uses it.
+  const expected = ['capture-network.ts:onHeadersReceived', 'index.ts:onBeforeSendHeaders', 'live-page-host.ts:onBeforeRequest', 'local-address-filter.ts:onBeforeRequest']
+  for (const name of ['offline-page-capture.ts', 'thumbnails.ts']) if (existsSync(join(mainDir, name)) && /webRequest\s*\.\s*onBeforeRequest\(/.test(readFileSync(join(mainDir, name), 'utf8'))) expected.push(`${name}:onBeforeRequest`)
+  assert.deepEqual(registrations.sort(), expected.sort())
   const host = readFileSync(join(mainDir, 'live-page-host.ts'), 'utf8')
   assert.match(host, /localAddressRequestListener\(\{ resolveHost: opts\.resolveHost, log, everyRequestIsEmbedded: true \}\)/, 'the live-page session uses the same rule, every request embedded')
   assert.match(host, /partition = `tw-live-page:\$\{role\}:\$\{deps\.newId\(\)\}`/, 'in-memory partition (no persist:)')

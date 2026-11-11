@@ -51,7 +51,8 @@ const reloadButton = el('button', { type: 'button', className: 'ce-quiet', textC
 const closeButton = el('button', { type: 'button', className: 'ce-quiet', textContent: 'Close' })
 const status = el('p', { className: 'ce-status', role: 'status' })
 const hint = el('p', { className: 'ce-hint' })
-const live = el('div', { className: 'ce-live' }, el('p', { className: 'ce-live-wait', textContent: 'Opening the page…' }))
+const viewport = el('div', { className: 'ce-viewport' }, el('p', { className: 'ce-live-wait', textContent: 'Opening the page…' }))
+const live = el('div', { className: 'ce-live' }, viewport)
 const listHeading = el('h2', { className: 'ce-list-heading' })
 const list = el('ol', { className: 'ce-list' })
 const empty = el('p', { className: 'ce-empty', textContent: 'No saved views on this slide yet. Scroll the page to what you want to keep and press Capture.' })
@@ -63,9 +64,21 @@ root.append(
   el('main', { className: 'ce-body' }, live, el('aside', { className: 'ce-side' }, listHeading, empty, list))
 )
 
+// The deck canvas is 1280 × 720. Main's presenterZoom uses that same layout width
+// without an audience window; the preview rectangle must keep its height in proportion too.
+const fitViewport = (): void => {
+  const scale = Math.max(0, Math.min(1, live.clientWidth / 1280, live.clientHeight / 720))
+  viewport.style.width = `${1280 * scale}px`
+  viewport.style.height = `${720 * scale}px`
+}
+const viewportObserver = new ResizeObserver(fitViewport)
+viewportObserver.observe(live)
+window.addEventListener('beforeunload', () => viewportObserver.disconnect(), { once: true })
+fitViewport()
+
 const HINT = {
-  view: 'Visible view keeps what the page shows in this window now.',
-  page: 'Entire page keeps the whole page as far as it has loaded, from the top. Parts that load only when scrolled to may be blank; pages taller than 16,384 pixels are cut there.'
+  view: 'Visible view keeps the audience slide proportions. Resizing this window changes the preview scale.',
+  page: 'Entire page keeps the same page width and includes the content below the visible view, from the top. Parts that load only when scrolled to may be blank; pages taller than 16,384 pixels are cut there.'
 } as const
 
 function renderControls(): void {
@@ -90,7 +103,7 @@ function renderList(): void {
     if (view.fresh) caption.append(el('span', { className: 'ce-new', textContent: 'New' }))
     const body = view.src
       ? el('div', { className: 'ce-picture' }, el('img', { src: view.src, alt: view.alt || 'Saved view' }))
-      : el('p', { className: 'ce-no-picture', textContent: 'Not shown here (the picture is missing or the list is long). It still shows in the presentation if the picture is in the talk.' })
+      : el('p', { className: 'ce-no-picture', textContent: 'Not shown here (the picture is missing or the list is long). It still shows in the talk if the picture is in the talk.' })
     return el('li', { className: 'ce-item' }, caption, body)
   }))
 }
@@ -113,7 +126,7 @@ w.__twCaptureEmbedInit = (json) => {
 
 w.__twLivePageSlot = () => {
   if (!init) return null
-  const r = live.getBoundingClientRect()
+  const r = viewport.getBoundingClientRect()
   return {
     v: 1, slideId: init.slideId, url: init.pageUrl,
     rect: { x: r.left, y: r.top, w: r.width, h: r.height },

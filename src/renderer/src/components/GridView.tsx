@@ -32,6 +32,8 @@ interface Props {
   compiledSlides: ProjectionRow[] | null
   triggerFindings: readonly LayoutDoctorFinding[]
   thumbnails?: Record<string, string> | null
+  pathwayIds?: readonly string[]
+  onAddToPathway?: (ids: string[]) => void
   previewsPending?: boolean
   activeIndex: number
   onSelectSlide: (index: number) => void
@@ -280,6 +282,7 @@ interface GridCellProps {
   isDropTarget: boolean
   isDragging: boolean
   isSelected: boolean
+  pathwayNumber: number
   /** Searching and this card does not match: dimmed in place. */
   dim: boolean
   isHitNow: boolean
@@ -312,6 +315,7 @@ const GridCell = React.memo(function GridCell({
   isDropTarget,
   isDragging,
   isSelected,
+  pathwayNumber,
   dim,
   isHitNow,
   marks,
@@ -421,6 +425,7 @@ const GridCell = React.memo(function GridCell({
             onChange={() => onTick(globalIndex)}
           />
         )}
+        {pathwayNumber > 0 && <span className="grid-pathway-badge" data-pathway-badge>{pathwayNumber}</span>}
         <CellThumb row={row} thumbnailUrl={thumbnailUrl} previewsPending={previewsPending} triggerFindings={triggerFindings} />
         <div
           style={{
@@ -528,6 +533,8 @@ export default function GridView({
   compiledSlides,
   triggerFindings,
   thumbnails,
+  pathwayIds,
+  onAddToPathway,
   previewsPending = false,
   activeIndex,
   onSelectSlide,
@@ -722,9 +729,11 @@ export default function GridView({
       if (!(e.metaKey || e.ctrlKey) || e.shiftKey || e.altKey) return
       if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
       const ae = document.activeElement as HTMLElement | null
+      if (ae?.closest('[data-pathway-dock], .pathway-dialog, .tw-card')) return
       if (ae && (ae.closest('.cm-editor') || ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA')) {
         return
       }
+      if (!outlineSelectionAllowed()) { e.preventDefault(); e.stopPropagation(); return }
       if (!onStepSlide || !slideRefOf || !compiledSlides) return
       const row = compiledSlides[activeIndex]
       if (!row || !isOutlineBlock(row)) return
@@ -910,11 +919,11 @@ export default function GridView({
   const inTextField = (target: EventTarget): boolean => target instanceof HTMLElement && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
   function handleCutCopy(e: React.ClipboardEvent, cut: boolean): void {
     if (inTextField(e.target) || !slideOps || !compiledSlides) return
-    if (sel.count >= 2 && onCutSlides && onCopySlides) {
+    if (sel.count > 0 && onCutSlides && onCopySlides) {
       // Several selected: one cut or copy of all, talk order (the host puts a cut on the clipboard itself).
       e.preventDefault()
       if (cut) void cutSelected('cut')
-      else { const clip = onCopySlides(selectedRefs()); if (clip != null) e.clipboardData.setData('text/plain', clip) }
+      else { const refs = selectedRefs(); if (refs.length) { const clip = onCopySlides(refs); if (clip != null) e.clipboardData.setData('text/plain', clip) } }
       return
     }
     const row = compiledSlides[activeIndex]
@@ -926,6 +935,7 @@ export default function GridView({
   }
   /** Cut, copy or delete ONE card through the host's checked handlers (cutBlocks / copyBlocks); the clip for a copy. */
   function cardCutCopy(index: number, mode: 'cut' | 'copy' | 'delete'): string | null {
+    if (!outlineSelectionAllowed()) return null
     const ref = slideRefOfRef.current?.(index) ?? null
     const cutFn = onCutSlidesRef.current
     const copyFn = onCopySlidesRef.current
@@ -952,11 +962,12 @@ export default function GridView({
     const cardIndex = (): number | null => { const f = menuForRef.current; return f && 'index' in f ? f.index : null }
     return {
       ...slideOps,
-      cut: (line) => { const i = cardIndex(); return i == null ? slideOps.cut(line) : cardCutCopy(i, 'cut') },
-      copy: (line) => { const i = cardIndex(); return i == null ? slideOps.copy(line) : cardCutCopy(i, 'copy') },
-      delete: (line) => { const i = cardIndex(); if (i == null) slideOps.delete(line); else cardCutCopy(i, 'delete') },
+      cut: (line) => { if (!outlineSelectionAllowed()) return null; const i = cardIndex(); return i == null ? slideOps.cut(line) : cardCutCopy(i, 'cut') },
+      copy: (line) => { if (!outlineSelectionAllowed()) return null; const i = cardIndex(); return i == null ? slideOps.copy(line) : cardCutCopy(i, 'copy') },
+      delete: (line) => { if (!outlineSelectionAllowed()) return; const i = cardIndex(); if (i == null) slideOps.delete(line); else cardCutCopy(i, 'delete') },
       // Move slide to…: the card's heading goes with the move, so a stale card is refused (moveBlocks' ref check).
       moveTo: (line, target) => {
+        if (!outlineSelectionAllowed()) return null
         const i = cardIndex()
         if (i == null) return slideOps.moveTo(line, target)
         const ref = slideRefOfRef.current?.(i) ?? null
@@ -977,10 +988,21 @@ export default function GridView({
   // The selection of several slides (slide handling 1b): ticks, ⇧-click range, ⌘-click toggle, Select section.
   // Keys are the slides' stable identity (useSlideSelection.slideKeys), so it survives a move.
   const slideKeyList = useMemo(
-    () => (compiledSlides ? slideKeys(compiledSlides, (i) => isOutlineBlock(compiledSlides[i])) : []),
-    [compiledSlides]
+    () => (compiledSlides ? slideKeys(compiledSlides, (i) => !!onAddToPathway || isOutlineBlock(compiledSlides[i])) : []),
+    [compiledSlides, onAddToPathway]
   )
   const sel = useSlideSelection(slideKeyList)
+  const pathwayGridRef = useRef({ onAddToPathway, compiledSlides })
+  pathwayGridRef.current = { onAddToPathway, compiledSlides }
+  const addSelectedToPathway = useCallback((): boolean => {
+    const { onAddToPathway: add, compiledSlides: rows } = pathwayGridRef.current
+    if (!add || !rows) return false
+    const indices = live.current.sel.count ? live.current.sel.indices : [live.current.activeIndex]
+    const ids = indices.map(i => rows[i]?.slide_id).filter((id): id is string => !!id)
+    if (!ids.length) return false
+    add(ids)
+    return true
+  }, [])
   const [moveOpen, setMoveOpen] = useState(false)
   const [dragMulti, setDragMulti] = useState(false)
   const dragRefsRef = useRef<SlideRef[]>([])
@@ -1001,9 +1023,16 @@ export default function GridView({
     const from = dragFromRef.current
     return from === null ? index : sectionDropBoundary(dropRowsRef.current, from, index)?.cell ?? index
   }
-  const selectedRefs = (): SlideRef[] =>
-    live.current.sel.indices.map((i) => slideRefOfRef.current?.(i) ?? null).filter((r): r is SlideRef => r !== null)
-  useEffect(() => { if (sel.count < 2) setMoveOpen(false) }, [sel.count])
+  // Generated cards may join a pathway, but an outline action must cover the WHOLE selection.
+  const selectedRefs = (): SlideRef[] => {
+    const refs = live.current.sel.indices.map(i => slideRefOfRef.current?.(i) ?? null)
+    return refs.every((ref): ref is SlideRef => ref !== null) ? refs : []
+  }
+  function outlineSelectionAllowed(): boolean {
+    return live.current.sel.count === 0 || selectedRefs().length === live.current.sel.count
+  }
+  const outlineEditable = sel.count > 0 && outlineSelectionAllowed()
+  useEffect(() => { if (sel.count < 2 || !outlineEditable) setMoveOpen(false) }, [sel.count, outlineEditable])
 
   const onSelect = useCallback(
     (index: number, e?: React.MouseEvent) => {
@@ -1039,14 +1068,18 @@ export default function GridView({
     if (await onCutSlidesRef.current(refs, mode)) live.current.sel.clear()
   }
   async function asideSelected(refs = selectedRefs()): Promise<void> {
+    if (!outlineSelectionAllowed()) return
     if (refs.length > 0 && await onSetAsideRef.current?.(refs)) live.current.sel.clear()
   }
   function copySelected(): void {
-    const clip = onCopySlidesRef.current?.(selectedRefs()) ?? null
+    const refs = selectedRefs()
+    if (!refs.length) return
+    const clip = onCopySlidesRef.current?.(refs) ?? null
     if (clip != null) writeSlideClipboard(clip, false)
   }
   useEffect(() => registerSlideSelection({
     count: () => live.current.sel.count,
+    canEditOutline: outlineSelectionAllowed,
     selectLines: lines => {
       const rows = live.current.groups.flatMap(group => group.rows)
       const indices = lines.map(line => rows.find(row => lineOfSlideRef.current?.(row.globalIndex) === line)?.globalIndex)
@@ -1062,9 +1095,10 @@ export default function GridView({
       return true
     },
     clear: () => live.current.sel.clear(),
-    openMove: () => { if (live.current.sel.count < 2) return false; setMoveOpen(true); return true },
+    addToPathway: addSelectedToPathway,
+    openMove: () => { if (live.current.sel.count < 2 || !selectedRefs().length) return false; setMoveOpen(true); return true },
     setAside: () => { const refs = live.current.sel.count > 0 ? selectedRefs() : [slideRefOfRef.current?.(live.current.activeIndex)].filter((r): r is SlideRef => r != null); if (!refs.length || !onSetAsideRef.current) return false; void asideSelected(refs); return true },
-    remove: () => { if (live.current.sel.count < 2) return false; void cutSelected('delete'); return true }
+    remove: () => { if (!selectedRefs().length) return false; void cutSelected('delete'); return true }
   }), []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const onDragStart = useCallback(
@@ -1077,15 +1111,18 @@ export default function GridView({
       // A selected card drags every selected slide (talk order); an unselected card drags just itself.
       const L = live.current
       const multi = dragRefRef.current !== null && L.sel.count >= 2 && L.sel.isSelected(index)
-      dragRefsRef.current = multi ? selectedRefs() : dragRefRef.current ? [dragRefRef.current] : []
+      dragRefsRef.current = !outlineSelectionAllowed() ? [] : multi ? selectedRefs() : dragRefRef.current ? [dragRefRef.current] : []
       setDragMulti(multi && dragRefsRef.current.length >= 2)
       if (multi && dragRefsRef.current.length >= 2) setStackDragImage(e, dragRefsRef.current.length)
       setDragFrom(index)
       setDropTarget(index)
       if (e.dataTransfer) {
-        e.dataTransfer.effectAllowed = 'move'
+        e.dataTransfer.effectAllowed = pathwayGridRef.current.onAddToPathway ? 'copyMove' : 'move'
         try {
           e.dataTransfer.setData('text/plain', String(index))
+          const rows = pathwayGridRef.current.compiledSlides ?? []
+          const picked = L.sel.count > 0 && L.sel.isSelected(index) ? L.sel.indices : [index]
+          e.dataTransfer.setData('application/x-tw-slides', JSON.stringify({ outlinePath: talk.outlinePath, slideIds: picked.map(i => rows[i]?.slide_id).filter(Boolean) }))
         } catch {
           /* Firefox quirk: ignore */
         }
@@ -1103,7 +1140,7 @@ export default function GridView({
         })
       }
     },
-    [dropTargetAt]
+    [dropTargetAt, talk.outlinePath]
   )
 
   const onDragEnter = useCallback((index: number) => {
@@ -1411,13 +1448,14 @@ export default function GridView({
                     isDropTarget={dropTarget === globalIndex && (scratchDragging || (dragFrom !== null && dragFrom !== globalIndex))}
                     isDragging={dragFrom === globalIndex || (dragMulti && dragFrom !== null && sel.isSelected(globalIndex))}
                     isSelected={sel.isSelected(globalIndex)}
+                    pathwayNumber={pathwayIds ? pathwayIds.indexOf(row.slide_id) + 1 : 0}
                     dim={searching && !run.isHit.has(globalIndex)}
                     isHitNow={searching && hitIndex === globalIndex}
                     marks={searching && titleScope ? run.terms : null}
                     snippet={run.snippets.get(globalIndex) ?? null}
-                    cellDraggable={canReorder && blockIndex !== null}
+                    cellDraggable={!!onAddToPathway || (canReorder && blockIndex !== null)}
                     onSelect={onSelect}
-                    onTick={canReorder && blockIndex !== null ? onTick : undefined}
+                    onTick={onAddToPathway || (canReorder && blockIndex !== null) ? onTick : undefined}
                     onEdit={onEdit ? stableOnEdit : undefined}
                     onMenu={onExplain || slideOps ? stableOnMenu : undefined}
                     onDragStart={onDragStart}
@@ -1449,12 +1487,14 @@ export default function GridView({
       {canReorder && onCutSlides && onCopySlides && (
         <BatchBar
           count={sel.count}
+          outlineEditable={outlineEditable}
           rows={menuRows}
           selectedLines={selectedLines()}
           moveOpen={moveOpen}
           onMoveOpenChange={setMoveOpen}
           onClear={() => sel.clear()}
           onMove={(place) => { const refs = selectedRefs(); if (refs.length > 0) { explicitRevealRef.current = true; onMoveSlidesRef.current?.(refs, place) } }}
+          onAddToPathway={onAddToPathway ? () => { addSelectedToPathway() } : undefined}
           onCut={() => { void cutSelected('cut') }}
           onSetAside={onSetAsideSlides ? () => { void asideSelected() } : undefined}
           onHeight={setBarHeight}

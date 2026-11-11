@@ -8,9 +8,12 @@
  * and every card stayed schematic until the app was relaunched — with the PNGs sitting on disk
  * under matching keys.
  *
- * So: an empty result is "not now", never "never". It costs no attempt and the talk comes back
+ * For the default Browser policy, an empty result is "not now", never "never". It costs no attempt and the talk comes back
  * after a delay, as often as it takes, while the Browser stays open. The two-attempt cap survives
  * only for a talk whose outline could not be READ, which is a real fault and will not fix itself.
+ * Portable Scratchpad sources opt into a separate per-source policy in this same queue: every
+ * run consumes an attempt, failures retry after its delay, and a later missing image can use
+ * the remaining attempt even after an earlier successful run.
  *
  * Kept out of the component so the rule can be tested without a DOM.
  */
@@ -44,14 +47,18 @@ export type ThumbNextStep =
   | { kind: 'wait'; ms: number }
   | { kind: 'idle' }
 
+/** Optional bounded policy for portable Scratchpad sources; Browser keeps the default policy. */
+export interface ThumbSourcePolicy { attemptsMax: number; deferDelayMs: number }
+
 export interface ThumbRegenQueue {
-  /** Queue a talk whose print 404'd. Returns false when it is already queued, running or done. */
-  note(slug: string, outlinePath: string): boolean
+  /** Queue a missing print. Coalesces queued/running work; completed bounded sources may use a remaining attempt. */
+  note(slug: string, outlinePath: string, policy?: ThumbSourcePolicy): boolean
   /** Take the next talk that is ready to run, or say how long to wait. */
   next(now: number): ThumbNextStep
   /** Record what a run returned and decide what becomes of the talk. */
   settle(slug: string, outcome: ThumbRunOutcome, now: number): ThumbSettleResult
   /** Forget everything — a fresh opening of the Browser looks at every talk again. */
+  forget(slug: string): void
   reset(): void
   /** Diagnostics for tests: what the queue is holding. */
   stats(): { queued: number; running: string | null; done: number; abandoned: number }
@@ -65,16 +72,26 @@ export function createThumbRegenQueue(options: { deferDelayMs?: number; readAtte
   const paths = new Map<string, string>()
   const readyAt = new Map<string, number>()
   const readFailures = new Map<string, number>()
+  const policies = new Map<string, ThumbSourcePolicy>()
+  const attempts = new Map<string, number>()
   const done = new Set<string>()
   const abandoned = new Set<string>()
   let running: string | null = null
 
   return {
-    note(slug, outlinePath) {
+    forget(slug) {
+      if (running === slug || queue.has(slug)) return
+      done.delete(slug); abandoned.delete(slug); readFailures.delete(slug); readyAt.delete(slug); policies.delete(slug); attempts.delete(slug)
+    },
+    note(slug, outlinePath, policy) {
       if (!slug || !outlinePath) return false
       // One in-flight request per talk, and one entry in the queue: a card that 404s on every
-      // scroll must not be able to queue the same talk twice.
-      if (running === slug || queue.has(slug) || done.has(slug) || abandoned.has(slug)) return false
+      // scroll must not be able to queue the same talk twice concurrently.
+      const heldPolicy = policies.get(slug) ?? policy
+      if (running === slug || queue.has(slug) || abandoned.has(slug)) return false
+      if (done.has(slug) && (!heldPolicy || (attempts.get(slug) ?? 0) >= heldPolicy.attemptsMax)) return false
+      if (heldPolicy) policies.set(slug, heldPolicy)
+      done.delete(slug)
       paths.set(slug, outlinePath)
       queue.set(slug, outlinePath)
       return true
@@ -88,6 +105,7 @@ export function createThumbRegenQueue(options: { deferDelayMs?: number; readAtte
           queue.delete(slug)
           readyAt.delete(slug)
           running = slug
+          if (policies.has(slug)) attempts.set(slug, (attempts.get(slug) ?? 0) + 1)
           return { kind: 'run', slug, outlinePath }
         }
         soonest = Math.min(soonest, ready)
@@ -101,6 +119,16 @@ export function createThumbRegenQueue(options: { deferDelayMs?: number; readAtte
         done.add(slug)
         readFailures.delete(slug)
         return { bumpNonce: true, deferredMs: null, abandoned: false }
+      }
+      const policy = policies.get(slug)
+      if (policy) {
+        if ((attempts.get(slug) ?? 0) >= policy.attemptsMax) {
+          abandoned.add(slug)
+          return { bumpNonce: false, deferredMs: null, abandoned: true }
+        }
+        const outlinePath = paths.get(slug)
+        if (outlinePath) { queue.set(slug, outlinePath); readyAt.set(slug, now + policy.deferDelayMs) }
+        return { bumpNonce: false, deferredMs: policy.deferDelayMs, abandoned: false }
       }
       if (rendered === 0) {
         // "Not now." No attempt is consumed and there is no cap: main deferred this pass because
@@ -128,6 +156,8 @@ export function createThumbRegenQueue(options: { deferDelayMs?: number; readAtte
       paths.clear()
       readyAt.clear()
       readFailures.clear()
+      policies.clear()
+      attempts.clear()
       done.clear()
       abandoned.clear()
       running = null

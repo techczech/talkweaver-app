@@ -1,4 +1,5 @@
 import { galleryIdentity, type GalleryTalk } from '../../../../shared/vault-gallery'
+import { plainTalkTitle } from '../../../../shared/plain-title'
 import type { InventoryEntry, InventoryResult } from '../../../../shared/vault-gallery-storage'
 import { browseRows, folderRole, inspectOnlyPath, knownTalkCount, leafName, parentOf, type BrowseScope } from '../../../../shared/vault-gallery-browse'
 
@@ -13,7 +14,7 @@ export const listRank = (item: GalleryItem): number => item.kind === 'folder' ? 
 export const folderKey = (path: string) => JSON.stringify(['folder', path])
 export const entryKey = (path: string) => JSON.stringify(['entry', path])
 export const UI = {
-  returnToTalk: 'Return to talk', allVaults: 'All vaults', allTalks: 'All talks', searchVault: 'Search this vault', searchFolder: 'Search this folder', searchVaults: 'Search vaults',
+  allVaults: 'All vaults', allTalks: 'All talks', searchVault: 'Search this vault', searchFolder: 'Search this folder', searchVaults: 'Search vaults',
   clearSearch: 'Clear search', newTalk: 'New talk', newFolder: 'New folder', openTalk: 'Open talk', openFolder: 'Open folder', openVault: 'Open vault', handouts: 'Handouts',
   previewTitle: 'Preview title slide', rename: 'Rename', duplicate: 'Duplicate', move: 'Move', bin: 'Move to Bin', more: 'More', details: 'Details', folders: 'Folders',
   list: 'List', gallery: 'Gallery', vaultSettings: 'Vault settings', closeVault: 'Close vault', addVault: 'Add or join vault', showSystem: 'Show assets and system folders',
@@ -50,6 +51,6 @@ export function buildItems(i: { talks: GalleryTalk[]; folders: string[]; scope: 
   if (!base.flat && showSystem) for (const f of i.folders) if (parentOf(f) === folder && inspectOnlyPath(f) && !entries.has(f)) entries.set(f, { relativePath: f, kind: folderRole(f) as InventoryEntry['kind'], logical: null, allocated: null })
   const visible = base.flat || showSystem
   const entryItems: GalleryItem[] = visible ? [...entries.values()].map((e): GalleryItem => ({ kind: 'entry', key: entryKey(e.relativePath), name: leafName(e.relativePath), path: e.relativePath, entry: e })) : []
-  const talkItems = base.talks.map((t): GalleryItem => ({ kind: 'talk', key: galleryIdentity(t), name: t.title, talk: t }))
+  const talkItems = base.talks.map((t): GalleryItem => ({ kind: 'talk', key: galleryIdentity(t), name: plainTalkTitle(t.title), talk: t }))
   return { items: [...folderItems, ...talkItems, ...entryItems], flat: base.flat }
 }

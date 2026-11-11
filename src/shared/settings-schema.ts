@@ -80,7 +80,7 @@ export const schema = defineSchema({
     // Presenting
     { key: 'presenting.warnAt', label: 'Clock turns amber', section: 'presenting', group: 'Presenter clock', type: 'number', default: 5, min: 1, max: 600, unit: 'min before the end', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'A talk’s own warn-at in its details wins over this.' },
     { key: 'presenting.urgentAt', label: 'Clock turns dark amber', section: 'presenting', group: 'Presenter clock', type: 'number', default: 1, min: 1, max: 600, unit: 'min before the end', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'A talk’s own urgent-at in its details wins over this.' },
-    { key: 'presenting.backup', label: 'Back up presentations', section: 'presenting', group: 'Present from anywhere', type: 'toggle', default: false, help: 'Writes each talk as one presenter file to a folder you keep in OneDrive or Dropbox, so a forgotten laptop never stops a talk.' },
+    { key: 'presenting.backup', label: 'Back up talks', section: 'presenting', group: 'Present from anywhere', type: 'toggle', default: false, help: 'Writes each talk as one presenter file to a folder you keep in OneDrive or Dropbox, so a forgotten laptop never stops a talk.' },
     { key: 'presenting.backupFolder', label: 'Backup folder', section: 'presenting', group: 'Present from anywhere', type: 'path', default: '', help: 'Put it inside a synced folder. Empty: not chosen yet.' },
     { key: 'presenting.backupEvery', label: 'Back up every', section: 'presenting', group: 'Present from anywhere', type: 'number', default: 15, min: 5, max: 1440, unit: 'min', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'How often changed talks are written again.' },
     // Publishing
@@ -90,6 +90,7 @@ export const schema = defineSchema({
     { key: 'publishing.branch', label: 'Production branch', section: 'publishing', group: 'Advanced', type: 'text', default: 'main', validate: (v) => (typeof v === 'string' && /^[A-Za-z0-9._/-]{1,100}$/.test(v) ? null : 'Letters, digits, . _ / - only'), help: 'The Cloudflare Pages branch that is the live site.' },
     // Recording
     { key: 'recording.discardShorter', label: 'Discard runs shorter than', section: 'recording', group: 'Runs', type: 'number', default: 20, min: 0, max: 86400, unit: 's', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'A run this short is taken for an accidental open and not kept.' },
+    { key: 'recording.microphone', label: 'Microphone', section: 'recording', group: 'Microphone', type: 'text', default: '', help: 'The microphone recordings use on this Mac, by name. Recording never switches to another one by itself. Empty: the Mac’s built-in microphone.' },
     { key: 'recording.endpoint', label: 'Storage endpoint', section: 'recording', group: 'Recording storage', type: 'text', default: '', help: 'The Cloudflare R2 endpoint recordings are uploaded to. The access keys are in Accounts and keys.' },
     { key: 'recording.bucket', label: 'Storage bucket', section: 'recording', group: 'Recording storage', type: 'text', default: '', help: 'The R2 bucket recordings are uploaded to.' },
     { key: 'recording.transcriptionPython', label: 'Transcription Python', section: 'recording', group: 'Transcription', type: 'path', default: '', help: 'The Python of the transcription environment. Empty: the one set up by the app’s instructions.' },
@@ -138,6 +139,7 @@ const SCALARS: readonly ScalarMap[] = [
     fromConfig: (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v / 1000) : v),
     toConfig: (v) => (typeof v === 'number' ? v * 1000 : v)
   },
+  { config: 'recordingMicrophone', key: 'recording.microphone' },
   { config: 'recordingR2Endpoint', key: 'recording.endpoint' },
   { config: 'recordingR2Bucket', key: 'recording.bucket' },
   { config: 'transcriptionPython', key: 'recording.transcriptionPython' },

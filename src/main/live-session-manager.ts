@@ -26,7 +26,7 @@ const isHistoryGone = (error: unknown): boolean => !!error && typeof error === '
 /** Reactions and questions are written to the Run at most once per this interval while they arrive. */
 export const FEEDBACK_FLUSH_MS = 1500
 
-type Client = Pick<ReturnType<typeof createLivePresenterClient>, 'disconnect' | 'reconnect' | 'publish' | 'sendPoll' | 'pointer' | 'ink'>
+type Client = Pick<ReturnType<typeof createLivePresenterClient>, 'disconnect' | 'reconnect' | 'publish' | 'sendPoll' | 'pointer' | 'ink' | 'embed'>
 interface Runtime {
   record: SessionRecoveryRecord
   windowId: number | null
@@ -434,6 +434,11 @@ export function createLiveSessionManager(deps: {
       if (!runtime || !reference || reference.talkSlug !== runtime.record.talkSlug) return
       if (!runtime.record.runId) commit(runtime, { runId: reference.runId })
       history(runtime)
+    },
+    embed(windowId: number, message: unknown) {
+      const runtime = runtimeForWindow(windowId)
+      if (!runtime || runtime.record.endRequested || isTerminalLiveStatus(runtime.record.status)) return
+      runtime.client?.embed(message)
     },
     pointer(windowId: number, message: PointerMessage) {
       const runtime = runtimeForWindow(windowId)

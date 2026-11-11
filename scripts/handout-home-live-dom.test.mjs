@@ -35,6 +35,7 @@ const details = { day: 'Tue 6 Oct', date: 'Tue 6 Oct 2026', startTime: '10:00', 
 const share = { url: 'https://handouts.example.test/k7m2', qr: '<svg aria-label="QR code"></svg>' }
 const prework = { label: 'Get ready', detail: '15 min', minutes: 15, steps: [{ label: 'Try one agent', minutes: 10, kind: 'task' }, { label: 'Read: what an agent is', minutes: 5, kind: 'slide' }, { label: 'One question for you', minutes: null, kind: 'question' }] }
 const pages = {
+  reveal: buildHandoutHomePageHtml({ ...common, slides: [slide('steps', 'Reveal', '<ul class="feature-list"><li>One</li><li>Two</li><li>Three</li></ul>')], home: { ...share } }),
   // A planned start three hours ahead, no pre-work.
   planned: buildHandoutHomePageHtml({ ...common, home: { ...share, ...details, startsAt: Date.now() + 3 * 3600_000 } }),
   // Pre-work and no start time.
@@ -130,6 +131,16 @@ try {
   }
   const phone = { width: 390, height: 844 }
   const laptop = { width: 1440, height: 900 }
+
+  // The live home uses the same reveal state as the slides page.
+  {
+    const page = await open('reveal', laptop, { live: true })
+    await emit(page, { type: 'slide.state', slideId: 'steps', reveal: 0, focus: { kind: 'reveal', step: 1 }, revision: 1 })
+    assert.deepEqual(await page.locator('.slide.active li').evaluateAll(items => items.map(el => el.dataset.modeState)), ['current', 'hidden', 'hidden'], 'home follows the first presenter reveal')
+    await emit(page, { type: 'slide.state', slideId: 'steps', reveal: 0, focus: { kind: 'reveal', step: 2 }, revision: 2 })
+    assert.deepEqual(await page.locator('.slide.active li').evaluateAll(items => items.map(el => el.dataset.modeState)), ['soft', 'current', 'hidden'], 'home follows the next presenter reveal')
+    await page.close()
+  }
 
   // 1. Handout (a talk on its own, not live): band, cover, links, download, share.
   {
@@ -459,9 +470,16 @@ try {
     assert.ok(slideBox.width > 800, '1100px: the slide takes the column ' + JSON.stringify(slideBox))
     assert.equal(await page.locator('#hhSlideTitle').isVisible(), false, 'one column: no title repeated under the slide')
 
+    await emit(page, { type: 'pointer.live', pointer: { x: 640, y: 360, space: 'slide', slideId: 'agentpoll' } })
+    assert.equal(await page.locator('.tw-pointer-ring').isVisible(), true, 'live home displays the presenter pointer')
+    await emit(page, { type: 'ink.live', ink: { slideId: 'agentpoll', space: 'slide', strokes: [{ tool: 'arrow', ink: 'red', width: 'thin', points: [[1,1],[600,300]] }], draft: null } })
+    assert.equal(await page.locator('[data-pen-stroke]').count(), 1, 'live home displays presenter ink')
+
     // Full screen: the slide fills the window; Esc and the same control leave it.
     await page.locator('#hhFull').click()
     await page.waitForFunction(() => document.getElementById('hhSlideBox').classList.contains('hh-full'))
+    assert.equal(await page.locator('[data-pen-stroke]').isVisible(), true, 'ink remains visible in full screen')
+    assert.equal(await page.evaluate(() => !document.fullscreenElement || document.fullscreenElement.contains(document.querySelector('.tw-live-overlay'))), true, 'marks belong to the browser full-screen subtree')
     const fullBox = await page.locator('#hhSlideBox').boundingBox()
     assert.deepEqual([fullBox.x, fullBox.y, fullBox.width, fullBox.height], [0, 0, 1100, 800], 'full screen covers the window')
     const fullSlide = await page.locator('#hhLive .stage').boundingBox()

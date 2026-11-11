@@ -25,27 +25,34 @@ body[data-tw-preview] .share-shell { min-height: 100vh; grid-template-rows: 1fr;
 // inside it. postMessage crosses that boundary and this bridge replays the deck step locally.
 const STEP_BRIDGE = `<script data-tw-step-bridge>window.addEventListener('message',function(e){var d=e&&e.data;if(e&&e.source!==window.parent)return;if(d&&d.type==='tw-step'&&(d.key==='ArrowRight'||d.key==='ArrowLeft')){window.dispatchEvent(new KeyboardEvent('keydown',{key:d.key,code:d.key,bubbles:true}))}})</script>`
 
+/** A preview document: the HTML text, or the file the compile's process wrote it to (preview-variant.ts),
+ *  served from disk so the main process holds no copy of it. */
+export type SlidePreviewDocument = string | { file: string; variant?: unknown }
+
 export type SlidePreviewStore = {
-  get: (id: string) => string | undefined
-  set: (id: string, html: string) => void
+  get: (id: string) => SlidePreviewDocument | undefined
+  set: (id: string, html: SlidePreviewDocument) => void
 }
+
+const documentBytes = (html: SlidePreviewDocument | undefined): number =>
+  html === undefined || typeof html !== 'string' ? 0 : html.length * 2
 
 /** Create the small FIFO store used by the main process for scheme-hosted preview documents. */
 export function createSlidePreviewStore(maxEntries = 8, maxBytes = 128 * 1024 * 1024): SlidePreviewStore {
-  const previews = new Map<string, string>()
+  const previews = new Map<string, SlidePreviewDocument>()
   let bytes = 0
   return {
     get: (id) => previews.get(id),
     set: (id, html) => {
-      bytes -= (previews.get(id)?.length ?? 0) * 2
+      bytes -= documentBytes(previews.get(id))
       previews.delete(id)
       previews.set(id, html)
-      bytes += html.length * 2
+      bytes += documentBytes(html)
       // The latest URL must remain loadable even if its document alone exceeds the budget.
       while (previews.size > 1 && (previews.size > maxEntries || bytes > maxBytes)) {
         const oldest = previews.keys().next().value
         if (oldest === undefined) break
-        bytes -= previews.get(oldest)!.length * 2
+        bytes -= documentBytes(previews.get(oldest))
         previews.delete(oldest)
       }
     }
@@ -147,24 +154,26 @@ export function selectedThumbnailSlideAtLine(
 }
 
 /** Mark shared preview HTML so Slide Focus and Inspector use the same chrome-free stage. */
-export function markSlidePreviewHtml(rawHtml: string): string {
+export function markSlidePreviewHtml(rawHtml: string, options: { localPages?: boolean } = {}): string {
   // A preview never plays or loads an audio chip's file: drop the <audio> elements (and any inlined
   // data URI) before the preview document exists. The chip itself stays as a static label.
-  // Nor does a preview contain an embedded local page (ticket 11): the inlined document is removed
-  // from its frame, so nothing of the page exists in a thumbnail, Slide Focus, the Inspector or the
-  // layout preview. The frame stays empty and the compiled placeholder shows in its place. The
-  // attribute's value is HTML-escaped by the compiler, so it holds no double quote.
-  const html = rawHtml.replace(/<audio\b[^>]*>\s*<\/audio>/gi, '').replace(/\sdata-embed-doc="[^"]*"/g, '')
+  // Conservative consumers keep the poster. The authoring opt-in preserves the compiled document;
+  // the runtime activates it only on the current slide, inside its original opaque sandbox.
+  const silent = rawHtml.replace(/<audio\b[^>]*>\s*<\/audio>/gi, '')
+  const html = options.localPages ? silent : silent.replace(/\sdata-embed-doc="[^"]*"/g, '')
   const withHook = /<body\b[^>]*data-tw-preview/i.test(html)
     ? html
     : /<body\b[^>]*>/i.test(html)
     ? html.replace(/<body\b([^>]*)>/i, '<body$1 data-tw-preview>')
     : html
-  const withStyle = withHook.includes('data-tw-preview-style')
-    ? withHook
-    : withHook.includes('</head>')
-    ? withHook.replace('</head>', `${PREVIEW_STYLE}\n</head>`)
-    : PREVIEW_STYLE + withHook
+  const withPages = options.localPages
+    ? withHook.replace(/<body\b([^>]*)>/i, (tag, attrs) => /data-tw-preview-pages/.test(tag) ? tag : `<body${attrs} data-tw-preview-pages>`)
+    : withHook
+  const withStyle = withPages.includes('data-tw-preview-style')
+    ? withPages
+    : withPages.includes('</head>')
+    ? withPages.replace('</head>', `${PREVIEW_STYLE}\n</head>`)
+    : PREVIEW_STYLE + withPages
   // The compiled deck EMBEDS the presenter template as a string, so '</body>' occurs inside
   // script literals long before the document's real closing tag. A first-occurrence replace
   // split a script mid-string ("Unexpected end of input", dead runtime, blank stage) — anchor

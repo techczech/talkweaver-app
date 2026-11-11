@@ -15,7 +15,9 @@ export type MalformedDetail = 'syntax' | 'duplicate-key' | 'lone-surrogate' | 'd
   | 'envelope' | 'identity-mismatch' | 'time' | 'invalid-path' | 'invalid-hash' | 'shape'
 export type PathIssue = 'reserved-character' | 'nfc-ambiguous'
 
-export interface ProductionDeployment { deploymentId: string; createdOn: string; shortId?: string; candidateDigest?: string }
+export interface ProductionDeployment { deploymentId: string; createdOn: string; shortId?: string; candidateDigest?: string
+  /** The deployment's own address, only in the one shape Cloudflare gives it (`https://<8 hex>.<site>.pages.dev`). */
+  url?: string }
 export type InventoryResult =
   | { outcome: 'complete'; requests: number; retried: boolean; production: ProductionDeployment;
       confirmedAt: string; explicitEmpty: boolean; files: Array<[path: string, hash: string]> }

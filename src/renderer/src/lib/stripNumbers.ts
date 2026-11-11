@@ -8,6 +8,41 @@ let numbers: ReadonlyMap<number, number> | null = null
 
 const listeners = new Set<() => void>()
 
+// What the Slide outline marks a row with besides its number (house rule R7): a section's number (§1, §2.1, as the Plain
+// margin says "Section 2.1") and the layout mark a slide carries on the strip (the compiled layout's name). Keyed by heading
+// line, published by the workspace after each compile with the numbers.
+export interface OutlineMark { sectionNumber?: string; layout?: string }
+const NO_MARKS: ReadonlyMap<number, OutlineMark> = new Map()
+let marks: ReadonlyMap<number, OutlineMark> = NO_MARKS
+
+export function publishOutlineMarks(next: ReadonlyMap<number, OutlineMark> | null): void {
+  marks = next ?? NO_MARKS
+  listeners.forEach((l) => l())
+}
+export function getOutlineMarks(): ReadonlyMap<number, OutlineMark> { return marks }
+
+/**
+ * The marks to publish: a section's dotted number from the margin's labels (the one place that decides what a section is,
+ * so the outline and the margin cannot disagree) and every compiled slide's layout, the strip's own text (the slide's
+ * `layout` trigger, else the compiler's layout; the plain default says nothing). `layouts` is aligned to `slideLines`.
+ */
+export function outlineMarksToPublish(
+  labels: ReadonlyArray<{ line: number; kind: string; sectionNumber?: string }>,
+  slideLines: ReadonlyArray<number | null>,
+  layouts: ReadonlyArray<string | null | undefined>
+): Map<number, OutlineMark> {
+  const out = new Map<number, OutlineMark>()
+  for (const label of labels) if (label.kind === 'section' && label.sectionNumber) out.set(label.line, { sectionNumber: label.sectionNumber })
+  slideLines.forEach((line, index) => {
+    const layout = (layouts[index] ?? '').trim().toLowerCase()
+    if (typeof line !== 'number' || !layout || layout === 'default') return
+    const seen = out.get(line)
+    if (seen?.layout) return
+    out.set(line, { ...seen, layout })
+  })
+  return out
+}
+
 export function publishStripNumbers(next: ReadonlyMap<number, number> | null): void {
   numbers = next
   listeners.forEach((l) => l())

@@ -139,3 +139,51 @@ console.log('PASS preview HTML retention budget')
   assert.equal(await c.get('same',group,()=>{throw Error('fresh value missing')}),'fresh')
   console.log('PASS outline eviction: pending generations invalidated, old completion cannot remove or retain over fresh work')
 }
+{
+  // Supersede through the cache: a live preview's load may only be dropped while that preview alone waits on it.
+  const {createPreparedTalkCache,createPreparationRoute}=await import('../src/main/prepared-talk-cache.ts')
+  const {createSingleFlight,isSuperseded}=await import('../src/main/single-flight.ts')
+  const gate=createSingleFlight()
+  const route=createPreparationRoute(createPreparedTalkCache({maxEntries:6,maxBytes:1e6,sizeOf:v=>v.length}),gate)
+  let finish
+  const running=route('live','r0','g',gated=>gated(()=>new Promise(r=>{finish=r})),'w1')
+  await new Promise(r=>setTimeout(r,1))
+  const solo=route('live','r1','g',gated=>gated(async()=>'r1'),'w1').then(()=>false,isSuperseded)
+  const shared=route('live','r2','g',gated=>gated(async()=>'r2'),'w1')
+  const joiner=route('live','r2','g',gated=>gated(async()=>'never loaded twice'))
+  const otherWindow=route('live','r3','g',gated=>gated(async()=>'r3'),'w2')
+  await new Promise(r=>setTimeout(r,1))
+  const newest=route('live','r4','g',gated=>gated(async()=>'r4'),'w1')
+  finish('r0')
+  assert.equal(await running,'r0','a running preparation is never dropped')
+  assert.ok(await solo,'a queued preparation only its own preview waits on is dropped')
+  assert.equal(await shared,'r2','a queued preparation another caller joined is kept')
+  assert.equal(await joiner,'r2','and that caller gets its value')
+  assert.equal(await otherWindow,'r3','another window\'s preview is never dropped')
+  assert.equal(await newest,'r4')
+  console.log('PASS preparation cache supersede: own-only queued load dropped, shared and other-owner loads kept')
+}
+{
+  // A dropped preparation is not joinable even before its rejection propagates: a caller asking for the
+  // same revision in that window starts a fresh load and gets a real value, not SupersededError.
+  const {createPreparedTalkCache,createPreparationRoute}=await import('../src/main/prepared-talk-cache.ts')
+  const {createSingleFlight,isSuperseded}=await import('../src/main/single-flight.ts')
+  const gate=createSingleFlight()
+  const route=createPreparationRoute(createPreparedTalkCache({maxEntries:6,maxBytes:1e6,sizeOf:v=>v.length}),gate)
+  let finish,loads=0
+  const running=route('live','x0','g',gated=>gated(()=>new Promise(r=>{finish=r})),'w1')
+  await new Promise(r=>setTimeout(r,1))
+  const doomed=route('live','a','g',gated=>gated(async()=>{loads++;return 'a'}),'w1').then(()=>'ran',e=>isSuperseded(e)?'superseded':e)
+  await new Promise(r=>setTimeout(r,1)) // 'a' is queued on the gate
+  let late
+  // The newer keyed request drops 'a' inside its own load; the very next microtask an ordinary caller asks for 'a'.
+  const newer=route('live','b','g',gated=>{const p=gated(async()=>'b');late=route('live','a','g',gated2=>gated2(async()=>{loads++;return 'a fresh'}));return p},'w1')
+  await new Promise(r=>setTimeout(r,1))
+  finish('x0')
+  assert.equal(await running,'x0')
+  assert.equal(await doomed,'superseded','the dropped caller is told so')
+  assert.equal(await late,'a fresh','a caller arriving after the drop gets its own load, not the doomed promise')
+  assert.equal(await newer,'b')
+  assert.equal(loads,1,'the dropped load never ran; the late caller\'s did')
+  console.log('PASS preparation cache supersede: a dropped load is unjoinable at once')
+}

@@ -334,7 +334,7 @@ await test('the hand-out rule itself: length, scheme, the blank page, and nothin
 // ── The editor's windows (security re-review, round 2) ───────────────────────────────────────────
 // The editor's own page never calls window.open and has no target="_blank" anchor: whatever reaches its handler
 // comes from a talk's content in the slide preview or Studio's replay. It is under the deck rule.
-await test('editor, Tools and Pathways windows: a link from preview content needs a press in that window and is never a local address', () => {
+await test('editor and Tools windows: a link from preview content needs a press in that window and is never a local address', () => {
   const opened = []
   const logs = []
   let pressed = false
@@ -380,7 +380,7 @@ await test('the editor\'s own page opens no window: its links go through main (s
   for (const name of readdirSync(mainDir)) if (/\.ts$/.test(name)) for (const m of readFileSync(join(mainDir, name), 'utf8').matchAll(/shell\.openExternal\(([^)]*)\)/g)) sites.push(`${name}: ${m[1]}`)
   // update-notices.ts: the browser opens the update notices' links (a download or notes link on talkweaver.app, or the Store listing), each through handOutLink.
   assert.deepEqual(sites.sort(), ['index.ts: link.href', 'index.ts: link.href', 'index.ts: url', 'index.ts: url', 'update-notices.ts: handed.href'], 'a new openExternal site: hand out a handOutLink href')
-  assert.equal(index.match(/appWindowOpenHandler\(appWindowOpenOpts, \(\) => pressLedger\.pressedRecently\(win\.webContents\.id\)\)/g).length, 3, 'editor, Tools and Pathways each ask their own window\'s presses')
+  assert.equal(index.match(/appWindowOpenHandler\(appWindowOpenOpts, \(\) => pressLedger\.pressedRecently\(win\.webContents\.id\)\)/g).length, 2, 'editor and Tools each ask their own window\'s presses')
 })
 
 await test('every deck window in the tree is asked about ITS OWN presses', () => {

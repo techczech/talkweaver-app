@@ -42,6 +42,12 @@ console.log('live page whole capture')
 
 await test('layout numbers checked; clip: full width scaled to ≤1920 stored px, as tall as the page or cut at the limit', () => {
   assert.deepEqual(readLayoutMetrics(metrics(1280, 3000)), { cssWidth: 1280, pageHeight: 3000, dpr: 2 })
+  const zoomed = metrics(1280, 3480)
+  zoomed.cssVisualViewport = { zoom: 0.525 }
+  zoomed.contentSize.width = 1344
+  const zoomedMetrics = readLayoutMetrics(zoomed)
+  assert.ok(Math.abs(zoomedMetrics.dpr - 2) < 0.000001, 'page zoom is removed from screenshot density')
+  assert.equal(wholePageClip(zoomedMetrics).scale, 0.75, 'the observed Retina/zoom response produces a bounded 1920px capture')
   for (const bad of [null, {}, { cssLayoutViewport: { clientWidth: 'x' }, cssContentSize: { width: 1, height: 1 } }, metrics(1280, Infinity), metrics(0, 10)]) assert.equal(readLayoutMetrics(bad), null)
   const c = wholePageClip({ cssWidth: 1280, pageHeight: 3000, dpr: 2 })
   assert.equal(c.scale, 0.75); assert.equal(c.height, 3000); assert.equal(c.truncated, false)

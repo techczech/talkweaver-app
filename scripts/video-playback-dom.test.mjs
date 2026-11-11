@@ -1,0 +1,136 @@
+import assert from 'node:assert/strict';
+import { mkdtemp, writeFile, stat, rm, readFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { chromium } from 'playwright';
+import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs';
+const dir = await mkdtemp(join(tmpdir(), 'tw-video-sync-'));
+let browser;
+try {
+  await writeFile(join(dir, 'clip.webm'), await readFile(new URL('../e2e/fixtures/video-playback-12s.webm', import.meta.url)));
+  const source = '---\ntitle: Synthetic video sync\nauto_title_slide: false\nauto_thanks_slide: false\n---\n\n### Video {id=video}\n\n![Clip](clip.webm){controls}\n\n### End {id=end}\n\nDone.\n\n### Step {id=step}\n\n![Step clip](clip.webm){controls}{play-on-next}\n\n### Auto {id=auto}\n\n![Auto clip](clip.webm){autoplay}{loop}\n';
+  const path = join(dir, 'test.md'); await writeFile(path, source);
+  const model = await prepareSource(path, source, null, await stat(path));
+  const htmlPath = join(dir, 'deck.html'); await writeFile(htmlPath, model.fullHtml);
+  browser = await chromium.launch({ headless: true, args: ['--autoplay-policy=no-user-gesture-required', '--mute-audio'] });
+  const context = await browser.newContext();
+  const errors = []; context.on('page', p => p.on('pageerror', e => errors.push(e.message)));
+  const presenter = await context.newPage();
+  const url = pathToFileURL(htmlPath).href;
+  await presenter.goto(url + '?presenter=1&session=video-sync#video');
+  const current = () => presenter.frameLocator('#currentPreview > iframe:not(.live-sim-frame)').locator('video');
+  await current().waitFor();
+  await presenter.locator('#presenterMediaPlay').click();
+  await presenter.waitForTimeout(600);
+  assert.equal(await current().evaluate(v => v.paused), false, 'presenter plays with audience closed');
+  const open = async () => { const p = await context.newPage(); await p.goto(url + '?audience=1&session=video-sync'); return p; };
+  let audience = await open();
+  const av = () => audience.locator('video[data-tw-video-slide="0"]');
+  async function follows(label) {
+    await presenter.waitForTimeout(500);
+    const a = await av().evaluate(v => ({ time: v.currentTime, paused: v.paused, rate: v.playbackRate, muted: v.muted }));
+    const c = await current().evaluate(v => ({ time: v.currentTime, paused: v.paused, rate: v.playbackRate, muted: v.muted }));
+    assert(Math.abs(a.time - c.time) < .3, `${label}: drift ${Math.abs(a.time - c.time)}`);
+    assert.equal(c.paused, a.paused, label); assert.equal(c.rate, a.rate, label);
+    assert(c.muted); assert.equal(a.muted, false);
+    console.log('PASS', label, JSON.stringify({ audience: a, current: c }));
+  }
+  await presenter.evaluate(() => {
+    window.__clipMarks = [];
+    document.addEventListener('tw-clip-play', () => window.__clipMarks.push(JSON.parse(document.documentElement.dataset.twClipPlay)));
+  });
+  await follows('late join Play');
+  const hiddenBefore = await audience.locator('video[data-tw-video-slide="2"]').evaluate(v => ({ muted: v.muted, time: v.currentTime }));
+  await audience.locator('video[data-tw-video-slide="2"]').evaluate(v => v.load());
+  await audience.locator('video[data-tw-video-slide="2"]').evaluate(v => v.readyState >= 1 ? undefined : new Promise(r => v.addEventListener('loadedmetadata', r, { once: true })));
+  await audience.waitForTimeout(300);
+  assert.deepEqual(await audience.locator('video[data-tw-video-slide="2"]').evaluate(v => ({ paused: v.paused, muted: v.muted, time: v.currentTime })), { paused: true, muted: hiddenBefore.muted, time: 0 }, 'late hidden metadata never adopts video A state');
+  assert(!(await presenter.evaluate(() => window.__clipMarks)).some(mark => mark.slideId === 'step'), 'no clip-play mark for hidden B');
+  console.log('PASS late metadata on slide B: paused, mute unchanged, no clip-play');
+  await presenter.reload(); await current().waitFor();
+  await presenter.locator('#presenterMediaPlay').click(); await follows('presenter reload then Play');
+  await current().evaluate(v => {
+    window.parent.__relayedKeys = [];
+    window.parent.document.addEventListener('keydown', e => { if (!e.isTrusted) window.parent.__relayedKeys.push({ key: e.key, metaKey: e.metaKey, ctrlKey: e.ctrlKey, altKey: e.altKey, shiftKey: e.shiftKey, repeat: e.repeat }); });
+    v.dispatchEvent(new KeyboardEvent('keydown', { key: 'X', code: 'KeyX', shiftKey: true, repeat: true, bubbles: true }));
+    v.dispatchEvent(new KeyboardEvent('keydown', { key: 'z', code: 'KeyZ', metaKey: true, ctrlKey: true, altKey: true, bubbles: true }));
+  });
+  assert.deepEqual(await presenter.evaluate(() => window.__relayedKeys), [
+    { key: 'X', metaKey: false, ctrlKey: false, altKey: false, shiftKey: true, repeat: true },
+    { key: 'z', metaKey: true, ctrlKey: true, altKey: true, shiftKey: false, repeat: false }
+  ]);
+  // A pointer interaction returns focus, so the next Escape arrives as a real key in the deck.
+  await current().focus();
+  await current().dispatchEvent('pointerup');
+  assert(await presenter.evaluate(() => document.activeElement === document.body));
+  await presenter.evaluate(() => { window.__trustedKeys = []; document.addEventListener('keydown', e => window.__trustedKeys.push({ key: e.key, trusted: e.isTrusted })); });
+  await presenter.keyboard.press('Escape');
+  assert((await presenter.evaluate(() => window.__trustedKeys)).some(e => e.key === 'Escape' && e.trusted));
+  console.log('PASS Current relay modifiers/repeat and real deck focus after controls');
+  await audience.evaluate(() => {
+    const v = document.querySelector('video[data-tw-video-slide="0"]');
+    Object.defineProperty(v, 'ended', { configurable: true, get: () => true });
+    v.pause();
+  });
+  await presenter.waitForTimeout(150);
+  assert.equal(await presenter.locator('#stage video[data-tw-video-slide="0"]').evaluate(v => v.paused), false, 'follower ending first cannot pause owner');
+  await av().evaluate(v => { delete v.ended; });
+  await presenter.locator('#presenterMediaPlay').click();
+  await follows('follower reaches end first');
+  await av().evaluate(v => { v.currentTime = 5; v.playbackRate = 1.5; });
+  await follows('audience seek 5s / rate 1.5');
+  await presenter.locator('#presenterMediaPause').click(); await follows('Pause');
+  await current().evaluate(v => { v.currentTime = 7; v.playbackRate = 1; }); await follows('Current seek / rate');
+  assert(Math.abs(await av().evaluate(v => v.currentTime) - 7) < .3); assert.equal(await av().evaluate(v => v.playbackRate), 1);
+  await current().focus(); await presenter.keyboard.press('m'); await follows('M from focused Current controls');
+  await presenter.keyboard.press('m'); await follows('M pauses from focused Current controls');
+  await presenter.evaluate(() => document.activeElement?.blur()); await presenter.keyboard.press('m'); await follows('M play');
+  await presenter.keyboard.press('m'); await follows('M pause');
+  await current().evaluate(v => { v.__persistentPlayer = true; });
+  await presenter.keyboard.press('+'); await presenter.waitForTimeout(500);
+  assert(await current().evaluate(v => v.__persistentPlayer), 'Current keeps the same player across preview redraw');
+  await presenter.keyboard.press('z'); await presenter.waitForTimeout(400);
+  assert.equal(await av().evaluate(v => !!v.closest('#lightbox')), true, 'Z/gallery moves audience player');
+  await follows('lightbox');
+  await presenter.keyboard.press('Escape'); await presenter.waitForTimeout(300);
+  await follows('lightbox restore');
+  await av().evaluate(v => { v.currentTime = v.duration - .2; v.play().catch(() => {}); }); await presenter.waitForTimeout(700);
+  assert(await av().evaluate(v => v.ended)); assert(await current().evaluate(v => v.ended), 'Current reaches ended frame');
+  await follows('ended');
+  await audience.close(); audience = await open(); await follows('reconnect ended');
+  await presenter.evaluate(() => { location.hash = 'end'; }); await presenter.waitForTimeout(500);
+  assert(await av().evaluate(v => v.paused), 'audience stops on departure');
+  await presenter.evaluate(() => { location.hash = 'video'; }); await follows('return ordinary clip preserves existing position');
+  await presenter.evaluate(() => { location.hash = 'step'; }); await presenter.waitForTimeout(300);
+  await presenter.keyboard.press('ArrowRight'); await presenter.waitForTimeout(600);
+  assert.equal(await current().evaluate(v => v.paused), false, 'play as step');
+  await presenter.keyboard.press('ArrowLeft'); await presenter.waitForTimeout(400);
+  assert.equal(await current().evaluate(v => v.paused), true, 'backwards step stops');
+  await presenter.evaluate(() => { location.hash = 'auto'; }); await presenter.waitForTimeout(700);
+  assert.equal(await current().evaluate(v => v.paused), false, 'autoplay'); assert(await current().evaluate(v => v.muted));
+  const loopVideo = audience.locator('video[data-tw-video-slide="3"]');
+  await loopVideo.evaluate(v => { v.currentTime = v.duration - .2; }); await presenter.waitForTimeout(800);
+  const loopAt = await loopVideo.evaluate(v => v.currentTime);
+  assert(loopAt < 2, 'loop wraps on audience');
+  assert(Math.abs(loopAt - await current().evaluate(v => v.currentTime)) < .3, 'Current follows loop boundary');
+  await current().evaluate(v => { v.muted = false; v.volume = 1; }); await presenter.waitForTimeout(100);
+  assert(await current().evaluate(v => v.muted && v.volume === 0), 'Current cannot become audible');
+  await presenter.keyboard.press('z'); await presenter.waitForTimeout(200);
+  await presenter.evaluate(() => { location.hash = 'end'; }); await presenter.waitForTimeout(400);
+  assert(await loopVideo.evaluate(v => v.paused), 'enlarged video stops on departure');
+  // Without a presenter heartbeat the paired audience regains standalone media behaviour.
+  await presenter.close();
+  await audience.waitForTimeout(3300);
+  await audience.evaluate(() => { location.hash = 'auto'; });
+  await audience.waitForTimeout(400);
+  assert.equal(await loopVideo.evaluate(v => v.paused), false, 'autoplay survives presenter closure');
+  await audience.evaluate(() => { location.hash = 'step'; });
+  await audience.waitForTimeout(250);
+  await audience.keyboard.press('ArrowRight');
+  await audience.waitForTimeout(500);
+  assert.equal(await audience.locator('video[data-tw-video-slide="2"]').evaluate(v => v.paused), false, 'reveal video survives presenter closure');
+  console.log('PASS audience autoplay and reveal fallback after presenter closure');
+  assert.deepEqual(errors, []);
+  console.log('PASS slide departure, backward reveal and autoplay; no page errors');
+} finally { await browser?.close(); await rm(dir, { recursive: true, force: true }); }

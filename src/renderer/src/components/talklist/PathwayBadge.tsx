@@ -21,11 +21,7 @@ export default function PathwayBadge({
       aria-label={`Open pathways for ${talk.title}`}
       onClick={(event) => {
         event.stopPropagation()
-        void window.tw.tools.openPathways({
-          outlinePath: talk.outlinePath,
-          talkSlug: talk.slug,
-          talkTitle: talk.title
-        })
+        window.dispatchEvent(new CustomEvent('tw-open-pathways', { detail: talk }))
       }}
     >
       <GitBranch size={variant === 'shelf' ? 8.5 : 10} aria-hidden />

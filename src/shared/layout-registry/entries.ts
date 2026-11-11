@@ -779,7 +779,7 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     ]
   },
   // ── Pre-work steps (ADR-0032 amendment point 5, round-2 E1–E3; ticket 08): a step of the talk's
-  // `{prework}` section. The Inspector's "Before the session" section renders these rows; the
+  // `{prework}` section. The Inspector's "Before the Run" section renders these rows; the
   // default is the empty token, never written.
   {
     // Fix round: a bare {task} asks for Mark as done (the locked drawing E3); {readonly} opts out.
@@ -3038,7 +3038,7 @@ The visible heading is suppressed.`,
     pickerEligible: false
   },
   {
-    // ADR-0032 amendment point 5 (ticket 08): the talk's "Before the session" section. Its slides
+    // ADR-0032 amendment point 5 (ticket 08): the talk's "Before the Run" section. Its slides
     // are the pre-work form's steps, answered on the handout link before the day; presenting leaves
     // them out. Only on a `##` section.
     name: 'prework',
@@ -3049,7 +3049,7 @@ The visible heading is suppressed.`,
     kind: 'modifier',
     sectionOnly: true,
     status: 'stable',
-    sample: `## Before the session
+    sample: `## Before the Run
 {prework}
 
 Three short steps before Monday.
@@ -3057,7 +3057,7 @@ Three short steps before Monday.
 ### Read this first
 
 - One idea per slide`,
-    description: 'Section: the pre-work form participants answer before the session; its slides are the steps and are not presented',
+    description: 'Section: the pre-work form participants answer before the Run; its slides are the steps and are not presented',
     category: 'modes',
     purpose: 'Modes',
     pickerEligible: false
@@ -3071,7 +3071,7 @@ Three short steps before Monday.
     triggerWords: ['task'],
     kind: 'modifier',
     status: 'stable',
-    sample: `## Before the session
+    sample: `## Before the Run
 {prework}
 
 ### Task 1: draft one real email
@@ -3079,7 +3079,7 @@ Three short steps before Monday.
 
 - Pick an email you need to send this week
 - Ask Copilot to draft it`,
-    description: 'Pre-work step: a task participants do before the session and mark as done (its list is the instructions)',
+    description: 'Pre-work step: a task participants do before the Run and mark as done (its list is the instructions)',
     category: 'modes',
     purpose: 'Modes',
     pickerEligible: false
@@ -3093,7 +3093,7 @@ Three short steps before Monday.
     triggerWords: ['readonly'],
     kind: 'modifier',
     status: 'stable',
-    sample: `## Before the session
+    sample: `## Before the Run
 {prework}
 
 ### Task 2: bring one file
@@ -3114,7 +3114,7 @@ Three short steps before Monday.
     triggerWords: ['check'],
     kind: 'modifier',
     status: 'stable',
-    sample: `## Before the session
+    sample: `## Before the Run
 {prework}
 
 ### Quick check: what makes something an agent?
@@ -3138,7 +3138,7 @@ Three short steps before Monday.
     triggerWords: ['right'],
     kind: 'modifier',
     status: 'stable',
-    sample: `## Before the session
+    sample: `## Before the Run
 {prework}
 
 ### Quick check: which one acts?
@@ -3160,7 +3160,7 @@ Three short steps before Monday.
     triggerWords: ['noask'],
     kind: 'modifier',
     status: 'stable',
-    sample: `## Before the session
+    sample: `## Before the Run
 {prework}
 
 ### Welcome

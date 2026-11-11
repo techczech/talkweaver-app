@@ -1,15 +1,11 @@
-// A picked slide shows the picture of the slide it was picked from, by the same twthumb:// address the Slide Browser
-// uses. A talk that was never opened in the editor has no thumbnail cache yet; the Slide Browser fills that in by
-// asking main to render the talk (useThumbRegen) when a picture 404s. The Slide Scratchpad does the same: one talk
-// at a time, each at most twice per session, and every waiting picture retries when a talk has been rendered.
+// Scratchpad source addresses are portable across machines. This adapter resolves their vault paths
+// and repairs stale picture keys; the shared slideThumbnails route owns rendering and retries.
+import { sourceThumbnailClient } from './slideThumbnails.ts'
 import type { ScratchSlide } from '../../../shared/scratchpad'
 
 type Listener = () => void
 const listeners = new Set<Listener>()
 const nonces = new Map<string, number>()
-const attempts = new Map<string, number>()
-const queue: string[] = []
-let running = false
 
 /** Candidate absolute outline paths for a stored slide: an absolute talkPath as it is, else under the named vault's
  *  folder, else under every vault (the first that can be read wins). */
@@ -86,46 +82,39 @@ async function resolve(slide: ScratchSlide): Promise<{ path: string; content: st
   return null
 }
 
-async function drain(slides: Map<string, ScratchSlide>): Promise<void> {
-  if (running) return
-  running = true
-  try {
-    for (let key = queue.shift(); key !== undefined; key = queue.shift()) {
-      const slide = slides.get(key)
-      if (!slide) continue
-      let rendered = 0
-      try {
-        const source = await resolve(slide)
-        if (source) {
-          const map = await window.tw.talk.thumbnails(source.path, source.content, { lane: 'browser' })
-          rendered = map ? Object.keys(map).length : 0
-          if (await rederive(key, source.path)) rendered = Math.max(rendered, 1) // a corrected address is as good as a render: retry the pictures
-        }
-      } catch { /* one bad talk must not stall the rest */ }
-      if (rendered > 0) {
-        nonces.set(key, (nonces.get(key) ?? 0) + 1)
-        for (const l of listeners) l()
-      } else if ((attempts.get(key) ?? 0) < 2) {
-        setTimeout(() => { queue.push(key); void drain(slides) }, 15_000) // "not now" (heap high, editor busy): offer again
-      }
-    }
-  } finally { running = false }
+// Source identity and address repair belong to the Scratchpad adapter; rendering and retries do not.
+const resolvedPaths = new Map<string, Set<string>>()
+let generation = 0
+let client: ReturnType<typeof sourceThumbnailClient> | null = null
+function sourceClient(): ReturnType<typeof sourceThumbnailClient> {
+  client ??= sourceThumbnailClient((path, _map, outlinePath) => {
+    const mine = generation
+    void Promise.all([...(resolvedPaths.get(path) ?? [])].map(async key => {
+      await rederive(key, outlinePath)
+      if (mine !== generation) return
+      nonces.set(key, (nonces.get(key) ?? 0) + 1)
+      for (const l of listeners) l()
+    }))
+  })
+  return client
 }
 
-const known = new Map<string, ScratchSlide>()
-/** The picture of this slide did not load: ask for its talk to be rendered (once per attempt, one talk at a time). */
+/** The picture missed: resolve its portable source path, then use the same queue as the Browser. */
 export function noteSourceThumbUnavailable(slide: ScratchSlide): void {
   const key = slide.talkPath
-  known.set(key, slide)
   const mine = waiting.get(key) ?? new Map<string, ScratchSlide>()
   mine.set(slide.slideId, slide)
   waiting.set(key, mine)
-  const n = attempts.get(key) ?? 0
-  if (n >= 2 || queue.includes(key)) return
-  attempts.set(key, n + 1)
-  queue.push(key)
-  void drain(known)
+  // A portable address may fall back to another vault. It is a job identity, never a concrete
+  // Browser outline path: rendering that fallback must not mark a different vault's talk done.
+  const job = `scratchpad:${JSON.stringify([slide.vaultId ?? '', slide.talkPath])}`
+  const keys = resolvedPaths.get(job) ?? new Set<string>()
+  keys.add(key); resolvedPaths.set(job, keys)
+  sourceClient().note(job, () => resolve(slide))
 }
 
-/** For tests: forget every talk. */
-export function resetSourceThumbs(): void { queue.length = 0; attempts.clear(); nonces.clear(); known.clear(); fixes.clear(); waiting.clear(); running = false }
+/** For tests: forget every talk and dispose pending retries. */
+export function resetSourceThumbs(): void {
+  generation += 1; client?.dispose(); client = null
+  nonces.clear(); fixes.clear(); waiting.clear(); resolvedPaths.clear()
+}

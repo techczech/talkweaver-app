@@ -1,3 +1,7 @@
+import { requestSlideThumbnails } from '../lib/slideThumbnails'
+import { AnimatedVideoStatus,AnimatedVideoChip,useVideoPackageStatuses } from './AnimatedVideoStatus'
+import { useVideoMenuRequest } from '../lib/toolsActions'
+import { AnimatedVideoAction } from './AnimatedVideoSheet'
 import { recordingRunKey, recordingRunHome } from '../../../shared/recording-run-home'
 // TalkWeaver Studio — the recordings player (ADR-0035, Phase 1, with the session treatment from
 // docs/design/2026-07-05-recording/direction-3-transcript-ready-split.html). A full-window Light Table
@@ -7,22 +11,28 @@ import { recordingRunKey, recordingRunHome } from '../../../shared/recording-run
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertTriangle, BarChart3, Check, ChevronDown, ChevronRight, FileText, HardDrive, Loader2, PanelLeftClose,
-  PanelLeftOpen, Pause, Play, Radio, RefreshCw, RotateCcw, Scissors, Search, Settings, SkipBack, SkipForward, Trash2,
-  UploadCloud, X, FileInput
+  AlertTriangle, Check, ChevronDown, ChevronRight, FileText, HardDrive, Loader2, PanelLeftClose,
+  PanelLeftOpen, Pause, Play, RefreshCw, RotateCcw, Scissors, Search, Settings, SkipBack, SkipForward, Trash2,
+  UploadCloud, X
 } from 'lucide-react'
-import type { RecordingSession, Transcript, TranscriptSegment, TrimRange } from '../../../preload/index'
+import type { RecordingSession, TalkInfo, Transcript, TranscriptSegment, TrimRange } from '../../../preload/index'
 import { shortcutById } from '../../../shared/shortcut-registry'
 import { runAudioSummary } from '../../../shared/run-audio'
 import { eventToCMKey } from '../keymap/store'
 import { commandRan } from '../commands/command-ran'
+import { ConfirmCard, BIN_CONSEQUENCE } from './cards'
+import KeyboardHelp from './KeyboardHelp'
+import { openSettingsAt } from '../lib/open-settings'
+import { plainTalkTitle } from '../../../shared/plain-title'
+import { runTitleAndWhen } from '../../../shared/sessions-list'
 import '../studio.css'
 import { clearUploadFailure, showUploadFailure } from '../lib/upload-failure-toast'
+import '../ui-kit.css'
 
 // Refusal codes from main when a talk or session name is not a safe file name (recording-paths.ts).
 const UNSAFE_NAME_ERRORS = new Set(['unsafe-talk-slug', 'unsafe-session-id', 'unsafe-path', 'run-path-unsafe'])
 
-type Session = RecordingSession & { audio: NonNullable<RecordingSession['audio']> }
+type Session = RecordingSession
 type SlideInfo = { title: string; section: string; thumbUrl: string | null; n: number; tag: string }
 type SlideTimeMark = RecordingSession['slideTimeIndex'][number]
 type ReplayState = { slideId: string; hiddenCount: number; highlights: Array<{ block: number; start: number; end: number }>; ink: unknown[]; inkImage: number | null }
@@ -34,6 +44,17 @@ const fmt = (sec: number): string => {
   return String(m).padStart(2, '0') + ':' + String(sec % 60).padStart(2, '0')
 }
 const mins = (sec: number): number => Math.round(sec / 60)
+async function studioTalkForRun(run: RecordingSession): Promise<TalkInfo | undefined> {
+  const home=recordingRunHome(run)
+  let vaultId: string | undefined
+  if (typeof home === 'string') {
+    const vault=(await window.tw.vault.list()).find(v=>v.root===home && v.open && !v.unavailable)
+    if (!vault) return undefined
+    vaultId=vault.id
+  }
+  return (await window.tw.vault.listTalks(vaultId)).find(t=>t.slug===run.talkSlug)
+}
+
 function deltaOf(recSec: number, planMin: number): { cls: string; text: string } | null {
   if (!planMin) return null
   const d = recSec - planMin * 60
@@ -129,19 +150,21 @@ function replayStateAt(session: Session | null, tMs: number): ReplayState | null
   return { slideId: enter.slideId, hiddenCount, highlights, ink, inkImage }
 }
 
+const ignoreVideoRequest=():void=>{}
+
 export default function Studio({
   isOpen,
   onClose,
   initialSessionId,
-  onShowHistory,
-  onShowImporter,
+  videoRequest=null,
+  onVideoRequestRegistered=ignoreVideoRequest,
   onOpenTalkText
 }: {
   isOpen: boolean
   onClose: () => void
   initialSessionId?: string | null
-  onShowHistory?: () => void
-  onShowImporter?: () => void
+  videoRequest?: number | null
+  onVideoRequestRegistered?: () => void
   onOpenTalkText?: (sessionId: string) => void
 }): JSX.Element | null {
   const [sessions, setSessions] = useState<Session[]>([])
@@ -157,7 +180,6 @@ export default function Studio({
   const [playing, setPlaying] = useState(false)
   const [speedIdx, setSpeedIdx] = useState(0)
   const [sheet, setSheet] = useState(false)
-  const [settingsOpen, setSettingsOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [uploadBusy, setUploadBusy] = useState(false)
@@ -188,16 +210,15 @@ export default function Studio({
     toastTimer.current = setTimeout(() => setToast(null), 2600)
   }, [])
 
+  const videoStates=useVideoPackageStatuses(sessions)
+
   const reload = useCallback(async (): Promise<Session[]> => {
     const all = (await window.tw.recording.listAllSessions()).filter(
-      // Studio plays & manages RECORDINGS, so it shows only sessions that actually have audio. Use a
-      // loose null check: an audio-less Run (a delivery/rehearsal saved without a recording) stores
-      // audio as null OR omits it entirely — `!== null` let `undefined` through and then `s.audio.uploaded`
-      // threw, blanking the whole window. `!= null` excludes both. (Audio-less runs live in History.)
-      // Also drop malformed/partial sessions (missing id/startedAt) — the rail keys + seeds avatars off
-      // them, so one bad session.json would otherwise crash the window.
-      (s): s is Session =>
-        s != null && typeof s.id === 'string' && typeof s.startedAt === 'string' && s.audio != null
+      // Studio lists the Runs that have audio (house rule R5): a filtered view of the Runs, not a list of its own.
+      // Plans and Runs without audio are in the Runs view; malformed records never enter this player.
+      (s): s is Session => s != null && typeof s.id === 'string' && s.id.length > 0 &&
+        typeof s.startedAt === 'string' && s.startedAt.length > 0 && s.status !== 'planned' &&
+        s.audio != null
     )
     setSessions(all)
     return all
@@ -235,7 +256,9 @@ export default function Studio({
         (s) =>
           s.talkTitle.toLowerCase().includes(q) ||
           (s.context ?? '').toLowerCase().includes(q) ||
-          fmtDate(s.startedAt).toLowerCase().includes(q)
+          fmtDate(s.startedAt).toLowerCase().includes(q) ||
+          runTitleAndWhen(s).name.toLowerCase().includes(q) ||
+          runTitleAndWhen(s).when.toLowerCase().includes(q)
       )
     }
     return list
@@ -283,6 +306,9 @@ export default function Studio({
   }, [])
 
   const active = useMemo(() => sessions.find((s) => recordingRunKey(s) === activeId) ?? sessions.find((s) => s.id === activeId) ?? null, [sessions, activeId])
+  const videoTarget=isOpen&&active&&(!initialSessionId||active.id===initialSessionId||recordingRunKey(active)===initialSessionId)?active:null
+  const [pendingVideo,clearPendingVideo]=useVideoMenuRequest(videoRequest,videoTarget,onVideoRequestRegistered)
+
   const activeTrims = active?.trims ?? []
   const enters = useMemo(
     () => (active ? active.slideTimeIndex.filter((m) => m.event === 'enter') : []),
@@ -332,7 +358,8 @@ export default function Studio({
     lastReplayKey.current = ''
     const a = audioRef.current
     if (a) {
-      a.src = `twrec://${active.id}?talk=${encodeURIComponent(active.talkSlug)}${recordingRunHome(active) === undefined ? '' : `&home=${encodeURIComponent(recordingRunHome(active) ?? '')}`}`
+      if (active.audio) a.src = `twrec://${active.id}?talk=${encodeURIComponent(active.talkSlug)}${recordingRunHome(active) === undefined ? '' : `&home=${encodeURIComponent(recordingRunHome(active) ?? '')}`}`
+      else { a.pause(); a.removeAttribute('src') }
       a.playbackRate = SPEEDS[speedIdx]
       a.load()
     }
@@ -353,8 +380,7 @@ export default function Studio({
     void (async () => {
       setSlideMap({})
       try {
-        const talks = await window.tw.vault.listTalks()
-        const info = talks.find((t) => t.slug === active.talkSlug)
+        const info = await studioTalkForRun(active)
         if (!info) return
         const content = await window.tw.talk.readOutline(info.outlinePath)
         if (content == null) {
@@ -362,8 +388,8 @@ export default function Studio({
           return
         }
         const [rows, thumbs] = await Promise.all([
-          window.tw.talk.compile(info.outlinePath, content),
-          window.tw.talk.thumbnails(info.outlinePath, content)
+          window.tw.videoPack.slides({talkSlug:active.talkSlug,sessionId:active.id,home:recordingRunHome(active)}),
+          requestSlideThumbnails(info.outlinePath, content)
         ])
         if (cancelled || !rows) return
         const map: Record<string, SlideInfo> = {}
@@ -386,6 +412,7 @@ export default function Studio({
     // real waveform (RMS per bucket), decoded off the local file
     void (async () => {
       setWave(null)
+      if (!active.audio) { setWaveLoading(false); return }
       setWaveLoading(true)
       try {
         const resp = await fetch(`twrec://${active.id}?talk=${encodeURIComponent(active.talkSlug)}${recordingRunHome(active) === undefined ? '' : `&home=${encodeURIComponent(recordingRunHome(active) ?? '')}`}`)
@@ -522,13 +549,14 @@ export default function Studio({
     [totalSec]
   )
   const togglePlay = useCallback((): void => {
+    if (!active?.audio) return
     const a = audioRef.current
     if (!a) return
     if (a.paused) {
       if (progress >= 0.999) seekToSec(0)
       void a.play()
     } else a.pause()
-  }, [progress, seekToSec])
+  }, [active?.audio, progress, seekToSec])
   const stepSlide = useCallback(
     (dir: number): void => {
       if (!enters.length) return
@@ -586,13 +614,14 @@ export default function Studio({
   )
 
   const doUpload = useCallback(async (): Promise<void> => {
+    if (!active?.audio) return
     if (!active || uploadBusy) return
     setUploadBusy(true)
     try {
       const r = await window.tw.recording.upload(active.talkSlug, active.id, recordingRunHome(active))
       if (r.ok && r.uploaded) {
         clearUploadFailure()
-        flash('Uploaded to R2')
+        flash('Uploaded')
         await reload()
       } else {
         showUploadFailure(r.error)
@@ -603,6 +632,7 @@ export default function Studio({
   }, [active, uploadBusy, flash, reload])
 
   const runTranscription = useCallback(async (): Promise<void> => {
+    if (!active?.audio) return
     if (!active || transcriptBusy) return
     const sessionId = active.id
     setTranscriptBusy(true)
@@ -697,7 +727,7 @@ export default function Studio({
     const all = await reload()
     setActiveId(all.filter((s) => recordingRunKey(s) !== wasId).map(recordingRunKey)[0] ?? null)
     setConfirmDelete(false)
-    flash('Recording moved to Trash')
+    flash('Recording moved to the Bin')
   }, [active, reload, flash])
 
   const handleTimeUpdate = useCallback((audio: HTMLAudioElement): void => {
@@ -719,7 +749,7 @@ export default function Studio({
       const t = e.target as HTMLElement | null
       const typing = t && t.matches('input, textarea, [contenteditable="true"]')
       if (e.key === '?') { if (!typing) { e.preventDefault(); setSheet((s) => !s) } return }
-      if (e.key === 'Escape') { e.preventDefault(); if (sheet) setSheet(false); else if (settingsOpen) setSettingsOpen(false); else onClose(); return }
+      if (e.key === 'Escape') { e.preventDefault(); if (sheet) setSheet(false); else onClose(); return }
       if (STUDIO_SIDEBAR_SHORTCUT.codes.includes(eventToCMKey(e) ?? '')) {
         e.preventDefault()
         setSidebarCollapsed((collapsed) => !collapsed)
@@ -730,8 +760,7 @@ export default function Studio({
       if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '2') {
         e.preventDefault()
-        if (onShowHistory) onShowHistory()
-        else window.dispatchEvent(new Event('tw-open-history'))
+        void window.tw.tools.open('runs')
         return
       }
       if (typing) return
@@ -750,7 +779,7 @@ export default function Studio({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [isOpen, sheet, settingsOpen, onClose, togglePlay, stepSlide, cycleSession, seekToSec, progress, totalSec, stepSegment, keyboardSegmentIdx, toggleTrimSegment, transcriptSegments, doUpload, onShowHistory])
+  }, [isOpen, sheet, onClose, togglePlay, stepSlide, cycleSession, seekToSec, progress, totalSec, stepSegment, keyboardSegmentIdx, toggleTrimSegment, transcriptSegments, doUpload])
 
   if (!isOpen) return null
 
@@ -771,58 +800,18 @@ export default function Studio({
       />
 
       {/* top chrome */}
-      <header className="tws-topbar">
-        <div className="tws-brand">
-          <span className="tws-wordmark">TalkWeaver</span>
-          <span className="tws-room">Recording Studio</span>
-        </div>
-        <nav className="tws-viewtabs" aria-label="Tools mode">
-          <button className="active" title="TalkWeaver Studio — review, trim and manage recordings">
-            <Radio className="lt-icon" />
-            Studio
-          </button>
-          <button
-            title="TalkWeaver History — every talk you have delivered"
-            onClick={() => {
-              if (onShowHistory) onShowHistory()
-              else window.dispatchEvent(new Event('tw-open-history'))
-            }}
-          >
-            <BarChart3 className="lt-icon" />
-            History
-          </button>
-          <button title="TalkWeaver Importer — bring PowerPoint slides into the vault" onClick={onShowImporter}>
-            <FileInput className="lt-icon" /> Importer
-          </button>
-        </nav>
-        <div className="tws-top-spacer" />
-        <div className="tws-tool tws-iconbtn" style={{ position: 'relative' }}>
-          <button
-            aria-label="Recording settings"
-            title="Recording settings"
-            onClick={() => setSettingsOpen((s) => !s)}
-            style={{ display: 'flex', width: '100%', height: '100%', alignItems: 'center', justifyContent: 'center' }}
-          >
-            <Settings className="lt-icon" />
-          </button>
-          {settingsOpen && (
-            <div className="tws-pop" onClick={(e) => e.stopPropagation()}>
-              <div className="tws-pop-title">Recording storage</div>
-              <div className="tws-pop-sub">Recordings save to this Mac first. Upload to R2 is on request, per recording.</div>
-              <div className="tws-pop-foot">
-                Endpoint, bucket, keys and the auto-discard threshold live in{' '}
-                <span className="tws-link">Settings ⌘,</span> → Recording storage.
-              </div>
-            </div>
-          )}
-        </div>
-        <button className="tws-tool tws-iconbtn tws-help" aria-label="Keyboard cheat-sheet" title="Keyboard cheat-sheet (?)" onClick={() => setSheet(true)}>?</button>
-        <button className="tws-tool tws-iconbtn" aria-label="Close Studio" title="Close (Esc)" onClick={onClose}><X className="lt-icon" /></button>
+      <header className="tw-tools-bar tws-bar">
+        <h2>Studio</h2>
+        <span className="tws-top-spacer" />
+        <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Open settings for Studio" title="Open settings for Studio" onClick={() => openSettingsAt('recording')}>
+          <Settings className="lt-icon" />
+        </button>
+        <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Keyboard cheat-sheet" title="Keyboard cheat-sheet (?)" onClick={() => setSheet(true)}>?</button>
       </header>
 
       <div className="tws-workbench">
       {/* session sidebar */}
-      <aside className={`tws-sidebar${sidebarCollapsed ? ' collapsed' : ''}`} aria-label="Recording sessions">
+      <aside className={`tws-sidebar${sidebarCollapsed ? ' collapsed' : ''}`} aria-label="Recorded Runs">
         {sidebarCollapsed ? (
           <div className="tws-sidebar-collapsed-strip">
             <button
@@ -839,7 +828,7 @@ export default function Studio({
         <>
         <div className="tws-sidebar-head">
           <div className="tws-sidebar-title-row">
-            <h2>Sessions</h2>
+            <h2>Recorded Runs</h2>
             <span className="tws-r-count">{sessions.length ? `${filtered.length} of ${sessions.length}` : 'none yet'}</span>
             <button
               className="tws-sidebar-toggle"
@@ -856,18 +845,17 @@ export default function Studio({
               ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search recordings by talk, context or date…"
+              placeholder="Search Runs by talk, context or date…"
               aria-label="Search recordings"
             />
           </div>
           <div className="tws-sidebar-controls">
-            <span className="tws-sort-label">Sort talks</span>
+            <span className="tws-sort-label">Sort Runs</span>
             <div className="tws-seg" role="group" aria-label="Sort talk groups">
               <button className={sort === 'newest' ? 'on' : ''} onClick={() => setSort('newest')} title="Talks with the most recent activity first">Newest</button>
               <button className={sort === 'length' ? 'on' : ''} onClick={() => setSort('length')} title="Talks with the longest recording first">Length</button>
             </div>
           </div>
-          <span className="tws-reassure"><Check className="lt-icon" /> Local first — nothing is lost</span>
         </div>
 
         <div className="tws-sidebar-scroll">
@@ -876,7 +864,7 @@ export default function Studio({
               <div className="tws-e-frame"><FileText className="lt-icon" /></div>
               <div>
               <h3>No recordings yet</h3>
-              <p>Press <span className="tws-q">⇧R</span> in the presenter to capture a run. Sessions appear here the moment you stop — saved on this Mac; upload to R2 whenever you choose.</p>
+              <p>Press <span className="tws-q">⇧R</span> in the presenter to capture a Run. Recorded Runs appear here the moment you stop — saved on this Mac; upload whenever you choose.</p>
               </div>
             </div>
           ) : filtered.length === 0 ? (
@@ -910,17 +898,18 @@ export default function Studio({
                       return (
                         <button key={recordingRunKey(s)} data-sid={s.id} className={`tws-scard ${active && recordingRunKey(s) === recordingRunKey(active) ? 'active' : ''}`} onClick={() => setActiveId(recordingRunKey(s))}>
                           <div className="tws-sc-top">
-                            <span className="tws-sc-date">{fmtDate(s.startedAt)}</span>
+                            <span className="tws-sc-date">{runTitleAndWhen(s).when}</span><AnimatedVideoChip status={videoStates[recordingRunKey(s)]}/>
                           </div>
-                          <div className="tws-sc-ctx">{s.context || '—'}</div>
+                          <div className="tws-sc-name">{runTitleAndWhen(s).name}</div>
+                          {s.context ? <div className="tws-sc-ctx">{s.context}</div> : null}
                           <div className="tws-sc-len">
                             <span className="tws-sc-rec">{mins(recSec)}m</span>
                             {s.trims?.length ? <span className="tws-sc-plan">raw {mins(rawSec)}m</span> : null}
                             {runAudioSummary(s).label ? <span className="tws-sc-audio-short" title="The audio is shorter than the recording: the microphone input was lost.">{runAudioSummary(s).label}</span> : null}
                             {s.timerTargetMin ? <span className="tws-sc-plan">planned {s.timerTargetMin}m</span> : null}
                             {d ? <span className={`tws-delta ${d.cls}`}>{d.text}</span> : null}
-                            <span className={`tws-sc-up ${s.audio.uploaded ? '' : 'local'}`}>
-                              {s.audio.uploaded ? <><Check className="lt-icon" /> in R2</> : <><HardDrive className="lt-icon" /> on this Mac</>}
+                            <span className={`tws-sc-up ${s.audio?.uploaded ? '' : 'local'}`}>
+                              {!s.audio ? 'No audio' : s.audio.uploaded ? <><Check className="lt-icon" /> uploaded</> : <><HardDrive className="lt-icon" /> on this Mac</>}
                             </span>
                           </div>
                           <span className="tws-sc-play"><Play className="lt-icon" /></span>
@@ -951,7 +940,6 @@ export default function Studio({
             </div>
             <span className="tws-nh-from">{curEnterIdx >= 0 ? 'from ' + fmt((enters[curEnterIdx].tMs || 0) / 1000) : ''}</span>
             <span className="tws-nh-sec">{curSlide?.section || ''}</span>
-            {curSlide?.tag ? <span className="tws-nh-tag">{curSlide.tag}</span> : null}
           </div>
           <div className="tws-monitor-wrap">
             <div className="tws-monitor-frame">
@@ -962,7 +950,7 @@ export default function Studio({
                     className={`tws-replay-frame ${replayReady ? 'ready' : ''}`}
                     src={replayUrl}
                     sandbox="allow-scripts"
-                    title="Presentation replay"
+                    title="Talk replay"
                   />
                 ) : null}
                 {(!replayReady || !replayUrl || replayError || !curSlide) ? (
@@ -998,10 +986,11 @@ export default function Studio({
                 Manage notes
               </button>
             ) : null}
+            {active?<AnimatedVideoAction key={recordingRunKey(active)} run={active} hasPackage={videoStates[recordingRunKey(active)]?.state!==undefined && videoStates[recordingRunKey(active)].state!=='none'} videoRequest={pendingVideo} onVideoRequestHandled={clearPendingVideo} slides={slideMap} onShowTalkFolder={async()=>{const talk=await studioTalkForRun(active);if(talk)await window.tw.shell.showInFolder(talk.outlinePath)}}/>:null}
             {transcript ? (
               <button
                 className="tws-ts-retry"
-                disabled={transcriptBusy}
+                disabled={transcriptBusy || !active?.audio}
                 title="Re-transcribe this recording"
                 onClick={() => { void runTranscription() }}
               >
@@ -1020,6 +1009,7 @@ export default function Studio({
             onMouseEnter={() => setTranscriptHover(true)}
             onMouseLeave={() => setTranscriptHover(false)}
           >
+            {active?<AnimatedVideoStatus key={recordingRunKey(active)} run={active} status={videoStates[recordingRunKey(active)]}/>:null}
             {transcript && transcriptSegments.length > 0 ? (
               <div className="tws-ts-list" role="list" aria-label="Transcript segments">
                 {transcriptSegments.map((seg, i) => {
@@ -1086,7 +1076,7 @@ export default function Studio({
                           <span>{transcriptNote || 'Transcribing…'}</span>
                         </div>
                       ) : (
-                        <button className="tws-btn primary" onClick={() => { void runTranscription() }} disabled={transcriptLoading}>
+                        <button className="tw-btn tw-btn--primary" onClick={() => { void runTranscription() }} disabled={transcriptLoading || !active?.audio}>
                           <FileText className="lt-icon" />
                           Transcribe
                         </button>
@@ -1124,7 +1114,7 @@ export default function Studio({
         <div className="tws-console-top">
           <div className="tws-transport">
             <button className="tws-tp" title="Previous slide (←)" onClick={() => stepSlide(-1)}><SkipBack className="lt-icon" /></button>
-            <button className="tws-tp tws-play" title="Play / pause (Space)" onClick={togglePlay}>
+            <button className="tws-tp tws-play" title={active?.audio?"Play / pause (Space)":"This Run has no audio."} disabled={!active?.audio} onClick={togglePlay}>
               {playing ? <Pause className="lt-icon" /> : <Play className="lt-icon" />}
             </button>
             <button className="tws-tp" title="Next slide (→)" onClick={() => stepSlide(1)}><SkipForward className="lt-icon" /></button>
@@ -1152,18 +1142,23 @@ export default function Studio({
             {delta ? <span className={`tws-delta ${delta.cls}`}>{delta.text}</span> : null}
             <button className="tws-speed" title="Playback speed" onClick={cycleSpeed}>{SPEEDS[speedIdx].toString()}×</button>
             {active && (
-              <button className="tws-upl" onClick={doUpload} disabled={active.audio.uploaded || uploadBusy} title={active.audio.uploaded ? 'Already in R2' : 'Upload this recording to R2 (U)'}>
-                {active.audio.uploaded ? <><Check className="lt-icon" /> In R2</> : <><UploadCloud className="lt-icon" /> {uploadBusy ? 'Uploading…' : 'Upload to R2'}</>}
+              <button className="tw-btn tw-btn--sm" onClick={doUpload} disabled={!active.audio || active.audio.uploaded || uploadBusy} title={active.audio?.uploaded ? 'Already uploaded' : 'Upload this recording (U)'}>
+                {active.audio?.uploaded ? <><Check className="lt-icon" /> Uploaded</> : <><UploadCloud className="lt-icon" /> {uploadBusy ? 'Uploading…' : 'Upload'}</>}
               </button>
             )}
             {active && !confirmDelete && (
-              <button className="tws-tp" title="Delete this recording" onClick={() => setConfirmDelete(true)} style={{ width: 30, height: 30 }}><Trash2 className="lt-icon" /></button>
+              <button className="tws-tp" title="Delete this Run" onClick={() => setConfirmDelete(true)} style={{ width: 30, height: 30 }}><Trash2 className="lt-icon" /></button>
             )}
             {active && confirmDelete && (
-              <>
-                <button className="tws-btn danger" onClick={doDelete}>Delete</button>
-                <button className="tws-btn" onClick={() => setConfirmDelete(false)}>Cancel</button>
-              </>
+              <ConfirmCard
+                title="Delete this Run?"
+                itemName={`${plainTalkTitle(active.talkTitle)} · ${fmtDate(active.startedAt)}`}
+                consequence={BIN_CONSEQUENCE}
+                recovery="You can recover its recording from the Bin until you empty it. Its slide timings are removed from Runs."
+                cta="Delete"
+                onCancel={() => setConfirmDelete(false)}
+                onConfirm={() => void doDelete()}
+              />
             )}
           </div>
         </div>
@@ -1188,7 +1183,7 @@ export default function Studio({
                     key={i}
                     style={{ left: at.toFixed(2) + '%' }}
                     onClick={() => seekToSec((m.tMs || 0) / 1000)}
-                    title={slide?.title || m.slideId || 'slide'}
+                    title={slide?.title || 'Slide'}
                   >
                     <div className="m-print">
                       <div className="m-thumb">
@@ -1273,60 +1268,11 @@ export default function Studio({
         </div>
       </div>
 
-      {/* hint footer */}
-      <div className="tws-hintbar">
-        <span className="h"><b>Space</b> play / pause</span>
-        <span className="h"><b>← →</b> slide to slide</span>
-        <span className="h"><b>↑ ↓</b> recording</span>
-        <span className="h"><b>, .</b> nudge 5s</span>
-        <span className="h"><b>[ ]</b> transcript</span>
-        <span className="h"><b>T</b> trim / restore</span>
-        <span className="h"><b>U</b> upload</span>
-        <span className="h push"><b>?</b> shortcuts</span>
-      </div>
       </main>
       </div>
 
-      {/* ? cheat-sheet */}
-      {sheet && (
-        <div className="tws-scrim" onClick={(e) => { if (e.target === e.currentTarget) setSheet(false) }}>
-          <div className="tws-panel">
-            <div className="tws-panel-head">
-              <h2>Keyboard</h2>
-              <span className="ph-sub">every control has a key</span>
-              <button className="ph-close" onClick={() => setSheet(false)} aria-label="Close"><X className="lt-icon" /></button>
-            </div>
-            <div className="tws-cs-groups">
-              <div className="tws-cs-group">
-                <h3>Player</h3>
-                <div className="tws-cs-row">Play / pause <span className="keys"><kbd>Space</kbd></span></div>
-                <div className="tws-cs-row">Previous slide <span className="keys"><kbd>←</kbd></span></div>
-                <div className="tws-cs-row">Next slide <span className="keys"><kbd>→</kbd></span></div>
-                <div className="tws-cs-row">Nudge back 5s <span className="keys"><kbd>,</kbd></span></div>
-                <div className="tws-cs-row">Nudge on 5s <span className="keys"><kbd>.</kbd></span></div>
-                <div className="tws-cs-row">Previous transcript segment <span className="keys"><kbd>[</kbd></span></div>
-                <div className="tws-cs-row">Next transcript segment <span className="keys"><kbd>]</kbd></span></div>
-                <div className="tws-cs-row">Trim / restore current segment <span className="keys"><kbd>T</kbd></span></div>
-                <div className="tws-cs-row">Jump to start <span className="keys"><kbd>0</kbd></span></div>
-              </div>
-              <div className="tws-cs-group">
-                <h3>Session</h3>
-                <div className="tws-cs-row">Previous / next recording <span className="keys"><kbd>↑</kbd><kbd>↓</kbd></span></div>
-                <div className="tws-cs-row">Upload to R2 <span className="keys"><kbd>U</kbd></span></div>
-                <div className="tws-cs-row">Search recordings <span className="keys"><kbd>⌘</kbd><kbd>F</kbd></span></div>
-                <div className="tws-cs-row">Collapse / expand recordings <span className="keys"><kbd>{STUDIO_SIDEBAR_SHORTCUT.keys}</kbd></span></div>
-                <div className="tws-cs-row">Edit context <span className="keys">click the label</span></div>
-              </div>
-              <div className="tws-cs-group">
-                <h3>Anywhere</h3>
-                <div className="tws-cs-row">This cheat-sheet <span className="keys"><kbd>?</kbd></span></div>
-                <div className="tws-cs-row">Close Studio <span className="keys"><kbd>Esc</kbd></span></div>
-                <div className="tws-cs-row">Recording keys <span className="keys"><kbd>⇧R</kbd> <kbd>⇧P</kbd></span></div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* ? opens the generated keyboard sheet (⌘/), on Studio's keys */}
+      <KeyboardHelp isOpen={sheet} onClose={() => setSheet(false)} view="studio" />
 
       {toast && <div className="tws-toast show"><Check className="lt-icon" /><span>{toast}</span></div>}
     </div>

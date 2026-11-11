@@ -22,7 +22,8 @@ button:disabled { opacity: 0.5; }
 .ce-status.is-error { color: var(--ce-error); }
 .ce-hint { color: var(--ce-quiet); font-size: 12px; }
 .ce-body { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 0 14px 14px; }
-.ce-live { flex: 7; min-width: 0; border: 1px solid var(--ce-line); background: #fff; display: flex; align-items: center; justify-content: center; }
+.ce-live { flex: 7; min-width: 0; display: flex; align-items: center; justify-content: center; background: #e8e2d7; overflow: hidden; }
+.ce-viewport { flex: none; background: #fff; display: flex; align-items: center; justify-content: center; outline: 1px solid var(--ce-line); }
 .ce-live-wait { color: var(--ce-quiet); }
 .ce-side { flex: 3; min-width: 220px; overflow-y: auto; }
 .ce-list-heading { font-size: 13px; margin: 0 0 6px; }

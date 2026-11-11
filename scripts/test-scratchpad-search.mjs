@@ -6,7 +6,7 @@ import {
   toggleTypeInQuery, titleFromFileName, typeCounts, visibleItems
 } from '../src/shared/scratchpad.ts'
 import { sourceOutlineCandidates } from '../src/renderer/src/lib/scratchpadSourceThumbs.ts'
-import { clampBox, collapse, defaultLayout, dock, expand, float, parseLayout, toggle } from '../src/shared/scratchpad-layout.ts'
+import { DOCK_MIN_WINDOW, FLOAT_TOP, SIDEBAR_RESERVE, clampBox, collapse, defaultLayout, dock, expand, float, parseLayout, toggle } from '../src/shared/scratchpad-layout.ts'
 
 let checks = 0
 const check = (name, fn) => { fn(); checks++ }
@@ -128,6 +128,15 @@ check('layout: collapse remembers the open mode, toggle goes back to it, dock an
   assert.deepEqual([pill.mode, pill.restore], ['collapsed', 'docked'])
   assert.equal(toggle(pill).mode, 'docked'); assert.equal(toggle(toggle(pill)).mode, 'collapsed')
   assert.equal(collapse(pill), pill)
+})
+
+check('layout (R17): the floating panel opens beside the right sidebar and below the two bars; docking needs a wide window', () => {
+  for (const vp of [{ w: 1000, h: 631 }, { w: 1280, h: 800 }, { w: 1440, h: 900 }]) {
+    const { box } = defaultLayout(vp)
+    assert.ok(box.x + box.w <= vp.w - SIDEBAR_RESERVE + 20, `${vp.w}: the box ends before the sidebar (${box.x + box.w})`)
+    assert.ok(box.y >= FLOAT_TOP, `${vp.w}: the box starts below the toolbars`)
+  }
+  assert.ok(DOCK_MIN_WINDOW > 1440, 'the dock (560 px) never fits beside a 1440 px window\'s sidebars with the editor keeping its share')
 })
 
 check('layout: a stored box is clamped to the window it opens in; odd storage falls back to the default', () => {

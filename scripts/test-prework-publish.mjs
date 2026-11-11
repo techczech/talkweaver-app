@@ -62,7 +62,7 @@ import { readPathwayManifest } from '../src/main/pathways.ts'
 import { liveAddressForPages, publishedFolders, removeSiteFolder, writableSiteFolder } from '../src/main/handout-publishing.ts'
 import { runChecklist } from '../src/shared/run-checklist.ts'
 import { sessionSource } from '../src/main/sessions-list.ts'
-import { RUN_FOLDER_UNCLEAR, UNPUBLISH_FOLDER_MISSING, runPublishFolder, runSiteFolder, runUnpublishJob } from '../src/main/run-unpublish.ts'
+import { RUN_FOLDER_UNCLEAR, RUN_FOLDER_UNPROVEN, UNPUBLISH_FOLDER_MISSING, legacyRunUnproven, runPublishFolder, runSiteFolder, runUnpublishJob } from '../src/main/run-unpublish.ts'
 import { buildNotAvailablePage } from '../src/main/work-page.ts'
 import { RUN_VAULT_NOT_OPEN, runVaultRoot } from '../src/main/run-page.ts'
 import { grantedPublishing } from './lib/publishing-fakes.mjs'
@@ -149,7 +149,9 @@ const siteDir = join(root, 'site')
 const built = []
 const trace = { deploys: 0 }
 const config = { vaultRoot: vault, cfAccountId: 'acct', cfPagesProject: 'talks', publishBaseUrl: 'https://talks.test', publishUseShortIds: false, liveWorkerBaseUrl: 'https://live.example.test' }
-const publishing = grantedPublishing({ siteDir, onUpload: () => { trace.deploys += 1 } })
+// This computer's own short links (what may bind a Run from before its folder was recorded): set by a test that needs one.
+let ownShortLinks = {}
+const publishing = grantedPublishing({ siteDir, onUpload: () => { trace.deploys += 1 }, registry: (() => { let kept = {}; return { read: () => ({ ...kept }), write: (next) => { kept = { ...next } }, origin: () => ({ state: 'registry', registry: { ...ownShortLinks } }) } })() })
 const common = {
   withPrewarmYield,
   // ticket 2b: the OCR text handed to the compiler; this test has no OCR index.
@@ -188,7 +190,7 @@ const runHandlerDeps = {
   openPostWorkFor: (talkSlug, runId) => { postWorkAsked.push(`${talkSlug}/${runId}`) },
   presenterPublications: { ticket: () => 1, published: () => [], unpublishedRun: () => [], talkUrl: () => null },
   talkInVault: (_root, _slug) => talk, outlineUrlOnDisk: () => null,
-  runSiteFolder, runPublishFolder, listRuns, RUN_FOLDER_UNCLEAR, runUnpublishJob, buildNotAvailablePage,
+  runSiteFolder, runPublishFolder, listRuns, RUN_FOLDER_UNCLEAR, runUnpublishJob, buildNotAvailablePage, legacyRunUnproven, RUN_FOLDER_UNPROVEN,
   // Publish handout for this Run: the Run's compiled deck, then its pages built as the worker thread
   // builds them (here in this process, with the real buildHandoutPages); what the handout carries is recorded.
   runForHandout: (_talk, run) => ({ eventTitle: run.eventTitle, talkTitle: run.talkTitle, plannedDate: run.plannedDate, startedAt: run.startedAt }),
@@ -406,6 +408,7 @@ const startLine = (html) => {
   // site that happens to carry that id as its name (amended D2): the registry's folder agents-wf2 and only
   // that. Publish again and Unpublish both work on agents-wf2; the folder called by the id is untouched.
   const clash = 'agents-wf2-clash'
+  ownShortLinks = { 'agents-wf2': clash } // this computer gave agents-wf2 that id itself: the binding is its own, not only the site's
   mkdirSync(join(siteDir, clash), { recursive: true })
   writeFileSync(join(siteDir, clash, 'index.html'), 'another handout')
   const legacy = readRunForTalk(vault, slug, 'run-wf2')
@@ -422,6 +425,7 @@ const startLine = (html) => {
   assert.equal(boundDown.success, true, boundDown.error)
   assert.deepEqual([readFileSync(join(folder, 'index.html'), 'utf8'), readFileSync(join(siteDir, clash, 'index.html'), 'utf8')], [NA, 'another handout'], 'Unpublish: agents-wf2 "not available", the folder called by the id untouched')
   rmSync(join(siteDir, clash), { recursive: true, force: true })
+  ownShortLinks = {}
   persistRunForTalk(vault, slug, 'run-wf2', normaliseRun({ ...legacy, handoutUrl: first.url, handoutFolder: 'agents-wf2' }))
   assert.equal((await down('run-wf2')).success, true)
   // The Run's folder missing from the site's copy: refused, nothing withdrawn.
@@ -613,8 +617,9 @@ for (const awkward of ['two words 1 run', 'two words #1 run']) {
   // The frozen candidate never follows an unrelated link into a different tree.
   persistRunForTalk(vault, slug, 'run-link-guard', planned('run-link-guard', { status: 'delivered' }))
   const beforeUpload = trace.deploys
-  const refusedLink = await loadHandler('run:publish-handout', { ...runHandlerDeps, runHandoutSlug: () => 'run-link-guard' })(null, { talkSlug: slug, runId: 'run-link-guard' })
-  assert.deepEqual([refusedLink.success, refusedLink.error, trace.deploys], [false, preservationMessage('PUBLISH_CANDIDATE_CHANGED'), beforeUpload])
+  // Per-talk publishing sends only this Run's folder: a link elsewhere in this computer's copy is neither read nor followed.
+  const passedLink = await loadHandler('run:publish-handout', { ...runHandlerDeps, runHandoutSlug: () => 'run-link-guard' })(null, { talkSlug: slug, runId: 'run-link-guard' })
+  assert.deepEqual([passedLink.success, trace.deploys], [true, beforeUpload + 1], passedLink.error)
   assert.deepEqual(outside(), before)
   rmSync(join(siteDir, 'run-link-guard'), { recursive: true, force: true })
   const EVIL = ['%2e%2e%2fvictim', '..%2Fvictim', '..%2F..', '%2Fetc', '%2F' + encodeURIComponent(victim.slice(1)), '%5C..%5Cvictim', '%00', 'victim%00', '%2e', '%2e%2e', 'linked', 'linked%2Fdeep', 'victim.', '%E0%A4%A', '%20victim', 'CON']
@@ -637,6 +642,12 @@ for (const awkward of ['two words 1 run', 'two words #1 run']) {
         // The symlink refusal is checked above; the same symlink is restored for the next unsafe-input check.
         rmSync(join(siteDir, 'linked'))
         const up = await loadHandler('run:publish-handout', { ...deps, runHandoutSlug: () => 'run-evil-folder' })(null, { talkSlug: slug, runId: 'run-evil' })
+        if (legacyRunUnproven(stored, registry, ownShortLinks)) {
+          // That id's folder is known only from a registry that is not this computer's own record (review round 1, finding 3).
+          assert.deepEqual([up.success, up.error, outside()], [false, RUN_FOLDER_UNPROVEN, before], `publish with the stored link ${link}: refused, nothing written`)
+          symlinkSync(victim, join(siteDir, 'linked'))
+          continue
+        }
         assert.equal(up.success, true, up.error)
         assert.deepEqual([outside(), existsSync(join(siteDir, 'run-evil-folder', 'index.html'))], [before, true], `publish with the stored link ${link}: built in its own folder inside the site`)
         assert.equal((await loadHandler('run:unpublish-handout', deps)(null, { talkSlug: slug, runId: 'run-evil' })).success, true)
@@ -646,12 +657,20 @@ for (const awkward of ['two words 1 run', 'two words #1 run']) {
     }
   }
   // A Run whose folder NAME is not a plain segment, or is a link: refused before anything is written.
-  for (const name of ['../victim', '..', '.', 'victim/deep', victim, '..\\victim', 'bad\u0000name', 'trailing.', ' leading', 'trailing ', 'NUL', 'com1.html', '', 'linked']) {
+  for (const name of ['../victim', '..', '.', 'victim/deep', victim, '..\\victim', 'bad\u0000name', 'trailing.', ' leading', 'trailing ', 'NUL', 'com1.html', '']) {
     persistRunForTalk(vault, slug, 'run-evil', planned('run-evil', { status: 'delivered' }))
     const siteBefore = snapshot(siteDir)
     const up = await loadHandler('run:publish-handout', { ...runHandlerDeps, runHandoutSlug: () => name })(null, { talkSlug: slug, runId: 'run-evil' })
     assert.deepEqual([up.success, up.error], [false, SITE_FOLDER_REFUSED], `a Run folder named ${JSON.stringify(name)} is refused`)
     assert.deepEqual([outside(), snapshot(siteDir), readRunForTalk(vault, slug, 'run-evil').handoutUrl], [before, siteBefore, undefined], `${JSON.stringify(name)}: nothing was written anywhere`)
+  }
+  // A Run folder named like the link in this computer's copy: the site (the live one) has no such folder, so it publishes; the copy
+  // is never written through the link.
+  {
+    persistRunForTalk(vault, slug, 'run-evil', planned('run-evil', { status: 'delivered' }))
+    const up = await loadHandler('run:publish-handout', { ...runHandlerDeps, runHandoutSlug: () => 'linked' })(null, { talkSlug: slug, runId: 'run-evil' })
+    assert.equal(up.success, true, up.error)
+    assert.deepEqual(outside(), before, 'nothing outside the site folder is written through the link')
   }
   // The link inside the site is still a link, and what it points at is whole.
   assert.ok(lstatSync(join(siteDir, 'linked')).isSymbolicLink() && readFileSync(join(victim, 'deep', 'keep.txt'), 'utf8') === 'keep')

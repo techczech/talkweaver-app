@@ -104,7 +104,7 @@ recording.registerRecordingIpc({
 })
 const sender = (id) => {
   const events = {}
-  return { id, once: (name, fn) => { events[name] = fn }, on: () => {}, fire: (name) => events[name]?.() }
+  return { id, isDestroyed: () => false, send: () => {}, once: (name, fn) => { events[name] = fn }, on: () => {}, fire: (name) => events[name]?.() }
 }
 const runsIn = (root) => {
   const folder = join(root, '_PRESENTATIONS', SLUG)
@@ -429,7 +429,7 @@ const transBundle = await build({ entryPoints: ['src/main/transcription.ts'], bu
 } }] })
 const transModule = { exports: {} }
 new Function('require', 'module', 'exports', transBundle.outputFiles[0].text)(createRequire(import.meta.url), transModule, transModule.exports)
-transModule.exports.registerTranscriptionIpc({
+transModule.exports.registerTranscriptionIpc(globalThis.__recordingVaultTest.ipcMain, {
   userDataDir: () => userData, vaultRoot: () => A,
   config: () => ({ python: 'python', script: 'transcribe.py' }), testMode: () => transcriptTestMode,
   readiness: () => ({ row: { state: 'ready' }, ffmpeg: { found: true, path: '/fixture/ffmpeg' } }),
@@ -455,12 +455,12 @@ const transcribeInputs = async (id) => {
   const run = { id, talkSlug: SLUG, audio: { segments: [{ file: `${id}.seg-2.r1.webm`, bytes: 5, startMs: 1000, endMs: 5000 }] } }
   writeFileSync(runPath, JSON.stringify(run))
   assert.equal(await recording.recordingAudioPath(userData, id, A, SLUG), owned, 'playback uses the first listed segment, including a replacement')
-  assert.deepEqual(await transcribeInputs(id), [owned], 'transcription uses the replacement, never the unlisted first file')
+  assert.deepEqual(await transcribeInputs(id), ['anullsrc=r=48000:cl=mono', owned], 'transcription uses the replacement, never the unlisted first file')
   const later = join(recDir, `${id}.seg-4.webm`)
   writeFileSync(later, 'LATER')
   writeFileSync(runPath, JSON.stringify({ ...run, audio: { segments: [...run.audio.segments, { file: `${id}.seg-4.webm`, startMs: 8000, endMs: 9000 }] } }))
-  assert.deepEqual(await transcribeInputs(id), [owned, 'anullsrc=r=48000:cl=mono', later], 'only listed segments are joined in order with their timing gap')
-  assert.ok(transcodes[0].includes('3.000'), 'the silence uses the recorded 3-second gap')
+  assert.deepEqual(await transcribeInputs(id), ['anullsrc=r=48000:cl=mono', owned, later], 'only listed segments are joined in order with their timing gap')
+  assert.match(transcodes[0][transcodes[0].indexOf('-filter_complex') + 1], /adelay=8000:all=1/, 'the later segment retains its 8-second start, after the recorded 3-second gap')
   rmSync(later)
   writeFileSync(runPath, JSON.stringify(run))
   trashed.length = 0
@@ -503,7 +503,7 @@ const transcribeInputs = async (id) => {
   const marker = join(recDir, `${id}.recording.json`)
   writeFileSync(marker, JSON.stringify({ sessionId: id, talkSlug: SLUG, segments: [{ index: 1, file: `${id}.seg-2.r1.webm`, startMs: 1000, endMs: 5000 }] }))
   assert.equal(recording.recordingAudioPath(userData, id, A, SLUG), owned, 'the marker supplies its own listed files before recovery')
-  assert.deepEqual(await transcribeInputs(id), [owned])
+  assert.deepEqual(await transcribeInputs(id), ['anullsrc=r=48000:cl=mono', owned])
   trashed.length = 0
   assert.equal((await handlers.get('recording:delete-session')({ sender: sender(STUDIO) }, { talkSlug: SLUG, sessionId: id })).ok, true)
   assert.deepEqual(trashed.sort(), [marker, owned].sort(), 'deleting an interrupted session uses only its marker list')

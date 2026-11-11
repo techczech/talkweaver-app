@@ -1,4 +1,8 @@
 const DEFAULT_TIMEOUT = 8000
+// Native FSWatcher.close runs synchronously during a safe talk switch. On macOS
+// it can exceed Playwright's unrelated 5s page default (one close measured at 5.72s on Pro).
+// Bound the switch explicitly; keep the exact active-row and saved-content checks.
+const TALK_OPEN_TIMEOUT = 30_000
 const TALKS_PANEL = 'aside.talk-list.tl-panel'
 const TALKS_TREE = `${TALKS_PANEL} .tl-tree`
 const TALK_ROWS = `${TALKS_TREE} [data-talk-title]`
@@ -63,13 +67,16 @@ async function returnToVaultRoot(page) {
 }
 
 async function mountedRowMatching(page, predicate) {
-  const rows = talkRows(page)
-  const count = await rows.count()
-  for (let index = 0; index < count; index += 1) {
-    const row = rows.nth(index)
-    const title = await row.getAttribute('data-talk-title')
-    const slug = await row.getAttribute('data-talk-slug')
-    if (predicate({ title, slug })) return row
+  const rows = await talkRows(page).evaluateAll((elements) => elements.map((element) => ({
+    title: element.getAttribute('data-talk-title'),
+    slug: element.getAttribute('data-talk-slug'),
+    key: element.getAttribute('data-row-key'),
+  })))
+  const match = rows.find(predicate)
+  if (match) {
+    if (!match.key) throw new Error('talk row has no stable identity')
+    const escaped = await page.evaluate((value) => CSS.escape(value), match.key)
+    return page.locator(`${TALK_ROWS}[data-row-key=${escaped}]`)
   }
   return null
 }
@@ -170,7 +177,12 @@ export async function openTalkByTitle(
   }
 
   const row = await talkRowByTitle(page, title, { timeout })
-  await row.click()
+  const rowKey = await row.getAttribute('data-row-key')
+  // Opening a talk changes SPA state; preview child frames can keep navigating after
+  // the click. Wait for the app's active talk, not Playwright's unrelated frame wait.
+  await row.click({ noWaitAfter: true })
+  await page.waitForFunction((key) => [...document.querySelectorAll('[data-row-key]')]
+    .some((el) => el.getAttribute('data-row-key') === key && el.getAttribute('aria-selected') === 'true'), rowKey, { polling: 50, timeout: TALK_OPEN_TIMEOUT })
   await talkSearchInput(page).fill('')
   await page.locator('.cm-content').first().waitFor({ state: 'visible', timeout })
   return true

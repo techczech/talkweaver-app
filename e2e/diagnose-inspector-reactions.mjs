@@ -60,7 +60,7 @@ try {
   await page.waitForTimeout(1000)
   await page.locator('.tl-row').first().dblclick()
   await page.waitForTimeout(3000)
-  await page.keyboard.press('Meta+p')
+  if (!(await page.locator('.tw-inspector').count())) await page.keyboard.press('Meta+p')
   await page.waitForTimeout(1500)
 
   const inspectorTitle = async () => (await page.locator('.tw-inspector-title').textContent() ?? '').trim()
@@ -86,7 +86,7 @@ try {
       chosen: group ? [...group.querySelectorAll('.tw-reactions-chips button[aria-pressed="true"] .tw-reactions-chip-label')].map((s) => s.textContent.trim()) : [],
       labels: group?.querySelector('.tw-reactions-labels')?.value ?? null,
       token: group?.querySelector('.tw-reactions-token code')?.textContent ?? '',
-      note: group?.querySelector('.tw-reactions-note')?.textContent ?? '',
+      note: group?.querySelector('.tw-infotip-btn')?.getAttribute('aria-label') ?? '',
     }
   })
   const lineOnDisk = () => readFileSync(outlinePath, 'utf8').split('\n')[13]

@@ -75,7 +75,8 @@ const shoot = async (name) => {
 await setWindow(1512, 945)
 await page.locator('.tl-row').first().dblclick()
 await page.waitForTimeout(3000)
-await page.keyboard.press('Meta+p')
+// The Inspector is the default tab of the right sidebar (R11a); ⌘P would hide it.
+if (await page.locator('.tw-inspector').count() === 0) await page.keyboard.press('Meta+p')
 await page.waitForTimeout(1500)
 
 const inspectorTitle = async () => (await page.locator('.tw-inspector-title').textContent() ?? '').trim()
@@ -264,19 +265,18 @@ for (const label of [chips.at(-1), chips[0]]) {
 }
 await shoot('06-small-window-first-chip')
 
-// ── 7. Slides-only view (⌘3): the Inspector runs the full window width ───────────────────────
-await setWindow(1512, 945)
-await page.keyboard.press('Meta+3')
+// ── 7. The smallest window (1000 x 631, R17): the Inspector in the sidebar still keeps its options pane ─────
+await setWindow(1000, 631)
 await page.waitForTimeout(1500)
 await goTo(STATEMENT)
 for (const label of chips) {
   await clickChip(label)
   const shot = await geometry(label)
-  rec(`slides-only: ${label} heading at the top`, shot.headingOffset != null && Math.abs(shot.headingOffset) <= 1, `${shot.headingOffset?.toFixed(1)}px`)
-  rec(`slides-only: after ${label}, the preview and Explain are in view`, shot.previewInView && shot.explainInView)
-  rec(`slides-only: after ${label}, the options pane shows at least 240px`, shot.paneShown >= 240, `${Math.round(shot.paneShown)}px`)
+  rec(`1000x631: ${label} heading at the top`, shot.headingOffset != null && Math.abs(shot.headingOffset) <= 1, `${shot.headingOffset?.toFixed(1)}px`)
+  rec(`1000x631: after ${label}, the preview and Explain are in view`, shot.previewInView && shot.explainInView)
+  rec(`1000x631: after ${label}, the options pane shows at least 240px`, shot.paneShown >= 240, `${Math.round(shot.paneShown)}px`)
 }
-await shoot('07-slides-only-last-chip')
+await shoot('07-smallest-window-last-chip')
 
 await app.close()
 if (failures) {

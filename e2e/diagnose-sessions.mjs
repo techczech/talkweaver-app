@@ -1,4 +1,4 @@
-// Work-files-and-sessions ticket 09: the Sessions list, in the real app.
+// Work-files-and-sessions ticket 09: the Runs list (was the Sessions list; consistency batch 3 merged History into it), in the real app.
 // Hidden-window Electron against an isolated temp userData and a temp vault seeded with four Runs
 // (the drawn examples, dated from today): Saïd workshop +7 days, Keble +14, Medical Sciences +21, ITLC lunchtime -5.
 //   (a) the list: Upcoming (Saïd, Keble, Medical Sciences) then Past (ITLC), with pills and "pre-work n/N";
@@ -58,18 +58,18 @@ async function openSessions(app) {
   await page.waitForLoadState('domcontentloaded')
   await page.waitForTimeout(2000)
   const pending = app.waitForEvent('window')
-  await page.evaluate(() => window.tw.tools.open('sessions'))
+  await page.evaluate(() => window.tw.tools.open('runs'))
   const tools = await pending
   await tools.waitForLoadState('domcontentloaded')
   tools.on('pageerror', (e) => console.log('PAGEERROR:', e.message.slice(0, 150)))
-  await tools.waitForSelector('[data-tools-view="sessions"]', { timeout: 10_000 })
+  await tools.waitForSelector('[data-tools-view="runs"]', { timeout: 10_000 })
   return tools
 }
 const shot = async (tools, name) => { if (shotsDir) await tools.screenshot({ path: join(shotsDir, `${name}.png`) }).catch(() => {}) }
 // "Upcoming: a, b | Past: c" read from the page (names, in order).
 const shown = (tools) => tools.evaluate(() => [...document.querySelectorAll('[data-sessions-group]')].map((g) => {
   const rows = [...g.parentElement.querySelectorAll('.tw-sess-row .nm')].map((n) => n.textContent)
-  return `${g.textContent}: ${rows.join(', ')}`
+  return `${g.childNodes[0].textContent}: ${rows.join(', ')}`
 }).join(' | '))
 const rowText = (tools, key) => tools.locator(`[data-sessions-row="${key}"]`).innerText().then((t) => t.replace(/\s+/g, ' ').trim())
 const waitRows = (tools) => tools.waitForSelector('[data-sessions-row]', { timeout: 10_000 })
@@ -102,34 +102,37 @@ const FOUR = [
     rec('Keble row text', (await rowText(tools, 'ai-teaching/keble')).includes('pre-work 31/40'))
     rec('Medical Sciences row: not published, pre-work not open', (await rowText(tools, 'ai-research/med')).includes('Not published') && (await rowText(tools, 'ai-research/med')).includes('pre-work not open'))
     rec('ITLC row: delivered, pre-work closed 12/15', (await rowText(tools, 'ai-teaching/itlc')).includes('Delivered') && (await rowText(tools, 'ai-teaching/itlc')).includes('pre-work closed 12/15'))
-    rec('four filters, none on', await tools.locator('[data-sessions-filter]').count() === 4 && await tools.locator('[data-sessions-filter].on').count() === 0)
-    rec('no row selected, detail says so', await tools.locator('.tw-sess-row.on').count() === 0 && (await tools.locator('.tw-tools-none').innerText()).includes('No run selected'))
+    rec('six filters (Upcoming, Live now, Past, Recorded, Published, Responses waiting), none on', await tools.locator('[data-sessions-filter]').count() === 6 && await tools.locator('[data-sessions-filter][aria-pressed="true"]').count() === 0)
+    rec('the list opens on its first Run (Saïd), as History did', await tools.locator('.tw-sess-row.on').count() === 1 && await tools.locator('[data-sessions-row="ai-research/said"][aria-current="true"]').count() === 1)
     await shot(tools, 'list')
 
-    const expectFilter = async (id, shotName, want) => {
+    const expectFilter = async (id, shotName, want, clear = true) => {
       await tools.locator(`[data-sessions-filter="${id}"]`).click()
       await tools.waitForTimeout(150)
       const got = await shown(tools)
       rec(`filter ${id}`, got === want, got)
-      rec(`filter ${id} chip is on`, await tools.locator(`[data-sessions-filter="${id}"].on`).count() === 1)
+      rec(`filter ${id} chip is on`, await tools.locator(`[data-sessions-filter="${id}"][aria-pressed="true"]`).count() === 1)
       await shot(tools, shotName)
+      // The "when" chips replace one another and the others stack; each is cleared before the next is read on its own.
+      if (clear) { await tools.locator(`[data-sessions-filter="${id}"]`).click(); await tools.waitForTimeout(150) }
     }
     await expectFilter('upcoming', 'filter-upcoming', UP)
-    await expectFilter('live', 'filter-live-now', '')
-    rec('Live now with nothing live says so', (await tools.locator('.tw-sess-none').innerText()).includes('No runs match'))
+    await expectFilter('live', 'filter-live-now', '', false)
+    rec('Live now with nothing live says so', (await tools.locator('.tw-sess-none').innerText()).includes('No Runs match'))
+    await tools.locator('[data-sessions-filter="live"]').click(); await tools.waitForTimeout(150)
     await expectFilter('past', 'filter-past', 'Past: ITLC lunchtime')
-    await expectFilter('published', 'filter-published-only', 'Upcoming: Saïd workshop, Keble | Past: ITLC lunchtime')
+    await expectFilter('published', 'filter-published-only', 'Upcoming: Saïd workshop, Keble | Past: ITLC lunchtime', false)
     await tools.locator('[data-sessions-filter="published"]').click()
     await tools.waitForTimeout(150)
     rec('clicking the chip again clears it', await shown(tools) === `${UP} | Past: ITLC lunchtime`)
 
     await tools.locator('[data-sessions-row="ai-research/said"]').click()
     await tools.waitForSelector('[data-sessions-detail="ai-research/said"]', { timeout: 3000 }).catch(() => {})
-    rec('selecting a row selects the Run', await tools.locator('[data-tools-view="sessions"][data-run="ai-research/said"]').count() === 1
+    rec('selecting a row selects the Run', await tools.locator('[data-tools-view="runs"][data-run="ai-research/said"]').count() === 1
       && await tools.locator('[data-sessions-row="ai-research/said"][aria-current="true"]').count() === 1)
     rec('detail names the Run and its talk', (await tools.locator('[data-sessions-detail] h1').innerText()) === 'Saïd workshop' && (await tools.locator('[data-sessions-detail] .sub').innerText()).includes('AI for research teams'))
     await shot(tools, 'row-selected')
-    // a Run asked for by id from outside (History, the status bar) is the selected one
+    // a Run asked for by id from outside (the editor's status bar, a published page) is the selected one
     const asked = await (await app.firstWindow()).evaluate(() => window.tw.tools.openRun('ai-teaching', 'itlc'))
     await tools.waitForSelector('[data-sessions-row="ai-teaching/itlc"][aria-current="true"]', { timeout: 5000 }).catch(() => {})
     rec('asking for a Run selects its row', asked.success && await tools.locator('[data-sessions-row="ai-teaching/itlc"][aria-current="true"]').count() === 1)
@@ -160,8 +163,8 @@ const FOUR = [
   try {
     const tools = await openSessions(app)
     await tools.waitForSelector('.tw-tools-empty', { timeout: 10_000 })
-    const body = await tools.locator('[data-tools-view="sessions"]').innerText()
-    rec('empty state', body.includes('No runs yet') && body.includes('No run selected') && await tools.locator('[data-sessions-filter]').count() === 0, body.replace(/\s+/g, ' '))
+    const body = await tools.locator('[data-tools-view="runs"]').innerText()
+    rec('empty state', body.includes('No Runs yet') && body.includes('No Run selected') && await tools.locator('[data-sessions-filter]').count() === 0, body.replace(/\s+/g, ' '))
     await shot(tools, 'empty')
   } finally { await app.close().catch(() => {}) }
 }

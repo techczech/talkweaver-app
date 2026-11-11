@@ -1,7 +1,7 @@
 // A planned Run lives in the vault of its talk (multi-vault architecture: "runs … take a root; pass the talk's
 // vault root"). Two vaults as the probe had them: A is the first (current) vault and holds nothing; B holds the
 // talk and its `Work files/`.
-//   1. Plan a run naming vault B writes the Run into B, never A; changing it and "Plan the next run like this"
+//   1. Plan a Run naming vault B writes the Run into B, never A; changing it and "Plan the next Run like this"
 //      stay in B; with no vault named the current vault is used, as before;
 //   2. a write naming a closed vault, a vault whose folder is gone, an unknown vault or a vault that does not
 //      hold the talk is refused, and nothing is written anywhere;
@@ -89,7 +89,7 @@ const nothingIn = (root) => !existsSync(join(root, '_PRESENTATIONS'))
   assert.deepEqual(updated, [[SLUG, 'run-test-1', B]], 'the work-time sync and post-work opening are told the Run\'s own vault')
   assert.ok(nothingIn(A))
 
-  // "Plan the next run like this" sends a new plan prefilled from the Run, with the talk's vault.
+  // "Plan the next Run like this" sends a new plan prefilled from the Run, with the talk's vault.
   const copy = createPlannedRunIn(deps, plan({ plannedDate: '2026-12-04', vaultId: 'vb' }))
   assert.equal(copy.ok, true, copy.error)
   assert.deepEqual(runsIn(B), ['run-test-1.json', 'run-test-2.json'], 'the copy is in B too')

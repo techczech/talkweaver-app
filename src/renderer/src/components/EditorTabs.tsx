@@ -11,7 +11,7 @@ export type EditorTabsProps = {
   onChange: (mode: EditorViewMode) => void
 }
 
-/** The two tabs above the editor: the same outline shown as Plain or as Markdown (spec T1, T3). */
+/** The Plain / Markdown switch at the start of the editor's toolbar: the same outline shown as Plain or as Markdown (spec T1, T3; R1: no row of its own). */
 export default function EditorTabs({ mode, onChange }: EditorTabsProps): ReactElement {
   const refs = useRef<Array<HTMLButtonElement | null>>([])
 

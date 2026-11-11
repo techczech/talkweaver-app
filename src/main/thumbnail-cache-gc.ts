@@ -37,12 +37,17 @@ const DAY_MS = 24 * 60 * 60 * 1000
 async function newestActivityMs(dir: string, depth = 0): Promise<number> {
   let newest = 0
   try {
-    newest = (await fsp.stat(dir)).mtimeMs
+    const own = await fsp.lstat(dir)
+    if (own.isSymbolicLink() || !own.isDirectory()) return 0
+    newest = own.mtimeMs
     for (const name of await fsp.readdir(dir)) {
       const child = join(dir, name)
-      try { newest = Math.max(newest, (await fsp.stat(child)).mtimeMs) } catch { /* vanished */ }
+      let entry: import('fs').Stats
+      try { entry = await fsp.lstat(child) } catch { continue }
+      if (entry.isSymbolicLink()) continue
+      newest = Math.max(newest, entry.mtimeMs)
       // depth 0: `@vaults` → its vault dirs (depth 1) → their talk dirs.
-      if ((depth === 0 && name === '@vaults') || depth === 1) {
+      if (entry.isDirectory() && ((depth === 0 && name === '@vaults') || depth === 1)) {
         newest = Math.max(newest, await newestActivityMs(child, depth + 1))
       }
     }
@@ -50,26 +55,24 @@ async function newestActivityMs(dir: string, depth = 0): Promise<number> {
   return newest
 }
 
-/** Remove a tree one entry at a time, counting what went. */
+/** Remove a tree one entry at a time, counting what went. Links are unlinked, never traversed.
+ * Same-user replacement between lstat and the next operation remains an accepted race. */
 async function removeTreeCounting(dir: string, tally: { files: number; bytes: number }): Promise<void> {
-  let entries: import('fs').Dirent[]
+  let entries: string[]
   try {
-    entries = await fsp.readdir(dir, { withFileTypes: true })
+    const entry = await fsp.lstat(dir)
+    if (entry.isSymbolicLink() || !entry.isDirectory()) {
+      await fsp.unlink(dir) // unlink this entry, never descend into a link's target
+      tally.files += 1
+      tally.bytes += entry.size
+      return
+    }
+    entries = await fsp.readdir(dir)
   } catch {
     return
   }
   for (const entry of entries) {
-    const target = join(dir, entry.name)
-    if (entry.isDirectory()) {
-      await removeTreeCounting(target, tally)
-    } else {
-      try {
-        const st = await fsp.lstat(target)
-        await fsp.unlink(target)
-        tally.files += 1
-        tally.bytes += st.size
-      } catch { /* vanished or unreadable; the rmdir below reports if anything is left */ }
-    }
+    await removeTreeCounting(join(dir, entry), tally)
   }
   try { await fsp.rmdir(dir) } catch { /* non-empty because of an unremovable child; leave it */ }
 }
@@ -90,8 +93,15 @@ export async function sweepOrphanedThumbCaches(
     return report
   }
   for (const name of names.filter((n) => NAMESPACE_RE.test(n)).sort()) {
-    if (name === liveNamespace) { report.kept.push({ name, reason: 'live' }); continue }
     const dir = join(userDataDir, name)
+    try {
+      const entry = await fsp.lstat(dir)
+      if (entry.isSymbolicLink() || !entry.isDirectory()) {
+        log(`[thumbnails] skipped unsafe cache namespace ${name}`)
+        continue
+      }
+    } catch { continue }
+    if (name === liveNamespace) { report.kept.push({ name, reason: 'live' }); continue }
     const activity = await newestActivityMs(dir)
     if (now - activity < graceMs) { report.kept.push({ name, reason: 'recent' }); continue }
     const tally = { files: 0, bytes: 0 }

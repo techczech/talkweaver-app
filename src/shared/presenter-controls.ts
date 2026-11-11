@@ -105,7 +105,7 @@ export const PRESENTER_CONTROLS: PresenterControl[] = [
   { id: 'viewFontDown', name: 'Slide text smaller', icon: 'a-arrow-down', shortcut: 'presenter.font-smaller' },
   { id: 'viewFontUp', name: 'Slide text larger', icon: 'a-arrow-up', shortcut: 'presenter.font-larger' },
   { id: 'viewReveal', name: 'Reveal mode', icon: 'layers', shortcut: 'presenter.reveal' },
-  { id: 'viewFocus', name: 'Focus mode', icon: 'focus', shortcut: 'presenter.focus' },
+  { id: 'viewFocus', name: 'Spotlight', icon: 'focus', shortcut: 'presenter.focus' },
   { id: 'viewHighlight', name: 'Highlight text', icon: 'highlighter', shortcut: 'presenter.highlight' },
   { id: 'viewHighlightClear', name: 'Clear highlights', icon: 'eraser' },
   { id: 'viewShortcuts', name: 'Keyboard shortcuts', icon: 'keyboard', shortcut: 'presenter.help' },
@@ -151,7 +151,7 @@ export const PRESENTER_CONTROLS: PresenterControl[] = [
   { id: 'presenterEmbedFullscreen', name: 'Embedded page: full screen', icon: 'maximize-2', iconOnly: true, shortcut: 'presenter.embed-fullscreen' },
   { id: 'navQuickPoll', name: 'Compose Quick poll', icon: 'vote', shortcut: 'presenter.poll-compose' },
   { id: 'navInstant', name: 'Compose instant slide', icon: 'zap', shortcut: 'presenter.instant-compose' },
-  { id: 'presenterFocus', name: 'Focus mode', icon: 'focus', shortcut: 'presenter.focus' },
+  { id: 'presenterFocus', name: 'Spotlight', icon: 'focus', shortcut: 'presenter.focus' },
   { id: 'presenterPointer', name: 'Pointer: show your mouse on every screen', icon: 'mouse-pointer-2', shortcut: 'presenter.pointer' },
   { id: 'viewPointer', name: 'Pointer', icon: 'mouse-pointer-2', shortcut: 'presenter.pointer' },
   { id: 'morePointer', name: 'Pointer', icon: 'mouse-pointer-2', shortcut: 'presenter.pointer' },
@@ -190,7 +190,7 @@ export const PRESENTER_CONTROLS: PresenterControl[] = [
   // The mode chip in the status bar while Reveal, Focus or Highlight is on: Clear (highlight only)
   // and the exit button (its name follows the mode, MODE_CHIP_NAMES). At collapse step c10 the
   // chip keeps its icon, colour and buttons but drops its words.
-  { id: 'presenterModeExit', name: 'Turn off focus mode', icon: 'x', iconOnly: true, shortcut: 'presenter.close' },
+  { id: 'presenterModeExit', name: 'Turn off spotlight', icon: 'x', iconOnly: true, shortcut: 'presenter.close' },
   { id: 'presenterHighlightExit', name: 'Turn off highlighting', icon: 'x', iconOnly: true, shortcut: 'presenter.close' },
   { id: 'presenterHighlightChipClear', name: 'Clear highlights on this slide', icon: 'eraser' },
   // REC cluster in the status bar and its toasts (src/preload/present-rec-ui.ts; presenter
@@ -219,6 +219,11 @@ export const PRESENTER_CONTROLS: PresenterControl[] = [
   { id: 'twrec-disk-dismiss', name: 'Dismiss', icon: 'x', iconOnly: true, preload: 'recorder' },
   // A failed save keeps the audio: Retry, or write it to a folder of the presenter's choice.
   { id: 'twrec-export', name: 'Save the recording\'s audio to another folder', icon: 'copy', preload: 'recorder' },
+  // The Microphone menu beside Record (the input and its level, before recording starts) and the
+  // notice when another input is connected during the talk (9 Nov 2026 incident).
+  { id: 'twrec-mic', name: 'Microphone', icon: 'mic', iconOnly: true, preload: 'recorder' },
+  { id: 'twrec-mic-use', name: 'Use this microphone', icon: 'mic', preload: 'recorder' },
+  { id: 'twrec-mic-dismiss', name: 'Dismiss', icon: 'x', iconOnly: true, preload: 'recorder' },
   // Edit pencil (src/preload/present-edit-bridge.ts)
   { id: 'twedit-btn', name: 'Edit this slide in TalkWeaver', icon: 'pencil', iconOnly: true, shortcut: 'presenter.edit', preload: 'edit' },
   // Guide chip in the top bar (src/preload/present-guide.ts; onboarding 0.38.1 ticket 10)
@@ -266,11 +271,11 @@ export const TIMER_BUTTON_NAMES = { idle: 'Start timer', running: 'Pause timer',
 
 /**
  * The mode chip per mode: its icon, its words, and the name of its exit button (tooltip and
- * accessible name). Reveal and Focus share one chip (they are exclusive); Highlight has its own.
+ * accessible name). Reveal and Spotlight share one chip (they are exclusive); Highlight has its own.
  */
 export const MODE_CHIP_NAMES = {
   reveal: { icon: 'layers', word: 'Reveal mode', exit: 'Turn off reveal mode' },
-  focus: { icon: 'focus', word: 'Focus mode', exit: 'Turn off focus mode' },
+  focus: { icon: 'focus', word: 'Spotlight', exit: 'Turn off spotlight' },
   highlight: { icon: 'highlighter', word: 'Highlight on', exit: 'Turn off highlighting' }
 } as const
 

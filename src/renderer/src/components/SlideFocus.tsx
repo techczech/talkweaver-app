@@ -1,3 +1,4 @@
+import ModeBack from './ModeBack'
 import { isWorkspaceCovered } from '../lib/workspaceCover'
 // Slide Focus surface (PRD B1/B3/B4, ADR-0034) — "zoom in on one slide". A full workspace VIEW
 // (peer of gridMode, not a scrim): scoped editing on the LEFT (the SAME outline, reused editor,
@@ -174,12 +175,8 @@ export default function SlideFocus({
     <div className="lt lt-focus">
       {/* ---------- top chrome: crumb + prev/next ---------- */}
       <div className="lt-focus-top">
-        <button className="lt-nav-btn" onClick={onExit} title="Back to where you came from (Esc)" aria-label="Back">
-          <ChevronLeft className="lt-icon" />
-        </button>
+        <ModeBack talkTitle={talk.title} onBack={onExit} />
         <div className="lt-crumb">
-          <span className="lt-c-talk">{talk.title}</span>
-          <ChevronRight className="lt-icon" />
           <span className="lt-c-sec">{section || 'slide'}</span>
           <ChevronRight className="lt-icon" />
           <span className="lt-c-slide">{slideTitle || 'untitled slide'}</span>
@@ -188,9 +185,6 @@ export default function SlideFocus({
           ))}
         </div>
         <div className="lt-focus-nav">
-          <button className="lt-railtoggle" disabled title="Version history arrives in the next update">
-            <History className="lt-icon" /> Versions <kbd>V</kbd>
-          </button>
           <span className="lt-pos">{pos}</span>
           <button className="lt-nav-btn" onClick={onPrev} title="Previous slide (←)" aria-label="Previous slide">
             <ChevronLeft className="lt-icon" />
@@ -207,7 +201,6 @@ export default function SlideFocus({
         <aside className="lt-md-pane">
           <div className="lt-pane-head">
             <span className="lt-p-title">Outline — this slide</span>
-            <span className="lt-p-note">scoped view of the Talk’s outline, not a copy</span>
           </div>
           <div className="lt-md-editor" ref={editorSlotRef} />
           <div className="lt-pane-foot">
@@ -290,19 +283,9 @@ export default function SlideFocus({
             </div>
           </div>
 
-          {/* version-rail placeholder (B2/B4) — Task 10 fills this with the real filmstrip. */}
-          <div className="lt-vrail-slot">Version history — arriving in the next update{slideId ? '' : ' (this slide has no history yet)'}.</div>
         </div>
       </div>
 
-      {/* ---------- hint bar ---------- */}
-      <footer className="lt-focus-hint">
-        <span className="lt-h"><kbd>←</kbd><kbd>→</kbd> <b>prev / next slide</b></span>
-        <span className="lt-h"><kbd>A</kbd> <b>adopt current version in…</b></span>
-        <span className="lt-h"><kbd>⇧D</kbd> <b>detach as new slide</b></span>
-        <span className="lt-h push"><kbd>Esc</kbd> <b>back to where you came from</b></span>
-        <span className="lt-h"><kbd>?</kbd> <b>all shortcuts</b></span>
-      </footer>
 
       {/* ---------- detach confirm (mockup 1959-1973) ---------- */}
       {confirmOpen && (
