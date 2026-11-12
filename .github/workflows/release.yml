@@ -54,9 +54,10 @@ jobs:
   macos:
     name: macOS (arm64)
     needs: skill-published
-    # macos-26: the built-in transcription helper (native/transcription.swift) needs the macOS 26 SDK
-    # (SpeechTranscriber); the macos-15 image's default Xcode 16.4 cannot compile it.
-    runs-on: macos-26
+    # macos-15 with Xcode 26 selected below: the built-in transcription helper (native/transcription.swift)
+    # needs the macOS 26 SDK (SpeechTranscriber), which the image's default Xcode 16.4 lacks. The macos-26
+    # image cannot be used yet: electron-builder's temporary signing keychain fails to unlock there.
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -67,6 +68,12 @@ jobs:
           bun-version-file: .bun-version
       - name: Install dependencies
         run: bun install --frozen-lockfile
+      - name: Select Xcode 26 (macOS 26 SDK for the transcription helper)
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26.[0-9]*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
       - name: Build native macOS helpers (Swift)
         run: npm run build:native
       - name: Build renderer/main
