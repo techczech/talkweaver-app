@@ -85,6 +85,9 @@ jobs:
       - name: Package (signed + notarized dmg, zip)
         run: npx electron-builder --mac --publish never
         env:
+          # Copy app files instead of hard-linking them: on CI electron-builder hard-links, and a file matched by
+          # two patterns (the renderer's html entries) then fails with EEXIST. Copying gives the same bundle.
+          USE_HARD_LINKS: 'false'
           # Developer ID code signing — electron-builder imports this .p12 into a temp keychain
           CSC_LINK: ${{ secrets.APPLE_DEVID_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_DEVID_P12_PASSWORD }}
