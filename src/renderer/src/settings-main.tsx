@@ -1,6 +1,8 @@
+import RecordingDeviceSettings from './components/RecordingDeviceSettings'
 // Entry of the shared Settings window (0.42): @app-patterns/settings-react's window over TalkWeaver's
 // schema and command registry, with the app's own pages (SettingsWindowPages.tsx). State and every
 // action come from main through the window's preload (src/preload/settings.ts).
+import PreciseWordTimingSettings from './components/PreciseWordTimingSettings'
 import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
 import { SettingsWindow, type CustomPage, type RowHint, type SheetState } from '@app-patterns/settings-react'
@@ -9,6 +11,7 @@ import '@app-patterns/settings-react/settings.css'
 import './settings-page.css'
 import { MENUS, registry } from '../../shared/bridle-commands'
 import { schema } from '../../shared/settings-schema'
+import { speechLanguageName } from '../../shared/speech-locales'
 import { BackupsPage, CloudflarePage, GetStartedPage } from './components/SettingsWindowPages'
 import AboutUpdatesSettings from './components/AboutUpdatesSettings'
 import './update-notices.css'
@@ -24,7 +27,8 @@ const ROW_HINTS: Record<string, RowHint> = {
   'importing.renderer': { control: 'segmented' },
   'writing.plainFont': { control: 'segmented' },
   'presenting.warnAt': { example: '10' },
-  'recording.discardShorter': { step: 5, example: '30' }
+  'recording.discardShorter': { step: 5, example: '30' },
+  'recording.wordsLocale': { summary: 'Speech in another language may be missed.' }
 }
 
 /**
@@ -50,6 +54,22 @@ type Opened = { section: string; sheet?: SheetState; focusKey?: string; n: numbe
 
 function SettingsApp(): React.JSX.Element | null {
   const update = useUpdateSnapshot()
+  const [parakeetReady,setParakeetReady] = useState(false)
+  useEffect(()=>{let alive=true;void window.tw.settings.transcriptionStatus().then(r=>{if(alive)setParakeetReady(r.state==='ready')}).catch(()=>{});return()=>{alive=false}},[])
+  const [languages,setLanguages] = useState<Array<{value:string;label:string}>>([])
+  const [speech, setSpeech] = useState('Checking language models…')
+  useEffect(() => { let alive=true
+    void window.tw.settings.nativeSpeechInventory().then(r=>{
+      if (!alive) return
+      setSpeech(!r.available ? r.error || 'Built-in words unavailable.' : `Installed: ${[...(r.installed ?? []),...(r.dictationInstalled ?? [])].join(', ') || 'none'}. Other supported languages download once on first use. Offline without a model: connect once and Retry.`)
+      const installed = new Set([...(r.installed ?? []),...(r.dictationInstalled ?? [])].map(l=>l.replaceAll('_','-')))
+      const supported = [...new Set([...(r.supported ?? []),...(r.dictationSupported ?? [])].map(l=>l.replaceAll('_','-')))].sort()
+      setLanguages(supported.map(value=>({value,label:`${speechLanguageName(value)} · ${installed.has(value) ? 'Installed' : 'Needs download'}`})))
+    }).catch(()=>{if(alive)setSpeech('Language models could not be checked. Retry by reopening Settings.')})
+
+    return ()=>{alive=false}
+  },[])
+
   const [view, setView] = useState<SettingsView | null>(null)
   const [opened, setOpened] = useState<Opened>({ section: 'general', n: 0 })
   const [seenAt, setSeenAt] = useState(() => Date.now())
@@ -94,20 +114,27 @@ function SettingsApp(): React.JSX.Element | null {
   const savedMic = view.state.settings['recording.microphone']
   const micOptions = microphoneSettingOptions(inputs, typeof savedMic === 'string' ? savedMic : '')
   const shown = (update?.source === 'store' ? schema.settings.filter((d) => d.key !== 'updates.checkForNewVersions') : schema.settings)
-    .map((d) => (d.key === 'recording.microphone' ? { ...d, type: 'choice' as const, options: micOptions } : d))
+    .map((d) => d.key === 'recording.microphone' ? { ...d, type: 'choice' as const, options: micOptions } : d.key === 'recording.wordsLocale' ? { ...d, help: `${d.help} ${speech}`, ...(languages.length ? { options: languages } : {}) } : d.key === 'recording.wordsEngine' ? { ...d, options: d.options?.filter(o => o.value !== 'parakeet' || parakeetReady) } : d)
   const pages: CustomPage[] = [
     { id: 'updates', label: 'About and updates', icon: 'info', render: () => <>
       <AboutUpdatesSettings look={{ sectionHead: { display: 'none' }, hint: {}, rowFolder: {}, folderLabel: { fontWeight: 600 }, btn: { cursor: 'pointer' } }} record={() => {}} onShowWhatsNew={() => { void (window as unknown as { tw: { settings: { editorAction(action: string): Promise<unknown> } } }).tw.settings.editorAction('whats-new') }} />
       <button type="button" onClick={() => setOpened((o) => ({ section: 'updates', sheet: { kind: 'reset-all' }, n: o.n + 1 }))}>Reset all settings…</button>
     </> },
+    { id: 'recording', label: 'Recording', icon: 'video', render: () => <div className="recording-settings-page">
+      <RecordingDeviceSettings microphone={String(savedMic || '')} capture={String(view.state.settings['recording.capture'] || 'voice')} setCapture={value => { void bridge.set('recording.capture', value) }} />
+      <label>Microphone <select value={String(savedMic || '')} onChange={e => { void bridge.set('recording.microphone', e.target.value) }}>{micOptions.map(option => <option key={String(option.value)} value={String(option.value)}>{option.label}</option>)}</select></label>
+      {shown.filter(d => ['recording.wordsEngine', 'recording.wordsLocale'].includes(d.key)).map(d => <p key={d.key}><label>{d.label} <select data-setting-key={d.key} value={String(view.state.settings[d.key] ?? d.default)} onChange={e => { void bridge.set(d.key, e.target.value) }}>{d.options?.map(o => <option key={String(o.value)} value={String(o.value)}>{o.label}</option>)}</select></label><small>{d.help}</small></p>)}
+      <details><summary>Advanced recording settings</summary>{shown.filter(d => d.section === 'recording' && !['recording.camera', 'recording.capture', 'recording.microphone', 'recording.wordsEngine', 'recording.wordsLocale'].includes(d.key)).map(d => <p key={d.key}><label>{d.label} <input type={d.type === 'number' ? 'number' : 'text'} value={String(view.state.settings[d.key] ?? d.default ?? '')} onChange={e => { void bridge.set(d.key, d.type === 'number' ? Number(e.target.value) : e.target.value) }} /></label></p>)}</details>
+    </div> },
     { id: 'get-started', label: 'Get started', icon: 'graduation-cap', placement: 'all', render: () => <GetStartedPage /> },
     { id: 'backups', label: 'Backups', icon: 'hard-drive', render: () => <BackupsPage version={view.state.changes.length} /> },
     { id: 'cloudflare', label: 'Cloudflare', icon: 'cloud', render: () => <CloudflarePage onSetUpRecording={() => goToSetting(RECORDING_STORAGE_FIELD.section, RECORDING_STORAGE_FIELD.key)} /> }
   ]
   return (
+    <>
     <SettingsWindow
       key={opened.n}
-      schema={{ ...schema, settings: shown, def: (key: string) => shown.find((d) => d.key === key) ?? schema.def(key), sections: [...schema.sections.filter((s) => s.id !== 'about' && s.id !== 'updates'), { ...schema.section('updates')!, pinned: true }] }}
+      schema={{ ...schema, settings: shown, def: (key: string) => shown.find((d) => d.key === key) ?? schema.def(key), sections: [...schema.sections.filter((s) => s.id !== 'about' && s.id !== 'updates' && s.id !== 'recording'), { ...schema.section('updates')!, pinned: true }] }}
       state={view.state}
       registry={registry}
       menus={MENUS}
@@ -120,6 +147,8 @@ function SettingsApp(): React.JSX.Element | null {
       onChangesSeen={setSeenAt}
       initial={{ section: opened.section, ...(opened.sheet ? { sheet: opened.sheet } : {}), ...(opened.focusKey ? { selKey: opened.focusKey } : {}) }}
     />
+    <PreciseWordTimingSettings language={String(view.state.settings['recording.wordsLocale']??'en-US')} />
+    </>
   )
 }
 

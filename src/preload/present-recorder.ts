@@ -1,3 +1,5 @@
+import { createPresenterVideo } from './presenter-video-capture'
+import type { CaptureChoice } from '../shared/recording-devices'
 /// <reference lib="dom" />
 // Recording bridge — a preload TalkWeaver attaches to the PRESENT window only when it
 // opens it (opt-in). A deck opened as a plain portable file has no preload, so it has no
@@ -49,7 +51,7 @@ export type RecState = 'idle' | 'recording' | 'paused' | 'confirm' | 'saving' | 
 // ink = the Pen's strokes on the layer being shown changed (ticket 08): only while recording, into
 // the recording file only (owner, 9 Oct 2026). The slide's own layer, or a zoomed image's (`space:
 // 'image'` and the image's index, in the image's own 0–1 units, as the projector and venue use).
-type RawEvent = 'enter' | 'reveal' | 'highlight' | 'ink' | 'clip' | 'pause' | 'resume' | 'stop'
+type RawEvent = 'enter' | 'reveal' | 'highlight' | 'ink' | 'clip' | 'pause' | 'resume' | 'stop' | 'flag' | 'refresh' | 'refreshed'
 type HighlightRange = { block: number; start: number; end: number }
 export interface RawMark {
   event: RawEvent
@@ -65,6 +67,8 @@ export interface RawMark {
 }
 
 export interface RecContext {
+  layered?: boolean
+  captureChoice?: CaptureChoice
   talkSlug: string
   talkTitle: string
   timerTargetMin: number
@@ -84,6 +88,8 @@ export interface RecContext {
 }
 
 export interface SaveResult {
+  captureUnknown?: boolean
+  capture?: import('../main/recording-layers').LayerManifest | null
   ok: boolean
   sessionId?: string
   kind?: RunKind
@@ -110,6 +116,14 @@ export interface RecorderController {
   displayMs(): number
   /** The slide id currently in the URL hash (the ledger `{id=…}`). */
   currentSlideId(): string
+  captureChoice(): CaptureChoice
+  chooseCapture(choice: CaptureChoice): void
+  checkedCamera(name: string, deviceId?: string): void
+  videoStatus(): { cameraLost: boolean; diskError: boolean }
+  refreshResumed(): boolean
+  cameraStream(): MediaStream | null
+  discardTake(): Promise<void>
+  markMistake(): void
   start(): Promise<void>
   pause(): void
   resume(): void
@@ -124,6 +138,7 @@ export interface RecorderController {
   /** Fired with a human-readable message when recording fails (mic denied, save error). */
   onError(cb: (message: string) => void): void
   /** Last save result (for the injected UI to reflect "saved" vs "discarded"). */
+  talkSlug(): string
   lastSave(): SaveResult | null
   /** Persist the always-on wall-clock Run, or change the kind of an already-saved Run. */
   saveRun(kind: RunKind, plannedRunId?: string): Promise<SaveResult | null>
@@ -173,6 +188,8 @@ async function loadContext(): Promise<RecContext> {
       preferredPlannedRunId: typeof c?.preferredPlannedRunId === 'string' ? c.preferredPlannedRunId : null,
       discardThresholdMs: typeof c?.discardThresholdMs === 'number' ? c.discardThresholdMs : 20000,
       testMode: !!c?.testMode,
+      layered: c?.layered === true,
+      captureChoice: c?.captureChoice === 'camera' ? 'camera' : 'voice',
       microphone: typeof c?.microphone === 'string' ? c.microphone : '',
       ...(typeof c?.streamTimeoutMs === 'number' && c.streamTimeoutMs > 0 ? { streamTimeoutMs: c.streamTimeoutMs } : {})
     }
@@ -207,7 +224,12 @@ function syntheticStream(): MediaStream {
   osc.frequency.value = 440
   osc.connect(dest)
   osc.start()
-  return dest.stream
+  const stream = dest.stream
+  for (const track of stream.getTracks()) {
+    const stop = track.stop.bind(track)
+    track.stop = () => { stop(); try { osc.stop() } catch { /* stopped */ } void ac.close() }
+  }
+  return stream
 }
 
 // What a clip mark names: the authored reference when the deck has one (the local file as written in
@@ -226,6 +248,11 @@ export function clipSource(ref: unknown, src: unknown): string {
 
 export function createRecorderController(ctx: RecContext): RecorderController {
   let state: RecState = 'idle'
+  let captureChoice: CaptureChoice = ctx.captureChoice ?? 'voice'
+  let refreshedUntil = 0
+  let cameraName = ''
+  let cameraDeviceId = ''
+  const video = createPresenterVideo(() => displayMs(), () => emitChange(), ctx.testMode)
   const rawMarks: RawMark[] = []
   let startedAtIso = ''
   // The microphone, MediaRecorder, loss detection and the stream to disk (present-audio-capture.ts).
@@ -256,6 +283,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   let lastHl = 0 // live highlight marks on the current slide
   let lastInk = '' // `${slideId}|${space}|${image}|${strokes}` of the Pen's ink last recorded
   let saveResult: SaveResult | null = null
+  let stopping = false
   let pendingAudio: CapturedAudio | null = null // a stopped recording awaiting save (or a Keep/Discard choice)
   let savedRunSessionId: string | null = null
   let savedRunKind: RunKind = 'delivery'
@@ -314,7 +342,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     if (!active) return -1
     return allSlides().indexOf(active)
   }
-  const isAudioArmed = (): boolean => state === 'recording' || state === 'paused' || state === 'confirm' || ((state === 'saving' || state === 'error') && !!pendingAudio)
+  const isAudioArmed = (): boolean => stopping || state === 'recording' || state === 'paused' || state === 'confirm' || ((state === 'saving' || state === 'error') && !!pendingAudio)
   const gatePassed = (): boolean => runLastSlideReached || (runNow() >= 5 * 60_000 && runForwardAdvances >= 5)
 
   function highlightableBlocks(slide: Element | null): Element[] {
@@ -570,10 +598,13 @@ export function createRecorderController(ctx: RecContext): RecorderController {
 
   // One start at a time (⇧R twice, or Record and the offer's Record): the second does nothing.
   let starting = false
+  let startDone: Promise<void> = Promise.resolve()
   async function start(): Promise<void> {
     if (starting) return
     starting = true
-    try { await startRecording() } finally { starting = false }
+    let ready: () => void = () => {}
+    startDone = new Promise<void>(resolve => { ready = resolve })
+    try { await startRecording() } finally { starting = false; ready() }
   }
 
   async function startRecording(): Promise<void> {
@@ -650,7 +681,26 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     rawMarks.push({ event: 'enter', slideId: lastHash, tMs: 0 })
     lastInk = ''
     noteInk(lastHash, 0)
+    state = 'recording' // the audio origin is set; video offsets use this same live clock
+    const runId = capture.sessionId()
+    if (runId && ctx.layered) {
+      // Device/renderer startup may stall. It must not hold the audio start/Stop gate.
+      // The countdown's warmed surface was taken by a started picture; if the start failed, it closes now.
+      const cool = (): void => { void ipcRenderer.invoke('recording:layers-cool').catch(() => {}) }
+      void video.start(runId, captureChoice, cameraName, cameraDeviceId).then(() => {
+        cool()
+        if (capture.sessionId() === runId && (state === 'recording' || state === 'paused')) emitChange()
+      }, error => {
+        cool()
+        if (capture.sessionId() === runId && (state === 'recording' || state === 'paused')) emitError(`Video capture could not start: ${String(error)}. Audio is being kept.`)
+      })
+    } else if (ctx.layered) {
+      void ipcRenderer.invoke('recording:layers-cool').catch(() => {})
+      video.unavailable()
+      emitError('Video could not start because the Run folder could not be opened. Voice is held here and will be saved when you stop.')
+    }
     state = 'recording'
+    capture.checkpoint(rawMarks.slice())
     pushRunState()
     emitChange()
   }
@@ -658,6 +708,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   function pause(): void {
     if (state !== 'recording') return
     capture.pause()
+    if (ctx.layered) video.pause()
     rawMarks.push({ event: 'pause', tMs: rawNow() })
     pauseStartRaw = rawNow()
     state = 'paused'
@@ -671,10 +722,29 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     if (pauseStartRaw !== null) { pausedAccum += now - pauseStartRaw; pauseStartRaw = null }
     state = 'recording'
     capture.resume()
+    if (ctx.layered) video.resume()
     emitChange()
   }
 
-  async function stop(forceKeep = false): Promise<SaveResult | null> {
+  // One deadline covers Stop plus final flush; video can consume at most five seconds.
+  let videoDeadline = 0
+  let videoAbandoned = false
+  async function boundedVideo(work: () => Promise<unknown>): Promise<void> {
+    if (videoAbandoned) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([work(), new Promise((_, reject) => {
+        timer = setTimeout(() => reject(Error('Video drain timed out')), Math.max(0, videoDeadline - Date.now()))
+      })])
+    } catch (error) {
+      videoAbandoned = true
+      video.unavailable()
+      throw error
+    } finally { clearTimeout(timer) }
+  }
+
+  async function stop(forceKeep = false, discard = false): Promise<SaveResult | null> {
+    if (starting) await startDone
     if (state !== 'recording' && state !== 'paused') return null
     // Close any open pause into the accumulator so displayMs freezes at the true length.
     if (pauseStartRaw !== null) { pausedAccum += rawNow() - pauseStartRaw; pauseStartRaw = null }
@@ -683,8 +753,18 @@ export function createRecorderController(ctx: RecContext): RecorderController {
 
     // The capture closes the last segment (and any open gap) at the frozen length, and waits for
     // every chunk to reach main before the save names the files.
-    pendingAudio = await capture.stop()
+    stopping = true
+    state = 'saving'; emitChange()
+    // Stop the microphone now, while video drains; its tail must not grow after the user pressed Stop.
+    const audioDone = capture.stop().then(audio => { pendingAudio = audio })
+    videoDeadline = Date.now() + 5000; videoAbandoned = false
+    let videoError: unknown = null
+    try { if (ctx.layered && capture.sessionId()) await boundedVideo(() => video.stop()) } catch (error) { videoError = error }
+    try { await audioDone } finally { stopping = false }
     pushRunState()
+    if (videoError) video.unavailable()
+
+    if (discard) { state = 'confirm'; await confirmSave(false); return saveResult }
 
     // A short recording is NEVER silently dropped — ask Keep/Discard first. At/above the
     // threshold it saves straight away (frozenDisplayMs is the pause-aware length).
@@ -725,6 +805,9 @@ export function createRecorderController(ctx: RecContext): RecorderController {
       } else {
         payload.audio = await audio.blobs[0]?.arrayBuffer()
         payload.extraAudio = await Promise.all(audio.blobs.slice(1).map((b) => b.arrayBuffer()))
+      }
+      if (audio.sessionId && ctx.layered) {
+        try { await boundedVideo(() => video.finish()) } catch { /* Voice saves with interrupted layers. */ }
       }
       const res = (await ipcRenderer.invoke('recording:save', payload)) as SaveResult
       result = res ?? { ok: false, error: 'no-response' }
@@ -780,11 +863,15 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     if (state !== 'confirm' && !(state === 'error' && pendingAudio)) return null
     if (keep) return doSave(true)
     const dropped = pendingAudio
-    pendingAudio = null
+    if (ctx.layered && dropped?.sessionId) {
+      try { await video.discard() } catch { /* Video must never prevent voice discard. */ }
+    }
     // Audio already streamed to disk goes to the Trash (recoverable), never silently deleted.
     if (dropped?.mode === 'stream' && dropped.sessionId) {
-      void ipcRenderer.invoke('recording:stream-discard', { sessionId: dropped.sessionId }).catch(() => {})
+      const result = await ipcRenderer.invoke('recording:stream-discard', { sessionId: dropped.sessionId })
+      if (!result?.ok) throw Error('The take could not be discarded. Its audio is still kept.')
     }
+    pendingAudio = null
     saveResult = { ok: true, discarded: true }
     state = 'idle'
     frozenDisplayMs = null
@@ -972,14 +1059,12 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   }
   const pollId = setInterval(checkState, 150)
   window.addEventListener('hashchange', checkState) // belt-and-braces for external hash changes
-  let checkpointTicks = 0
   const stateTickId = setInterval(() => {
     pushRunState()
     scheduleFinalise()
-    // Every 10 s, refresh the in-progress marker beside the audio with the slide marks, so a crash
-    // still leaves a Run with its slide timings.
-    if ((state === 'recording' || state === 'paused') && ++checkpointTicks % 5 === 0) capture.checkpoint(rawMarks.slice())
-  }, 2000)
+    // Checkpoint the clock and slide marks every second, alongside the streamed media.
+    if (state === 'recording' || state === 'paused') capture.checkpoint(rawMarks.slice())
+  }, 1000)
   window.addEventListener('beforeunload', () => {
     clearInterval(pollId)
     clearInterval(stateTickId)
@@ -989,10 +1074,91 @@ export function createRecorderController(ctx: RecContext): RecorderController {
   noteSlideIndexForStartOffer(activeSlideIndex())
   initialiseRunCapture()
 
+  ipcRenderer.on('recording:prepare-refresh', () => { void handover() })
+  async function handover(): Promise<void> {
+    if (starting || stopping || !['idle', 'saved', 'recording', 'paused'].includes(state)) {
+      await ipcRenderer.invoke('recording:refresh-ready', null, 'Finish saving the take before refreshing.'); return
+    }
+    if (state === 'idle' || state === 'saved') { await ipcRenderer.invoke('recording:refresh-ready', null); return }
+    try {
+      const previous = state
+      const end = displayMs()
+      stopping = true
+      state = 'saving'; emitChange()
+      rawMarks.push({event:'refresh', tMs:rawNow()})
+      capture.checkpoint(rawMarks.slice())
+      const audio = await capture.stop()
+      pendingAudio = audio
+      frozenDisplayMs = end
+      videoDeadline = Date.now() + 5000; videoAbandoned = false
+      if (ctx.layered && audio.sessionId) {
+        try { await boundedVideo(async () => {
+          await video.stop()
+          if (!videoAbandoned && capture.sessionId() === audio.sessionId) await video.handover(end)
+        }) }
+        catch {
+          stopping = false
+          const saved = await doSave(true)
+          await ipcRenderer.invoke('recording:refresh-ready', null, saved?.ok
+            ? 'Video hand-over timed out. The voice take was saved; refresh again when ready.'
+            : 'Video hand-over timed out. Keep the presenter open and retry saving the held voice.')
+          return
+        }
+      }
+      if (audio.mode !== 'stream' || audio.tail.length) throw Error('Some audio is still held here. Stop and save before refreshing.')
+      await ipcRenderer.invoke('recording:refresh-ready', {
+        audio, previous, end, raw:rawNow(), pausedAccum, startedAtIso,
+        rawMarks:rawMarks.slice(), at:Date.now(), cameraName, cameraDeviceId, captureChoice, microphone:mic
+      })
+    } catch (error) {
+      pendingAudio ??= await capture.stop()
+      stopping = false
+      state = 'error'; emitError('Refresh could not finish. Captured files are kept; retry saving.'); emitChange()
+      await ipcRenderer.invoke('recording:refresh-ready', null, String(error))
+    }
+  }
+  async function restoreRefresh(): Promise<void> {
+    const saved = await ipcRenderer.invoke('recording:refresh-restore')
+    if (!saved?.audio || !['recording', 'paused'].includes(saved.previous)) return
+    captureChoice = saved.captureChoice; cameraName = saved.cameraName; cameraDeviceId = saved.cameraDeviceId
+    mic = saved.microphone; startedAtIso = saved.startedAtIso
+    const gap = Math.max(0, Date.now() - saved.at)
+    t0 = performance.now() - saved.raw - gap
+    pausedAccum = saved.pausedAccum
+    if (saved.previous === 'paused') pauseStartRaw = rawNow() - (saved.raw - saved.pausedAccum - saved.end) - gap
+    state = saved.previous; frozenDisplayMs = null
+    rawMarks.push(...saved.rawMarks, { event:'refreshed', tMs:rawNow() })
+    const restored = await capture.restore(saved.audio, state === 'paused')
+    if (ctx.layered && saved.audio.sessionId) {
+      try {
+        await video.start(saved.audio.sessionId, captureChoice, cameraName, cameraDeviceId, true)
+        if (state === 'paused') video.pause()
+      } catch (error) {
+        if (ctx.testMode) console.warn('[recording:video-restore]', String(error))
+        video.unavailable(); emitError('Video could not resume after refresh. Voice and captured files are kept.')
+      }
+    }
+    if (state !== 'recording' && state !== 'paused') return
+    capture.checkpoint(rawMarks.slice()); pushRunState(); emitChange()
+    if (restored) {
+      refreshedUntil = Date.now() + 4500; emitChange()
+      setTimeout(emitChange, 4600)
+    }
+  }
+  void restoreRefresh().catch(() => { emitError('Recording could not resume after refresh. Captured files will be recovered.'); state = 'error'; emitChange() })
+
   return {
     getState: () => state,
     displayMs,
     currentSlideId: () => lastHash,
+    captureChoice: () => captureChoice,
+    chooseCapture: choice => { if (!isAudioArmed() && !starting) { captureChoice = choice; void ipcRenderer.invoke('recording:capture-choice', choice); emitChange() } },
+    checkedCamera: (name, deviceId) => { cameraName = name; cameraDeviceId = deviceId ?? '' },
+    videoStatus: () => video.status(),
+    refreshResumed: () => Date.now() < refreshedUntil,
+    cameraStream: () => video.previewStream(),
+    discardTake: async () => { if (state === 'recording' || state === 'paused') await stop(false, true) },
+    markMistake: () => { if (state === 'recording' || state === 'paused') { rawMarks.push({ event: 'flag', slideId: hashSlideId(), tMs: rawNow() }); capture.checkpoint(rawMarks.slice()); emitChange() } },
     start,
     pause,
     resume,
@@ -1011,6 +1177,7 @@ export function createRecorderController(ctx: RecContext): RecorderController {
     },
     setKind,
     finaliseRun,
+    talkSlug: () => ctx.talkSlug,
     currentKind: () => savedRunKind,
     runGate: () => ({
       gatePassed: gatePassed(),
@@ -1049,7 +1216,7 @@ let controller: RecorderController | null = null
 async function init(): Promise<void> {
   const ctx = await loadContext()
   controller = createRecorderController(ctx)
-  mountRecUi(controller)
+  mountRecUi(controller, ctx.layered === true)
   // The presenter view also gets the ⌘E "edit this slide" bridge (a plain presentation window gets
   // it via present-edit.ts). Mounted after the REC UI so both controls coexist.
   mountEditBridge()

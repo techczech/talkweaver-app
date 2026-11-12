@@ -11,6 +11,9 @@ import { extractStyles, extractSlides } from '../compiler/scripts/lib/04-html-ex
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
 import { buildVenuePageHtml } from '../compiler/scripts/lib/venue-page.mjs'
 import { slideFitRuntimeSource } from '../compiler/scripts/lib/01-cli-utils.mjs'
+// The fixture exercises the classic cards' runtime width step; the 0.44 Ocean look stacks boxed cards beside a
+// rail instead (its fit is test-ocean-look-dom.mjs), so this compiles in the classic look.
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 // HTML parity 02: the slide fit pipeline (compiler/assets/runtime/slide-fit.js) is ONE module the app
 // and the share page (handout, /p venue) both inline. The share page scales a 1280×720 canvas with a
@@ -97,7 +100,7 @@ const IDS = ['cards', 'long', 'table', 'carousel', 'over']
 const scratch = await mkdtemp(join(tmpdir(), 'talkweaver-slide-fit-'))
 const sourcePath = join(scratch, 'slide-fit.md')
 await writeFile(sourcePath, source)
-const model = await prepareSource(sourcePath, source, 'slide-fit', statSync(sourcePath))
+const model = await prepareSource(sourcePath, inClassicLook(source), 'slide-fit', statSync(sourcePath))
 const full = String(model.fullHtml)
 const styles = extractStyles(full)
 const slides = extractSlides(full)

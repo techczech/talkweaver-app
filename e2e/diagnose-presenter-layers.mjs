@@ -1,0 +1,502 @@
+import { createRequire } from 'node:module'
+import { spawnSync } from 'node:child_process'
+// Hidden Electron, fake devices; real app permission handlers. Never opens the owner's profile or apps.
+// Do not add --use-fake-ui-for-media-stream: Chromium bypasses permission request handlers with it.
+import { _electron as electron } from 'playwright'
+import assert from 'node:assert/strict'
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, renameSync, chmodSync, statSync, existsSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+const repo=resolve(import.meta.dirname,'..'), shots=join(repo,'docs/design/2026-11-10-record-and-edit-video/built/slice-1')
+const root=mkdtempSync(join(repo,'.slice1-e2e-')), vault=join(root,'vault'), userData=join(root,'userData'), talk=join(vault,'fixture')
+mkdirSync(talk,{recursive:true});mkdirSync(userData,{recursive:true});mkdirSync(shots,{recursive:true})
+const outline=join(talk,'fixture-outline.md'), content='---\ntitle: Layered recording\n---\n\n## Talk\n\n### Opening {id=opening}\n\nRecord the presenter.\n\n### Second {id=second}\n\nThe audience sees slides only.\n'
+writeFileSync(outline,content)
+writeFileSync(join(userData,'config.json'),JSON.stringify({vaultRoot:vault,recordingDiscardMs:800}))
+let app, count=0
+const failures=[]
+const repeatCount=process.env.TW_LAYER_PROBE_FAST==='1'?2:10
+const ffmpeg=createRequire(import.meta.url)('ffmpeg-static')
+function decodes(run, layer) { const result=spawnSync(ffmpeg,['-v','error','-i',join(userData,'recordings',run.id,run.capture.layers[layer].file),'-f','null','-'],{timeout:15000}); assert.equal(result.status,0,result.stderr?.toString()) }
+const pass=name=>console.log(`PASS ${++count} ${name}`)
+try {
+  app=await electron.launch({timeout:30000,cwd:repo,args:['.','--user-data-dir='+userData,'--use-fake-device-for-media-stream'],env:{...process.env,TW_E2E:'1',TW_REC_TEST:'1'}})
+  const main=await app.firstWindow();await main.waitForLoadState('domcontentloaded')
+  const opened=app.waitForEvent('window')
+  await main.evaluate(({outline,content})=>window.tw.talk.present(outline,content,'presenter'),{outline,content})
+  const presenter=await opened;await presenter.addInitScript(()=>{window.fixtureErrors=[];addEventListener('DOMContentLoaded',()=>new MutationObserver(records=>{for(const record of records)for(const node of record.addedNodes)if(node instanceof HTMLElement&&node.classList.contains('twrec-error'))window.fixtureErrors.push(node.textContent)}).observe(document.body,{childList:true}))});presenter.on('pageerror', error=>console.error('presenter error:',error.message));presenter.on('console',msg=>{if(msg.text().startsWith('[recording:video-restore]'))console.log(msg.text())});await presenter.waitForSelector('#twrec-primary')
+  await presenter.screenshot({path:join(shots,'present.png')})
+  await presenter.locator('#twrec-primary').click()
+  await presenter.waitForSelector('.twrec-device-check')
+  await presenter.locator('[data-continue]').waitFor({state:'visible'})
+  await presenter.waitForFunction(()=>!document.querySelector('[data-continue]').disabled)
+  await presenter.screenshot({path:join(shots,'check.png')})
+  await presenter.locator('[data-continue]').click()
+  await presenter.waitForSelector('#twrec-countdown')
+  await presenter.screenshot({path:join(shots,'countdown.png')})
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+  await presenter.waitForTimeout(1600)
+  await presenter.screenshot({path:join(shots,'recording.png')})
+  await presenter.locator('#twrec-pause').click()
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='paused')
+  await presenter.screenshot({path:join(shots,'paused.png')})
+  await presenter.keyboard.press('Shift+m')
+  await presenter.locator('#twrec-resume').click();await presenter.waitForTimeout(1200)
+  await presenter.locator('#twrec-stop').click()
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved',{},{timeout:20000})
+  await presenter.screenshot({path:join(shots,'saved.png')})
+  const runsDir=join(vault,'_PRESENTATIONS','fixture'), files=readdirSync(runsDir).filter(f=>f.endsWith('.json'))
+  const runs=files.map(f=>JSON.parse(readFileSync(join(runsDir,f),'utf8'))), run=runs.find(r=>r.audio)
+  assert.ok(run);assert.ok(run.slideTimeIndex.some(m=>m.event==='flag'));assert.equal(run.capture.version,1);assert.ok(run.capture.layers.slides.bytes>0);assert.equal(run.capture.layers.camera,undefined)
+  pass('first-time check → countdown → record → pause → shortcut flag → resume → stop → saved Run with separate slides')
+  // Edit video opens the saved Run in Studio (slice 3a); the recording panel itself is checked by diagnose-recording-panel.mjs.
+  const studioOpened=app.waitForEvent('window');await presenter.locator('#twrec-edit-video').click();const studio=await studioOpened;await studio.waitForSelector('[data-recording-panel]',{timeout:30000});await studio.close()
+  await presenter.locator('#twrec-saved-dismiss').click()
+  assert.ok(JSON.parse(readFileSync(join(runsDir,run.id+'.json'),'utf8')).audio)
+  pass('closing the saved offer preserves the saved Run')
+  await presenter.locator('#twrec-mic').click()
+  await presenter.waitForFunction(()=>Number(document.querySelector('#twrec-idle-meter').getAttribute('aria-valuenow'))>0)
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-idle-name').textContent.length>0)
+  const idleFiles = readdirSync(join(userData,'recordings')).filter(f=>f.endsWith('.webm')).map(f=>[f,statSync(join(userData,'recordings',f)).size])
+  await presenter.waitForTimeout(350)
+  assert.equal(readdirSync(join(userData,'recordings')).filter(f=>f.endsWith('.recording.json')).length,0)
+  for (const [file,size] of idleFiles) assert.equal(statSync(join(userData,'recordings',file)).size,size)
+  await presenter.screenshot({path:join(shots,'idle-meter.png')})
+  pass('capture menu has a moving inline meter and writes no recording files')
+  await presenter.keyboard.press('Escape')
+  const settingsOpened = app.waitForEvent('window')
+  await main.evaluate(()=>window.tw.settingsWindow.open('recording'))
+  const settings = await settingsOpened; await settings.waitForLoadState('domcontentloaded')
+  await settings.getByText('Check camera and microphone', {exact:true}).waitFor()
+  await settings.screenshot({path:join(shots,'settings.png')})
+  const checkedMicrophone=await settings.evaluate(async()=> (await window.tw.recordingDevices.get()).settings.microphone)
+  await settings.evaluate(name=>window.bridleSettings.set('recording.microphone',name),checkedMicrophone)
+  await settings.getByRole('button',{name:'Check camera and microphone',exact:true}).click()
+  await settings.waitForSelector('.twrec-device-check');await settings.waitForFunction(()=>!document.querySelector('[data-continue]').disabled)
+  await settings.screenshot({path:join(shots,'settings-check.png')})
+  await settings.locator('[data-continue]').click()
+  await settings.screenshot({path:join(shots,'settings-checked.png')})
+  await settings.getByRole('button',{name:'Check camera and microphone',exact:true}).click();await settings.waitForSelector('.twrec-device-check')
+  await settings.locator('[data-cancel]').click();await settings.close()
+  pass('Settings manually rechecks already-remembered devices and previews the named microphone')
+
+  await presenter.locator('#twrec-mic').click();await presenter.locator('#twrec-preview').check();await presenter.keyboard.press('Escape')
+  const captureReady=app.waitForEvent('window')
+  await presenter.keyboard.press('Shift+r')
+  await presenter.waitForSelector('#twrec-countdown');assert.equal(await presenter.locator('.twrec-device-check').count(),0)
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+  await captureReady
+  const audiences=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().filter(w=>w.webContents.getURL().includes('audience=1') && w.webContents.isOffscreen()).map(w=>({visible:w.isVisible(),url:w.webContents.getURL()})))
+  assert.ok(audiences.length);assert.ok(audiences.every(w=>!w.visible))
+  pass('unchanged devices skip the check; capture source is a hidden audience page')
+  const unrelatedCleanup=await app.evaluate(async({BrowserWindow,ipcMain})=>{
+    const owner=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('presenter=1')).webContents
+    const source=BrowserWindow.getAllWindows().find(w=>w.webContents.isOffscreen())
+    const event={sender:owner,senderFrame:owner.mainFrame}
+    const unused=await ipcMain._invokeHandlers.get('recording:stream-open')(event,{talkSlug:'fixture',talkTitle:'Fixture'})
+    if(!unused.ok)throw Error(unused.error)
+    await ipcMain._invokeHandlers.get('recording:layers-discard')(event,unused.sessionId)
+    const alive=!source.isDestroyed()
+    await ipcMain._invokeHandlers.get('recording:stream-discard')(event,{sessionId:unused.sessionId})
+    return alive
+  })
+  assert.equal(unrelatedCleanup,true)
+  pass('discarding a missing video entry cannot close another Run capture source in the same presenter')
+
+  await presenter.waitForTimeout(1500)
+  await presenter.locator('#twrec-stop').click();await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved')
+  await presenter.waitForFunction(()=>!document.querySelector('#twrec-preview').checked && Number(document.querySelector('#twrec-idle-meter').getAttribute('aria-valuenow'))===0)
+  pass('Stop clears Preview and closes idle devices when the capture menu is closed')
+  for (let n = 2; n < repeatCount; n++) {
+    await presenter.keyboard.press('Shift+r'); await presenter.waitForSelector('#twrec-countdown')
+    assert.equal(await presenter.locator('.twrec-device-check').count(), 0)
+    await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+    await presenter.waitForTimeout(1100); await presenter.locator('#twrec-stop').click()
+    await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved')
+  }
+  pass(`${repeatCount} consecutive recordings use the remembered devices without another sheet`)
+  for (const paused of [false, true]) {
+    await presenter.keyboard.press('Shift+r')
+    await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+    await presenter.waitForTimeout(1400)
+    if (paused) await presenter.locator('#twrec-pause').click()
+    const expected = paused ? 'paused' : 'recording'
+    const deckWcId = await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('presenter=1')).webContents.id)
+    const result = await main.evaluate(({deckWcId,outline,content})=>window.tw.present.rebuild(deckWcId,outline,content+'\nRefreshed slides.\n','opening'),{deckWcId,outline,content})
+    assert.ok(result.ok, result.error)
+    await presenter.waitForFunction(st=>document.querySelector('#twrec-module')?.dataset.rec===st,expected)
+    try { await presenter.waitForFunction(()=>document.body.textContent.includes('Recording resumed after refresh')) } catch(error) { console.error('Refresh diagnostic',await presenter.evaluate(()=>({label:document.querySelector('#twrec-label')?.textContent,errors:window.fixtureErrors,state:document.querySelector('#twrec-module')?.dataset.rec})));throw error }
+    assert.equal(await presenter.locator('#twrec-countdown').count(),0)
+    assert.equal(await presenter.locator('.twrec-device-check').count(),0)
+    await presenter.screenshot({path:join(shots,paused?'refresh-paused.png':'refresh-recording.png')})
+    if (paused) {
+      const frozenClock=await presenter.locator('#twrec-clock').textContent()
+      await presenter.waitForTimeout(700)
+      assert.equal(await presenter.locator('#twrec-clock').textContent(),frozenClock)
+      await presenter.locator('#twrec-resume').click()
+    }
+    await presenter.waitForTimeout(1500)
+    await presenter.locator('#twrec-stop').click()
+    await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved')
+    const refreshed = readdirSync(runsDir).filter(f=>f.endsWith('.json')).map(f=>JSON.parse(readFileSync(join(runsDir,f),'utf8'))).filter(r=>r.capture?.refreshes?.length).at(-1)
+    assert.ok(refreshed.capture.refreshes[0].endMs >= refreshed.capture.refreshes[0].startMs)
+    assert.equal(refreshed.capture.layers.slides.segments.length,2)
+    for (const part of refreshed.capture.layers.slides.segments) {
+      assert.ok(part.bytes>0,JSON.stringify({state:expected,id:refreshed.id,capture:refreshed.capture}))
+      const decoded=spawnSync(ffmpeg,['-v','error','-i',join(userData,'recordings',refreshed.id,part.file),'-f','null','-'],{timeout:15000})
+      assert.equal(decoded.status,0,decoded.stderr?.toString())
+    }
+    assert.ok(refreshed.audio.segments.length>=2)
+    for (const segment of refreshed.audio.segments) {
+      const decoded=spawnSync(ffmpeg,['-v','error','-i',join(userData,'recordings',segment.file),'-f','null','-'],{timeout:15000})
+      assert.equal(decoded.status,0,decoded.stderr?.toString())
+      assert.ok(segment.endMs>=segment.startMs)
+    }
+    assert.ok(refreshed.slideTimeIndex.some(m=>m.event==='refresh'))
+    assert.ok(refreshed.slideTimeIndex.some(m=>m.event==='refreshed'))
+    pass(`Refresh while ${expected} restores same state, separate decodable originals and clock gap without countdown or sheet`)
+  }
+  for (const restartPaused of [false,true]) {
+  const preserved = new Map(readdirSync(runsDir).filter(f=>f.endsWith('.json')).map(f=>[f,readFileSync(join(runsDir,f),'utf8')]))
+  await presenter.keyboard.press('Shift+r')
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+  await presenter.waitForTimeout(1200)
+  if (restartPaused) await presenter.locator('#twrec-pause').click()
+  await presenter.locator('#twrec-again').click()
+  await presenter.locator('#twrec-restart-cancel').click()
+  const discardedId = readdirSync(join(userData,'recordings')).find(f=>f.endsWith('.recording.json')).replace('.recording.json','')
+  await presenter.locator('#twrec-again').click()
+  await presenter.locator('#twrec-restart-confirm').click()
+  await presenter.waitForSelector('#twrec-countdown')
+  assert.equal(existsSync(join(userData,'recordings',discardedId)),false)
+  assert.equal(existsSync(join(userData,'recordings',discardedId+'.webm')),false)
+  for (const [file,bytes] of preserved) assert.equal(readFileSync(join(runsDir,file),'utf8'),bytes)
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+  await presenter.waitForTimeout(1200);await presenter.locator('#twrec-stop').click()
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved')
+  pass(`Start again from ${restartPaused?'paused':'recording'} confirms once, discards only this take, counts down and preserves saved Runs`)
+  }
+  const captureSource = await app.evaluate(async ({BrowserWindow}) => {
+    const source = BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('audience=1') && w.webContents.isOffscreen())
+    return source ? source.webContents.executeJavaScript('({ camera: document.querySelectorAll("video[autoplay][muted]").length, recording: !!document.querySelector("#twrec-module"), presenter: document.body.classList.contains("presenter-mode") })') : null
+  })
+  // The source has been closed after saving; audience isolation is checked during the next take.
+  const audienceOpened = app.waitForEvent('window')
+  await presenter.evaluate(()=>document.getElementById('presenterAudienceApp').click())
+  const openAudience = await audienceOpened;await openAudience.waitForLoadState('domcontentloaded')
+  assert.equal(await openAudience.locator('#twrec-module').count(),0)
+  assert.ok(await openAudience.locator('.slide').count()>0)
+  await openAudience.screenshot({path:join(shots,'audience-open.png')})
+  pass('an open audience window contains slides without the recording cluster')
+  await presenter.locator('#twrec-capture').selectOption('camera')
+  await presenter.locator('#twrec-mic').click()
+  await presenter.locator('#twrec-preview').check()
+  await presenter.keyboard.press('Escape')
+  await presenter.waitForFunction(()=>!!document.querySelector('#twrec-self-view video')?.srcObject)
+  await presenter.locator('#twrec-self-view button').click()
+  assert.equal(await presenter.locator('#twrec-self-view video').isVisible(),false)
+  await presenter.locator('#twrec-self-view button').click()
+  const framing = await presenter.locator('#twrec-self-view').boundingBox()
+  const thenBox = await presenter.locator('#presenterFollowing').boundingBox()
+  assert.ok(framing.x>=thenBox.x && framing.y>=thenBox.y+thenBox.height-1,'self-view sits under Next/Then')
+  await presenter.screenshot({path:join(shots,'self-view.png')})
+  pass('camera self-view before recording can be hidden and shown in one click')
+  await presenter.keyboard.press('Shift+r')
+  await presenter.waitForSelector('#twrec-countdown');assert.equal(await presenter.locator('.twrec-device-check').count(),0)
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-self-view video')?.srcObject?.active)
+  await presenter.waitForTimeout(1200)
+  const healthyCameraId=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('presenter=1')).webContents.id)
+  const healthyCameraRefresh=await main.evaluate(({deckWcId,outline,content})=>window.tw.present.rebuild(deckWcId,outline,content+'\nRefreshed camera slides.\n','opening'),{deckWcId:healthyCameraId,outline,content})
+  assert.ok(healthyCameraRefresh.ok,healthyCameraRefresh.error)
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-self-view video')?.srcObject?.active)
+  const updatedPicture=await app.evaluate(async({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('audience=1')&&w.webContents.isOffscreen()).webContents.executeJavaScript('document.body.textContent.includes("Refreshed camera slides.")'))
+  assert.equal(updatedPicture,true)
+  pass('healthy camera Refresh resumes self-view and the slides source contains the newly compiled slides')
+  const audience = await app.evaluate(async ({BrowserWindow}) => {
+    const source=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('audience=1') && w.webContents.isOffscreen())
+    return source.webContents.executeJavaScript('({ recording: !!document.querySelector("#twrec-module"), camera: !!document.querySelector(".twrec-device-check"), slides: document.querySelectorAll(".slide").length })')
+  })
+  const sourceShot=await app.evaluate(async ({BrowserWindow}) => { const source=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('audience=1') && w.webContents.isOffscreen()); return (await source.webContents.capturePage()).toPNG().toString('base64') });writeFileSync(join(shots,'audience.png'),Buffer.from(sourceShot,'base64'))
+  assert.equal(await openAudience.locator('.twrec-device-check').count(),0)
+  assert.equal(await openAudience.locator('#twrec-module').count(),0)
+  assert.equal(await openAudience.locator('#twrec-self-view').count(),0)
+  assert.equal(audience.recording,false);assert.equal(audience.camera,false);assert.ok(audience.slides>0)
+  pass('audience page has slides and no recording controls or camera preview')
+  await presenter.waitForTimeout(1500)
+  await app.evaluate(({BrowserWindow}) => { const w=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('presenter=1')); w.webContents.send('recording:layer-test-loss') })
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-label').textContent.includes('Camera lost'))
+  await presenter.screenshot({path:join(shots,'camera-lost.png')})
+  assert.equal(await presenter.locator('#twrec-module').getAttribute('data-rec'),'recording')
+  pass('an ended camera track leaves slides and voice recording, with a visible loss badge')
+  const cameraDeckId=await app.evaluate(({BrowserWindow,ipcMain})=>{
+    const w=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('presenter=1'))
+    w.webContents.once('did-start-navigation',()=>{
+      global.previewOriginal=ipcMain._invokeHandlers.get('recording:device-preview')
+      ipcMain.removeHandler('recording:device-preview')
+      ipcMain.handle('recording:device-preview',event=>global.previewOriginal(event,false,false))
+    })
+    return w.webContents.id
+  })
+  const cameraRefresh=await main.evaluate(({deckWcId,outline,content})=>window.tw.present.rebuild(deckWcId,outline,content,'opening'),{deckWcId:cameraDeckId,outline,content})
+  assert.ok(cameraRefresh.ok,cameraRefresh.error)
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-label')?.textContent.includes('Camera lost'))
+  assert.equal(await presenter.locator('#twrec-module').getAttribute('data-rec'),'recording')
+  await presenter.screenshot({path:join(shots,'refresh-camera-lost.png')})
+  pass('camera denied during Refresh resumes slides and voice with camera-lost notice; no silent stop')
+  await app.evaluate(({ipcMain})=>{global.previewCalls=[];ipcMain.removeHandler('recording:device-preview');ipcMain.handle('recording:device-preview',(event,camera,preview)=>{global.previewCalls.push({camera,preview});return global.previewOriginal(event,camera,preview)})})
+  const returnRefresh=await main.evaluate(({deckWcId,outline,content})=>window.tw.present.rebuild(deckWcId,outline,content,'opening'),{deckWcId:cameraDeckId,outline,content})
+  assert.ok(returnRefresh.ok,returnRefresh.error)
+  let cameraReturned=false
+  try { await presenter.waitForFunction(()=>document.querySelector('#twrec-self-view video')?.srcObject?.active);cameraReturned=true } catch(error) {
+    failures.push('Camera did not return across Refresh: '+String(error))
+    console.log('Camera return diagnostic',await presenter.evaluate(()=>({label:document.querySelector('#twrec-label')?.textContent,errors:window.fixtureErrors})),await app.evaluate(()=>global.previewCalls))
+  }
+  await app.evaluate(({ipcMain})=>{ipcMain.removeHandler('recording:device-preview');ipcMain.handle('recording:device-preview',global.previewOriginal)})
+  await presenter.screenshot({path:join(shots,'refresh-camera-returned.png')})
+  if(cameraReturned)pass('camera returning on the next Refresh records a new segment while voice continues')
+
+  await presenter.waitForTimeout(1200);await presenter.locator('#twrec-stop').click();await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved')
+  const cameraRun=readdirSync(runsDir).filter(f=>f.endsWith('.json')).map(f=>JSON.parse(readFileSync(join(runsDir,f),'utf8'))).find(r=>r.capture?.layers.camera)
+  assert.ok(cameraRun.capture.layers.camera.bytes>0);assert.ok(cameraRun.capture.layers.slides.bytes>0)
+  assert.notEqual(cameraRun.capture.layers.camera.file,cameraRun.capture.layers.slides.file)
+  assert.ok(cameraRun.capture.layers.camera.segments.some(p=>p.lostAtMs>=0))
+  if(cameraReturned){
+    assert.equal(cameraRun.capture.layers.camera.segments.at(-1).lostAtMs,undefined)
+    for(const [i,gap] of cameraRun.capture.refreshes.entries())assert.equal(gap.endMs,cameraRun.capture.layers.slides.segments[i+1].startMs)
+  }
+  for(const file of readdirSync(join(userData,'recordings',cameraRun.id)).filter(f=>/^camera\.seg-/.test(f)))assert.ok(statSync(join(userData,'recordings',cameraRun.id,file)).size>0)
+  decodes(cameraRun,'slides');decodes(cameraRun,'camera')
+  for (const layer of ['slides','camera']) for (const part of cameraRun.capture.layers[layer].segments ?? []) {
+    if (!part.bytes) continue
+    const decoded=spawnSync(ffmpeg,['-v','error','-i',join(userData,'recordings',cameraRun.id,part.file),'-f','null','-'],{timeout:15000})
+    assert.equal(decoded.status,0,decoded.stderr?.toString())
+  }
+  assert.ok(cameraRun.capture.layers.camera.segments.filter(p=>p.bytes>0).length>=2)
+  await presenter.locator('#twrec-capture').selectOption('voice')
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-self-view').hidden)
+  const cameraAfterStop=await presenter.evaluate(async()=>{try{const stream=await navigator.mediaDevices.getUserMedia({video:true,audio:false});stream.getTracks().forEach(track=>track.stop());return true}catch{return false}})
+  assert.equal(cameraAfterStop,false,'camera grant is revoked after capture and self-view stop')
+  pass('camera and slides save as two independent, decodable media files on one Run; camera grant ends at Stop')
+  await presenter.locator('#twrec-capture').selectOption('voice');await presenter.keyboard.press('Shift+r')
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording');await presenter.waitForTimeout(1500)
+  const recordings=join(userData,'recordings'), activeId=readdirSync(recordings).find(f=>f.endsWith('.recording.json')).replace('.recording.json','')
+  renameSync(join(recordings,activeId),join(recordings,activeId+'.unavailable'))
+  await presenter.locator('#twrec-stop').click();await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved')
+  await presenter.screenshot({path:join(shots,'save-failed.png')})
+  renameSync(join(recordings,activeId+'.unavailable'),join(recordings,activeId))
+  pass('unavailable video folder never blocks normal voice save or asks for Retry')
+  // Inject each video IPC failure while leaving real microphone encoding and recording:save intact.
+  for (const failedChannel of ['recording:layers-open','recording:layers-started','recording:layers-finish','recording:layers-append','recording:layers-tail','recording:layers-stop-source']) {
+    const before=new Set(readdirSync(runsDir))
+    const channel=failedChannel==='recording:layers-tail'?'recording:layers-append':failedChannel
+    const installFailure=()=>app.evaluate(({ipcMain},channel)=>{
+      global.layerOriginal=ipcMain._invokeHandlers.get(channel);global.layerFailAttempts=0
+      ipcMain.removeHandler(channel);ipcMain.handle(channel,()=>{global.layerFailAttempts++;throw Error('Injected video failure')})
+    },channel)
+    if(failedChannel!=='recording:layers-tail')await installFailure()
+    await presenter.keyboard.press('Shift+r')
+    await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+    await presenter.waitForTimeout(1500)
+    if (failedChannel === 'recording:layers-open') {
+      const dropped=readdirSync(join(userData,'recordings')).find(f=>f.endsWith('.recording.json')).replace('.recording.json','')
+      await presenter.locator('#twrec-again').click();await presenter.locator('#twrec-restart-confirm').click()
+      await presenter.waitForSelector('#twrec-countdown');await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+      assert.equal(existsSync(join(userData,'recordings',dropped+'.recording.json')),false)
+      assert.equal(existsSync(join(userData,'recordings',dropped+'.webm')),false)
+      await presenter.waitForTimeout(1500)
+      pass('Start again with no video entry discards only the owned voice take')
+    }
+    if(failedChannel==='recording:layers-append'){
+      await presenter.waitForFunction(()=>document.querySelector('#twrec-label').textContent.includes('Video interrupted'))
+      await presenter.waitForTimeout(200)
+      const attempts=await app.evaluate(()=>global.layerFailAttempts)
+      await presenter.waitForTimeout(2500)
+      assert.ok(await app.evaluate(()=>global.layerFailAttempts)<=attempts+1,'only one final encoder chunk may follow the failure; picture recording must not keep accumulating data')
+      assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().filter(w=>w.webContents.isOffscreen()&&w.webContents.getURL().includes('audience=1')).length),0)
+      assert.equal(await presenter.locator('#twrec-module').getAttribute('data-rec'),'recording')
+      pass('permanent video append failure stops only that picture layer while voice keeps recording')
+    }
+    if(failedChannel==='recording:layers-tail')await installFailure()
+    await presenter.locator('#twrec-stop').click()
+    await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved',null,{timeout:20000})
+    await app.evaluate(({ipcMain},channel)=>{ipcMain.removeHandler(channel);ipcMain.handle(channel,global.layerOriginal)},channel)
+    const saved=readdirSync(runsDir).filter(f=>!before.has(f)&&f.endsWith('.json')).map(f=>JSON.parse(readFileSync(join(runsDir,f),'utf8'))).find(r=>r.audio)
+    assert.ok(saved);assert.equal(saved.kind,'delivery')
+    if(failedChannel!=='recording:layers-stop-source')assert.ok(!saved.capture || saved.capture.layers.slides.outcome!=='complete')
+    if(saved.capture?.layers.slides.bytes>0)decodes(saved,'slides')
+    assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().filter(w=>w.webContents.isOffscreen()&&w.webContents.getURL().includes('audience=1')).length),0,'failed video cleanup cannot leave a capture source running after the voice save')
+    for(const part of saved.audio.segments){const decoded=spawnSync(ffmpeg,['-v','error','-i',join(userData,'recordings',part.file),'-f','null','-'],{timeout:15000});assert.equal(decoded.status,0,decoded.stderr?.toString())}
+    pass(`${failedChannel} failure saves decodable voice normally, no Retry, truthful layer outcome`)
+  }
+  for (const transition of ['fade','reveal']) {
+    const before=new Set(readdirSync(runsDir))
+    await presenter.keyboard.press('Shift+r');await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording');await presenter.waitForTimeout(1300)
+    await app.evaluate(async ({BrowserWindow},transition)=>{
+      const source=BrowserWindow.getAllWindows().find(w=>w.webContents.isOffscreen()&&w.webContents.getURL().includes('audience=1'))
+      await source.webContents.executeJavaScript(`(async()=>{
+        const slide=document.querySelector('.slide.active')||document.body;
+        const old=document.createElement('div'), next=document.createElement('div');
+        for(const el of [old,next]){el.style.cssText='position:fixed;inset:0;z-index:2147483647;background:rgb(255,0,0)';slide.append(el)}
+        next.style.background='rgb(0,255,0)';next.style.transition='${transition==='fade'?'opacity':'clip-path'} 266ms linear';
+        next.style.${transition==='fade'?'opacity':'clipPath'}='${transition==='fade'?'0':'inset(0 100% 0 0)'}';
+        await new Promise(r=>setTimeout(r,150));
+        next.style.${transition==='fade'?'opacity':'clipPath'}='${transition==='fade'?'1':'inset(0 0 0 0)'}';
+      })()`)
+    },transition)
+    await presenter.waitForTimeout(3200)
+    const settled=await app.evaluate(async({BrowserWindow})=>{
+      const source=BrowserWindow.getAllWindows().find(w=>w.webContents.isOffscreen()&&w.webContents.getURL().includes('audience=1'))
+      return (await source.webContents.capturePage()).toPNG().toString('base64')
+    })
+    const reference=spawnSync(ffmpeg,['-v','error','-i','pipe:0','-vf','scale=32:18','-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'],{input:Buffer.from(settled,'base64'),timeout:15000})
+    assert.equal(reference.status,0,reference.stderr?.toString())
+    await presenter.locator('#twrec-stop').click();await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved')
+    const saved=readdirSync(runsDir).filter(f=>!before.has(f)&&f.endsWith('.json')).map(f=>JSON.parse(readFileSync(join(runsDir,f),'utf8'))).find(r=>r.audio)
+    const decoded=spawnSync(ffmpeg,['-v','error','-i',join(userData,'recordings',saved.id,saved.capture.layers.slides.file),'-vf','fps=10,scale=32:18','-f','rawvideo','-pix_fmt','rgb24','-'],{timeout:15000})
+    assert.equal(decoded.status,0,decoded.stderr?.toString());assert.ok(decoded.stdout.length>3)
+    const frameBytes=reference.stdout.length
+    assert.equal(frameBytes,32*18*3);assert.equal(decoded.stdout.length%frameBytes,0)
+    assert.ok(decoded.stdout.length>=frameBytes*10)
+    for(let offset=decoded.stdout.length-frameBytes*10;offset<decoded.stdout.length;offset+=frameBytes){
+      let difference=0
+      for(let i=0;i<frameBytes;i++)difference+=Math.abs(decoded.stdout[offset+i]-reference.stdout[i])
+      assert.ok(difference/frameBytes<3,`${transition} held picture must equal the settled slide within VP8 colour tolerance`)
+    }
+    pass(`${transition}: real encoder holds settled slide pixels for the final second`)
+  }
+  for (const fault of ['stop-event','finish-pending','handover-pending']) {
+    const before=new Set(readdirSync(runsDir))
+    if(fault!=='stop-event')await app.evaluate(({ipcMain},fault)=>{const channel=fault==='finish-pending'?'recording:layers-finish':'recording:layers-handover';global.pendingChannel=channel;global.pendingOriginal=ipcMain._invokeHandlers.get(channel);ipcMain.removeHandler(channel);ipcMain.handle(channel,()=>new Promise(()=>{}))},fault)
+    await presenter.keyboard.press('Shift+r');await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording');await presenter.waitForTimeout(1600)
+    if(fault==='stop-event')await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('presenter=1')).webContents.send('recording:layer-test-loss','stop-event'))
+    const start=Date.now()
+    if(fault==='handover-pending') {
+      const wcId=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('presenter=1')).webContents.id)
+      const refreshed=await main.evaluate(({wcId,outline,content})=>window.tw.present.rebuild(wcId,outline,content,'opening'),{wcId,outline,content})
+      assert.equal(refreshed.ok,false)
+    } else await presenter.locator('#twrec-stop').click()
+    await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved',null,{timeout:8000})
+    assert.ok(Date.now()-start<7000,'video adds at most 5 seconds plus save/test scheduling')
+    if(fault!=='stop-event')await app.evaluate(({ipcMain})=>{ipcMain.removeHandler(global.pendingChannel);ipcMain.handle(global.pendingChannel,global.pendingOriginal)})
+    const saved=readdirSync(runsDir).filter(f=>!before.has(f)&&f.endsWith('.json')).map(f=>JSON.parse(readFileSync(join(runsDir,f),'utf8'))).find(r=>r.audio)
+    assert.equal(saved.capture.layers.slides.outcome,'interrupted')
+    for(const part of saved.audio.segments){const decoded=spawnSync(ffmpeg,['-v','error','-i',join(userData,'recordings',part.file),'-f','null','-'],{timeout:15000});assert.equal(decoded.status,0,decoded.stderr?.toString())}
+    assert.ok(await presenter.locator('#twrec-saved-dismiss').isEnabled())
+    pass(`${fault}: bounded normal voice save, interrupted video and usable controls`)
+  }
+  const beforeStalled=new Set(readdirSync(runsDir))
+  await app.evaluate(({ipcMain})=>{
+    global.stalledOpen=ipcMain._invokeHandlers.get('recording:layers-open')
+    ipcMain.removeHandler('recording:layers-open')
+    ipcMain.handle('recording:layers-open',async(...args)=>{await new Promise(resolve=>{global.releaseStalledOpen=resolve});return global.stalledOpen(...args)})
+  })
+  await presenter.keyboard.press('Shift+r');await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+  await presenter.waitForTimeout(1500);await presenter.locator('#twrec-stop').click()
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved',null,{timeout:10000})
+  await app.evaluate(({ipcMain})=>{ipcMain.removeHandler('recording:layers-open');ipcMain.handle('recording:layers-open',global.stalledOpen);global.releaseStalledOpen()})
+  const stalledRun=readdirSync(runsDir).filter(f=>!beforeStalled.has(f)&&f.endsWith('.json')).map(f=>JSON.parse(readFileSync(join(runsDir,f),'utf8'))).find(r=>r.audio)
+  assert.ok(stalledRun)
+  for(const part of stalledRun.audio.segments){const decoded=spawnSync(ffmpeg,['-v','error','-i',join(userData,'recordings',part.file),'-f','null','-'],{timeout:15000});assert.equal(decoded.status,0,decoded.stderr?.toString())}
+  pass('a video start that never resolves cannot delay normal voice Stop/save; late startup is refused')
+  await presenter.keyboard.press('Shift+r')
+  await presenter.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording');await presenter.waitForTimeout(2200)
+  const beforeCrash=new Set(readdirSync(runsDir))
+  const ownProcess=app.process()
+  const exited = new Promise(resolve=>ownProcess.once('exit',resolve))
+  const crashDeckId=await app.evaluate(({BrowserWindow})=>{
+    const w=BrowserWindow.getAllWindows().find(w=>w.webContents.getURL().includes('presenter=1'))
+    w.webContents.once('did-start-navigation',()=>process.kill(process.pid,'SIGKILL'))
+    return w.webContents.id
+  })
+  await main.evaluate(({deckWcId,outline,content})=>window.tw.present.rebuild(deckWcId,outline,content,'opening'),{deckWcId:crashDeckId,outline,content}).catch(()=>{})
+  await exited;app=null
+  const crashedId=readdirSync(join(userData,'recordings')).find(f=>f.endsWith('.recording.json')).replace('.recording.json','')
+  const staleCapture=join(userData,'recordings',crashedId,'.capture-abcd.json');writeFileSync(staleCapture,'interrupted staging')
+  app=await electron.launch({timeout:30000,cwd:repo,args:['.','--user-data-dir='+userData,'--use-fake-device-for-media-stream'],env:{...process.env,TW_E2E:'1',TW_REC_TEST:'1'}})
+  let recoveredMain=await app.firstWindow();await recoveredMain.waitForLoadState('domcontentloaded')
+  await recoveredMain.waitForTimeout(2500)
+  const recoveredFile=readdirSync(runsDir).find(f=>f.endsWith('.json')&&!beforeCrash.has(f))
+  assert.ok(recoveredFile,'crashed capture becomes a Run on reopening')
+  const recovered=JSON.parse(readFileSync(join(runsDir,recoveredFile),'utf8'))
+  assert.equal(recovered.audio.partial,true);assert.ok(recovered.recordingMs>0);assert.ok(recovered.capture.layers.slides.bytes>0)
+  assert.ok(recovered.capture.refreshes.length>0,'handover was persisted before process death')
+  assert.ok(recovered.capture.refreshes.every(gap=>gap.endMs>=gap.startMs))
+  assert.ok(recovered.capture.layers.slides.segments.at(-1).endMs>=0)
+  assert.equal(existsSync(staleCapture),false)
+  decodes(recovered,'slides')
+  await recoveredMain.getByText('An interrupted recording was recovered on this Mac.',{exact:true}).waitFor()
+  await recoveredMain.screenshot({path:join(shots,'recovered.png')})
+  pass('killing only the harness app during Refresh handover preserves media and recovers a partial Run on reopening')
+  const silentOpened=app.waitForEvent('window');await recoveredMain.evaluate(({outline,content})=>window.tw.talk.present(outline,content,'presenter'),{outline,content})
+  const silentWindow=await silentOpened;await silentWindow.waitForSelector('#twrec-primary');if(await silentWindow.locator('#twResumeNo').isVisible())await silentWindow.locator('#twResumeNo').click();await silentWindow.locator('#twrec-primary').click()
+  await silentWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording');await silentWindow.waitForTimeout(2200)
+  const silentId=readdirSync(join(userData,'recordings')).find(f=>f.endsWith('.recording.json')).replace('.recording.json','')
+  // Keep the synthetic voice file under its Run while making the marker's voice reference unavailable.
+  renameSync(join(userData,'recordings',silentId+'.webm'),join(userData,'recordings',silentId,'voice-kept-for-test.webm'))
+  const silentProcess=app.process();silentProcess.kill('SIGKILL');await new Promise(resolve=>silentProcess.once('exit',resolve));app=null
+  app=await electron.launch({timeout:30000,cwd:repo,args:['.','--user-data-dir='+userData,'--use-fake-device-for-media-stream'],env:{...process.env,TW_E2E:'1',TW_REC_TEST:'1'}})
+  recoveredMain=await app.firstWindow();await recoveredMain.waitForLoadState('domcontentloaded');await recoveredMain.getByText('An interrupted recording was recovered on this Mac.',{exact:true}).waitFor()
+  const silentRun=JSON.parse(readFileSync(join(runsDir,silentId+'.json'),'utf8'))
+  assert.equal(silentRun.audio,null);assert.ok(silentRun.capture.voiceGaps.length>0);assert.equal(silentRun.capture.state,'interrupted');assert.ok(silentRun.capture.layers.slides.bytes>0);decodes(silentRun,'slides')
+  await recoveredMain.screenshot({path:join(shots,'recovered-no-voice.png')})
+  pass('a crash with no available microphone file still offers the preserved video Run')
+  const shortSettingsOpened=app.waitForEvent('window');await recoveredMain.evaluate(()=>window.tw.settingsWindow.open('recording'))
+  const shortSettings=await shortSettingsOpened;await shortSettings.waitForLoadState('domcontentloaded')
+  await shortSettings.evaluate(()=>window.bridleSettings.set('recording.discardShorter',20));await shortSettings.close()
+  const shortOpened=app.waitForEvent('window');await recoveredMain.evaluate(({outline,content})=>window.tw.talk.present(outline,content,'presenter'),{outline,content})
+  const shortWindow=await shortOpened;await shortWindow.waitForSelector('#twrec-primary');if(await shortWindow.locator('#twResumeNo').isVisible())await shortWindow.locator('#twResumeNo').click()
+  const beforeShort=readdirSync(runsDir).length
+  await shortWindow.locator('#twrec-primary').click();await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+  await shortWindow.waitForTimeout(500);await shortWindow.locator('#twrec-stop').click();await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='confirm')
+  await shortWindow.screenshot({path:join(shots,'short.png')})
+  await shortWindow.locator('#twrec-discard').click();await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='idle')
+  assert.equal(readdirSync(runsDir).length,beforeShort)
+  pass('short recording has an explicit Keep/Discard state; Discard returns to the presenter without saving a Run')
+  for (const refuse of ['short-backstop','save-failure']) {
+    await shortWindow.keyboard.press('Shift+r');await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+    await shortWindow.waitForTimeout(1100)
+    const id=readdirSync(join(userData,'recordings')).find(f=>f.endsWith('.recording.json')).replace('.recording.json','')
+    await shortWindow.locator('#twrec-stop').click();await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='confirm')
+    await app.evaluate(({ipcMain},refuse)=>{global.saveOriginal=ipcMain._invokeHandlers.get('recording:save');ipcMain.removeHandler('recording:save');ipcMain.handle('recording:save',(event,payload)=>refuse==='short-backstop'?global.saveOriginal(event,{...payload,force:false}):{ok:false,error:'Injected save failure'})},refuse)
+    await shortWindow.locator('#twrec-keep').click();await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='error')
+    await app.evaluate(({ipcMain})=>{ipcMain.removeHandler('recording:save');ipcMain.handle('recording:save',global.saveOriginal)})
+    if(refuse==='short-backstop')assert.equal(existsSync(join(userData,'recordings',id)),true)
+    await shortWindow.locator('#twrec-discard').click();await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='idle')
+    assert.equal(existsSync(join(userData,'recordings',id)),false)
+    assert.equal(readdirSync(runsDir).length,beforeShort)
+    pass(`${refuse} after video finish allows Discard and leaves no capture folder or Run`)
+  }
+  await app.evaluate(({ipcMain})=>{global.noVideoOpen=ipcMain._invokeHandlers.get('recording:layers-open');ipcMain.removeHandler('recording:layers-open');ipcMain.handle('recording:layers-open',()=>{throw Error('No video entry')})})
+  await shortWindow.keyboard.press('Shift+r');await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording');await shortWindow.waitForTimeout(1000)
+  const noVideoId=readdirSync(join(userData,'recordings')).find(f=>f.endsWith('.recording.json')).replace('.recording.json','')
+  await shortWindow.locator('#twrec-stop').click();await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='confirm')
+  await shortWindow.locator('#twrec-discard').click();await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='idle')
+  assert.equal(existsSync(join(userData,'recordings',noVideoId+'.webm')),false)
+  assert.equal(readdirSync(runsDir).length,beforeShort)
+  await app.evaluate(({ipcMain})=>{ipcMain.removeHandler('recording:layers-open');ipcMain.handle('recording:layers-open',global.noVideoOpen)})
+  pass('short Discard with no video entry discards voice cleanly and preserves saved Runs')
+  // Automatic words add transcript/status sidecars after Stop; count Run metadata only.
+  const runMetadataOnly=names=>names.filter(name=>name.endsWith('.json')&&!/\.(?:transcript|words)\./.test(name))
+  const beforeMemory=new Set(readdirSync(runsDir)),beforeMemoryRuns=new Set(runMetadataOnly([...beforeMemory]))
+  chmodSync(join(userData,'recordings'),0)
+  try {
+    await shortWindow.keyboard.press('Shift+r');await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording')
+    await shortWindow.waitForTimeout(500);await shortWindow.locator('#twrec-stop').click();await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='confirm')
+    /* Restore write permission after memory fallback, before the normal Keep save. */
+    chmodSync(join(userData,'recordings'),0o755)
+    await shortWindow.locator('#twrec-keep').click();await shortWindow.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved')
+    await shortWindow.screenshot({path:join(shots,'open-failed.png')})
+  } finally { chmodSync(join(userData,'recordings'),0o755) }
+  console.log('memory-save-directory',JSON.stringify({beforeShort,beforeMemoryCount:beforeMemory.size,afterCount:readdirSync(runsDir).length,added:readdirSync(runsDir).filter(f=>!beforeMemory.has(f))}))
+  const afterMemoryRuns=runMetadataOnly(readdirSync(runsDir))
+  assert.equal(afterMemoryRuns.length,beforeMemoryRuns.size+1)
+  for(const name of beforeMemoryRuns)assert.ok(afterMemoryRuns.includes(name),'earlier Run is preserved: '+name)
+  const addedMemoryRuns=afterMemoryRuns.filter(name=>!beforeMemoryRuns.has(name))
+  assert.equal(addedMemoryRuns.length,1)
+  const memoryRun=addedMemoryRuns.map(f=>JSON.parse(readFileSync(join(runsDir,f),'utf8'))).find(r=>r.audio)
+  assert.ok(memoryRun);assert.equal(memoryRun.kind,'delivery');assert.ok(!memoryRun.capture)
+  for(const part of memoryRun.audio.segments){const decoded=spawnSync(ffmpeg,['-v','error','-i',join(userData,'recordings',part.file),'-f','null','-'],{timeout:15000});assert.equal(decoded.status,0,decoded.stderr?.toString())}
+  pass('an unopened Run folder falls back to memory and saves voice normally as a delivery Run')
+  if(failures.length)throw Error(failures.join('\n'))
+  console.log(`${count} tests passed`)
+} catch (error) { console.error(error); if (app) { for (const p of app.windows()) { if (!p.isClosed()) await p.screenshot({path:join(shots, 'failure-'+String(app.windows().indexOf(p))+'.png')}).catch(()=>{}) } } throw error } finally { if(app) { await app.evaluate(({app})=>app.exit(0)).catch(()=>{}); await app.close().catch(()=>{}) } rmSync(root,{recursive:true,force:true}) }

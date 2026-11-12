@@ -19,6 +19,8 @@ import { join } from 'node:path'
 import { chromium } from 'playwright'
 import sharp from 'sharp'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const W = 1280
 const H = 720
@@ -37,7 +39,7 @@ const dir = mkdtempSync(join(tmpdir(), 'tw-statement-review-'))
 const outlinePath = join(dir, 'statement-review-outline.md')
 const source = lines.join('\n')
 writeFileSync(outlinePath, source, 'utf8')
-const model = await prepareSource(outlinePath, source, 'statement-review', statSync(outlinePath))
+const model = await prepareSource(outlinePath, inClassicLook(source), 'statement-review', statSync(outlinePath))
 const htmlPath = join(dir, 'statement-review.html')
 writeFileSync(htmlPath, model.fullHtml, 'utf8')
 const ids = ['lt-top', 'lt-nosidebar', 'lt-left', 'act-nopanel', 'act-panel', 'act-centred']
@@ -131,7 +133,7 @@ const dir2 = mkdtempSync(join(tmpdir(), 'tw-statement-review-1080-'))
 const outline2 = join(dir2, 'statement-review-1080-outline.md')
 const source2 = l2.join('\n')
 writeFileSync(outline2, source2, 'utf8')
-const model2 = await prepareSource(outline2, source2, 'statement-review-1080', statSync(outline2))
+const model2 = await prepareSource(outline2, inClassicLook(source2), 'statement-review-1080', statSync(outline2))
 const html2 = join(dir2, 'statement-review-1080.html')
 writeFileSync(html2, model2.fullHtml, 'utf8')
 const ids2 = ['low-short', 'low-two', 'low-long', 'low-action', ...['tinted', 'rule', 'strong'].flatMap((bg) => [`panel-${bg}`, `rail-${bg}`])]

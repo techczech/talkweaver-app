@@ -137,6 +137,12 @@ export function macAppProblem(app, options = {}) {
   const appStat = lstatOrNull(app)
   if (!appStat || appStat.isSymbolicLink() || !appStat.isDirectory()) return `refused: ${app} is not an app folder (missing, a link or a file)`
 
+  const speech = join(app,'Contents','Helpers','transcription')
+  const helperFolder = lstatOrNull(join(app,'Contents','Helpers'))
+  if (!helperFolder?.isDirectory() || helperFolder.isSymbolicLink()) return 'refused: speech helper folder is missing or a link'
+  const speechStat = lstatOrNull(speech)
+  if (!speechStat?.isFile() || speechStat.isSymbolicLink() || !(speechStat.mode & 0o111)) return 'refused: missing or unsafe speech helper'
+
   // 1. The folder and its files.
   let at = app
   for (const part of ['Contents', 'Resources', 'ffmpeg']) {
@@ -185,6 +191,13 @@ export function macAppProblem(app, options = {}) {
       if (problem) return problem
       const anchored = runner('/usr/bin/codesign', ['--verify', '--deep', '--strict', `-R=${developerIdRequirement(team)}`, app])
       if (anchored.status !== 0) return `refused: the app's signature does not satisfy Apple's Developer ID requirement for team ${team} (codesign --verify -R, anchored to Apple's root), whatever its certificate is named:\n${String(anchored.stderr || '').trim()}`
+    }
+    if (options.requireSigned) {
+      const verified = runner('/usr/bin/codesign',['--verify','--strict',`-R=${developerIdRequirement(options.expectedTeam !== undefined ? options.expectedTeam : expectedTeamIdentifier())}`,speech])
+      if (verified.status !== 0) return 'refused: speech helper signature does not match this app’s Developer ID'
+      const entitlements = runner('/usr/bin/codesign',['-d','--entitlements',':-',speech])
+      if (entitlements.status !== 0) return 'refused: speech helper entitlements could not be checked'
+      if (/<key>/.test((entitlements.stdout || '') + (entitlements.stderr || ''))) return 'refused: standalone speech helper carries unexpected entitlements'
     }
     const content = contentSha256Of(binary)
     if ('problem' in content) return `refused: ${binary}: ${content.problem}`

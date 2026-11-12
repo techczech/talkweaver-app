@@ -41,6 +41,7 @@ export default defineConfig({
         external: ['./security-startup'],
         input: {
           index: resolve(__dirname, 'src/main/index.ts'),
+          'alignment-worker': resolve(__dirname, 'src/main/alignment-worker.ts'),
           'security-startup': resolve(__dirname, 'src/main/security-startup.ts'),
           'vault-gallery-inventory-worker': resolve(__dirname, 'src/main/vault-gallery-inventory-worker.ts'),
           // A publish builds and writes its handout pages in a utility process of its own (handout-pages-worker.ts).

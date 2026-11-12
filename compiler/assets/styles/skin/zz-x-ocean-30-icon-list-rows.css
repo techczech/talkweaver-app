@@ -1,0 +1,105 @@
+/* 0.44 look ("ocean"): the icon list as rows ({iconlist} in its list form, {iconlist=list}, with {focus} or a reveal,
+   beside the title rail or under the title tab). Round-10 sampler S15 (three bands) and S16 (outline shapes), the
+   locked rules in handoff-0.44-basics.md (a): the rows share the whole height of the content column (few items:
+   bigger shapes, not bigger gaps); icons 96px and up, labels bold at 44px and up, detail lines 32px.
+
+   Colour by count: up to three rows are bands in strengths of the main colour (Ocean, Deeper Ocean, light), white
+   type and white icons on both blues (4.91:1 and 7.06:1), near-black on the light band (15.6:1); four or more rows
+   are white outline shapes with Ocean icons and near-black labels, only the current row filled amber (8.65:1).
+   Icons are the author's (named, or a brand mark matched from the item's text, which the author's list already
+   drew); none is added here. */
+
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) {
+  --ir-n: 3;
+  display: flex !important; flex-direction: column !important; gap: 1.5cqw !important;
+  flex: 1 1 auto; align-self: stretch; justify-content: stretch;
+  width: 100% !important; max-width: none !important; min-height: 0; height: 100%;
+  margin: 0 !important; padding: 0 !important; border: 0 !important; list-style: none; columns: auto !important; column-count: auto !important;
+}
+/* the content column is the band: under the tab from the clearance to the bottom margin, or the rail's neighbour
+   from the top margin to the bottom margin */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content:has(> .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"])) {
+  height: 100% !important; max-height: 100% !important; box-sizing: border-box;
+}
+.slide[data-look="ocean"][data-layout="list"]:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content:has(> .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"])) {
+  align-items: stretch !important; grid-template-rows: minmax(0, 1fr) !important;
+}
+.slide[data-look="ocean"][data-layout="list"]:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content:has(> .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"])) > :is(.slide-head, .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"])) {
+  grid-row: 1 / span 1 !important; align-self: stretch !important;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li {
+  --c: var(--look-main);
+  flex: 1 1 auto !important; max-height: none;
+  display: grid !important; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; align-content: center; align-items: center;
+  column-gap: 2.4cqw; row-gap: .4cqw;
+  margin: 0 !important; padding: 1.4cqw 2.4cqw !important; border: .125cqw solid var(--look-hairline) !important; border-radius: .5cqw !important;
+  background: var(--look-ground) !important; color: var(--look-ink) !important; box-shadow: none !important;
+  break-inside: avoid;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li::before { content: none !important; display: none !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li > .fl-icon {
+  grid-row: 1 / span 2; width: 6cqw !important; height: 6cqw !important; margin: 0 !important; padding: 0 !important;
+  display: block; background: none !important; border: 0 !important; color: var(--c) !important; opacity: 1 !important;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li > .fl-icon :is(svg, img) {
+  width: 100% !important; height: 100% !important; display: block; color: inherit;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li > .fl-text {
+  grid-column: 2; font: 700 max(var(--type-floor, 31px), 2.75cqw)/1.15 var(--look-face-display) !important; color: inherit !important;
+  overflow-wrap: break-word; min-width: 0; text-transform: none !important; letter-spacing: 0 !important;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li:not(:has(> .fl-icon)) > :is(.fl-text, .fl-sublist) { grid-column: 1 / -1; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li > .fl-sublist {
+  grid-column: 2; margin: 0 !important; padding: 0 !important; list-style: none; display: flex; flex-direction: column; gap: .2cqw;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li > .fl-sublist > li {
+  margin: 0 !important; padding: 0 !important; border: 0 !important; background: none !important;
+  font: 400 max(var(--type-floor, 31px), 2cqw)/1.25 var(--look-face-text) !important; color: inherit !important; opacity: 1 !important;
+  white-space: normal !important; overflow-wrap: break-word; min-width: 0;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li > .fl-sublist > li::before { content: none !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li > .fl-sublist :is(.fl-subtext, .fl-subicon) { color: inherit !important; opacity: 1 !important; }
+
+/* three rows or fewer: bands in strengths of one colour, larger icons and labels */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):not(:has(> li:nth-child(4))) > li {
+  border: 0 !important; padding: 1.8cqw 3cqw !important;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):not(:has(> li:nth-child(4))) > li > .fl-icon { width: 7.5cqw !important; height: 7.5cqw !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):not(:has(> li:nth-child(4))) > li > .fl-text { font-size: max(var(--type-floor, 31px), 3.25cqw) !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):not(:has(> li:nth-child(4))) > li:nth-child(3n + 1) { background: var(--look-three-1) !important; color: var(--look-on-main) !important; --c: var(--look-on-main); }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):not(:has(> li:nth-child(4))) > li:nth-child(3n + 2) { background: var(--look-three-2) !important; color: var(--look-on-deep) !important; --c: var(--look-on-deep); }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):not(:has(> li:nth-child(4))) > li:nth-child(3n + 3) { background: var(--look-light) !important; color: var(--look-ink) !important; --c: var(--look-main); }
+/* a single row is one idea: the light band, not a lone blue bar */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li:only-child { background: var(--look-light) !important; color: var(--look-ink) !important; --c: var(--look-main); }
+
+/* four or more: white outline shapes on the light neutral ground */
+.slide[data-look="ocean"][data-layout="list"]:has(> .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]) > li:nth-child(4)) { background-color: var(--look-ground-neutral); }
+/* seven or more rows: two columns, so a row never drops under the label size */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):has(> li:nth-child(6)) {
+  display: grid !important; grid-auto-flow: column; grid-template-rows: repeat(var(--ir-rows, 3), minmax(0, 1fr)); grid-template-columns: repeat(2, minmax(0, 1fr));
+  justify-items: stretch !important; justify-content: stretch !important; align-content: stretch !important; column-gap: 1.5cqw;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):has(> li:nth-child(6)) > li { width: auto !important; max-height: none; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):has(> li:nth-child(7)) { --ir-rows: 4; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):has(> li:nth-child(9)) { --ir-rows: 5; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):has(> li:nth-child(6)) > li > .fl-icon { width: 4.5cqw !important; height: 4.5cqw !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):has(> li:nth-child(6)) > li > .fl-text { font-size: max(var(--type-floor, 31px), 2.4cqw) !important; }
+
+/* the current row of a reveal or {focus}, at any count (three bands included): a full Ocean fill with a white label
+   and icon (owner, 12 Nov) */
+.slide[data-look="ocean"][data-layout="list"].mode-active > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li[data-mode-state="current"]:not(#oc-current) {
+  background: var(--look-current-fill) !important; border-color: var(--look-current-fill) !important; color: var(--look-on-current) !important; --c: var(--look-on-current);
+}
+
+/* long labels or detail lines (07-assembly stampOceanFit): the compact step, still at the locked minimums */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand]))[data-oc-fit="long"] > li > .fl-text { font-size: max(var(--type-floor, 31px), 2.75cqw) !important; font-weight: 600 !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand]))[data-oc-fit="long"] > li > .fl-text strong { font-weight: 800; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand]))[data-oc-fit="long"] > li > .fl-icon { width: 6cqw !important; height: 6cqw !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand]))[data-oc-fit="long"] > li { padding-block: 1.1cqw !important; }
+/* four to six rows: the box sizes of the icon list (icon 112px, label 50px) */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):not([data-oc-fit="long"]):has(> li:nth-child(4)):not(:has(> li:nth-child(5))) > li > .fl-icon { width: 7cqw !important; height: 7cqw !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])):not([data-oc-fit="long"]):has(> li:nth-child(4)):not(:has(> li:nth-child(5))) > li > .fl-text { font-size: max(var(--type-floor, 31px), 3.125cqw) !important; }
+
+/* five rows: the compact step so all five fit between the margins (icon 96px, label 44px) */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):has(> li:nth-child(5)):not(:has(> li:nth-child(6))) { gap: 1.2cqw !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):has(> li:nth-child(5)):not(:has(> li:nth-child(6))) > li { padding-block: .9cqw !important; }

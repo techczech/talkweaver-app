@@ -824,6 +824,111 @@ function createSlideFit() {
     });
   }
 
+
+  // ---- 0.44 Ocean look: fit or fall back ------------------------------------------------------------------
+  // A slide in the look (data-look="ocean") whose content, after the look's own sizing and the list and statement
+  // ladders, still reaches past the stage, hides part of itself (overflow hidden or clip with more content than
+  // box) or cuts a title short is switched, for good, to data-look="ocean-safe": the look's colours on the 0.43
+  // structure and sizes. A title the look had moved to the top goes back where 0.43 put it.
+  const OCEAN_FIT_TOLERANCE = 1.5;
+  function lookOverflows(slide) {
+    const stage = slide.getBoundingClientRect();
+    if (!(stage.width > 0)) return false;
+    const t = OCEAN_FIT_TOLERANCE;
+    for (const el of slide.querySelectorAll(".slide-content *")) {
+      if (el.closest(".notes, .sr-only, iframe, svg, .slide-qr-corner")) continue;
+      const cs = getComputedStyle(el);
+      if (cs.display === "none" || cs.position === "fixed") continue; // hidden reveal steps still take their place
+      const r = el.getBoundingClientRect();
+      if (!(r.width > 0 && r.height > 0)) continue;
+      if (r.left < stage.left - t || r.top < stage.top - t || r.right > stage.right + t || r.bottom > stage.bottom + t) return true;
+      if ((cs.overflowX === "hidden" || cs.overflowX === "clip") && el.scrollWidth > el.clientWidth + t) return true;
+      if ((cs.overflowY === "hidden" || cs.overflowY === "clip") && el.scrollHeight > el.clientHeight + t) return true;
+    }
+    return false;
+  }
+  // The opening poster: the title steps down from the display size until the title, subtitle and byline all fit the
+  // stage without meeting (the byline's place included), to no smaller than about 0.43's poster size; past that the
+  // slide falls back like any other.
+  function posterCollides(poster) {
+    const mid = poster.querySelector(".tp-main > .tp-mid");
+    const foot = poster.querySelector(".tp-main > .tp-foot");
+    if (!mid || !foot) return false;
+    return mid.getBoundingClientRect().bottom > foot.getBoundingClientRect().top - OCEAN_FIT_TOLERANCE;
+  }
+  function fitOceanPoster(content) {
+    const slide = content.closest(".slide");
+    if (!slide || slide.dataset.look !== "ocean") return;
+    const poster = content.querySelector(".tp.tp-poster:not(.tp-closing)");
+    const title = poster?.querySelector(".tp-title");
+    if (!title) return;
+    title.style.fontSize = "";
+    const width = slide.offsetWidth || slide.getBoundingClientRect().width;
+    if (!(width > 0)) return;
+    const min = width * 0.033;
+    let px = parseFloat(getComputedStyle(title).fontSize);
+    for (let i = 0; i < 30 && px > min && (lookOverflows(slide) || posterCollides(poster)); i += 1) {
+      px = Math.max(min, px * 0.93);
+      title.style.fontSize = `${px}px`;
+    }
+    if (lookOverflows(slide) || posterCollides(poster)) title.style.fontSize = "";
+  }
+  // Two blocks of the slide drawn over each other (a paragraph under a list's bands, a list's last row under a
+  // pair of boxes): the look's arrangement did not leave each its place.
+  function blocksMeet(content) {
+    const blocks = [...content.children].filter((el) => {
+      if (el.matches(".slide-head, .notes, .sr-only, script, style, template")) return false;
+      const cs = getComputedStyle(el);
+      if (cs.display === "none" || cs.position === "absolute" || cs.position === "fixed") return false;
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0;
+    }).map((el) => el.getBoundingClientRect());
+    const t = 4;
+    for (let i = 0; i < blocks.length; i += 1) {
+      for (let j = i + 1; j < blocks.length; j += 1) {
+        const a = blocks[i], b = blocks[j];
+        if (Math.min(a.right, b.right) - Math.max(a.left, b.left) > t && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > t) return true;
+      }
+    }
+    return false;
+  }
+  // Icon-row panels with detail lines: the lines start at the size for their count (zz-x-ocean-50-readability.css) and
+  // step down the same ladder, one size for the whole row, until the slide fits; past the floor the slide falls back.
+  const PANEL_DETAIL_STEPS = [3.75, 3.45, 3, 2.5, 2.4];
+  function fitOceanPanelDetails(content) {
+    const slide = content.closest(".slide");
+    if (!slide || slide.dataset.look !== "ocean") return;
+    const rows = [...content.querySelectorAll(":scope > .icon-row:not(.ir-rows)")].filter((row) => row.querySelector(":scope > .ir-item .ir-desc > li"));
+    if (!rows.length) return;
+    const items = rows.flatMap((row) => [...row.querySelectorAll(":scope > .ir-item")]);
+    items.forEach((item) => item.style.removeProperty("--oc-detail"));
+    if (!lookOverflows(slide) && !blocksMeet(content)) return;
+    const li = rows[0].querySelector(":scope > .ir-item .ir-desc > li");
+    const cqw = (rows[0].closest(".slide-content")?.getBoundingClientRect().width || 0) / 100;
+    const start = cqw > 0 ? parseFloat(getComputedStyle(li).fontSize) / (cqw / (slide.getBoundingClientRect().width / (slide.offsetWidth || 1))) : 0;
+    for (const step of PANEL_DETAIL_STEPS) {
+      if (start && step >= start - 0.01) continue;
+      items.forEach((item) => item.style.setProperty("--oc-detail", `max(var(--type-floor, 31px), ${step}cqw)`));
+      if (!lookOverflows(slide) && !blocksMeet(content)) return;
+    }
+  }
+  function oceanFallBack(content) {
+    const slide = content.closest(".slide");
+    if (!slide || slide.dataset.look !== "ocean") return false;
+    content.style.zoom = "";
+    const poster = content.querySelector(".tp.tp-poster:not(.tp-closing)");
+    if (!lookOverflows(slide) && !blocksMeet(content) && !(poster && posterCollides(poster))) return false;
+    slide.dataset.look = "ocean-safe";
+    content.querySelectorAll(":scope > .icon-row > .ir-item").forEach((item) => item.style.removeProperty("--oc-detail"));
+    poster?.querySelector(".tp-title")?.style.removeProperty("font-size");
+    if (slide.dataset.ocTitleFrom) {
+      slide.dataset.titleLayout = slide.dataset.ocTitleFrom;
+      if (slide.dataset.ocSplit) slide.dataset.split = slide.dataset.ocSplit;
+      delete slide.dataset.titleLook;
+    }
+    return true;
+  }
+
   function fitContent(content) {
     if (!content) return;
     fitQuotes(content);
@@ -838,6 +943,17 @@ function createSlideFit() {
     // whole-slide zoom may touch it.
     fitStatements(content);
     alignParagraphIcons(content);
+    fitOceanPoster(content);
+    fitOceanPanelDetails(content);
+    // 0.44 Ocean look: fit or fall back. If the look's sizes and arrangement leave anything of this slide outside
+    // the stage, hiding its own content or a title cut short, the slide takes the safe drawing (the 0.43 structure
+    // and sizes in the look's colours) and is fitted again the 0.43 way.
+    if (oceanFallBack(content)) {
+      content.querySelectorAll("h1:not(.sr-only)").forEach((h1) => { h1.style.fontSize = ""; settleTitle(h1); fitTitle(h1); });
+      fitLists(content);
+      fitStatements(content);
+      alignParagraphIcons(content);
+    }
     autofitContent(content);
     linkImageClaims(content);
   }

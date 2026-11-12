@@ -6,6 +6,8 @@ import { JSDOM } from 'jsdom'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 // Ticket "Author wins": structure (a heading with child headings and an empty body) supplies the
 // section-divider DEFAULT. It never overrules the author. Any token the author put on the heading
@@ -85,7 +87,7 @@ const OUTLINE = [
 const dir = mkdtempSync(join(tmpdir(), 'tw-structure-vs-tokens-'))
 const path = join(dir, 'structure-vs-tokens.md')
 writeFileSync(path, OUTLINE, 'utf8')
-const model = await prepareSource(path, OUTLINE, 'Structure vs tokens', statSync(path))
+const model = await prepareSource(path, inClassicLook(OUTLINE), 'Structure vs tokens', statSync(path))
 const compiledHtml = await buildDeckHtmlFromModel(model)
 const document = new JSDOM(compiledHtml).window.document
 

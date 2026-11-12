@@ -33,6 +33,8 @@ import { extractSlides, extractStyles } from '../compiler/scripts/lib/04-html-ex
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
 import { buildVenuePageHtml } from '../compiler/scripts/lib/venue-page.mjs'
 import { keepLastTwoWordsTogether, keepStatementLastWordsTogether } from '../compiler/scripts/lib/no-lone-word.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 // ── The compile-time guard ────────────────────────────────────────────────────
 const NB = '&nbsp;'
@@ -90,7 +92,7 @@ const dir = mkdtempSync(join(tmpdir(), 'tw-statement-options-'))
 const outlinePath = join(dir, 'statement-options-outline.md')
 const source = lines.join('\n')
 writeFileSync(outlinePath, source, 'utf8')
-const model = await prepareSource(outlinePath, source, 'statement-options', statSync(outlinePath))
+const model = await prepareSource(outlinePath, inClassicLook(source), 'statement-options', statSync(outlinePath))
 assert.equal(model.warnings.some((warning) => String(warning).startsWith('statement-unknown')), false,
   'every statement value, Poster included, parses without a warning')
 const htmlPath = join(dir, 'statement-options.html')
@@ -377,7 +379,7 @@ try {
   ].join('\n')
   const talkPath = join(talkDir, 'lone-word-outline.md')
   writeFileSync(talkPath, talkSource, 'utf8')
-  const talkModel = await prepareSource(talkPath, talkSource, 'lone-word', statSync(talkPath))
+  const talkModel = await prepareSource(talkPath, inClassicLook(talkSource), 'lone-word', statSync(talkPath))
   const talkHtml = join(talkDir, 'lone-word.html')
   writeFileSync(talkHtml, talkModel.fullHtml, 'utf8')
   const FIXED = ['3b2vn', 'k0a03', 'examples-before-codex', 'jrs5j', '2h226', '379cn', 'cvuj6', 'mglz1']
@@ -477,7 +479,7 @@ try {
   const fixSource = fixLines.join('\n')
   const fixPath = join(fixDir, 'preview9-outline.md')
   writeFileSync(fixPath, fixSource, 'utf8')
-  const fixModel = await prepareSource(fixPath, fixSource, 'preview9', statSync(fixPath))
+  const fixModel = await prepareSource(fixPath, inClassicLook(fixSource), 'preview9', statSync(fixPath))
   check(!fixModel.warnings.some((warning) => /^(statement|claim-style|claim)-unknown/.test(String(warning))),
     `the claim tokens on statement slides parse without warnings (${fixModel.warnings.join(', ')})`)
   const fixFull = String(fixModel.fullHtml)
@@ -588,7 +590,7 @@ try {
     `### ${SPECIMEN}`, '{id=d-explicit}{statement=default}', ''].join('\n')
   const deckBarPath = join(fixDir, 'deck-bar-outline.md')
   writeFileSync(deckBarPath, deckBarSource, 'utf8')
-  const deckBarHtml = String((await prepareSource(deckBarPath, deckBarSource, 'deck-bar', statSync(deckBarPath))).fullHtml)
+  const deckBarHtml = String((await prepareSource(deckBarPath, inClassicLook(deckBarSource), 'deck-bar', statSync(deckBarPath))).fullHtml)
   const contentClass = (id) => deckBarHtml.match(new RegExp(`data-id="${id}"[\\s\\S]*?<div class="slide-content ([^"]*)"`))?.[1] ?? ''
   check(/\bstatement-bg-rule\b/.test(contentClass('d-untokened')), `deck claim_style: bar makes an untokened statement a Rule (${contentClass('d-untokened')})`)
   check(!/\bstatement-bg-rule\b/.test(contentClass('d-plain')), 'a slide {claim=plain} wins over the deck claim_style')
@@ -668,13 +670,13 @@ try {
   const p10Source = p10Lines.join('\n')
   const p10Path = join(p10Dir, 'preview10-outline.md')
   writeFileSync(p10Path, p10Source, 'utf8')
-  const p10Model = await prepareSource(p10Path, p10Source, 'preview10', statSync(p10Path))
+  const p10Model = await prepareSource(p10Path, inClassicLook(p10Source), 'preview10', statSync(p10Path))
   check(!p10Model.warnings.some((warning) => /^statement-unknown/.test(String(warning))), `{statement=full} parses without a warning (${p10Model.warnings.join(', ')})`)
   // The deck-level text size: frontmatter `triggers: {font-body=xl}` reaches the statement too.
   const deckXlSource = p10Source.replace('auto_thanks_slide: false', "auto_thanks_slide: false\ntriggers: '{font-body=xl}'")
   const deckXlPath = join(p10Dir, 'preview10-deck-xl-outline.md')
   writeFileSync(deckXlPath, deckXlSource, 'utf8')
-  const deckXlModel = await prepareSource(deckXlPath, deckXlSource, 'preview10-deck-xl', statSync(deckXlPath))
+  const deckXlModel = await prepareSource(deckXlPath, inClassicLook(deckXlSource), 'preview10-deck-xl', statSync(deckXlPath))
   writeFileSync(join(p10Dir, 'deck.html'), String(p10Model.fullHtml), 'utf8')
   writeFileSync(join(p10Dir, 'deck-xl.html'), String(deckXlModel.fullHtml), 'utf8')
   const p10Ids = [...String(p10Model.fullHtml).matchAll(/<section class="slide[^"]*" data-id="(p10[^"]+)"/g)].map((match) => match[1])

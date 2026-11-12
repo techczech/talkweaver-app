@@ -1,4 +1,10 @@
 import './security-startup'
+import { transcriptPath as transcriptPathForAlignment } from './recording-paths'
+import { modelPin as modelPinForAlignment } from './alignment-models'
+import { createAlignmentService } from './alignment-service'
+import { alignmentUtility } from './alignment-utility'
+import { AlignmentModels, readAlignmentManifests } from './alignment-models'
+import { cancelRecordingRefresh, prepareRecordingRefresh, registerPresenterRefresh } from './presenter-refresh'
 import { ImageEditRecipeSizeError, readImageEdit, saveImageEdit } from './image-edit'
 import { withRemoteEmbedArtwork } from './embed-preview-artwork'
 import { saveOfflinePage } from './offline-page'
@@ -157,12 +163,13 @@ installNavigationGuard(app, {
 // Applied to ipcMain itself, here, BEFORE the first registration below and before any module is
 // handed ipcMain: a listener registered earlier would not be covered (a unit test checks the order).
 applyMainFrameOnly(ipcMain)
+registerPresenterRefresh()
 // When a real key or mouse press last reached each window (recent-press.ts): asked by the clipboard
 // read and by a deck window's web links. Installed before the first window.
 const pressLedger = createPressLedger()
 installPressLedger(app, pressLedger)
 import { fileURLToPath, pathToFileURL } from 'url'
-import { cpus, homedir, hostname, loadavg, tmpdir, totalmem } from 'os'
+import { cpus, homedir, hostname, loadavg, tmpdir, totalmem, release } from 'os'
 import { installNavigationGuard } from './navigation-guard'
 import { applyMainFrameOnly } from './ipc-main-frame-only'
 import { contentHandOutRefusal, handOutLink } from './hand-out'
@@ -301,7 +308,7 @@ import {
   thumbnailSlides
 } from '../shared/slide-preview'
 import { readFile as readFileAsync, readdir as readdirAsync, stat as statAsync, access as accessAsync } from 'fs/promises'
-import {
+import { savedRecordingHome,
   setupRecordingPermissions,
   installRecordingPermissions,
   setDeviceListWindow,
@@ -325,12 +332,17 @@ import { movePreworkToWorkFile } from './prework-move'
 import {
   DEFAULT_TRANSCRIPTION_PYTHON,
   DEFAULT_TRANSCRIPTION_SCRIPT,
-  registerTranscriptionIpc
+  registerTranscriptionIpc, stopActiveTranscription, sweepTranscriptionTemps, nativeLocaleAvailable, transcribeSavedRun as runSavedTranscription
 } from './transcription'
+import { defaultWordsEngine } from '../shared/transcript-contract'
+import { recordedSegmentPaths, readRecordingSource } from './recording-paths'
 import { createTranscriptionSetup, type TranscriptionSetup } from './transcription-setup'
-import { shippedFfmpegCandidates, systemFfmpegCandidates } from './ffmpeg-path'
+import { resolveFfmpeg, shippedFfmpegCandidates, systemFfmpegCandidates } from './ffmpeg-path'
 import { registerTalkTextIpc } from './talkTextIpc'
 import { registerVideoPackageIpc } from './video-package-ipc'
+import { registerRecordingVideoIpc } from './recording-video-ipc'
+import { playbackFile, removePlaybackCopies } from './recording-video'
+import { createTranscription as createRecordingTranscription } from './transcription'
 import { registeredKeyNames, openVocabularyFrontmatterKeys, METADATA_REGISTRY } from '../shared/metadata-registry'
 import {
   applyMetadataDefaults,
@@ -559,12 +571,17 @@ type Config = {
   // `recording-keys`, recording-storage.ts). Two keys of an earlier source of them are read once
   // and dropped (recording-storage.ts, retireRecordingConfig); they are not part of this type.
   recordingDiscardMs?: number
+  recordingCapture?: string
+  recordingCamera?: string
+  recordingDevices?: unknown
   recordingMicrophone?: string
   recordingR2Endpoint?: string
   recordingR2Bucket?: string
   // Transcription engine (Settings -> Transcription; optional, spec D16). Non-secret local paths:
   // the Python of an environment and the script (both set up from resources/agent-setup/transcription),
   // and an ffmpeg of the person's own (unset: the one that ships with the app). `~` is expanded at runtime.
+  transcriptionEngine?: 'auto' | 'native' | 'parakeet'
+  transcriptionLocale?: string
   transcriptionPython?: string
   transcriptionScript?: string
   transcriptionFfmpeg?: string
@@ -1378,8 +1395,24 @@ ipcMain.handle('recording:take-setup-notice', () => recordingStorage().takeNotic
 // Non-secret local paths only. Optional (spec D16): whether it can run is the one row decided in
 // transcription-setup.ts, which Settings shows and Studio's Transcribe obeys. The same operations
 // are what the `setup transcription` command will call (ticket 07: setPaths and status).
-function transcriptionSettings(): { python: string; script: string; ffmpeg: string; defaultPython: string; defaultScript: string } {
+const userTranscriptionJobOwner = Symbol('user-transcription')
+function nativeSpeechHelper(): string | null {
+  if (E2E && !app.isPackaged && process.env.TW_REC_TEST === '1' && process.env.TW_E2E_SPEECH_HELPER) return process.env.TW_E2E_SPEECH_HELPER === 'unavailable' ? null : process.env.TW_E2E_SPEECH_HELPER
+  return process.platform === 'darwin' && Number(release().split('.')[0]) >= 25 ? transcriptionExecutable() : null
+}
+function transcriptionExecutable(): string | null {
+  if (E2E && !app.isPackaged && process.env.TW_REC_TEST === '1' && process.env.TW_E2E_SPEECH_HELPER) return process.env.TW_E2E_SPEECH_HELPER === 'unavailable' ? null : process.env.TW_E2E_SPEECH_HELPER
+  if (process.platform !== 'darwin' || Number(release().split('.')[0]) < 22) return null
+  const path = app.isPackaged ? join(process.resourcesPath,'..','Helpers','transcription') : join(app.getAppPath(),'native','transcription')
+  return existsSync(path) ? path : null
+}
+function transcriptionSettings() {
+  const choice = getConfig('transcriptionEngine', undefined)
+  const python = getConfig('transcriptionPython', undefined) ?? DEFAULT_TRANSCRIPTION_PYTHON
+  const script = getConfig('transcriptionScript', undefined) ?? DEFAULT_TRANSCRIPTION_SCRIPT
   return {
+    engine: defaultWordsEngine(!!nativeSpeechHelper(),!!python && !!script,choice === 'native' || choice === 'parakeet' ? choice : undefined),
+    locale: getConfig('transcriptionLocale', undefined) ?? 'en-US',
     python: getConfig('transcriptionPython', undefined) ?? DEFAULT_TRANSCRIPTION_PYTHON,
     script: getConfig('transcriptionScript', undefined) ?? DEFAULT_TRANSCRIPTION_SCRIPT,
     ffmpeg: getConfig('transcriptionFfmpeg', undefined) ?? '',
@@ -1426,6 +1459,17 @@ handleFromSettingsWindow('preferences:set-transcription', () => transcriptionSet
 })
 
 // The Transcription row (spec D16), the agent prompt it copies, and the set-up folder it opens.
+ipcMain.handle('transcription:native-inventory', async () => {
+  const helper = nativeSpeechHelper()
+  if (!helper) return {available:false,error:'Built-in words need macOS 26.'}
+  try {
+    const {execFile} = await import('node:child_process')
+    return await new Promise(resolve => execFile(helper,['--inventory'],{timeout:30000,maxBuffer:1024*1024},(error,stdout) => {
+      if (error) resolve({available:false,error:'Speech inventory could not be read. Retry.'})
+      else { try { resolve({...JSON.parse(stdout),available:true}) } catch { resolve({available:false,error:'Invalid speech inventory.'}) } }
+    }))
+  } catch { return {available:false,error:'Speech inventory could not be read.'} }
+})
 ipcMain.handle('transcription:status', () => transcriptionSetup().status())
 ipcMain.handle('transcription:agent-prompt', () => transcriptionSetup().agentPrompt())
 ipcMain.handle('transcription:open-setup-folder', async () => (await shell.openPath(transcriptionSetup().setupFolder())) === '')
@@ -1778,7 +1822,7 @@ function initialiseLiveSessions() {
 let presentReloadNonce = 0
 
 // ⌘R in a deck window: recompile from the EDITOR's live content (so an unsaved fix is included) and
-// reload the deck at its current slide. Refuses while a recording is armed (a reload would drop it).
+// reload the deck at its current slide. An armed recording flushes a segment before navigation.
 // The actual recompile+reload happens in the present:rebuild handler after the editor hands back its
 // current content — this only reads the deck's state and asks the editor for it.
 async function refreshDeckFromEditor(win: BrowserWindow): Promise<void> {
@@ -1792,8 +1836,8 @@ async function refreshDeckFromEditor(win: BrowserWindow): Promise<void> {
       "({ slideId: location.hash.startsWith('#') ? decodeURIComponent(location.hash.slice(1)) : '', rec: ((document.getElementById('twrec-module')||{}).dataset||{}).rec || '' })"
     )
   } catch { /* fall through with empty state — refresh from the top */ }
-  if (state.rec && state.rec !== 'idle' && state.rec !== 'saved' && state.rec !== 'error') {
-    win.webContents.send('present:hint', 'Stop the recording before refreshing (⇧R) — a reload would drop it.')
+  if (state.rec && !['idle', 'saved', 'error', 'recording', 'paused'].includes(state.rec)) {
+    win.webContents.send('present:hint', 'Finish saving the recording before refreshing.')
     return
   }
   const editor = targetEditorFor(info.outlinePath)
@@ -5888,7 +5932,7 @@ function attachLivePageHost(win: BrowserWindow, role: LivePageRole, outlinePath:
   win.once('closed', () => { livePageHosts.delete(id); livePageTalks.delete(id) })
   return host
 }
-app.on('before-quit', () => disposeAllLivePageHosts())
+app.on('before-quit', () => { stopActiveTranscription(); disposeAllLivePageHosts() })
 
 // Capture embed… (live-page-capture-window.ts): one window at a time, for one slide's web page, opened
 // by an editor window for the talk it has open. It closes when that editor closes or asks (another
@@ -6020,7 +6064,7 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
           }
           // Cache-bust (_r) so the reused window truly reloads the freshly-compiled file.
           const reuseQuery: Record<string, string> =
-            mode === 'presenter' ? { presenter: '1' } : mode === 'audience' ? { audience: '1' } : {}
+            mode === 'presenter' ? { presenter: '1', session: randomUUID() } : mode === 'audience' ? { audience: '1' } : {}
           reuseQuery.livepage = '1'
           reuseQuery._r = String(++presentReloadNonce)
           const reuseOpts: { query: Record<string, string>; hash?: string } = { query: reuseQuery }
@@ -6081,7 +6125,7 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
     // mode: 'presenter' → presenter view (notes + controls); 'audience' → chromeless audience view;
     // anything else → the plain presentation window. The deck runtime reads ?presenter=1 / ?audience=1.
     // livepage=1: this deck shows a slide's web page live, in a view of its own (live-page-host.ts).
-    const query: Record<string, string> = { ...(mode === 'presenter' ? { presenter: '1' } : mode === 'audience' ? { audience: '1' } : {}), livepage: '1' }
+    const query: Record<string, string> = { ...(mode === 'presenter' ? { presenter: '1', session: randomUUID() } : mode === 'audience' ? { audience: '1' } : {}), livepage: '1' }
     // ⇧F5 present-from-here: the runtime reads location.hash on init and starts on the slide whose
     // dataset.id matches the id (09-output-builders.mjs). An unknown/empty id falls back to slide 0.
     const loadOpts: { query?: Record<string, string>; hash?: string } = {}
@@ -6378,16 +6422,15 @@ ipcMain.handle('present:rebuild', async (_event, deckWcId: number, outlinePath: 
     const { presentPath } = await buildTalkPresentFile(outlinePath, content, true, info?.pathwayId, undefined, info?.runId)
     const mode = info?.mode
     // Cache-bust (_r) so this is a REAL navigation, not a same-URL no-op that skips the fresh file.
-    const query: Record<string, string> = mode === 'presenter' ? { presenter: '1' } : mode === 'audience' ? { audience: '1' } : {}
+    const query: Record<string, string> = mode === 'presenter' ? { presenter: '1', session: randomUUID() } : mode === 'audience' ? { audience: '1' } : {}
     query.livepage = '1'
     query._r = String(++presentReloadNonce)
     const loadOpts: { query: Record<string, string>; hash?: string } = { query }
     if (slideId) loadOpts.hash = slideId
-    deck.loadFile(presentPath, loadOpts)
+    if (mode === 'presenter') await prepareRecordingRefresh(deck.webContents)
+    try { await deck.loadFile(presentPath, loadOpts) } catch (error) { cancelRecordingRefresh(deck.webContents); throw error }
     // Confirm once the fresh page has loaded (the bridge re-mounts + registers its hint listener by then).
-    deck.webContents.once('did-finish-load', () => {
-      if (!deck.isDestroyed()) deck.webContents.send('present:hint', '✓ Refreshed with your latest edits')
-    })
+    if (!deck.isDestroyed()) deck.webContents.send('present:hint', '✓ Refreshed with your latest edits')
     return { ok: true }
   } catch (e) {
     console.error('[present:rebuild]', e)
@@ -6424,6 +6467,7 @@ registerRecordingIpc({
   vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
   openVaultRoots: () => availableVaults().map((vault) => vault.root),
   hasUnavailableOpenVaults: () => vaultRegistry.list().some((vault) => vault.open && vaultAvailability.isUnavailable(vault.id)),
+  retirePlaybackCopies: (sessionId) => removePlaybackCopies(app.getPath('userData'), sessionId),
   // A presenter window's recording, Run and stream marker go to the vault of the talk it presents (issue 256).
   presenterVault: (wcId) => {
     const info = presentWindows.get(wcId)
@@ -6436,6 +6480,10 @@ registerRecordingIpc({
   discardThresholdMs: () => Math.max(0, Number(getConfig('recordingDiscardMs', 20000)) || 20000),
   microphone: () => { const name = getConfig('recordingMicrophone', '') as unknown; return typeof name === 'string' ? name : '' },
   setMicrophone: (name) => writeConfig({ recordingMicrophone: name || undefined }),
+  recordingDevices: () => getConfig('recordingDevices', null),
+  setRecordingDevices: value => writeConfig({ recordingDevices: value, recordingCamera: (value as { camera?: string })?.camera, recordingMicrophone: (value as { microphone?: string })?.microphone }),
+  captureChoice: () => getConfig('recordingCapture', 'voice') ?? 'voice',
+  setCaptureChoice: value => writeConfig({ recordingCapture: value }),
   storage: () => recordingStorage(),
   testMode: () => process.env.TW_REC_TEST === '1',
   beforeCloseWindow: async (id, action) => {
@@ -6451,6 +6499,7 @@ registerRecordingIpc({
   // the panel and the status-bar dates refresh WITHOUT a reload (T29). Reuses the existing
   // 'talk meta changed' channel — pathways already ride it.
   onSessionSaved: (saved) => {
+    void transcribeSavedRun(saved).catch(()=>console.warn('[transcription] Saved Run is intact; words could not be started. Retry from the Run.'))
     notifyTalkMetaUpdated()
     // Reactions ticket 06: the Run file may exist only now; a live session bound to it writes its
     // history at once instead of waiting for its 30 s retry.
@@ -6585,13 +6634,127 @@ registerHistoryIpc({
   }
 })
 
+let preciseModels: AlignmentModels | undefined
+function alignmentModels(): AlignmentModels {
+  const supported=process.platform!=='win32' && (process.platform!=='darwin' || Number(process.getSystemVersion().split('.')[0])>=14)
+  return preciseModels ??= new AlignmentModels(supported?readAlignmentManifests(app.isPackaged ? join(process.resourcesPath,'alignment-models') : join(app.getAppPath(),'resources','alignment-models')):[],app.getPath('userData'),()=>{
+    void alignmentModels().status().then(rows=>{const w=sharedSettings?.host.settingsWindow() as BrowserWindow|null|undefined;if(w && !w.isDestroyed())w.webContents.send('alignment:models-changed',rows)})
+  },supported?undefined:process.platform==='win32'?'Precise word timing is not available on Windows yet.':'Precise word timing requires macOS 14 or newer.')
+}
+const wordAlignment = createAlignmentService({root:()=>writableVaultRoot()??null,isRootAvailable:root=>root===null || availableVaults().some(v=>v.open && v.root===root && !!writableRoot(v.root,rootFs)),userData:()=>app.getPath('userData'),ffmpeg:()=>{const f=resolveFfmpeg({configured:expandHomePath(transcriptionSettings().ffmpeg.trim()),shipped:shippedFfmpegCandidates({platform:process.platform,resourcesPath:process.resourcesPath??null,appPath:app.getAppPath(),packaged:app.isPackaged}),system:systemFfmpegCandidates(process.platform),exists:existsSync});return f.found?f.path:null},models:alignmentModels,worker:alignmentUtility,notify:state=>{const w=toolsWindow;if(w && !w.isDestroyed())w.webContents.send('alignment:state',state)}})
+async function alignAfterTranscription(slug:string,sid:string,home?:string|null):Promise<void>{
+  const capturedRoot=home===undefined?writableVaultRoot()??null:home,capturedData=app.getPath('userData')
+  const target=transcriptPathForAlignment(capturedRoot,capturedData,slug,sid)
+  if(!target.ok)return
+  try{const t=JSON.parse(readFileSync(target.path,'utf8')),m=alignmentModels().manifest(t.locale??'');if(m && await alignmentModels().store.usable(modelPinForAlignment(m)) && (capturedRoot===null || availableVaults().some(v=>v.open && v.root===capturedRoot && !!writableRoot(v.root,rootFs))) && app.getPath('userData')===capturedData)wordAlignment.enqueue(slug,sid,capturedRoot)}catch{}
+}
+ipcMain.handle('alignment:run',(event,slug:unknown,sid:unknown,home:unknown)=>{if(event.sender!==toolsWindow?.webContents)return{ok:false,error:'Open the Run in Studio to align its words.'};if(home!==undefined && home!==null && typeof home!=='string')return{ok:false,error:'Invalid Run vault.'};return wordAlignment.run(slug,sid,home as string|null|undefined)})
+ipcMain.handle('alignment:status',(event,slug:unknown,sid:unknown,home:unknown)=>{if(event.sender!==toolsWindow?.webContents || home!==undefined && home!==null && typeof home!=='string')return null;return wordAlignment.status(slug,sid,home as string|null|undefined)})
+ipcMain.handle('alignment:get',(event,slug:unknown,sid:unknown,home:unknown)=>{if(event.sender!==toolsWindow?.webContents || home!==undefined && home!==null && typeof home!=='string')return null;return wordAlignment.read(slug,sid,home as string|null|undefined)})
+ipcMain.handle('alignment:cancel',(event,slug:unknown,sid:unknown,home:unknown)=>{if(event.sender!==toolsWindow?.webContents)return{ok:false,error:'Open Studio to cancel alignment.'};if(typeof slug!=='string' || typeof sid!=='string' || home!==undefined && home!==null && typeof home!=='string')return{ok:false,error:'Invalid Run.'};return wordAlignment.cancel(slug,sid,home as string|null|undefined)?{ok:true}:{ok:false,error:'The Run’s vault is unavailable.'}})
+app.on('before-quit',()=>wordAlignment.quit())
+ipcMain.handle('alignment:models',()=>alignmentModels().status())
+handleFromSettingsWindow('alignment:download',()=>({ok:false,error:'Use Settings to download a model.'}),async (_event,language:unknown)=>{
+  try{await alignmentModels().change(language,'download');return{ok:true}}catch{return{ok:false,error:'The download failed or was cancelled. Retry when connected.'}}
+})
+handleFromSettingsWindow('alignment:install',()=>({ok:false,error:'Use Settings to install a model.'}),async (event,language:unknown)=>{
+  if(typeof language!=='string' || alignmentModels().manifest(language)?.source!=='local')return{ok:false,error:'No local model entry for this language.'}
+  const picked=await dialog.showOpenDialog({title:'Install precise word timing model',properties:['openFile'],filters:[{name:'ONNX model',extensions:['onnx']}]})
+  if(picked.canceled || !picked.filePaths[0])return{ok:false,error:'Cancelled'}
+  if(!fromSettingsWindow(event))return{ok:false,error:'Settings closed; file not installed.'}
+  try{await alignmentModels().change(language,'install',picked.filePaths[0]);return{ok:true}}catch{return{ok:false,error:'The file does not match the verified model, or installation was cancelled.'}}
+})
+handleFromSettingsWindow('alignment:remove',()=>({ok:false,error:'Use Settings to remove a model.'}),async (_event,language:unknown)=>{
+  try{await alignmentModels().change(language,'remove');return{ok:true}}catch{return{ok:false,error:'Cancel the model operation before removing it.'}}
+})
+handleFromSettingsWindow('alignment:cancel-download',()=>({ok:false,error:'Use Settings to cancel a download.'}),(_event,language:unknown)=>{alignmentModels().cancel(language);return{ok:true}})
+app.on('before-quit',()=>preciseModels?.store.cancelAll())
+
+function transcriptVaultForHome(home:unknown):string|null|undefined {
+  if(home===null)return null
+  if(typeof home!=='string')return undefined
+  const vault=availableVaults().find(v=>v.open && v.root===home)
+  return vault?writableRoot(vault.root,rootFs)??undefined:undefined
+}
 // Transcription IPC (Parakeet bridge + transcript store). Registered once; deps are lazy.
 registerTranscriptionIpc(ipcMain, {
+  vaultForHome: transcriptVaultForHome,
+  savedRunDeps: (senderId, runId) => {
+    const home = savedRecordingHome(senderId, runId)
+    return home ? savedTranscriptionDeps(home.root) : null
+  },
+  jobOwner: userTranscriptionJobOwner,
   userDataDir: () => app.getPath('userData'),
   vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
   config: () => transcriptionSetup().quickStatus().paths,
+    selection: transcriptionSettings,
+  nativeHelper: transcriptionExecutable,
+    alignAfterTranscription,
+    nativeAvailable: (locale: string) => nativeLocaleAvailable(nativeSpeechHelper(),locale),
   readiness: () => transcriptionSetup().quickStatus(),
   testMode: () => process.env.TW_REC_TEST === '1'
+})
+
+/** Slice 1 calls only this after the audio Run is durably saved. */
+async function transcribeSavedRun(saved: {talkSlug:string;runId:string;vaultRoot?:string|null}): Promise<void> {
+  const root = saved.vaultRoot ?? null
+  if (!recordedSegmentPaths(app.getPath('userData'),saved.runId,readRecordingSource(root,app.getPath('userData'),saved.talkSlug,saved.runId)).length) return
+  await runSavedTranscription(savedTranscriptionDeps(root),saved.talkSlug,saved.runId, (note: string) => { for (const window of BrowserWindow.getAllWindows()) if (!window.isDestroyed()) window.webContents.send('transcript:progress',{sessionId:saved.runId,note}) })
+}
+
+function savedTranscriptionDeps(root: string | null) {
+  return {
+    jobOwner: userTranscriptionJobOwner,
+    // The explicit native stand-in exercises the real pipeline, rather than TW_REC_TEST's instant transcript.
+    testMode: () => process.env.TW_REC_TEST === '1' && !(E2E && !app.isPackaged && process.env.TW_E2E_SPEECH_HELPER),
+    userDataDir: () => app.getPath('userData'), vaultRoot: () => {
+      if (!root) return null
+      const vault = availableVaults().find(v=>v.open && v.root===root)
+      return vault ? writableRoot(vault.root,rootFs) ?? null : null
+    },
+    config: () => transcriptionSetup().quickStatus().paths,
+    selection: transcriptionSettings,
+    nativeHelper: transcriptionExecutable,
+    alignAfterTranscription,
+    nativeAvailable: (locale: string) => nativeLocaleAvailable(nativeSpeechHelper(),locale),
+    readiness: () => transcriptionSetup().quickStatus()
+  }
+
+}
+
+// The Run view's recording panel: play back a layered Run, trim its ends, export one video (slice 3a).
+const recordingVideo = registerRecordingVideoIpc({
+  ipcMain,
+  toolsWindow: () => toolsWindow,
+  userDataDir: () => app.getPath('userData'),
+  vaultFor: (home) => home === undefined ? writableVaultRoot() ?? null : transcriptVaultForHome(home),
+  readiness: () => transcriptionSetup().quickStatus(),
+  // For the export only: a transcript file that exists but cannot be read is "unreadable", never "no words".
+  readTranscript: async (vault, talkSlug, runId) => {
+    const target = transcriptPathForAlignment(vault, app.getPath("userData"), talkSlug, runId)
+    if (!target.ok) return { state: 'unreadable' as const }
+    if (!existsSync(target.path)) return { state: 'none' as const }
+    const transcript = await createRecordingTranscription({
+    userDataDir: () => app.getPath('userData'), vaultRoot: () => vault,
+    selection: transcriptionSettings, nativeHelper: transcriptionExecutable,
+    alignAfterTranscription, nativeAvailable: (locale: string) => nativeLocaleAvailable(nativeSpeechHelper(), locale),
+    config: () => transcriptionSetup().quickStatus().paths,
+    readiness: () => transcriptionSetup().quickStatus()
+    }).get(talkSlug, runId)
+    return transcript ? { state: 'ok' as const, transcript: transcript as import('../shared/recording-editor').EditorTranscript & { segments?: Array<{ start: number; end: number; text: string }> } } : { state: 'unreadable' as const }
+  },
+  showSaveDialog: (win, options) => win ? dialog.showSaveDialog(win, options) : dialog.showSaveDialog(options),
+  reveal: (path) => { if (!E2E) shell.showItemInFolder(path) },
+  defaultFolder: () => app.getPath('videos')
+})
+// Quitting stops a running export and waits (at most four seconds) for ffmpeg to end and its temporary
+// files to go; anything left is removed at the next start from the export's own record.
+let recordingVideoQuitting = false
+app.on('before-quit', (event) => {
+  if (recordingVideoQuitting || !recordingVideo.busy()) return
+  event.preventDefault()
+  recordingVideoQuitting = true
+  void recordingVideo.shutdown(4000).finally(() => app.quit())
 })
 
 registerVideoPackageIpc({
@@ -6607,6 +6770,10 @@ registerVideoPackageIpc({
   transcription: {
     userDataDir: () => app.getPath('userData'), vaultRoot: () => writableVaultRoot() ?? null,
     config: () => transcriptionSetup().quickStatus().paths,
+    selection: transcriptionSettings,
+    nativeHelper: transcriptionExecutable,
+    alignAfterTranscription,
+    nativeAvailable: (locale: string) => nativeLocaleAvailable(nativeSpeechHelper(),locale),
     readiness: () => transcriptionSetup().quickStatus(), testMode: () => process.env.TW_REC_TEST === '1'
   }
 })
@@ -10392,6 +10559,7 @@ app.whenReady().then(async () => {
   if (SETUP_ARGS) { if (holdsInstanceLock) await runSetupCommand(SETUP_ARGS); return }
   // A second instance on this user-data folder is quitting (the lock above): it starts nothing.
   if (!holdsInstanceLock) return
+  sweepTranscriptionTemps()
   // The agent skill: decide once whether this is a first run (before any vault exists), then refresh the
   // copies the person installed when the running version differs from the stored one. Never awaited by the
   // window and never a startup failure.
@@ -10638,6 +10806,13 @@ app.whenReady().then(async () => {
     try {
       const url = new URL(request.url)
       const sessionId = url.hostname
+      // A playback copy the recording panel prepared (recording-video.ts): only its own checked names.
+      const play = url.searchParams.get('play'), copy = url.searchParams.get('copy')
+      if (play !== null || copy !== null) {
+        const file = play && copy ? playbackFile(app.getPath('userData'), sessionId, copy, play) : null
+        callback(file ? { path: file } : { error: -2 })
+        return
+      }
       const talkSlug = url.searchParams.get('talk')
       if (!sessionId || !talkSlug) { callback({ error: -2 }); return }
       const home = url.searchParams.get('home')

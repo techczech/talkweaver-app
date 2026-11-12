@@ -1011,6 +1011,7 @@ const actionsIn = (html, id) => {
     window.tw.replay = { build: async () => ({ success: false }) }
     window.tw.vault = { listTalks: async () => [] }
     window.tw.transcript = { get: async () => null, onProgress: () => () => {} }
+    window.tw.alignment = { onState: () => () => {}, status: async () => null }
     dom.window.HTMLMediaElement.prototype.load = () => {}
     const originalFetch = globalThis.fetch
     globalThis.fetch = async (url) => { requests.push(url); return { arrayBuffer: async () => new ArrayBuffer(0) } }

@@ -1,0 +1,93 @@
+/* 0.44 look ("ocean"): theme tokens. Design record: docs/design/2026-11-10-native-slide-redesign/
+   (round verdicts 5 to 8 lock the colours; round 4 locks colour by count).
+
+   The tokens also apply to data-look="ocean-safe" (a slide the runtime's fit-or-fall-back step returned to the 0.43
+   structure: the look's colours, 0.43 sizes). Every other rule in the zz-x-ocean-* files is scoped to `.slide[data-look="ocean"]`, which the compiler
+   stamps on each slide unless the talk sets `palette: classic` (or the old `palette: green`), so a classic
+   talk renders exactly as in 0.43. Later design decisions (typeface, section colours, the companion's
+   reach) are changes to these tokens, not to the layout files.
+
+   Contrast (WCAG 2.1): white on Ocean 4.91:1, white on Deeper Ocean 7.06:1, near-black on amber 8.65:1,
+   near-black on white 17.8:1, near-black on light 15.6:1, Deeper Ocean on light 6.19:1. White on amber is
+   2.05:1, so amber always carries near-black type and icons; Ocean text on light (4.31:1) is used only at
+   label size (30px and up). Amber text on white (2.05:1) is used only for display-size key words. */
+
+.slide:is([data-look="ocean"], [data-look="ocean-safe"]) {
+  /* colour */
+  --look-main: var(--sec-accent, #1273C4);      /* Ocean, or the section's own accent */
+  --look-deep: var(--sec-deep, #0D5A9E);        /* the second strength: white icon and label on it */
+  --look-light: var(--sec-tint, #E8F1FC);       /* the light strength of the main colour */
+  --look-companion: #FF9F1C;                    /* amber: the bold companion */
+  --look-on-main: #FFFFFF;
+  --look-on-deep: #FFFFFF;
+  --look-on-companion: #16181D;
+  --look-ink: #16181D;                          /* text and thin lines only, never a field */
+  --look-muted: #4A5361;                        /* supporting text: 8.2:1 on white */
+  --look-ground: #FFFFFF;
+  --look-ground-neutral: #F2F4F7;
+  --look-hairline: #D5DBE3;
+  --look-line: 3px;                             /* figure lines */
+
+  /* type: the deck's own faces until the typeface round decides (open decision; default today's) */
+  --look-face-display: var(--sans);
+  --look-face-text: var(--sans);
+  /* item labels and supporting text follow the slide's text-size step ({font-body=…}, --fs-body: 3.2cqw at
+     the default M step): label 0.8125 × (41.6px at 1600), supporting text 0.625 × (32px), never below the floor */
+  --look-size-label: max(var(--type-floor, 31px), calc(var(--fs-body, 3.2cqw) * .8125));
+  --look-size-body: max(var(--type-floor, 31px), calc(var(--fs-body, 3.2cqw) * .625));
+  --look-size-statement: 6.4cqw;                 /* 102px at 1600; cqw only, so thumbnails scale */
+  --look-icon: 6.8cqw;                           /* item icons: 109px at 1600 */
+
+  /* colour by count and the companion level (open decisions, defaults per the locked verdicts) */
+  --look-section: var(--look-main);              /* section colour: every section Ocean by default */
+  --look-lead: var(--look-main);                 /* who fills single-idea slides (statement, divider) */
+  --look-on-lead: var(--look-on-main);
+  --look-tab-on-lead: var(--look-deep);          /* the title tab on a lead-coloured slide, white type on it */
+  --look-keyword: var(--look-main);              /* key words of a light statement: Ocean on white, 4.91:1 */
+  --look-keyword-mark: transparent;              /* an underline under those key words (Bold: amber), clear of the text */
+  --look-current: var(--look-companion);         /* a marker: the current loop stop, a highlighted bar or slice, a timeline dot */
+  --look-on-marker: var(--look-on-companion);    /* type on that marker: near-black on amber (8.65:1) */
+  /* the current item of a list, row or tile in a reveal or {focus}: a full Ocean fill with white label and white icon
+     (owner, 12 Nov, sampler S85 and S86: "full colour in blue not orange", "icon should not turn black but white");
+     white on Ocean 4.91:1. Tokens, so Bold can differ later. */
+  --look-current-fill: var(--look-main);
+  --look-on-current: var(--look-on-main);
+  --look-two-a: var(--look-light);               /* two things side by side: light half … */
+  --look-two-b: var(--look-main);                /* … and the main colour (no orange halves by default) */
+  --look-three-1: var(--look-main);              /* three things: strengths of one colour */
+  --look-three-2: var(--look-deep);
+  --look-three-3: var(--look-ground-neutral);     /* the light panel of three: the light neutral, as frame l4-4 */
+
+  /* the legacy tokens every layout already reads */
+  --paper: var(--look-ground);
+  --ink: var(--look-ink);
+  --muted: var(--look-muted);
+  --hairline: var(--look-hairline);
+  --line: var(--look-hairline);
+  /* The legacy tint grounds of layouts the look has not redrawn carry Ocean text at running size (numbers, captions,
+     labels): a lighter strength of the section's tint keeps that text at AA (Ocean on #F3F8FD 4.6:1; on #E8F1FC it was 4.31:1). The
+     designed shapes keep --look-light. */
+  --look-light-ground: color-mix(in srgb, var(--look-light) 55%, #FFFFFF);   /* #F3F8FD for Ocean */
+  --tint: var(--look-light-ground);
+  --hue-2: var(--look-deep);
+  --hue-2-tint: var(--look-light-ground);
+  --hue-3: var(--look-deep);                    /* text the classic layouts set in this hue reaches AA on the light grounds (was Ocean, 4.46:1 on #F2F4F7) */
+  --hue-3-tint: var(--look-light-ground);
+  /* No background here: a slide stays transparent so the stage behind it shows (stage-fit); layouts that
+     want a field or the light neutral ground paint it themselves. */
+}
+
+/* Bold: amber leads the statement and divider slides; the detail slides stay blue. Key words on a light
+   statement keep the Ocean text colour (amber type on white is 2.05:1); the amber is an underline under them. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-companion="bold"] {
+  --look-lead: var(--look-companion);
+  --look-on-lead: var(--look-on-companion);
+  --look-tab-on-lead: var(--look-main);
+  --look-keyword-mark: var(--look-companion);
+}
+
+/* the size tokens re-resolve where a layout sets its own text step (--fs-body on .slide-content) */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"]) > .slide-content {
+  --look-size-label: max(var(--type-floor, 31px), calc(var(--fs-body, 3.2cqw) * .8125));
+  --look-size-body: max(var(--type-floor, 31px), calc(var(--fs-body, 3.2cqw) * .625));
+}

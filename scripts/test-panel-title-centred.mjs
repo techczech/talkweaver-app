@@ -13,6 +13,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const SLIDES = {
   'one-para': ['Agent definition', '{statement}', ['An agent is a model that decides what to do next.']],
@@ -32,7 +34,7 @@ const dir = mkdtempSync(join(tmpdir(), 'tw-panel-title-centred-'))
 const path = join(dir, 'panel-outline.md')
 const source = lines.join('\n')
 writeFileSync(path, source, 'utf8')
-const model = await prepareSource(path, source, 'panel-title-centred', statSync(path))
+const model = await prepareSource(path, inClassicLook(source), 'panel-title-centred', statSync(path))
 const htmlPath = join(dir, 'panel.html')
 writeFileSync(htmlPath, model.fullHtml, 'utf8')
 

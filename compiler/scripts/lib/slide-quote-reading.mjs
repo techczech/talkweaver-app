@@ -298,7 +298,17 @@ export function slideReader(lexMarkdownBlocks) {
     for (const b of rawBlocks) {
       if (b && b.type === "timeline" && attrs.timeline) b.mode = attrs.timeline;
     }
-    return { attrs, lines, layout, blocks: mapBlocks(layout, rawBlocks), poll };
+    const blocks = mapBlocks(layout, rawBlocks);
+    // The layout mapping may REBUILD the timeline block from a nested list (flushSlide re-applies the mode
+    // after mapping for the same reason, 08-source-adapters). Without this the probe that reserves a
+    // {timeline=horizontal|spine|pills} slide's continuation ids saw no mode, reserved none, and the
+    // continuation slide was drawn but never presented (beats-records-mismatch).
+    if (attrs.timeline) {
+      for (const b of blocks) {
+        if (b && b.type === "timeline") b.mode = attrs.timeline;
+      }
+    }
+    return { attrs, lines, layout, blocks, poll };
   }
 
   /**

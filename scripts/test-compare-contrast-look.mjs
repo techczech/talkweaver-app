@@ -21,6 +21,8 @@ import { join } from 'node:path'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { formatWarning } from '../compiler/scripts/lib/warning-registry.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'tw-vs-'))
 const HEAD = ['---', 'title: Vs look', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '# Deck', '## Section', '']
@@ -41,7 +43,7 @@ async function compile(name, body, extraFrontmatter = []) {
   const source = [...HEAD.slice(0, 5).slice(0, 4), ...extraFrontmatter, '---', ...HEAD.slice(5), ...body].join('\n')
   const path = join(dir, `${name}.md`)
   writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, name, statSync(path))
+  const model = await prepareSource(path, inClassicLook(source), name, statSync(path))
   const deckPath = join(dir, `${name}.html`)
   writeFileSync(deckPath, model.fullHtml, 'utf8')
   return { model, deckPath }

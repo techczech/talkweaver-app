@@ -23,8 +23,8 @@ function relay(stream: NodeJS.ReadableStream | null, write: (text: string) => vo
 }
 
 /** A utility process running `path` (in `cwd` when given), its output passed on to the main process's console. */
-export function forkUtilityChild(path: string, serviceName: string, cwd?: string): Electron.UtilityProcess {
-  const child = utilityProcess.fork(path, [], { serviceName, stdio: 'pipe', ...(cwd ? { cwd } : {}) })
+export function forkUtilityChild(path: string, serviceName: string, cwd?: string, env?: NodeJS.ProcessEnv): Electron.UtilityProcess {
+  const child = utilityProcess.fork(path, [], { serviceName, stdio: 'pipe', ...(cwd ? { cwd } : {}), ...(env ? {env} : {}) })
   relay(child.stdout, (text) => console.log(text))
   relay(child.stderr, (text) => console.error(text))
   return child

@@ -39,4 +39,5 @@ worker-dist.staged-*/
 /research/.manifest.lock
 agent-skill-dist/
 
+/native/transcription
 /release-security-test/

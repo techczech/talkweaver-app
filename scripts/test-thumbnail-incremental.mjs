@@ -34,7 +34,7 @@ const font = await compile(source.replace('title: Large deck', 'title: Large dec
 assert.ok(font.every((r,i) => r.thumbnail_hash !== before[i].thumbnail_hash), 'deck font invalidates every picture')
 const sections='---\noutline_version: 2\ntitle: Sections\n---\n\n## First\n\n### One {#one}\n\nText\n\n## Second\n\n### Two {#two}\n\nText\n'
 const plain = await compile(sections)
-const coloured = await compile(sections.replace('## Second', '## Second\n{accent=cobalt}'))
+const coloured = await compile(sections.replace('## Second', '## Second\n{accent=vermilion}'))
 assert.notEqual(plain.find(r=>r.slide_id==='two').thumbnail_hash, coloured.find(r=>r.slide_id==='two').thumbnail_hash, 'section accent invalidates dependent slides')
 // Contextual navigation keeps its whole-sequence dependency, even when the slide markup is unchanged.
 const context = await prepareSource('/tmp/context-outline.md', sections.replace('## First', '## First\n{grid-zoom}'), 'context', statSync('package.json'))

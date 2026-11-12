@@ -1,0 +1,79 @@
+{
+  "en": {
+    "model": "facebook/wav2vec2-base-960h",
+    "revision": "22aad52d435eb6dbaf354bdad9b0da84ce7d6156",
+    "files": {
+      "config.json": {
+        "gitBlob": "8ca9cc7496e145e37d09cec17d0c3bf9b8523c8e",
+        "bytes": 1596,
+        "sha256": null
+      },
+      "model.safetensors": {
+        "gitBlob": "942562678fb28df86c055027c18216fa2a7cb5dd",
+        "bytes": 377607901,
+        "sha256": "8aa76ab2243c81747a1f832954586bc566090c83a0ac167df6f31f0fa917d74a"
+      },
+      "preprocessor_config.json": {
+        "gitBlob": "3f24dc078fcba55ee1d417a413847ead40c093a3",
+        "bytes": 159,
+        "sha256": null
+      },
+      "special_tokens_map.json": {
+        "gitBlob": "25bc39604f72700b3b8e10bd69bb2f227157edd1",
+        "bytes": 85,
+        "sha256": null
+      },
+      "tokenizer_config.json": {
+        "gitBlob": "978a15a96dbb2d23e2afbc70137cae6c5ce38c8d",
+        "bytes": 163,
+        "sha256": null
+      },
+      "vocab.json": {
+        "gitBlob": "88181b954aa14df68be9b444b3c36585f3078c0a",
+        "bytes": 291,
+        "sha256": null
+      }
+    }
+  },
+  "cs": {
+    "model": "comodoro/wav2vec2-xls-r-300m-cs-250",
+    "revision": "73e2b9004f35d3ca79316a624e7edc3cdaa45d40",
+    "files": {
+      "added_tokens.json": {
+        "gitBlob": "8d17218304cec2861d67757bb3d693c933efde36",
+        "bytes": 23,
+        "sha256": null
+      },
+      "config.json": {
+        "gitBlob": "91de2ea5f1ed8eb38178c3f33ddabbb3bbeed89b",
+        "bytes": 2061,
+        "sha256": null
+      },
+      "model.safetensors": {
+        "gitBlob": "33c8b9e3a81495fd6694c1de50047561eb7c62f6",
+        "bytes": 1261996032,
+        "sha256": "99376277738caade67bf57b7dfab362b3172323b4724c0db4c51a56254340099"
+      },
+      "preprocessor_config.json": {
+        "gitBlob": "9f99bcabcbeaf80e6791d79c9cb6cd68c6e7ae95",
+        "bytes": 262,
+        "sha256": null
+      },
+      "special_tokens_map.json": {
+        "gitBlob": "623bcb06d8c0af8f6d7aa926d568ad455780c999",
+        "bytes": 309,
+        "sha256": null
+      },
+      "tokenizer_config.json": {
+        "gitBlob": "e89b92fc336152988221a90e4dc96d6c53dfc5b6",
+        "bytes": 300,
+        "sha256": null
+      },
+      "vocab.json": {
+        "gitBlob": "94ccf2a70d1cd102e85aaaa500c573c7b0443f29",
+        "bytes": 469,
+        "sha256": null
+      }
+    }
+  }
+}

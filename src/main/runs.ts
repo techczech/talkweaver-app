@@ -1,3 +1,4 @@
+import type { LayerManifest } from './recording-layers.ts'
 import type { RunAudioFields } from '../shared/run-audio.ts'
 import { AUDIENCE_FEEDBACK_LIMITS, parsePollDefinition, parsePollChoice, parseQuestionInput, parseReactionInput, type InstantSlide, type PollDefinition, type PollChoice } from '../../worker/protocol.ts'
 import { preworkWindow } from '../shared/plan-run.ts'
@@ -73,6 +74,8 @@ function assertRunSource(previous: RunRecord | null, next: RunRecord): void {
   if (previous?.sourceOutline && previous.sourceOutline !== next.sourceOutline) throw new Error('run-source-conflict')
 }
 export interface RunRecord {
+  capture?: LayerManifest | null
+  captureUnknown?: boolean
   sourceOutline?: string
   id: string
   talkSlug: string
@@ -482,6 +485,8 @@ export function normaliseRun(value: unknown): RunRecord {
     transcript: raw.transcript ?? null,
     // The Pen's ink in it is checked and capped here, on the way in, before it goes anywhere.
     slideTimeIndex: readbackSlideTimeIndex<RunMark>(raw.slideTimeIndex),
+    ...(raw.captureUnknown === true ? { captureUnknown: true } : {}),
+    ...(raw.capture && typeof raw.capture === "object" && (raw.capture as LayerManifest).version === 1 ? { capture: raw.capture as LayerManifest } : {}),
     polls: normalisePolls(raw.polls),
     pollResponses: normalisePollResponses(raw.pollResponses)
   }

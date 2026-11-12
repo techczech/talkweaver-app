@@ -1,0 +1,56 @@
+/* 0.44 slide redesign, step 1: layouts that were broken in every look (current-state faults,
+   docs/design/2026-11-10-native-slide-redesign/current-state/current-state-faults.md). These rules apply
+   to the classic look too: they repair, they do not restyle. Named zz-w… so it sorts after zz-scene-*. */
+
+/* flow=vertical: the connector between two stacked boxes had no height, so the rotated arrow
+   (drawn 30-64px long) lay on top of the boxes' text. The connector now owns the arrow's length. */
+.flow.flow-vertical { gap: 0; }
+.flow.flow-vertical .flow-node { width: min(820px, 100%); max-width: none; align-self: center; font-size: max(var(--type-floor, 31px), 1.1em); padding: .55em 1em; }
+.flow.flow-vertical .flow-connector { align-self: center; padding: 0; height: calc(clamp(30px, 4cqw, 64px) + 12px); width: auto; }
+
+/* flow=branch: one root fanning out to two to six branches (the reported flat-list case, which the compiler
+   now reads as a root and its branches, and the same shape written nested): the root sits centred above its
+   branches, one row, each branch with its own stem up to the shared bar. A wider fan (seven or more), a
+   branch with several roots, or a fan whose branches carry detail lines keeps the 0.43 drawing exactly:
+   its children wrap onto rows under one bar, so nothing a branch says is squeezed out of the stage. */
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) { justify-content: center; width: 100%; }
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) > .flow-item { width: 100%; }
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) > .flow-item > .flow-node { max-width: min(560px, 100%); font-size: max(var(--type-floor, 31px), 1.1em); }
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-fan { width: 100%; }
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-stem { height: clamp(24px, 3cqw, 44px); width: 3px; }
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-children {
+  flex-wrap: nowrap; gap: clamp(16px, 2cqw, 32px); width: 100%; justify-content: space-between;
+  border-top: 0; padding-top: 0; position: relative;
+}
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-children > .flow-child {
+  flex: 1 1 0; min-width: 0; max-width: none; position: relative; margin-top: clamp(24px, 3cqw, 44px);
+  font-size: max(var(--type-floor, 31px), 1em); text-align: center; justify-content: center; overflow-wrap: break-word;
+}
+/* the stem from the bar down to each branch */
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-children > .flow-child::before {
+  content: ""; position: absolute; left: 50%; top: calc(-1 * clamp(24px, 3cqw, 44px) - 1.5px); width: 3px;
+  height: clamp(24px, 3cqw, 44px); background: var(--accent); transform: translateX(-50%);
+}
+/* the bar joins the first and the last branch centres (not the outer edges) */
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-children::before {
+  content: ""; position: absolute; top: 0; height: 3px; background: var(--accent);
+  left: calc(50% / var(--fan-count, 3)); right: calc(50% / var(--fan-count, 3));
+}
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-children:has(> .flow-child:nth-child(2):last-child) { --fan-count: 2; }
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-children:has(> .flow-child:nth-child(3):last-child) { --fan-count: 3; }
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-children:has(> .flow-child:nth-child(4):last-child) { --fan-count: 4; }
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-children:has(> .flow-child:nth-child(5):last-child) { --fan-count: 5; }
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-children:has(> .flow-child:nth-child(6):last-child) { --fan-count: 6; }
+.flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-children:has(> .flow-child:only-child)::before { display: none; }
+
+/* timeline=compact: read down the first column, then the second (chronological order), at the
+   body size rather than the old 1.7cqw. */
+.timeline.timeline-compact { font-size: max(var(--type-floor, 31px), 2.2cqw); width: 100%; }
+.timeline.timeline-compact .tl-entries {
+  grid-auto-flow: column;
+  grid-template-rows: repeat(var(--tl-compact-rows, 3), auto);
+  gap: .6em 2.4em;
+}
+
+/* the label inside a flow node takes the node's size (it carried a smaller one of its own) */
+.flow.flow-vertical .flow-node .flow-label, .flow.flow-branch:has(> .flow-item:only-child):not(:has(.flow-child:nth-child(7))):not(:has(.flow-detail-line)) .flow-node .flow-label { font-size: inherit; }

@@ -229,6 +229,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['presenter.duration', 'T', ['t'], 'Set duration', 'Opens the talk-duration and reminder controls.', 'Overview & timer'],
     // Recording (src/preload/present-rec-ui.ts; present in the presenter window TalkWeaver opens).
     ['presenter.record', '⇧R', ['Shift-r'], 'Start, or stop and save, recording', 'Starts recording the talk; while recording or paused, stops and saves it.', 'Recording'],
+    ['presenter.record-flag', '⇧M', ['Shift-m'], 'Mark a mistake', 'Flags this point in the recording without stopping.', 'Recording'],
     ['presenter.record-pause', '⇧P', ['Shift-p'], 'Pause or resume recording', 'Pauses the recording, or resumes a paused one.', 'Recording'],
     ['presenter.save-run-as', 'L', ['l'], 'Save run as…', 'Opens the run-kind picker (Delivery, Rehearsal, Recording) to save or relabel this Run in the Runs view.', 'Recording'],
     ['presenter.save-run', '↵', ['Enter'], 'Save this run as a delivery', 'While the save offer shows at the last slide, saves the Run as a delivery in the Runs view.', 'Recording'],
@@ -280,7 +281,20 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['pathway.move-item', '⌘↑ / ⌘↓', ['Mod-ArrowUp', 'Mod-ArrowDown'], 'Move pathway slide', 'Moves the focused ticked slide within pathway order without changing the outline.', 'Reorder'],
   ]),
   ...entries('studio', [
-    ['studio.sidebar-toggle', '⌘\\', ['Mod-\\'], 'Collapse or expand recordings', 'Toggles the recordings sidebar so the player can use the full width.', 'View']
+    ['studio.sidebar-toggle', '⌘\\', ['Mod-\\'], 'Collapse or expand recordings', 'Toggles the recordings sidebar so the player can use the full width.', 'View'],
+    // The recording panel of a Run with its picture (slice 3a); outside a text field. I and O are the usual in and out points.
+    ['studio.trim-start', 'I', ['i'], 'Trim start here', 'Starts the video at the playhead. The recording itself is not changed.', 'Recording'],
+    ['studio.trim-end', 'O', ['o'], 'Trim end here', 'Ends the video at the playhead. The recording itself is not changed.', 'Recording'],
+    ['studio.trim-undo', '⌘Z', ['Mod-z'], 'Undo a trim or edit', 'Takes back the last trim or edit, also after the Run was reopened.', 'Recording'],
+    ['studio.trim-redo', '⇧⌘Z', ['Mod-Shift-z'], 'Redo a trim or edit', 'Puts back the trim or edit you last undid.', 'Recording'],
+    // The recording editor (slice 3); outside a text field, like the trim keys. Arrows move by word there,
+    // where Studio's own player uses them for slides; ⇧ extends, as in the macOS text system.
+    ['studio.editor-play', 'Space', ['Space'], 'Play or pause the video', 'In the video editor: plays the selected words, or plays and pauses from the playhead.', 'Recording'],
+    ['studio.editor-cut', '⌫ / ⌦', ['Backspace', 'Delete'], 'Cut the selected words', 'In the video editor: leaves the selected words out of the video. The recording itself is not changed.', 'Recording'],
+    ['studio.editor-previous-word', '←', ['ArrowLeft'], 'Previous word', 'In the video editor: selects the word before.', 'Recording'],
+    ['studio.editor-next-word', '→', ['ArrowRight'], 'Next word', 'In the video editor: selects the word after.', 'Recording'],
+    ['studio.editor-extend-previous', '⇧←', ['Shift-ArrowLeft'], 'Extend the selection back', 'In the video editor: adds the word before to the selection.', 'Recording'],
+    ['studio.editor-extend-next', '⇧→', ['Shift-ArrowRight'], 'Extend the selection on', 'In the video editor: adds the word after to the selection.', 'Recording']
   ]),
   ...entries('talktext', [
     ['talktext.notes', 'N', ['n'], 'Notes mode', 'Shows the agent-written Notes document and its part review controls.', 'View'],

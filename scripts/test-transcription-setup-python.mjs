@@ -65,7 +65,7 @@ try {
   const help = run(python, [join(folder, 'parakeet_to_srt.py'), '--help'])
   assert.equal(help.status, 0, `the vendored script did not answer --help:\n${help.all}`)
   assert.match(help.stdout, /usage: parakeet_to_srt\.py/)
-  assert.match(help.stdout, /-o OUTPUT, --output OUTPUT/, 'the arguments TalkWeaver passes (<audio> -o <out.srt>) are the script\'s')
+  assert.match(help.stdout, /-o(?: OUTPUT)?, --output OUTPUT/, 'the arguments TalkWeaver passes (<audio> -o <out.srt>) are the script\'s')
   console.log('  3. the vendored script answers --help in that environment')
 
   // The row, for exactly what SETUP.md step 6 sets, with a stand-in ffmpeg (ffmpeg is not this test's subject).

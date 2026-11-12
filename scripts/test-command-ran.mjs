@@ -185,7 +185,8 @@ await test('the routes outside the main window report through the same preload: 
     'src/renderer/src/components/PathwaysView.tsx': ['add-to-pathway', 'present-pathway', 'pathway.move-item'],
     'src/renderer/src/components/TalkText.tsx': ['talktext.notes', 'talktext.script', 'talktext.rewrite', 'talktext.copy', 'talktext.help'],
     'src/renderer/src/components/Importer.tsx': ['importer.flagged', 'importer.search', 'importer.apply', 'importer.reset', 'importer.views', 'importer.help'],
-    'src/renderer/src/components/Studio.tsx': ['studio.sidebar-toggle'],
+    'src/renderer/src/components/Studio.tsx': ['studio.sidebar-toggle', 'studio.trim-start', 'studio.trim-end', 'studio.trim-undo', 'studio.trim-redo'],
+    'src/renderer/src/components/recording/RecordingEditor.tsx': ['studio.editor-play', 'studio.editor-cut', 'studio.editor-previous-word', 'studio.editor-next-word', 'studio.editor-extend-previous', 'studio.editor-extend-next'],
     'src/renderer/src/components/talklist/TalkList.tsx': ['browser.talk-view', 'browser.talk-names', 'browser.filter', 'browser.sort', 'browser.open-talk', 'browser.up-level', 'browser.fold-all'],
     'src/renderer/src/components/talklist/actions.ts': ['browser.rename', 'browser.duplicate', 'browser.move-talk', 'browser.delete-talk', 'browser.open-talk']
   }

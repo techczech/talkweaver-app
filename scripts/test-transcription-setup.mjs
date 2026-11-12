@@ -232,7 +232,7 @@ try {
     // 0.42: the rows are schema settings; the status row is on the Settings window's Get started page.
     const { schema } = await import('../src/shared/settings-schema.ts')
     const transcriptionRows = schema.settings.filter((d) => d.group === 'Transcription')
-    assert.ok(transcriptionRows.length === 3, 'the Transcription rows of Settings are found')
+    assert.deepEqual(transcriptionRows.map(d=>d.key).sort(), ['recording.wordsEngine','recording.wordsLocale','recording.transcriptionPython','recording.transcriptionScript','recording.ffmpeg'].sort(), 'all five Transcription rows, including built-in choice and language, are checked')
     const pages = readFileSync(join(repo, 'src', 'renderer', 'src', 'components', 'SettingsWindowPages.tsx'), 'utf8')
     const shown = {
       'Settings › Recording › Transcription': transcriptionRows.map((d) => `${d.label}\n${d.help ?? ''}`).join('\n'),
@@ -559,6 +559,9 @@ try {
       const appOutDir = join(scratch, `gate-${apps += 1}`)
       const app = join(appOutDir, 'TalkWeaver.app')
       mkdirSync(join(app, 'Contents', 'MacOS'), { recursive: true })
+      mkdirSync(join(app,'Contents','Helpers'),{recursive:true})
+      copyFileSync(pinnedProgram,join(app,'Contents','Helpers','transcription'))
+      chmodSync(join(app,'Contents','Helpers','transcription'),0o755)
       copyFileSync(pinnedProgram, join(app, 'Contents', 'MacOS', 'TalkWeaver'))
       chmodSync(join(app, 'Contents', 'MacOS', 'TalkWeaver'), 0o755)
       writeFileSync(join(app, 'Contents', 'Info.plist'), '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict><key>CFBundleExecutable</key><string>TalkWeaver</string><key>CFBundleIdentifier</key><string>test.talkweaver.gate</string><key>CFBundlePackageType</key><string>APPL</string></dict></plist>\n')
@@ -572,6 +575,7 @@ try {
     }
     /** Ad-hoc signing as electron-builder signs: the nested program first, then the app. */
     const sign = (laid) => {
+      run('/usr/bin/codesign',['--force','--sign','-',join(laid.app,'Contents','Helpers','transcription')])
       run('/usr/bin/codesign', ['--force', '--sign', '-', '--options', 'runtime', laid.binary])
       run('/usr/bin/codesign', ['--force', '--sign', '-', laid.app])
     }
@@ -626,7 +630,11 @@ try {
       ? { status: 0, stdout: '', stderr: `Executable=${signed.app}/Contents/MacOS/TalkWeaver\nIdentifier=test.talkweaver.gate\nFormat=app bundle with Mach-O thin (arm64)\nCodeDirectory v=20500 size=1 flags=0x10000(runtime) hashes=1+1 location=embedded\nSignature size=9000\nAuthority=${authority}\nAuthority=Apple Worldwide Developer Relations Certification Authority\nAuthority=Apple Root CA\nTimestamp=9 Oct 2026 at 12:00:00\nInfo.plist entries=3\nTeamIdentifier=${teamIdentifier}\nSealed Resources version=2 rules=13 files=4\nInternal requirements count=1 size=200\n` }
       : spawnSync(command, args, { encoding: 'utf8' })
     assert.equal(gateApp(signed.app, { requireSigned: true, run: signedBy(`Developer ID Application: Test Person (${team})`, team) }), null, 'a Developer ID Application signature of the team in build.mac.identity: accepted')
-    assert.deepEqual(requirements, [`-R=${developerIdRequirement(team)}`], 'once codesign accepts the Apple-anchored Developer ID requirement for that team')
+    assert.deepEqual(requirements, [`-R=${developerIdRequirement(team)}`, `-R=${developerIdRequirement(team)}`], 'both app and standalone speech helper satisfy the Apple-anchored Developer ID requirement for that team')
+    const speech = join(signed.app,'Contents','Helpers','transcription')
+    const signer = signedBy(`Developer ID Application: Test Person (${team})`, team)
+    assert.match(gateApp(signed.app,{requireSigned:true,run:(cmd,args)=>args.at(-1)===speech && args.some(a=>a.startsWith('-R=')) ? {status:1,stdout:'',stderr:'wrong helper signer'} : signer(cmd,args)}),/speech helper signature/, 'an app signature cannot hide a helper with the wrong signer')
+    assert.match(gateApp(signed.app,{requireSigned:true,run:(cmd,args)=>args.at(-1)===speech && args.includes('--entitlements') ? {status:0,stdout:'<dict><key>com.apple.security.cs.allow-jit</key><true/></dict>',stderr:''} : signer(cmd,args)}),/unexpected entitlements/, 'Electron entitlements on the standalone helper are refused')
     assert.equal(developerIdRequirement(team), `anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] exists and certificate leaf[field.1.2.840.113635.100.6.1.13] exists and certificate leaf[subject.OU] = "${team}"`, 'Apple\'s Developer ID designated requirement')
     // The full release verifier must compose the security gate after its FFmpeg/signature checks.
     // OS signing is simulated at the existing runner seam; the gate's policy assertions are real.

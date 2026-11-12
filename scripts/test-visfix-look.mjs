@@ -21,6 +21,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'tw-visfix-look-'))
 const source = [
@@ -43,7 +45,7 @@ const source = [
 ].join('\n')
 const path = join(dir, 'visfix.md')
 writeFileSync(path, source, 'utf8')
-const model = await prepareSource(path, source, 'Visfix probe', statSync(path))
+const model = await prepareSource(path, inClassicLook(source), 'Visfix probe', statSync(path))
 const htmlPath = join(dir, 'visfix.html')
 writeFileSync(htmlPath, model.fullHtml, 'utf8')
 

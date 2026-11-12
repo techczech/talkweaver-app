@@ -198,6 +198,7 @@ export const PRESENTER_CONTROLS: PresenterControl[] = [
   // run is chosen at save (Change, Save as…, L), never on start (ADR-0031 §3).
   { id: 'twrec-primary', name: 'Start recording', icon: 'circle-dot', shortcut: 'presenter.record', preload: 'recorder' },
   { id: 'twrec-change-kind', name: 'Change run kind', icon: 'tags', shortcut: 'presenter.save-run-as', preload: 'recorder' },
+  { id: 'twrec-flag', name: 'Mark a mistake', icon: 'flag', shortcut: 'presenter.record-flag', preload: 'recorder' },
   { id: 'twrec-pause', name: 'Pause recording', icon: 'circle-pause', shortcut: 'presenter.record-pause', preload: 'recorder' },
   { id: 'twrec-resume', name: 'Resume recording', icon: 'circle-play', shortcut: 'presenter.record-pause', preload: 'recorder' },
   { id: 'twrec-stop', name: 'Stop and save recording', icon: 'square', shortcut: 'presenter.record', preload: 'recorder' },

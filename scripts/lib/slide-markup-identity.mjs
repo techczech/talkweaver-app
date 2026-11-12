@@ -36,3 +36,15 @@ export function withoutLaterSlideStamps(html, talk) {
   const out = String(html).replace(SECTION_HUE_STAMP, '').replace(REMOTE_PAGE_SANDBOX, '')
   return talk.talkNamesTitleLook ? out : out.replace(DEFAULT_TITLE_LOOK_STAMP, '')
 }
+
+// 0.44 (native slide redesign): a talk with no `palette:` draws the Ocean look, so every slide's colour
+// stamp, look stamp and some title placements differ from a reference recorded before 0.44. The
+// classic look (`palette: classic`) is the pre-0.44 rendering byte for byte, so an identity guard
+// compiles the talk in it. A talk that names a palette itself is compiled as written.
+export function inClassicLook(outlineText) {
+  const text = String(outlineText ?? '')
+  const fm = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*\r?\n/.exec(text)
+  if (fm && /^palette\s*:/m.test(fm[1])) return text
+  if (fm) return text.replace(/^---[ \t]*\r?\n/, (open) => `${open}palette: classic\n`)
+  return `---\npalette: classic\n---\n${text}`
+}

@@ -3,7 +3,7 @@ name: talkweaver
 description: Use TalkWeaver, a presentation app. Create and revise talks as Markdown outlines, cut Pathways, convert PowerPoint decks, make handouts (including any handout or follow-up notes after a delivered talk or workshop), process recordings into Scripts or Notes, set up publishing and read or change the app's settings through its command line. Content and app use, not TalkWeaver development.
 metadata:
   app: talkweaver
-  app-version: 0.43.0
+  app-version: 0.44.0
 ---
 
 # TalkWeaver
@@ -69,7 +69,7 @@ What this skill does require of any plan:
 ## Conversion, handouts and recordings
 
 - After a talk or workshop has been delivered and recorded, "a handout" (with "more explanation to go along with the slides") means the Run's **Notes**, drafted from the recording into the Run pack, approved in TalkWeaver and exported with the Run handout. It never means a new web page or a page on another site.
-- Every talk gets a self-study companion as well as its recording: a summary per section, the talk's widgets in self-study mode, and links. Offer it when a talk is finished, together with a short summary video: a new script written from the transcript and Notes, voiced in the house narrator, about 5-7 minutes for an hour's talk or several 2-4 minute videos for a workshop, linked from the Notes (`animated-talk-video` N76, N77).
+- Every talk gets a self-study companion as well as its recording: a summary per section, the talk's widgets in self-study mode, and links. Offer it when a talk is finished, together with a short summary video: a new script written from the transcript and Notes, voiced in the house narrator, about 5-7 minutes for an hour's talk or several 2-4 minute videos for a workshop, linked from the Notes (`animated-talk-video` N76, N77). With several videos, one companion covers the whole session, each video placed in the part of the argument it explains (N85).
 - [Extraction and conversion](references/talkweaver-extraction-conversion.md): PowerPoint to outline, import-cleanup packs, gaps report.
 - [Handout creation](references/talkweaver-handout-creation.md): select Talk or Run, build the audience export through the app, verify, publish only to an authorised destination.
 - [Recording and transcript processing](references/talkweaver-recording-processing.md): locate audio and transcript, clean the Script, draft Notes in the app-prepared pack.

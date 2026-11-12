@@ -27,7 +27,7 @@ import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { slotCompositionFor } from '../compiler/scripts/lib/slot-composition.mjs'
 import { buildDeckStyles } from './build-deck-styles.mjs'
-import { talkNamesTitleLook, withoutLaterSlideStamps } from './lib/slide-markup-identity.mjs'
+import { inClassicLook, talkNamesTitleLook, withoutLaterSlideStamps } from './lib/slide-markup-identity.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repo = resolve(here, '..')
@@ -271,7 +271,7 @@ async function compile(name) {
   const path = join(dir, `${name}.md`)
   const source = deckSourceFor(name)
   writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, `slot-${name}`, statSync(path), undefined, FIXTURE_ROOTS)
+  const model = await prepareSource(path, inClassicLook(source), `slot-${name}`, statSync(path), undefined, FIXTURE_ROOTS)
   const slide = model.slides.find((entry) => entry.nodeLevel === 3) ?? model.slides.at(-1)
   return { model, slide, html: model.fullHtml, source }
 }
@@ -750,7 +750,7 @@ const shotLines = (title, images, labels, tokens = '', frontmatter = []) => [
 async function compileSource(name, source) {
   const path = join(dir, `${name}.md`)
   writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, `slot-${name}`, statSync(path), undefined, FIXTURE_ROOTS)
+  const model = await prepareSource(path, inClassicLook(source), `slot-${name}`, statSync(path), undefined, FIXTURE_ROOTS)
   return { model, slide: model.slides.find((entry) => entry.nodeLevel === 3), html: model.fullHtml }
 }
 const labels3 = ['Released web resource', 'Session with an open model', 'Explainer built']

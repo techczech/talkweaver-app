@@ -1,0 +1,41 @@
+/* (the dot sits in the margin, outside the item's box, so a drag or click at the item's start lands on its words;
+   it is centred on the first line: the item's row padding, .55em times the fitter's gap step, plus half a line)
+   0.44 look ("ocean"): the plain list (no icons, no boxes), under the title tab or beside the title rail. Round-10
+   sampler S12 and S13: the points spread evenly down the whole content box, at reading size from a distance, each
+   led by a small Ocean dot; no rules between them (they read as table rows). The type size stays the list fitter's
+   own (a larger override here broke drag-to-highlight in the presenter's Current preview). */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-plain {
+  border: 0 !important; list-style: none;
+}
+/* beside the rail (or with no title): up to six points spread down the whole column; a longer list keeps its flow
+   so the list fitter's ladder (leading, gaps, type) can make room */
+.slide[data-look="ocean"][data-layout="list"]:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content > .feature-list.fl-plain:not(:has(> li:nth-child(7))) {
+  display: flex !important; flex-direction: column !important; justify-content: space-evenly !important; gap: calc(1.2cqw * var(--list-gap, 1));
+  width: 100% !important; max-width: none !important; min-height: 0; align-self: stretch !important;
+  margin: 0 !important; padding: 0 !important; columns: auto !important;
+}
+.slide[data-look="ocean"][data-layout="list"]:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content:has(> .feature-list.fl-plain):not(:has(> .feature-list.fl-plain > li:nth-child(7))) {
+  grid-template-rows: minmax(0, 1fr) !important; height: 100% !important; box-sizing: border-box; align-items: stretch !important;
+}
+.slide[data-look="ocean"][data-layout="list"]:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content:has(> .feature-list.fl-plain):not(:has(> .feature-list.fl-plain > li:nth-child(7))) > :is(.slide-head, .feature-list.fl-plain) {
+  grid-row: 1 / span 1 !important;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-plain > li {
+  /* the item keeps the list's own row padding and leading (the fitter's ladder steps them); only the rule goes */
+  position: relative; margin: 0 0 0 1.1em !important; border: 0 !important; background: none !important; box-shadow: none !important;
+  color: var(--look-ink) !important;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-plain > li::before {
+  content: "" !important; display: block !important; position: absolute; left: -1em; top: calc(.55em * var(--list-gap, 1) + var(--list-lh, 1.35) * .5em - .16em); width: .32em; height: .32em; margin: 0 !important;
+  border-radius: 50%; background: var(--look-main) !important; border: 0 !important;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-plain > li :is(.fl-text, .fl-subtext) { font: inherit; color: inherit; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-plain > li > :is(ul, ol, .fl-sublist) {
+  margin: .3em 0 0 !important; padding: 0 !important; font-size: .78em; color: var(--look-muted);
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-plain > li > :is(ul, ol, .fl-sublist) > li { font-size: max(var(--type-floor, 31px), 1em) !important; border: 0 !important; padding-block: .1em !important; }
+/* the current point of a reveal or {focus}: full-strength near-black words and a larger Ocean dot, no fill behind the
+   sentence (owner's decision, 12 Nov: the Ocean fill is for icon lists and rows; a band behind a sentence is too heavy);
+   the other points dim as the reveal dims them, readable at 3:1 or better */
+.slide[data-look="ocean"][data-layout="list"].mode-active > .slide-content > .feature-list.fl-plain > li[data-mode-state="current"] { color: var(--look-ink) !important; opacity: 1 !important; }
+.slide[data-look="ocean"][data-layout="list"].mode-active > .slide-content > .feature-list.fl-plain > li[data-mode-state="current"]::before { background: var(--look-main) !important; transform: scale(1.4); }

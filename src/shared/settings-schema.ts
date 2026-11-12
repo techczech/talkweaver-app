@@ -10,6 +10,7 @@
 // (scripts/test-shared-settings.mjs checks them).
 //
 // Pure; erasable TypeScript only (node tests import it as it is).
+import { SPEECH_LOCALES, speechLanguageName } from './speech-locales.ts'
 import { checkValue, defineSchema, type Migrated, type SettingDef } from '@app-patterns/settings'
 import { METADATA_REGISTRY } from './metadata-registry.ts'
 import { metadataDefaultsViewModel } from './metadata-surfaces.ts'
@@ -90,9 +91,13 @@ export const schema = defineSchema({
     { key: 'publishing.branch', label: 'Production branch', section: 'publishing', group: 'Advanced', type: 'text', default: 'main', validate: (v) => (typeof v === 'string' && /^[A-Za-z0-9._/-]{1,100}$/.test(v) ? null : 'Letters, digits, . _ / - only'), help: 'The Cloudflare Pages branch that is the live site.' },
     // Recording
     { key: 'recording.discardShorter', label: 'Discard runs shorter than', section: 'recording', group: 'Runs', type: 'number', default: 20, min: 0, max: 86400, unit: 's', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'A run this short is taken for an accidental open and not kept.' },
+    { key: 'recording.capture', label: 'When I press Record, capture', section: 'recording', group: 'Devices on this Mac', type: 'choice', default: 'voice', options: [{ value: 'voice', label: 'Slides and voice' }, { value: 'camera', label: 'Slides, voice and camera' }] },
+    { key: 'recording.camera', label: 'Camera', section: 'recording', group: 'Devices on this Mac', type: 'text', default: '', help: 'Checked in the presenter before its first recording on this Mac. To check again, choose Slides, voice and camera in the presenter.' },
     { key: 'recording.microphone', label: 'Microphone', section: 'recording', group: 'Microphone', type: 'text', default: '', help: 'The microphone recordings use on this Mac, by name. Recording never switches to another one by itself. Empty: the Mac’s built-in microphone.' },
     { key: 'recording.endpoint', label: 'Storage endpoint', section: 'recording', group: 'Recording storage', type: 'text', default: '', help: 'The Cloudflare R2 endpoint recordings are uploaded to. The access keys are in Accounts and keys.' },
     { key: 'recording.bucket', label: 'Storage bucket', section: 'recording', group: 'Recording storage', type: 'text', default: '', help: 'The R2 bucket recordings are uploaded to.' },
+    { key: 'recording.wordsEngine', label: 'Words written out by', section: 'recording', group: 'Transcription', type: 'choice', default: 'auto', options: [{value:'auto',label:'This Mac (built in), when available'},{value:'native',label:'This Mac (built in)'},{value:'parakeet',label:'Installed better model (Parakeet)'}], help: 'Built in needs macOS 26. No Python; an Apple language model may download once, visibly. Older Macs use an installed better model.' },
+    { key: 'recording.wordsLocale', label: 'Language for words', section: 'recording', group: 'Transcription', type: 'choice', default: 'en-US', options: SPEECH_LOCALES.map(value=>({value,label:speechLanguageName(value)})), help: 'Speech in another language may be missed. Language code, for example en-US or cs-CZ. The model is prepared on the first Run; offline with no model: connect once and Retry.' },
     { key: 'recording.transcriptionPython', label: 'Transcription Python', section: 'recording', group: 'Transcription', type: 'path', default: '', help: 'The Python of the transcription environment. Empty: the one set up by the app’s instructions.' },
     { key: 'recording.transcriptionScript', label: 'Transcription script', section: 'recording', group: 'Transcription', type: 'path', default: '', help: 'Empty: the one set up by the app’s instructions.' },
     { key: 'recording.ffmpeg', label: 'ffmpeg', section: 'recording', group: 'Transcription', type: 'path', default: '', help: 'Your own ffmpeg. Empty: the one that comes with the app.' },
@@ -139,9 +144,13 @@ const SCALARS: readonly ScalarMap[] = [
     fromConfig: (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v / 1000) : v),
     toConfig: (v) => (typeof v === 'number' ? v * 1000 : v)
   },
+  { config: 'recordingCapture', key: 'recording.capture' },
+  { config: 'recordingCamera', key: 'recording.camera' },
   { config: 'recordingMicrophone', key: 'recording.microphone' },
   { config: 'recordingR2Endpoint', key: 'recording.endpoint' },
   { config: 'recordingR2Bucket', key: 'recording.bucket' },
+  { config: 'transcriptionEngine', key: 'recording.wordsEngine' },
+  { config: 'transcriptionLocale', key: 'recording.wordsLocale' },
   { config: 'transcriptionPython', key: 'recording.transcriptionPython' },
   { config: 'transcriptionScript', key: 'recording.transcriptionScript' },
   { config: 'transcriptionFfmpeg', key: 'recording.ffmpeg' }

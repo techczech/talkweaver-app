@@ -22,6 +22,8 @@ interface Props {
 
 export default function TranscriptionStatusRow({ look, version }: Props) {
   const [row, setRow] = useState<TranscriptionRow | null>(null)
+  const [native, setNative] = useState<Awaited<ReturnType<typeof window.tw.settings.nativeSpeechInventory>> | null>(null)
+  useEffect(() => { let alive=true; void window.tw.settings.nativeSpeechInventory().then(r=>{if(alive)setNative(r)}); return ()=>{alive=false} },[version])
   const [steps, setSteps] = useState(false)
 
   useEffect(() => {
@@ -44,6 +46,14 @@ export default function TranscriptionStatusRow({ look, version }: Props) {
 
   const edge = row ? transcriptionRowEdge(row) : null
   return (<>
+    <div style={look.hint} aria-live="polite">
+      {!native ? 'Checking this Mac’s speech languages…' : !native.available ? native.error : <>
+        This Mac (built in). Installed: {[...(native.installed ?? []),...(native.dictationInstalled ?? [])].join(', ') || 'none'}.<br />
+        Needs download: {[...(native.supported ?? []),...(native.dictationSupported ?? [])].filter(l=>![...(native.installed ?? []),...(native.dictationInstalled ?? [])].includes(l)).join(', ') || 'none'}.
+        <br />No Python. A language model may download once, with progress on the Run. Offline without a model: connect once and Retry.
+      </>}
+    </div>
+
     <div style={featureList} role="list" aria-label="Transcription status" data-transcription="features">
       <div role="listitem" style={featureRow} data-transcription="status" data-state={row?.state ?? 'loading'}>
         <div style={{ minWidth: 0, flex: 1 }}>

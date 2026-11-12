@@ -9,6 +9,7 @@ import { codeLayoutForBlock } from '../compiler/scripts/lib/code-layout.mjs'
 import { doctorDeck } from './layout-doctor-render.mjs'
 import { textTooTallPercent, warningBadgesForSurface } from '../compiler/scripts/lib/warning-registry.mjs'
 import { textFitNoteLabel, textFitNotesFor } from '../src/shared/text-fit-notes.ts'
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const wrappedWidthLayout = codeLayoutForBlock({ text: ['x'.repeat(80), 'y'.repeat(80)].join('\n') })
 assert.equal(wrappedWidthLayout.lines, 2, 'code layout retains the authored line count')
@@ -156,7 +157,9 @@ const parcelHtmlPath = join(parcelTalkDir, 'ticket-17-fixtures.html')
 writeFileSync(parcelOutlinePath, parcelOutline, 'utf8')
 const parcelModel = await prepareSource(
   parcelOutlinePath,
-  parcelOutline,
+  // The design metrics below (compare disc, key/value columns, …) hold the pre-0.44 designs; the Ocean look's
+  // floor and clip checks for these sampler fixtures are test-ocean-look-dom.mjs (never worse than classic).
+  inClassicLook(parcelOutline),
   'Ticket 17 fixture deck',
   statSync(parcelOutlinePath)
 )

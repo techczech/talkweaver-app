@@ -27,6 +27,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const LONG_STATEMENT = 'This means 2026 is the year of agents in every office, on every desk and in every inbox'
 const QUOTE = 'I need to wrap up my work on the York workshops. Pull up any emails about expenses and all the forms they sent.'
@@ -51,7 +53,7 @@ const source = [
 ].join('\n')
 const path = join(dir, 'statement-quote-subsection.md')
 writeFileSync(path, source, 'utf8')
-const model = await prepareSource(path, source, 'Statement quote subsection probe', statSync(path))
+const model = await prepareSource(path, inClassicLook(source), 'Statement quote subsection probe', statSync(path))
 const htmlPath = join(dir, 'statement-quote-subsection.html')
 writeFileSync(htmlPath, model.fullHtml, 'utf8')
 

@@ -91,6 +91,7 @@ export const PRESENTER_PALETTE: Group[] = [
   ]],
   ['Recording', [
     { id: 'record-start', name: 'Start recording', icon: 'circle-dot', shortcut: 'presenter.record', controls: ['#twrec-primary'] },
+    { id: 'record-flag', name: 'Mark a mistake', icon: 'flag', shortcut: 'presenter.record-flag', controls: ['#twrec-flag'] },
     { id: 'record-pause', name: 'Pause or resume recording', icon: 'circle-pause', shortcut: 'presenter.record-pause', controls: ['#twrec-pause', '#twrec-resume'] },
     { id: 'record-stop', name: 'Stop and save recording', icon: 'square', shortcut: 'presenter.record', controls: ['#twrec-stop'] },
     { id: 'save-run-as', name: 'Save run as…', icon: 'tags', shortcut: 'presenter.save-run-as', controls: ['#twrec-change-kind'], viaKey: true, needs: RECORDER, words: ['run kind', 'history', 'change'] }
@@ -179,6 +180,7 @@ export const PRESENTER_PALETTE_ICONS = ['search'] as const
  */
 export const PRESENTER_KEY_NEEDS: Record<string, string> = {
   'presenter.record': RECORDER,
+  'presenter.record-flag': RECORDER,
   'presenter.record-pause': RECORDER,
   'presenter.save-run-as': RECORDER,
   'presenter.save-run': RECORDER,

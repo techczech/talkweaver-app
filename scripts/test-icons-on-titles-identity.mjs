@@ -39,7 +39,7 @@ import { createHash } from 'node:crypto'
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { talkNamesTitleLook, withoutLaterSlideStamps } from './lib/slide-markup-identity.mjs'
+import { inClassicLook, talkNamesTitleLook, withoutLaterSlideStamps } from './lib/slide-markup-identity.mjs'
 
 const REPO = fileURLToPath(new URL('..', import.meta.url))
 const BUNDLE = join(REPO, 'resources', 'example-vault')
@@ -78,7 +78,8 @@ for (const { slug, path, example } of sources) {
     console.error(`FAIL: ${slug} uses the title or paragraph icon syntax, so it cannot be an identity reference`)
     process.exit(1)
   }
-  const model = await prepareSource(path, text, slug, statSync(path))
+  // The reference was recorded before 0.44: compile in the classic look (slide-markup-identity.mjs).
+  const model = await prepareSource(path, inClassicLook(text), slug, statSync(path))
   // Stamps a later ticket added to every slide are left out (scripts/lib/slide-markup-identity.mjs).
   const sections = findSlideSections(model.fullHtml).map((span) => withoutLaterSlideStamps(span.html, { talkNamesTitleLook: talkNamesTitleLook(text) }))
   sectionsOf[slug] = sections

@@ -120,7 +120,7 @@ export function sessionIdTaken(vaultRoot: string | null, userDataDir: string, ta
   }
   let names: string[]
   try { names = readdirSync(resolve(userDataDir, 'recordings')) } catch { return false }
-  return names.some((name) => name.startsWith(`${sessionId}.`))
+  return names.some((name) => name === sessionId || name.startsWith(`${sessionId}.`))
 }
 
 /**
@@ -379,12 +379,17 @@ export function wordsPath(vaultRoot: string | null, userDataDir: string, talkSlu
   return transcriptSidecarPath(vaultRoot, userDataDir, talkSlug, sessionId, 'words')
 }
 
+/** `<sessionId>.edits.json`: the layered Run's edit sidecar (ADR-0043), beside the transcript under the same rules. */
+export function editsPath(vaultRoot: string | null, userDataDir: string, talkSlug: unknown, sessionId: unknown): RecordingPath {
+  return transcriptSidecarPath(vaultRoot, userDataDir, talkSlug, sessionId, 'edits')
+}
+
 function transcriptSidecarPath(
   vaultRoot: string | null,
   userDataDir: string,
   talkSlug: unknown,
   sessionId: unknown,
-  kind: 'transcript' | 'words'
+  kind: 'transcript' | 'words' | 'edits'
 ): RecordingPath {
   const error = nameError(talkSlug, sessionId)
   if (error) return refuse(error)

@@ -401,12 +401,12 @@ type ToolsShowPayload = { command?: 'tools-animated-video'; view: ToolsView; ses
 export type RecordingKind = 'delivery' | 'rehearsal' | 'recording'
 export type HighlightRange = { block: number; start: number; end: number }
 export type TranscriptSegment = { start: number; end: number; text: string }
-export type Transcript = { engine: 'parakeet'; createdAt: string; timingClock?: 'recording'|'recording-v2'; needsTranscription?:boolean; segments: TranscriptSegment[]; words?: WordTiming[] }
+export type Transcript = import('../shared/transcript-contract').TranscriptMetadata & { engine: import('../shared/transcript-contract').TranscriptEngine; createdAt: string; timingClock?: 'recording'|'recording-v2'; needsTranscription?:boolean; segments: TranscriptSegment[]; words?: WordTiming[] }
 /** transcript:get — the stored transcript, plus whether the transcript contains word timings for the Run. */
 export type TranscriptWithWordsFlag = Transcript & { hasWords: boolean }
 /** One stored word: milliseconds on the recording clock, like TranscriptSegment. */
-export type WordTiming = { text: string; start: number; end: number }
-export type WordTimings = { engine: 'parakeet'; createdAt: string; words: WordTiming[] }
+export type WordTiming = import('../shared/transcript-contract').TranscriptWord
+export type WordTimings = { engine: import('../shared/transcript-contract').TranscriptEngine; createdAt: string; words: WordTiming[] }
 export type VideoPackStatus = {state:'none'} | ({packageId:string;folder:string;prompt:string;createdAt:string;durationMs:number;stretch:string} & ({state:'waiting'}|{state:'ready';videoPath:string;lengthMs:number}))
 export type VideoPackRequest = { talkSlug: string; sessionId: string; home?: string | null; sections?: string[]; animate?: Record<string, 'animate' | 'keep'> }
 export type VideoPackProgress = { step: 'audio' | 'words' | 'slides' | 'images' }
@@ -437,7 +437,9 @@ ipcRenderer.on('tools:show', (_event, payload: ToolsShowPayload) => {
 // One recorded Session (ADR-0035) as it lives in the Vault Presentation Ledger — audio + a
 // slide-time index keyed to Slide Ledger ids, plus timing. `slideTimeIndex` marks are enter
 // (with slideId) / pause / resume, on the pause-aware recording clock.
+export type RecordingVideoRef = { talkSlug: string; runId: string; home?: string | null }
 export type RecordingSession = {
+  capture?: import('../main/recording-layers').LayerManifest | null
   /** Read-time location only; a kept Run lives in this Mac’s app data. */
   kept?: 'app-data'
   /** Read-time vault root; null selects the kept copy. Never persisted into the Run. */
@@ -765,6 +767,41 @@ const api = {
     deleteTalk: (outlinePath: string): Promise<boolean> => ipcRenderer.invoke('vault:delete-talk', outlinePath),
     deleteFolder: (folderRel: string, vaultId?: string): Promise<boolean> => ipcRenderer.invoke('vault:delete-folder', folderRel, vaultId)
   },
+  alignment: {
+    status: (slug:string,sid:string,home?:string|null):Promise<import('../shared/alignment-status').AlignmentRunState|null> => ipcRenderer.invoke('alignment:status',slug,sid,home),
+    get: (slug:string,sid:string,home?:string|null):Promise<TranscriptWithWordsFlag|null> => ipcRenderer.invoke('alignment:get',slug,sid,home),
+    run: (slug:string,sid:string,home?:string|null): Promise<import('../shared/alignment-status').AlignmentReply> => ipcRenderer.invoke('alignment:run',slug,sid,home),
+    cancel: (slug:string,sid:string,home?:string|null): Promise<import('../shared/alignment-status').AlignmentReply> => ipcRenderer.invoke('alignment:cancel',slug,sid,home),
+    onState: (cb:(state:import('../shared/alignment-status').AlignmentRunState)=>void): (()=>void) => {
+      const listener=(_e:unknown,state:import('../shared/alignment-status').AlignmentRunState):void=>cb(state)
+      ipcRenderer.on('alignment:state',listener);return()=>ipcRenderer.removeListener('alignment:state',listener)
+    },
+    models: (): Promise<import('../shared/alignment-status').AlignmentModelRow[]> => ipcRenderer.invoke('alignment:models'),
+    download: (language:string): Promise<import('../shared/alignment-status').AlignmentReply> => ipcRenderer.invoke('alignment:download',language),
+    install: (language:string): Promise<import('../shared/alignment-status').AlignmentReply> => ipcRenderer.invoke('alignment:install',language),
+    remove: (language:string): Promise<import('../shared/alignment-status').AlignmentReply> => ipcRenderer.invoke('alignment:remove',language),
+    cancelDownload: (language:string): Promise<import('../shared/alignment-status').AlignmentReply> => ipcRenderer.invoke('alignment:cancel-download',language),
+    onModels: (cb:(rows:import('../shared/alignment-status').AlignmentModelRow[])=>void): (()=>void) => {
+      const listener=(_e:unknown,rows:import('../shared/alignment-status').AlignmentModelRow[]):void=>cb(rows)
+      ipcRenderer.on('alignment:models-changed',listener)
+      return()=>ipcRenderer.removeListener('alignment:models-changed',listener)
+    }
+  },
+  /** The Run view's recording panel (slice 3a): a layered Run's playback, edits and export. */
+  recordingVideo: {
+    open: (ref: RecordingVideoRef): Promise<import('../main/recording-video-ipc').RecordingOpen | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:open', ref),
+    prepare: (ref: RecordingVideoRef): Promise<import('../main/recording-video-ipc').RecordingPlayback> => ipcRenderer.invoke('recording-video:prepare', ref),
+    edit: (ref: RecordingVideoRef, op: import('../shared/recording-edits').EditOp, revision: number): Promise<{ ok: true; edits: import('../main/recording-edits-store').EditsSnapshot } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:edit', ref, op, revision),
+    startFresh: (ref: RecordingVideoRef): Promise<{ ok: true; edits: import('../main/recording-edits-store').EditsSnapshot } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:start-fresh', ref),
+    export: (ref: RecordingVideoRef, options: import('../main/recording-video-ipc').ExportOptions): Promise<{ ok: true; jobId: string; name: string } | { ok: false; cancelled?: boolean; stale?: boolean; wordsUnreadable?: boolean; error?: string }> => ipcRenderer.invoke('recording-video:export', ref, options),
+    cancelExport: (jobId: string): Promise<boolean> => ipcRenderer.invoke('recording-video:export-cancel', jobId),
+    reveal: (jobId: string): Promise<boolean> => ipcRenderer.invoke('recording-video:reveal', jobId),
+    onExportProgress: (cb: (progress: import('../main/recording-video-ipc').ExportProgress) => void): (() => void) => {
+      const listener = (_e: unknown, progress: import('../main/recording-video-ipc').ExportProgress): void => cb(progress)
+      ipcRenderer.on('recording-video:export-progress', listener)
+      return () => ipcRenderer.removeListener('recording-video:export-progress', listener)
+    }
+  },
   settings: {
     // Configured folders the app reads from. A null override = the auto-detected default is in use.
     getPaths: (): Promise<{
@@ -792,6 +829,7 @@ const api = {
     getTranscription: (): Promise<TranscriptionSettings> => ipcRenderer.invoke('preferences:get-transcription'),
     // The paths are changed only in the Settings window (src/preload/settings.ts; main refuses any other sender).
     // The Transcription row: whether it can run, or the one missing thing (never a path).
+    nativeSpeechInventory: (): Promise<{available:boolean;supported?:string[];installed?:string[];dictationSupported?:string[];dictationInstalled?:string[];error?:string}> => ipcRenderer.invoke('transcription:native-inventory'),
     transcriptionStatus: (): Promise<TranscriptionRow> => ipcRenderer.invoke('transcription:status'),
     // "Copy instructions for your agent": the prompt, with this computer's set-up and user-data folders.
     transcriptionAgentPrompt: (): Promise<string> => ipcRenderer.invoke('transcription:agent-prompt'),
@@ -1648,10 +1686,11 @@ const api = {
   transcript: {
     // On-demand transcript for one recorded Run. Progress is pushed separately as readable notes.
     // hasWords: the run also stored word timings (only a script that offers --words makes them).
-    run: (talkSlug: string, sessionId: string): Promise<{ ok: boolean; segments?: TranscriptSegment[]; hasWords?: boolean; error?: string }> =>
-      ipcRenderer.invoke('transcript:run', talkSlug, sessionId),
-    get: (talkSlug: string, sessionId: string): Promise<TranscriptWithWordsFlag | null> =>
-      ipcRenderer.invoke('transcript:get', talkSlug, sessionId),
+    run: (talkSlug: string, sessionId: string, choice?: 'native'|'parakeet'): Promise<{ ok: boolean; segments?: TranscriptSegment[]; hasWords?: boolean; error?: string }> =>
+      ipcRenderer.invoke('transcript:run', talkSlug, sessionId, choice),
+    get: (talkSlug: string, sessionId: string, home?:string|null): Promise<TranscriptWithWordsFlag | null> =>
+      ipcRenderer.invoke('transcript:get', talkSlug, sessionId, home),
+    attempt: (talkSlug: string, sessionId: string): Promise<import('../main/transcription').TranscriptionAttempt | null> => ipcRenderer.invoke('transcript:attempt',talkSlug,sessionId),
     cancel: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('transcript:cancel'),
     onProgress: (cb: (event: { sessionId: string; note: string }) => void): (() => void) => {
       const listener = (_e: unknown, event: { sessionId: string; note: string }): void => cb(event)
@@ -2005,6 +2044,7 @@ const api = {
       ipcRenderer.invoke('recording:list-sessions', talkSlug),
     // Every Session across all talks (Studio's rail), newest first.
     listAllSessions: (): Promise<RecordingSession[]> => ipcRenderer.invoke('recording:list-all-sessions'),
+    recoveredNotice: (): Promise<number> => ipcRenderer.invoke('recording:recovered-notice'),
     listRecovery: (): Promise<RecordingRecovery[]> => ipcRenderer.invoke('recording:list-recovery'),
     // Upload ONE session to R2 — direct and ONLY on request (never automatic). On failure the
     // recording stays local, untouched. `error` is a fixed word, never an error's text: an

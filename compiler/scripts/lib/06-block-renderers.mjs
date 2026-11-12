@@ -36,9 +36,12 @@ export async function loadCompilerSvgSanitiser() {
 // vs-panels.mjs's compareModel / contrastModel. A panel is a head and its rows; every row carries one icon
 // (a row no icon was found for is drawn without one; the compiler warns, vs-panels.mjs). Rows of the two
 // panels share a grid, so a row that wraps keeps its partner level (CSS: skin/zz-scene-compare-contrast.css).
-function vsHeadHtml(panel, side) {
+// `authoredOnly` (the 0.44 Ocean look, set by 07-assembly): draw only icons the author named, never a brand mark
+// or a vocabulary guess. A head has no icon of its own to name (outline-list-item-icon.mjs treats the head row
+// as drawing none), so in that look a head is drawn without one.
+function vsHeadHtml(panel, side, authoredOnly = false) {
   if (!panel.head) return "";
-  const key = headIconKey(panel.head);
+  const key = authoredOnly ? null : headIconKey(panel.head);
   const icon = key && iconSvg(key) ? `<div class="vs-head-ico">${iconSvg(key)}</div>` : "";
   return `<div class="vs-head ${side}">${icon}<div class="vs-head-text">${renderInline(panel.head)}</div></div>`;
 }
@@ -46,8 +49,8 @@ function contrastChildrenHtml(nodes) {
   if (!nodes?.length) return "";
   return `<ul class="vs-children">${nodes.map((node) => `<li>${renderInline(node.text || "")}${contrastChildrenHtml(node.children)}</li>`).join("")}</ul>`;
 }
-function vsRowHtml(row, side, last, vocab) {
-  const key = rowIconKey(row, vocab);
+function vsRowHtml(row, side, last, vocab, authoredOnly = false) {
+  const key = authoredOnly ? (String(row?.text ?? "").trim() ? row.icon || null : null) : rowIconKey(row, vocab);
   const svg = key ? iconSvg(key) : "";
   const icon = svg ? `<div class="vs-ico">${svg}</div>` : "";
   return `<div class="vs-row ${side}${last ? " last" : ""}${svg ? "" : " vs-bare"}">${icon}<div class="vs-text">${renderInline(row.text)}${contrastChildrenHtml(row.children)}</div></div>`;
@@ -55,25 +58,25 @@ function vsRowHtml(row, side, last, vocab) {
 function vsRowTracks(model) {
   return `${model.headed ? "auto " : ""}repeat(${model.rowCount}, auto)`;
 }
-function renderContrastPanels(model, deckUsed) {
+function renderContrastPanels(model, deckUsed, authoredOnly = false) {
   const [left, right] = model.panels;
   const headRow = model.headed ? 1 : 0;
   const bg = '<div class="vs-bg L subtle-box"></div><div class="vs-bg R subtle-box hue-2"></div><div class="vs-disc" aria-hidden="true">vs</div>';
-  const heads = model.headed ? vsHeadHtml(left, "L") + vsHeadHtml(right, "R") : "";
+  const heads = model.headed ? vsHeadHtml(left, "L", authoredOnly) + vsHeadHtml(right, "R", authoredOnly) : "";
   const pairs = Array.from({ length: model.rowCount }, (_, i) => {
     const last = i === model.rowCount - 1;
-    const l = left.rows[i] ? vsRowHtml(left.rows[i], "L", last, deckUsed) : "";
-    const r = right.rows[i] ? vsRowHtml(right.rows[i], "R", last, deckUsed) : "";
+    const l = left.rows[i] ? vsRowHtml(left.rows[i], "L", last, deckUsed, authoredOnly) : "";
+    const r = right.rows[i] ? vsRowHtml(right.rows[i], "R", last, deckUsed, authoredOnly) : "";
     return `<div class="contrast-pair vs-pair" style="grid-row:${i + 2 + headRow}">${l}${r}</div>`;
   }).join("");
   return `<div class="contrast-grid contrast-vs vs-grid${model.long ? " vs-long" : ""}${model.headed ? " vs-headed" : ""}" style="--vs-rows:${model.rowCount};grid-template-rows:var(--vs-pad) ${vsRowTracks(model)} var(--vs-pad)">${bg}${heads}${pairs}</div>`;
 }
-function renderCompareHalves(model, deckUsed) {
+function renderCompareHalves(model, deckUsed, authoredOnly = false) {
   const sides = [["L", "half-a", ""], ["R", "half-b", " hue-2"]];
   const panels = model.panels.map((panel, i) => {
     const [side, half, hue] = sides[i];
-    const rows = panel.rows.map((row, k) => vsRowHtml(row, side, k === panel.rows.length - 1, deckUsed)).join("");
-    return `<section class="compare-half ${half} vs-panel ${side} subtle-box${hue}" style="grid-row:1 / span ${model.rowCount + (model.headed ? 1 : 0)}">${vsHeadHtml(panel, side)}${rows}</section>`;
+    const rows = panel.rows.map((row, k) => vsRowHtml(row, side, k === panel.rows.length - 1, deckUsed, authoredOnly)).join("");
+    return `<section class="compare-half ${half} vs-panel ${side} subtle-box${hue}" style="grid-row:1 / span ${model.rowCount + (model.headed ? 1 : 0)}">${vsHeadHtml(panel, side, authoredOnly)}${rows}</section>`;
   });
   return `<div class="compare-grid vs-grid compare-vs${model.long ? " vs-long" : ""}" style="--vs-rows:${model.rowCount};grid-template-rows:${vsRowTracks(model)}">${panels[0]}<div class="vs-disc" aria-hidden="true">vs</div>${panels[1]}</div>`;
 }
@@ -703,7 +706,10 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
         const detail = s.details.map((d) => `<li><span class="tl-body">${renderInline(d)}</span></li>`).join("");
         return `<li data-tl-stop>${dateNode("tl-date", s.date)}${textNode("tl-body", s.text)}</li>${detail}`;
       }).join("");
-      return `<div class="timeline timeline-compact" data-timeline-mode="compact" data-tl-stops="${stops.length}"><div class="tl-group"><ol class="tl-entries">${rows}</ol></div></div>`;
+      // Two columns read DOWN the first column, then down the second (chronological order). Row-major
+      // grid flow put 2022, 2024, 2026 in the left column and 2023, 2025 in the right.
+      const rowCount = stops.reduce((n, s) => n + 1 + s.details.length, 0);
+      return `<div class="timeline timeline-compact" data-timeline-mode="compact" data-tl-stops="${stops.length}" style="--tl-compact-rows:${Math.max(1, Math.ceil(rowCount / 2))}"><div class="tl-group"><ol class="tl-entries">${rows}</ol></div></div>`;
     }
     // RAIL / COLUMNS / HORIZONTAL draw the group view: one group per stop (date as the group head,
     // text and detail lines as its entries — mockup .tl-simple / .tl-dyn .list), or one group per
@@ -735,8 +741,14 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // (aria-hidden) and reflow responsively, shrinking with the slide via clamp() typography.
     const DIRS = new Set(["horizontal", "vertical", "loop", "branch"]);
     const direction = DIRS.has(block.direction) ? block.direction : "horizontal";
-    const nodes = (block.nodes || []).filter((n) => n && (n.text || (n.children || []).length));
+    let nodes = (block.nodes || []).filter((n) => n && (n.text || (n.children || []).length));
     if (!nodes.length) return "";
+    // branch over a FLAT list (no node has children): the first node is the root and every later
+    // node is one of its branches. Without this a flat list drew a plain row with no branching and
+    // no connectors at all.
+    if (direction === "branch" && nodes.length > 1 && !nodes.some((n) => (n.children || []).length)) {
+      nodes = [{ ...nodes[0], children: nodes.slice(1).map((n) => ({ text: n.text, children: [] })) }];
+    }
     const connector = `<div class="flow-connector" aria-hidden="true"><span class="flow-arrow"></span></div>`;
     // branch: a node renders its label then, if it has children, a fanned sub-row of child nodes
     // beneath it (joined to the parent by a downward stem). Other directions render children as
@@ -893,7 +905,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // (both sides of a row arrive together: each pair is still a `.contrast-grid > .contrast-pair`).
     // An explicit variant ({contrast=ledger|rows|tint|flip|cards}) keeps its own device below.
     const panelsModel = contrastModel(block);
-    if (panelsModel) return renderContrastPanels(panelsModel, deckUsed);
+    if (panelsModel) return renderContrastPanels(panelsModel, deckUsed, block.authoredIconsOnly === true);
     // Opt-in contrast vocabulary from the 2026-07-13 design round. Explicit variants win at
     // every pair count, and all preserve `.contrast-grid > .contrast-pair` plus first/last
     // span ordering for stepping and projection.
@@ -1470,7 +1482,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // ADR-0039 / 0.41 ticket 08: halves of plain rows draw as the two "vs" panels; a half with a
     // picture, code or nested bullets keeps the old halves below.
     const vsModel = compareModel(block);
-    if (vsModel) return renderCompareHalves(vsModel, deckUsed);
+    if (vsModel) return renderCompareHalves(vsModel, deckUsed, block.authoredIconsOnly === true);
     const sideClass = ["half-a", "half-b"];
     const halves = (block.halves ?? []).slice(0, 2).map((half, i) => {
       const label = half.label ? `<div class="compare-label">${renderInline(half.label)}</div>` : "";
@@ -1793,6 +1805,13 @@ export function parseStatItem(text) {
   // ` · ` or any space-surrounded dash splits explicitly (the middot is untypeable; 2026-06-12).
   const sepMatch = t.match(/\s[·—–-]\s/);
   if (sepMatch) return { value: t.slice(0, sepMatch.index).trim(), label: t.slice(sepMatch.index + sepMatch[0].length).trim() };
+  // The documented form `- 1 billion: weekly users` (registry, chooser): a value that BEGINS with a number
+  // (an optional sign, currency or approximation mark; digits with "1 000", "1,5" or "2.5" grouping; then at most
+  // two short unit words: "40 min", "1 billion", "$2.5bn", "30 %"), a colon, the label. Without this the colon
+  // stayed on the number ("12:") and "40 min" lost its unit to the label. Prose that merely contains a digit
+  // ("ISO 9001: quality management", "Version 2: now available") is not a value and stays a caption.
+  const colon = t.match(/^((?:[~≈<>±+\-−]|ca\.\s?)?[$€£¥]?\d+(?:[ \u00a0.,]\d+)*(?:\s?(?:%|[A-Za-zµ×x]{1,9})){0,2}):\s+(.+)$/);
+  if (colon) return { value: colon[1].trim(), label: colon[2].trim() };
   const m = t.match(/^(\S*\d\S*)\s+(.+)$/);
   if (m) return { value: m[1], label: m[2] };
   return { value: "", label: t };
@@ -1880,6 +1899,14 @@ export function parseTimetableRows(items) {
 // for v2 content — every list either becomes a structural block (contrast/tiles/
 // system-map/image-claim/timeline) or a feature-list. Applied as a final pass over
 // all layouts so the caller never needs to enumerate which ones need it.
+// `[Action: label -> url]` / `[Action: label → url]` / `[Action: label](url)`: the same two forms the
+// lexer reads on an own line (03-markdown-lexer-core.mjs), for text that arrives as a list item.
+function actionTokenFromText(text) {
+  const t = String(text ?? "").trim();
+  const m = t.match(/^\[Action:\s*(.+?)\s*(?:→|->)\s*(\S+?)\]$/i) || t.match(/^\[Action:\s*(.+?)\]\((\S+?)\)$/i);
+  return m ? { type: "action", label: m[1].trim(), url: m[2].trim() } : null;
+}
+
 export function mapBlocksToLayout(layout, blocks) {
   // The quote layout takes no block for itself: its mapping is the two steps every layout shares, in
   // slide-quote-reading.mjs so the app reads a quote slide with the same function.
@@ -1927,7 +1954,17 @@ export function mapBlocksToLayout(layout, blocks) {
     return featurizeRemainingLists([...rest([firstList]), { type: "feature-list", items: firstList.items, ordered: firstList.ordered, children: firstList.children, ...(firstList.iconOverrides ? { iconOverrides: firstList.iconOverrides } : {}) }]);
   }
   if (layout === "grid" && firstList) return featurizeRemainingLists([...rest([firstList]), { type: "tiles", items: firstList.items }]);
-  if (layout === "system-map" && firstList) return featurizeRemainingLists([...rest([firstList]), { type: "system-map", nodes: firstList.items }]);
+  if (layout === "system-map" && firstList) {
+    // The registry's authoring: "Write the system as a parent bullet and indent its parts as
+    // sub-bullets." One parent with children → the parent is the centre and its children are the
+    // satellites. (Reading only the top level drew the parent as the lone satellite under a
+    // placeholder "result" centre.) A flat list keeps the old reading: every item is a satellite.
+    const kids = firstList.children?.[0] ?? [];
+    if (firstList.items.length === 1 && kids.length) {
+      return featurizeRemainingLists([...rest([firstList]), { type: "system-map", centre: firstList.items[0], nodes: kids.map((k) => k.text) }]);
+    }
+    return featurizeRemainingLists([...rest([firstList]), { type: "system-map", nodes: firstList.items }]);
+  }
   // Concept map: the first list's items are RELATION lines `A -label- B`. Parse them into a
   // deduped node set + labelled edges; unparsed lines are carried on the block so flushSlide can
   // warn. The block holds the graph model; renderBlock lays it out as an SVG.
@@ -2154,11 +2191,21 @@ export function mapBlocksToLayout(layout, blocks) {
     const actions = blocks.filter((b) => b && b.type === "action");
     const consumed = [...images, ...actions, ...(firstList ? [firstList] : [])];
     const remaining = blocks.filter((b) => !consumed.includes(b));
+    // The registry sample writes the action as a LIST ITEM (`- [Action: Get started -> url]`); the
+    // lexer only reads an action on its own line, so the item used to show as raw text. A callout
+    // that is exactly an action token is that action.
+    const callouts = [];
+    const listActions = [];
+    for (const item of firstList ? firstList.items : []) {
+      const action = actionTokenFromText(item);
+      if (action) listActions.push(action);
+      else callouts.push(item);
+    }
     return featurizeRemainingLists([...remaining, {
       type: "cta-screenshots",
       images,
-      callouts: firstList ? firstList.items : [],
-      actions
+      callouts,
+      actions: [...listActions, ...actions]
     }]);
   }
   // F1: for all other layouts (including list-visual, copy-visual, media, statement,

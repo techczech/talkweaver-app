@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const STATEMENT = 'Agents need a place to keep their work.'
 const slides = {
@@ -28,7 +30,7 @@ const dir = mkdtempSync(join(tmpdir(), 'tw-strong-head-'))
 const outlinePath = join(dir, 'strong-head-outline.md')
 const source = lines.join('\n')
 writeFileSync(outlinePath, source, 'utf8')
-const model = await prepareSource(outlinePath, source, 'strong-head', statSync(outlinePath))
+const model = await prepareSource(outlinePath, inClassicLook(source), 'strong-head', statSync(outlinePath))
 const htmlPath = join(dir, 'strong-head.html')
 writeFileSync(htmlPath, model.fullHtml, 'utf8')
 const shotsDir = process.env.SHOTS_DIR

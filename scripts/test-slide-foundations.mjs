@@ -22,6 +22,8 @@ import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { SECTION_ACCENTS, SECTION_ACCENTS_GREEN, accentForDeckColour, extraHuesForAccent } from '../compiler/scripts/lib/02-triggers-layout.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dir = mkdtempSync(join(tmpdir(), 'tw-slide-foundations-'))
@@ -54,7 +56,7 @@ async function compile(name, meta, body) {
   const source = ['---', `title: ${name}`, 'auto_title_slide: false', 'auto_thanks_slide: false', ...meta, '---', '', ...body].join('\n')
   const path = join(dir, `${name.replace(/\W+/g, '-')}.md`)
   writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, name, statSync(path))
+  const model = await prepareSource(path, inClassicLook(source), name, statSync(path))
   const htmlPath = join(dir, `${name.replace(/\W+/g, '-')}.html`)
   writeFileSync(htmlPath, model.fullHtml, 'utf8')
   return { html: model.fullHtml, htmlPath }

@@ -21,8 +21,17 @@
 // Each mirrors a closed vocabulary in src/shared/metadata-registry.ts; scripts/test-settings-
 // honoured.mjs enumerates the registry and fails when a documented value has no effect here.
 
-/** Alternate section-accent cycles a deck can switch to. "" (absent) is the default cycle. */
-export const DECK_PALETTES = ["green"];
+/** Deck palettes. "" (absent) is the 0.44 ocean look; `bold` lets amber lead statement and divider
+ *  slides; `classic` restores the pre-0.44 look; `green` is the pre-0.44 green cycle (classic styling). */
+export const DECK_PALETTES = ["green", "classic", "bold"];
+
+/** The model palette a deck palette choice draws with (02-triggers-layout.mjs deckLookForPalette). */
+export function modelPaletteFor(choice) {
+  if (choice === "green") return "green";
+  if (choice === "classic") return "";
+  if (choice === "bold") return "ocean-bold";
+  return "ocean";
+}
 /** Deck faces. `trebuchet` is the locked house face — a real choice that stamps no attribute. */
 export const DECK_FONTS = ["trebuchet", "gill-sans", "verdana"];
 /** How a mixed logo row is painted. */

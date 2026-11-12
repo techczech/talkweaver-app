@@ -310,8 +310,8 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     vocabulary: {
       kind: 'closed',
       options: [
-        { value: '', label: 'Automatic', explanation: 'Key absent — the title slides use the section accent the palette cycle gives them.' },
-        { value: 'cobalt', label: 'Cobalt', explanation: 'Use the cobalt section accent on the title slides.' },
+        { value: '', label: 'Automatic', explanation: 'Key absent — the title slides use the section accent the palette gives them (Ocean in the Ocean look).' },
+        { value: 'cobalt', label: 'Cobalt', explanation: 'Use the house blue on the title slides: Ocean in the Ocean look, cobalt in the classic look.' },
         { value: 'emerald', label: 'Emerald', explanation: 'Use the emerald section accent on the title slides.' },
         { value: 'vermilion', label: 'Vermilion', explanation: 'Use the vermilion section accent on the title slides.' },
         { value: 'forest', label: 'Forest', explanation: 'Use the forest accent from the green palette on the title slides.' }
@@ -516,14 +516,16 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     vocabulary: {
       kind: 'closed',
       options: [
-        { value: '', label: 'Default', explanation: 'The default Oxford-blue / crimson accent cycle.' },
-        { value: 'green', label: 'Green', explanation: 'The green alternate accent cycle — the only alternate the compiler honours.' }
+        { value: '', label: 'Ocean', explanation: 'The 0.44 look: Ocean blue with Deeper Ocean, white grounds and amber marking only the current item, the key words and highlighted bars.' },
+        { value: 'bold', label: 'Ocean, bold amber', explanation: 'The Ocean look with amber leading the title slide (an amber disc), the statement and section divider slides; detail slides stay blue.' },
+        { value: 'classic', label: 'Classic', explanation: 'The look before 0.44: sections cycle cobalt, emerald and vermilion, with the earlier slide styling.' },
+        { value: 'green', label: 'Green (classic)', explanation: 'The earlier green accent cycle, with the earlier slide styling.' }
       ]
     },
     label: 'Palette',
     group: 'Appearance',
     explanation:
-      'The deck’s accent colour cycle. Only the documented alternate is honoured; any other value keeps the default and raises a compiler warning naming the value.',
+      'The deck’s look and colours. Absent: the Ocean look. `bold` lets amber lead the title, statement and divider slides; `classic` restores the look before 0.44; `green` is the earlier green cycle. Any other value keeps the Ocean look and raises a compiler warning naming the value.',
     defaultable: true,
     ownership: 'user'
   },

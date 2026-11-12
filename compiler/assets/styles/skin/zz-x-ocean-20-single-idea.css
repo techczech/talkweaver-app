@@ -1,0 +1,205 @@
+/* 0.44 look ("ocean"): the single-idea slides. One idea = one colour (round 5 verdict, round 8/9 frames).
+   --look-lead is Ocean at the Accent companion level and amber at Bold (palette: bold).
+
+   STATEMENT. Two forms:
+     full colour (default, and {statement-bg=strong}): the whole slide in the lead colour, the sentence in
+       very large type on it, the title tab drawn white with the lead colour's text;
+     light ({statement-bg=rule} and {statement-bg=lower-third}): white stage, one short heavy rule in the
+       lead colour above the sentence, the sentence near-black, its bold words in the key-word colour.
+   SECTION DIVIDER: the whole slide in the lead colour, the title very large at the lower left (no band).
+
+   Which slides take the full colour is decided once, by the compiler (07-assembly.mjs oceanGround stamps
+   data-ground="lead" on a divider and on a statement whose body is words alone); every full-colour rule here keys
+   on that stamp. Any other statement (holding a list, a table, code, a picture) is drawn on the light ground with
+   near-black type: designed or safe, never a coloured field under children the field was not designed for. */
+
+/* ---------- statement, full colour ---------- */
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] {
+  background: var(--look-lead) !important;
+  /* the title tab keeps its shape and white type, filled with the deeper strength so it reads on the field
+     (white on Deeper Ocean 7.06:1; in Bold, white on Ocean 4.91:1 on the amber field) */
+  --titlelook-fill: var(--look-tab-on-lead);
+  --titlelook-ink: var(--look-on-main);
+  --tab-shadow: none;
+  color: var(--look-on-lead);
+}
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] > .slide-content {
+  background: none !important;
+}
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] > .slide-content > :is(p, .content-p):not(.kicker) {
+  color: var(--look-on-lead) !important;
+}
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] > .slide-content > :not(.slide-head) :is(strong, b, mark) {
+  color: inherit !important; background: none !important; padding: 0 !important; box-shadow: none !important;
+  /* the underline clears the descenders (handoff: no decoration may touch text, descenders included) */
+  text-decoration: underline; text-decoration-thickness: .07em; text-underline-offset: .3em; text-decoration-skip-ink: auto;
+}
+/* Everything written on the field takes the type colour of the field: a quote, its attribution and source line,
+   a caption, a list. Key words (bold, highlighted) keep that colour and are marked by the underline above, never
+   by a fill: the 0.43 highlight (a box in the accent with paper-coloured type) would be white on white here.
+   Contrast: white on Ocean 4.91:1 (AA at every size); near-black on amber (Bold) 8.65:1. */
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] > .slide-content > :not(.slide-head):not(.slide-actions),
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] > .slide-content > :not(.slide-head):not(.slide-actions) :not(svg, svg *):not(.slide-action):not(.slide-action *) {
+  color: var(--look-on-lead) !important;
+}
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] > .slide-content > blockquote :is(cite, .cite-text, footer, .slide-source, .statement-source),
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] > .slide-content > :is(.slide-source, .statement-source, figcaption) {
+  color: var(--look-on-lead) !important; opacity: 1 !important; font-weight: 400 !important;
+}
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] > .slide-content > blockquote::before { color: var(--look-on-lead) !important; }
+/* The sentence. The lead paragraph (the one slide-fit.js fitStatements steps down, 0.5px at a time to its
+   floor, when the statement is too tall) is very large, the largest thing on the slide; any later paragraph
+   is supporting text at the label size. The measure is a share of the stage, not of the type, so it widens
+   in characters as the fitter shrinks the lead, and the paragraphs are fitted together inside the stage. */
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content > p:not(.kicker):not(.slide-source):not(.statement-source) {
+  border: 0 !important; padding: 0 !important; box-shadow: none !important;
+  font: 400 var(--look-size-label)/1.25 var(--look-face-text) !important;
+  max-width: 84cqw !important;
+  margin: 1.6cqw 0 0 !important;
+}
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content > p:nth-child(1 of p:not(.kicker):not(.slide-source)) {
+  font: 700 var(--look-size-statement)/1.12 var(--look-face-display) !important;
+  letter-spacing: -.02em !important;
+  margin: 0 !important;
+}
+.slide[data-look="ocean"][data-layout="statement"][data-title-layout="top"] > .slide-content {
+  display: flex !important; flex-direction: column !important; justify-content: center !important; align-items: flex-start !important;
+}
+
+/* ---------- statement, light ---------- */
+.slide[data-look="ocean"][data-layout="statement"]:has(> .slide-content.layout-statement:is(.statement-bg-rule, .statement-bg-lower-third)) {
+  background: var(--look-ground) !important;
+}
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement:is(.statement-bg-rule, .statement-bg-lower-third) > :is(p, .content-p):not(.kicker) {
+  color: var(--look-ink) !important; position: relative;
+}
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement:is(.statement-bg-rule, .statement-bg-lower-third) > :is(p, .content-p):not(.kicker):first-of-type::before {
+  content: "" !important; display: block !important; width: 18cqw; height: 1.5cqw; margin: 0 0 3cqw; background: var(--look-lead) !important;
+  position: static !important; border: 0 !important;
+}
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement:is(.statement-bg-rule, .statement-bg-lower-third) > :is(p, .content-p) :is(strong, b) {
+  color: var(--look-keyword) !important; background: none !important; padding: 0 !important; box-shadow: none !important;
+  /* The mark sits just under the baseline, inside its own line, and breaks around descenders (skip-ink),
+     so it touches neither its own words nor the line below when a key phrase wraps. */
+  text-decoration: underline var(--look-keyword-mark); text-decoration-thickness: .07em; text-underline-offset: .14em; text-decoration-skip-ink: auto;
+}
+
+/* ---------- section divider: the whole slide in the lead colour, the title at the lower left ---------- */
+.slide[data-look="ocean"][data-ground="lead"]:has(> .slide-content.layout-section-title) {
+  background: var(--look-lead) !important;
+}
+.slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title {
+  display: flex !important; flex-direction: column; justify-content: flex-end !important; align-items: flex-start !important;
+  height: 100%; padding-bottom: 6cqw !important;
+}
+.slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title > .slide-head {
+  margin: 0 !important; padding: 0 !important; max-width: 80cqw;
+}
+.slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title > .slide-head::before { display: none !important; content: none !important; }
+.slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title h1 {
+  font: 700 8.4cqw/1.04 var(--look-face-display) !important; letter-spacing: -.025em !important;
+  color: var(--look-on-lead) !important; max-width: 11em !important; margin: 0 !important;
+}
+.slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title :is(.kicker, p) { color: var(--look-on-lead) !important; opacity: 1; }
+
+/* On a full-colour slide (full statement, divider) everything that is drawn in the accent (countdown,
+   section timer, links, rules) would vanish into the field: the accent there is the type colour. The slide's
+   inline stamp sets --accent, hence !important. The field itself is painted from --look-lead (--sec-accent). */
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"],
+.slide[data-look="ocean"][data-ground="lead"]:has(> .slide-content.layout-section-title) {
+  --accent: var(--look-on-lead) !important;
+}
+
+/* the section number, large, above the title at the lower left (07-assembly stamps it on the divider's content) */
+.slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title[data-section-number]::before {
+  content: attr(data-section-number); display: block;
+  font: 700 12cqw/1 var(--look-face-display); letter-spacing: -.03em; color: var(--look-on-lead); margin: 0 0 1cqw;
+}
+/* The section timer floats over the page, outside the slide: on a full-colour slide it takes the type colour.
+   (:has() cannot nest, so the two full-colour cases are two selectors.) */
+body:has(.slide.active[data-look="ocean"][data-ground="lead"]) .section-timer-float:not(.countdown-final) {
+  color: #FFFFFF;
+}
+
+/* ---------- a statement whose body is a quote (one or several, with or without {focus}) ----------
+   The quote uses the statement's measure (84cqw), not the 28ch quote column or the 14em measure of an untitled
+   one-line statement; one quote is set at the label size, several at the reading size, never under the floor. */
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement > blockquote {
+  max-width: 100% !important; width: auto !important; margin-inline: 0 !important;
+  font-size: max(var(--type-floor, 31px), 2.8cqw) !important; line-height: 1.3 !important;
+  /* the opening mark sits in this left margin, clear of the first words (with a title or without) */
+  padding-left: 1.9em !important;
+}
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement > blockquote::before { left: 0 !important; }
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement:has(> blockquote ~ blockquote) > blockquote {
+  font-size: max(var(--type-floor, 31px), 2.2cqw) !important;
+}
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement > blockquote :is(cite, .cite-text) {
+  font-size: max(var(--type-floor, 31px), .7em) !important; font-style: normal;
+}
+
+/* ---------- a statement whose body is a picture: the 0.43 arrangement in the new colours ----------
+   The sentence stays large at the left on the light ground (near-black, 15.6:1 on #E8F1FC) with its Ocean rule;
+   the picture takes the larger share of the stage and its full height between the margins, never a full-colour
+   field with a small picture. */
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement.statement-picture {
+  grid-template-columns: minmax(0, 1fr) 54cqw !important; column-gap: 4cqw !important; padding-inline: 5cqw !important;
+}
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement.statement-picture > .slide-figure {
+  align-self: stretch !important; display: flex !important; align-items: center; justify-content: center; min-height: 0;
+}
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement.statement-picture > .slide-figure > :is(img, video) {
+  width: 100% !important; height: 100% !important; max-height: 100% !important; object-fit: contain !important;
+}
+
+/* ---------- a statement the field was not designed for: the light ground, near-black type ---------- */
+.slide[data-look="ocean"][data-layout="statement"]:not([data-ground="lead"]):not(:has(> .slide-content.layout-statement:is(.statement-bg-rule, .statement-bg-lower-third, .statement-picture))) {
+  background: var(--look-ground) !important; color: var(--look-ink);
+}
+
+/* Anything else a lead-coloured slide carries outside its content (the corner QR's address, a source line) takes
+   the field's type colour too. The QR code itself keeps its own white card. */
+.slide[data-look="ocean"][data-ground="lead"] > :not(.slide-content):not(.notes) :is(figcaption, p, span, a, small, cite):not(svg *) {
+  color: var(--look-on-lead) !important; opacity: 1 !important;
+}
+
+/* a long divider title steps down so it stays inside the stage (07-assembly stamps data-oc-title on dividers over 34
+   and over 90 characters) */
+.slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title[data-oc-title="long"] h1 { font-size: 6cqw !important; max-width: 16em !important; }
+.slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title[data-oc-title="very-long"] h1 { font-size: 4.2cqw !important; max-width: 24em !important; line-height: 1.12 !important; }
+.slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title[data-oc-title] { padding-top: 4cqw !important; }
+.slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title[data-oc-title="very-long"][data-section-number]::before { font-size: 7cqw; }
+
+/* a link written in a title keeps the title's colour (a browser-blue link on the tab or a field was unreadable) */
+.slide[data-look="ocean"] .slide-head :is(a, a:visited) { color: inherit !important; text-decoration-thickness: .06em; text-underline-offset: .18em; }
+
+/* ---------- a statement holding a picture: explicit places, so neither the words nor the picture can be pushed off ----------
+   With the title at the left (statement-picture): words in the left column, centred (title, then up to three blocks of
+   words), the picture in the right column at full height. With a title rail and the words and picture in the content
+   column: the picture first at the height left, each block of words in its own row under it (auto-placed after the
+   picture's row) at the label size (not the display size). */
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement.statement-picture {
+  grid-template-rows: minmax(0, 1fr) repeat(4, auto) minmax(0, 1fr) !important; row-gap: 1.2cqw !important; height: 100%; box-sizing: border-box;
+}
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement.statement-picture > .slide-head { grid-column: 1 !important; grid-row: 2 !important; }
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement.statement-picture > :not(.slide-head):not(.slide-figure) { grid-column: 1 !important; grid-row: 3 !important; margin: 0 !important; }
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement.statement-picture > :not(.slide-head):not(.slide-figure) ~ :not(.slide-head):not(.slide-figure) { grid-row: 4 !important; }
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement.statement-picture > :not(.slide-head):not(.slide-figure) ~ :not(.slide-head):not(.slide-figure) ~ :not(.slide-head):not(.slide-figure) { grid-row: 5 !important; }
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement.statement-picture > .slide-figure { grid-column: 2 !important; grid-row: 1 / -1 !important; height: 100% !important; min-height: 0 !important; }
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement:not(.statement-picture):has(> .slide-figure) > :is(p, .content-p, blockquote) {
+  font-size: var(--look-size-label) !important; line-height: 1.25 !important; max-width: none !important;
+}
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement:not(.statement-picture):has(> .slide-figure) > .slide-figure > :is(img, video) {
+  width: 100% !important; height: 100% !important; max-height: 100% !important; object-fit: contain !important;
+}
+.slide[data-look="ocean"][data-layout="statement"]:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-statement:not(.statement-picture):has(> .slide-figure) {
+  grid-template-rows: minmax(0, 1fr) !important; grid-auto-rows: auto !important; grid-auto-flow: row !important; row-gap: 1.6cqw !important; height: 100% !important; box-sizing: border-box;
+}
+.slide[data-look="ocean"][data-layout="statement"]:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-statement:not(.statement-picture):has(> .slide-figure) > .slide-head { grid-row: 1 / span 2 !important; }
+.slide[data-look="ocean"][data-layout="statement"]:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-statement:not(.statement-picture):has(> .slide-figure) > .slide-figure { grid-row: 1 !important; grid-column: 2 !important; height: auto !important; min-height: 0 !important; align-self: stretch !important; overflow: hidden; display: flex !important; align-items: center; justify-content: center; margin: 0 !important; }
+.slide[data-look="ocean"][data-layout="statement"]:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-statement:not(.statement-picture):has(> .slide-figure) > :not(.slide-head):not(.slide-figure) { grid-row: auto !important; grid-column: 2 !important; margin: 0 !important; }
+
+/* the action buttons under a statement sit under its words, as wide as they need, never past the stage */
+.slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement > .slide-actions {
+  width: auto !important; max-width: 100% !important; margin-inline: 0 !important; align-self: flex-start; box-sizing: border-box;
+}

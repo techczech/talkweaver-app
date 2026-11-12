@@ -21,6 +21,9 @@ import {
 
 // Short base path: a Unix socket path is limited to 104 bytes on macOS.
 const base = realpathSync(mkdtempSync(join(tmpdir(), 'twq-')))
+const originalCwd = process.cwd()
+// Bind by a short relative name: a worktree-owned TMPDIR can exceed the socket path limit.
+process.chdir(base)
 let passed = 0
 const test = async (name, fn) => {
   try { await fn(); passed++; console.log(`  ok  ${name}`) } catch (err) { console.error(`  FAIL ${name}`); throw err }
@@ -28,7 +31,7 @@ const test = async (name, fn) => {
 
 /** A stand-in SlideWell: reads one request line, answers with reply(request) (or stays silent). */
 async function standIn(name, reply) {
-  const path = join(base, name)
+  const path = name
   const requests = []
   const server = createServer((sock) => {
     let buf = ''
@@ -49,6 +52,7 @@ async function standIn(name, reply) {
   return { path, requests, close: () => new Promise((resolve) => server.close(resolve)) }
 }
 
+try {
 await test('request: one JSON line, control characters flattened, limit clamped', () => {
   assert.equal(encodePictureRequest('robots\nin a classroom', 500), '{"v":1,"op":"picture-query","text":"robots in a classroom","limit":200}\n')
   assert.equal(encodePictureRequest('  ', 10), null)
@@ -104,5 +108,8 @@ await test('location: SlideWell\'s user-data folders, packaged name first', () =
   ])
 })
 
-rmSync(base, { recursive: true, force: true })
 console.log(`slidewell query: ${passed} passed`)
+} finally {
+  process.chdir(originalCwd)
+  rmSync(base, { recursive: true, force: true })
+}

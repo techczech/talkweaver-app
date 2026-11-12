@@ -8,8 +8,7 @@
 //    segments, transcript:get says words exist;
 // 4. the real job path with a stand-in engine (node scripts as "python" and "ffmpeg"; POSIX only):
 //    a script that offers --words writes both files, and its --help is asked once; a script without
-//    the option still transcribes, with no words file and no error (and drops words left from an
-//    earlier transcript); re-transcribing replaces the words file by rename with no temp left;
+//    the option still transcribes on a first run, and preserves earlier words on a re-run; re-transcribing replaces the words file by rename with no temp left;
 //    cancelling leaves the previous transcript and words intact; unsafe names and a canonical transcript
 //    linked outside are refused before anything is written;
 // 5. injected staging/publication failures preserve the complete inline pair (hasWords true);
@@ -229,6 +228,8 @@ if (wi >= 0) writeFileSync(args[wi + 1], JSON.stringify({ words: [
       userDataDir: () => userData,
       vaultRoot: () => vault,
       config: () => ({ python: process.execPath, script }),
+      // Engine/locale selection cannot override the authoritative expanded program paths.
+      selection: () => ({ locale: 'en-US', python: 'must-not-run', script: 'must-not-run' }),
       readiness: () => ({
         row: { state: 'ready', pythonVersion: '3.11', ffmpeg: null, ffmpegConfigured: false },
         ffmpeg: { found: true, path: ffmpeg, source: 'configured' }
@@ -316,25 +317,32 @@ if (wi >= 0) writeFileSync(args[wi + 1], JSON.stringify({ words: [
     assert.deepEqual(tempsIn(talkDir), [])
     ok('cancelling leaves the previous transcript and words intact')
 
-    // d. A script without the option: transcribes, no words, no error; earlier words do not linger.
+    // d. Legacy engines with segments still save a manual re-run, as on main.
     script = oldScript
     const plain = await tx.run('my-talk', sid, null)
-    assert.deepEqual(plain.ok ? 'ok' : plain.error, 'ok')
+    assert.equal(plain.ok, true)
     assert.equal(plain.hasWords, false)
-    assert.equal(JSON.parse(readFileSync(transcriptFile, 'utf8')).segments.length, 2)
-    assert.deepEqual(JSON.parse(readFileSync(transcriptFile,'utf8')).words, [], 'wordless transcription commits an explicit empty inline word list')
-    assert.ok(!readFileSync(log, 'utf8').split('\n').some((l) => l.startsWith('old-engine ') && l.includes('--words')), 'the old script was never given --words')
-    const read = await tx.get('my-talk', sid)
-    assert.equal(read.hasWords, false)
-    assert.equal(read.segments.length, 2)
-    // A second Run with no words file ever: same answer.
+    assert.equal(plain.segments.length, 2)
+    assert.deepEqual(JSON.parse(readFileSync(transcriptFile, 'utf8')).segments, plain.segments)
+    assert.deepEqual(JSON.parse(readFileSync(transcriptFile, 'utf8')).words, [])
+    ok('a legacy engine without words saves its segments over a previous transcript')
     const sid2 = 'sess-20261019-111500-b'
     writeFileSync(join(userData, 'recordings', `${sid2}.webm`), 'webm')
     writeFileSync(join(talkDir, `${sid2}.json`), JSON.stringify({ id: sid2, talkSlug: 'my-talk', audio: { segments: [{ file: `${sid2}.webm`, startMs: 0, endMs: 4000 }] } }))
-    assert.equal((await tx.run('my-talk', sid2, null)).hasWords, false)
+    const firstPlain = await tx.run('my-talk', sid2, null)
+    assert.equal(firstPlain.ok, true)
+    assert.equal(firstPlain.hasWords, false)
+    const firstFile=join(talkDir, `${sid2}.transcript.json`)
+    assert.equal(JSON.parse(readFileSync(firstFile, 'utf8')).segments.length, 2)
+    assert.deepEqual(JSON.parse(readFileSync(firstFile,'utf8')).words, [], 'wordless first transcription commits an explicit empty inline word list')
+    assert.deepEqual(JSON.parse(readFileSync(firstFile,'utf8')).sentences, [], 'v2 keeps sentence storage explicit when a legacy script supplies no words')
+    assert.ok(!readFileSync(log, 'utf8').split('\n').some((l) => l.startsWith('old-engine ') && l.includes('--words')), 'the old script was never given --words')
+    const read = await tx.get('my-talk', sid2)
+    assert.equal(read.hasWords, false)
+    assert.equal(read.segments.length, 2)
     assert.ok(!existsSync(join(talkDir, `${sid2}.words.json`)))
     assert.equal(helpCalls('old-engine'), 1)
-    ok('a script without --words still transcribes: no words file, no error, get says words are absent')
+    ok('a script without --words still transcribes a first Run: no words file, no error, get says words are absent')
 
     // e. Unsafe names and a canonical transcript linked outside are refused before any write.
     script = newScript
@@ -382,14 +390,14 @@ if (wi >= 0) writeFileSync(args[wi + 1], JSON.stringify({ words: [
       if (op === 'rename' && path === transcriptFile && failPublish) { failPublish = false; return true }
       return false
     }
-    script = oldScript
+    script = newScript
     const blocked = await tx.run('my-talk', sid, null)
     assert.equal(blocked.ok, false)
     assert.match(blocked.error, /transcript and word timings could not be saved/)
     assert.equal(readFileSync(transcriptFile, 'utf8'), prev.transcript, 'the transcript was not replaced')
     assert.equal(readWords(), prev.words, 'the words still belong to it')
     assert.equal((await tx.get('my-talk', sid)).hasWords, true)
-    // ...and the same when the new run has words of its own.
+    // ...and the same when the replacement words differ.
     failPublish = true
     script = newScript2
     assert.equal((await tx.run('my-talk', sid, null)).ok, false)
@@ -462,15 +470,22 @@ if (wi >= 0) writeFileSync(args[wi + 1], JSON.stringify({ words: [
     const stubborn = engine('stubborn-help', { offersWords: true, helpHang: 'ignore-term' })
     script = stubborn
     const quick = service({ probeTimeoutMs: 500 })
+    assert.equal((await quick.get('my-talk', sid)).hasWords, true, 'the timeout re-run starts with stored words')
     const t0 = Date.now()
     const afterHang = await quick.run('my-talk', sid, null)
-    assert.deepEqual([afterHang.ok, afterHang.hasWords], [true, false], 'a probe that hangs: transcribed without words')
+    assert.equal(afterHang.ok, true)
+    assert.equal(afterHang.hasWords, false)
+    assert.equal(afterHang.segments.length, 2, 'a timed-out words probe still permits the returned segments')
+    assert.deepEqual(JSON.parse(readFileSync(transcriptFile, 'utf8')).segments, afterHang.segments)
     assert.ok(Date.now() - t0 < 10_000, 'the hung probe was given up (SIGTERM, then SIGKILL after the grace)')
     // Not remembered: the second run probes again, so it too waits out the timeout and the kill grace
     // (2 s at least). Timed by the service's own clock, not by the stand-in's log, which a loaded
     // machine may never reach before the kill.
     const t1 = Date.now()
-    assert.equal((await quick.run('my-talk', sid, null)).ok, true, 'not left busy')
+    const repeatedHang = await quick.run('my-talk', sid, null)
+    assert.equal(repeatedHang.ok, true, 'not left busy: the second attempt saves its segments too')
+    assert.equal(repeatedHang.hasWords, false)
+    assert.deepEqual(JSON.parse(readFileSync(transcriptFile, 'utf8')).segments, repeatedHang.segments)
     assert.ok(Date.now() - t1 >= 2_000, 'a probe that timed out is not remembered: the next run asks again')
     ok('a --help that ignores SIGTERM is killed after the grace; not cached; the service is free again')
 

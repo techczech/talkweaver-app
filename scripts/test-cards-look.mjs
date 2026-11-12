@@ -21,6 +21,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'tw-cards-'))
 const points = (n, extra = []) => [...['Search and note', 'Draft and summarise', 'Organise and help', ...extra].slice(0, n)]
@@ -45,7 +47,7 @@ const source = [
 ].join('\n')
 const path = join(dir, 'cards.md')
 writeFileSync(path, source, 'utf8')
-const model = await prepareSource(path, source, 'Cards look', statSync(path))
+const model = await prepareSource(path, inClassicLook(source), 'Cards look', statSync(path))
 const deckPath = join(dir, 'cards.html')
 writeFileSync(deckPath, model.fullHtml, 'utf8')
 

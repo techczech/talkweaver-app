@@ -31,30 +31,41 @@ Terms used in the registry and here:
 
 For AI chat and terminal slides, also read `talkweaver-ai-chat-and-terminal-slides.md` in this folder.
 
+## 0. The deck's look and colours (0.44)
+
+A talk with no `palette:` draws the Ocean look: every section in Ocean blue, Deeper Ocean as the second strength, white and light grounds, near-black text, and amber only for the current item of a reveal, the key words of a light statement and highlighted bars. Colour follows the count of things on the slide: one idea fills the slide (statement, section divider); two things are a light half and an Ocean half (`{contrast}`); three are Ocean, Deeper Ocean and light (`{iconrow}`, boxed `{iconlist}` of three); four or more are white boxes with large Ocean icons and near-black labels. Boxed icon lists, annotated lists and statements fill the stage under the top title tab.
+
+- `palette: bold` (frontmatter): the same look with amber leading the title slide (its disc turns amber with a near-black icon), the statement and section divider slides; key words on a light statement stay Ocean with an amber underline.
+- Set the palette in Talk tab → Design → Palette. Omitted `palette` uses Ocean; `palette: bold` selects Ocean, bold amber; `palette: classic` selects Classic.
+- `palette: classic`: the look before 0.44 (sections cycle cobalt, emerald, vermilion). Use it only when a talk must keep its old appearance. `palette: green` is the old green cycle.
+- A section `{accent=…}` and the deck `colour:` keep working: in the Ocean look `cobalt` is Ocean; `emerald`, `vermilion` and `forest` keep their own hue with matching deeper and light strengths.
+- A statement is full Ocean by default; `{statement-bg=rule}` gives the light form (white, a short Ocean rule, the bold words in Ocean).
+- In a bar chart, write a bar's label in bold (`- **Local model E**: 22`) to highlight it.
+
 ## 1. Choose by what the content is
 
 | The content is | Use | Notes |
 |---|---|---|
-| One sentence to remember | `{statement}` | Variants: `statement-bg=rule`, `statement-bg=strong`, `statement-bg=lower-third`, `statement-align=centred`. |
+| One sentence to remember | `{statement}` | Full colour by default; `statement-bg=rule` (or `lower-third`) is the light form. Also `statement-bg=strong`, `statement-align=centred`. |
 | One claim plus the points that support it | `{stmt-list}` | Claim paragraph, then bullets. |
 | Someone else's exact words | `{quote}` | `form=tweet`, `form=video`, `form=book`, `form=paper`, `form=web` style it from the source link. |
 | A quote with a picture of the person or source | `{image-quote}` | Image, `>` quotation, attribution bullet. |
 | Two to four big numbers | `{stats}` | `- 1 billion: weekly users`. |
-| Values to compare by size | `{barchart}` or `{chart}` | `label: number` bullets. `{novalues}` hides the numbers. |
+| Values to compare by size | `{barchart}` or `{chart}` | `label: number` bullets; a bold label highlights its bar. `{novalues}` hides the numbers. |
 | Shares of a whole adding to 100 | `{piechart}` | |
 | A number changing over time | `{linechart}` (alias `{curve}`) | |
 | Slow start, fast growth, levelling off | `{sigmoid}` | `label: number` bullets. |
 | Points where order matters | `{numbered}` | Modifier on a list. |
 | Three to six steps, shown as numbered stops | `{process}` (alias `{agenda}`) | |
-| Steps joined by arrows, left to right | `{flow}` | `flow=vertical`, `flow=loop`, `flow=branch`. |
+| Steps joined by arrows, left to right | `{flow}` | `flow=vertical`, `flow=loop`, `flow=branch` (a flat list fans the first item out to the rest). |
 | Stages that rise, each a step up | `{steps}` (alias `{stairs}`) | |
-| Events with dates | `{timeline}` | `timeline=rail`, `columns`, `compact`, `horizontal`, `spine`, `pills`, `dynamic`. |
+| Events with dates | `{timeline}` | `- Nov 2022: text`; a date can be a year, a range, a decade, `Nov 2022` or `Late 2024`. `timeline=rail`, `columns`, `compact`, `horizontal`, `spine`, `pills`, `dynamic`. |
 | A short timeline with a comment | `{timeline-visual}` | Bullets with dates, then a paragraph. |
 | A day's schedule with breaks | `{timetable}` | `- 09:00 - Welcome`. |
 | Levels building on each other, foundation last | `{pyramid}` | Apex first, base last. |
 | Stages that repeat | `{cycle}` | Also `{flow=loop}`. |
-| Parts that combine into a result (A + B = C) | `{equation}` | `equation=pills`, `circle`, `square`, `oval`. Result last. |
-| One central thing with the parts that feed it | `{system-map}` | Parent bullet, sub-bullets. |
+| Parts that combine into a result (A + B = C) | `{equation}` | `equation=pills`, `circle`, `square`, `oval`. Result last; it stays on the row. |
+| One central thing with the parts that feed it | `{system-map}` | Parent bullet (the centre), sub-bullets (the parts). |
 | A hierarchy | `{orgchart}` | Parent bullet, sub-bullets; deeper indentation makes deeper levels. |
 | One idea with branches | `{mindmap}` (object) | |
 | Groups with sub-points as boxes joined by lines | `{smartart}` | |
@@ -74,7 +85,7 @@ For AI chat and terminal slides, also read `talkweaver-ai-chat-and-terminal-slid
 | Image with two or three claims about it | `{image-claim}` | |
 | List of features beside an image or video | `{list-visual}` | |
 | Several images with captions | `{image-grid}` | `{image-steps}` steps through them. |
-| Screenshots plus what to do next | `{cta-screenshots}` | |
+| Screenshots plus what to do next | `{cta-screenshots}` | The action can be a bullet: `- [Action: Label -> url]`. |
 | AI chat, hidden work as click-open rows | `{chat}` | ```` ```chat ```` fence. |
 | AI chat with a "Behind the scenes" panel | `{chat-lanes}` | ```` ```chat ```` fence. |
 | Shell commands and output | `{terminal}` | ```` ```terminal ```` fence. |

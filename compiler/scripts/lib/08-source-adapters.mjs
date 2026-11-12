@@ -28,7 +28,7 @@ import { resolveShotList, SHOT_LIST_ARRANGEMENTS } from "./slot-composition.mjs"
 import { posterBlockFor, posterAccentFor, applyAuthoredPosters, TITLE_STYLES } from "./title-poster.mjs";
 import { parseOutlineTree, classifyContentLines } from "./14-outline-tree.mjs";
 import { audienceSourceLines } from "./slide-script.mjs";
-import { readDeckFlag, deckFlagOn, readDeckChoice, readDeckMinutes, DECK_PALETTES, DECK_FONTS, DECK_LOGO_COLOURS } from "./deck-settings.mjs";
+import { readDeckFlag, deckFlagOn, readDeckChoice, readDeckMinutes, DECK_PALETTES, DECK_FONTS, DECK_LOGO_COLOURS, modelPaletteFor } from "./deck-settings.mjs";
 import { sequence } from "./15-sequencer.mjs";
 import { resolveNarrowColumns } from "./narrow-columns.mjs";
 import { resolveImageSteps } from "./image-steps.mjs";
@@ -855,7 +855,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
       // The sidebar colour is the section-accent vocabulary pinned on this one slide. A `##`
       // statement's {accent=…} already colours its whole section (checked there).
       if (layout === "statement" && statementOptions.accent && slide.nodeLevel !== 2
-        && !accentForDeckColour(statementOptions.accent, deckPalette)) {
+        && !accentForDeckColour(statementOptions.accent, modelPaletteFor(deckPalette))) {
         warnings.push(`accent-unknown:${statementOptions.accent}`);
       }
     }
@@ -1595,7 +1595,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
       if (node.level === 2) {
         current.section = { id: node.id, title: node.title };
         const requestedAccent = attrs.accent == null || attrs.accent === true ? "" : String(attrs.accent).trim().toLowerCase();
-        if (requestedAccent && !accentForSectionName(requestedAccent, deckPalette)) {
+        if (requestedAccent && !accentForSectionName(requestedAccent, modelPaletteFor(deckPalette))) {
           warnings.push(`accent-unknown:${requestedAccent}`);
           current.sectionAccent = "";
         } else {
@@ -1949,7 +1949,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
     ...(liveLookAhead ? {} : { liveLookAhead: false }),
     warnAtMinutes, urgentAtMinutes,
     ...(license ? { license } : {}),
-    palette: deckPalette === "green" ? "green" : "",
+    palette: modelPaletteFor(DECK_PALETTES.includes(deckPalette) ? deckPalette : ""),
     brandLogoColour,
     // LAYER 2 (drop-in): a frontmatter `icons:` block (concept phrase → icon name) becomes the
     // deck-level override map. Built once and threaded into the icon vocabulary.

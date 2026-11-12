@@ -1,0 +1,357 @@
+/* 0.44 look ("ocean"): stage-filling layouts for the kinds the design rounds drew (round 5 to 9 frames:
+   docs/design/2026-11-10-native-slide-redesign/round-8-orange/frames/accent-*.png). Tokens in
+   zz-x-ocean-00-tokens.css. Every rule is scoped to .slide[data-look="ocean"]; sizes are in cqw (stage
+   width), so thumbnails, the handout and exports scale with the stage. Floors: --type-floor (31px at 1600).
+
+   Colour by count: one idea = one colour; two = a light half and the main colour; three = strengths of
+   the main colour (main, deep, light); four or more = white shapes on the light neutral ground with large
+   icons in the main colour and bold near-black labels, only the current item filled (amber). */
+
+/* ---------- shared: the content block fills the band under the title ---------- */
+.slide[data-look="ocean"][data-title-layout="top"] > .slide-content > :is(.feature-list.fl-cards, .feature-list.fl-annotated:not([data-oc-fit="dense"]), .icon-row, .steps-diagram, .orgchart, .system-map, .chart-cols, .timeline.timeline-rail) {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0 !important;
+}
+
+/* ---------- reveal: earlier items stay whole, the current item is filled ---------- */
+.slide[data-look="ocean"].mode-reveal .mode-el[data-mode-state="soft"] { opacity: 1; }
+
+/* =====================================================================================
+   RISING STEPS ({steps}): bottom-aligned columns that rise, one colour; the top step deep
+   ===================================================================================== */
+.slide[data-look="ocean"] .slide-content > .steps-diagram {
+  display: flex !important; align-items: flex-end; gap: 1.2cqw; height: 100% !important; flex: 1 1 0 !important;
+}
+.slide[data-look="ocean"] .steps-diagram .step-arrow { display: none !important; }
+.slide[data-look="ocean"] .steps-diagram .step-col {
+  flex: 1 1 0; min-width: 0; display: flex !important; flex-direction: column; justify-content: flex-start;
+  padding: 1.8cqw !important; margin: 0 !important;
+  background: var(--look-light) !important; border: 0 !important; border-top: .5cqw solid var(--look-main) !important;
+  border-radius: 0 !important; box-shadow: none !important; color: var(--look-ink);
+}
+.slide[data-look="ocean"] .steps-diagram .step-col:last-of-type { background: var(--look-main) !important; border-top-color: var(--look-deep) !important; color: var(--look-on-main); }
+.slide[data-look="ocean"] .steps-diagram .step-label {
+  font: 700 var(--look-size-label)/1.12 var(--look-face-display) !important; color: inherit !important;
+  overflow-wrap: normal; hyphens: manual; text-transform: none !important;
+}
+.slide[data-look="ocean"] .steps-diagram .step-cap { font: 400 var(--look-size-body)/1.25 var(--look-face-text) !important; color: inherit !important; opacity: .9; margin-top: .6cqw; }
+.slide[data-look="ocean"].mode-reveal .steps-diagram .step-col[data-mode-state="current"] { background: var(--look-current-fill) !important; border-top-color: var(--look-current-fill) !important; color: var(--look-on-current) !important; }
+
+/* =====================================================================================
+   EQUATION ({equation}, default circle → here: tall shapes on one row, the result filled)
+   ===================================================================================== */
+.slide[data-look="ocean"] .slide-content > .equation-row:is(.equation-circle) {
+  display: flex !important; flex-wrap: nowrap !important; align-items: stretch; justify-content: center;
+  gap: 0; height: 22cqw !important; margin-block: auto !important; flex: 0 0 auto !important;
+}
+.slide[data-look="ocean"] .equation-row.equation-circle > .eq-unit { display: flex !important; flex: 1 1 0; min-width: 0; align-items: stretch; gap: 0; }
+.slide[data-look="ocean"] .equation-row.equation-circle .eq-term {
+  flex: 1 1 0; min-width: 0; aspect-ratio: auto !important; width: auto !important; height: auto !important; min-height: 0; align-self: stretch;
+  display: flex !important; align-items: center; justify-content: center; text-align: center;
+  padding: 1.6cqw 1.2cqw !important; border-radius: 1.2cqw !important;
+  background: var(--look-ground) !important; border: .25cqw solid var(--look-main) !important; box-shadow: none !important;
+  font: 700 2.8cqw/1.15 var(--look-face-display) !important; color: var(--look-ink) !important;
+  overflow-wrap: normal !important; word-break: normal !important; hyphens: manual !important;
+}
+.slide[data-look="ocean"] .equation-row.equation-circle .eq-op {
+  flex: 0 0 auto; width: 4.4cqw; align-self: center; text-align: center; font: 300 4.4cqw/1 var(--look-face-display) !important;
+  color: var(--look-ink) !important; background: none !important; border: 0 !important;
+}
+.slide[data-look="ocean"] .equation-row.equation-circle .eq-term.eq-result {
+  flex: 1.15 1 0; background: var(--look-main) !important; border-color: var(--look-main) !important; color: var(--look-on-main) !important;
+  font-size: 3cqw !important;
+}
+.slide[data-look="ocean"] > .slide-content > .equation-row.equation-circle { width: 100%; max-width: none; margin: auto 0 !important; }
+.slide[data-look="ocean"] .equation-row:is(.equation-pills, .equation-square, .equation-oval) { flex-wrap: nowrap !important; }
+.slide[data-look="ocean"] .equation-row:is(.equation-pills, .equation-square, .equation-oval) .eq-term { overflow-wrap: normal !important; word-break: normal !important; hyphens: manual !important; }
+
+/* =====================================================================================
+   HIERARCHY ({orgchart}): large boxes, thin near-black connectors, the root in the main colour
+   ===================================================================================== */
+.slide[data-look="ocean"] .slide-content > .orgchart { display: flex !important; flex-direction: column; justify-content: center; font-size: var(--look-size-label) !important; }
+.slide[data-look="ocean"] .orgchart .org-box {
+  font: 700 3cqw/1.15 var(--look-face-display) !important; padding: 1.6cqw 2.4cqw !important;
+  background: var(--look-ground) !important; border: .19cqw solid var(--look-main) !important; border-radius: .5cqw !important;
+  box-shadow: none !important; color: var(--look-ink) !important; min-width: 12cqw; text-align: center;
+}
+.slide[data-look="ocean"] .orgchart .org-root > .org-box { background: var(--look-main) !important; color: var(--look-on-main) !important; }
+.slide[data-look="ocean"] .orgchart .org-root > .org-children > .org-node > .org-box { background: var(--look-deep) !important; border-color: var(--look-deep) !important; color: var(--look-on-deep) !important; }
+.slide[data-look="ocean"] .orgchart { overflow: visible !important; margin: 0 !important; }
+.slide[data-look="ocean"] .orgchart .org-children { margin-top: 4cqw !important; gap: 1.6cqw !important; }
+.slide[data-look="ocean"] .orgchart .org-children::before { top: -4cqw !important; height: 2cqw !important; width: .19cqw !important; background: var(--look-ink) !important; transform: translateX(-50%); }
+.slide[data-look="ocean"] .orgchart .org-children > .org-node::before { top: -2cqw !important; height: 2cqw !important; width: .19cqw !important; background: var(--look-ink) !important; transform: translateX(-50%); }
+.slide[data-look="ocean"] .orgchart .org-children > .org-node:not(:only-child)::after { top: -2cqw !important; height: .19cqw !important; background: var(--look-ink) !important; }
+.slide[data-look="ocean"] .orgchart .org-children > .org-node:first-child:not(:only-child)::after { left: 50% !important; right: -.8cqw !important; }
+.slide[data-look="ocean"] .orgchart .org-children > .org-node:last-child:not(:only-child)::after { left: -.8cqw !important; right: 50% !important; }
+.slide[data-look="ocean"] .orgchart .org-children > .org-node:not(:first-child):not(:last-child):not(:only-child)::after { left: -.8cqw !important; right: -.8cqw !important; }
+.slide[data-look="ocean"] .orgchart .org-box { max-width: 26cqw !important; }
+.slide[data-look="ocean"].mode-reveal .orgchart .org-box[data-mode-state="current"] { background: var(--look-current-fill) !important; border-color: var(--look-current-fill) !important; color: var(--look-on-current) !important; }
+
+/* =====================================================================================
+   HUB WITH PARTS ({system-map}): the centre in the middle, filled; the parts either side,
+   joined to it by thin near-black lines (drawn in CSS: the runtime's top-down links are hidden)
+   ===================================================================================== */
+.slide[data-look="ocean"] .slide-content > .system-map {
+  --hub-rows: 1;
+  display: grid !important;
+  grid-template-columns: minmax(0, 1fr) 4cqw minmax(0, .9fr) 4cqw minmax(0, 1fr);
+  grid-template-rows: repeat(var(--hub-rows), minmax(0, 1fr));
+  row-gap: 2cqw; align-items: center;
+}
+.slide[data-look="ocean"] .slide-content > .system-map:has(.system-sat:nth-child(3)) { --hub-rows: 2; }
+.slide[data-look="ocean"] .slide-content > .system-map:has(.system-sat:nth-child(5)) { --hub-rows: 3; }
+.slide[data-look="ocean"] .slide-content > .system-map:has(.system-sat:nth-child(7)) { --hub-rows: 4; }
+.slide[data-look="ocean"] .system-map > .system-links { display: none !important; }
+.slide[data-look="ocean"] .system-map > .system-sats { display: contents !important; }
+.slide[data-look="ocean"] .system-map .system-centre {
+  grid-column: 3; grid-row: 1 / span var(--hub-rows); align-self: stretch; justify-self: stretch; position: relative;
+  min-height: 14cqw; display: flex; align-items: center; justify-content: center;
+  padding: 2cqw !important; margin: 0 !important; border-radius: 1cqw !important;
+  background: var(--look-main) !important; color: var(--look-on-main) !important; border: 0 !important;
+  font: 700 3.6cqw/1.1 var(--look-face-display) !important; text-align: center; overflow-wrap: normal;
+}
+.slide[data-look="ocean"] .system-map .system-sat {
+  grid-column: 1; position: relative; margin: 0 !important; min-width: 0;
+  padding: 1.8cqw 2cqw !important; background: var(--look-ground) !important;
+  border: .19cqw solid var(--look-hairline) !important; border-radius: .5cqw !important; box-shadow: none !important;
+  font: 700 var(--look-size-label)/1.15 var(--look-face-display) !important; color: var(--look-ink) !important; text-align: left;
+  border-left: .6cqw solid var(--look-main) !important;
+}
+.slide[data-look="ocean"] .system-map .system-sat:nth-child(even) { grid-column: 5; border-left-width: .19cqw !important; border-left-color: var(--look-hairline) !important; border-right: .6cqw solid var(--look-main) !important; text-align: right; }
+.slide[data-look="ocean"] .system-map .system-sat:nth-child(1), .slide[data-look="ocean"] .system-map .system-sat:nth-child(2) { grid-row: 1; }
+.slide[data-look="ocean"] .system-map .system-sat:nth-child(3), .slide[data-look="ocean"] .system-map .system-sat:nth-child(4) { grid-row: 2; }
+.slide[data-look="ocean"] .system-map .system-sat:nth-child(5), .slide[data-look="ocean"] .system-map .system-sat:nth-child(6) { grid-row: 3; }
+.slide[data-look="ocean"] .system-map .system-sat:nth-child(7), .slide[data-look="ocean"] .system-map .system-sat:nth-child(8) { grid-row: 4; }
+/* a lone last part on the left sits opposite the centre's middle when the count is odd */
+.slide[data-look="ocean"] .system-map .system-sat:last-child:nth-child(odd):not(:first-child) { grid-column: 5; border-left-width: .19cqw !important; border-left-color: var(--look-hairline) !important; border-right: .6cqw solid var(--look-main) !important; text-align: right; }
+/* the connector from each part to the centre: across the 4cqw gutter and into the centre column */
+.slide[data-look="ocean"] .system-map .system-sat::after {
+  content: ""; position: absolute; top: 50%; height: .19cqw; width: 4.2cqw; background: var(--look-ink); left: 100%;
+}
+.slide[data-look="ocean"] .system-map .system-sat:is(:nth-child(even), :last-child:nth-child(odd):not(:first-child))::after { left: auto; right: 100%; }
+.slide[data-look="ocean"] .system-map.system-multicolour .system-sat { color: var(--look-ink) !important; }
+.slide[data-look="ocean"].mode-reveal .system-map .system-sat[data-mode-state="current"] { background: var(--look-current-fill) !important; border-color: var(--look-current-fill) !important; color: var(--look-on-current) !important; }
+
+/* =====================================================================================
+   ANNOTATED LIST IN GROUPS ({annotated}): one panel per group across the stage
+   ===================================================================================== */
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) {
+  --an-cols: 3;
+  display: grid !important; grid-auto-flow: row; grid-template-columns: repeat(var(--an-cols), minmax(0, 1fr)) !important; grid-auto-rows: minmax(0, 1fr);
+  gap: 1.5cqw; padding: 0; list-style: none; align-items: stretch;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:has(> li:nth-child(2):last-child),
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:has(> li:nth-child(4):last-child) { --an-cols: 2; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-ann {
+  display: flex; align-items: center; flex: 1 1 auto; padding: 1.4cqw 2cqw 2cqw !important; margin: 0 !important; border: 0 !important;
+  font: 600 max(var(--fs-body, 3.2cqw), 2.8cqw)/1.2 var(--look-face-text) !important; color: var(--look-ink) !important; background: none !important;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li {
+  display: flex !important; flex-direction: column; gap: 1.2cqw; margin: 0 !important; padding: 0 !important;
+  background: var(--look-ground) !important; border: .19cqw solid var(--look-hairline) !important; border-radius: .5cqw; overflow: hidden;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-lead {
+  display: block; align-self: stretch; width: auto !important; margin: 0 !important; padding: 1.8cqw 2cqw !important;
+  background: var(--look-main) !important; color: var(--look-on-main) !important; text-align: left;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li:nth-child(3n + 2) > .fl-lead { background: var(--look-deep) !important; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-lead .fl-text { font: 700 max(var(--fs-body, 3.2cqw), 2.8cqw)/1.1 var(--look-face-display) !important; color: inherit !important; text-transform: none !important; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-sublist { display: flex !important; flex-direction: column; justify-content: space-evenly; flex: 1 1 auto; gap: 1.6cqw; margin: 0 !important; padding: 1cqw 2cqw 2.4cqw !important; list-style: none; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-sublist > li {
+  margin: 0 !important; padding: 0 0 0 1.4cqw !important; border-left: .35cqw solid var(--look-main) !important; background: none !important;
+  font: 600 max(var(--fs-body, 3.2cqw), 2.8cqw)/1.2 var(--look-face-text) !important; color: var(--look-ink) !important;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-sublist > li::before { content: none !important; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) .fl-subtext { font: inherit !important; color: inherit !important; }
+.slide[data-look="ocean"]:has(.slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li:nth-child(4)) { background-color: var(--look-ground-neutral); }
+
+/* =====================================================================================
+   DATED TIMELINE (the default rail): a long rail down the left, a node per stop, the dates
+   large in the main colour, the text beside them
+   ===================================================================================== */
+.slide[data-look="ocean"] .slide-content > .timeline.timeline-rail {
+  display: flex !important; flex-direction: column; justify-content: space-between; gap: 0 !important;
+  position: relative; padding: .6cqw 0 .6cqw 4cqw !important; font-size: var(--look-size-body) !important; border: 0 !important;
+}
+.slide[data-look="ocean"] .timeline.timeline-rail::before {
+  content: "" !important; display: block !important; position: absolute; left: 1.15cqw; top: 1.6cqw; bottom: 1.6cqw;
+  width: var(--look-line); background: var(--look-ink) !important; border: 0 !important;
+}
+.slide[data-look="ocean"] .timeline.timeline-rail > .tl-group {
+  display: grid !important; grid-template-columns: 21cqw minmax(0, 1fr) !important; column-gap: 2cqw; align-items: baseline;
+  position: relative; margin: 0 !important; padding: 0 !important; border: 0 !important; background: none !important;
+}
+.slide[data-look="ocean"] .timeline.timeline-rail > .tl-group::before {
+  content: "" !important; display: block !important; position: absolute; left: -4cqw; top: 1.9cqw; width: 2.4cqw; height: 2.4cqw;
+  margin-left: .02cqw; border-radius: 50%; background: var(--look-main) !important; border: .45cqw solid var(--look-ground) !important;
+  box-sizing: border-box; transform: translate(0, -50%);
+}
+.slide[data-look="ocean"] .timeline.timeline-rail > .tl-group::after { content: none !important; display: none !important; }
+.slide[data-look="ocean"] .timeline.timeline-rail .tl-group-head, .slide[data-look="ocean"] .timeline.timeline-rail .tl-date {
+  font: 700 3.6cqw/1.12 var(--look-face-display) !important; color: var(--look-main) !important; margin: 0 !important;
+  padding: 0 !important; border: 0 !important; background: none !important; text-transform: none !important; letter-spacing: 0 !important;
+}
+.slide[data-look="ocean"] .timeline.timeline-rail .tl-entries { margin: 0 !important; padding: 0 !important; grid-column: 2; display: flex; flex-direction: column; gap: .2em; }
+.slide[data-look="ocean"] .timeline.timeline-rail > .tl-group:not(:has(> .tl-group-head)) > .tl-entries { grid-column: 1 / -1; }
+.slide[data-look="ocean"] .timeline.timeline-rail .tl-entries > li { margin: 0 !important; padding: 0 !important; border: 0 !important; background: none !important; display: block; }
+.slide[data-look="ocean"] .timeline.timeline-rail .tl-entries > li::before { content: none !important; }
+.slide[data-look="ocean"] .timeline.timeline-rail .tl-body { font: 600 3.2cqw/1.2 var(--look-face-text) !important; color: var(--look-ink) !important; }
+.slide[data-look="ocean"] .timeline.timeline-rail:has(> .tl-group:nth-child(7)) :is(.tl-group-head, .tl-date) { font-size: 2.8cqw !important; }
+.slide[data-look="ocean"] .timeline.timeline-rail:has(> .tl-group:nth-child(7)) .tl-body { font-size: 2.6cqw !important; }
+.slide[data-look="ocean"].mode-reveal .timeline.timeline-rail > .tl-group:is([data-mode-state="current"], :has([data-mode-state="current"]))::before { background: var(--look-current) !important; }
+
+/* =====================================================================================
+   BAR CHART ({barchart}, {chart}): horizontal bars across the full width, the value on the
+   bar's end, labels left, a thin near-black axis (round-9 frame l3-4); a bar whose label is
+   wholly bold is highlighted amber
+   ===================================================================================== */
+.slide[data-look="ocean"] .slide-content > .chart-cols {
+  display: grid !important; grid-template-columns: auto minmax(0, 1fr); grid-auto-rows: minmax(0, 1fr);
+  grid-auto-flow: row dense; align-items: center; column-gap: 1.6cqw; row-gap: .9cqw; max-height: 100%;
+}
+.slide[data-look="ocean"] .chart-cols .chart-col { display: contents !important; }
+.slide[data-look="ocean"] .chart-cols .chart-label {
+  grid-column: 1; order: 0; align-self: center !important; min-height: 0 !important; text-align: right !important; margin: 0 !important; max-width: 24cqw; border: 0 !important; padding: 0 !important;
+  font: 600 var(--look-size-label)/1.15 var(--look-face-text) !important; color: var(--look-ink) !important; overflow-wrap: normal;
+}
+.slide[data-look="ocean"] .chart-cols .chart-col-plot {
+  grid-column: 2; position: relative; height: 100% !important; min-height: 3.2cqw; max-height: 6cqw; width: 100%;
+  display: flex !important; flex-direction: row !important; align-items: stretch; justify-content: flex-start;
+  border: 0 !important; border-left: var(--look-line) solid var(--look-ink) !important; padding: .35cqw 0 !important;
+}
+.slide[data-look="ocean"] .chart-cols .chart-bar {
+  height: auto !important; width: calc(var(--bar, 0%) * .88) !important; min-width: .4cqw; flex: 0 0 auto;
+  background: var(--look-main) !important; border-radius: 0 !important; opacity: 1 !important; order: 0;
+}
+.slide[data-look="ocean"] .chart-cols .chart-val {
+  order: 1; align-self: center; margin: 0 0 0 1cqw !important; position: static !important; transform: none !important;
+  font: 700 var(--look-size-label)/1 var(--look-face-display) !important; color: var(--look-ink) !important; white-space: nowrap;
+}
+.slide[data-look="ocean"] .chart-cols .chart-col:has(> .chart-label > strong:only-child) .chart-bar { background: var(--look-current) !important; }
+.slide[data-look="ocean"] .chart-cols .chart-col > .chart-label > strong:only-child { font-weight: inherit; }
+.slide[data-look="ocean"].mode-reveal .chart-cols .chart-col[data-mode-state="current"] .chart-bar { background: var(--look-current) !important; }
+
+/* =====================================================================================
+   FIT: labels wrap between words; a single word longer than its shape breaks only as the last
+   resort, so nothing overflows (the type never goes below the floor to make room)
+   ===================================================================================== */
+.slide[data-look="ocean"] :is(.feature-list.fl-cards > li > .fl-text, .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-lead, .feature-list.fl-annotated:not([data-oc-fit="dense"]) .fl-text, .icon-row .ir-label, .steps-diagram .step-label, .equation-row .eq-term, .orgchart .org-box, .system-map .system-sat, .system-map .system-centre, .timeline.timeline-rail .tl-body) {
+  white-space: normal !important;
+  overflow-wrap: break-word !important;
+  min-width: 0;
+}
+
+/* =====================================================================================
+   THE LOOP ({cycle}): one large circle filling the stage height, a numbered Ocean stop per
+   stage, the labels outside the stops, white space kept (round-9 frame l2-4). The compiler's
+   ring positions are kept; in a square box they lie on a circle, drawn here as one thin ring.
+   ===================================================================================== */
+.slide[data-look="ocean"] .slide-content > .cycle-diagram {
+  --cy-w: min(62cqh, 46cqw);
+  --stop: 5.6cqw;
+  width: var(--cy-w) !important; height: var(--cy-w); aspect-ratio: 1 !important;
+  margin: auto !important; position: relative; counter-reset: cy;
+}
+.slide[data-look="ocean"] .cycle-diagram::before {
+  content: ""; position: absolute; left: 13.3%; right: 13.3%; top: 11.3%; bottom: 11.3%;
+  border: var(--look-line) solid var(--look-ink); border-radius: 50%; z-index: 0;
+}
+.slide[data-look="ocean"] .cycle-diagram .cycle-arc-svg { display: none !important; }
+.slide[data-look="ocean"] .cycle-diagram .cycle-node {
+  counter-increment: cy;
+  width: var(--stop) !important; height: var(--stop) !important; min-height: 0 !important;
+  padding: 0 !important; border: 0 !important; border-radius: 50% !important; background: var(--look-main) !important;
+  box-shadow: 0 0 0 .5cqw var(--look-ground) !important; overflow: visible; z-index: 2;
+  display: block !important;
+}
+.slide[data-look="ocean"] .cycle-diagram .cycle-node::before {
+  content: counter(cy); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  font: 700 2.8cqw/1 var(--look-face-display); color: var(--look-on-main);
+}
+/* the label sits outside the stop: to the right of stops on the right half and the centre line, to the left of the rest */
+.slide[data-look="ocean"] .cycle-diagram .cycle-node > :is(.cycle-cap, .cycle-stage) {
+  position: absolute; top: 50%; left: calc(100% + 1.4cqw); transform: translateY(-50%);
+  width: 22cqw; text-align: left; margin: 0 !important;
+}
+.slide[data-look="ocean"] .cycle-diagram .cycle-node:is([style^="left:0"], [style^="left:1"], [style^="left:2"], [style^="left:3"], [style^="left:4"]) > :is(.cycle-cap, .cycle-stage) {
+  left: auto; right: calc(100% + 1.4cqw); text-align: right;
+}
+.slide[data-look="ocean"] .cycle-diagram .cycle-node:has(> .cycle-stage) > .cycle-stage { transform: translateY(calc(-100% - .2cqw)); }
+.slide[data-look="ocean"] .cycle-diagram .cycle-node:has(> .cycle-stage) > .cycle-cap { transform: none; }
+.slide[data-look="ocean"] .cycle-diagram .cycle-cap {
+  font: 700 var(--look-size-label)/1.15 var(--look-face-display) !important; color: var(--look-ink) !important;
+  overflow-wrap: break-word;
+}
+.slide[data-look="ocean"] .cycle-diagram .cycle-stage {
+  font: 700 var(--look-size-body)/1.15 var(--look-face-text) !important; letter-spacing: 0 !important; text-transform: none !important; color: var(--look-main) !important;
+}
+.slide[data-look="ocean"].mode-reveal .cycle-diagram .cycle-node[data-mode-state="current"] { background: var(--look-current) !important; }
+.slide[data-look="ocean"].mode-reveal .cycle-diagram .cycle-node[data-mode-state="current"]::before { color: var(--look-on-marker); }
+/* a stop on the vertical centre line: the ring leaves it sideways, so its label sits right of it and clear of the
+   ring: above the stop's middle at the top of the circle, below it at the bottom */
+.slide[data-look="ocean"] .cycle-diagram .cycle-node[style^="left:50.00%"]:is([style*="top:0"], [style*="top:1"], [style*="top:2"], [style*="top:3"], [style*="top:4"]) > .cycle-cap:only-child { transform: translateY(-100%); }
+.slide[data-look="ocean"] .cycle-diagram .cycle-node[style^="left:50.00%"]:is([style*="top:5"], [style*="top:6"], [style*="top:7"], [style*="top:8"], [style*="top:9"]) > .cycle-cap:only-child { transform: none; }
+
+/* =====================================================================================
+   BIG NUMBERS ({stats}): fields that fill the band, the number very large; colour by count
+   ===================================================================================== */
+.slide[data-look="ocean"][data-title-layout="top"] > .slide-content > .stats-row {
+  flex: 1 1 auto; min-height: 0; width: 100%; max-width: none; margin: 0 !important;
+  display: grid !important; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 1.5cqw; align-items: stretch;
+}
+.slide[data-look="ocean"] .stats-row > .stat {
+  display: flex !important; flex-direction: column; justify-content: flex-end; align-items: flex-start; gap: .8cqw;
+  padding: 2.4cqw !important; margin: 0 !important; border: .19cqw solid var(--look-hairline) !important; border-radius: .5cqw;
+  background: var(--look-ground) !important; color: var(--look-ink); text-align: left !important; min-width: 0;
+}
+.slide[data-look="ocean"] .stats-row > .stat .stat-value {
+  font: 700 var(--stat-size, 7.2cqw)/1.02 var(--look-face-display) !important; letter-spacing: -.03em; color: var(--look-main) !important;
+  white-space: normal; overflow-wrap: normal; border: 0 !important; padding: 0 !important; margin: 0 !important; max-width: 100%;
+}
+.slide[data-look="ocean"] .stats-row > .stat .stat-value::after { content: none !important; display: none !important; }
+.slide[data-look="ocean"] .stats-row > .stat .stat-label {
+  font: 400 var(--look-size-label)/1.2 var(--look-face-text) !important; color: inherit !important; text-align: left !important;
+  border: 0 !important; padding: 0 !important; margin: 0 !important;
+}
+.slide[data-look="ocean"] .stats-row:not(:has(> .stat:nth-child(4))) > .stat:nth-child(3n + 1) { background: var(--look-three-1) !important; border-color: transparent !important; color: var(--look-on-main); }
+.slide[data-look="ocean"] .stats-row:not(:has(> .stat:nth-child(4))) > .stat:nth-child(3n + 2) { background: var(--look-three-2) !important; border-color: transparent !important; color: var(--look-on-deep); }
+.slide[data-look="ocean"] .stats-row:not(:has(> .stat:nth-child(4))) > .stat:nth-child(3n + 3) { background: var(--look-three-3) !important; border-color: transparent !important; color: var(--look-ink); }
+.slide[data-look="ocean"] .stats-row:not(:has(> .stat:nth-child(4))) > .stat:is(:nth-child(3n + 1), :nth-child(3n + 2)) .stat-value { color: inherit !important; }
+.slide[data-look="ocean"] .stats-row:has(> .stat:nth-child(2):last-child) > .stat:nth-child(1) { background: var(--look-two-a) !important; color: var(--look-ink); }
+.slide[data-look="ocean"] .stats-row:has(> .stat:nth-child(2):last-child) > .stat:nth-child(1) .stat-value { color: var(--look-main) !important; }
+.slide[data-look="ocean"] .stats-row:has(> .stat:nth-child(4)) { --stat-size: 5.6cqw; }
+.slide[data-look="ocean"] .stats-row:has(> .stat:nth-child(2):last-child), .slide[data-look="ocean"] .stats-row:has(> .stat:only-child) { --stat-size: 9.6cqw; }
+
+
+/* =====================================================================================
+   COMPARE ({compare}): two equal halves, a light half and the main colour (two things)
+   ===================================================================================== */
+.slide[data-look="ocean"][data-layout="compare"] .compare-grid { column-gap: 0 !important; }
+.slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel {
+  border: 0 !important; border-radius: 0 !important; box-shadow: none !important; padding: 2.6cqw !important;
+}
+.slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel.L { background: var(--look-two-a) !important; color: var(--look-ink) !important; }
+.slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel.R { background: var(--look-two-b) !important; color: var(--look-on-main) !important; opacity: 1 !important; }
+.slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel :is(.vs-head, .vs-row, .vs-head-text, .vs-text, .vs-ico, p, li) { color: inherit !important; opacity: 1 !important; --c: currentColor; }
+.slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel .vs-head { border-bottom-color: currentColor !important; }
+.slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel .vs-head-text { font: 700 3.6cqw/1.1 var(--look-face-display) !important; text-transform: none !important; letter-spacing: -.01em !important; }
+.slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel.L .vs-head-text { color: var(--look-main) !important; }
+.slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel .vs-text { font: 400 var(--look-size-label)/1.25 var(--look-face-text) !important; }
+.slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-disc { display: none !important; }
+
+/* the loop's ring with its arrowheads and the centre mark (07-assembly stampOceanLoop): replaces the plain CSS ring */
+.slide[data-look="ocean"] .cycle-diagram:has(> .oc-loop-ring)::before { content: none !important; display: none !important; }
+.slide[data-look="ocean"] .cycle-diagram > .oc-loop-ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; z-index: 0; pointer-events: none; }
+.slide[data-look="ocean"] .cycle-diagram > .oc-loop-ring .oc-loop-arc { fill: none; stroke: var(--look-ink); stroke-width: var(--look-line); vector-effect: non-scaling-stroke; }
+.slide[data-look="ocean"] .cycle-diagram > .oc-loop-ring .oc-loop-head { fill: var(--look-ink); stroke: none; }
+.slide[data-look="ocean"] .cycle-diagram > .oc-loop-ring .oc-loop-mark { stroke: var(--look-main); }
+
+/* a dated timeline set inside a coloured media panel ({timeline-visual}): its dates, text and rail take the panel's
+   type colour (Ocean dates on an Ocean panel were invisible) */
+.slide[data-look="ocean"] .slot-media .timeline.timeline-rail :is(.tl-group-head, .tl-date, .tl-body) { color: inherit !important; }
+.slide[data-look="ocean"] .slot-media .timeline.timeline-rail::before { background: currentColor !important; }
+/* a slide that fell back to the safe drawing (slide-fit.js) keeps the 0.43 arcs, not the look's ring */
+.slide:not([data-look="ocean"]) .cycle-diagram > .oc-loop-ring { display: none !important; }

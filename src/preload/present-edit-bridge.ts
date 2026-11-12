@@ -31,7 +31,7 @@ function requestEdit(): void {
 }
 
 // ⌘R's refresh-in-place, asked for from the presenter's More menu: main runs the same
-// refreshDeckFromEditor the key runs (it refuses while recording and says so in the hint).
+// refreshDeckFromEditor the key runs (an active recording hands over before navigation).
 function requestRefresh(): void {
   void ipcRenderer.invoke('present:refresh-deck')
 }
@@ -168,7 +168,7 @@ export function mountEditBridge(): void {
     },
     true
   )
-  // Main sends a hint here when it declines a ⌘R refresh (recording armed, or the editor is closed).
+  // Main sends a hint here when it declines a ⌘R refresh (save in progress, or the editor is closed).
   ipcRenderer.on('present:hint', (_e, msg: string) => flashHint(msg))
   mountButton()
   mountRefreshItem()

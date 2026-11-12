@@ -57,6 +57,8 @@ export interface PermissionQuestion {
   /** `webContents.id` of the window that may list the microphones by name (the Settings window). */
   deviceListIds?: ReadonlySet<number>
   /** True for a check (setPermissionCheckHandler), false or absent for a request. */
+  cameraIds?: ReadonlySet<number>
+  previewIds?: ReadonlySet<number>
   check?: boolean
 }
 
@@ -68,9 +70,11 @@ export function decidePermission(question: PermissionQuestion): boolean {
   if (question.isMainFrame !== true) return false
   if (permission === 'media') {
     const types = question.mediaTypes
-    const audioOnly = Array.isArray(types) && types.length > 0 && types.every((type) => type === 'audio')
-    if (question.presenterIds.has(contentsId)) return audioOnly
-    return question.check === true && question.deviceListIds?.has(contentsId) === true && audioOnly
+    const audioOnly = Array.isArray(types) && types.length > 0 && types.every(type => type === 'audio')
+    const cameraAllowed = question.cameraIds?.has(contentsId) === true
+    const knownTypes = Array.isArray(types) && types.length > 0 && types.every(type => type === 'audio' || (type === 'video' && cameraAllowed))
+    if (question.presenterIds.has(contentsId)) return knownTypes
+    return question.deviceListIds?.has(contentsId) === true && ((question.check === true && audioOnly) || (question.previewIds?.has(contentsId) === true && knownTypes))
   }
   if (permission === 'clipboard-sanitized-write') return true
   if (permission === 'clipboard-read') return question.appWindowIds.has(contentsId)
@@ -104,6 +108,7 @@ export interface RecordingPermissions {
   addPresenter(window: PermissionWindow): void
   /** An editor, Tools or Pathways window opened: its main frame may read the clipboard. */
   addAppWindow(window: PermissionWindow): void
+  grantDevices(id: number, camera: boolean, preview: boolean): void
   presenterIds(): ReadonlySet<number>
   appWindowIds(): ReadonlySet<number>
 }
@@ -114,6 +119,8 @@ export interface RecordingPermissions {
  */
 export function createRecordingPermissions(sets: { appWindowIds?: Set<number>; deviceListWindow?: () => number | null } = {}): RecordingPermissions {
   const presenters = new Set<number>()
+  const cameras = new Set<number>()
+  const previews = new Set<number>()
   const appWindows = sets.appWindowIds ?? new Set<number>()
   const deviceListIds = (): ReadonlySet<number> => {
     const id = sets.deviceListWindow?.()
@@ -121,7 +128,7 @@ export function createRecordingPermissions(sets: { appWindowIds?: Set<number>; d
   }
   const decide = (contents: { id?: unknown } | null, permission: unknown, isMainFrame: unknown, mediaTypes: unknown, check: boolean): boolean => {
     try {
-      return decidePermission({ permission, contentsId: contents?.id, isMainFrame, mediaTypes, presenterIds: presenters, appWindowIds: appWindows, deviceListIds: deviceListIds(), check }) === true
+      return decidePermission({ permission, contentsId: contents?.id, isMainFrame, mediaTypes, presenterIds: presenters, appWindowIds: appWindows, deviceListIds: deviceListIds(), cameraIds: cameras, previewIds: previews, check }) === true
     } catch { return false }
   }
   const handler: RequestHandler = (contents, permission, callback, details) => {
@@ -141,6 +148,7 @@ export function createRecordingPermissions(sets: { appWindowIds?: Set<number>; d
     window.once('closed', () => { ids.delete(id) })
   }
   return {
+    grantDevices(id, camera, preview) { camera ? cameras.add(id) : cameras.delete(id); preview ? previews.add(id) : previews.delete(id) },
     handler,
     checkHandler,
     install(session) {

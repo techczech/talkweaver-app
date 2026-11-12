@@ -379,7 +379,7 @@ await test('the editor\'s own page opens no window: its links go through main (s
   const sites = []
   for (const name of readdirSync(mainDir)) if (/\.ts$/.test(name)) for (const m of readFileSync(join(mainDir, name), 'utf8').matchAll(/shell\.openExternal\(([^)]*)\)/g)) sites.push(`${name}: ${m[1]}`)
   // update-notices.ts: the browser opens the update notices' links (a download or notes link on talkweaver.app, or the Store listing), each through handOutLink.
-  assert.deepEqual(sites.sort(), ['index.ts: link.href', 'index.ts: link.href', 'index.ts: url', 'index.ts: url', 'update-notices.ts: handed.href'], 'a new openExternal site: hand out a handOutLink href')
+  assert.deepEqual(sites.sort(), ['index.ts: link.href', 'index.ts: link.href', 'index.ts: url', 'index.ts: url', "presenter-layers-ipc.ts: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Camera'", "presenter-layers-ipc.ts: 'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'", 'update-notices.ts: handed.href'], 'a new openExternal site: hand out a handOutLink href')
   assert.equal(index.match(/appWindowOpenHandler\(appWindowOpenOpts, \(\) => pressLedger\.pressedRecently\(win\.webContents\.id\)\)/g).length, 2, 'editor and Tools each ask their own window\'s presses')
 })
 

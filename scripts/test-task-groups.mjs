@@ -28,12 +28,24 @@ const test = (name, fn) => { try { fn(); results.push([true, name]) } catch (err
 // Commands the map leaves out, or marks "Did not fit": placed by the builder from the map's
 // neighbours, reported to the owner. Id -> [task, subgroup].
 const BUILDER_PLACED = {
+  'presenter.record-flag': ['Present', 'Recording'],
   'pathway.delete': ['Shape the talk', 'Pathways'],
   'add-to-pathway': ['Shape the talk', 'Pathways'],
   'present-pathway': ['Shape the talk', 'Pathways'],
   'edit-image': ['Build a slide', 'Images and icons'],
   'tools-animated-video': ['Share', 'Video'],
   'vault-gallery': ['Manage talks', 'Vaults'],
+  // The recording panel's keys (slice 3a, 2026-11-11): beside Studio's sidebar key.
+  'studio.trim-start': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.trim-end': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.trim-undo': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.trim-redo': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-play': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-cut': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-previous-word': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-next-word': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-extend-previous': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-extend-next': ['Manage talks', 'Importer, Studio, Runs'],
   // Return Live (freeze and mark on a live web page, 2026-10-28): beside Pointer and Pen in Display modes.
   'presenter-palette.return-live': ['Present', 'Display modes'],
   // Object cards (ADR-0042, 2026-10-28): beside the other object keys in the map's Objects.
@@ -148,6 +160,16 @@ const BUILDER_PLACED = {
   history: ['Manage talks', 'Importer, Studio, Runs'],
   importer: ['Manage talks', 'Importer, Studio, Runs'],
   'studio.sidebar-toggle': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.trim-start': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.trim-end': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.trim-undo': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.trim-redo': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-play': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-cut': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-previous-word': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-next-word': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-extend-previous': ['Manage talks', 'Importer, Studio, Runs'],
+  'studio.editor-extend-next': ['Manage talks', 'Importer, Studio, Runs'],
   'importer.flagged': ['Manage talks', 'Importer, Studio, Runs'],
   'importer.search': ['Manage talks', 'Importer, Studio, Runs'],
   'importer.apply': ['Manage talks', 'Importer, Studio, Runs'],
@@ -283,7 +305,7 @@ test('the count per task group is derived and equals the map plus the builder\'s
   for (const record of map.records.filter((r) => r.class === 'command' && !BUILDER_PLACED[r.id])) expected[record.task] += 1
   for (const [, [task]] of Object.entries(BUILDER_PLACED)) expected[task] += 1
   assert.deepEqual(counts, expected)
-  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 305) // Consistency batch 3 adds `runs` and `tools-view-runs` (History and Sessions stay as aliases). // House rule R18 folds View: Editor only and View: Editor + slides into View: Slides (one fewer). // Set aside in Scratchpad adds one (slide handling 3); Search slides in the grid, Next search result and Previous search result add three (slide handling 2); Select section, Clear slide selection and Move selected slides to… add three (slide handling 1b); Return Live (freeze and mark) adds one; Insert › Speaker notes adds one; the object cards add six (expand, Discard, row up/down, delete comment, insert speaker notes); Capture embed… adds one; Insert HTML page… adds one; six research tidy/cross-talk commands added; ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one; the Tools window and Attach commands add fifteen; the research folder adds two (Capture to research…, Reveal research folder) Slide Scratchpad adds fifteen (ticket 2: insert slide, insert visual, compare, change place); Capture embed… adds one; Insert HTML page… adds one; six research tidy/cross-talk commands added; ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one; the Tools window and Attach commands add fifteen; the research folder adds two (Capture to research…, Reveal research folder)
+  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 316) // The recording editor adds six Studio keys (play, cut, previous and next word, extend back and on). The recording panel adds four Studio keys (trim start, trim end, undo and redo a trim). Consistency batch 3 adds `runs` and `tools-view-runs` (History and Sessions stay as aliases). // House rule R18 folds View: Editor only and View: Editor + slides into View: Slides (one fewer). // Set aside in Scratchpad adds one (slide handling 3); Search slides in the grid, Next search result and Previous search result add three (slide handling 2); Select section, Clear slide selection and Move selected slides to… add three (slide handling 1b); Return Live (freeze and mark) adds one; Insert › Speaker notes adds one; the object cards add six (expand, Discard, row up/down, delete comment, insert speaker notes); Capture embed… adds one; Insert HTML page… adds one; six research tidy/cross-talk commands added; ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one; the Tools window and Attach commands add fifteen; the research folder adds two (Capture to research…, Reveal research folder) Slide Scratchpad adds fifteen (ticket 2: insert slide, insert visual, compare, change place); Capture embed… adds one; Insert HTML page… adds one; six research tidy/cross-talk commands added; ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one; the Tools window and Attach commands add fifteen; the research folder adds two (Capture to research…, Reveal research folder)
 })
 
 test('a chord becomes the key event that matches it', () => {

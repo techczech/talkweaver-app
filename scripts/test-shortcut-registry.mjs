@@ -329,7 +329,7 @@ const BINDING_MAP = new Map([
   ['src/preload/present-edit-bridge.ts', ['presenter.edit']],
   ['src/preload/present-guide.ts', ['presenter.guide']],
   ['src/preload/present-live-bridge.ts', ['presenter.live', 'presenter.close']],
-  ['src/preload/present-rec-ui.ts', ['presenter.record', 'presenter.record-pause', 'presenter.save-run-as', 'presenter.save-run', 'presenter.close', 'presenter.next', 'presenter.previous']],
+  ['src/preload/present-rec-ui.ts', ['presenter.record', 'presenter.record-flag', 'presenter.record-pause', 'presenter.save-run-as', 'presenter.save-run', 'presenter.close', 'presenter.next', 'presenter.previous']],
   ['src/renderer/src/App.tsx', ['app.sidebar-talks', 'app.sidebar-outline', 'app.sidebar-toggle', 'app.settings']],
   // The image drawer (ticket 11): docked beside the editor; keys act only while focus is inside it.
   ['src/renderer/src/components/ResearchPanel.tsx', ['research.previous', 'research.next', 'research.insert', 'research.make-slide', 'research.open', 'research.scope', 'research.close']],
@@ -360,6 +360,8 @@ const BINDING_MAP = new Map([
   ['src/renderer/src/components/SlideFocus.tsx', ['browser.move', 'browser.open', 'browser.close']],
   ['src/renderer/src/components/SlidesOrganizer.tsx', ['browser.move', 'browser.open', 'browser.close']],
   ['src/renderer/src/components/Studio.tsx', ['app.help', 'browser.move', 'browser.open', 'browser.close']],
+  // The recording editor matches its keys with shortcutEventMatches over KEYS (registry ids); Escape closes the most local thing.
+  ['src/renderer/src/components/recording/RecordingEditor.tsx', ['studio.editor-play', 'studio.editor-cut', 'studio.editor-previous-word', 'studio.editor-next-word', 'studio.editor-extend-previous', 'studio.editor-extend-next', 'studio.trim-undo', 'studio.trim-redo', 'studio.trim-start', 'studio.trim-end']],
   // The Tools window's keys (work-files ticket 30): one handler runs every `tools.*` chord, and ⌘⇧P opens that window's palette.
   ['src/renderer/src/components/ToolsPalette.tsx', ['app.command-palette', 'tools.view-sessions', 'tools.view-published', 'tools.view-workfiles', 'tools.plan-run', 'tools.edit-plan', 'tools.plan-like-this', 'tools.publish', 'tools.go-live', 'tools.open-run', 'tools.copy-link', 'tools.copy-invitation', 'tools.new-work-file']],
   ['src/renderer/src/components/TalkText.tsx', ['talktext.notes', 'talktext.script', 'talktext.rewrite', 'talktext.show-slide', 'talktext.previous-slide', 'talktext.next-slide', 'talktext.copy', 'talktext.help', 'talktext.close']],
@@ -650,6 +652,7 @@ const PRESENTER_KEY_CLAIMS = [
   ['present-rec-ui', /e\.key === 'L' \|\| e\.key === 'l'/, ['presenter.save-run-as']],
   ['present-rec-ui', /saveToast\.classList\.contains\('show'\) && e\.key === 'Enter'/, ['presenter.save-run']],
   ['present-rec-ui', /e\.key === 'R' \|\| e\.key === 'r'/, ['presenter.record']],
+  ['present-rec-ui', /e\.key === 'M' \|\| e\.key === 'm'/, ['presenter.record-flag']],
   ['present-rec-ui', /e\.key === 'P' \|\| e\.key === 'p'/, ['presenter.record-pause']],
   ['present-live-bridge', /event\.key === 'Escape' && !panel\.hidden/, ['presenter.close']],
   ['present-live-bridge', /event\.key === 'g' \|\| event\.key === 'G'/, ['presenter.live']],

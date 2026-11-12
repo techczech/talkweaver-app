@@ -22,6 +22,8 @@ import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
 import { TITLE_REGIME_BY_LAYOUT } from '../compiler/scripts/lib/trigger-dictionary.generated.mjs'
 import { buildLayoutSampler } from './build-layout-sampler.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dir = mkdtempSync(join(tmpdir(), 'tw-title-regime-'))
@@ -45,7 +47,7 @@ async function compileSlide(title, trigger, body = ['- One', '- Two']) {
   ].join('\n')
   const path = join(dir, `${++probe}.md`)
   writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, title, statSync(path))
+  const model = await prepareSource(path, inClassicLook(source), title, statSync(path))
   return { model, html: await buildDeckHtmlFromModel(model) }
 }
 
@@ -155,7 +157,7 @@ for (const override of OVERRIDES) {
 // -----------------------------------------------------------------------------
 // 4. The title is never demoted to a kicker — anywhere in the sampler.
 // -----------------------------------------------------------------------------
-const { html: samplerHtml } = await buildLayoutSampler()
+const { html: samplerHtml } = await buildLayoutSampler(undefined, { classic: true })
 const samplerDoc = new JSDOM(samplerHtml).window.document
 const norm = (value) => String(value ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
 const duplicated = []
@@ -190,7 +192,7 @@ assert.equal(samplerHtml.includes('kicker-compact'), false, 'the kicker-compact 
     ].join('\n')
     const path = join(dir, `kicker-${++probe}.md`)
     writeFileSync(path, source, 'utf8')
-    const model = await prepareSource(path, source, 'Kicker probe', statSync(path))
+    const model = await prepareSource(path, inClassicLook(source), 'Kicker probe', statSync(path))
     const doc = new JSDOM(await buildDeckHtmlFromModel(model)).window.document
     const kickers = {}
     for (const section of doc.querySelectorAll('section.slide')) {
@@ -224,7 +226,7 @@ assert.equal(samplerHtml.includes('kicker-compact'), false, 'the kicker-compact 
   ].join('\n')
   const path = join(dir, 'emitter.md')
   writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, 'One emitter', statSync(path))
+  const model = await prepareSource(path, inClassicLook(source), 'One emitter', statSync(path))
   const doc = new JSDOM(await buildDeckHtmlFromModel(model)).window.document
   const byId = (id) => {
     const section = doc.querySelector(`section.slide[data-id="${id}"]`)
@@ -266,7 +268,7 @@ assert.equal(samplerHtml.includes('kicker-compact'), false, 'the kicker-compact 
   ].join('\n')
   const path = join(dir, 'compact.md')
   writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, 'Compact title probe', statSync(path))
+  const model = await prepareSource(path, inClassicLook(source), 'Compact title probe', statSync(path))
   const htmlPath = join(dir, 'compact.html')
   writeFileSync(htmlPath, model.fullHtml, 'utf8')
   const browser = await chromium.launch({ headless: true })
@@ -348,7 +350,7 @@ assert.equal(samplerHtml.includes('kicker-compact'), false, 'the kicker-compact 
       ].join('\n')
       const path = join(dir, `band-${look || 'unset'}.md`)
       writeFileSync(path, source, 'utf8')
-      const model = await prepareSource(path, source, 'Band probe', statSync(path))
+      const model = await prepareSource(path, inClassicLook(source), 'Band probe', statSync(path))
       const htmlPath = join(dir, `band-${look || 'unset'}.html`)
       writeFileSync(htmlPath, model.fullHtml, 'utf8')
       const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } })

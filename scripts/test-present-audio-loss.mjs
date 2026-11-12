@@ -43,7 +43,7 @@ const repo = fileURLToPath(new URL('..', import.meta.url))
 const bundled = await build({
   entryPoints: [join(repo, 'src/preload/present-recorder.ts')], bundle: true, write: false, format: 'iife', globalName: 'Recorder', platform: 'browser', logLevel: 'silent',
   plugins: [{ name: 'preload-boundaries', setup(b) {
-    b.onLoad({ filter: /present-recorder\.ts$/ }, async (args) => ({ contents: readFileSync(args.path,'utf8').replace('mountRecUi(controller)', 'window.testController = controller; mountRecUi(controller)'), loader: 'ts' }))
+    b.onLoad({ filter: /present-recorder\.ts$/ }, async (args) => ({ contents: readFileSync(args.path,'utf8').replace('mountRecUi(controller', 'window.testController = controller; mountRecUi(controller'), loader: 'ts' }))
     b.onResolve({ filter: /^electron$|present-edit-bridge$|present-live-bridge$/ }, (args) => ({ path: args.path, namespace: 'test' }))
     b.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'electron' ? 'export const ipcRenderer = window.testIpc' : 'export const mountEditBridge = () => {}; export const mountLiveBridge = () => {};', loader: 'js' }))
   } }]
@@ -379,6 +379,40 @@ try {
     await p.waitForSelector('#twrec-mic:not([hidden])')
     return p
   }
+
+  await check('layered presenter untouched record cluster opens no devices; menu previews without writing; Preview off closes devices', async () => {
+    const p = await roomPage(() => {
+      window.ctx.layered = true; window.ctx.captureChoice = 'camera'; window.realStreams = true; window.previewStreams = []
+      window.devices.push({kind:'videoinput',deviceId:'fakecam',label:'Fake camera'})
+      const invoke = window.testIpc.invoke
+      window.testIpc.invoke = (channel,...args) => channel === 'recording:devices'
+        ? Promise.resolve({camera:'granted',settings:{camera:'Fake camera',cameraDeviceId:'fakecam'}}) : invoke(channel,...args)
+      const acquire = navigator.mediaDevices.getUserMedia
+      navigator.mediaDevices.getUserMedia = async constraints => {
+        let stream
+        if (constraints.video) {
+          window.micOpens++
+          const canvas=document.createElement('canvas');canvas.width=4;canvas.height=4;canvas.getContext('2d').fillRect(0,0,4,4)
+          stream=canvas.captureStream(1)
+        } else stream=await acquire(constraints)
+        window.previewStreams.push(stream);return stream
+      }
+    })
+    await p.waitForTimeout(350)
+    assert.equal(await p.evaluate(() => window.micOpens), 0)
+    await p.keyboard.press('ArrowRight'); await p.keyboard.press('ArrowLeft')
+    assert.equal(await p.evaluate(() => window.micOpens), 0)
+    await p.locator('#twrec-mic').click()
+    await p.waitForFunction(() => Number(document.querySelector('#twrec-idle-meter').getAttribute('aria-valuenow')) > 0)
+    await p.waitForFunction(() => window.previewStreams.some(stream => stream.getVideoTracks().some(track => track.readyState === 'live')))
+    assert.ok(await p.evaluate(() => window.previewStreams.some(stream => stream.getAudioTracks().some(track => track.readyState === 'live'))))
+    assert.equal((await callsNamed(p, 'recording:stream-open')).length, 0)
+    assert.equal((await callsNamed(p, 'recording:save')).length, 0)
+    await p.locator('#twrec-preview').check()
+    await p.locator('#twrec-preview').uncheck()
+    await p.waitForFunction(() => window.previewStreams.every(stream => stream.getTracks().every(track => track.readyState === 'ended')))
+    await p.close()
+  })
 
   for (const paused of [false, true]) await check(paused ? 'switch paused, resume, Stop: actual files keep bytes and spans' : 'lost permanently: notice offers another input, new segment resumes, earlier file intact', async () => {
     const disk = mkdtempSync(resolve('.test-mic-disk-'))
@@ -748,6 +782,23 @@ try {
     await p.close()
   })
 
+  await check('idle microphone meter is inline and Start again discards only the live take after confirmation', async () => {
+    const p = await roomPage()
+    await p.waitForSelector('#twrec-idle-meter')
+    assert.equal((await callsNamed(p, 'recording:stream-open')).length, 0)
+    await p.locator('#twrec-primary').click()
+    await p.waitForFunction(() => window.calls.some(([c]) => c === 'recording:stream-append'))
+    await p.locator('#twrec-again').click()
+    await p.locator('#twrec-restart-cancel').click()
+    assert.equal((await callsNamed(p, 'recording:stream-discard')).length, 0)
+    await p.locator('#twrec-pause').click()
+    await p.locator('#twrec-again').click()
+    await p.locator('#twrec-restart-confirm').click()
+    await p.waitForFunction(() => window.calls.some(([c]) => c === 'recording:stream-discard'))
+    assert.equal((await callsNamed(p, 'recording:save')).length, 0)
+    await p.close()
+  })
+
   for (const where of ['construct', 'start']) {
     await check(`Use it when the new recorder throws (${where === 'construct' ? 'constructor' : 'start()'}): the old one keeps recording and watching, and the presenter is told`, async () => {
       const p = await roomPage()
@@ -780,6 +831,20 @@ try {
       await p.close()
     })
   }
+  await check('unknown capture description says unknown, never none, after normal voice save', async () => {
+    const p=await browser.newPage()
+    await p.setContent('<section class="slide active" data-id="a"></section>')
+    await p.evaluate(FAKES)
+    await p.evaluate(()=>{const invoke=window.testIpc.invoke;window.testIpc.invoke=async(name,...args)=>name==='recording:save'?{ok:true,sessionId:'sess-x',kind:'delivery',captureUnknown:true}:invoke(name,...args)})
+    await p.addScriptTag({content:bundled.outputFiles[0].text})
+    await p.locator('#twrec-primary').click()
+    await p.waitForFunction(()=>window.calls.some(([c])=>c==='recording:stream-append'))
+    await p.locator('#twrec-stop').click()
+    await p.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='saved')
+    const text=await p.locator('#twrec-saved-text').textContent()
+    assert.match(text,/slides: unknown/);assert.match(text,/camera: unknown/);assert.doesNotMatch(text,/: none/)
+    await p.close()
+  })
 } finally {
   await browser.close()
 }

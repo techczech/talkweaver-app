@@ -22,7 +22,7 @@ import { VALUE_TRIGGER_DICTIONARY } from '../compiler/scripts/lib/trigger-dictio
 import { optionGroupsForSlide, sectionedOptionGroups } from '../src/shared/layout-registry/options.ts'
 import { resolveTitleLook } from '../compiler/scripts/lib/title-look.mjs'
 import { commitOptionSelection, groupHasSelection, selectionForGroup } from '../src/shared/trigger-line.ts'
-import { talkNamesTitleLook, withoutLaterSlideStamps } from './lib/slide-markup-identity.mjs'
+import { inClassicLook, talkNamesTitleLook, withoutLaterSlideStamps } from './lib/slide-markup-identity.mjs'
 
 const dir = mkdtempSync(join(tmpdir(), 'tw-title-look-'))
 let n = 0
@@ -33,7 +33,7 @@ async function compile(frontmatter, slides, body = '- One\n- Two') {
   ].join('\n')
   const path = join(dir, `${++n}.md`)
   writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, 'Title look probe', statSync(path))
+  const model = await prepareSource(path, inClassicLook(source), 'Title look probe', statSync(path))
   const html = await buildDeckHtmlFromModel(model)
   const doc = new JSDOM(html).window.document
   const slide = (id) => doc.querySelector(`section.slide[data-id="${id}"]`)
@@ -197,7 +197,7 @@ async function compileRaw(frontmatter, outline) {
   const source = ['---', 'title: Title look probe', 'auto_title_slide: false', 'auto_thanks_slide: false', ...frontmatter, '---', '', outline].join('\n')
   const path = join(dir, `${++n}.md`)
   writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, 'Title look probe', statSync(path))
+  const model = await prepareSource(path, inClassicLook(source), 'Title look probe', statSync(path))
   const doc = new JSDOM(await buildDeckHtmlFromModel(model)).window.document
   return { model, doc, slide: (id) => doc.querySelector(`section.slide[data-id="${id}"]`) }
 }

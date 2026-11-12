@@ -14,11 +14,14 @@
 // files never change a stored transcript. No Electron import here: index.ts hands in ipcMain, and the tests
 // drive createTranscription directly.
 
+import { withoutAlignment } from './alignment-result.ts'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
+import { validRange, validSilence, validEnds, validLocale, normaliseTranscript, transcriptForPublish } from './transcript-validation.ts'
 import { tmpdir } from 'os'
 import { basename, dirname, join } from 'path'
 import { spawn, type ChildProcess } from 'child_process'
-import { randomBytes } from 'crypto'
+import { randomBytes, createHash } from 'crypto'
+import { trimWords, mapSentences, segmentWordEnds, rematchCorrections, type TranscriptMetadata, type TranscriptEngine } from '../shared/transcript-contract.ts'
 import {
   audibleSegmentPaths, recordedSegmentPaths, readRecordingSource, transcriptPath as transcriptPathFor,
   type RecordingPath
@@ -33,8 +36,8 @@ export const DEFAULT_TRANSCRIPTION_PYTHON = ''
 export const DEFAULT_TRANSCRIPTION_SCRIPT = ''
 
 export type TranscriptSegment = { start: number; end: number; text: string }
-export type TranscriptJson = {
-  engine: 'parakeet'
+export type TranscriptJson = TranscriptMetadata & {
+  engine: TranscriptEngine
   createdAt: string
   /** Present when a measured leading delay was included by the transcriber. */
   timingClock?: 'recording' | 'recording-v2'
@@ -46,7 +49,7 @@ export type TranscriptJson = {
 }
 
 /** One word, in milliseconds on the recording clock (the segments' unit and clock). */
-export type WordTiming = { text: string; start: number; end: number }
+export type WordTiming = import('../shared/transcript-contract.ts').TranscriptWord
 export type WordsJson = {
   engine: 'parakeet'
   createdAt: string
@@ -63,18 +66,28 @@ export interface TranscriptionConfig {
   python: string
   script: string
   ffmpeg?: string
+  engine?: 'native' | 'parakeet' | null
+  locale?: string
 }
 
 export interface TranscriptionDeps {
   userDataDir: () => string // app.getPath('userData')
+  vaultForHome?: (home:unknown)=>string|null|undefined
   vaultRoot: () => string | null // the current vault's root (vault registry)
   config: () => TranscriptionConfig // Settings -> Transcription, with defaults expanded
   // The Transcription row and the ffmpeg to use, for these settings (transcription-setup.ts).
   readiness: () => { row: TranscriptionRow; ffmpeg: FfmpegResolution }
+  selection?: () => Pick<TranscriptionConfig, 'engine' | 'locale'>
+  alignAfterTranscription?: (slug:string,sid:string,root?:string|null)=>Promise<void>
+  jobOwner?: symbol
+  nativeHelper?: () => string | null
   testMode?: () => boolean // TW_REC_TEST=1: deterministic fixture, no Python
   /** The file operations the stored transcript and words go through (default: node:fs); tests inject failures. */
   files?: TranscriptionFiles
   /** How long the script's --help may take before it is stopped (default 30 s). */
+  annotationTimeoutMs?: number
+  nativeAvailable?: (locale: string) => Promise<boolean>
+  savedRunDeps?: (senderId: number, sessionId: string) => TranscriptionDeps | null
   probeTimeoutMs?: number
 }
 
@@ -246,12 +259,14 @@ function spawnAndCollect(
   sink: ProgressSink | null,
   progressPrefix?: string,
   env?: NodeJS.ProcessEnv,
-  timeoutMs?: number
+  timeoutMs?: number,
+  stdoutProgress = true
 ): Promise<{ ok: true; stdout: string; stderr: string } | { ok: false; error: string; stderr: string }> {
   return new Promise((resolve) => {
+    if (job.cancelled) { resolve({ok:false,error:'cancelled',stderr:''}); return }
     let child: ChildProcess
     try {
-      child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env })
+      child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'], env, detached: process.platform !== 'win32' })
     } catch (e) {
       resolve({ ok: false, error: String(e), stderr: '' })
       return
@@ -264,15 +279,18 @@ function spawnAndCollect(
     const finish = (result: { ok: true; stdout: string; stderr: string } | { ok: false; error: string; stderr: string }): void => {
       if (settled) return
       settled = true
+      // Only a live child still owns this process-group identity.
+      killChildTree(child, 'SIGKILL')
       if (timer) clearTimeout(timer)
       if (killTimer) clearTimeout(killTimer)
+      job.child = null
       resolve(result)
     }
     // Past its time: SIGTERM, then SIGKILL after a grace, and the job stops waiting either way.
     timer = timeoutMs ? setTimeout(() => {
-      try { child.kill('SIGTERM') } catch { /* gone */ }
+      try { killChildTree(child, 'SIGTERM') } catch { /* gone */ }
       killTimer = setTimeout(() => {
-        try { child.kill('SIGKILL') } catch { /* gone */ }
+        try { killChildTree(child, 'SIGKILL') } catch { /* gone */ }
         finish({ ok: false, error: 'timeout', stderr })
       }, KILL_GRACE_MS)
     }, timeoutMs) : null
@@ -282,7 +300,11 @@ function spawnAndCollect(
       const text = chunk.toString()
       if (stream === 'stdout') stdout += text
       else stderr += text
-      if (!sink) return
+      if (stdout.length + stderr.length > 64 * 1024 * 1024) {
+        try { killChildTree(child, 'SIGKILL') } catch { /* gone */ }
+        finish({ok:false,error:'Transcription output exceeded the safety limit.',stderr:''}); return
+      }
+      if (!sink || (stream === 'stdout' && !stdoutProgress)) return
       for (const line of text.split(/\r?\n/)) {
         if (line.trim()) emitProgress(sink, progressPrefix ? `${progressPrefix}: ${line}` : line)
       }
@@ -319,30 +341,35 @@ export interface Transcription {
   /** The stored transcript and whether words exist for the Run; null when there is none or a name is unsafe. */
   get(talkSlug: unknown, sessionId: unknown): Promise<TranscriptRead | null>
   /** Transcribe one Run (one job at a time); progress notes go to `sink`. */
-  run(talkSlug: unknown, sessionId: unknown, sink: ProgressSink | null, signal?: AbortSignal): Promise<TranscriptRunResult>
+  run(talkSlug: unknown, sessionId: unknown, sink: ProgressSink | null, signal?: AbortSignal, choice?: 'native' | 'parakeet'): Promise<TranscriptRunResult>
   /** Stop the running job; its files on disk stay as they were before it started. */
   cancel(): { ok: true }
 }
 
+function killChildTree(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  try { if (process.platform !== 'win32' && child.pid) process.kill(-child.pid, signal); else child.kill(signal) } catch { /* gone */ }
+}
 function stopTranscriptionJob(job: ActiveJob): void {
   job.cancelled = true
-  const child = job.child
-  try {
-    child?.kill('SIGTERM')
-  } catch {
-    /* already gone */
-  }
-  // A child that ignores SIGTERM: SIGKILL after the grace, and the job stops waiting for it.
-  if (child) {
-    const late = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) {
-        try { child.kill('SIGKILL') } catch { /* gone */ }
-        job.abandon?.()
-      }
-    }, KILL_GRACE_MS)
-    late.unref?.()
-  }
+  if (job.child) killChildTree(job.child, 'SIGKILL')
+  job.abandon?.()
   removeTemps(job.tempPaths)
+}
+/** Synchronous quit barrier: do not wait for Electron's event loop or child close. */
+const routeJobs = new Set<ActiveJob>()
+export function stopActiveTranscription(): void { if (activeJob) stopTranscriptionJob(activeJob); for (const job of routeJobs) stopTranscriptionJob(job) }
+/** Only our exact temp pattern, and only dead owners; other app instances stay untouched. */
+export function sweepTranscriptionTemps(folder?: string): void {
+  try {
+    folder ??= tmpdir()
+    for (const name of readdirSync(folder)) {
+      const match = /^talkweaver-.+-(\d+)-\d+-[0-9a-f]{8}\.(wav|srt|words\.json)$/.exec(name)
+      if (!match) continue
+      try { process.kill(Number(match[1]), 0); continue } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') continue }
+      removeTemps([join(folder, name)])
+    }
+  } catch { /* Optional cleanup must never prevent startup. */ }
 }
 
 // Transcription has one writer across the normal IPC and captured-vault package operations.
@@ -350,7 +377,7 @@ let activeJob: ActiveJob | null = null
 
 /** The transcription service: one job at a time, the words-option answer remembered per script. */
 export function createTranscription(deps: TranscriptionDeps): Transcription {
-  const owner=Symbol('transcription-service')
+  const owner=deps.jobOwner ?? Symbol('transcription-service')
   const files = deps.files ?? nodeFiles
   // `<python>\0<script>\0<mtime:size>` → whether that script's --help offers `--words`.
   const offersWords = new Map<string, boolean>()
@@ -370,14 +397,18 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
   }
 
   /** Transcript and timings share one canonical file and one atomic commit point. */
-  function store(slug: string, sid: string, transcript: TranscriptJson, words: WordTiming[], _sink: ProgressSink | null): TranscriptRunResult {
+  function store(slug: string, sid: string, transcript: TranscriptJson, words: WordTiming[], _sink: ProgressSink | null, beforePublish?: () => void): TranscriptRunResult {
+    const storedRoot=deps.vaultRoot()
     const target = transcriptPath(deps, slug, sid)
     if (!target.ok) return {ok:false,error:target.error}
     mkdirSync(dirname(target.path),{recursive:true})
     const temp = `${target.path}.${process.pid}.${Date.now().toString(36)}${randomBytes(4).toString('hex')}.tmp`
     try {
       files.writeFile(temp,JSON.stringify({...transcript,words} satisfies TranscriptJson,null,2))
+      beforePublish?.()
       files.rename(temp,target.path)
+      queueMicrotask(()=>{void deps.alignAfterTranscription?.(slug,sid,storedRoot).catch(()=>{})})
+      try { rmSync(`${target.path}.attempt.json`,{force:true}) } catch { /* optional status */ }
     } catch (error) {
       throw new Error(`The transcript and word timings could not be saved: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
@@ -391,7 +422,8 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
       try {
         const target = transcriptPath(deps, String(talkSlug), String(sessionId))
         if (!target.ok) return null
-        let transcript = JSON.parse(readFileSync(target.path, 'utf8')) as TranscriptJson
+        let transcript = normaliseTranscript(JSON.parse(readFileSync(target.path, 'utf8')))
+        if (!transcript) return null
         try {
           // Older multi-segment transcoders concatenated actual media durations. Their offsets
           // cannot be repaired from metadata alone; flag them without changing the saved pair.
@@ -419,7 +451,7 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
       return { ok: true }
     },
 
-    async run(talkSlug, sessionId, sink, signal) {
+    async run(talkSlug, sessionId, sink, signal, choice) {
       if (signal?.aborted) return { ok: false, error: 'cancelled' }
       if (activeJob) return { ok: false, error: 'busy' }
 
@@ -430,6 +462,33 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
       const target = transcriptPath(deps, String(talkSlug), String(sessionId))
       if (!target.ok) return { ok: false, error: target.error }
 
+      const capturedRoot = deps.vaultRoot()
+      const capturedUserData = deps.userDataDir()
+      const sourceStamp = () => {
+        const source = readRecordingSource(capturedRoot, capturedUserData, slug, sid)
+        const audio = recordedSegmentPaths(capturedUserData, sid, source)
+        const hash = createHash('sha256').update(JSON.stringify({kind:source?.kind,id:source?.record.id ?? source?.record.sessionId,recordingMs:Number(source?.record.recordingMs)}))
+        for (const segment of audio) {
+          const st = statSync(segment.path)
+          hash.update(JSON.stringify([segment, st.dev, st.ino, st.size, st.mtimeMs, st.ctimeMs]))
+        }
+        return hash.digest('hex')
+      }
+      let initialStamp: string
+      try { initialStamp = sourceStamp() } catch { return {ok:false,error:'The recording source could not be read.'} }
+      const guardPublish = () => {
+        if (job.cancelled || signal?.aborted) throw Error('cancelled')
+        if (deps.vaultRoot() !== capturedRoot || deps.userDataDir() !== capturedUserData || sourceStamp() !== initialStamp) throw Error('The recording changed. Retry with the current source.')
+      }
+      const publish = (transcript: TranscriptJson, words: WordTiming[]) => {
+        guardPublish()
+        let previous: TranscriptJson | null = null
+        try { previous = normaliseTranscript(JSON.parse(readFileSync(target.path,'utf8'))) } catch { /* first transcript */ }
+        if (!words.length && !transcript.segments.length && previous?.words?.length) return {ok:false as const,error:'No words were found; the earlier transcript was kept. Retry with another language.'}
+        const checked = transcriptForPublish(withoutAlignment({...transcript,words}))
+        if (!checked) return {ok:false as const,error:'The new timings could hide transcript content; the earlier transcript was kept. Retry with another language.'}
+        return store(slug,sid,checked,checked.words ?? [],sink,guardPublish)
+      }
       const job: ActiveJob = { owner, sessionId: sid, child: null, cancelled: false, tempPaths: [] }
       activeJob = job
       const abort = () => stopTranscriptionJob(job)
@@ -444,9 +503,14 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
           return stored
         }
 
-        const cfg = deps.config()
+        const configured = deps.config()
+        const selected = deps.selection?.()
+        const cfg = {...configured,engine:choice ?? selected?.engine ?? configured.engine,locale:selected?.locale ?? configured.locale}
         const ready = deps.readiness()
-        const refusal = transcriptionActionMessage(ready.row)
+        const native = cfg.engine === 'native'
+        const nativeHelper = native ? deps.nativeHelper?.() : null
+        if (native && (!nativeHelper || (deps.nativeAvailable && !await deps.nativeAvailable(cfg.locale || 'en-US')))) return {ok:false,error:'Built-in words are unavailable for this language on this Mac.'}
+        const refusal = native ? null : transcriptionActionMessage(ready.row)
         if (refusal || !ready.ffmpeg.found) return { ok: false, error: refusal ?? transcriptionActionMessage({ ...ready.row, state: 'ffmpeg-not-found' }) ?? 'ffmpeg could not be found. Check it in Settings → Transcription.' }
         const ffmpegPath = ready.ffmpeg.path
 
@@ -462,8 +526,8 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
         const childEnv = childEnvWithFfmpegDir(ffmpegPath)
 
         // The cheap step first: whether the script offers word timings (asked once per script version).
-        emitProgress(sink, 'Checking the transcription script.')
-        const askWords = await scriptHasWordsOption(job, cfg, childEnv)
+        emitProgress(sink, native ? 'Writing out words on this Mac.' : 'Checking the transcription script.')
+        const askWords = native ? false : await scriptHasWordsOption(job, cfg, childEnv)
         if (askWords === 'cancelled' || job.cancelled) return { ok: false, error: 'cancelled' }
 
         // pid + random as well as the time: two processes (or test runs) never share a temp name.
@@ -473,7 +537,7 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
         const wordsTemp = join(tmpdir(), `talkweaver-${base}.words.json`)
         job.tempPaths.push(wavPath, srtPath, wordsTemp)
 
-        emitProgress(sink, sources.length > 1 ? `Joining ${sources.length} audio segments into one WAV for Parakeet.` : 'Converting WebM audio to WAV for Parakeet.')
+        emitProgress(sink, native ? 'Preparing the saved voice for built-in words.' : sources.length > 1 ? `Joining ${sources.length} audio segments into one WAV for Parakeet.` : 'Converting WebM audio to WAV for Parakeet.')
         const ffmpeg = await spawnAndCollect(job, ffmpegPath, recordingTranscodeArgs(audioSegments,recordingMs,wavPath), sink, 'ffmpeg', childEnv)
         if (!ffmpeg.ok) {
           if (ffmpeg.error === 'cancelled') return { ok: false, error: 'cancelled' }
@@ -481,6 +545,34 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
         }
         if (job.cancelled) return { ok: false, error: 'cancelled' }
 
+        if (native) {
+          const helper = deps.nativeHelper?.()
+          if (!helper) return {ok:false,error:'Built-in words need macOS 26 and the speech helper. Choose an installed better model in Settings → Recording.'}
+          const result = await spawnAndCollect(job, helper, [wavPath, cfg.locale || 'en-US'], sink, undefined, undefined, 30 * 60_000, false)
+          if (!result.ok) return {ok:false,error:result.error === 'cancelled' ? 'cancelled' : humanProcessError('Words could not be written out. Retry',result)}
+          const raw = JSON.parse(result.stdout)
+          if (!['apple-speech-transcriber','apple-dictation'].includes(raw.engine) || !Array.isArray(raw.words) || !Array.isArray(raw.segments)) throw Error('Invalid native transcript')
+          if (!validLocale(raw.locale)) throw Error('Invalid native locale')
+          const returned = raw.words.map((w: any) => ({text:w?.text,start:w?.startMs,end:w?.endMs})) as WordTiming[]
+          const segments = raw.segments.map((r: any) => ({text:r?.text,start:r?.startMs,end:r?.endMs})) as TranscriptSegment[]
+          if (returned.some(w=>!validRange(w)||typeof w.text!=='string') || segments.some(r=>!validRange(r)||typeof r.text!=='string')) throw Error('Invalid native word ranges')
+          if (returned.some((w,i)=>i > 0 && w.start < returned[i-1].end) || segments.some((s,i)=>i > 0 && s.start < segments[i-1].start)) throw Error('Native ranges overlap or are out of order')
+          if (!validSilence(raw.silence)) raw.silence = []
+          if (!validEnds(raw.sentenceEnds, returned.length)) raw.sentenceEnds = []
+          // Token indices refer to the helper's list: remap after dropping empty tokens.
+          const nativeEnds = new Set<number>(raw.sentenceEnds)
+          const keptEnds: number[] = []; const cleaned: WordTiming[] = []
+          returned.forEach((w,i)=>{const text=w.text.trim();if(text)cleaned.push({...w,text});if(nativeEnds.has(i) && cleaned.length)keptEnds.push(cleaned.length-1)})
+          const coverage = Number.isFinite(recordingMs) ? recordingMs : Math.max(...audioSegments.map(a=>a.endMs))
+          if (Number.isFinite(coverage) && returned.some(w=>w.end > coverage + 100)) throw Error('Native words extend beyond the recording')
+          const words = trimWords(cleaned,raw.silence)
+          let old: TranscriptJson | null = null
+          try { old = normaliseTranscript(JSON.parse(readFileSync(target.path,'utf8'))) } catch { /* first transcript */ }
+          const corrections = rematchCorrections([...(old?.captionCorrections ?? []),...(old?.unmatchedCorrections ?? [])],words)
+          return publish({engine:raw.engine,createdAt:new Date().toISOString(),timingClock:'recording-v2',schemaVersion:2,locale:raw.locale,
+            engineVersion:typeof raw.engineVersion === 'string' ? raw.engineVersion : 'apple-speech-26',configVersion:'pcm-10ms-hysteresis-v1',sourceFingerprint:initialStamp,segments,
+            silence:raw.silence,sentences:mapSentences(words,keptEnds,raw.silence,segmentWordEnds(cleaned,segments)),captionCorrections:corrections.matched,unmatchedCorrections:corrections.unmatched},words)
+        }
         emitProgress(sink, askWords ? 'Running Parakeet transcription with word timings.' : 'Running Parakeet transcription.')
         const args = [cfg.script, wavPath, '-o', srtPath, ...(askWords ? ['--words', wordsTemp] : [])]
         const parakeet = await spawnAndCollect(job, cfg.python, args, sink, undefined, childEnv)
@@ -504,7 +596,30 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
           }
           words = parseWordsJson(JSON.stringify(list))
         }
-        const stored = store(slug, sid, { engine: 'parakeet', createdAt: new Date().toISOString(), segments, timingClock:'recording-v2' }, words, sink)
+        const segmentEnds = segmentWordEnds(words,segments)
+        let annotation: Pick<TranscriptJson,'silence'|'sentences'|'acousticMeasurement'> = {
+          acousticMeasurement:'unavailable',
+          sentences:mapSentences(words,[],[],segmentEnds)
+        }
+        const helper = deps.nativeHelper?.()
+        if (helper && words.length) {
+          try {
+            files.writeFile(wordsTemp,JSON.stringify(words.map(w=>({text:w.text,startMs:w.start,endMs:w.end}))))
+            const result = await spawnAndCollect(job,helper,['--annotate',wavPath,cfg.locale || 'en-US',wordsTemp],null,undefined,undefined,deps.annotationTimeoutMs ?? 30 * 60_000,false)
+            if (job.cancelled) return {ok:false,error:'cancelled'}
+            if (result.ok) {
+              const measured = JSON.parse(result.stdout)
+              if (!validSilence(measured.silence) || !validEnds(measured.sentenceEnds,words.length)) throw Error('Invalid acoustic map')
+              const trimmed = trimWords(words,measured.silence)
+              words = words.map((w,i)=>({...w,trimmedStart:trimmed[i].start,trimmedEnd:trimmed[i].end,timing:trimmed[i].timing}))
+              annotation = {acousticMeasurement:'available',silence:measured.silence,sentences:mapSentences(words,measured.sentenceEnds,measured.silence,segmentEnds)}
+            }
+          } catch { if (job.cancelled) return {ok:false,error:'cancelled'} /* Optional measurement cannot discard Parakeet. */ }
+        }
+        let previous: TranscriptJson | null = null
+        try { previous = normaliseTranscript(JSON.parse(readFileSync(target.path,'utf8'))) } catch { /* first transcript */ }
+        const corrections = rematchCorrections([...(previous?.captionCorrections ?? []),...(previous?.unmatchedCorrections ?? [])],words)
+        const stored = publish({ engine: 'parakeet', createdAt: new Date().toISOString(), segments, timingClock:'recording-v2', schemaVersion:2, locale:cfg.locale || 'en-US',engineVersion:scriptStamp(cfg.script),configVersion:'parakeet-v1',sourceFingerprint:initialStamp,...annotation,captionCorrections:corrections.matched,unmatchedCorrections:corrections.unmatched }, words)
         if (stored.ok) {
           emitProgress(sink, stored.hasWords
             ? `Transcript written with ${segments.length} segments and ${words.length} word timings.`
@@ -512,7 +627,7 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
         }
         return stored
       } catch (e) {
-        return { ok: false, error: String(e) }
+        return { ok: false, error: job.cancelled || (e instanceof Error && e.message === 'cancelled') ? 'cancelled' : String(e) }
       } finally {
         signal?.removeEventListener('abort', abort)
         if (activeJob === job) {
@@ -524,19 +639,106 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
   }
 }
 
-type IpcSender = { send(channel: string, payload: unknown): void; isDestroyed(): boolean }
+type IpcSender = { id?: number; send(channel: string, payload: unknown): void; isDestroyed(): boolean }
 type IpcMainLike = { handle(channel: string, listener: (event: { sender: IpcSender }, ...args: unknown[]) => unknown): void }
 
 export function registerTranscriptionIpc(ipc: IpcMainLike, deps: TranscriptionDeps): Transcription {
   const transcription = createTranscription(deps)
-  ipc.handle('transcript:get', (_event, talkSlug: unknown, sessionId: unknown) => transcription.get(talkSlug, sessionId))
+  const savedDeps = (event: {sender: IpcSender}, sid: unknown) => deps.savedRunDeps ? deps.savedRunDeps(event.sender.id ?? -1,String(sid)) : deps
+  ipc.handle('transcript:saved-status', (event, slug, sid) => {
+    const scoped = savedDeps(event,sid)
+    return scoped ? savedTranscriptionStatus(scoped,String(slug),String(sid)) : {state:'failed',note:'The saved Run is no longer available here. Open the Run to write out words.'}
+  })
+  ipc.handle('transcript:retry-saved', (event, slug, sid) => {
+    const scoped = savedDeps(event,sid)
+    return scoped ? transcribeSavedRun(scoped,String(slug),String(sid), note => { if (!event.sender.isDestroyed()) event.sender.send('transcript:progress',{sessionId:String(sid),note}) }) : undefined
+  })
+  ipc.handle('transcript:attempt', (_event, slug, sid) => readTranscriptionAttempt(deps,String(slug),String(sid)))
+  ipc.handle('transcript:get', async (_event, talkSlug: unknown, sessionId: unknown, home:unknown) => {
+    if(home===undefined)return transcription.get(talkSlug,sessionId)
+    const root=deps.vaultForHome?.(home);if(root===undefined)return null
+    const scoped=createTranscription({...deps,vaultRoot:()=>{if(deps.vaultForHome?.(home)!==root)throw Error('Vault unavailable');return root}})
+    const result=await scoped.get(talkSlug,sessionId)
+    return deps.vaultForHome?.(home)===root?result:null
+  })
   ipc.handle('transcript:cancel', () => transcription.cancel())
-  ipc.handle('transcript:run', (event, talkSlug: unknown, sessionId: unknown) => {
+  ipc.handle('transcript:run', (event, talkSlug: unknown, sessionId: unknown, choice: unknown) => {
     const sid = String(sessionId || '').trim()
     const sink: ProgressSink = (note) => {
       if (!event.sender.isDestroyed()) event.sender.send('transcript:progress', { sessionId: sid, note })
     }
-    return transcription.run(talkSlug, sessionId, sink)
+    return transcription.run(talkSlug, sessionId, sink, undefined, choice === 'native' || choice === 'parakeet' ? choice : undefined)
   })
   return transcription
+}
+
+export type TranscriptionAttempt = {engine:'native';time:string;reason:string|null}
+export function readTranscriptionAttempt(deps: TranscriptionDeps, slug: string, sid: string): TranscriptionAttempt | null {
+  const target = transcriptPath(deps,slug,sid)
+  if (!target.ok) return null
+  try {
+    const value = JSON.parse(readFileSync(`${target.path}.attempt.json`,'utf8'))
+    return value?.engine === 'native' && typeof value.time === 'string' && (value.reason === null || typeof value.reason === 'string') ? value : null
+  } catch { return null }
+}
+/** Cheap native route probe; model download is deferred to the actual job. */
+export async function nativeLocaleAvailable(helper: string | null, locale: string): Promise<boolean> {
+  if (!helper) return false
+  const job: ActiveJob = {owner:Symbol(),sessionId:'route',child:null,cancelled:false,tempPaths:[]}
+  routeJobs.add(job)
+  let result: Awaited<ReturnType<typeof spawnAndCollect>>
+  try { result = await spawnAndCollect(job,helper,['--route',locale],null,undefined,undefined,5000,false) } finally { routeJobs.delete(job) }
+  if (!result.ok) return false
+  try { const route=JSON.parse(result.stdout);return ['apple-speech-transcriber','apple-dictation'].includes(route.engine) && validLocale(route.locale) } catch { return false }
+}
+export type SavedWordsStatus = { state: 'checking' | 'writing' | 'ready' | 'failed' | 'unavailable' | 'none'; note: string }
+const savedWords = new Map<string, SavedWordsStatus>()
+function savedWordsKey(deps: TranscriptionDeps, slug: string, sid: string): string | null {
+  const target = transcriptPath(deps, slug, sid)
+  return target.ok ? target.path : null
+}
+export function savedTranscriptionStatus(deps: TranscriptionDeps, slug: string, sid: string): SavedWordsStatus {
+  const key = savedWordsKey(deps, slug, sid)
+  const status = key && savedWords.get(key)
+  if (status) return status
+  if (!recordedSegmentPaths(deps.userDataDir(),sid,readRecordingSource(deps.vaultRoot(),deps.userDataDir(),slug,sid)).length) return {state:'none',note:'This Run has no saved voice to write out.'}
+  return { state: 'checking', note: 'Checking built-in words on this Mac.' }
+}
+/** Automatic means built-in only. Unavailable and busy are silent, with no lasting failure. */
+export async function transcribeSavedRun(deps: TranscriptionDeps, slug: string, sid: string, sink: ProgressSink): Promise<void> {
+  if (activeJob) return
+  const root = deps.vaultRoot(), data = deps.userDataDir()
+  const stillCurrent = () => deps.vaultRoot() === root && deps.userDataDir() === data
+  const locale = deps.selection?.().locale ?? deps.config().locale ?? 'en-US'
+  const key = savedWordsKey(deps, slug, sid)
+  const remember = (status: SavedWordsStatus) => {
+    if (!key) return
+    savedWords.set(key, status)
+    if (savedWords.size > 200) savedWords.delete(savedWords.keys().next().value!)
+  }
+  if (!deps.nativeAvailable || !await deps.nativeAvailable(locale)) {
+    remember({state:'unavailable', note:'Built-in words are unavailable on this Mac or for this language. Choose an installed model in Settings → Recording, then write out the Run manually.'})
+    return
+  }
+  if (activeJob || !stillCurrent()) return
+  const progress: ProgressSink = note => { remember({state:'writing',note}); sink(note) }
+  progress('Words are being written out on this Mac.')
+  let finalNote: string | null = 'Words were not written. Retry from the Run.'
+  try {
+    const result = await createTranscription(deps).run(slug,sid,progress,undefined,'native')
+    if (result.ok) finalNote = 'Words are ready.'
+    // A manual run that started in the meantime owns Studio's busy state: say nothing.
+    if (!result.ok && result.error === 'busy') { finalNote = null; return }
+    if (!stillCurrent() || (!result.ok && (result.error === 'busy' || result.error === 'cancelled'))) return
+    if (!result.ok) finalNote = `Words could not be written out: ${result.error}. The recording is saved. Retry from the Run.`
+    const target=transcriptPath(deps,slug,sid)
+    if (target.ok) {
+      const temp=`${target.path}.attempt.json.${process.pid}.tmp`
+      try {
+        mkdirSync(dirname(target.path),{recursive:true})
+        writeFileSync(temp,JSON.stringify({engine:'native',time:new Date().toISOString(),reason:result.ok ? null : result.error} satisfies TranscriptionAttempt))
+        renameSync(temp,`${target.path}.attempt.json`)
+      } catch { /* The saved recording and transcript remain usable if optional status storage fails. */ } finally { try { rmSync(temp,{force:true}) } catch { /* optional status */ } }
+    }
+  } finally { if (finalNote) { remember({state: finalNote === 'Words are ready.' ? 'ready' : 'failed',note:finalNote}); sink(finalNote) } }
 }

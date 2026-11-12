@@ -32,6 +32,8 @@ import { VALUE_TRIGGER_DICTIONARY } from '../compiler/scripts/lib/trigger-dictio
 import { GLOBAL_OPTION_GROUPS, LAYOUTS } from '../src/shared/layout-registry/entries.ts'
 import { groupApplies, optionGroupsForSlide, sectionedOptionGroups } from '../src/shared/layout-registry/options.ts'
 import { commitOptionSelection, selectionForGroup } from '../src/shared/trigger-line.ts'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 // ── 1. Registry and Inspector ────────────────────────────────────────────────
 assert.deepEqual([...(VALUE_TRIGGER_DICTIONARY.numbered ?? [])].sort(), ['mono', 'plain', 'square', 'styled'],
@@ -107,7 +109,7 @@ const source = [
 ].join('\n')
 const path = join(dir, 'numbered-lists.md')
 writeFileSync(path, source, 'utf8')
-const model = await prepareSource(path, source, 'Numbered lists probe', statSync(path))
+const model = await prepareSource(path, inClassicLook(source), 'Numbered lists probe', statSync(path))
 const htmlPath = join(dir, 'numbered-lists.html')
 writeFileSync(htmlPath, model.fullHtml, 'utf8')
 const listOf = (id) => {

@@ -4,15 +4,18 @@ import { fileURLToPath } from 'node:url'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
 import { writeDeckStyles } from './build-deck-styles.mjs'
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repo = resolve(here, '..')
 export const samplerOutlinePath = join(repo, 'docs/layout-sampler-outline.md')
 export const samplerArtefactsDir = join(repo, 'artefacts/layout-sampler')
 
-export async function buildLayoutSampler(outputDir = samplerArtefactsDir) {
+// `classic: true` compiles the sampler in the pre-0.44 look (checks that hold the classic designs).
+export async function buildLayoutSampler(outputDir = samplerArtefactsDir, { classic = false } = {}) {
   writeDeckStyles()
-  const source = readFileSync(samplerOutlinePath, 'utf8')
+  const written = readFileSync(samplerOutlinePath, 'utf8')
+  const source = classic ? inClassicLook(written) : written
   // The sampler's two videos are test fixtures in e2e/fixtures, outside docs/: name that folder as an
   // allowed root beside the sampler's own (ADR-0036; the compiler's default is the talk's folder alone).
   const model = await prepareSource(samplerOutlinePath, source, 'TalkWeaver Layout Sampler', statSync(samplerOutlinePath), undefined,

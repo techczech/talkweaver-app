@@ -1,3 +1,4 @@
+import { createLayerStore, hasCapturedVideo } from './recording-layers.ts'
 import { recordingDurationMs } from './recording-duration'
 import { resolveFfmpeg, shippedFfmpegCandidates, systemFfmpegCandidates } from './ffmpeg-path'
 // Streaming a recording to disk while it records — the main-process IPC for the presenter's audio
@@ -10,7 +11,7 @@ import { resolveFfmpeg, shippedFfmpegCandidates, systemFfmpegCandidates } from '
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { dirname, join } from 'path'
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
-import { normaliseRun, runReservationIsFor, writeNewRunFile, type RunMark, type RunRecord } from './runs'
+import { normaliseRun, writeRunFile, runReservationIsFor, writeNewRunFile, type RunMark, type RunRecord } from './runs'
 import { existingRecordedSegmentPath, saveTargets, segmentIndexOfFile, sessionIdRandom, sessionIdTaken, vaultSessionPath } from './recording-paths'
 import { isSafeTalkSlug } from './runs'
 import { createRecordingStreams, type RecordingStreams } from './recording-stream'
@@ -122,10 +123,28 @@ export function savedRunFor(path: string, sessionId: string, talkSlug?: string):
  * disk. The audio files are never deleted; only the in-progress marker goes once the Run exists.
  * Returns how many Runs were written.
  */
-export async function recoverInterruptedRecordings(): Promise<number> {
+let recoveryInFlight: Promise<number> | null = null
+let recoveredNotice = 0
+let recoveryAgain = false
+export function recoverInterruptedRecordings(): Promise<number> {
+  if (recoveryInFlight) recoveryAgain = true
+  else recoveryInFlight = (async () => {
+    try {
+      let written = 0
+      do {
+        recoveryAgain = false
+        written += await recoverInterruptedRecordingsNow()
+      } while (recoveryAgain)
+      return written
+    } finally { recoveryInFlight = null }
+  })()
+  return recoveryInFlight
+}
+async function recoverInterruptedRecordingsNow(): Promise<number> {
   const deps = streamDeps
   if (!deps || !streams) return 0
   let written = 0
+  const videoMeasurements: Array<() => Promise<void>> = []
   let L: StreamLedger | null = null
   try {
     L = await deps.ledger()
@@ -134,7 +153,8 @@ export async function recoverInterruptedRecordings(): Promise<number> {
     try {
       const { manifest } = found
       const sessionId = manifest.sessionId
-      if (found.bytes === 0) { streams.complete(sessionId); continue }
+      const capture = createLayerStore(join(deps.userDataDir(), 'recordings')).read(sessionId)
+      if (found.bytes === 0 && !hasCapturedVideo(capture)) { streams.complete(sessionId); continue }
       // The vault the marker names (the presented talk's); a marker from before 0.41 names none: the current vault, as then.
       // A named vault that is not open now is left for a later recovery, never written into another vault.
       let vault: string | null
@@ -170,11 +190,26 @@ export async function recoverInterruptedRecordings(): Promise<number> {
           console.warn('[recording] recovered with checkpointed timing:', sessionId, error instanceof Error ? error.message : String(error))
         }
       }
+      const openVideoFiles = new Set<string>()
+      if (capture) {
+        capture.durationMs = Math.max(capture.durationMs, manifest.recordingMs, ...found.segments.map(segment => segment.endMs))
+        for (const layer of Object.values(capture.layers)) {
+          const segment = layer.segments?.at(-1) ?? layer
+          if (segment.endMs === undefined) openVideoFiles.add(segment.file)
+          const end = Math.max(segment.startMs ?? 0, capture.durationMs)
+          segment.endMs ??= end
+          segment.lostAtMs ??= segment.endMs
+          capture.durationMs = Math.max(capture.durationMs, segment.endMs)
+          layer.outcome = layer.bytes ? 'interrupted' : 'none'
+        }
+        for (const gap of capture.refreshes ?? []) gap.endMs ??= Math.max(gap.startMs, capture.durationMs)
+      }
       const lastEnd = found.segments.reduce((max, seg) => Math.max(max, seg.endMs), 0)
-      const recordingMs = Math.max(manifest.recordingMs, lastEnd)
+      const recordingMs = Math.max(manifest.recordingMs, lastEnd, capture?.durationMs ?? 0)
       const rawMarks = Array.isArray(manifest.rawMarks) ? manifest.rawMarks as RunMark[] : []
       const session = {
         id: sessionId,
+        capture: capture ? { ...capture, state: 'interrupted' as const, ...(found.bytes === 0 ? { voiceGaps: manifest.gaps.length ? manifest.gaps : [{ startMs: 0, endMs: recordingMs, reason: 'audio-unavailable' }] } : {}) } : null,
         talkSlug: manifest.talkSlug,
         talkTitle: manifest.talkTitle,
         kind: 'delivery' as const,
@@ -186,11 +221,11 @@ export async function recoverInterruptedRecordings(): Promise<number> {
         timerTargetMin: manifest.timerTargetMin,
         context: null,
         pathwayId: manifest.pathwayId,
-        audio: audioBlock(`presentations/${manifest.talkSlug}/${sessionId}/audio.webm`, found.segments, { segments: [], gaps: manifest.gaps }, recordingMs, true),
+        audio: found.bytes > 0 ? audioBlock(`presentations/${manifest.talkSlug}/${sessionId}/audio.webm`, found.segments, { segments: [], gaps: manifest.gaps }, recordingMs, true) : null,
         transcript: null,
         slideTimeIndex: L && rawMarks.length ? L.buildSlideTimeIndex(rawMarks) : []
       }
-      if (recoveryNote) Object.assign(session.audio, { recoveryNote })
+      if (recoveryNote && session.audio) Object.assign(session.audio, { recoveryNote })
       mkdirSync(dirname(targets.sessionJson), { recursive: true })
       if (vault && !vaultSessionPath(vault, manifest.talkSlug, sessionId).ok) continue
       // Created exclusively: a Run that appeared meanwhile is kept as it is, never replaced.
@@ -203,15 +238,36 @@ export async function recoverInterruptedRecordings(): Promise<number> {
         }
         throw e
       }
+      if (session.capture) {
+        const savedText = readFileSync(targets.sessionJson, 'utf8')
+        const pendingCapture = session.capture
+        videoMeasurements.push(async () => {
+          for (const layer of Object.values(pendingCapture.layers)) {
+            const segment = layer.segments?.at(-1) ?? layer
+            if (!segment.bytes || !openVideoFiles.has(segment.file)) continue
+            try {
+              const ffmpeg = resolveFfmpeg({ configured: deps.configuredFfmpeg?.() ?? '', shipped: shippedFfmpegCandidates({ platform: process.platform, resourcesPath: process.resourcesPath, appPath: app.getAppPath(), packaged: app.isPackaged }), system: systemFfmpegCandidates(process.platform), exists: existsSync })
+              if (!ffmpeg.found) continue
+              const measured = await recordingDurationMs(ffmpeg.path, join(deps.userDataDir(), 'recordings', sessionId, segment.file), deps.durationTimeoutMs)
+              segment.endMs = Math.max(segment.endMs ?? 0, (segment.startMs ?? 0) + Math.ceil(measured))
+              pendingCapture.durationMs = Math.max(pendingCapture.durationMs, segment.endMs)
+            } catch { /* Voice Run is already durable. Keep checkpointed video timing. */ }
+          }
+          // An edit or deletion during measurement wins. No await between compare and write.
+          try { if (readFileSync(targets.sessionJson, 'utf8') === savedText) writeRunFile(targets.sessionJson, normaliseRun(session)) } catch { /* Keep the already saved Run. */ }
+        })
+      }
       streams.complete(sessionId)
       recoveryProblems.delete(sessionId)
       written += 1
+      recoveredNotice += 1
       deps.onSessionSaved?.({ talkSlug: manifest.talkSlug, kind: 'delivery', runId: sessionId, vaultRoot: vault ?? null })
     } catch (e) {
       recoveryProblems.add(found.manifest.sessionId)
       console.warn('[recording] could not recover an interrupted recording:', e)
     }
   }
+  for (const measure of videoMeasurements) await measure().catch(() => {})
   return written
 }
 
@@ -219,7 +275,7 @@ export async function recoverInterruptedRecordings(): Promise<number> {
 export function listRecordingRecovery(): RecordingRecovery[] {
   if (!streams || !streamDeps) return []
   const deps = streamDeps
-  return streams.listInterrupted().filter((found) => found.bytes > 0).flatMap<RecordingRecovery>(({ manifest }) => {
+  return streams.listInterrupted().filter((found) => found.bytes > 0 || hasCapturedVideo(createLayerStore(join(deps.userDataDir(), 'recordings')).read(found.manifest.sessionId))).flatMap<RecordingRecovery>(({ manifest }) => {
     const base = { sessionId: manifest.sessionId, talkSlug: manifest.talkSlug, talkTitle: manifest.talkTitle }
     const vault = typeof manifest.vaultRoot === 'string' ? deps.writableVault?.(manifest.vaultRoot)
       : manifest.vaultRoot === null ? null : deps.vaultRoot()
@@ -263,6 +319,7 @@ export function registerRecordingStreamIpc(deps: StreamIpcDeps): RecordingStream
   streamDeps = deps
   streams = createRecordingStreams({ userDataDir: () => deps.userDataDir() })
   const store = streams
+  ipcMain.handle('recording:recovered-notice', async () => { await recoverInterruptedRecordings(); const count = recoveredNotice; recoveredNotice = 0; return count })
   ipcMain.handle('recording:list-recovery', () => listRecordingRecovery())
   ipcMain.handle('recording:stream-open', async (event, payload) => {
     try {

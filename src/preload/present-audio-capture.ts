@@ -112,6 +112,7 @@ export interface AudioStatus {
 export type AudioEvent = 'lost' | 'recovering' | 'restored' | 'retry-failed' | 'disk-failed' | 'switched'
 
 export interface AudioCapture {
+  sessionId(): string | null
   /** Throws Error('mic') when the input cannot be opened, Error('codec') when recording cannot start. */
   /**
    * Resolves with the moment the first segment's MediaRecorder started — the recording's origin.
@@ -121,6 +122,7 @@ export interface AudioCapture {
   pause(): void
   resume(): void
   stop(): Promise<CapturedAudio>
+  restore(snapshot: CapturedAudio, wasPaused: boolean): Promise<boolean>
   /** Open the chosen input again after a loss. True when audio flows again. */
   reacquire(): Promise<boolean>
   /**
@@ -512,6 +514,7 @@ export function createAudioCapture(env: CaptureEnv): AudioCapture {
   }
 
   return {
+    sessionId: () => sessionId,
     async start(meta) {
       if (!stopped) return origin ?? { perf: now(), iso: new Date().toISOString() }
       let first: MediaStream
@@ -613,6 +616,20 @@ export function createAudioCapture(env: CaptureEnv): AudioCapture {
       }
     },
 
+    async restore(snapshot, wasPaused) {
+      if (!stopped || snapshot.mode !== 'stream' || !snapshot.sessionId || snapshot.tail.length) throw Error('Unsafe recording handover')
+      mode = 'stream'; sessionId = snapshot.sessionId; mime = snapshot.mimeType
+      segments = snapshot.segments.map(s => ({ ...s }))
+      chunkCounts = segments.map(() => 1)
+      onDisk = new Set(segments.map(s => s.index))
+      gaps = snapshot.gaps.slice(); backlog = []; paused = wasPaused
+      stopped = false; lost = true; reason = 'device-change'
+      lostAtMs = segments.at(-1)?.endMs ?? 0
+      tickId = setInterval(() => feed({ type: 'tick', at: now() }), 1000)
+      on(navigator.mediaDevices, 'devicechange', onDeviceChange)
+      emit('lost')
+      return reacquire()
+    },
     reacquire,
     switchInput,
     status,

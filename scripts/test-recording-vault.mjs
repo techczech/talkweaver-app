@@ -69,6 +69,7 @@ globalThis.__recordingVaultTest = {
   dialog: {},
 }
 const bundled = await build({ entryPoints: ['src/main/recording.ts'], bundle: true, write: false, format: 'cjs', platform: 'node', packages: 'external', plugins: [{ name: 'electron-test-boundary', setup(b) {
+  b.onLoad({ filter: /recording-layers\.ts$/ }, args => ({contents:readFileSync(args.path,'utf8').replace('snapshot(owner: number, id: string): LayerManifest | null {', 'snapshot(owner: number, id: string): LayerManifest | null { if ((globalThis as any).__captureSnapshotFails) throw Error("capture description failed");'),loader:'ts'}))
   b.onResolve({ filter: /^electron$/ }, () => ({ path: 'electron', namespace: 'test' }))
   b.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'module.exports = globalThis.__recordingVaultTest', loader: 'js' }))
 } }] })
@@ -77,6 +78,8 @@ new Function('require', 'module', 'exports', bundled.outputFiles[0].text)(create
 const recording = module.exports
 
 // New session ids draw from a crypto source by default; section 5 forces a repeating source through `sessionRand`.
+let discardThreshold = 0
+let onRecovered = () => {}
 let forcedRand = null
 let uploadTestMode = true
 let transcriptTestMode = false
@@ -92,7 +95,7 @@ recording.registerRecordingIpc({
   vaultRoot: () => A,
   openVaultRoots: () => registry.filter((v) => v.open && !closedRoots.has(v.root) && !unavailableRoots.has(v.root)).map((v) => v.root),
   hasUnavailableOpenVaults: () => registry.some((v) => v.open && unavailableRoots.has(v.root)),
-  discardThresholdMs: () => 0,
+  discardThresholdMs: () => discardThreshold,
   storage: () => ({ upload: async (key, body, contentType) => {
     uploads.push({ key, body: Buffer.from(body).toString('utf8'), contentType })
     return { ok: true }
@@ -101,6 +104,7 @@ recording.registerRecordingIpc({
   presenterVault: (id) => id === PRESENTER ? presenterPick : id === OTHER_PRESENTER ? { root: B } : undefined,
   writableVault: (root) => [A, B].includes(root) && !closedRoots.has(root) && existsSync(root) ? root : undefined,
   sessionRand: () => forcedRand ? forcedRand() : Math.random(),
+  onSessionSaved: saved => onRecovered(saved),
 })
 const sender = (id) => {
   const events = {}
@@ -910,6 +914,142 @@ for (const scenario of ['unavailable-vault', 'malformed-run', 'unreadable-run', 
   assert.equal(existsSync(`${target}.reservation`), false)
   console.log('ok  11 recovery completes proven empty reservations; foreign and non-empty files need attention')
 }
+
+await test('failed capture manifest persistence keeps its owned loss clock in the normal voice Run save', async () => {
+  const presenter=Object.assign(sender(PRESENTER),{getURL:()=> 'file:///fixture.html'}),event={sender:presenter}
+  const previousPick=presenterPick;presenterPick={root:B}
+  recording.registerRecordingContext(PRESENTER,{talkSlug:SLUG,talkTitle:'Fixture'})
+  const opened=await handlers.get('recording:stream-open')(event,{talkSlug:SLUG,talkTitle:'Fixture'})
+  const id=opened.sessionId;assert.equal(opened.ok,true)
+  await handlers.get('recording:stream-segment')(event,{sessionId:id,index:0,startMs:0})
+  await handlers.get('recording:stream-append')(event,{sessionId:id,index:0,bytes:new Uint8Array([1,2,3])})
+  await assert.rejects(handlers.get('recording:layers-open')(event,id,false)) // No native window in this IPC stand-in; the owned files are real.
+  handlers.get('recording:layers-started')(event,id,'slides',0)
+  handlers.get('recording:layers-append')(event,id,'slides',0,new Uint8Array([4,5,6]))
+  const rename=fs.renameSync
+  fs.renameSync=(from,to)=>{if(String(to).endsWith('/capture.json'))throw Error('ENOSPC capture manifest');return rename(from,to)};syncBuiltinESMExports()
+  try {
+    assert.throws(()=>handlers.get('recording:layers-checkpoint')(event,id,700,'slides'),/ENOSPC/)
+    handlers.get('recording:layers-finish')(event,id)
+    const result=await handlers.get('recording:save')(event,{talkSlug:SLUG,talkTitle:'Fixture',kind:'delivery',mode:'recording',stream:{sessionId:id,tail:[]},wallClockMs:2000,rawMarks:[{event:'enter',slideId:'a',tMs:0},{event:'stop',tMs:2000}],force:true})
+    assert.equal(result.ok,true,result.error)
+    const run=JSON.parse(readFileSync(join(B,'_PRESENTATIONS',SLUG,id+'.json'),'utf8'))
+    assert.equal(run.capture.layers.slides.lostAtMs,700)
+    assert.equal(run.capture.layers.slides.outcome,'interrupted');assert.equal(run.capture.durationMs,2000)
+    assert.equal(run.kind,'delivery');assert.ok(run.audio)
+  } finally {fs.renameSync=rename;syncBuiltinESMExports();recording.unregisterRecordingContext(PRESENTER);presenterPick=previousPick}
+})
+
+await test('invalid compiled-deck URL reserves no video entry; missing video discard still permits voice discard', async () => {
+  const presenter=Object.assign(sender(PRESENTER),{getURL:()=> 'https://invalid.example/'})
+  recording.registerRecordingContext(PRESENTER,{talkSlug:SLUG,talkTitle:'Fixture'})
+  const event={sender:presenter}
+  const opened=await handlers.get('recording:stream-open')(event,{talkSlug:SLUG,talkTitle:'Fixture'})
+  assert.equal(opened.ok,true)
+  await assert.rejects(handlers.get('recording:layers-open')(event,opened.sessionId,true),/Compiled deck required/)
+  assert.equal(existsSync(join(userData,'recordings',opened.sessionId)),false)
+  await handlers.get('recording:layers-discard')(event,opened.sessionId)
+  assert.equal((await handlers.get('recording:stream-discard')(event,{sessionId:opened.sessionId})).ok,true)
+  recording.unregisterRecordingContext(PRESENTER)
+})
+
+await test('a same-id saved Run in another home retains the capture folder until its own deletion', async () => {
+  const id='capture-shared-homes', recDir=join(userData,'recordings'), folder=join(recDir,id)
+  mkdirSync(folder);writeFileSync(join(folder,'slides.webm'),'KEEP SHARED');writeFileSync(join(recDir,id+'.webm'),'VOICE')
+  for(const home of [A,B])writeFileSync(join(home,'_PRESENTATIONS',SLUG,id+'.json'),JSON.stringify({id,talkSlug:SLUG,audio:{bytes:5}}))
+  const original=globalThis.__recordingVaultTest.shell.trashItem
+  try {
+    globalThis.__recordingVaultTest.shell.trashItem=async path=>{trashed.push(path);rmSync(path,{recursive:true})}
+    assert.deepEqual(await handlers.get('recording:delete-session')({sender:sender(STUDIO)},{talkSlug:SLUG,sessionId:id,home:A}),{ok:true})
+    assert.equal(readFileSync(join(folder,'slides.webm'),'utf8'),'KEEP SHARED')
+    assert.deepEqual(await handlers.get('recording:delete-session')({sender:sender(STUDIO)},{talkSlug:SLUG,sessionId:id,home:B}),{ok:true})
+    assert.equal(existsSync(folder),false)
+  } finally {globalThis.__recordingVaultTest.shell.trashItem=original}
+})
+
+await test('deleting a Run trashes only its unshared capture folder, including an unreadable manifest', async () => {
+  const id='capture-delete-owned', other='capture-delete-other', recDir=join(userData,'recordings')
+  const folder=join(recDir,id), otherFolder=join(recDir,other), json=join(A,'_PRESENTATIONS',SLUG,id+'.json')
+  mkdirSync(folder);mkdirSync(otherFolder)
+  writeFileSync(join(folder,'camera.webm'),'PRIVATE');writeFileSync(join(folder,'capture.json'),'broken')
+  writeFileSync(join(otherFolder,'camera.webm'),'KEEP')
+  writeFileSync(json,JSON.stringify({id,talkSlug:SLUG,audio:{bytes:5}}));writeFileSync(join(recDir,id+'.webm'),'VOICE')
+  const original=globalThis.__recordingVaultTest.shell.trashItem
+  try {
+    globalThis.__recordingVaultTest.shell.trashItem=async path=>{trashed.push(path);rmSync(path,{recursive:true})}
+    trashed.length=0
+    assert.deepEqual(await handlers.get('recording:delete-session')({sender:sender(STUDIO)},{talkSlug:SLUG,sessionId:id,home:A}),{ok:true})
+    assert.ok(trashed.includes(folder));assert.equal(existsSync(folder),false)
+    assert.equal(readFileSync(join(otherFolder,'camera.webm'),'utf8'),'KEEP')
+  } finally {globalThis.__recordingVaultTest.shell.trashItem=original}
+})
+
+await test('recovery requested after the interrupted list was read runs another pass before settling', async () => {
+  const recDir=join(userData,'recordings'), first='recover-reentrant-first', second='recover-reentrant-second'
+  const interrupt=id=>{
+    writeFileSync(join(recDir,id+'.webm'),'VOICE')
+    writeFileSync(join(recDir,id+'.recording.json'),JSON.stringify({sessionId:id,talkSlug:SLUG,vaultRoot:B,segments:[{index:0,startMs:0,endMs:3000}],recordingMs:3000}))
+  }
+  interrupt(first)
+  let joined
+  const hooks=[]
+  onRecovered=({runId})=>{hooks.push(runId);assert.ok(readRun(B,runId).audio);if(runId===first){interrupt(second);joined=recording.recoverInterruptedRecordings()}}
+  try {
+    await recording.recoverInterruptedRecordings();await joined
+    assert.equal(JSON.parse(readFileSync(join(B,'_PRESENTATIONS',SLUG,second+'.json'),'utf8')).audio.partial,true)
+    assert.equal(existsSync(join(recDir,second+'.recording.json')),false)
+    await recording.recoverInterruptedRecordings()
+    assert.equal(hooks.filter(id=>id===first).length,1);assert.equal(hooks.filter(id=>id===second).length,1)
+  } finally {onRecovered=()=>{}}
+})
+
+await test('short backstop keeps video for Keep; capture-description failure reports unknown and keeps files', async () => {
+  const presenter=Object.assign(sender(PRESENTER),{getURL:()=> 'file:///fixture.html'}), event={sender:presenter}
+  const previousPick=presenterPick;presenterPick={root:B}
+  recording.registerRecordingContext(PRESENTER,{talkSlug:SLUG,talkTitle:'Fixture'})
+  try {
+    for (const unknown of [false,true]) {
+      const opened=await handlers.get('recording:stream-open')(event,{talkSlug:SLUG,talkTitle:'Fixture'}),id=opened.sessionId
+      await handlers.get('recording:stream-segment')(event,{sessionId:id,index:0,startMs:0})
+      await handlers.get('recording:stream-append')(event,{sessionId:id,index:0,bytes:new Uint8Array(Buffer.from('VOICE'))})
+      // Hidden-window stand-in refuses construction after the owned store opens.
+      await assert.rejects(handlers.get('recording:layers-open')(event,id,false),/constructor/)
+      let savedHooks=0
+      onRecovered=({runId,vaultRoot})=>{if(runId===id){savedHooks++;assert.equal(vaultRoot,B);assert.ok(readRun(B,id).audio)}}
+      const folder=join(userData,'recordings',id)
+      handlers.get('recording:layers-append')(event,id,'slides',0,new Uint8Array(Buffer.from('VIDEO')))
+      const payload={talkSlug:SLUG,stream:{sessionId:id,tail:[]},rawMarks:[{event:'enter',slideId:'a',tMs:0},{event:'stop',tMs:1}],wallClockMs:1}
+      discardThreshold=1000
+      assert.equal((await handlers.get('recording:save')(event,payload)).discarded,true)
+      assert.equal(savedHooks,0,'short save refusal cannot start words')
+      assert.equal(readFileSync(join(folder,'slides.webm'),'utf8'),'VIDEO')
+      // Inject description failure at the snapshot seam, leaving the real files and save intact.
+      globalThis.__captureSnapshotFails=unknown
+      const result=await handlers.get('recording:save')(event,{...payload,force:true})
+      assert.equal(result.ok,true,result.error);assert.equal(result.captureUnknown,unknown)
+      assert.equal(savedHooks,1,'one words hook after durable voice publication, even with unknown/interrupted video')
+      assert.deepEqual(recording.savedRecordingHome(PRESENTER,id),{root:B});assert.equal(recording.savedRecordingHome(STUDIO,id),null)
+      const run=JSON.parse(readFileSync(join(B,'_PRESENTATIONS',SLUG,id+'.json'),'utf8'))
+      if(unknown)assert.equal(run.captureUnknown,true)
+      else assert.equal(run.capture.layers.slides.bytes,5)
+      assert.equal(run.audio.bytes,5)
+      assert.equal(readFileSync(join(folder,'slides.webm'),'utf8'),'VIDEO')
+    }
+  } finally {onRecovered=()=>{};discardThreshold=0;delete globalThis.__captureSnapshotFails;recording.unregisterRecordingContext(PRESENTER);presenterPick=previousPick}
+})
+
+await test('a capture folder Trash refusal preserves the Run and voice for another delete', async () => {
+  const id='capture-trash-refused', folder=join(userData,'recordings',id), json=join(A,'_PRESENTATIONS',SLUG,id+'.json'), audio=join(userData,'recordings',id+'.webm')
+  mkdirSync(folder);writeFileSync(join(folder,'slides.webm'),'VIDEO');writeFileSync(audio,'VOICE')
+  writeFileSync(json,JSON.stringify({id,talkSlug:SLUG,audio:{bytes:5}}))
+  const original=globalThis.__recordingVaultTest.shell.trashItem
+  try {
+    trashed.length=0
+    globalThis.__recordingVaultTest.shell.trashItem=async path=>{trashed.push(path);if(path===folder)throw Error('Trash refused');rmSync(path,{recursive:true})}
+    const result=await handlers.get('recording:delete-session')({sender:sender(STUDIO)},{talkSlug:SLUG,sessionId:id,home:A})
+    assert.equal(result.ok,false);assert.deepEqual(trashed,[folder]);assert.ok(existsSync(json));assert.equal(readFileSync(audio,'utf8'),'VOICE')
+  } finally {globalThis.__recordingVaultTest.shell.trashItem=original}
+})
 
 rmSync(base, { recursive: true, force: true })
 delete globalThis.__recordingVaultTest

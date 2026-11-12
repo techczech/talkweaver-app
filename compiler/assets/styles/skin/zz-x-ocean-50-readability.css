@@ -1,0 +1,135 @@
+/* 0.44 look ("ocean"): readability rules found by auditing real talks (scripts/audit-talks-look.mjs). Each rule makes a
+   class of text reach WCAG AA (3:1 for large text) against the colour actually painted behind it. Loaded last.
+
+   Contrast used here: near-black #16181D on the classic mint tint #E4F3EE 15.9:1; Deeper Ocean on the light neutral
+   #F2F4F7 6.41:1; white on Deeper Ocean 7.06:1; muted #4A5361 on the light ground #F3F8FD 7.28:1; white at .75 over
+   Ocean 3.47:1 and near-black at .75 over amber 5.22:1 (a passed item on a full-colour statement, large type). */
+
+/* ---------- text never escapes its band: rows and panels grow with their words (the whole-slide fit then makes room) */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]) > li {
+  flex: 1 0 auto !important; min-height: min-content;
+}
+/* a sentence in a band is running text, not a label: the reading step (36px) */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated)[data-oc-fit="long"] > li > .fl-text {
+  font-size: max(var(--type-floor, 31px), 2.25cqw) !important;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards { grid-auto-rows: minmax(min-content, 1fr) !important; }
+
+/* ---------- an icon-list band: the label centres on the icon; with a detail line, label and detail centre together */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]) > li:not(:has(> .fl-sublist)) {
+  grid-template-rows: auto !important; row-gap: 0 !important;
+}
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]) > li:not(:has(> .fl-sublist)) > .fl-icon { grid-row: 1 !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]) > li > .fl-text { line-height: 1.15 !important; margin: 0 !important; padding: 0 !important; }
+
+/* ---------- everything in a filled shape takes the shape's type colour, at any depth */
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))):not(:has(> li:nth-child(2):last-child)) > li:not(:nth-child(3n + 3)) :is(.fl-sublist, .fl-sublist li, .fl-subtext, .fl-subtext *),
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:has(> li:nth-child(2):last-child) > li:nth-child(2) :is(.fl-sublist, .fl-sublist li, .fl-subtext, .fl-subtext *) {
+  color: inherit !important; opacity: 1 !important;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-lead :is(strong, b, em, a, code, .fl-num, .fl-icon, .fl-text) { color: inherit !important; background: none !important; }
+.slide[data-look="ocean"] .stats-row > .stat :is(.stat-cap, .stat-cap *) { color: inherit !important; opacity: 1 !important; }
+/* icon rows drawn as rows beside the rail ({iconrow}{sidebar}): a row on the deeper strength carries white type */
+.slide[data-look="ocean"] .icon-row.ir-rows:not(:has(> .ir-item:nth-child(4))) > .ir-item.hue-2 { color: var(--look-on-deep) !important; --c: var(--look-on-deep); }
+.slide[data-look="ocean"] .icon-row.ir-rows:not(:has(> .ir-item:nth-child(4))) > .ir-item.hue-2 :is(.ir-label, .ir-label *, .ir-desc, .ir-desc li, .ir-li-text) { color: inherit !important; }
+
+/* ---------- a title drawn as text (not the tab) on the light neutral ground: Deeper Ocean, not Ocean (4.46:1) */
+.slide[data-look="ocean"]:not([data-ground="lead"])[data-title-look]:not([data-title-look="tab"]) > .slide-content > .slide-head > h1 { color: var(--look-deep) !important; }
+
+/* ---------- an author-named ground ({bg=emerald} and the other named grounds keep their classic tint): the words on it
+   are near-black, never the accent colour */
+.slide[data-look="ocean"][style*="--slide-bg"] .slide-content :is(cite, .cite-text, h2, h3, h4, h5, .kicker, strong, b, figcaption, .ig-note, .ig-note *, .tl-date, .fl-num):not(.slide-head *) {
+  color: var(--look-ink) !important;
+}
+
+/* ---------- marked words in a title (tab, field or text): they take the heading's own ink; a highlight or code run
+   keeps no fill of its own on the painted heading (bold Deeper Ocean on an Ocean tab was 1.44:1) */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"]) .slide-head h1 :is(strong, b, em, i, a, code, mark, s, del, u, ins, span:not(.title-icon):not(.title-icon *)) {
+  color: inherit !important;
+}
+.slide:is([data-look="ocean"], [data-look="ocean-safe"]) .slide-head h1 :is(code, mark) {
+  background: none !important; box-shadow: none !important; padding: 0 !important; border: 0 !important;
+}
+.slide:is([data-look="ocean"], [data-look="ocean-safe"]) .slide-head h1 mark { text-decoration: underline; text-decoration-thickness: .08em; text-underline-offset: .16em; }
+
+/* ---------- on a full-colour statement: no fills under marked words anywhere, the title's own bold words included */
+.slide[data-look="ocean"][data-ground="lead"] :is(.slide-content, .slide-head) :is(strong, b, mark, s, del, u, em, i, ins) {
+  background: none !important; box-shadow: none !important; color: inherit !important;
+}
+
+/* ---------- passed items of {focus} stay readable (a reveal keeps earlier items whole, as round 1 drew it) (the not-yet-revealed, blurred state stays as it is) */
+/* a passed filled shape (band, panel) is redrawn light with muted type instead of fading its colour (the two :not(#…)
+   raise the rule above the count-by-colour rules it replaces) */
+.slide[data-look="ocean"].mode-focus .slide-content :is(.feature-list.fl-cards > li, .feature-list.fl-iconlist-list > li, .icon-row > .ir-item, .stats-row > .stat, .steps-diagram > .step-col)[data-mode-state="soft"]:not(#oc-passed):not(#oc-passed-2) {
+  opacity: 1 !important; filter: none !important;
+  background: var(--look-light-ground) !important; border-color: var(--look-hairline) !important;
+  color: var(--look-muted) !important; --c: var(--look-muted);
+}
+.slide[data-look="ocean"].mode-focus .slide-content :is(.feature-list.fl-cards > li, .feature-list.fl-iconlist-list > li, .icon-row > .ir-item, .stats-row > .stat, .steps-diagram > .step-col)[data-mode-state="soft"]:not(#oc-passed):not(#oc-passed-2) :is(*:not(svg):not(svg *)) {
+  color: inherit !important; opacity: 1 !important;
+}
+.slide[data-look="ocean"].mode-focus .slide-content :is(.feature-list.fl-cards > li, .feature-list.fl-iconlist-list > li, .icon-row > .ir-item)[data-mode-state="soft"]:not(#oc-passed):not(#oc-passed-2) :is(.fl-icon, .ir-icon) { color: var(--look-muted) !important; }
+/* on a full-colour statement a passed item fades only to .75 (white over Ocean 3.47:1; near-black over amber 5.22:1) */
+.slide[data-look="ocean"][data-ground="lead"].mode-focus .mode-el[data-mode-state="soft"] { opacity: .75 !important; }
+
+/* ---------- a title drawn as text by a named title look (kicker and the others): its ink token is Deeper Ocean off the field */
+.slide[data-look="ocean"]:not([data-ground="lead"])[data-title-layout="top"][data-title-look]:not([data-title-look="tab"]) > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { color: var(--look-deep) !important; }
+
+/* ---------- marks on a field keep full strength (a struck word was faded to 2.85:1) */
+.slide[data-look="ocean"][data-ground="lead"] :is(.slide-content, .slide-head) :is(s, del, u, ins, mark) { opacity: 1 !important; text-decoration-color: currentColor !important; }
+
+/* ---------- links: never the browser's blue. On a field or a filled shape they take its type colour; elsewhere Deeper
+   Ocean (7.06:1 on white, 6.19:1 on the light strength). A button keeps its own pairing. */
+:where(.slide[data-look="ocean"] .slide-content a:not(.slide-action)) { color: var(--look-deep); }
+.slide[data-look="ocean"][data-ground="lead"] :is(.slide-content, .slide-head) a:not(.slide-action) { color: inherit !important; text-decoration: underline; text-decoration-thickness: .06em; text-underline-offset: .18em; }
+.slide[data-look="ocean"] .slide-content :is(.feature-list.fl-cards > li, .feature-list.fl-iconlist-list > li, .icon-row > .ir-item, .stats-row > .stat, .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-lead) a:not(.slide-action) { color: inherit !important; }
+/* a button on a field: white with near-black type (17.8:1), in either companion level */
+.slide[data-look="ocean"][data-ground="lead"] .slide-action { background: var(--look-ground) !important; color: var(--look-ink) !important; border-color: var(--look-ground) !important; }
+
+/* ---------- off the field, the accent the classic layouts still use is Deeper Ocean: small accent text on their light
+   tints (a table's first column, contents-rail numbers, numbered badges, code sidebars) reaches AA (6.2:1 on #E8F1FC,
+   6.4:1 on #F2F4F7, 7.06:1 on white) and their accent fills keep white type at 7.06:1. The designed layouts paint with
+   the look's own tokens; the title tab stays Ocean. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"]):not([data-ground="lead"]) { --accent: var(--look-deep) !important; }
+.slide[data-look="ocean"]:not([data-ground="lead"])[data-title-layout="top"][data-title-look="tab"]:not([data-title-look-tone="soft"]) { --titlelook-fill: var(--look-main); }
+/* {statement-bg=strong} on a field: the variant's white tab gives way to the field's tab */
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"]:has(> .slide-content.statement-bg-strong) { --titlelook-fill: var(--look-tab-on-lead) !important; --titlelook-ink: var(--look-on-main) !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]) > li > .fl-icon { align-self: center !important; }
+
+/* ---------- icon-row panels (up to four) that carry detail lines: the detail lines are the slide's reading content.
+   The icon steps down (7.5cqw, 6cqw with four panels), the name stays display size, and the detail lines fill the panel
+   below the name, spread down to its bottom padding, at one size for the whole row set by the most lines in any panel:
+   two panels up to three lines 3.75cqw (48px at 1600 wide: the content box is 1280px, so 1cqw is 12.8px), four 3.45cqw
+   (44px), five or six 3cqw (38px), seven or more 2.5cqw (32px); three panels one step smaller; four panels two steps
+   smaller (their measure is about a fifth of the stage); never under the floor. Three or more lines read as a left-aligned list with dots. Panels with a name only keep the large icon.
+   Fit or fall back (slide-fit.js) takes the safe drawing if a row still overflows. The :not(#oc-detail) raises these
+   over the count-by-colour sizes. */
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):not(#oc-detail) > .ir-item:has(.ir-desc > li) {
+  --oc-icon: 7.5cqw; --oc-detail: 3.75cqw;
+  justify-content: flex-start !important; gap: 1cqw !important;
+}
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(> .ir-item:nth-child(4)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-icon: 6cqw; }
+/* five or more lines in a panel: the icon steps down again (5cqw, 80px) so the lines keep their size */
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(.ir-desc > li:nth-child(5)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-icon: 5cqw; gap: .6cqw !important; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(.ir-desc > li:nth-child(4)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-detail: 3.45cqw; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(.ir-desc > li:nth-child(5)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-detail: 3cqw; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(.ir-desc > li:nth-child(7)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-detail: 2.5cqw; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(> .ir-item:nth-child(3)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-detail: 3.45cqw; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(> .ir-item:nth-child(3)):has(.ir-desc > li:nth-child(4)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-detail: 3cqw; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(> .ir-item:nth-child(3)):has(.ir-desc > li:nth-child(5)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-detail: 2.5cqw; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(> .ir-item:nth-child(3)):has(.ir-desc > li:nth-child(7)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-detail: max(var(--type-floor, 31px), 2.4cqw); }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(> .ir-item:nth-child(4)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-detail: 3cqw; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(> .ir-item:nth-child(4)):has(.ir-desc > li:nth-child(4)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-detail: 2.5cqw; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):has(> .ir-item:nth-child(4)):has(.ir-desc > li:nth-child(5)):not(#oc-detail) > .ir-item:has(.ir-desc > li) { --oc-detail: max(var(--type-floor, 31px), 2.4cqw); }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):not(#oc-detail) > .ir-item:has(.ir-desc > li) > .ir-icon { margin: .4cqw 0 !important; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):not(#oc-detail) > .ir-item:has(.ir-desc > li) .ir-desc { flex: 1 1 auto !important; display: flex !important; flex-direction: column !important; justify-content: space-evenly !important; gap: .6cqw !important; padding-top: .4cqw !important; margin: 0 !important; min-height: 0; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):not(#oc-detail) > .ir-item:has(.ir-desc > li) .ir-desc > li { line-height: 1.25 !important; margin: 0 !important; }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):not(#oc-detail) > .ir-item:has(.ir-desc > li):has(.ir-desc > li:nth-child(3)) .ir-desc > li {
+  text-align: left !important; position: relative; padding-left: 1em !important;
+}
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):not(:has(> .ir-item:nth-child(5))):not(#oc-detail) > .ir-item:has(.ir-desc > li):has(.ir-desc > li:nth-child(3)) .ir-desc > li::before {
+  content: "" !important; display: block !important; position: absolute; left: .15em; top: .5em; width: .3em; height: .3em; border-radius: 50%; background: currentColor !important;
+}
+
+/* ---------- an icon-list band's label uses the band's width (it wrapped into a narrow column) */
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]) > li > .fl-text { width: auto !important; max-width: none !important; justify-self: stretch; }

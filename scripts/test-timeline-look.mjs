@@ -31,6 +31,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 // The two specimen slides of the design round (fc5mb, 4k84m), as authored.
 const HORIZONTAL_LABELS = ['Today', 'Soon', 'Long term']
@@ -53,7 +55,7 @@ const source = [
 ].join('\n')
 const path = join(dir, 'timeline-look.md')
 writeFileSync(path, source, 'utf8')
-const model = await prepareSource(path, source, 'Timeline look probe', statSync(path))
+const model = await prepareSource(path, inClassicLook(source), 'Timeline look probe', statSync(path))
 const htmlPath = join(dir, 'timeline-look.html')
 writeFileSync(htmlPath, model.fullHtml, 'utf8')
 

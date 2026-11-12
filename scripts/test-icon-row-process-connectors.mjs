@@ -22,6 +22,8 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const dir = mkdtempSync(join(tmpdir(), 'tw-connectors-'))
@@ -60,7 +62,7 @@ const SOURCE = [
 
 const path = join(dir, 'connectors.md')
 writeFileSync(path, SOURCE, 'utf8')
-const model = await prepareSource(path, SOURCE, 'connectors', statSync(path), undefined, { allowedAssetRoots: [dir] })
+const model = await prepareSource(path, inClassicLook(SOURCE), 'connectors', statSync(path), undefined, { allowedAssetRoots: [dir] })
 const deckPath = join(dir, 'connectors.html')
 writeFileSync(deckPath, model.fullHtml, 'utf8')
 

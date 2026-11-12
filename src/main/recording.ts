@@ -1,3 +1,4 @@
+import { registerPresenterLayers } from './presenter-layers-ipc'
 // Recording — the main-process half of the Presentation Ledger (Phase 1). This file owns
 // everything the recording bridge (src/preload/present-recorder.ts) hands back:
 //   • mic permission for the present window          (Task 4, below)
@@ -12,7 +13,7 @@
 
 import { BrowserWindow, ipcMain, shell } from 'electron'
 import { dirname, join } from 'path'
-import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from 'fs'
+import { existsSync, lstatSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from 'fs'
 import { readFile as readFileAsync } from 'fs/promises'
 import { pathToFileURL } from 'url'
 import {
@@ -46,6 +47,7 @@ import {
   listSessionJsonFiles,
   streamMarkerPath,
   vaultSessionPath,
+  editsPath,
 } from './recording-paths'
 import type { FinalisedStream, RecordingStreams, StreamTailChunk } from './recording-stream'
 import { audioBlock, normaliseTimeline, registerRecordingStreamIpc, toBytes } from './recording-stream-ipc'
@@ -117,6 +119,8 @@ export interface RecordingDeps {
   openVaultRoots?: () => string[]
   /** An open vault that cannot be scanned may own a same-id Run; retain audio without touching it. */
   hasUnavailableOpenVaults?: () => boolean
+  /** Removes a deleted Run's derived playback copies (recording-video.ts); only when its recording is not shared. */
+  retirePlaybackCopies?: (sessionId: string) => void
   /**
    * The vault a presenter window's writes go to: the vault of the talk it presents (presented-vault.ts), or the
    * refusal in words. `undefined`: the sender is not a presenter window (Studio, History), which act in the
@@ -127,6 +131,10 @@ export interface RecordingDeps {
   writableVault?: (root: string) => string | undefined
   discardThresholdMs: () => number // getConfig('recordingDiscardMs', 20000)
   /** The microphone chosen on this Mac, by name (setting recording.microphone); '' = the built-in one. */
+  captureChoice?: () => string
+  setCaptureChoice?: (value: string) => void
+  recordingDevices?: () => unknown
+  setRecordingDevices?: (value: unknown) => void
   configuredFfmpeg?: () => string
   microphone?: () => string
   /** Remember the microphone the presenter chose (the same setting; this Mac only). */
@@ -152,6 +160,8 @@ interface SlideTimeMark { event: string; slideId?: string; tMs: number; hidden?:
 type RunKind = 'delivery' | 'rehearsal' | 'recording'
 type TrimRange = { start: number; end: number }
 interface SessionJson {
+  capture?: import('./recording-layers').LayerManifest | null
+  captureUnknown?: boolean
   sourceOutline?: string
   id: string
   talkSlug: string
@@ -398,6 +408,12 @@ function runHomeFor(deps: RecordingDeps, webContentsId: number, sessionId: unkno
   return { ok: true, root }
 }
 
+/** Only the saving presenter can recover its saved Run's home for the words offer. */
+export function savedRecordingHome(webContentsId: number, sessionId: string): { root: string | null } | null {
+  const homes = runHomes.get(webContentsId)
+  return homes?.has(sessionId) ? { root: homes.get(sessionId) ?? null } : null
+}
+
 function rememberRunHome(webContentsId: number, sessionId: string, root: string | null): void {
   const homes = runHomes.get(webContentsId) ?? new Map<string, string | null>()
   homes.set(sessionId, root)
@@ -437,6 +453,12 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
     sessionRand: deps.sessionRand
   })
 
+  const layerStore = registerPresenterLayers({ userData: deps.userDataDir, streams: streamStore, allowed: id => contexts.has(id), settingsAllowed: id => deviceListWindow() === id, grantDevices: (id, camera, preview) => recordingPermissions.grantDevices(id, camera, preview), getSettings: () => deps.recordingDevices?.(), setSettings: value => deps.setRecordingDevices?.(value) })
+
+  ipcMain.handle('recording:capture-choice', (event, value: unknown) => {
+    if (event.senderFrame !== event.sender.mainFrame || !contexts.has(event.sender.id) || (value !== 'voice' && value !== 'camera')) throw Error('Invalid capture choice')
+    deps.setCaptureChoice?.(value)
+  })
   ipcMain.handle('recording:context', (event) => {
     const ctx = contexts.get(event.sender.id)
     return {
@@ -447,6 +469,8 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       preferredPlannedRunId: ctx?.preferredPlannedRunId ?? null,
       discardThresholdMs: deps.discardThresholdMs(),
       testMode: deps.testMode ? deps.testMode() : process.env.TW_REC_TEST === '1',
+      layered: true,
+      captureChoice: deps.captureChoice?.() ?? 'voice',
       microphone: deps.microphone?.() ?? ''
     }
   })
@@ -562,6 +586,9 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
         ? runWallClockMs
         : Number.isFinite(started) ? Math.max(0, Date.parse(endedAt) - started) : 0
       const r2Key = `presentations/${talkSlug}/${sessionId}/audio.webm`
+      // A failed video finish must retire only its own handles, independently of voice.
+      if (streamed) { try { layerStore.interrupt(event.sender.id, sessionId) } catch { /* keep the last readable manifest */ } }
+      let captureUnknown = false
       const session: SessionJson = {
         id: sessionId,
         talkSlug,
@@ -581,9 +608,33 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
           : audioBuf
             ? timeline ? audioBlock(r2Key, memoryFiles, timeline, recordingMs, false) : { r2Key, bytes: audioBuf.byteLength, uploaded: false }
             : null,
+        capture: (() => {
+          try {
+            const known = layerStore.snapshot(event.sender.id, sessionId)
+            if (!known) return null
+            const disk = layerStore.read(sessionId)
+            const capture = known.state === 'interrupted' ? known : disk ?? known
+            if (!disk) capture.state = 'interrupted'
+            capture.durationMs = Math.max(capture.durationMs, runWallClockMs)
+            if (capture.state !== 'saved') capture.state = 'interrupted'
+            for (const meta of Object.values(capture.layers)) {
+              const part = meta.segments?.at(-1) ?? meta
+              part.endMs ??= Math.max(part.startMs ?? 0, capture.durationMs)
+              if (capture.state === 'interrupted') part.lostAtMs ??= part.endMs
+              meta.outcome = meta.bytes === 0 ? 'none' : capture.state !== 'saved' || (meta.segments ?? [meta]).some(segment => segment.lostAtMs !== undefined) ? 'interrupted' : 'complete'
+            }
+            for (const gap of capture.refreshes ?? []) gap.endMs ??= Math.max(gap.startMs, capture.durationMs)
+            return capture
+          } catch (error) {
+            captureUnknown = true
+            console.warn('[recording] capture state unknown; video files kept:', sessionId, error)
+            return null
+          }
+        })(),
         transcript: null,
         slideTimeIndex: L.buildSlideTimeIndex(rawMarks) as SlideTimeMark[]
       }
+      if (captureUnknown) session.captureUnknown = true
       const baseSession = planned
         ? attachDeliveryToPlanned(planned, normaliseRun(session))
         : normaliseRun(session)
@@ -614,6 +665,7 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       if (streamId) streamStore.complete(streamId)
       if (pendingPolls) livePollBuffers.delete(event.sender.id)
       rememberRunHome(event.sender.id, sessionId, vault)
+      layerStore.complete(sessionId)
       deps.onSessionSaved?.({ talkSlug, kind, runId: sessionId, vaultRoot: vault ?? null })
 
       // 3) Local-first is the whole story on save (Dominik's call): the recording lives on this
@@ -621,7 +673,7 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       //    calls recording:upload, which makes one upload call. Nothing goes to the network
       //    automatically, and nothing is queued or retried in the background.
 
-      return { ok: true, sessionId, discarded: false, kind, ...(picked.kept ? { kept: 'app-data' as const, message: KEPT_IN_APP_DATA } : {}) }
+      return { ok: true, sessionId, discarded: false, kind, capture: session.capture, captureUnknown, ...(picked.kept ? { kept: 'app-data' as const, message: KEPT_IN_APP_DATA } : {}) }
     } catch (e) {
       console.error('[recording:save]', e)
       return { ok: false, error: String(e) }
@@ -900,9 +952,18 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       }
       const audioPaths = shared ? [] : recordedSegmentPaths(deps.userDataDir(), sessionId, source)
       const targets = [...(saved ? [p] : []), ...audioPaths.map((audio) => audio.path)]
+      if (!shared) {
+        const root = join(deps.userDataDir(), 'recordings'), folder = join(root, sessionId)
+        if (existsSync(folder) && !lstatSync(root).isSymbolicLink() && lstatSync(folder).isDirectory() && !lstatSync(folder).isSymbolicLink()) targets.unshift(folder)
+      }
       const marker = streamMarkerPath(deps.userDataDir(), sessionId)
       if (!shared && marker.ok && existsSync(marker.path) && !streamStore.isOpen(sessionId)) targets.push(marker.path)
+      // The Run's edit sidecar sits beside its Run file and belongs to this Run alone: it goes to the Bin with it,
+      // so a later Run with the same talk and id never inherits its cuts.
+      const edits = saved ? editsPath(resolvedHome.root, deps.userDataDir(), talkSlug, sessionId) : null
+      if (edits?.ok && existsSync(edits.path) && lstatSync(edits.path).isFile()) targets.push(edits.path)
       for (const path of new Set(targets)) await shell.trashItem(path)
+      if (!shared) deps.retirePlaybackCopies?.(sessionId)
       runHomes.get(event.sender.id)?.delete(sessionId)
       return { ok: true }
     } catch (e) {

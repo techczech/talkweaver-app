@@ -36,6 +36,8 @@ import { pathToFileURL } from 'node:url'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { tieShortWords, keepLastTwoWordsTogether } from '../compiler/scripts/lib/no-lone-word.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 // --- 3. tieShortWords (pure) -------------------------------------------------------------------
 const NBSP = '&nbsp;'
@@ -88,7 +90,7 @@ const source = [
 ].join('\n')
 const path = join(dir, 'no-lone-last-word.md')
 writeFileSync(path, source, 'utf8')
-const model = await prepareSource(path, source, 'No lone last word probe', statSync(path))
+const model = await prepareSource(path, inClassicLook(source), 'No lone last word probe', statSync(path))
 const htmlPath = join(dir, 'no-lone-last-word.html')
 writeFileSync(htmlPath, model.fullHtml, 'utf8')
 

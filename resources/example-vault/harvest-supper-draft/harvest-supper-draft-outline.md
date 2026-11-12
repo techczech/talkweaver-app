@@ -25,12 +25,12 @@ The picture for this slide has not been added yet.
 
 > **Try it.** In All commands (<kbd>⌘⇧P</kbd>): **TalkWeaver Studio…**, **TalkWeaver Runs…** and **TalkWeaver Importer…**.
 
-> **Try it.** In Studio, <kbd>⌘\</kbd> hides the recordings. In the Importer: <kbd>F</kbd> flagged slides, <kbd>⌘F</kbd> search, <kbd>⌘↵</kbd> apply, <kbd>⌥R</kbd> reset, <kbd>⌘1</kbd> views.
-
-> **Try it.** <kbd>⌘N</kbd> opens a new window, and so does **Open selected talk or folder in a new window** (<kbd>⌘⇧P</kbd>).
+> **Try it.** Studio: <kbd>⌘\</kbd> hides the list, <kbd>I</kbd> <kbd>O</kbd> trim a video, <kbd>⌘Z</kbd> <kbd>⇧⌘Z</kbd> undo, redo; in Edit video <kbd>Space</kbd> <kbd>⌫</kbd> <kbd>←</kbd> <kbd>→</kbd> <kbd>⇧←</kbd> <kbd>⇧→</kbd> play, cut and select words. Importer: <kbd>F</kbd> flagged, <kbd>⌘F</kbd> search, <kbd>⌘↵</kbd> apply, <kbd>⌥R</kbd> reset, <kbd>⌘1</kbd> views.
 
 ### The Talks panel
 {id=h4}
+
+> **Try it.** New window: <kbd>⌘N</kbd>, or **Open selected talk or folder in a new window**.
 
 > **Try it.** In All commands (<kbd>⌘⇧P</kbd>): **New talk…**, **New folder…** and **Refresh talk list**.
 

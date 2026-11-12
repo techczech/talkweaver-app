@@ -57,3 +57,13 @@ html, body, #root { height: 100%; margin: 0; }
 .bsw-nav svg, .bsw-phead > svg { color: var(--muted); }
 .bsw-nav.bsw-sel svg { color: var(--oxford); }
 .bsw-rcfoot { background: var(--paper); border-top-color: var(--line); }
+
+/* Recording uses the same cream cards and navy controls as the other Settings pages. */
+.recording-settings-page { padding: 4px 20px 20px; font: 13px/1.5 var(--font-ui); max-width: 760px; }
+.recording-settings-page p { margin: 12px 0; }
+.recording-device-settings { border-bottom: 1px solid var(--line); margin-bottom: 16px; padding-bottom: 12px; }
+.recording-settings-page label { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 12px 0; font-weight: 600; }
+.recording-settings-page button, .recording-settings-page select, .recording-settings-page input { font: 12px/1.4 var(--font-ui); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; color: var(--ink); background: var(--panel); }
+.recording-settings-page button { background: var(--hover); cursor: pointer; }
+.recording-settings-page button:hover { background: var(--active); }
+.recording-settings-page details { margin-top: 18px; color: var(--muted); }

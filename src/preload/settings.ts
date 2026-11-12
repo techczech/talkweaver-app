@@ -24,6 +24,13 @@ const on = <T>(channel: string, listener: (value: T) => void): (() => void) => {
 }
 
 const tw = {
+  recordingDevices: {
+    library: (reveal = false) => ipcRenderer.invoke('recording:device-library', reveal),
+    preview: (camera: unknown, preview: unknown) => ipcRenderer.invoke('recording:device-preview', camera, preview),
+    get: () => ipcRenderer.invoke('recording:devices'),
+    check: (value: unknown) => ipcRenderer.invoke('recording:devices', value),
+    systemSettings: (kind: unknown) => ipcRenderer.invoke('recording:device-settings', kind)
+  },
   // The built-in agent skill (agent-skill-host.ts). Agent ids only; main holds every folder.
   agentSkill: {
     status: (): Promise<import('../shared/agent-skill/types').StatusReport> => ipcRenderer.invoke('agent-skill:status'),
@@ -96,7 +103,24 @@ const tw = {
     setEnrolled: (slug: string, enrolled: boolean) => ipcRenderer.invoke('backup:set-enrolled', slug, enrolled),
     onStatus: (listener: (run: unknown) => void) => on('backup:status', listener)
   },
+  alignment: {
+    onState: (cb:(state:import('../shared/alignment-status').AlignmentRunState)=>void): (()=>void) => {
+      const listener=(_e:unknown,state:import('../shared/alignment-status').AlignmentRunState):void=>cb(state)
+      ipcRenderer.on('alignment:state',listener);return()=>ipcRenderer.removeListener('alignment:state',listener)
+    },
+    models: (): Promise<import('../shared/alignment-status').AlignmentModelRow[]> => ipcRenderer.invoke('alignment:models'),
+    download: (language:string): Promise<import('../shared/alignment-status').AlignmentReply> => ipcRenderer.invoke('alignment:download',language),
+    install: (language:string): Promise<import('../shared/alignment-status').AlignmentReply> => ipcRenderer.invoke('alignment:install',language),
+    remove: (language:string): Promise<import('../shared/alignment-status').AlignmentReply> => ipcRenderer.invoke('alignment:remove',language),
+    cancelDownload: (language:string): Promise<import('../shared/alignment-status').AlignmentReply> => ipcRenderer.invoke('alignment:cancel-download',language),
+    onModels: (cb:(rows:import('../shared/alignment-status').AlignmentModelRow[])=>void): (()=>void) => {
+      const listener=(_e:unknown,rows:import('../shared/alignment-status').AlignmentModelRow[]):void=>cb(rows)
+      ipcRenderer.on('alignment:models-changed',listener)
+      return()=>ipcRenderer.removeListener('alignment:models-changed',listener)
+    }
+  },
   settings: {
+    nativeSpeechInventory: () => ipcRenderer.invoke('transcription:native-inventory'),
     chooseArchive: () => ipcRenderer.invoke('preferences:choose-archive'),
     clearArchive: () => ipcRenderer.invoke('preferences:clear-archive'),
     chooseBackupFolder: () => ipcRenderer.invoke('preferences:choose-backup-folder'),

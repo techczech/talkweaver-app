@@ -585,7 +585,7 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
   const { buildPerSlideProjections } = await import('../compiler/scripts/lib/10-projections.mjs')
   const { applyInspectorOptionToOutline } = inspectorModule
   const statementOutline = [
-    '---', 'title: Statement options', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+    '---', 'title: Statement options', 'auto_title_slide: false', 'auto_thanks_slide: false', 'palette: classic', '---', '',
     '## Statements', '',
     '### Agents need a place to keep their work.', '{id=untitled}{statement}', '',
     '### Where to start', '{id=titled}{statement=poster}', '', 'Agents need a place to keep their work.', ''
@@ -594,7 +594,10 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
   const statementRows = buildPerSlideProjections(statementModel, 'statement-options')
   const at = (id) => statementRows.findIndex((row) => row.slide_id === id)
   assert.equal(statementRows[at('untitled')].title_layout, 'hidden', 'a heading-only statement compiles without a title')
-  assert.equal(statementRows[at('titled')].title_layout, 'left', 'a statement with a body sits beside the rail')
+  assert.equal(statementRows[at('titled')].title_layout, 'left', 'a statement with a body sits beside the rail (classic look)')
+  // 0.44 Ocean look (no palette): a statement with a body fills the stage under the top title tab.
+  const oceanRows = buildPerSlideProjections(await prepareSource('/tmp/statement-options-ocean.md', statementOutline.replace('palette: classic\n', ''), 'statement-options'), 'statement-options')
+  assert.equal(oceanRows[oceanRows.findIndex((row) => row.slide_id === 'titled')].title_layout, 'top', 'in the Ocean look a statement with a body takes the top title')
   const KEYS = ['statement-sidebar', 'statement-bg', 'statement-align', 'statement-colour']
   const bindingsOf = (index, line, rowsIn = statementRows, deckStatement = '') =>
     inspectorModel(rowsIn, index, 3, line, LAYOUTS, undefined, false, [], '', deckStatement).sections.flatMap((section) => section.bindings)

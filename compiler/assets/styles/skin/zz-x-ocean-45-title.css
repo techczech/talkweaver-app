@@ -1,0 +1,54 @@
+/* 0.44 look ("ocean"): the opening title slide (the Poster, the default title_style), to round-9 frame t-cur-1 and
+   round-10 S01: a white stage, the title large at the left, a large disc in the lead colour bleeding off the right
+   edge carrying the talk's own icon in white (the icon written on the talk's `#` line; none is chosen for it). Without
+   an icon the disc is plain. In Bold the disc is amber and its icon near-black (8.65:1). The series and event,
+   subtitle, author, affiliation, web address, date, logo, handout QR and any authored body all keep their places;
+   the light side rail becomes white, holding the logo and QR. The Split and Banner title styles and the closing
+   poster keep their structure in the look's colours. */
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) {
+  --oc-disc: 47.5cqw;
+  background: var(--look-ground);
+}
+/* the disc: a flat circle (centre 94.25cqw across, half way down, radius 23.75cqw, about a third off the right edge),
+   cut from a box that stays inside the poster, so nothing overflows the stage and no gradient is involved */
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing)::after {
+  content: ""; position: absolute; z-index: 0; pointer-events: none; top: 0; bottom: 0; right: 0; width: 30cqw;
+  background: var(--look-lead); clip-path: circle(23.75cqw at calc(100% - 5.75cqw) 50%);
+}
+/* the logo and QR leave the side rail: the logo sits above the kicker, the QR in the bottom-left corner beside the
+   byline, so the title has the whole width left of the disc */
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-side {
+  position: absolute; left: 5cqw; top: 4.4cqw; bottom: 4.4cqw; width: auto; min-width: 0; background: none; border: 0; padding: 0; z-index: 1;
+  display: flex; flex-direction: column; justify-content: space-between; pointer-events: none;
+}
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-side > * { pointer-events: auto; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-side .tp-qr { margin: auto 0 0; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-side .tp-qr .qr-caption { max-width: 15.6cqw; font-size: 1.5cqw; color: var(--look-muted); }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing):has(> .tp-side .tp-qr) .tp-foot { padding-left: 17.5cqw; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing):has(> .tp-side .tp-logo) .tp-main { padding-top: 10cqw; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-side:empty { display: none; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-main {
+  position: static; z-index: 1; padding: 4.4cqw 32cqw 4.4cqw 5cqw;
+}
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-main > * { position: relative; z-index: 1; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-main > .tp-mid { position: static; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-title {
+  position: static; font: 700 max(48px, 6cqw)/1.06 var(--look-face-display); letter-spacing: -.03em; color: var(--look-ink); max-width: 11em;
+}
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-sub {
+  font-size: max(var(--type-floor, 31px), 2.4cqw); color: var(--look-muted); max-width: 22em;
+}
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) :is(.tp-who, .tp-whenweb) { font-size: max(var(--type-floor, 31px), 2cqw); }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) :is(.tp-soft, .tp-whenweb) { color: var(--look-muted); }
+/* the talk's icon, moved into the disc: white on the lead colour, about 15cqw */
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-title > .title-with-icon { display: block; position: static; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-title > .title-with-icon > .title-icon {
+  position: absolute; z-index: 1; right: 4.6cqw; top: 50%; transform: translateY(-50%);
+  width: 15cqw; height: 15cqw; margin: 0; padding: 0; background: none; border: 0; color: var(--look-on-lead);
+}
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-title > .title-with-icon > .title-icon svg { width: 100%; height: 100%; display: block; stroke-width: 2; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-title > .title-with-icon > .title-text { display: inline; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-title:is(:has(.title-text), *) { overflow-wrap: normal; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-foot { flex-wrap: wrap; row-gap: .4em; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-who { max-width: none; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-whenweb { text-align: left; }

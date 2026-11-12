@@ -25,8 +25,8 @@ function assertWire(wire, full = false) {
     if (wire[FuseV1Options[name]] !== (required ? 49 : 48)) throw new Error(`${name}: expected ${required ? 'enabled' : 'disabled'}, got ${wire[FuseV1Options[name]]}`)
   }
 }
-function assertEntitlements(xml, main = false) {
-  const allowed = new Set(['com.apple.security.cs.allow-jit', ...(main ? ['com.apple.security.device.audio-input'] : [])])
+function assertEntitlements(xml, main = false, onnx = false) {
+  const allowed = new Set(onnx ? [] : ['com.apple.security.cs.allow-jit', ...(main ? ['com.apple.security.device.audio-input','com.apple.security.device.camera'] : [])])
   if (!xml.includes('<plist')) throw new Error('codesign returned no entitlement plist')
   const values = plist.parse(xml)
   if (!values || typeof values !== 'object' || Array.isArray(values)) throw new Error('invalid entitlement dictionary')
@@ -87,7 +87,7 @@ async function verify(app, { full = false, allowUnsigned = false } = {}) {
       const signed = spawnSync('/usr/bin/codesign', ['-d', '--entitlements', ':-', target], { encoding: 'utf8' })
       if (signed.status !== 0) throw new Error(`cannot read signed entitlements: ${target}`)
       // Native libraries may have no entitlement blob at all (an empty allowlist).
-      assertEntitlements(signed.stdout.trim() || '<plist><dict/></plist>', target === app || target === main)
+      assertEntitlements(signed.stdout.trim() || '<plist><dict/></plist>', target === app || target === main, target.includes('/node_modules/onnxruntime-node/'))
       console.log(`safe signed entitlements: ${target}`)
     }
     console.log(`PASS all ${targets.length} Mach-O binaries: signatures, team, runtime and entitlement allowlist`)

@@ -576,9 +576,12 @@ async function goLive(pc) {
   const lookingDuring = during.service.look('asked')
   await duringAsked
   let releaseUpload
-  during.fake.model.delay = (request) => (request.method === 'PUT' && request.path.endsWith(`/scripts/${LIVE_WORKER_NAME}`) ? new Promise((resolve) => { releaseUpload = resolve }) : null)
+  let uploadStarted
+  const uploading = new Promise((resolve) => { uploadStarted = resolve })
+  during.fake.model.delay = (request) => (request.method === 'PUT' && request.path.endsWith(`/scripts/${LIVE_WORKER_NAME}`) ? new Promise((resolve) => { releaseUpload = resolve; uploadStarted() }) : null)
   const settingUp = during.service.setUp()
-  await new Promise((resolve) => setTimeout(resolve, 20))
+  // Release the lookup while the actual upload is held, regardless of machine load.
+  await uploading
   releaseDuring()
   await lookingDuring
   during.fake.model.delay = null

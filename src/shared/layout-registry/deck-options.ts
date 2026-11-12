@@ -36,6 +36,8 @@ export const INPUT_OVERRIDES: Record<string, DeckOption['input']> = {
 /** Colour chips for the two palette-shaped vocabularies. */
 export const SWATCHES: Record<string, string> = {
   green: '#166534',
+  bold: '#FF9F1C',
+  classic: '#0a7a5c',
   cobalt: '#0f4bd8',
   emerald: '#0a7a5c',
   vermilion: '#c2410c',

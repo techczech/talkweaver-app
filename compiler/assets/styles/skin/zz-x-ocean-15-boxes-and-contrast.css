@@ -1,0 +1,352 @@
+/* 0.44 look ("ocean"): icon lists as boxes, icon rows and contrast, to the locked frames in
+   docs/design/2026-11-10-native-slide-redesign/round-9-amber-sections/frames/ (l1-4 six boxes, l4-4 three
+   panels, p2-6a contrast) and handoff-0.44-basics.md (a) and (b).
+
+   Sizes are stage-relative (1cqw = 16px at 1600 x 900) and do not follow the list fitter's --fs-body step: the
+   fitter stepped these slides down to the floor and made the label the size of the detail line. A slide whose
+   labels or detail lines are long carries data-oc-fit="long" (07-assembly.mjs stampOceanFit) and takes the
+   compact step, which sits exactly on the locked minimums.
+
+     boxes (four or more)   icon 7cqw = 112px (long 6cqw = 96px), label 3.125cqw = 50px bold (long 2.75cqw = 44px),
+                            detail 2cqw = 32px regular, muted (long 1.9375cqw = 31px, the floor)
+     panels (three or fewer) icon 13cqw = 208px (long 12.5cqw = 200px), label 3.75cqw = 60px bold (long 3.5cqw = 56px),
+                            detail 2.125cqw = 34px (long 1.9375cqw = 31px)
+     contrast               head 5.5cqw = 88px (long 4.5cqw = 72px), rows 2.5cqw = 40px (long 2.25cqw = 36px), thin rules clear of the text
+   Icon strokes are 2.5 units on Lucide's 24-unit grid and scale with the icon (112px → 11.7px lines).
+
+   Stage use: the block runs from just under the title tab to a 3.5cqw (56px) bottom margin, the sides at the
+   slide's own inset (5.6cqw = 90px, where the title tab's text starts); gaps 1.5cqw (24px). */
+
+/* ---------- the band: from under the tab to the bottom margin ---------- */
+.slide[data-look="ocean"][data-title-layout="top"]:has(> .slide-content > :is(.feature-list.fl-cards, .icon-row)) {
+  --titlelook-clear: 2.4cqw;
+}
+.slide[data-look="ocean"][data-title-layout="top"] > .slide-content:has(> :is(.feature-list.fl-cards, .icon-row)) {
+  padding-bottom: max(0px, calc(3.5cqw - var(--slide-pad-y))) !important;
+}
+.slide[data-look="ocean"][data-title-layout="top"] > .slide-content > :is(.feature-list.fl-cards, .icon-row) {
+  flex: 1 1 auto; min-height: 0; width: 100%; max-width: none; margin: 0 !important; align-self: stretch;
+}
+
+/* The content box is the band, not a minimum: capped at the slide, so the grid shares out the band instead of
+   growing past the bottom margin when its contents are tall. */
+.slide[data-look="ocean"][data-title-layout="top"] > .slide-content:has(> :is(.feature-list.fl-cards, .icon-row)) {
+  height: 100% !important; max-height: 100% !important; box-sizing: border-box;
+}
+
+/* ---------- shared icon drawing: bold strokes that scale with the icon ---------- */
+.slide[data-look="ocean"] :is(.feature-list.fl-cards > li > .fl-icon, .icon-row .ir-item > .ir-icon) svg {
+  width: 100% !important; height: 100% !important; display: block; color: inherit;
+}
+.slide[data-look="ocean"] :is(.feature-list.fl-cards > li > .fl-icon, .icon-row .ir-item > .ir-icon) svg,
+.slide[data-look="ocean"] :is(.feature-list.fl-cards > li > .fl-icon, .icon-row .ir-item > .ir-icon) svg * {
+  stroke-width: 2.5 !important; vector-effect: none !important;
+}
+
+/* =====================================================================================
+   ICON LIST AS BOXES, FOUR OR MORE (frame l1-4): white boxes on the light neutral ground, the
+   icon top left, the label under it, the detail under that, the block balanced in the box
+   ===================================================================================== */
+.slide[data-look="ocean"]:has(> .slide-content > .feature-list.fl-cards > li:nth-child(4)) { background-color: var(--look-ground-neutral); }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards {
+  --oc-cols: 3;
+  display: grid !important;
+  grid-template-columns: repeat(var(--oc-cols), minmax(0, 1fr)) !important;
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 1.5cqw;
+  padding: 0; list-style: none;
+  align-items: stretch !important; align-content: stretch !important;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:has(> li:nth-child(2):last-child),
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:has(> li:nth-child(4):last-child) { --oc-cols: 2; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:has(> li:nth-child(10)) { --oc-cols: 4; }
+
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li {
+  --c: var(--look-main);
+  --oc-icon: 6.5cqw; --oc-label: 2.875cqw; --oc-detail: 2cqw; --oc-pad: 1.75cqw; --oc-gap: .5cqw;
+  display: flex !important; flex-direction: column; justify-content: center; align-items: flex-start;
+  gap: var(--oc-gap);
+  min-width: 0; min-height: 0; height: auto !important; align-self: stretch !important;
+  margin: 0 !important; padding: var(--oc-pad) !important;
+  background: var(--look-ground) !important;
+  border: .125cqw solid var(--look-hairline) !important; border-radius: .5cqw !important; box-shadow: none !important;
+  color: var(--look-ink); text-align: left; overflow: hidden;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li > .fl-icon {
+  display: block; flex: 0 0 auto; width: var(--oc-icon) !important; height: var(--oc-icon) !important;
+  margin: 0 0 .5cqw !important; padding: 0 !important; background: none !important; border: 0 !important; border-radius: 0 !important;
+  color: var(--c) !important;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li > .fl-text {
+  display: block; align-self: stretch !important; margin: 0 !important; padding: 0 !important; grid-column: auto !important;
+  font: 700 var(--oc-label)/1.08 var(--look-face-display) !important; letter-spacing: -.01em; text-transform: none !important;
+  color: inherit !important; text-align: inherit !important;
+  white-space: normal !important; overflow-wrap: break-word !important; hyphens: manual;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li > .fl-sublist {
+  display: flex !important; flex-direction: column; gap: .3cqw; align-self: stretch;
+  margin: 0 !important; padding: 0 !important; border: 0 !important; list-style: none;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li > .fl-sublist > li {
+  margin: 0 !important; padding: 0 !important; border: 0 !important; background: none !important;
+  font: 400 var(--oc-detail)/1.25 var(--look-face-text) !important; color: var(--look-muted) !important; text-align: inherit !important;
+  overflow-wrap: break-word;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li > .fl-sublist > li::before { content: none !important; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li .fl-subtext { font: inherit !important; color: inherit !important; }
+/* The compact step (long labels or detail lines, four or more boxes; or seven or more boxes): the locked
+   minimums, and the icon beside the label so the detail keeps its height. */
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:is([data-oc-fit="long"]:has(> li:nth-child(4)), :has(> li:nth-child(7))) > li {
+  --oc-icon: 6cqw; --oc-label: 2.75cqw; --oc-detail: max(var(--type-floor), 1.9375cqw); --oc-pad: 1.5cqw;
+  display: grid !important; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto;
+  align-content: center; align-items: center; column-gap: 1.25cqw; row-gap: .6cqw;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:is([data-oc-fit="long"]:has(> li:nth-child(4)), :has(> li:nth-child(7))) > li > .fl-icon { grid-column: 1; grid-row: 1; margin: 0 !important; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:is([data-oc-fit="long"]:has(> li:nth-child(4)), :has(> li:nth-child(7))) > li > .fl-text { grid-column: 2; grid-row: 1; line-height: 1.04 !important; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:is([data-oc-fit="long"]:has(> li:nth-child(4)), :has(> li:nth-child(7))) > li > .fl-sublist { grid-column: 1 / -1; grid-row: 2; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:is([data-oc-fit="long"]:has(> li:nth-child(4)), :has(> li:nth-child(7))) > li > .fl-sublist > li { line-height: 1.18 !important; }
+
+/* the current item of a reveal: the only filled box, amber with near-black label, detail and icon */
+.slide[data-look="ocean"].mode-reveal .slide-content > .feature-list.fl-cards > li:is([data-mode-state="current"], :has(> .fl-sublist > li[data-mode-state="current"])) {
+  background: var(--look-current-fill) !important; border-color: var(--look-current-fill) !important;
+  color: var(--look-on-current) !important; --c: var(--look-on-current);
+}
+.slide[data-look="ocean"].mode-reveal .slide-content > .feature-list.fl-cards > li:is([data-mode-state="current"], :has(> .fl-sublist > li[data-mode-state="current"])) > .fl-sublist > li { color: var(--look-on-current) !important; }
+
+/* =====================================================================================
+   THREE OR FEWER, AS PANELS (frame l4-4): tall panels filling the stage, the icon large and centred
+   in the upper part, the label and detail centred below. Shared by boxed icon lists and icon rows.
+   Three: Ocean, Deeper Ocean, light. Two: light and Ocean. One: Ocean.
+   ===================================================================================== */
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))) > li,
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows) > .ir-item {
+  --oc-icon: 13cqw; --oc-label: 3.75cqw; --oc-detail: 2.125cqw;
+  display: flex !important; flex-direction: column; justify-content: flex-start; align-items: center;
+  gap: .5cqw; padding: 2.4cqw 2cqw 2.6cqw !important; text-align: center !important;
+  border: 0 !important; border-radius: .5cqw !important; box-shadow: none !important; min-width: 0; margin: 0 !important;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))) > li > .fl-icon,
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows) > .ir-item > .ir-icon {
+  display: block; width: var(--oc-icon) !important; height: var(--oc-icon) !important; flex: 0 0 auto;
+  margin: auto 0 !important; padding: 0 !important; background: none !important; border: 0 !important; border-radius: 0 !important;
+  color: var(--c) !important; align-self: center;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))) > li > .fl-text,
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows) > .ir-item > .ir-label {
+  display: block; align-self: stretch !important; margin: 0 !important; padding: 0 !important;
+  font: 700 var(--oc-label)/1.06 var(--look-face-display) !important; letter-spacing: -.01em !important; text-transform: none !important;
+  color: inherit !important; text-align: center !important; white-space: normal !important; overflow-wrap: break-word !important;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))) > li > .fl-sublist { align-items: center; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))) > li > .fl-sublist > li,
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows) > .ir-item .ir-desc > li {
+  font: 400 var(--oc-detail)/1.22 var(--look-face-text) !important; color: inherit !important; opacity: 1;
+  text-align: center !important; margin: 0 !important; padding: 0 !important; border: 0 !important; background: none !important; box-shadow: none !important;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards[data-oc-fit="long"]:not(:has(> li:nth-child(4))) > li,
+.slide[data-look="ocean"] .slide-content > .icon-row[data-oc-fit="long"]:not(.ir-rows) > .ir-item {
+  --oc-icon: 12.5cqw; --oc-label: 3.5cqw; --oc-detail: max(var(--type-floor), 1.9375cqw);
+}
+
+/* the icon row's own parts */
+.slide[data-look="ocean"] .slide-content > .icon-row {
+  display: grid !important; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 1.5cqw; align-items: stretch;
+}
+.slide[data-look="ocean"] .icon-row .ir-item { --c: var(--look-main); background: var(--look-ground) !important; color: var(--look-ink); }
+.slide[data-look="ocean"] .icon-row .ir-item > .ir-desc { display: flex !important; flex-direction: column; align-items: stretch; gap: .3cqw; margin: 0 !important; padding: 0 !important; list-style: none; width: 100%; }
+.slide[data-look="ocean"] .icon-row .ir-item > .ir-desc > li { display: block !important; }
+.slide[data-look="ocean"] .icon-row .ir-item .ir-desc > li::before,
+.slide[data-look="ocean"] .icon-row .ir-item .ir-desc > li::after { content: none !important; display: none !important; }
+.slide[data-look="ocean"] .icon-row .ir-item .ir-desc > li > :is(.ir-link, .ir-li-icon) { display: none !important; }
+.slide[data-look="ocean"] .icon-row .ir-item .ir-li-text { font: inherit !important; color: inherit !important; }
+/* four or five in a row: no fills (colour by count), white panels on the light ground, Ocean icons */
+.slide[data-look="ocean"]:has(> .slide-content > .icon-row > .ir-item:nth-child(4)) { background-color: var(--look-ground-neutral); }
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):has(> .ir-item:nth-child(4)) > .ir-item {
+  --oc-icon: 8.5cqw; --oc-label: 3.125cqw; --oc-detail: 2cqw;
+  border: .125cqw solid var(--look-hairline) !important;
+}
+.slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows):has(> .ir-item:nth-child(4)) > .ir-item .ir-desc > li { color: var(--look-muted) !important; opacity: 1; }
+.slide[data-look="ocean"] .slide-content > .icon-row[data-oc-fit="long"]:not(.ir-rows):has(> .ir-item:nth-child(4)) > .ir-item {
+  --oc-icon: 6cqw; --oc-label: 2.75cqw; --oc-detail: max(var(--type-floor), 1.9375cqw);
+}
+
+/* colour by count for the panels */
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))) > li:nth-child(3n + 1),
+.slide[data-look="ocean"] .slide-content > .icon-row:not(:has(> .ir-item:nth-child(4))) > .ir-item:nth-child(3n + 1) {
+  background: var(--look-three-1) !important; color: var(--look-on-main) !important; --c: var(--look-on-main);
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))) > li:nth-child(3n + 2),
+.slide[data-look="ocean"] .slide-content > .icon-row:not(:has(> .ir-item:nth-child(4))) > .ir-item:nth-child(3n + 2) {
+  background: var(--look-three-2) !important; color: var(--look-on-deep) !important; --c: var(--look-on-deep);
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))) > li:nth-child(3n + 3),
+.slide[data-look="ocean"] .slide-content > .icon-row:not(:has(> .ir-item:nth-child(4))) > .ir-item:nth-child(3n + 3) {
+  background: var(--look-three-3) !important; color: var(--look-ink) !important; --c: var(--look-main);
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:has(> li:nth-child(2):last-child) > li:nth-child(1),
+.slide[data-look="ocean"] .slide-content > .icon-row:has(> .ir-item:nth-child(2):last-child) > .ir-item:nth-child(1) {
+  background: var(--look-two-a) !important; color: var(--look-ink) !important; --c: var(--look-main);
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:has(> li:nth-child(2):last-child) > li:nth-child(2),
+.slide[data-look="ocean"] .slide-content > .icon-row:has(> .ir-item:nth-child(2):last-child) > .ir-item:nth-child(2) {
+  background: var(--look-two-b) !important; color: var(--look-on-main) !important; --c: var(--look-on-main);
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))) > li:nth-child(3n + 3) > .fl-sublist > li,
+.slide[data-look="ocean"] .slide-content > .icon-row:not(:has(> .ir-item:nth-child(4))) > .ir-item:nth-child(3n + 3) .ir-desc > li,
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:has(> li:nth-child(2):last-child) > li:nth-child(1) > .fl-sublist > li,
+.slide[data-look="ocean"] .slide-content > .icon-row:has(> .ir-item:nth-child(2):last-child) > .ir-item:nth-child(1) .ir-desc > li { color: var(--look-muted) !important; opacity: 1; }
+/* the current item of a reveal or {focus} over panels: a full Ocean fill with white type and icon */
+.slide[data-look="ocean"].mode-active .slide-content > .icon-row > .ir-item:is([data-mode-state="current"], :has([data-mode-state="current"])):not(#oc-current) {
+  background: var(--look-current-fill) !important; color: var(--look-on-current) !important; --c: var(--look-on-current); border-color: var(--look-current-fill) !important;
+}
+.slide[data-look="ocean"].mode-active .slide-content > .icon-row > .ir-item:is([data-mode-state="current"], :has([data-mode-state="current"])):not(#oc-current) .ir-desc > li { color: var(--look-on-current) !important; opacity: 1; background: none !important; border-color: transparent !important; }
+
+/* Boxed cards beside a left rail (an authored {title=side} or {split=…}): the column is narrow, so the cards
+   stack as rows, the icon beside the text, at the locked minimums. */
+.slide[data-look="ocean"][data-title-layout="left"] .slide-content > .feature-list.fl-cards { grid-template-columns: minmax(0, 1fr) !important; gap: 1.2cqw; }
+.slide[data-look="ocean"][data-title-layout="left"] .slide-content > .feature-list.fl-cards > li {
+  display: grid !important; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: auto auto; align-content: center; align-items: center;
+  column-gap: 1.6cqw; row-gap: .3cqw; text-align: left !important;
+  --oc-icon: 6cqw; --oc-label: 2.75cqw; --oc-detail: max(var(--type-floor), 1.9375cqw);
+  padding: 1.4cqw 1.8cqw !important;
+}
+.slide[data-look="ocean"][data-title-layout="left"] .slide-content > .feature-list.fl-cards > li > .fl-icon { grid-row: 1 / span 2; grid-column: 1; margin: 0 !important; }
+.slide[data-look="ocean"][data-title-layout="left"] .slide-content > .feature-list.fl-cards > li > :is(.fl-text, .fl-sublist) { grid-column: 2; margin: 0 !important; text-align: left !important; align-items: flex-start; }
+.slide[data-look="ocean"][data-title-layout="left"] .slide-content > .feature-list.fl-cards > li > .fl-sublist > li { text-align: left !important; }
+
+/* =====================================================================================
+   CONTRAST (frame p2-6a): two full-height halves from under the title tab to the bottom edge
+   and out to both side edges; light blue-grey with Ocean head against Ocean with white; heads
+   large; rows separated by thin rules clear of the text. Icons only where the author named one.
+   ===================================================================================== */
+.slide[data-look="ocean"][data-layout="contrast"] > .slide-content:has(> .vs-grid) {
+  height: 100% !important; max-height: 100% !important; box-sizing: border-box; padding-bottom: 0 !important;
+}
+.slide[data-look="ocean"][data-layout="contrast"] .slide-content > .vs-grid {
+  --vs-pad: 5.5cqw;
+  /* bleed: up to the tab's lower edge, out to both side edges and down to the bottom edge */
+  margin: calc(-1 * var(--titlelook-clear, 0px)) calc(-1 * var(--slide-pad-x)) calc(-1 * var(--slide-pad-y)) !important;
+  width: auto !important; max-width: none !important; flex: 1 1 auto !important; min-height: 0; align-self: stretch !important;
+  grid-template-columns: minmax(0, 1fr) 0 minmax(0, 1fr) !important; column-gap: 0 !important;
+  align-content: stretch !important;
+}
+.slide[data-look="ocean"][data-layout="contrast"] .slide-content > .vs-grid.vs-headed { grid-template-rows: var(--vs-pad) auto repeat(var(--vs-rows), auto) minmax(0, 1fr) !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .slide-content > .vs-grid:not(.vs-headed) { grid-template-rows: var(--vs-pad) repeat(var(--vs-rows), auto) minmax(0, 1fr) !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-bg { border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-bg.L { background: var(--look-two-a) !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-bg.R { background: var(--look-two-b) !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-disc { display: none !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .L { color: var(--look-ink); --c: var(--look-main); }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .R { color: var(--look-on-main) !important; --c: var(--look-on-main); }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-head {
+  display: flex !important; align-items: center; gap: 1.5cqw;
+  margin: 0 5.6cqw !important; padding: 0 0 2.5cqw !important; border: 0 !important; background: none !important;
+}
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-head.L { color: var(--look-ink) !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-head-text {
+  font: 700 5.5cqw/1.05 var(--look-face-display) !important; color: inherit !important; text-transform: none !important; letter-spacing: -.015em !important;
+}
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-head-ico {
+  flex: 0 0 auto; width: 5.5cqw !important; height: 5.5cqw !important; color: var(--c) !important; margin: 0 !important;
+}
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-head-ico svg { width: 100%; height: 100%; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid :is(.vs-head-ico, .vs-ico) svg,
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid :is(.vs-head-ico, .vs-ico) svg * { stroke-width: 2.5 !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-row {
+  display: flex !important; align-items: center; gap: 1.2cqw;
+  margin: 0 5.6cqw !important; padding: 1.9cqw 0 !important; background: none !important;
+  border: 0 !important; border-top: .125cqw solid color-mix(in srgb, currentColor 28%, transparent) !important;
+}
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-row .vs-text {
+  font: 600 2.5cqw/1.2 var(--look-face-text) !important; color: inherit !important; min-width: 0; overflow-wrap: break-word;
+}
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-row .vs-ico { flex: 0 0 auto; width: 2.5cqw !important; height: 2.5cqw !important; color: var(--c) !important; margin: 0 !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-row .vs-children { font: 400 max(var(--type-floor), 2cqw)/1.25 var(--look-face-text) !important; color: inherit !important; }
+
+/* An icon row the compiler wraps into rows (narrow columns, usually five or more): drawn as the boxes above,
+   three to a row, white on the light ground, the icon top left, the label and detail under it. */
+.slide[data-look="ocean"]:has(> .slide-content > .icon-row.ir-rows) { background-color: var(--look-ground-neutral); }
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows {
+  display: grid !important; grid-auto-flow: row !important; grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+  grid-template-rows: none !important; grid-auto-rows: minmax(0, 1fr) !important; gap: 1.5cqw !important; align-items: stretch;
+}
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows > .ir-item {
+  --oc-icon: 6.5cqw; --oc-label: 2.875cqw; --oc-detail: 2cqw;
+  display: flex !important; flex-direction: column; justify-content: center; align-items: flex-start; gap: .5cqw;
+  padding: 1.75cqw !important; margin: 0 !important; min-height: 0; min-width: 0; overflow: hidden; text-align: left !important;
+  background: var(--look-ground) !important; border: .125cqw solid var(--look-hairline) !important; border-radius: .5cqw !important; box-shadow: none !important;
+  color: var(--look-ink); grid-row: auto !important; grid-column: auto !important;
+}
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows > .ir-item > .ir-icon {
+  display: block; width: var(--oc-icon) !important; height: var(--oc-icon) !important; margin: 0 0 .4cqw !important; padding: 0 !important;
+  background: none !important; border: 0 !important; color: var(--look-main) !important; flex: 0 0 auto;
+}
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows > .ir-item > .ir-label {
+  display: block; margin: 0 !important; padding: 0 !important; border: 0 !important;
+  font: 700 var(--oc-label)/1.06 var(--look-face-display) !important; letter-spacing: -.01em !important; text-transform: none !important;
+  color: var(--look-ink) !important; white-space: normal !important; overflow-wrap: break-word !important; text-align: left !important;
+}
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows > .ir-item .ir-desc > li {
+  font: 400 var(--oc-detail)/1.22 var(--look-face-text) !important; color: var(--look-muted) !important; text-align: left !important;
+  margin: 0 !important; padding: 0 !important; border: 0 !important; background: none !important; box-shadow: none !important; min-height: 0;
+}
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows[data-oc-fit="long"] > .ir-item {
+  --oc-icon: 6cqw; --oc-label: 2.75cqw; --oc-detail: max(var(--type-floor), 1.9375cqw); padding: 1.5cqw !important;
+  display: grid !important; grid-template-columns: auto minmax(0, 1fr); align-content: center; align-items: center; column-gap: 1.25cqw; row-gap: .6cqw;
+}
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows[data-oc-fit="long"] > .ir-item > .ir-icon { grid-column: 1; margin: 0 !important; }
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows[data-oc-fit="long"] > .ir-item > .ir-label { grid-column: 2; line-height: 1.04 !important; }
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows[data-oc-fit="long"] > .ir-item > .ir-desc { grid-column: 1 / -1; }
+
+/* contrast rows keep the height of their text (a row may not be squeezed under its own lines) */
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-pair { min-height: auto !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-row::after { content: none !important; }
+/* many or long rows: the compact step, rows at the 36px minimum, a narrower inset */
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid[data-oc-fit="long"] { --vs-pad: .75cqw; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid[data-oc-fit="long"] :is(.vs-head, .vs-row) { margin-inline: 3.5cqw !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid[data-oc-fit="long"] .vs-head { padding-bottom: 1.2cqw !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid[data-oc-fit="long"] .vs-head-text { font-size: 4.5cqw !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid[data-oc-fit="long"] .vs-row { padding: .6cqw 0 !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid[data-oc-fit="long"] .vs-row .vs-text { font-size: 2.25cqw !important; line-height: 1.15 !important; }
+
+/* the classic card and icon-row decorations (the rule under a card's title row, the head rules) are not drawn
+   in the Ocean look: no rule may cross or touch the text */
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li::before,
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li::after,
+.slide[data-look="ocean"] .slide-content > .icon-row > .ir-item::before,
+.slide[data-look="ocean"] .slide-content > .icon-row > .ir-item::after { content: none !important; display: none !important; }
+.slide[data-look="ocean"] .slide-content > .icon-row > .ir-item > .ir-label { border: 0 !important; box-shadow: none !important; }
+/* rows with no icon (the Ocean look draws only named icons) start at the panel's text edge, not after an icon gap */
+.slide[data-look="ocean"] .vs-grid .vs-row.vs-bare { padding-left: 0 !important; }
+
+/* Everything written in a shape takes the shape's type colour: bold and emphasised words, links, code and highlights
+   inside a label or a detail line included (a bold prefix in the accent colour was Ocean on an Ocean panel). Key words
+   keep their weight; no fill is drawn under them. */
+.slide[data-look="ocean"] .slide-content > :is(.feature-list.fl-cards, .feature-list.fl-iconlist-list) > li :is(strong, b, em, i, a, code, mark, .fl-subtext),
+.slide[data-look="ocean"] .slide-content > .icon-row > .ir-item :is(strong, b, em, i, a, code, mark, .ir-li-text) {
+  color: inherit !important; background: none !important; opacity: 1 !important;
+}
+
+/* a numbered box or panel: the number takes the icon's place at display size (bold, at least 24px, so Ocean on the light
+   panel reads at large-text contrast) */
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li > .fl-icon.fl-num {
+  font: 700 calc(var(--oc-icon) * .72)/1 var(--look-face-display) !important; color: var(--c) !important; display: flex; align-items: center;
+}
+/* detail lines on a filled panel (Ocean or Deeper Ocean) take the panel's white type, whatever density the list
+   fitter chose (a dense list kept near-black detail on Ocean, 3.62:1) */
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))):not(:has(> li:nth-child(2):last-child)) > li:not(:nth-child(3n + 3)) > .fl-sublist > li,
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:has(> li:nth-child(2):last-child) > li:nth-child(2) > .fl-sublist > li,
+.slide[data-look="ocean"] .slide-content > .icon-row:not(:has(> .ir-item:nth-child(4))):not(:has(> .ir-item:nth-child(2):last-child)) > .ir-item:not(:nth-child(3n + 3)) .ir-desc > li,
+.slide[data-look="ocean"] .slide-content > .icon-row:has(> .ir-item:nth-child(2):last-child) > .ir-item:nth-child(2) .ir-desc > li {
+  color: inherit !important; opacity: 1 !important;
+}
+/* a numbered icon row: the number takes the icon's place at display size (bold, so Ocean on the light panel reads at
+   large-text contrast); the detail list itself, not only its items, takes the panel's colour */
+.slide[data-look="ocean"] .slide-content > .icon-row > .ir-item > .ir-icon.ir-num {
+  font: 700 calc(var(--oc-icon, 8.5cqw) * .72)/1 var(--look-face-display) !important; color: var(--c) !important;
+  display: flex; align-items: center; justify-content: center;
+}
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))):not(:has(> li:nth-child(2):last-child)) > li:not(:nth-child(3n + 3)) > .fl-sublist,
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:has(> li:nth-child(2):last-child) > li:nth-child(2) > .fl-sublist {
+  color: inherit !important;
+}

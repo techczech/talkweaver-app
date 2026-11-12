@@ -20,6 +20,7 @@
 // (shared-talk:share, shared-talk:stop), of a Run's results link (history:results-share,
 // history:results-share-stop) and of a live session (live:go). Those channels are not listed here.
 export const SETTINGS_WINDOW_ONLY: readonly string[] = [
+  'alignment:download', 'alignment:install', 'alignment:remove', 'alignment:cancel-download',
   'preferences:choose-archive',
   'preferences:clear-archive',
   'preferences:choose-backup-folder',
@@ -65,7 +66,14 @@ export const SHARED_CHANGES: Readonly<Record<string, string>> = {
   'agent-skill:offer-shown': 'Agent ids only; records that the one offer was shown.'
 }
 
+export const DEVICE_WINDOW_CHANGES: Readonly<Record<string, string>> = {
+  'recording:devices': 'Only the main frame of a presenter or Settings window; bounded device names and local checked metadata only.',
+  'recording:device-preview': 'Only those same main frames; explicit scoped microphone/camera preview grants, revoked on window loss.',
+}
+
 export const READS: readonly string[] = [
+  'alignment:models',
+  'recording:device-library', 'recording:device-settings',
   'agent-skill:status', 'agent-skill:offer',
   'updates:get', 'updates:check', 'updates:download', 'updates:open-notes', 'updates:open-store', 'updates:whats-new',
   'cloudflare:status',
@@ -75,6 +83,7 @@ export const READS: readonly string[] = [
   'recording:check-storage',
   'publish:get-config',
   'preferences:get-backup',
+  'transcription:native-inventory',
   'transcription:status',
   'transcription:agent-prompt',
   'transcription:open-setup-folder',

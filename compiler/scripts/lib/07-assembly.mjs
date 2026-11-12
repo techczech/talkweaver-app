@@ -5,7 +5,7 @@ import { boardPanelModelSource } from "../../assets/runtime/board-panel-model.js
 import { boardPanelRuntimeSource } from "../../assets/runtime/board-panel.js";
 import { videoPlaybackRuntimeSource } from "../../assets/runtime/video-playback.js";
 import { scriptDir, slugify, escapeHtml, makeQrSvg, timerRuntimeSource, overviewRuntimeSource, slideFitRuntimeSource, stageFitRuntimeSource, pollDisplayRuntimeSource, pollExtendedSource, markmapVendorSource, mermaidVendorSource } from "./01-cli-utils.mjs";
-import { accentForSectionIndex, accentForSectionName, accentForDeckColour, extraHuesForAccent, titlePlacementFor, titleRegimeForLayout, renderInline, withRenderedClaims, quoteCiteEqualsTitle } from "./02-triggers-layout.mjs";
+import { accentForSectionIndex, accentForSectionName, accentForDeckColour, extraHuesForAccent, deckLookForPalette, companionLevelForPalette, deepStrengthOf, titlePlacementFor, titleRegimeForLayout, renderInline, withRenderedClaims, quoteCiteEqualsTitle } from "./02-triggers-layout.mjs";
 import { findSlideSections, updateDeckTitle, withoutScripts } from "./04-html-extraction.mjs";
 import { createIconVocabulary, buildDeckIconMap, applySlideMonochrome } from "./05-icons.mjs";
 import { withScreenshotStyle, sizeScreenshotRows, screenshotBand, isLoneScreenshot } from "./screenshot-row.mjs";
@@ -450,6 +450,157 @@ function renderLinksBlock(deckLinks) {
   return `<ul class="feature-list fl-plain fl-wide">\n${items}\n</ul>`;
 }
 
+const isVsBlock = (b) => Boolean(b) && (b.type === "contrast" || b.type === "compare");
+
+// Boxed icon lists and icon rows in the Ocean look draw large type and icons; a slide whose labels or detail
+// lines are long takes the compact step instead (sizes at the locked minimums: icon 96px, label 44px, detail
+// the 31px floor at 1600 x 900), so a six-word label and a twelve-word detail still fit inside their box.
+const OCEAN_LONG_LABEL = 22;
+const OCEAN_LONG_DETAIL = 44;
+const OCEAN_LONG_ROW = 30;
+const plainLength = (html) => String(html).replace(/<[^>]*>/g, "").replace(/&[a-z#0-9]+;/gi, " ").trim().length;
+function stampOceanFit(contentHtml) {
+  const longest = (re) => Math.max(0, ...[...contentHtml.matchAll(re)].map((m) => plainLength(m[1])));
+  const long = longest(/class="(?:fl-text|ir-label)">([\s\S]*?)<\/span>/g) > OCEAN_LONG_LABEL
+    || longest(/class="(?:fl-subtext|ir-li-text)">([\s\S]*?)<\/span>/g) > OCEAN_LONG_DETAIL;
+  // A contrast whose rows are many or long takes its compact step too (rows at the 36px minimum).
+  const vsTexts = [...contentHtml.matchAll(/class="vs-text">([\s\S]*?)<\/div>/g)].map((m) => plainLength(m[1]));
+  const vsLong = vsTexts.length > 8 || Math.max(0, ...vsTexts) > OCEAN_LONG_ROW;
+  let html = contentHtml;
+  if (vsLong) html = html.replace(/<div class="(contrast-grid contrast-vs vs-grid[^"]*)"/g, '<div class="$1" data-oc-fit="long"');
+  if (!long) return html;
+  return html
+    .replace(/<ul class="(feature-list[^"]*\bfl-cards\b[^"]*)"/g, '<ul class="$1" data-oc-fit="long"')
+    .replace(/<ul class="(feature-list[^"]*\bfl-iconlist-list\b[^"]*)"/g, '<ul class="$1" data-oc-fit="long"')
+    .replace(/<div class="(icon-row\b[^"]*)"/g, '<div class="$1" data-oc-fit="long"');
+}
+
+// The Ocean look paints a whole slide in the lead colour only for the slide kinds designed for it (handoff 0.44 (a)
+// "one idea: one vivid colour"): a section divider, and a statement whose body is words alone (sentences or quotes
+// with their attribution). Everything else, a statement holding a list, a picture, a table or code included, stays
+// on a light ground with near-black type: designed or safe, never a coloured field under classic children.
+// The CSS keys every full-colour rule on this stamp (data-ground="lead"), never on its own selectors.
+const OCEAN_WORDS_ONLY = new Set(["p", "blockquote", "cite", "span", "strong", "b", "em", "i", "a", "mark", "code", "br", "sup", "sub", "abbr", "small", "u", "s", "del", "ins", "q", "kbd", "footer"]);
+function oceanGround(layout, contentHtml) {
+  if (/<div class="slide-content layout-section-title\b/.test(contentHtml)) return "lead";
+  if (layout !== "statement") return "";
+  const open = contentHtml.match(/<div class="slide-content layout-statement([^"]*)"/);
+  if (!open || /\b(?:statement-bg-rule|statement-bg-lower-third|statement-picture)\b/.test(open[1])) return "";
+  const body = contentHtml.slice(contentHtml.indexOf("</header>") >= 0 ? contentHtml.indexOf("</header>") + 9 : open.index + open[0].length);
+  const tags = [...body.matchAll(/<([a-zA-Z][a-zA-Z0-9-]*)\b/g)].map((m) => m[1].toLowerCase());
+  // the content's own closing wrapper is the only div allowed (a later div is a block the statement holds)
+  const divs = (body.match(/<div\b/g) || []).length;
+  if (divs > 0) return "";
+  if (!tags.length || tags.some((tag) => !OCEAN_WORDS_ONLY.has(tag))) return "";
+  return "lead";
+}
+
+// The Ocean loop (round-9 frame l2-4): one ring through the stops with an arrowhead before each stop, so the
+// direction reads, and the repeat mark (Lucide "repeat") at the centre. Drawn as one SVG behind the stops from the
+// stops' own positions; it is not a reveal unit (the stops still appear one by one). Classic keeps its arcs.
+const OCEAN_LOOP_STOP = 8.2; // the stop's radius plus air, in % of the square diagram
+const OCEAN_LOOP_REPEAT = '<g class="oc-loop-mark" transform="translate(%X %Y) scale(.8) translate(-12 -12)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></g>';
+function stampOceanLoop(contentHtml) {
+  return contentHtml.replace(/<div class="cycle-diagram"([^>]*)>([\s\S]*?)<\/div>(?=\s*<\/div>)/g, (whole, attrs, inner) => {
+    const stops = [...inner.matchAll(/<div class="cycle-node[^"]*" style="left:([\d.]+)%;top:([\d.]+)%"/g)].map((m) => ({ x: Number(m[1]), y: Number(m[2]) }));
+    if (stops.length < 2) return whole;
+    const cx = stops.reduce((sum, p) => sum + p.x, 0) / stops.length;
+    const cy = stops.reduce((sum, p) => sum + p.y, 0) / stops.length;
+    const r = stops.reduce((sum, p) => sum + Math.hypot(p.x - cx, p.y - cy), 0) / stops.length;
+    if (!(r > 5)) return whole;
+    const gap = OCEAN_LOOP_STOP / r;
+    const at = (a) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+    const f = (n) => n.toFixed(2);
+    const angles = stops.map((p) => Math.atan2(p.y - cy, p.x - cx));
+    const parts = [];
+    angles.forEach((a0, i) => {
+      let a1 = angles[(i + 1) % angles.length];
+      while (a1 <= a0) a1 += 2 * Math.PI;
+      const from = a0 + gap;
+      const to = a1 - gap - 0.06;
+      if (to <= from) return;
+      const [x0, y0] = at(from);
+      const [x1, y1] = at(to);
+      parts.push(`<path class="oc-loop-arc" d="M ${f(x0)} ${f(y0)} A ${f(r)} ${f(r)} 0 ${to - from > Math.PI ? 1 : 0} 1 ${f(x1)} ${f(y1)}"/>`);
+      // the arrowhead at the arc's end, pointing along the ring (clockwise)
+      const tip = at(a1 - gap);
+      const tx = -Math.sin(a1 - gap);
+      const ty = Math.cos(a1 - gap);
+      const nx = -ty;
+      const ny = tx;
+      const len = 3.2;
+      const half = 1.7;
+      const bx = tip[0] - tx * len;
+      const by = tip[1] - ty * len;
+      parts.push(`<path class="oc-loop-head" d="M ${f(tip[0])} ${f(tip[1])} L ${f(bx + nx * half)} ${f(by + ny * half)} L ${f(bx - nx * half)} ${f(by - ny * half)} Z"/>`);
+    });
+    const mark = OCEAN_LOOP_REPEAT.replace("%X", f(cx)).replace("%Y", f(cy));
+    const svg = `<svg class="oc-loop-ring" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">${parts.join("")}${mark}</svg>`;
+    return `<div class="cycle-diagram"${attrs}>${svg}${inner}</div>`;
+  });
+}
+
+// A designed list whose words cannot fit the stage at the locked sizes (found by auditing real talks: long detail lines,
+// many sub-points) is stamped data-oc-fit="dense" and keeps the 0.43 drawing in the look's colours, where the list
+// fitter makes room: designed or safe, never a band or panel that its words overflow.
+// annotated: over 200 characters, a group with three or more notes, or four groups with notes; icon list: over 280
+// characters or more than 9 items in all.
+const OCEAN_DENSE = { "fl-annotated": { chars: 200 }, "fl-iconlist-list": { chars: 280, items: 9 } };
+function oceanListDensity(html) {
+  const out = [];
+  const re = /<ul class="(feature-list[^"]*)"([^>]*)>/g;
+  let m;
+  while ((m = re.exec(html))) {
+    let depth = 1;
+    let i = re.lastIndex;
+    const tag = /<(\/?)ul\b/g;
+    tag.lastIndex = i;
+    let t;
+    while (depth > 0 && (t = tag.exec(html))) depth += t[1] ? -1 : 1;
+    const end = t ? t.index : html.length;
+    const inner = html.slice(re.lastIndex, end);
+    const kind = Object.keys(OCEAN_DENSE).find((k) => new RegExp(`\\b${k}\\b`).test(m[1]) && !/\bfl-numbered\b/.test(m[1]));
+    const limits = kind && OCEAN_DENSE[kind];
+    // groups (top-level items) and the sub-items under each
+    const subs = [];
+    let level = 0;
+    for (const tg of inner.matchAll(/<(\/?)(ul|ol|li)\b/g)) {
+      if (tg[2] !== "li") level += tg[1] ? -1 : 1;
+      else if (!tg[1] && level === 0) subs.push(0);
+      else if (!tg[1] && level === 1 && subs.length) subs[subs.length - 1] += 1;
+    }
+    const items = (inner.match(/<li\b/g) || []).length;
+    const crowded = kind === "fl-annotated"
+      ? subs.some((n) => n >= 3) || (subs.length >= 4 && subs.some((n) => n > 0))
+      : items > limits?.items;
+    const dense = !!limits && (plainLength(inner) > limits.chars || crowded);
+    out.push({ start: m.index, open: m[0], dense });
+    re.lastIndex = end;
+  }
+  return out;
+}
+function stampOceanDense(html) {
+  let shift = 0;
+  let out = html;
+  for (const list of oceanListDensity(html)) {
+    if (!list.dense) continue;
+    const at = list.start + shift;
+    const stamped = list.open.replace(/ data-oc-fit="[^"]*"/, "").replace(/>$/, ' data-oc-fit="dense">');
+    out = out.slice(0, at) + stamped + out.slice(at + list.open.length);
+    shift += stamped.length - list.open.length;
+  }
+  return out;
+}
+
+function oceanTakesTopTitle(slide, rendered) {
+  if (slide.split || slide.frameTitleExplicit === true || slide.frame?.title === "side" || slide.titleTop === true) return false;
+  // A statement whose body is a picture keeps its 0.43 arrangement (the sentence large at the left, the picture
+  // beside it): under a top tab the sentence would shrink to a tab and leave the picture small on a field.
+  if (rendered.layout === "statement") return slide.statementOptions?.sidebar !== "on" && !/class="slide-content layout-statement[^"]*\bstatement-picture\b/.test(rendered.contentHtml) && !/<figure\b/.test(rendered.contentHtml);
+  if (rendered.layout === "list") return /class="feature-list[^"]*\b(?:fl-cards|fl-annotated)\b/.test(rendered.contentHtml) && !oceanListDensity(rendered.contentHtml).some((list) => list.dense);
+  return false;
+}
+
 function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = null, brandLogoColour = "unified") {
   // Assign a cycling accent per section (in first-seen order) so each section
   // reads as a distinct movement; every accent-driven CSS device keys off --accent.
@@ -468,7 +619,14 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
   // distinct. Logos never touch it. See assignFeatureIconsV3 / decideFeatureListStyle.
   // A deck `icons:` block (Layer 2) rides on the vocabulary as an override map.
   const deckUsed = createIconVocabulary(buildDeckIconMap(deckIcons));
+  // The 0.44 look rides on every slide <section> (not only the deck container), so the slide keeps it
+  // wherever it is drawn on its own: thumbnails, the handout, exports.
+  const oceanLook = deckLookForPalette(palette) === "ocean";
+  const lookAttrs = oceanLook ? ` data-look="ocean" data-companion="${companionLevelForPalette(palette)}"` : "";
+  // A section divider in the Ocean look shows its section's number, large (handoff 0.44: "large section number").
+  const sectionNumbers = new Map(sectionOrder.filter(Boolean).map((key, at) => [key, at + 1]));
   return slides.map((slide, index) => {
+    const sectionNumber = oceanLook && slide.role === "section-title" ? sectionNumbers.get(slide.section || "") : undefined;
     const id = slide.id || `slide-${index + 1}`;
     // Per-section skin (ADR-0005): accentForSectionIndex now returns { accent, tint }. Stamp
     // --accent (back-compat: accent-driven CSS still reads --accent directly) PLUS the new
@@ -491,6 +649,8 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
           `--accent: ${sectionSkin.accent}`, `--sec-accent: ${sectionSkin.accent}`, `--sec-tint: ${sectionSkin.tint}`,
           `--sec-hue-2: ${extraHues[0].accent}`, `--sec-hue-2-tint: ${extraHues[0].tint}`,
           `--sec-hue-3: ${extraHues[1].accent}`, `--sec-hue-3-tint: ${extraHues[1].tint}`,
+          // The ocean look's second strength (white icon and label on it); classic slides stay byte-identical.
+          ...(oceanLook ? [`--sec-deep: ${sectionSkin.deep || deepStrengthOf(sectionSkin.accent)}`] : []),
         ]
       : [];
     if (slide.backgroundTint) {
@@ -591,7 +751,7 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
       const contentHtml = `<div class="slide-content layout-carousel">
 ${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
   </div>`;
-      return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-carousel data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pictureTextAttr}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${titleLookAttrs}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasis?.count ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${accentStyle}>
+      return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-carousel data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pictureTextAttr}${lookAttrs}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${titleLookAttrs}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasis?.count ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${accentStyle}>
   ${contentHtml}
   ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
@@ -603,8 +763,42 @@ ${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
     // rail. Set on a COPY so the deck model itself is never mutated. {title=show} still wins.
     // ADR-0023 §5 rule 3 joins it: when a quote attributes itself to the slide's own title
     // (authored, or filled from the title by rule 2) the painted title would just repeat the cite.
-    const framedSlide = pollFrameEligible(slide) || quoteCiteEqualsTitle(slide) ? { ...slide, noTitle: true } : slide;
-    let { contentHtml, cornerQrHtml, cornerSectionHtml, layout, titlePlacement, effectiveTitleStyle } = renderSlideContent(framedSlide, deckUsed, brandLogoColour);
+    // 0.44 Ocean look: contrast and compare draw only the icons the author named (no brand marks, no guesses).
+    const lookSlide = oceanLook && Array.isArray(slide.blocks) && slide.blocks.some(isVsBlock)
+      ? { ...slide, blocks: slide.blocks.map((b) => (isVsBlock(b) ? { ...b, authoredIconsOnly: true } : b)) }
+      : slide;
+    const framedSlide = pollFrameEligible(lookSlide) || quoteCiteEqualsTitle(lookSlide) ? { ...lookSlide, noTitle: true } : lookSlide;
+    let rendered = renderSlideContent(framedSlide, deckUsed, brandLogoColour);
+    // 0.44 ocean look: a boxed icon list, an annotated list and a statement fill the stage under the
+    // top title tab (as the design frames draw them) instead of beside the left rail. Only when the
+    // author placed nothing: {title=side}, {split=…}, {title=top} and a statement's own Sidebar choice win.
+    // The title placement the slide had before the look moved its title to the top: the runtime's fit-or-fall-back
+    // step (slide-fit.js) restores it when the slide falls back to the safe drawing.
+    let titleFromAttrs = "";
+    if (oceanLook && rendered.titlePlacement.mode === "left" && oceanTakesTopTitle(framedSlide, rendered)) {
+      const from = rendered.titlePlacement;
+      titleFromAttrs = ` data-oc-title-from="${escapeHtml(from.mode)}"${from.split ? ` data-oc-split="${escapeHtml(String(from.split))}"` : ""}`;
+      rendered = renderSlideContent({ ...framedSlide, titleTop: true }, deckUsed, brandLogoColour);
+    }
+    let { contentHtml, cornerQrHtml, cornerSectionHtml, layout, titlePlacement, effectiveTitleStyle } = rendered;
+    if (sectionNumber) {
+      contentHtml = contentHtml.replace('<div class="slide-content layout-section-title"', `<div class="slide-content layout-section-title" data-section-number="${sectionNumber}"`);
+    }
+    if (oceanLook) contentHtml = stampOceanDense(stampOceanFit(contentHtml));
+    if (oceanLook && contentHtml.includes('<div class="cycle-diagram"')) contentHtml = stampOceanLoop(contentHtml);
+    // A divider that opens a grid of its children ({grid-linear}, {grid-zoom}) draws an overview of cards: not a field.
+    const groundAttr = oceanLook && !/^grid/.test(String(slide.containerMode || "")) && oceanGround(layout, contentHtml) ? ' data-ground="lead"' : "";
+    // A long divider title takes the smaller display step, so it stays inside the stage.
+    if (oceanLook && groundAttr && contentHtml.includes('<div class="slide-content layout-section-title')) {
+      const heading = contentHtml.match(/<h1[^>]*>([\s\S]*?)<\/h1>/);
+      const length = heading ? plainLength(heading[1]) : 0;
+      if (length > 34) contentHtml = contentHtml.replace('<div class="slide-content layout-section-title"', `<div class="slide-content layout-section-title" data-oc-title="${length > 90 ? "very-long" : "long"}"`);
+    }
+    // The Ocean look draws bar charts across the stage: each bar also carries its share as --bar (the shared
+    // chart renderer stays as it is, so classic slides keep their bytes).
+    if (oceanLook && contentHtml.includes('class="chart-bar"')) {
+      contentHtml = contentHtml.replace(/class="chart-bar" style="height:(\d+(?:\.\d+)?)%"/g, 'class="chart-bar" style="height:$1%;--bar:$1%"');
+    }
     // Slide redesign (13 Oct 2026): the statement's Background choice decides where colour goes,
     // and skin/statement.css paints it. Tinted (default), Strong and the lower third paint the
     // slide (or its bottom third) themselves, in the authored {bg=…} colour (--slide-bg, carried on
@@ -630,7 +824,7 @@ ${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
       contentHtml = marked.html;
       emphasisCount = marked.count;
     }
-    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pictureTextAttr}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasisCount ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.mode === "top" && slide.titleLook ? ` data-title-look="${slide.titleLook}"${slide.titleLookTone ? ` data-title-look-tone="${slide.titleLookTone}"` : ""}` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${slideStyle}>
+    return `<section class="slide" data-id="${escapeHtml(id)}" data-section="${escapeHtml(section)}" data-subsection="${escapeHtml(subsection)}" data-role="${escapeHtml(role)}" data-layout="${escapeHtml(layout)}" data-nav-title="${escapeHtml(title)}"${navLabelAttr}${pictureTextAttr}${lookAttrs}${groundAttr}${titleFromAttrs}${pollAttr}${reactionsAttr}${authoredMode ? ` data-mode="${escapeHtml(authoredMode)}"` : ""}${preparesFor ? ` data-prepares-for="${escapeHtml(preparesFor)}"` : ""}${slide.noStep ? " data-nostep" : ""}${slide.imageSteps ? " data-image-steps" : ""}${emphasisCount ? " data-emphasis-steps" : ""}${!slide.noStep && hasMediaSteps(contentHtml) ? " data-media-steps" : ""}${slide.noValues ? " data-novalues" : ""}${slide.fontBody ? ` data-font-body="${slide.fontBody}"` : ""}${slide.fontTitle ? ` data-font-title="${slide.fontTitle}"` : ""}${slide.countdownSeconds ? ` data-countdown="${slide.countdownSeconds}" data-countdown-style="${slide.countdownStyle || "digits"}"` : ""}${slide.sectionTimerSeconds ? ` data-section-timer="${slide.sectionTimerSeconds}" data-section-timer-show="${slide.sectionTimerShow || "presenter"}"` : ""}${slide.remindText ? ` data-remind="${escapeHtml(slide.remindText)}"${slide.remindAtMinutes != null ? ` data-remind-at="${slide.remindAtMinutes}"` : ""}${slide.remindInSeconds != null ? ` data-remind-in="${slide.remindInSeconds}"` : ""}` : ""}${titlePlacement.mode ? ` data-title-layout="${titlePlacement.mode}"` : ""}${effectiveTitleStyle ? ` data-title-style="${escapeHtml(effectiveTitleStyle)}"` : ""}${titlePlacement.mode === "top" && slide.titleLook ? ` data-title-look="${slide.titleLook}"${slide.titleLookTone ? ` data-title-look-tone="${slide.titleLookTone}"` : ""}` : ""}${titlePlacement.split ? ` data-split="${titlePlacement.split}"` : ""}${containerAttrs}${slideStyle}>
   ${contentHtml}
 ${cornerQrHtml ? `  ${cornerQrHtml}\n` : ""}${cornerSectionHtml ? `  ${cornerSectionHtml}\n` : ""}  ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;

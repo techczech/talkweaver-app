@@ -19,6 +19,7 @@ const { ffmpegShipProblem, macFfmpegNoticeProblem, macFfmpegPinProblem, shippedF
 const readOrNull = (path) => { try { return readFileSync(path) } catch { return null } }
 
 exports.default = async function beforePack(context) {
+  require('./alignment-package-inputs.cjs').assertAlignmentPackageInputs(context)
   const repo = join(__dirname, '..')
   const node = (script) => spawnSync(process.execPath, ['--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', join(repo, 'scripts', script)], { cwd: repo, stdio: 'inherit', windowsHide: true })
   if (node('check-whats-new.mjs').status !== 0) throw new Error('this release version has no What\'s new notes: add resources/whats-new/<version>.md (see docs/RELEASING.md)')

@@ -25,6 +25,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+// These checks hold the pre-0.44 (classic) designs: compile in the classic look (0.44 made Ocean the default).
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const W = 1280
 const H = 720
@@ -90,7 +92,7 @@ const dir = mkdtempSync(join(tmpdir(), 'tw-statement-dimensions-'))
 const outlinePath = join(dir, 'statement-dimensions-outline.md')
 const source = lines.join('\n')
 writeFileSync(outlinePath, source, 'utf8')
-const model = await prepareSource(outlinePath, source, 'statement-dimensions', statSync(outlinePath))
+const model = await prepareSource(outlinePath, inClassicLook(source), 'statement-dimensions', statSync(outlinePath))
 assert.deepEqual(model.warnings.filter((warning) => /^(statement-unknown|accent-unknown|section-only-trigger-level)/.test(String(warning))), [],
   'every choice, the retired values and {accent=…} on a statement slide included, parses without a warning')
 const htmlPath = join(dir, 'statement-dimensions.html')

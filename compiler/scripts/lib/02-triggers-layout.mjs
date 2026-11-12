@@ -270,12 +270,76 @@ export function backgroundTintForName(name) {
   return SLIDE_BACKGROUND_TINTS.get(String(name ?? "").trim().toLowerCase()) || null;
 }
 
+// === The 0.44 look ("ocean", docs/design/2026-11-10-native-slide-redesign) =========================
+// Locked by Dominik (round verdicts 5 to 8): Ocean #1273C4 is the main colour, Deeper Ocean #0D5A9E the
+// second strength (white icon and label on it), amber #FF9F1C the bold companion, light neutral and white
+// grounds, near-black #16181D for text and thin lines only. A deck with no `palette:` gets this look;
+// `palette: bold` is the same look with amber leading the statement and divider slides (not the title slide);
+// `palette: classic` restores the pre-0.44 look (cobalt → emerald → vermilion and the old slide styling);
+// `palette: green` keeps its own pre-0.44 green cycle and the classic styling, as before.
+//
+// Internally the model's palette is one of "ocean" | "ocean-bold" | "" (classic) | "green", so every
+// function below that took "" for the classic cycle still does.
+export const OCEAN_MAIN = "#1273C4";
+export const OCEAN_DEEP = "#0D5A9E";
+export const OCEAN_LIGHT = "#E8F1FC";
+export const OCEAN_COMPANION = "#FF9F1C";
+
+/** The second strength of any main colour: 22% of the way to black (Ocean gives #0E5A99, pinned to the
+ *  locked #0D5A9E). Deep enough to carry white type wherever the main colour does. */
+export function deepStrengthOf(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? "").trim());
+  if (!m) return OCEAN_DEEP;
+  if (m[1].toLowerCase() === OCEAN_MAIN.slice(1).toLowerCase()) return OCEAN_DEEP;
+  const n = parseInt(m[1], 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => Math.round(c * 0.78));
+  return `#${ch.map((c) => c.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
+}
+
+/** The light strength of any main colour: 9% of it over white (Ocean gives #E8F1FC, the locked light). */
+export function lightStrengthOf(hex) {
+  const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? "").trim());
+  if (!m) return OCEAN_LIGHT;
+  if (m[1].toLowerCase() === OCEAN_MAIN.slice(1).toLowerCase()) return OCEAN_LIGHT;
+  const n = parseInt(m[1], 16);
+  const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => Math.round(255 - (255 - c) * 0.09));
+  return `#${ch.map((c) => c.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
+}
+
+// The ocean look's section cycle: every section Ocean (the open "section colours across a talk"
+// decision defaults to one colour; a longer cycle is a one-line change here).
+export const SECTION_ACCENTS_OCEAN = [
+  { name: "ocean", accent: OCEAN_MAIN, tint: OCEAN_LIGHT, deep: OCEAN_DEEP },
+];
+// Names a section `{accent=…}`, a statement's accent or the deck `colour:` may give in the ocean look.
+// "cobalt" was the house blue, so it IS Ocean here (a talk that wrote `colour: cobalt`, as Deck settings
+// does, gets the new blue). The other names keep their hue, with derived strengths.
+const OCEAN_NAMED = [
+  SECTION_ACCENTS_OCEAN[0],
+  { name: "cobalt", accent: OCEAN_MAIN, tint: OCEAN_LIGHT, deep: OCEAN_DEEP },
+  ...[...SECTION_ACCENTS, ...SECTION_ACCENTS_GREEN]
+    .filter((pair, i, all) => pair.name !== "cobalt" && all.findIndex((p) => p.name === pair.name) === i)
+    .map((pair) => ({ ...pair, tint: lightStrengthOf(pair.accent), deep: deepStrengthOf(pair.accent) })),
+];
+
+/** Which look a model palette draws: "ocean" (the 0.44 default, also `bold`) or "classic". */
+export function deckLookForPalette(palette = "") {
+  return palette === "ocean" || palette === "ocean-bold" ? "ocean" : "classic";
+}
+
+/** The companion level of the ocean look: "accent" (default) or "bold" (`palette: bold`). */
+export function companionLevelForPalette(palette = "") {
+  return palette === "ocean-bold" ? "bold" : "accent";
+}
+
 // Map a deck-level palette name to its section-accent cycle. Unknown / unset → default.
 export function sectionAccentsForPalette(palette) {
+  if (deckLookForPalette(palette) === "ocean") return SECTION_ACCENTS_OCEAN;
   return palette === "green" ? SECTION_ACCENTS_GREEN : SECTION_ACCENTS;
 }
 
 export function sectionAccentMapForPalette(palette = "") {
+  if (deckLookForPalette(palette) === "ocean") return new Map(OCEAN_NAMED.map((pair) => [pair.name, pair]));
   return new Map(sectionAccentsForPalette(palette).map((pair) => [pair.name, pair]));
 }
 
@@ -300,6 +364,7 @@ export const DECK_ACCENT_NAMES = [...new Set([...SECTION_ACCENTS, ...SECTION_ACC
 export function accentForDeckColour(name, palette = "") {
   const wanted = String(name ?? "").trim().toLowerCase();
   if (!wanted) return null;
+  if (deckLookForPalette(palette) === "ocean") return accentForSectionName(wanted, palette);
   return accentForSectionName(wanted, palette)
     || accentForSectionName(wanted, "green")
     || accentForSectionName(wanted, "")
@@ -323,6 +388,14 @@ export function accentForSectionIndex(index, palette = "") {
  * right/wrong meaning through the fixed --green/--red tokens, not through these hues.
  */
 export function extraHuesForAccent(skin, palette = "") {
+  // The ocean look colours by count in ONE hue family (Dominik, round 4/5 verdicts: never three unrelated
+  // hues): the second element takes the deep strength, the third the main colour again.
+  if (deckLookForPalette(palette) === "ocean") {
+    const main = skin?.accent || OCEAN_MAIN;
+    const deep = skin?.deep || deepStrengthOf(main);
+    const tint = skin?.tint || lightStrengthOf(main);
+    return [{ name: `${skin?.name || "ocean"}-deep`, accent: deep, tint }, { name: skin?.name || "ocean", accent: main, tint }];
+  }
   const cycle = sectionAccentsForPalette(palette);
   const name = String(skin?.name ?? "").trim().toLowerCase();
   const at = cycle.findIndex((entry) => entry.name === name && entry.accent === skin?.accent);
@@ -534,8 +607,9 @@ export function spineFontScale(stopCount) {
 // A timeline entry is "dated" when it opens with a year, year-range, or decade — these get
 // the date-emphasis treatment (date column in accent). Mid-string years (e.g. an era label
 // "AI Axial Age — 1936–1973") do NOT count: only a LEADING date marks a real dated entry.
-// Recognised: 1936 · 1936–1973 / 1936-73 · 1950s · c. 1940 / ~1940.
-const TIMELINE_DATE_RE = /^\s*(?:c\.?\s*|~|circa\s+)?(\d{4}s?(?:\s*[–-]\s*(?:\d{4}s?|\d{2}s?))?|\d{1,2}(?:st|nd|rd|th)\s+century)\b/i;
+// Recognised: 1936 · 1936–1973 / 1936-73 · 1950s · c. 1940 / ~1940 · and (0.44) a year led by a month
+// or a part of the year: Nov 2022 · 30 Nov 2022 · March 2023 · Late 2024 · Early 2025 · Spring 2026.
+const TIMELINE_DATE_RE = /^\s*(?:c\.?\s*|~|circa\s+)?((?:(?:\d{1,2}\s+)?(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\.?\s+|(?:early|mid|late|spring|summer|autumn|fall|winter)[\s-]+)?\d{4}s?(?:\s*[–-]\s*(?:\d{4}s?|\d{2}s?))?|\d{1,2}(?:st|nd|rd|th)\s+century)\b/i;
 export function timelineDateOf(text) {
   const m = String(text).match(TIMELINE_DATE_RE);
   if (m) {

@@ -74,7 +74,7 @@ export function buildSlideTimeIndex(rawMarks) {
     } else if (m.event === "resume") {
       if (pauseStart !== null) { paused += m.tMs - pauseStart; pauseStart = null; }
       out.push({ event: "resume", tMs: m.tMs - paused });
-    } else if (m.event === "enter" || m.event === "reveal" || m.event === "highlight" || m.event === "ink" || m.event === "clip") {
+    } else if (m.event === "enter" || m.event === "reveal" || m.event === "highlight" || m.event === "ink" || m.event === "clip" || m.event === "flag" || m.event === "refresh" || m.event === "refreshed") {
       // If a mark somehow lands inside an open pause, freeze it at the pause start.
       const openPaused = pauseStart !== null ? m.tMs - pauseStart : 0;
       const mark = { event: m.event, slideId: m.slideId, tMs: m.tMs - paused - openPaused };

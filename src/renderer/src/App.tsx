@@ -969,6 +969,9 @@ function MainApp() {
   const shellReady = state.phase === 'ready'
   useEffect(() => {
     if (!shellReady) return
+    void window.tw.recording.recoveredNotice().then(count => {
+      if (count) notify(`${count === 1 ? 'An interrupted recording was' : `${count} interrupted recordings were`} recovered on this Mac.`, 'info', 'recording-recovered', { label: 'Open Runs', onAction: () => { void window.tw.tools.open('runs') } })
+    }).catch(() => {})
     void window.tw.recording.takeSetupNotice().then((notice) => {
       if (notice) notify(notice, 'warning', 'recording-keys-notice', { label: 'Open Settings', onAction: () => openSettingsWindow('accounts') })
     }).catch(() => {})

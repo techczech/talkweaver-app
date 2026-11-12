@@ -1,3 +1,6 @@
+import { ipcRenderer } from 'electron'
+import { checkPresenterDevices } from './presenter-device-check'
+import { mountSelfView } from './presenter-self-view'
 /// <reference lib="dom" />
 // The recording UI the recording preload injects into the presenter window: the REC cluster in
 // the status bar, its four toasts (start offer, recording paused, save run, saved), the run-kind
@@ -105,6 +108,11 @@ const REC_CSS = `
     transition:opacity .22s ease, transform .22s ease; }
   .twrec-lost-note { left:12px; right:12px; width:max-content; max-width:calc(100vw - 52px);
     height:auto; min-height:44px; padding:8px 12px; flex-wrap:wrap; white-space:normal; }
+  .twrec-saved-note { width:min(720px,calc(100vw - 24px)); height:auto; min-height:44px;
+    padding:12px; flex-wrap:wrap; white-space:normal; }
+  .twrec-saved-note .rt-text { flex:1 1 calc(100% - 40px); line-height:1.4; }
+  .twrec-saved-note #twrec-words { flex:1 1 calc(100% - 180px); }
+  .twrec-saved-note progress { width:110px; height:8px; }
   .twrec-lost-note .rt-text { flex:1 1 320px; line-height:1.4; }
   .twrec-toast.show { transform:translateY(0); opacity:1; pointer-events:auto; }
   .twrec-toast .rt-dot { width:9px; height:9px; border-radius:50%; background:#5d6d7c; flex:none; }
@@ -171,7 +179,7 @@ const RECORDING_CONTROL_IDS = [
   'twrec-toast-yes', 'twrec-toast-no', 'twrec-save-delivery', 'twrec-save-as', 'twrec-save-dismiss',
   'twrec-start-record', 'twrec-start-dismiss', 'twrec-saved-change', 'twrec-saved-dismiss',
   'twrec-lost-resume', 'twrec-lost-dismiss', 'twrec-back-dismiss', 'twrec-disk-dismiss', 'twrec-export',
-  'twrec-mic', 'twrec-mic-use', 'twrec-mic-dismiss'
+  'twrec-flag', 'twrec-mic', 'twrec-mic-use', 'twrec-mic-dismiss'
 ] as const
 const CLUSTER_BUTTONS: RecButton[] = ['primary', 'pause', 'resume', 'stop', 'change-kind', 'keep', 'export', 'discard']
 const recKeys = (id: string): string => presenterControlKeys(presenterControl(id), SHORTCUT_REGISTRY)
@@ -187,7 +195,31 @@ function normaliseKind(value: unknown): RunKind {
   return value === 'rehearsal' || value === 'recording' ? value : 'delivery'
 }
 
-export function mountRecUi(controller: RecorderController): void {
+export function mountRecUi(controller: RecorderController, layered = false): void {
+  let preparing = false
+  async function startCapture(): Promise<void> {
+    if (preparing || !['idle', 'saved'].includes(controller.getState())) return
+    preparing = true
+    try {
+      if (!layered) { await controller.start(); return }
+      const inputs = await controller.microphones()
+      const devices = await navigator.mediaDevices.enumerateDevices()
+      const checked = await checkPresenterDevices(controller.captureChoice(), inputs.chosen?.label || controller.microphoneName() || devices.find(d => d.kind === 'audioinput' && d.deviceId !== 'default')?.label || '', (channel, ...args) => ipcRenderer.invoke(channel, ...args))
+      if (!checked) return
+      controller.checkedCamera(checked.camera, checked.cameraDeviceId)
+      const checkedInput = (await controller.microphones()).inputs.find(input => input.label === checked.microphone)
+      if (checkedInput && controller.microphoneName() !== inputName(checkedInput)) await controller.chooseMicrophone(checkedInput)
+      // The slides picture's surface gets ready during the countdown, so it is painting when the voice starts.
+      void ipcRenderer.invoke('recording:layers-warm').catch(() => {})
+      const countdown = document.createElement('div')
+      countdown.setAttribute('role', 'status'); countdown.id = 'twrec-countdown'
+      countdown.style.cssText = 'position:fixed;inset:40% 45%;z-index:200;font:80px -apple-system;color:white;pointer-events:none'
+      document.body.appendChild(countdown)
+      try { for (const number of [3, 2, 1]) { countdown.textContent = String(number); await new Promise(resolve => setTimeout(resolve, 1000)) } }
+      finally { countdown.remove() }
+      await controller.start()
+    } finally { preparing = false }
+  }
   // 1) Styles — once.
   if (!document.getElementById('twrec-styles')) {
     const style = document.createElement('style')
@@ -208,8 +240,12 @@ export function mountRecUi(controller: RecorderController): void {
     <span id="twrec-spinner" hidden>${presenterIconSvg('loader-circle').replace('class="tw-ico', 'class="rec-mark rec-spin tw-ico')}</span>
     <span id="twrec-ok" hidden>${presenterIconSvg('circle-check').replace('class="tw-ico', 'class="rec-mark tw-ico')}</span>
     <span class="rec-word" id="twrec-label">Not recording</span>
+    <span id="twrec-idle-meter" role="meter" aria-label="Microphone level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width:42px;height:5px;background:#ffffff26"><span id="twrec-idle-level" style="display:block;height:100%;background:#3fb970;width:0"></span></span><span id="twrec-idle-name"></span>
+    <button type="button" class="rec-btn" id="twrec-again" hidden>Start again</button>
     <span class="rec-clock" id="twrec-clock" hidden>00:00</span>
     <button type="button" class="rec-btn rec-go" id="twrec-primary"><span class="tw-btn-label">Record</span></button>
+    <select id="twrec-capture" class="rec-btn" aria-label="Capture"><option value="voice">Slides and voice</option><option value="camera">Slides, voice and camera</option></select>
+    <button type="button" class="rec-btn icon" id="twrec-flag" title="Mark a mistake (⇧M)" hidden><span class="tw-btn-label">Mark a mistake</span></button>
     <button type="button" class="rec-btn icon rec-mic" id="twrec-mic" aria-haspopup="dialog" aria-expanded="false" hidden><span class="tw-btn-label">Microphone</span></button>
     <button type="button" class="rec-btn icon" id="twrec-pause" hidden><span class="tw-btn-label">Pause recording</span></button>
     <button type="button" class="rec-btn icon rec-amber" id="twrec-resume" hidden><span class="tw-btn-label">Resume recording</span></button>
@@ -274,7 +310,12 @@ export function mountRecUi(controller: RecorderController): void {
   const savedToast = makeToast('twrec-toast twrec-saved-note', `
     ${presenterIconSvg('circle-check').replace('class="tw-ico', 'class="rt-ok tw-ico')}
     <span class="rt-text" id="twrec-saved-text"><b>Saved to History</b></span>
+    <span class="rt-text" id="twrec-words" role="status" aria-live="polite"></span>
+    <progress id="twrec-words-progress" aria-label="Writing out words" hidden></progress>
+    <button type="button" class="rec-btn" id="twrec-words-retry" hidden>Retry words</button>
+    <button type="button" class="rec-btn" id="twrec-words-manual" hidden>Set up words</button>
     <button type="button" class="rec-btn" id="twrec-saved-change"><span class="tw-btn-label">Change</span>${kbd('twrec-saved-change')}</button>
+    <button type="button" class="rec-btn" id="twrec-edit-video">Edit video</button>
     <button type="button" class="rt-dismiss" id="twrec-saved-dismiss"></button>`)
   // Audio lost while recording: stays up until the audio is back (or Stop), with one-click Resume.
   const lostToast = makeToast('twrec-toast twrec-lost-note', `
@@ -302,6 +343,8 @@ export function mountRecUi(controller: RecorderController): void {
     <button type="button" class="rt-dismiss" id="twrec-mic-dismiss"></button>`)
   const toasts = [toast, saveToast, startToast, savedToast, lostToast, backToast, diskToast, micToast]
 
+  let previewEnabled = false
+  const previewWanted = () => previewEnabled || !micPanel.hidden
   // The Microphone menu: which input recordings use, and its level now.
   const micPanel = document.createElement('div')
   micPanel.className = 'twrec-mic-panel'
@@ -310,6 +353,7 @@ export function mountRecUi(controller: RecorderController): void {
   micPanel.setAttribute('aria-label', 'Microphone')
   micPanel.hidden = true
   micPanel.innerHTML = `
+    <label><input type="checkbox" id="twrec-preview"> Preview</label>
     <label class="mp-title" for="twrec-mic-select">Microphone</label>
     <div class="mp-row">
       <select id="twrec-mic-select"></select>
@@ -332,6 +376,16 @@ export function mountRecUi(controller: RecorderController): void {
   const buttons = new Map(CLUSTER_BUTTONS.map((name) => [name, $(`twrec-${name}`)] as const))
   const primary = buttons.get('primary'), btnChangeKind = buttons.get('change-kind'), btnPause = buttons.get('pause')
   const btnResume = buttons.get('resume'), btnStop = buttons.get('stop'), btnKeep = buttons.get('keep'), btnDiscard = buttons.get('discard')
+  function captureSummary(): string {
+    if (controller.lastSave()?.captureUnknown) return 'Voice saved · slides: unknown · camera: unknown (files kept)'
+    const capture = controller.lastSave()?.capture
+    const describe = (name: 'slides' | 'camera') => {
+      const layer = capture?.layers[name]
+      const loss = (layer?.segments ?? (layer ? [layer] : [])).find(part => part.lostAtMs !== undefined)?.lostAtMs
+      return `${name}: ${layer?.outcome ?? 'none'}${layer?.outcome === 'interrupted' && loss !== undefined ? ` at ${fmtClock(loss)}` : ''}`
+    }
+    return `Voice saved · ${describe('slides')} · ${describe('camera')}`
+  }
   const saveText = $('twrec-save-text'), savedText = $('twrec-saved-text')
   const lostText = $('twrec-lost-text'), backText = $('twrec-back-text'), lostResume = $('twrec-lost-resume')
 
@@ -373,19 +427,50 @@ export function mountRecUi(controller: RecorderController): void {
     if (startToastTimer !== null) window.clearTimeout(startToastTimer)
     startToastTimer = window.setTimeout(hideStartToast, RECORDING_OFFER_VISIBLE_MS)
   }
+  let wordsDismissed = false
   let savedToastTimer: number | null = null
   const hideSavedToast = (): void => {
+    wordsDismissed = true
     if (savedToastTimer !== null) { window.clearTimeout(savedToastTimer); savedToastTimer = null }
+    window.clearTimeout(wordsTimer)
     savedToast.classList.remove('show')
   }
   // The length of the run History holds: the wall-clock run, or the recorded length of a
   // recording (its kind changed with Change).
   let savedLengthMs = 0
+  let wordsTimer: number | undefined
+  let wordsRun: string | undefined
+  async function refreshWords(): Promise<void> {
+    const sid = controller.lastSave()?.sessionId
+    if (!sid) return
+    wordsRun = sid
+    try {
+      const status = await ipcRenderer.invoke('transcript:saved-status', controller.talkSlug(), sid)
+      if (wordsDismissed || controller.lastSave()?.sessionId !== sid) return
+      const text = $('twrec-words')
+      if (text) text.textContent = status.state === 'writing' ? `Words are being written out. ${status.note}` : status.note
+      $('twrec-words-progress')!.hidden = !['checking', 'writing'].includes(status.state)
+      $('twrec-words-retry')!.hidden = status.state !== 'failed'
+      $('twrec-words-manual')!.hidden = status.state !== 'unavailable'
+      if (status.state === 'checking' || status.state === 'writing') wordsTimer = window.setTimeout(() => { void refreshWords() }, 400)
+    } catch { if ($('twrec-words')) $('twrec-words')!.textContent = 'Words status is unavailable. The Run is saved; write out words from the Run.' }
+  }
+  $('twrec-words-retry')?.addEventListener('click', () => {
+    if (!wordsRun) return
+    void ipcRenderer.invoke('transcript:retry-saved', controller.talkSlug(), wordsRun).finally(() => { void refreshWords() })
+    $('twrec-words-retry')!.hidden = true
+    $('twrec-words')!.textContent = 'Words are being written out on this Mac.'
+    $('twrec-words-progress')!.hidden = false
+  })
+  $('twrec-words-manual')?.addEventListener('click', () => { void ipcRenderer.invoke('settings-window:open', 'recording') })
   const showSavedToast = (): void => {
-    if (savedText) savedText.innerHTML = `<b>Saved to History</b> as ${kindLabel(controller.currentKind())} · ${fmtClock(savedLengthMs)}`
+    wordsDismissed = false
+    window.clearTimeout(wordsTimer)
+    void refreshWords()
+    if (savedText) savedText.innerHTML = `<b>Saved to History</b> as ${kindLabel(controller.currentKind())} · ${fmtClock(savedLengthMs)} · ${captureSummary()}`
     showOnly(savedToast)
     if (savedToastTimer !== null) window.clearTimeout(savedToastTimer)
-    savedToastTimer = window.setTimeout(hideSavedToast, SAVED_TOAST_VISIBLE_MS)
+    // Keep the saved offer available through transcription; dismissing only hides this UI.
   }
 
   // Audio lost / back notices (present-audio-capture.ts reports; recording-loss.ts says why).
@@ -462,6 +547,9 @@ export function mountRecUi(controller: RecorderController): void {
   const setLevel = (level: number): void => {
     const pct = Math.round(Math.max(0, Math.min(1, level)) * 100)
     if (micLevel) micLevel.style.width = `${pct}%`
+    const inline = $('twrec-idle-level')
+    if (inline) inline.style.width = `${pct}%`
+    $('twrec-idle-meter')?.setAttribute('aria-valuenow', String(pct))
     micMeter?.setAttribute('aria-valuenow', String(pct))
   }
   function stopMeter(): void {
@@ -486,7 +574,7 @@ export function mountRecUi(controller: RecorderController): void {
       if (token === meterToken && micPanelNote) micPanelNote.textContent = 'This microphone cannot be heard. Check that it is connected.'
       return
     }
-    if (token !== meterToken || micPanel.hidden) { try { stream.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ } return }
+    if (token !== meterToken || !previewWanted()) { try { stream.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ } return }
     const Ctor = (window as unknown as { AudioContext?: typeof AudioContext; webkitAudioContext?: typeof AudioContext }).AudioContext
       ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
     if (!Ctor) { try { stream.getTracks().forEach((t) => t.stop()) } catch { /* ignore */ } return }
@@ -542,7 +630,8 @@ export function mountRecUi(controller: RecorderController): void {
     const { inputs, chosen } = await controller.microphones()
     micInputs = inputs
     fillMicMenu(chosen)
-    if (!micPanel.hidden) await startMeter(chosen)
+    if (previewWanted()) await startMeter(chosen)
+    const name = $('twrec-idle-name'); if (name) name.textContent = chosen ? inputName(chosen) : ''
     if (note && micPanelNote && !micPanelNote.textContent) micPanelNote.textContent = note
   }
   function placeMicPanel(): void {
@@ -555,6 +644,7 @@ export function mountRecUi(controller: RecorderController): void {
     micPanel.hidden = false
     micButton?.setAttribute('aria-expanded', 'true')
     placeMicPanel()
+    updateSelfView()
     void refreshMicMenu(note).then(placeMicPanel)
     micSelect?.focus()
   }
@@ -562,7 +652,8 @@ export function mountRecUi(controller: RecorderController): void {
     if (micPanel.hidden) return
     micPanel.hidden = true
     micButton?.setAttribute('aria-expanded', 'false')
-    stopMeter()
+    if (!previewEnabled) stopMeter()
+    updateSelfView()
   }
   micSelect?.addEventListener('change', () => {
     const input = micInputs[Number(micSelect.value)]
@@ -672,26 +763,77 @@ export function mountRecUi(controller: RecorderController): void {
     return saveRun(picked)
   }
 
+  const captureChoice = document.getElementById('twrec-capture') as HTMLSelectElement
+  captureChoice.addEventListener('change', () => controller.chooseCapture(captureChoice.value === 'camera' ? 'camera' : 'voice'))
+  document.getElementById('twrec-flag')?.addEventListener('click', () => controller.markMistake())
+  // Edit video opens the saved Run in Studio, where it plays back, is trimmed and exported (slice 3a).
+  document.getElementById('twrec-edit-video')?.addEventListener('click', () => {
+    const saved = controller.lastSave()
+    const runId = saved && saved.ok && !saved.discarded ? saved.sessionId : undefined
+    void ipcRenderer.invoke('tools:open', 'studio', runId).catch(() => {})
+  })
+  const updateSelfView = mountSelfView(controller, layered, previewWanted)
+  $('twrec-preview')?.addEventListener('change', event => {
+    previewEnabled = (event.target as HTMLInputElement).checked
+    if (!previewEnabled) closeMicPanel()
+    if (previewWanted()) void refreshMicMenu(); else stopMeter()
+    updateSelfView()
+  })
+  window.addEventListener('pagehide', () => { previewEnabled = false; micPanel.hidden = true; stopMeter(); updateSelfView() })
+  let lastMediaState = ''
+  $('twrec-again')?.addEventListener('click', () => {
+    if (document.getElementById('twrec-restart')) return
+    const dialog = document.createElement('dialog')
+    dialog.id = 'twrec-restart'; dialog.className = 'twrec-device-check'
+    dialog.innerHTML = '<h2>Start again?</h2><p>Discard this take and start a new recording? Earlier saved Runs are kept.</p><button id="twrec-restart-cancel">Keep this take</button><button id="twrec-restart-confirm">Discard and start again</button>'
+    document.body.appendChild(dialog); dialog.showModal()
+    dialog.querySelector('#twrec-restart-cancel')!.addEventListener('click', () => dialog.remove())
+    dialog.querySelector('#twrec-restart-confirm')!.addEventListener('click', async () => {
+      dialog.remove()
+      try { await controller.discardTake(); await startCapture() }
+      catch { const note = document.createElement('p'); note.className = 'twrec-error'; note.textContent = 'The take could not be discarded. Keep this presentation open.'; document.body.appendChild(note) }
+    })
+    dialog.addEventListener('cancel', () => dialog.remove())
+  })
   let savingAudio = false
   function render(): void {
     const st = controller.getState()
     const gate = controller.runGate()
+    if (st === 'saving' && gate.audioArmed && previewEnabled) {
+      previewEnabled = false
+      const previewToggle = $('twrec-preview') as HTMLInputElement | null
+      if (previewToggle) previewToggle.checked = false
+    }
+    const idle = st === 'idle' || st === 'saved'
+    const mediaState = `${idle}:${controller.captureChoice?.()}:${!!controller.cameraStream?.()}`
+    if (mediaState !== lastMediaState) {
+      lastMediaState = mediaState
+      if (idle && layered && previewWanted()) void refreshMicMenu(); else stopMeter()
+      updateSelfView()
+    }
+    $('twrec-idle-meter')!.hidden = !idle
+    $('twrec-idle-name')!.hidden = !idle
+    $('twrec-again')!.hidden = st !== 'recording' && st !== 'paused'
     const audio = controller.audioStatus()
     const view = recView({ state: st, displayMs: controller.displayMs(), kind: controller.currentKind(), audioHeld: gate.audioArmed, audio })
+    captureChoice.value = controller.captureChoice?.() ?? 'voice'
+    captureChoice.hidden = !layered || st === 'recording' || st === 'paused' || st === 'saving' || st === 'confirm' || st === 'error'
+    const flag = document.getElementById('twrec-flag')
+    if (flag) flag.hidden = !layered || (st !== 'recording' && st !== 'paused')
     module.dataset.rec = st
     module.dataset.tone = view.tone
     if (dot) dot.hidden = view.mark !== 'dot'
     if (spinner) spinner.hidden = view.mark !== 'spinner'
     if (ok) ok.hidden = view.mark !== 'check'
     if (label) {
-      label.textContent = view.word
+      label.textContent = (st === 'recording' || st === 'paused' || st === 'error') && controller.videoStatus?.().diskError ? 'Video interrupted · voice kept' : (st === 'recording' || st === 'paused') && controller.videoStatus?.().cameraLost ? (audio.lost ? 'Camera and microphone lost · slides continue' : 'Camera lost · slides and voice continue') : controller.refreshResumed?.() && !audio.lost ? 'Recording resumed after refresh' : view.word
       // Collapse step c5 drops only the words that the dot and the button's tooltip also carry.
       label.dataset.collapse = view.wordCollapses ? 'c5' : ''
     }
     if (clock) { clock.hidden = view.time === null; if (view.time !== null) clock.textContent = view.time }
     for (const [name, el] of buttons) if (el) el.hidden = !view.buttons.includes(name)
     // Keep deliberate switching available throughout the talk, including after a loss.
-    const canChooseMic = view.buttons.includes('primary') || st === 'recording' || st === 'paused'
+    const canChooseMic = view.buttons.includes('primary') || (layered && idle) || st === 'recording' || st === 'paused'
     if (micButton) micButton.hidden = !canChooseMic
     if (!canChooseMic) closeMicPanel()
     if (btnKeep) {
@@ -701,7 +843,7 @@ export function mountRecUi(controller: RecorderController): void {
     }
     // The length a saved recording carries, for the saved toast after Change.
     if (st === 'saving') savingAudio = gate.audioArmed
-    else if (st === 'saved' && savingAudio) { savedLengthMs = controller.displayMs(); savingAudio = false }
+    else if (st === 'saved' && savingAudio) { savedLengthMs = controller.displayMs(); savingAudio = false; showSavedToast() }
     if (st !== 'paused' || audio.lost) hideToast()
     if (!audio.lost || (st !== 'recording' && st !== 'paused')) { hideLostToast(); lostDismissed = false }
     if (st !== 'idle') hideStartToast()
@@ -733,7 +875,7 @@ export function mountRecUi(controller: RecorderController): void {
   setInterval(() => { if (controller.getState() === 'recording' && clock) clock.textContent = fmtClock(controller.displayMs()) }, 200)
 
   // 4) Controls
-  primary?.addEventListener('click', () => { void controller.start() })
+  primary?.addEventListener('click', () => { void startCapture() })
   btnChangeKind?.addEventListener('click', () => { void saveWithPicker() })
   btnPause?.addEventListener('click', () => controller.pause())
   btnResume?.addEventListener('click', () => controller.resume())
@@ -746,7 +888,7 @@ export function mountRecUi(controller: RecorderController): void {
   $('twrec-save-delivery')?.addEventListener('click', () => { hideSaveToast(); void saveRun('delivery') })
   $('twrec-save-as')?.addEventListener('click', () => { void saveWithPicker() })
   $('twrec-save-dismiss')?.addEventListener('click', hideSaveToast)
-  $('twrec-start-record')?.addEventListener('click', () => { hideStartToast(); void controller.start() })
+  $('twrec-start-record')?.addEventListener('click', () => { hideStartToast(); void startCapture() })
   $('twrec-start-dismiss')?.addEventListener('click', hideStartToast)
   $('twrec-saved-change')?.addEventListener('click', () => { void saveWithPicker() })
   $('twrec-saved-dismiss')?.addEventListener('click', hideSavedToast)
@@ -769,7 +911,7 @@ export function mountRecUi(controller: RecorderController): void {
   function toggleRecord(): void {
     const st = controller.getState()
     if (st === 'recording' || st === 'paused') void controller.stop()
-    else if (st === 'idle' || st === 'saved' || st === 'error') void controller.start()
+    else if (st === 'idle' || st === 'saved' || st === 'error') void startCapture()
   }
   function togglePause(): void {
     const st = controller.getState()
@@ -803,6 +945,7 @@ export function mountRecUi(controller: RecorderController): void {
     }
     if (!e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return
     if (e.key === 'R' || e.key === 'r') { e.preventDefault(); e.stopImmediatePropagation(); hideStartToast(); toggleRecord(); reportGuideCommand('presenter.record') }
+    else if (e.key === 'M' || e.key === 'm') { e.preventDefault(); e.stopImmediatePropagation(); controller.markMistake(); reportGuideCommand('presenter.record-flag') }
     else if (e.key === 'P' || e.key === 'p') { e.preventDefault(); e.stopImmediatePropagation(); togglePause(); reportGuideCommand('presenter.record-pause') }
   }, true)
 

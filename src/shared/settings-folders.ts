@@ -26,6 +26,8 @@ export const LOCAL_ONLY_KEYS: readonly string[] = [
   'general.imageArchive',
   // a device of this Mac (another Mac's microphone names mean nothing here)
   'recording.microphone',
+  'recording.capture',
+  'recording.camera',
   // something to run
   'recording.transcriptionPython',
   'recording.transcriptionScript',

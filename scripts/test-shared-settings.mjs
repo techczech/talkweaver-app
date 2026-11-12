@@ -20,7 +20,7 @@ import { createConfigOverlay } from '../src/main/settings-overlay.ts'
 import { createSecretSlots, recordedKeyChange, splitRecordingKeys } from '../src/main/settings-secret-slots.ts'
 import { createSettingsKeymap, legacyOverridesArg, overridesArg } from '../src/main/settings-keymap.ts'
 import { openSettings, runWithSettings } from '../src/main/settings-open.ts'
-import { READS, RECORDING_SETTINGS_ONLY, SETTINGS_WINDOW_ONLY, SHARED_CHANGES, settingsWindowOnly } from '../src/main/settings-window-channels.ts'
+import { READS, RECORDING_SETTINGS_ONLY, SETTINGS_WINDOW_ONLY, SHARED_CHANGES, DEVICE_WINDOW_CHANGES, settingsWindowOnly } from '../src/main/settings-window-channels.ts'
 import { runTalkWeaverSettings, settingsArguments } from '../src/main/settings-cli.ts'
 import { KEYMAP_SETTING, appKeysError, isEditorKeyString, isRegistryChord, overridesFromStore, parseAppKeys, storeWritesFor } from '../src/shared/keymap-overrides.ts'
 import { LOCAL_ONLY, LOCAL_ONLY_KEYS, SEPARATE_FOLDER_KEYS, folderInside, folderShapeError, foldersOverlap, separateFolderProblem, siteFolderShapeError } from '../src/shared/settings-folders.ts'
@@ -717,7 +717,7 @@ await test('review #6: setup opens the shared store after the migration and read
 await test('review #2: every change the Settings window’s own pages make is refused from any other sender', () => {
   const preload = readFileSync(new URL('../src/preload/settings.ts', import.meta.url), 'utf8')
   const invoked = [...new Set([...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map((m) => m[1]))]
-  const lists = [SETTINGS_WINDOW_ONLY, Object.keys(SHARED_CHANGES), READS]
+  const lists = [SETTINGS_WINDOW_ONLY, Object.keys(SHARED_CHANGES), Object.keys(DEVICE_WINDOW_CHANGES), READS]
   for (const ch of invoked) assert.equal(lists.filter((l) => l.includes(ch)).length, 1, `${ch} is classified once`)
   for (const l of lists) for (const ch of l) assert.ok(invoked.includes(ch), `${ch} is a channel of the Settings preload`)
   const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')

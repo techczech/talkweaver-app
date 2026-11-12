@@ -16,7 +16,7 @@ import {
   UploadCloud, X
 } from 'lucide-react'
 import type { RecordingSession, TalkInfo, Transcript, TranscriptSegment, TrimRange } from '../../../preload/index'
-import { shortcutById } from '../../../shared/shortcut-registry'
+import { shortcutById, shortcutEventMatches } from '../../../shared/shortcut-registry'
 import { runAudioSummary } from '../../../shared/run-audio'
 import { eventToCMKey } from '../keymap/store'
 import { commandRan } from '../commands/command-ran'
@@ -28,6 +28,9 @@ import { runTitleAndWhen } from '../../../shared/sessions-list'
 import '../studio.css'
 import { clearUploadFailure, showUploadFailure } from '../lib/upload-failure-toast'
 import '../ui-kit.css'
+import { RecordingPanel, type RecordingPanelHandle } from './recording/RecordingPanel'
+import { RecordingEditor } from './recording/RecordingEditor'
+import { hasPictureLayers } from '../../../shared/recording-video'
 
 // Refusal codes from main when a talk or session name is not a safe file name (recording-paths.ts).
 const UNSAFE_NAME_ERRORS = new Set(['unsafe-talk-slug', 'unsafe-session-id', 'unsafe-path', 'run-path-unsafe'])
@@ -114,6 +117,8 @@ function segmentIndexAtMs(segments: TranscriptSegment[], tMs: number): number {
 const SPEEDS = [1, 1.25, 1.5, 2, 0.75]
 const STUDIO_SIDEBAR_STORAGE_KEY = 'talkweaver.studio.sidebarCollapsed'
 const STUDIO_SIDEBAR_SHORTCUT = shortcutById('studio.sidebar-toggle')
+// The recording panel's trim keys (a Run with its picture), dispatched from the registry's codes.
+const STUDIO_TRIM_KEYS = ['studio.trim-start', 'studio.trim-end', 'studio.trim-undo', 'studio.trim-redo'] as const
 
 function readStudioSidebarCollapsed(): boolean {
   try {
@@ -180,6 +185,8 @@ export default function Studio({
   const [playing, setPlaying] = useState(false)
   const [speedIdx, setSpeedIdx] = useState(0)
   const [sheet, setSheet] = useState(false)
+  // The recording editor (slice 3) replaces Studio's view for the active layered Run while it is open.
+  const [editing, setEditing] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [uploadBusy, setUploadBusy] = useState(false)
@@ -190,12 +197,18 @@ export default function Studio({
   const [transcriptLoading, setTranscriptLoading] = useState(false)
   const [transcriptBusy, setTranscriptBusy] = useState(false)
   const [transcriptNote, setTranscriptNote] = useState<string | null>(null)
+  const [parakeetReady,setParakeetReady] = useState(false)
+  useEffect(()=>{if(!isOpen)return;let alive=true;void window.tw.settings?.transcriptionStatus?.().then(r=>{if(alive)setParakeetReady(r.state==='ready')}).catch(()=>{});return()=>{alive=false}},[isOpen])
+  const alignmentKeyRef=useRef('')
+  const [alignmentState,setAlignmentState]=useState<import('../../../shared/alignment-status').AlignmentRunState|null>(null)
   const [transcriptError, setTranscriptError] = useState<string | null>(null)
   const [transcriptHover, setTranscriptHover] = useState(false)
   const [rangeAnchorIdx, setRangeAnchorIdx] = useState<number | null>(null)
   const [activeSegmentIdx, setActiveSegmentIdx] = useState<number | null>(null)
 
   const audioRef = useRef<HTMLAudioElement>(null)
+  // A layered Run (slides picture, camera, voice) plays in the recording panel, not in <audio>.
+  const panelRef = useRef<RecordingPanelHandle>(null)
   const replayRef = useRef<HTMLIFrameElement>(null)
   const lastReplayKey = useRef('')
   const searchRef = useRef<HTMLInputElement>(null)
@@ -309,7 +322,26 @@ export default function Studio({
   const videoTarget=isOpen&&active&&(!initialSessionId||active.id===initialSessionId||recordingRunKey(active)===initialSessionId)?active:null
   const [pendingVideo,clearPendingVideo]=useVideoMenuRequest(videoRequest,videoTarget,onVideoRequestRegistered)
 
+
+  const alignmentKey=active?recordingRunKey(active):''
+  alignmentKeyRef.current=alignmentKey
+  const currentAlignment=active && alignmentState?.sessionId===active.id && (alignmentState.home===undefined || recordingRunHome(active)===undefined || alignmentState.home===recordingRunHome(active))?alignmentState:null
+  useEffect(()=>{setAlignmentState(null)},[alignmentKey])
+  useEffect(()=>{
+    if(!active)return
+    let received=false,alive=true
+    const take=(state:import('../../../shared/alignment-status').AlignmentRunState):void=>{
+      if(!alive || alignmentKeyRef.current!==alignmentKey || state.sessionId!==active.id || state.home!==undefined && recordingRunHome(active)!==undefined && state.home!==recordingRunHome(active))return
+      received=true;setAlignmentState(state)
+      if(state.state==='done')void window.tw.alignment.get(active.talkSlug,active.id,recordingRunHome(active)).then(fresh=>{if(alive && alignmentKeyRef.current===alignmentKey && fresh)setTranscript(fresh)})
+    }
+    const off=window.tw.alignment.onState(take)
+    void window.tw.alignment.status(active.talkSlug,active.id,recordingRunHome(active)).then(state=>{if(!received && state)take(state)}).catch(()=>{})
+    return()=>{alive=false;off()}
+  },[alignmentKey])
+
   const activeTrims = active?.trims ?? []
+  const layered = !!active && hasPictureLayers(active.capture)
   const enters = useMemo(
     () => (active ? active.slideTimeIndex.filter((m) => m.event === 'enter') : []),
     [active]
@@ -336,6 +368,8 @@ export default function Studio({
   useEffect(() => {
     activeIdRef.current = active?.id ?? null
   }, [active])
+  const activeKey = active ? recordingRunKey(active) : null
+  useEffect(() => { setEditing(false) }, [activeKey])
 
   // When the active session changes: point the <audio> at its local file, reset the playhead,
   // resolve the talk's slides (title + thumbnail by ledger id), and decode a real waveform.
@@ -358,7 +392,7 @@ export default function Studio({
     lastReplayKey.current = ''
     const a = audioRef.current
     if (a) {
-      if (active.audio) a.src = `twrec://${active.id}?talk=${encodeURIComponent(active.talkSlug)}${recordingRunHome(active) === undefined ? '' : `&home=${encodeURIComponent(recordingRunHome(active) ?? '')}`}`
+      if (active.audio && !hasPictureLayers(active.capture)) a.src = `twrec://${active.id}?talk=${encodeURIComponent(active.talkSlug)}${recordingRunHome(active) === undefined ? '' : `&home=${encodeURIComponent(recordingRunHome(active) ?? '')}`}`
       else { a.pause(); a.removeAttribute('src') }
       a.playbackRate = SPEEDS[speedIdx]
       a.load()
@@ -412,7 +446,7 @@ export default function Studio({
     // real waveform (RMS per bucket), decoded off the local file
     void (async () => {
       setWave(null)
-      if (!active.audio) { setWaveLoading(false); return }
+      if (!active.audio || hasPictureLayers(active.capture)) { setWaveLoading(false); return }
       setWaveLoading(true)
       try {
         const resp = await fetch(`twrec://${active.id}?talk=${encodeURIComponent(active.talkSlug)}${recordingRunHome(active) === undefined ? '' : `&home=${encodeURIComponent(recordingRunHome(active) ?? '')}`}`)
@@ -473,8 +507,10 @@ export default function Studio({
 
     void (async () => {
       try {
-        const existing = await window.tw.transcript.get(active.talkSlug, active.id)
+        const existing = await window.tw.transcript.get(active.talkSlug, active.id,recordingRunHome(active))
         if (!cancelled) setTranscript(existing)
+        const attempt = await window.tw.transcript.attempt(active.talkSlug,active.id)
+        if (!cancelled && attempt?.reason) setTranscriptError(`Words could not be written out: ${attempt.reason}`)
       } catch {
         if (!cancelled) setTranscriptError('Could not read the saved transcript. The recording is still safe.')
       } finally {
@@ -490,9 +526,17 @@ export default function Studio({
   useEffect(() => {
     if (!isOpen) return
     return window.tw.transcript.onProgress((event) => {
-      if (event.sessionId === activeIdRef.current) setTranscriptNote(event.note)
+      if (event.sessionId !== activeIdRef.current || event.note === 'busy' || event.note.includes('Words could not be written out: busy')) return
+      setTranscriptNote(event.note)
+      if (event.note === 'Words are ready.') {
+        setTranscriptBusy(false)
+        const run = active
+        if (run) void window.tw.transcript.get(run.talkSlug,run.id,recordingRunHome(run)).then(fresh=>{if(activeIdRef.current===run.id && fresh)setTranscript(fresh)})
+      } else if (event.note === 'Words were not written. Retry from the Run.' || event.note.startsWith('Words could not be written out:')) {
+        setTranscriptBusy(false); setTranscriptError(event.note)
+      } else { setTranscriptBusy(true) }
     })
-  }, [isOpen])
+  }, [isOpen, active])
 
   useEffect(() => {
     if (curSegmentIdx >= 0 && (playing || activeSegmentIdx === null)) setActiveSegmentIdx(curSegmentIdx)
@@ -541,14 +585,16 @@ export default function Studio({
   // playback controls
   const seekToSec = useCallback(
     (sec: number): void => {
+      if (layered) { panelRef.current?.seekRun(Math.max(0, Math.min(totalSec, sec)) * 1000); return }
       const a = audioRef.current
       if (!a || !totalSec) return
       a.currentTime = Math.max(0, Math.min(totalSec, sec))
       setProgress(a.currentTime / totalSec)
     },
-    [totalSec]
+    [totalSec, layered]
   )
   const togglePlay = useCallback((): void => {
+    if (layered) { panelRef.current?.toggle(); return }
     if (!active?.audio) return
     const a = audioRef.current
     if (!a) return
@@ -556,7 +602,7 @@ export default function Studio({
       if (progress >= 0.999) seekToSec(0)
       void a.play()
     } else a.pause()
-  }, [active?.audio, progress, seekToSec])
+  }, [active?.audio, progress, seekToSec, layered])
   const stepSlide = useCallback(
     (dir: number): void => {
       if (!enters.length) return
@@ -631,7 +677,14 @@ export default function Studio({
     }
   }, [active, uploadBusy, flash, reload])
 
-  const runTranscription = useCallback(async (): Promise<void> => {
+  // An export found the words changed under the window: read them again.
+  const reloadWords = useCallback((): void => {
+    const run = active
+    if (!run) return
+    // Never swap loaded words for none: a read that returns nothing keeps what is shown (an export then says the words could not be read).
+    void window.tw.transcript.get(run.talkSlug, run.id, recordingRunHome(run)).then((fresh) => { if (activeIdRef.current === run.id) setTranscript((cur) => fresh ?? cur) }).catch(() => {})
+  }, [active])
+  const runTranscription = useCallback(async (choice?: 'native'|'parakeet'): Promise<void> => {
     if (!active?.audio) return
     if (!active || transcriptBusy) return
     const sessionId = active.id
@@ -639,7 +692,7 @@ export default function Studio({
     setTranscriptError(null)
     setTranscriptNote('Starting transcription…')
     try {
-      const res = await window.tw.transcript.run(active.talkSlug, sessionId)
+      const res = await window.tw.transcript.run(active.talkSlug, sessionId, choice)
       if (activeIdRef.current !== sessionId) return
       if (!res.ok) {
         const msg = res.error === 'busy'
@@ -651,7 +704,7 @@ export default function Studio({
         setTranscriptNote(null)
         return
       }
-      const fresh = await window.tw.transcript.get(active.talkSlug, sessionId)
+      const fresh = await window.tw.transcript.get(active.talkSlug, sessionId,recordingRunHome(active))
       if (activeIdRef.current !== sessionId) return
       const next = fresh ?? {
         engine: 'parakeet' as const,
@@ -749,6 +802,8 @@ export default function Studio({
       const t = e.target as HTMLElement | null
       const typing = t && t.matches('input, textarea, [contenteditable="true"]')
       if (e.key === '?') { if (!typing) { e.preventDefault(); setSheet((s) => !s) } return }
+      // The editor has its own keys (registry ids, studio scope); Studio's player keys stand aside.
+      if (editing && layered) { if (e.key === 'Escape' && sheet) { e.preventDefault(); setSheet(false) } return }
       if (e.key === 'Escape') { e.preventDefault(); if (sheet) setSheet(false); else onClose(); return }
       if (STUDIO_SIDEBAR_SHORTCUT.codes.includes(eventToCMKey(e) ?? '')) {
         e.preventDefault()
@@ -764,6 +819,17 @@ export default function Studio({
         return
       }
       if (typing) return
+      if (layered && panelRef.current) {
+        // The registry's own matcher: Mod is ⌘ on a Mac and Ctrl elsewhere, as for every other registry key.
+        const hit = STUDIO_TRIM_KEYS.find((id) => shortcutEventMatches(e, id))
+        if (hit) {
+          e.preventDefault()
+          const panel = panelRef.current
+          if (hit === 'studio.trim-start') panel.trimStart(); else if (hit === 'studio.trim-end') panel.trimEnd(); else if (hit === 'studio.trim-undo') panel.undo(); else panel.redo()
+          commandRan(hit)
+          return
+        }
+      }
       if (e.key === ' ') { e.preventDefault(); togglePlay() }
       else if (e.key === 'ArrowLeft') { e.preventDefault(); stepSlide(-1) }
       else if (e.key === 'ArrowRight') { e.preventDefault(); stepSlide(1) }
@@ -779,13 +845,34 @@ export default function Studio({
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [isOpen, sheet, onClose, togglePlay, stepSlide, cycleSession, seekToSec, progress, totalSec, stepSegment, keyboardSegmentIdx, toggleTrimSegment, transcriptSegments, doUpload])
+  }, [isOpen, sheet, onClose, togglePlay, stepSlide, cycleSession, seekToSec, progress, totalSec, stepSegment, keyboardSegmentIdx, toggleTrimSegment, transcriptSegments, doUpload, layered, editing])
 
   if (!isOpen) return null
 
   const pct = (progress * 100).toFixed(3) + '%'
   const activeEffectiveSec = active ? effectiveTotalSec : 0
   const delta = active ? deltaOf(activeEffectiveSec, active.timerTargetMin) : null
+
+  if (editing && layered && active) return (
+    <div className="lt twstudio" role="dialog" aria-label="TalkWeaver Studio">
+      <RecordingEditor
+        key={recordingRunKey(active)}
+        run={active}
+        slides={slideMap}
+        transcript={transcript}
+        writing={{ busy: transcriptBusy || transcriptLoading, note: transcriptNote, error: transcriptError }}
+        parakeetReady={parakeetReady}
+        suspended={sheet}
+        onWriteOut={(choice) => { void runTranscription(choice) }}
+        onStopWriting={() => { void window.tw.transcript.cancel() }}
+        onBack={() => setEditing(false)}
+        onHelp={() => setSheet(true)}
+        onSettings={() => openSettingsAt('recording')}
+        onReloadWords={reloadWords}
+      />
+      <KeyboardHelp isOpen={sheet} onClose={() => setSheet(false)} view="studio" />
+    </div>
+  )
 
   return (
     <div className="lt twstudio" role="dialog" aria-label="TalkWeaver Studio">
@@ -931,6 +1018,19 @@ export default function Studio({
       {/* stage: monitor + transcript seam */}
       <div className="tws-stage">
         <div className="tws-monitor-col">
+          {layered && active ? (
+            <RecordingPanel
+              key={recordingRunKey(active)}
+              ref={panelRef}
+              run={active}
+              slides={slideMap}
+              transcript={transcript}
+              onTime={(ms) => { if (totalSec) setProgress(Math.min(1, ms / 1000 / totalSec)); const idx = segmentIndexAtMs(transcriptSegments, ms); if (panelRef.current?.playing() && idx >= 0) setActiveSegmentIdx(idx) }}
+              onPlaying={setPlaying}
+              onEdit={() => setEditing(true)}
+              onReloadWords={reloadWords}
+            />
+          ) : <>
           <div className="tws-now-head">
             <div className="tws-nh-pos">
               <span>Now showing</span>
@@ -971,6 +1071,7 @@ export default function Studio({
               </div>
             </div>
           </div>
+          </>}
         </div>
 
         <aside className="tws-transcript-seam">
@@ -995,7 +1096,7 @@ export default function Studio({
                 onClick={() => { void runTranscription() }}
               >
                 <RefreshCw className={`lt-icon ${transcriptBusy ? 'spin' : ''}`} />
-                Re-transcribe
+                Write out again
               </button>
             ) : (
               <span className={`tws-p-soon ${transcriptBusy ? 'busy' : ''}`}>
@@ -1003,6 +1104,18 @@ export default function Studio({
               </span>
             )}
           </div>
+          {transcriptError ? <div role="alert"><p>{transcriptError}</p><button className="tw-btn" disabled={transcriptBusy} onClick={()=>void runTranscription()}>Retry</button>{transcriptError.includes('No words were found') ? <button className="tw-btn" onClick={()=>openSettingsAt('recording')}>Choose another language</button> : null}</div> : null}
+          {transcriptNote && transcriptBusy ? <p aria-live="polite">{transcriptNote}</p> : null}
+          <label className="tws-ts-engine">Write out again with… <select disabled={transcriptBusy || !active?.audio} value="" onChange={e=>{if(e.target.value)void runTranscription(e.target.value as 'native'|'parakeet')}}>
+            <option value="">Choose an engine</option><option value="native">This Mac (built in)</option><option value="parakeet" disabled={!parakeetReady}>{parakeetReady ? 'Installed better model (Parakeet)' : 'Parakeet — set it up in Settings'}</option>
+          </select></label>
+          {transcript?.words?.length ? <div className="tws-ts-alignment">
+            <div className="tws-ts-alignment-actions"><button className="tws-ts-retry" disabled={transcriptBusy || currentAlignment?.state==='working'} onClick={()=>{if(active)void window.tw.alignment.run(active.talkSlug,active.id,recordingRunHome(active)).then(r=>{if(!r.ok && alignmentKeyRef.current===alignmentKey)setAlignmentState({sessionId:active.id,home:recordingRunHome(active),state:'failed',note:r.error})})}}>Align words again</button>
+            {currentAlignment?.state==='working'?<button className="tws-ts-retry" onClick={()=>{if(active)void window.tw.alignment.cancel(active.talkSlug,active.id,recordingRunHome(active))}}>Cancel alignment</button>:null}</div>
+            {currentAlignment?.state==='working' && currentAlignment.progress!==undefined?<progress aria-label="Word alignment" value={currentAlignment.progress} max={1}/>:null}
+            <p aria-live="polite">{currentAlignment?currentAlignment.note:transcript.alignment?'Precise word timing is ready.':'Words use their earlier timings. Download or install Precise word timing in Settings › Recording.'}</p>
+          </div>:null}
+          {Array.isArray(transcript?.unmatchedCorrections) && transcript.unmatchedCorrections.length ? <div><p>Caption corrections to check</p><ul>{transcript.unmatchedCorrections.map((c,i)=><li key={i}>{c.original} → {c.text} ({Math.round(c.start/1000)} s)</li>)}</ul></div> : null}
           <div
             className={`tws-ts-body ${transcript ? 'has-transcript' : ''}`}
             ref={transcriptBodyRef}
@@ -1110,9 +1223,9 @@ export default function Studio({
       </div>
 
       {/* timeline console */}
-      <div className="tws-console" style={active ? undefined : { opacity: 0.4, pointerEvents: 'none' }}>
+      <div className={`tws-console${layered ? ' tws-console-meta-only' : ''}`} style={active ? undefined : { opacity: 0.4, pointerEvents: 'none' }}>
         <div className="tws-console-top">
-          <div className="tws-transport">
+          {layered ? null : <div className="tws-transport">
             <button className="tws-tp" title="Previous slide (←)" onClick={() => stepSlide(-1)}><SkipBack className="lt-icon" /></button>
             <button className="tws-tp tws-play" title={active?.audio?"Play / pause (Space)":"This Run has no audio."} disabled={!active?.audio} onClick={togglePlay}>
               {playing ? <Pause className="lt-icon" /> : <Play className="lt-icon" />}
@@ -1124,7 +1237,7 @@ export default function Studio({
               <span className="tot">{fmt(effectiveTotalSec)}</span>
               {hasTrims ? <span className="raw">raw {fmt(progress * totalSec)} / {fmt(totalSec)}</span> : null}
             </div>
-          </div>
+          </div>}
           <div className="tws-ct-meta">
             <span
               className={`tws-cm-label ${active?.context ? '' : 'placeholder'}`}
@@ -1140,7 +1253,8 @@ export default function Studio({
               {active ? `${mins(activeEffectiveSec)}m recorded${hasTrims ? ` · raw ${mins(totalSec)}m` : ''}${active.timerTargetMin ? ` · planned ${active.timerTargetMin}m` : ''}` : ''}
             </span>
             {delta ? <span className={`tws-delta ${delta.cls}`}>{delta.text}</span> : null}
-            <button className="tws-speed" title="Playback speed" onClick={cycleSpeed}>{SPEEDS[speedIdx].toString()}×</button>
+            {layered ? null : <button className="tws-speed" title="Playback speed" onClick={cycleSpeed}>{SPEEDS[speedIdx].toString()}×</button>}
+            {active && !layered && active.audio ? <RecordingPanel key={`export:${recordingRunKey(active)}`} exportOnly run={active} slides={slideMap} transcript={transcript} onTime={() => {}} onPlaying={() => {}} /> : null}
             {active && (
               <button className="tw-btn tw-btn--sm" onClick={doUpload} disabled={!active.audio || active.audio.uploaded || uploadBusy} title={active.audio?.uploaded ? 'Already uploaded' : 'Upload this recording (U)'}>
                 {active.audio?.uploaded ? <><Check className="lt-icon" /> Uploaded</> : <><UploadCloud className="lt-icon" /> {uploadBusy ? 'Uploading…' : 'Upload'}</>}
@@ -1163,7 +1277,7 @@ export default function Studio({
           </div>
         </div>
 
-        <div className="tws-timeline">
+        {layered ? null : <div className="tws-timeline">
           <div className="tws-track">
             <div className="tws-ruler">
               {[0, 0.2, 0.4, 0.6, 0.8, 1].map((f) => (
@@ -1265,7 +1379,7 @@ export default function Studio({
               )}
             </div>
           </div>
-        </div>
+        </div>}
       </div>
 
       </main>

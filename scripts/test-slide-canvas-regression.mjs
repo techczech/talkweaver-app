@@ -35,7 +35,7 @@ const W = 64, H = 36            // 16:9 signature grid (each cell ~22x25 real px
 const TOLERANCE = 2             // mean abs difference per pixel (0-255) treated as noise
 const VIEWPORT = { width: 1440, height: 900 }
 
-const { outPath } = await buildLayoutSampler()
+const { outPath } = await buildLayoutSampler(undefined, { classic: true })
 
 const browser = await chromium.launch({ headless: true })
 const signatures = {}

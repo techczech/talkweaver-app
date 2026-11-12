@@ -1,0 +1,76 @@
+/* 0.44 look ("ocean"): pie charts in the locked colours, by the colour-by-count rule (round-10 sampler S36). The shared
+   chart renderer keeps its inline slice colours (classic and the editor widget stay as they are); in this look the
+   slices and swatches are repainted here. Two slices: Ocean and the light strength; three: Ocean, Deeper Ocean, light;
+   four or more: strengths of Ocean only, the labels near-black in the legend; thin white separators between slices
+   and an Ocean edge on the light ones so they hold against the white ground. A slice whose legend label is wholly
+   bold (as a highlighted bar) is amber. No berry, no green. */
+.slide[data-look="ocean"] .chart-pie { flex: 1 1 auto; width: 100% !important; max-width: none !important; margin: 0 !important; gap: 5cqw !important; align-items: center; }
+.slide[data-look="ocean"] .chart-pie svg { width: min(32cqw, 100%) !important; height: auto !important; aspect-ratio: 1; flex: 0 0 auto; overflow: visible; }
+.slide[data-look="ocean"] .chart-pie svg > :is(path, circle) { stroke: #FFFFFF; stroke-width: 3; stroke-linejoin: round; }
+.slide[data-look="ocean"] .chart-pie .chart-legend { gap: 1.6cqw !important; }
+.slide[data-look="ocean"] .chart-pie .chart-legend li { font-size: max(var(--type-floor, 31px), 2.4cqw) !important; gap: 1.2cqw !important; align-items: center !important; }
+.slide[data-look="ocean"] .chart-pie .chart-swatch { width: 2.2cqw !important; height: 2.2cqw !important; border-radius: .3cqw !important; box-sizing: border-box; }
+.slide[data-look="ocean"] .chart-pie .chart-leg-label { color: var(--look-ink) !important; }
+.slide[data-look="ocean"] .chart-pie .chart-leg-val { color: var(--look-muted) !important; }
+.slide[data-look="ocean"][data-title-layout="top"] > .slide-content:has(> .chart-pie) { height: 100% !important; box-sizing: border-box; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(2):last-child) svg > :is(path, circle):nth-child(1) { fill: var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(2):last-child) .chart-legend > li:nth-child(1) .chart-swatch { background: var(--look-main) !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(2):last-child) svg > :is(path, circle):nth-child(2) { fill: var(--look-light); stroke: var(--look-main); stroke-width: 2; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(2):last-child) .chart-legend > li:nth-child(2) .chart-swatch { background: var(--look-light) !important; border: .15cqw solid var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(3):last-child) svg > :is(path, circle):nth-child(1) { fill: var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(3):last-child) .chart-legend > li:nth-child(1) .chart-swatch { background: var(--look-main) !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(3):last-child) svg > :is(path, circle):nth-child(2) { fill: var(--look-deep); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(3):last-child) .chart-legend > li:nth-child(2) .chart-swatch { background: var(--look-deep) !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(3):last-child) svg > :is(path, circle):nth-child(3) { fill: var(--look-light); stroke: var(--look-main); stroke-width: 2; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(3):last-child) .chart-legend > li:nth-child(3) .chart-swatch { background: var(--look-light) !important; border: .15cqw solid var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(1) { fill: var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(1) .chart-swatch { background: var(--look-main) !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(2) { fill: var(--look-deep); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(2) .chart-swatch { background: var(--look-deep) !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(3) { fill: #5B9BD8; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(3) .chart-swatch { background: #5B9BD8 !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(4) { fill: #A9CBEE; stroke: var(--look-main); stroke-width: 2; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(4) .chart-swatch { background: #A9CBEE !important; border: .15cqw solid var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(5) { fill: var(--look-light); stroke: var(--look-main); stroke-width: 2; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(5) .chart-swatch { background: var(--look-light) !important; border: .15cqw solid var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(6) { fill: #0A3F70; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(6) .chart-swatch { background: #0A3F70 !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(7) { fill: var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(7) .chart-swatch { background: var(--look-main) !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(8) { fill: var(--look-deep); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(8) .chart-swatch { background: var(--look-deep) !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(9) { fill: #5B9BD8; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(9) .chart-swatch { background: #5B9BD8 !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(10) { fill: #A9CBEE; stroke: var(--look-main); stroke-width: 2; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(10) .chart-swatch { background: #A9CBEE !important; border: .15cqw solid var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(11) { fill: var(--look-light); stroke: var(--look-main); stroke-width: 2; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(11) .chart-swatch { background: var(--look-light) !important; border: .15cqw solid var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(12) { fill: #0A3F70; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(12) .chart-swatch { background: #0A3F70 !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:only-child) svg > :is(path, circle):nth-child(1) { fill: var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:only-child) .chart-legend > li:nth-child(1) .chart-swatch { background: var(--look-main) !important; }
+/* a highlighted slice: its legend label is wholly bold */
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(1) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(1) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(1):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(2) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(2) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(2):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(3) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(3) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(3):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(4) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(4):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(5) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(5) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(5):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(6) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(6) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(6):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(7) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(7) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(7):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(8) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(8) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(8):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(9) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(9) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(9):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(10) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(10) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(10):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(11) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(11) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(11):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(12) .chart-leg-label > strong:only-child) svg > :is(path, circle):nth-child(12) { fill: var(--look-current) !important; stroke: #FFFFFF; stroke-width: 3; }
+.slide[data-look="ocean"] .chart-pie .chart-legend > li:nth-child(12):has(.chart-leg-label > strong:only-child) .chart-swatch { background: var(--look-current) !important; border: 0; }

@@ -14,7 +14,7 @@ import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { talkNamesTitleLook, withoutLaterSlideStamps } from './slide-markup-identity.mjs'
+import { inClassicLook, talkNamesTitleLook, withoutLaterSlideStamps } from './slide-markup-identity.mjs'
 
 const WEB = 'https://example.org/schemas-and-propositions'
 const DOI = 'https://doi.org/10.1000/xyz123'
@@ -60,7 +60,8 @@ export async function formlessHashes(compilerRoot) {
     const path = join(dir, 'talk.md')
     const text = formlessOutline()
     writeFileSync(path, text)
-    const model = await prepareSource(path, text, 'Talk', statSync(path), undefined, { allowedAssetRoots: [dir] })
+    // Recorded before 0.44: compile in the classic look (slide-markup-identity.mjs inClassicLook).
+    const model = await prepareSource(path, inClassicLook(text), 'Talk', statSync(path), undefined, { allowedAssetRoots: [dir] })
     const html = await buildDeckHtmlFromModel(model)
     const script = buildSlideScriptPayload(model.slides)
     const out = {}
