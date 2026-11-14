@@ -2,7 +2,7 @@
 // beside its schema settings, which now live in the window's generated sections.
 //
 //   Get started   Open the Guide, Show the example vault again, Add a vault…, and the transcription
-//                 set-up row (whether it can run; the paths are Recording › Transcription rows).
+//                 set-up row (whether it can run; the paths are Recording › Advanced recording settings rows).
 //   Backups       What the last backup did, which talks are backed up, Back up now (On / off, the
 //                 folder and the interval are Presenting › Present from anywhere rows).
 //   Cloudflare    Settings › Cloudflare as it was (CloudflareSettings.tsx), and the account, site
@@ -76,8 +76,8 @@ export function GetStartedRows({ exampleRemoved, onAction }: { exampleRemoved: b
       <AgentSkillSettings look={look} />
       <div style={look.sectionHead}>Transcription</div>
       <div style={look.hint}>
-        Optional. TalkWeaver can transcribe recorded Runs on this computer with a speech engine you set up once. The paths are under
-        Recording › Transcription.
+        Optional. On macOS 26 or later TalkWeaver transcribes recorded Runs with its built-in engine (Recording). This row is for an
+        external speech engine you set up once; its paths are under Recording › Advanced recording settings.
       </div>
       <TranscriptionStatusRow look={look} version={0} />
     </div>

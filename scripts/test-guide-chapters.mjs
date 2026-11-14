@@ -128,6 +128,24 @@ try {
     for (const task of TASK_GROUPS.filter((t) => t !== 'Present')) assert.equal(byTask[task].live.length, 0, `${task} has no live commands`)
   })
 
+  await test('recording, the Studio editor and export: every registry command is a row of its chapter; export has none', () => {
+    const rowsOf = (task, subgroup) => byTask[task].rows.filter((r) => r.subgroup === subgroup).flatMap((r) => [...r.ids])
+    // The presenter's recording commands (keys, the palette's Start and Stop fold into presenter.record).
+    const recording = COMMAND_REGISTRY.filter((c) => c.subgroup === 'Recording' && c.taskGroup === 'Present').map((c) => c.id)
+    assert.ok(recording.includes('presenter.record') && recording.includes('presenter.record-pause') && recording.includes('presenter.record-flag'))
+    for (const id of recording) assert.ok(rowsOf('Present', 'Recording').includes(id), `${id} is a row of Present › Recording`)
+    for (const entry of PRESENTER_PALETTE.flatMap(([, entries]) => entries).filter((e) => /^record-/.test(e.id))) {
+      assert.ok(entry.shortcut ? rowsOf('Present', 'Recording').includes(entry.shortcut) : rowsOf('Present', 'Recording').includes(`presenter-palette.${entry.id}`), `palette ${entry.id} is in Present › Recording`)
+    }
+    // Studio and its editor keys: one sub-group of Manage talks, practised in the example vault's section 08.
+    const studio = COMMAND_REGISTRY.filter((c) => c.id === 'studio' || c.id.startsWith('studio.')).map((c) => c.id)
+    assert.ok(studio.includes('studio.trim-start') && studio.includes('studio.editor-cut'))
+    for (const id of studio) assert.ok(rowsOf('Manage talks', 'Importer, Studio, Runs').includes(id), `${id} is a row of Manage talks › Importer, Studio, Runs`)
+    // Export video…, Tidy up…, Leave this slide out and the Camera switch are buttons with no command: no row names them.
+    const labels = chapters.flatMap((c) => [...c.rows, ...c.live].map((r) => r.label))
+    for (const absent of ['Export video', 'Tidy up', 'Leave this slide out', 'Camera']) assert.ok(!labels.some((l) => l.startsWith(absent)), `${absent} is no row`)
+  })
+
   await test('the derived list and total of each chapter (printed for the report)', () => {
     let all = 0
     for (const chapter of chapters) {

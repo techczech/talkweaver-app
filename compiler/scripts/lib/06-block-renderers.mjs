@@ -336,18 +336,38 @@ function renderActionRow(actions) {
 
 function renderQr(block, className = "slide-figure slide-qr slide-qr-corner") {
   const url = String(block.url || "");
-  const cleaned = cleanQrUrl(url);
+  // the whole address, never shortened: an address the audience cannot read in full defeats its purpose
+  const cleaned = cleanQrUrl(url, 0);
   const svg = makeQrSvg(url);
   const safe = /^(https?|mailto):/i.test(url) ? url : null;
   if (!svg) {
-    return `<figure class="${className} qr-too-long">${safe ? `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener">${escapeHtml(cleaned)}</a>` : escapeHtml(cleaned)}</figure>`;
+    // too long for a code at all: a plain link, drawn as before
+    const shortened = cleanQrUrl(url);
+    return `<figure class="${className} qr-too-long">${safe ? `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener">${escapeHtml(shortened)}</a>` : escapeHtml(shortened)}</figure>`;
   }
+  // An address breaks after a slash, never inside a name: "handouts.fyi/" then "k8wf", not "k8" then "wf". Each part
+  // between slashes is one span that does not wrap (.qr-part); inside it the places a part may break when it alone is
+  // wider than its caption (after "-", "_", ".", "?", "&", "=") are marked, and the fitter (slide-fit.js
+  // fitQrCaptions) opens them only for such a part (data-qr-long). The text is the address, character for character.
+  const shown = cleaned.split(/(?<=\/)(?=[^/])/).map((part) => `<span class="qr-part">${escapeHtml(part).replace(/([-_.?=]|&amp;)(?=.)/g, "$1<wbr>")}</span>`).join("<wbr>");
   const caption = safe
-    ? `<figcaption class="qr-caption"><a href="${escapeHtml(safe)}" target="_blank" rel="noopener">${escapeHtml(cleaned)}</a></figcaption>`
-    : `<figcaption class="qr-caption">${escapeHtml(cleaned)}</figcaption>`;
+    ? `<figcaption class="qr-caption"><a href="${escapeHtml(safe)}" target="_blank" rel="noopener">${shown}</a></figcaption>`
+    : `<figcaption class="qr-caption">${shown}</figcaption>`;
   return `<figure class="${className}">`
     + `<button type="button" class="qr-code" data-qr-url="${escapeHtml(url)}" aria-label="Show QR code for ${escapeHtml(url)} full screen">${svg}</button>`
     + caption + `</figure>`;
+}
+
+// Outside the Ocean look a QR caption keeps the drawing it had before the whole-address rule (07-assembly applies this to
+// a deck that is not in the look): the address shortened to QR_URL_MAX_LEN, breaking after a slash. The parts' text is
+// the address as shown, so shortening it again gives the same text cleanQrUrl gave from the url.
+const QR_PARTS = /<span class="qr-part">[\s\S]*?<\/span>(?:<wbr><span class="qr-part">[\s\S]*?<\/span>)*/g;
+export function legacyQrCaptions(html) {
+  if (!String(html).includes('class="qr-part"')) return html;
+  return String(html).replace(QR_PARTS, (run) => {
+    const shown = run.replace(/<[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
+    return escapeHtml(cleanQrUrl(shown)).replace(/\/(?=[^/])/g, "/<wbr>");
+  });
 }
 
 // Collapse consecutive `action` blocks into a single `actions` block so a run of action

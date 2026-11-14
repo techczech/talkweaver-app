@@ -49,8 +49,9 @@ try {
   for (let i = 0; i < EDIT_HISTORY_LIMIT + 20; i++) many = applyEditOp(many, { kind: 'cut', ranges: [{ start: i * 100, end: i * 100 + 50 }] }, D)
   assert.equal(many.undo.length, EDIT_HISTORY_LIMIT)
   const cam = applyEditOp(many, { kind: 'finish', finish: { camera: false } }, D)
-  assert.equal(cam.finish.camera, false); assert.equal(cam.undo, many.undo, 'the camera choice is not a cut step')
-  pass(`undo and redo are bounded to ${EDIT_HISTORY_LIMIT} steps; a new edit clears redo; the camera choice is kept apart`)
+  assert.equal(cam.finish.camera, false); assert.equal(cam.undo.length, EDIT_HISTORY_LIMIT, 'the camera choice is one undo step (0.44.5), still within the bound')
+  assert.equal(applyEditOp(cam, { kind: 'undo' }, D).finish.camera, true, 'undo puts the camera back')
+  pass(`undo and redo are bounded to ${EDIT_HISTORY_LIMIT} steps; a new edit clears redo; the camera choice is undoable`)
 
   const cuts = [{ start: 1000, end: 2000 }, { start: 5000, end: 6000 }]
   assert.equal(runToEdited(500, cuts), 500); assert.equal(runToEdited(1500, cuts), 1000); assert.equal(runToEdited(7000, cuts), 5000)
@@ -76,7 +77,7 @@ try {
   assert.equal(existsSync(path), false); assert.equal(store.get({}).edits.revision, 0)
   const s1 = store.apply({}, { kind: 'trim-start', at: 2000 }, 0)
   const onDisk = JSON.parse(readFileSync(path, 'utf8'))
-  assert.equal(onDisk.version, 4); assert.equal(onDisk.revision, 1); assert.equal(onDisk.id, undefined, 'never looks like a Run file')
+  assert.equal(onDisk.version, 5); assert.equal(onDisk.revision, 1); assert.equal(onDisk.id, undefined, 'never looks like a Run file')
   assert.throws(() => store.apply({}, { kind: 'trim-end', at: 50_000 }, 0), /changed in another window/)
   failRename = true
   assert.throws(() => store.apply({}, { kind: 'trim-end', at: 50_000 }, 1), /disk gone/)
@@ -97,7 +98,7 @@ try {
   const fresh = store.startFresh({})
   assert.equal(fresh.problem, null); assert.ok(fresh.keptAs && existsSync(fresh.keptAs)); assert.equal(readFileSync(fresh.keptAs, 'utf8'), '{ not json')
   store.apply({}, { kind: 'trim-start', at: 10 }, 0)
-  writeFileSync(path, JSON.stringify({ version: 5, cuts: [] }))
+  writeFileSync(path, JSON.stringify({ version: 6, cuts: [] }))
   assert.equal(store.get({}).problem.kind, 'newer')
   assert.throws(() => store.apply({}, { kind: 'trim-start', at: 20 }, 1), /newer version/)
   const linked = join(folder, 'sess-b.edits.json'); symlinkSync(join(root, 'elsewhere.json'), linked)
@@ -152,9 +153,14 @@ try {
   assert.equal(editedMs, 9000)
   const graph = args[args.indexOf('-filter_complex') + 1]
   assert.match(graph, /tpad=start_mode=clone:start_duration=0\.04,/, 'the first slides frame is held from 0, not black')
-  assert.match(graph, /overlay=x=1471:y=815/); assert.match(graph, /asetnsamples=n=1600/); assert.match(graph, /afade=t=in:st=1:d=0\.015/)
+  assert.match(graph, /overlay=x=1471:y=815/)
+  // Since 0.44.5 the sound arrives already spliced on the picture's frames (recording-joins.ts, test:recording-finish).
+  assert.deepEqual(args.slice(args.indexOf('pipe:0') - 7, args.indexOf('pipe:0') + 1), ['-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0'])
+  assert.ok(!/tmix/.test(graph), 'hard joins: no dissolve')
+  const smooth = exportArgs({ durationMs: 10_000, cuts: [{ start: 2000, end: 3000 }], slides: [{ path: '/s.webm', startMs: 0, endMs: 10_000 }], camera: [], voice: [], audioOnly: false, smooth: true }, '/out.part')
+  assert.match(smooth.args[smooth.args.indexOf('-filter_complex') + 1], /tmix=frames=6.*overlay=x=0:y=0:eof_action=pass:enable='gte\(t,1\.983333\)\*lt\(t,2\.15\)'/, 'smooth joins: the dissolve shows only just after the join')
   assert.ok(!args.some((a) => /\s/.test(a) && a !== graph && !a.includes('enable')), 'arguments are an array, never a shell line')
-  assert.deepEqual(args.slice(args.indexOf('-map_metadata'), args.indexOf('-map_metadata') + 4), ['-map_metadata', '4', '-map_chapters', '4'])
+  assert.deepEqual(args.slice(args.indexOf('-map_metadata'), args.indexOf('-map_metadata') + 4), ['-map_metadata', '3', '-map_chapters', '3'])
   pass('the export command places the camera in the player’s rectangle and cuts sound on the picture’s frames')
 
   assert.equal(freeName('/x/a.srt', (p) => p === '/x/a.srt' || p === '/x/a (2).srt'), '/x/a (3).srt')

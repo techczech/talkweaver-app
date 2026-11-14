@@ -100,8 +100,8 @@ const missingWhenItFits = eligible.filter((entry) => typeof entry.whenItFits !==
 assert.deepEqual(missingWhenItFits, [], `Picker-eligible entr(ies) missing whenItFits: ${missingWhenItFits.join(", ")}`);
 assert.deepEqual(
   entries.filter((entry) => entry.kind !== "component" && entry.pickerEligible === false).map((entry) => entry.name),
-  ["image-steps", "emphasis-steps", ...PREWORK_STEP_TOKENS, "names", "page-70"],
-  "only the board-only `names` modifier, the pre-work step tokens and the page-70, image-steps and emphasis-steps option tokens are opted out of the picker besides component entries"
+  ["section-colour", "image-steps", "emphasis-steps", ...PREWORK_STEP_TOKENS, "names", "page-70"],
+  "only the board-only `names` modifier, the pre-work step tokens, the section-colour section token and the page-70, image-steps and emphasis-steps option tokens are opted out of the picker besides component entries"
 );
 assert.deepEqual(
   Object.fromEntries(PURPOSES.map((p) => [p, eligible.filter((entry) => entry.purpose === p).length])),
@@ -113,15 +113,19 @@ assert.deepEqual(
   ["action", "auto-embed", "code", "countdown", "embed", "mermaid", "qr", "svg"],
   "the eight component-kind entries leave the picker"
 );
-assert(LAYOUTS.every((entry) => (entry.kind === "component") === !isPickerEligible(entry) || entry.name === "names" || entry.name === "image-steps" || entry.name === "page-70" || entry.name === "emphasis-steps" || PREWORK_STEP_TOKENS.includes(entry.name)), "isPickerEligible agrees with the declared data");
+assert(LAYOUTS.every((entry) => (entry.kind === "component") === !isPickerEligible(entry) || entry.name === "names" || entry.name === "section-colour" || entry.name === "image-steps" || entry.name === "page-70" || entry.name === "emphasis-steps" || PREWORK_STEP_TOKENS.includes(entry.name)), "isPickerEligible agrees with the declared data");
 
 assert.deepEqual(
   entries.filter((entry) => entry.sectionOnly).map((entry) => entry.name),
-  ["accent", "prework", "grid-linear", "grid-zoom", "contents", "timer-audience"],
-  "only the six level-constrained triggers are section-only"
+  ["accent", "section-colour", "prework", "grid-linear", "grid-zoom", "contents", "timer-audience"],
+  "only the seven level-constrained triggers are section-only"
 );
 
-const missingSamplerNames = entries.map((entry) => entry.name).filter((name) => !sampler.includes(name));
+// section-colour (0.44 section lead colours) is a `##`-level colour token, shown by its own fixture
+// (scripts/fixtures/ocean-look/section-colours-outline.md): a sampler slide for it would change the recorded baselines of
+// every test that walks the sampler, for no layout of its own.
+const NOT_IN_SAMPLER = new Set(["section-colour"]);
+const missingSamplerNames = entries.map((entry) => entry.name).filter((name) => !NOT_IN_SAMPLER.has(name) && !sampler.includes(name));
 assert.deepEqual(missingSamplerNames, [], `Registry name(s) missing from docs/layout-sampler-outline.md: ${missingSamplerNames.join(", ")}`);
 
 const triggerTokenLayouts = LAYOUTS.filter((entry) => String(entry.trigger ?? '').trim().startsWith('{'));

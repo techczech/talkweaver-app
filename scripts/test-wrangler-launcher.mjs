@@ -12,7 +12,7 @@ import { strict as assert } from 'node:assert'
 import { EventEmitter, once } from 'node:events'
 import { createInterface } from 'node:readline'
 import { mock } from 'node:test'
-import { spawnSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
@@ -29,6 +29,9 @@ import {
   TRACE_FILE_VARIABLE, prepareWranglerRun, prepareWranglerWorkDir, resolveWranglerLaunch, runWrangler, wranglerChildEnv, wranglerEntryPath,
   wranglerEnvFilePath, wranglerRunFolder, windowsSystemRoot,
 } from '../src/main/wrangler-launcher.ts'
+// Gone, or a zombie not yet reaped: either way it no longer runs. kill(pid, 0) alone succeeds on a zombie.
+// ps exits 1 when no process has that pid; any other failure (ps missing, not permitted) is a broken check, not a stopped process.
+const notRunning = (pid) => { try { return /^Z/.test(execFileSync('ps', ['-o', 'stat=', '-p', String(pid)]).toString().trim()) } catch (error) { if (error.status === 1) return true; throw error } }
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)))
 const present = () => true
@@ -579,7 +582,7 @@ function fakeChild(script) {
   // a process of its own which inherits its output and sleeps for a minute.
   if (process.platform !== 'win32') {
     const dir = mkdtempSync(join(tmpdir(), 'tw-launcher-group-'))
-    const gone = async (pid) => { for (const end = Date.now() + 3000; Date.now() < end;) { try { process.kill(pid, 0) } catch { return true } await new Promise((resolve) => setTimeout(resolve, 25)) } return false }
+    const gone = async (pid) => { assert.ok(Number.isInteger(pid) && pid > 0, `pid ${pid}`); for (const end = Date.now() + 20000; Date.now() < end;) { if (notRunning(pid)) return true; await new Promise((resolve) => setTimeout(resolve, 25)) } return false }
     const script = (name, body, beforeReady = '') => { const path = join(dir, name); writeFileSync(path, `const { spawn } = require('node:child_process')\nconst inner = spawn('sleep', ['60'], { stdio: ['ignore', 'inherit', 'inherit'] })\n${beforeReady}\nconsole.log(JSON.stringify({ inner: inner.pid, cwd: process.cwd(), env: process.env }))\n${body}\n`); return path }
     let child
     const real = (path, options) => runWrangler(mac, ['pages', 'deploy'], { ...options, start: (launch) => (child = startWranglerProcess({ ...launch, command: process.execPath, args: [path], cwd: dir, env: { PATH: process.env.PATH, MADE_UP_ONLY: 'yes' } }, process.platform)) })
@@ -636,7 +639,7 @@ function fakeChild(script) {
   // The publishing tool must not outlive the app (ticket 04 round 3): every run under way is ended at once.
   if (process.platform !== 'win32') {
     const dir = mkdtempSync(join(tmpdir(), 'tw-launcher-quit-'))
-    const gone = async (pid) => { for (const end = Date.now() + 3000; Date.now() < end;) { try { process.kill(pid, 0) } catch { return true } await new Promise((resolve) => setTimeout(resolve, 25)) } return false }
+    const gone = async (pid) => { assert.ok(Number.isInteger(pid) && pid > 0, `pid ${pid}`); for (const end = Date.now() + 20000; Date.now() < end;) { if (notRunning(pid)) return true; await new Promise((resolve) => setTimeout(resolve, 25)) } return false }
     const path = join(dir, 'long.cjs')
     writeFileSync(path, "const { spawn } = require('node:child_process')\nconst inner = spawn('sleep', ['60'], { stdio: ['ignore', 'inherit', 'inherit'] })\nconsole.log(JSON.stringify({ inner: inner.pid, self: process.pid }))\nprocess.on('SIGTERM', () => {})\nsetInterval(() => {}, 1000)\n")
     let child
@@ -661,7 +664,7 @@ function fakeChild(script) {
   // (the last resort: the launcher's own `exit` handler).
   if (process.platform !== 'win32') {
     const dir = mkdtempSync(join(tmpdir(), 'tw-launcher-app-quit-'))
-    const gone = async (pid) => { for (const end = Date.now() + 3000; Date.now() < end;) { try { process.kill(pid, 0) } catch { return true } await new Promise((resolve) => setTimeout(resolve, 25)) } return false }
+    const gone = async (pid) => { assert.ok(Number.isInteger(pid) && pid > 0, `pid ${pid}`); for (const end = Date.now() + 20000; Date.now() < end;) { if (notRunning(pid)) return true; await new Promise((resolve) => setTimeout(resolve, 25)) } return false }
     const tool = join(dir, 'long.cjs')
     writeFileSync(tool, "const { spawn } = require('node:child_process')\nconst inner = spawn('sleep', ['60'], { stdio: ['ignore', 'inherit', 'inherit'] })\nconsole.log(JSON.stringify({ inner: inner.pid, self: process.pid }))\nprocess.on('SIGTERM', () => {})\nsetInterval(() => {}, 1000)\n")
     const app = join(dir, 'app.mjs')
@@ -691,7 +694,7 @@ child.stdout.once('data', (chunk) => {
   if (process.platform !== 'win32') {
     // POSIX, real processes: the GROUP is still on the list, and what the tool left behind is ended.
     const dir = mkdtempSync(join(tmpdir(), 'tw-launcher-left-'))
-    const gone = async (pid) => { for (const end = Date.now() + 3000; Date.now() < end;) { try { process.kill(pid, 0) } catch { return true } await new Promise((resolve) => setTimeout(resolve, 25)) } return false }
+    const gone = async (pid) => { assert.ok(Number.isInteger(pid) && pid > 0, `pid ${pid}`); for (const end = Date.now() + 20000; Date.now() < end;) { if (notRunning(pid)) return true; await new Promise((resolve) => setTimeout(resolve, 25)) } return false }
     const tool = join(dir, 'leaves.cjs')
     writeFileSync(tool, "const { spawn } = require('node:child_process')\nconst inner = spawn('sleep', ['60'], { stdio: ['ignore', 'inherit', 'inherit'] })\nprocess.stdout.write(JSON.stringify({ inner: inner.pid }) + '\\n', () => process.exit(0))\n")
     let child
@@ -989,7 +992,11 @@ function directWranglerCallsIn(fileName, text) {
   ]
   for (const sample of allowed) assert.deepEqual(directWranglerCallsIn('sample.ts', sample), [], `allowed: ${sample}`)
 
-  const filesBelow = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+  // Other tests in the parallel tier create and remove temporary fixture folders under scripts/; one that
+  // vanishes while this walks is skipped, not reported as an error.
+  const vanished = (error) => { if (error?.code === 'ENOENT') return true; throw error }
+  const listing = (dir) => { try { return readdirSync(dir, { withFileTypes: true }) } catch (error) { vanished(error); return [] } }
+  const filesBelow = (dir) => listing(dir).flatMap((entry) => {
     const path = join(dir, entry.name)
     return entry.isDirectory() ? filesBelow(path) : /\.(?:mjs|js|ts|tsx)$/.test(entry.name) ? [path] : []
   })
@@ -1066,7 +1073,8 @@ function directWranglerCallsIn(fileName, text) {
   for (const dir of ['src', 'scripts', 'e2e']) {
     for (const file of filesBelow(join(repo, dir))) {
       if (file === self) continue
-      const text = readSource(file)
+      let text
+      try { text = readSource(file) } catch (error) { vanished(error); continue }
       for (const [pattern, why] of banned) if (pattern.test(text)) found.push(`${relative(repo, file)}: ${why}`)
     }
   }

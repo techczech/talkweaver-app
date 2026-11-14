@@ -8,6 +8,7 @@ import { headerOnlyWebm, recordingDurationMs } from './recording-duration.ts'
 // `<vault>/_PRESENTATIONS/`, symlinks resolved). Local files under `<userData>/recordings/` are
 // named by the session id alone, which must be a safe Run id.
 
+import { isTakeRun } from '../shared/recording-takes.ts'
 import { randomBytes } from 'crypto'
 import { lstatSync, readFileSync, readdirSync, realpathSync } from 'fs'
 import { readdir, stat } from 'fs/promises'
@@ -168,7 +169,8 @@ export function recordingsDirOk(userDataDir: string): boolean {
 }
 
 /** Saved Runs beside the audio, never markers, links or files whose contents name another Run. */
-export function listKeptRuns(userDataDir: string, talkSlug?: string, options?: { strictSessionId: string }): Array<RunRecord & { kept: 'app-data' }> {
+/** New takes of a slide (`takeOf`) are left out unless `includeTakes` (always included in strict mode). */
+export function listKeptRuns(userDataDir: string, talkSlug?: string, options?: { strictSessionId: string }, includeTakes = !!options): Array<RunRecord & { kept: 'app-data' }> {
   if (!recordingsDirOk(userDataDir)) {
     if (options) throw new Error('recordings-unreadable')
     return []
@@ -190,7 +192,7 @@ export function listKeptRuns(userDataDir: string, talkSlug?: string, options?: {
       if (!lstatSync(path).isFile()) continue
       const raw = JSON.parse(readFileSync(path, 'utf8'))
       if (!raw || raw.id !== id || !isSafeTalkSlug(raw.talkSlug) || (talkSlug !== undefined && raw.talkSlug !== talkSlug)) continue
-      runs.push({ ...normaliseRun(raw), kept: 'app-data' })
+      if (includeTakes || !isTakeRun(raw)) runs.push({ ...normaliseRun(raw), kept: 'app-data' })
     } catch (error) {
       if (id === options?.strictSessionId) throw error
       // One unreadable Run must not hide the others in History.
@@ -308,6 +310,21 @@ export function sessionJsonPath(vaultRoot: string | null, userDataDir: string, t
   const error = nameError(talkSlug, sessionId)
   if (error) return refuse(error)
   return localRecordingPath(userDataDir, sessionId, 'json')
+}
+
+/**
+ * The Run saved at exactly this home: in the vault when `vaultRoot` is set (never a Run kept in app data
+ * under the same id), in app data when it is null. A retake is checked against this, so its take is saved
+ * where its Run is and found beside it. Null when there is no such Run file or it names another Run.
+ */
+export function runAtHome(vaultRoot: string | null, userDataDir: string, talkSlug: unknown, sessionId: unknown): Record<string, unknown> | null {
+  const target = sessionJsonPath(vaultRoot, userDataDir, talkSlug, sessionId)
+  if (!target.ok) return null
+  try {
+    if (!lstatSync(target.path).isFile()) return null
+    const record = JSON.parse(readFileSync(target.path, 'utf8')) as Record<string, unknown> | null
+    return record && record.id === sessionId && record.talkSlug === talkSlug ? record : null
+  } catch { return null }
 }
 
 /** `<vault>/_PRESENTATIONS/<talkSlug>` for listing a talk's sessions, guarded like a Run path. */

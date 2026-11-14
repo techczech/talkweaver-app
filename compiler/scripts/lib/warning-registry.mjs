@@ -65,6 +65,8 @@ export const WARNING_REGISTRY = [
   warning('missing-image', 'error', 'Slide {1} cannot find image {2}.', 'Restore the image or update the source path.'),
   warning('missing-source-ref', 'warning', 'Slide {payload} has no source reference.', 'Add a source reference or mark the slide as linking.'),
   warning('numbered-unknown', 'warning', 'Unknown number style: {payload}.', 'Choose a registered number style: mono, plain or styled.'),
+  warning('section-colours-unknown', 'warning', 'Unknown section colour in section-colours: {payload}.', 'Use blue, amber, deep-blue, light or light-amber, or off.'),
+  warning('section-colour-unknown', 'warning', 'Unknown section colour: {payload}.', 'Use blue, amber, deep-blue, light or light-amber.'),
   warning('palette-unknown', 'warning', 'Unknown deck palette: {payload}.', 'Choose a palette offered by Deck settings.'),
   warning('poll-authoring-invalid', 'warning', 'Invalid poll on slide {1}: {2}', 'Correct the poll type, labels or options before collecting responses.'),
   warning('poll-type-unknown', 'warning', 'Unknown poll type: {payload}.', 'Choose single, multiple, open, ranking, rating, categorisation or board for the poll.'),

@@ -396,6 +396,8 @@ export const TASK_GROUP_TABLE: Readonly<Record<string, readonly [TaskGroup, stri
   'importer.views': ['Manage talks', 'Importer, Studio, Runs'],
   'importer.help': ['Set up TalkWeaver', 'Shortcuts'],
   'presenter-palette.reset-timer': ['Present', 'Timer'],
+  'presenter-palette.record-again': ['Present', 'Recording'],
+  'presenter-palette.record-microphone': ['Present', 'Recording'],
   'presenter-palette.join-link': ['Present', 'Live audience, polls and questions'],
   'presenter-palette.copy-venue-link': ['Present', 'Live audience, polls and questions'],
   'presenter-palette.allow-questions': ['Present', 'Live audience, polls and questions'],

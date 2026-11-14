@@ -1,4 +1,4 @@
-// Transcription, in words: the states of the one row in Settings → Transcription, and what a
+// Transcription, in words: the states of the one row in Settings → Get started → Transcription, and what a
 // transcription action says when it cannot run (spec docs/plans/cloudflare-setup-in-app, D16).
 // Pure, with no imports but a type, so the main process (which decides the row,
 // src/main/transcription-setup.ts), Settings and Studio use the same states and the same sentences.
@@ -95,8 +95,8 @@ export function transcriptionRowLabel(row: TranscriptionRow): string {
 export function transcriptionActionMessage(row: TranscriptionRow): string | null {
   switch (row.state) {
     case 'ready': return null
-    case 'not-set-up': return 'Transcription is not set up. It is optional: Settings → Transcription has the set-up steps.'
-    default: return `Transcription is not ready: ${MISSING[row.state]}. Fix it in Settings → Transcription.`
+    case 'not-set-up': return 'Transcription is not set up. It is optional: Settings → Get started → Transcription has the set-up steps.'
+    default: return `Transcription is not ready: ${MISSING[row.state]}. Fix it in Settings → Get started → Transcription.`
   }
 }
 
@@ -105,6 +105,6 @@ export const TRANSCRIPTION_SETUP_STEPS: readonly string[] = [
   'Transcription runs on this computer: a Python environment, the transcription script that ships with TalkWeaver, and a speech model of about 2.5 GB.',
   'The speech engine that ships with TalkWeaver needs a Mac with Apple silicon. Elsewhere, point TalkWeaver at an engine of your own that takes the same arguments.',
   'The quickest way: press "Copy instructions for your agent" and paste them to your coding agent. It creates the environment in TalkWeaver\'s own folder and fetches the model.',
-  'By hand: open the set-up folder and follow SETUP.md in it, then paste the Python and script paths below and press Save.',
+  'By hand: open the set-up folder and follow SETUP.md in it, then paste the Python and script paths into Settings → Recording → Advanced recording settings.',
   'ffmpeg ships with TalkWeaver. Leave its field empty unless you want to use your own.',
 ]

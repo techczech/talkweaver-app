@@ -1,0 +1,36 @@
+/* Paper and print preparation (PR 358). New, unmarked rules: they sort after every migrated block
+   (README.md), so the print fallback below follows the deck's @media print block it overrides. */
+
+/* A carousel item's "n / m" marker exists only for print (slideFit.preparePrint clones the slide per
+   item); a video's stand-in likewise (slideFit.preparePrint). */
+.carousel-print-count { display: none; }
+.tw-print-video { display: none; }
+@media print {
+  .carousel-print-count { display: block; position: absolute; right: 2.2cqw; bottom: 1.4cqw; font: 600 1.15cqw/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .04em; color: #5b6572; }
+}
+
+/* A browser that cannot divide a length by a length drops the canvas zoom and would cut the 1280px
+   canvas off at the paper edge: there each slide takes the paper width instead. */
+@supports not (zoom: calc(100cqw / 1280px)) {
+  @media print {
+    .deck { container-type: normal; }
+    .deck > .stage { width: auto; zoom: normal; }
+  }
+}
+
+/* beforeprint measures every slide in the print layout at scale 1 (slideFit.preparePrint). */
+html.tw-print-layout .stage { zoom: 1 !important; }
+
+/* A diagram slide drawn ahead of time (predrawDiagrams): laid out on its canvas but invisible and
+   inert; the moment it becomes the shown slide this rule stops applying. A mind map drawn ahead stays
+   hidden on the shown slide until it is drawn afresh; the presenter window lays out its hidden deck
+   for the draw. */
+.deck > .stage > .slide.tw-predraw:not(.active) { display: grid !important; visibility: hidden !important; pointer-events: none; }
+.slide.active .mindmap-mm[data-mm-ahead] > svg { visibility: hidden; }
+body.presenter-mode.tw-predrawing .deck { display: block !important; position: fixed; inset: 0; visibility: hidden; pointer-events: none; z-index: -1; }
+
+/* The fitter's "Code too long" badge (slide-fit.js fitCode) is a note to the author: a handout's participants never
+   print it. */
+@media print {
+  .share-shell .code-overflow-marker { display: none !important; }
+}

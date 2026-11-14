@@ -80,7 +80,7 @@ try {
   const row = await setup.status()
   assert.equal(row.state, 'ready')
   assert.equal(row.pythonVersion, found.version, 'the version is read from the environment')
-  console.log(`  4. Settings → Transcription reads "${transcriptionRowLabel(row)}"`)
+  console.log(`  4. Settings → Get started → Transcription reads "${transcriptionRowLabel(row)}"`)
   console.log('\nPASS transcription set-up (Python)')
 } finally {
   rmSync(scratch, { recursive: true, force: true, maxRetries: 3 })

@@ -9,6 +9,7 @@ import {
   type OpenPatternToken
 } from './entries.ts'
 import { meaningForToken, parseTriggerLine } from '../trigger-line.ts'
+import { normaliseTriggerValue } from '../../../compiler/scripts/lib/trigger-value-spelling.mjs'
 
 export type { OpenPatternToken } from './entries.ts'
 
@@ -79,7 +80,7 @@ export function isRegisteredTriggerToken(
   const equals = raw.indexOf('=')
   if (equals > 0) {
     const key = raw.slice(0, equals)
-    const value = raw.slice(equals + 1)
+    const value = normaliseTriggerValue(key, raw.slice(equals + 1))
     const listed = vocab.valueVocab.get(key)
     const open = vocab.openPatterns.get(key)
     return Boolean(

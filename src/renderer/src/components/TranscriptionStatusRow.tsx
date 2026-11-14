@@ -6,7 +6,7 @@ import {
 import { featureList, featureRow, rowDetail, rowState, tone } from './CloudflareSettings'
 import { notify } from '../lib/notify'
 
-// Settings → Transcription: the one status row (spec docs/plans/cloudflare-setup-in-app, D16), a
+// Settings → Get started → Transcription: the one status row (spec docs/plans/cloudflare-setup-in-app, D16), a
 // bordered row with the state at the right-hand edge as on the Cloudflare screen, then "Set-up
 // steps" and "Copy instructions for your agent". Every word comes from
 // src/shared/transcription-status.ts; the row itself is decided in the main process

@@ -388,6 +388,7 @@ function MainApp() {
   const runConnectionAction = useCallback((action: ConnectionActionId): void => {
     if (action === 'open-settings') window.dispatchEvent(new Event('tw-open-settings'))
     // Settings, scrolled to its Cloudflare section (the same route as a publish sheet's Open Settings).
+    else if (action === 'open-transcription') openSettingsWindow('get-started')
     else if (action === 'open-cloudflare') openSettingsWindow('cloudflare')
     else if (action === 'get-slidewell') void window.tw.guide.openLink('slidewell-download').catch(() => undefined)
   }, [])
@@ -1035,7 +1036,8 @@ function MainApp() {
   // Try it on a How it works topic: an example talk in its own window, or a command that needs no talk open.
   const runTopicTry = (target: TopicTarget): void => {
     if (target.kind === 'talk') { openExampleTalk(target.talk); return }
-    window.dispatchEvent(new Event(target.id === 'settings' ? 'tw-open-settings' : target.id === 'history' ? 'tw-open-history' : 'tw-search-talks'))
+    const events = { settings: 'tw-open-settings', history: 'tw-open-history', studio: 'tw-open-studio', 'search-talks': 'tw-search-talks' } as const
+    window.dispatchEvent(new Event(events[target.id]))
   }
   const guideBody = (
     <GuidePane

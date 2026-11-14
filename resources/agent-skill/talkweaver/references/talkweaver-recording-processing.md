@@ -7,6 +7,7 @@ For standalone audio, establish the supplied source and destination, then follow
 Current storage contracts:
 
 - Session record: `<vault>/_PRESENTATIONS/<talk-slug>/<session-id>.json`.
+- A session record with `takeOf` is a new take of one slide of another recording (Record this slide again), not a recording of its own: skip it.
 - Raw transcript: alongside it as `<session-id>.transcript.json`.
 - Rewrite pack: `<vault>/_PRESENTATIONS/<talk-slug>/agent-rewrite/<session-id>/`.
 - Local recorded audio: `<app-data>/recordings/<session-id>.webm`. Without a configured vault the app can also store the transcript under that recordings directory.
@@ -16,7 +17,7 @@ Preserve raw audio, transcript timestamps, Session IDs, trims and slide-time rel
 
 ## Transcribe audio
 
-First check whether the correct Run already has a usable transcript. For a TalkWeaver recording, prefer its configured transcription operation, checking the actual exposed UI/tool and settings. The app transcribes local saved voice with its built-in speech engine on supported Macs, or an existing configured external engine, then saves timestamped segments through its own transcript store. Check availability, language and engine choice in Settings → Recording. The legacy external-engine setup remains `talkweaver setup transcription` (see [CLI](cli.md)); do not require that setup for the built-in engine.
+First check whether the correct Run already has a usable transcript. For a TalkWeaver recording, prefer its configured transcription operation, checking the actual exposed UI/tool and settings. The app transcribes local saved voice with its built-in speech engine on supported Macs, or an existing configured external engine, then saves timestamped segments through its own transcript store. Check availability, language and engine choice in Settings → Recording. External-engine set-up steps are in Settings → Get started → Transcription. The legacy external-engine setup remains `talkweaver setup transcription` (see [CLI](cli.md)); do not require that setup for the built-in engine.
 
 If audio, ffmpeg or the configured engine is unavailable, identify the missing prerequisite and preserve partial results. Do not change app code/settings, substitute a model silently, or manufacture a successful transcript receipt. A requested standalone transcription can use an existing verified transcription tool on the computer or available `speech-to-text` skill; verify language, timestamp/output format and local availability. Write separate source outputs, preserving engine/provenance. External SRT/VTT/JSON is not automatically an imported TalkWeaver transcript. Confirm a supported import path before attaching it to a Run; do not invent one or overwrite raw app records.
 

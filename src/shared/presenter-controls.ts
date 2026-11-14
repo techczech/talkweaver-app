@@ -225,6 +225,18 @@ export const PRESENTER_CONTROLS: PresenterControl[] = [
   { id: 'twrec-mic', name: 'Microphone', icon: 'mic', iconOnly: true, preload: 'recorder' },
   { id: 'twrec-mic-use', name: 'Use this microphone', icon: 'mic', preload: 'recorder' },
   { id: 'twrec-mic-dismiss', name: 'Dismiss', icon: 'x', iconOnly: true, preload: 'recorder' },
+  // While recording or paused: discard this take and record again, after a confirmation
+  // (docs/design/2026-11-10-record-and-edit-video, drawings/recording.html).
+  { id: 'twrec-again', name: 'Start again', icon: 'rotate-ccw', iconOnly: true, preload: 'recorder' },
+  // The saved note: the words being written out (Retry, or Settings when no transcriber is set up)
+  // and Edit video, which opens the saved Run in Studio ("Back to the editor" after a new take).
+  { id: 'twrec-words-retry', name: 'Retry words', preload: 'recorder' },
+  { id: 'twrec-words-manual', name: 'Set up words', preload: 'recorder' },
+  { id: 'twrec-edit-video', name: 'Edit video', preload: 'recorder' },
+  // The audio-lost notice's switch ("Use <microphone>" when another one is connected).
+  { id: 'twrec-lost-switch', name: 'Choose microphone', preload: 'recorder' },
+  // Self-view under Next and Then while the camera is previewed or recorded (presenter-self-view.ts).
+  { id: 'twrec-self-view-toggle', name: 'Hide self-view', preload: 'recorder' },
   // Edit pencil (src/preload/present-edit-bridge.ts)
   { id: 'twedit-btn', name: 'Edit this slide in TalkWeaver', icon: 'pencil', iconOnly: true, shortcut: 'presenter.edit', preload: 'edit' },
   // Guide chip in the top bar (src/preload/present-guide.ts; onboarding 0.38.1 ticket 10)

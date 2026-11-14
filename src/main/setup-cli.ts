@@ -100,7 +100,7 @@ export type ParsedSetup = { ok: true; command: SetupCommand } | { ok: false; err
 export const USAGE: readonly string[] = [
   'Usage: TalkWeaver setup <command> [--json]',
   '',
-  '  status                                         every row of Settings → Cloudflare, Transcription and the Importer',
+  '  status                                         Settings → Cloudflare, Settings → Get started → Transcription, and the Importer',
   '  cloudflare connect                             the token is read from standard input',
   '  cloudflare account <id>                        choose the account when the token sees several',
   '  cloudflare create-site [name]                  make the Pages site (default talkweaver-handouts)',

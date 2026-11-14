@@ -52,10 +52,10 @@ await test('ten rows: the drawing’s names, icons, needs and "without it" lines
   CONNECTS.forEach((c, i) => {
     assert.equal(drawn[i].name, c.name)
     assert.equal(drawn[i].icon, c.icon, c.name)
-    assert.equal(drawn[i].without, c.without, c.name)
+    if (drawn[i].id !== 'transcription') assert.equal(drawn[i].without, c.without, c.name)
     if (drawn[i].id !== 'transcription') assert.equal(drawn[i].need, c.need, c.name)
   })
-  assert.match(row(rows, 'transcription').need, /ffmpeg ships with TalkWeaver/)
+  assert.match(row(rows, 'transcription').need, /built in on macOS 26 or later, or an external Python engine/)
   assert.equal(row(rows, 'share').name, 'Share-link address')
   assert.equal(CONNECTION_TEXT.notSetUp, 'Not set up')
   assert.equal(CONNECTION_TEXT.found, 'Found on this Mac')
@@ -73,8 +73,8 @@ await test('with nothing set up, the Cloudflare rows read Not set up and open Se
     assert.equal(row(rows, id).state, 'off', id)
     assert.deepEqual(row(rows, id).action, { id: 'open-cloudflare', label: 'Set up in Settings', enabled: true }, id)
   }
-  assert.equal(row(rows, 'transcription').stateText, 'Not set up — optional')
-  assert.equal(row(rows, 'transcription').action.id, 'open-cloudflare')
+  assert.equal(row(rows, 'transcription').stateText, 'External engine: Not set up — optional')
+  assert.equal(row(rows, 'transcription').action.id, 'open-transcription')
   assert.equal(row(rows, 'agent').action.label, 'Set up in Settings')
   assert.equal(row(rows, 'backups').action.label, 'Choose a folder…')
   assert.equal(row(rows, 'slidewell').stateText, 'Not found on this Mac')
@@ -164,16 +164,28 @@ await test('Cloudflare R2 follows the Recording storage row: not set up, keys sa
 await test('Local transcription follows the Transcription row (ffmpeg ships with the app): not set up, each missing piece, ready', () => {
   const tr = (state, extra) => row(connectionRows(src({ transcription: transcription(state, extra) })), 'transcription')
   const none = tr('not-set-up')
-  assert.deepEqual([none.state, none.stateText, none.action.id], ['off', 'Not set up — optional', 'open-cloudflare'])
+  assert.deepEqual([none.state, none.stateText, none.action.id], ['off', 'External engine: Not set up — optional', 'open-transcription'])
   for (const state of ['python-not-set', 'python-not-found', 'script-not-set', 'script-not-found', 'ffmpeg-not-found']) {
     const r = tr(state)
-    assert.equal(r.stateText, edgeText(transcriptionRowEdge(transcription(state))), state)
-    assert.deepEqual([r.state, r.action.id], ['part', 'open-cloudflare'], state)
+    assert.equal(r.stateText, `External engine: ${edgeText(transcriptionRowEdge(transcription(state)))}`, state)
+    assert.deepEqual([r.state, r.action.id], ['part', 'open-transcription'], state)
   }
   const ready = tr('ready')
-  assert.deepEqual([ready.state, ready.stateText, ready.action], ['on', 'Ready', null])
+  assert.deepEqual([ready.state, ready.stateText, ready.action], ['on', 'External engine: Ready', null])
   // The shipped ffmpeg is enough: a Mac with no ffmpeg of its own and everything else set reads Ready.
   assert.equal(tr('ready', { ffmpeg: 'shipped' }).state, 'on')
+})
+
+await test('built-in transcription works without Python; timing and unsupported Macs are separate', () => {
+  const r = row(connectionRows(src({ builtinTranscription: true })), 'transcription')
+  assert.equal(r.state, 'on')
+  assert.match(r.stateText, /^Built in on this Mac/)
+  assert.equal(r.action, null)
+  assert.match(r.need, /external Python engine you set up/)
+  assert.match(r.without, /Precise word timing is a separate setting/)
+  const main = read('src/main/index.ts')
+  assert.match(main, /builtinTranscription: !!nativeSpeechHelper\(\)/)
+  assert.match(read('src/renderer/src/App.tsx'), /action === 'open-transcription'\) openSettingsWindow\('get-started'\)/)
 })
 
 await test('LibreOffice and Poppler: both, one, neither', () => {
@@ -266,6 +278,12 @@ await test('probes: the Cloudflare, going-live, recording and transcription rows
   assert.equal(row(rows, 'office').stateText, 'Partly found: Poppler. No LibreOffice')
   // The same rows, computed from the statuses alone, are what the Guide shows.
   assert.deepEqual(rows, connectionRows(sources))
+})
+
+await test('probes: built-in support reaches the row independently of the external engine', async () => {
+  const sources = await gatherConnectionSources(deps({ builtinTranscription: true }))
+  assert.equal(sources.builtinTranscription, true)
+  assert.equal(row(connectionRows(sources), 'transcription').state, 'on')
 })
 
 await test('probes: a failing status or source is "not set up" or "not found", never an error', async () => {

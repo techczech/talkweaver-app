@@ -37,10 +37,11 @@ const FAKES = () => {
       return { ok: true }
     }
   }
-  class FakeTrack extends EventTarget { constructor() { super(); this.readyState = 'live' } getSettings() { return { deviceId: 'default', groupId: 'g1' } } stop() { this.readyState = 'ended' } }
+  class FakeTrack extends EventTarget { constructor() { super(); this.readyState = 'live'; this.label = 'Built-in Microphone' } getSettings() { return { deviceId: 'mic-1', groupId: 'g1' } } stop() { this.readyState = 'ended' } }
   Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: {
     getUserMedia: async () => { const t = new FakeTrack(); return { getTracks: () => [t], getAudioTracks: () => [t] } },
-    enumerateDevices: async () => [{ kind: 'audioinput', deviceId: 'default', groupId: 'g1' }],
+    // A named microphone: recording starts only with one (present-recorder.ts, inputForRecording; 'default' is a pseudo-device).
+    enumerateDevices: async () => [{ kind: 'audioinput', deviceId: 'mic-1', groupId: 'g1', label: 'Built-in Microphone' }],
     addEventListener() {}, removeEventListener() {}
   } })
   window.MediaRecorder = class {
@@ -195,6 +196,22 @@ try {
     await projector.waitForSelector('video.lightbox-video', { state: 'detached', timeout: 3000 })
   })
 
+  // The presenter's copy owns playback since the presenter view plays in step (d4b6ca59), so a
+  // start can begin there too (M, autoplay, play-on-next): the projector follows it, and the start
+  // is still one mark.
+  await check('a start in the presenter (M) that the projector follows is one mark', async () => {
+    await projector.evaluate(() => { document.querySelectorAll('video').forEach((v) => { v.pause(); v.currentTime = 0 }) })
+    await settle()
+    const before = await seenSoFar()
+    await appPresenter.keyboard.press('m')
+    await projector.waitForFunction(() => !document.querySelector('.slide.active video').paused, null, { timeout: 3000 })
+    await settle()
+    assert.equal((await seenSoFar()) - before, 1)
+    await appPresenter.keyboard.press('m') // stopped again
+    await projector.waitForFunction(() => document.querySelector('.slide.active video').paused, null, { timeout: 3000 })
+    await settle()
+  })
+
   await check('a play naming a slide that is no longer at that index is dropped', async () => {
     await appPresenter.evaluate(() => { document.querySelector('.slide[data-id="solo"]').dataset.id = 'drifted' })
     await projector.evaluate(() => { document.querySelectorAll('video').forEach((v) => v.pause()) })
@@ -206,14 +223,33 @@ try {
     await appPresenter.evaluate(() => { document.querySelector('.slide[data-id="drifted"]').dataset.id = 'solo' })
   })
 
-  await check('the saved run holds one clip mark per start: 2 per pair round, 1 solo, 1 lightbox', async () => {
+  await check('the saved run holds one clip mark per start: 2 per pair round, 1 solo, 1 lightbox, 1 presenter start', async () => {
     await appPresenter.locator('#twrec-stop').click()
     await appPresenter.waitForFunction(() => document.querySelector('#twrec-module').dataset.rec === 'saved')
     const marks = await savedMarks()
     assert.equal(marks.filter((m) => m.slideId === 'pair').length, ROUNDS * 2, JSON.stringify(marks.map((m) => m.slideId)))
-    assert.equal(marks.filter((m) => m.slideId === 'solo').length, 2, JSON.stringify(marks.map((m) => m.slideId)))
-    assert.equal(marks.length, ROUNDS * 2 + 2)
+    assert.equal(marks.filter((m) => m.slideId === 'solo').length, 3, JSON.stringify(marks.map((m) => m.slideId)))
+    assert.equal(marks.length, ROUNDS * 2 + 3)
     assert.ok(marks.every((m) => m.clip.src === clip && m.clip.atS >= 0 && m.clip.atS <= 86400))
+  })
+
+  // Only the presenter window (no projector opened): a start there is one mark in the saved run.
+  await check('the presenter on its own: a start (M) is one mark in the saved run', async () => {
+    const aloneContext = await browser.newContext({ viewport: { width: 1280, height: 720 } })
+    const alone = await aloneContext.newPage()
+    await alone.addInitScript(FAKES)
+    await alone.goto(`file://${pairFile}?presenter=1&session=clipalone1#solo`, { waitUntil: 'load' })
+    await alone.addScriptTag({ content: bundled.outputFiles[0].text })
+    await alone.waitForSelector('#twrec-primary')
+    await alone.locator('#twrec-primary').click()
+    await alone.waitForFunction(() => window.calls.some(([c]) => c === 'recording:stream-append'))
+    await alone.keyboard.press('m')
+    await alone.waitForTimeout(600)
+    await alone.locator('#twrec-stop').click()
+    await alone.waitForFunction(() => document.querySelector('#twrec-module').dataset.rec === 'saved')
+    const marks = (await alone.evaluate(() => window.calls.filter(([c]) => c === 'recording:save').map(([, p]) => p.rawMarks)))[0]?.filter((m) => m.event === 'clip') ?? []
+    assert.deepEqual(marks.map((m) => [m.slideId, m.clip.src]), [['solo', clip]], JSON.stringify(marks))
+    await aloneContext.close()
   })
 } finally {
   await browser.close()

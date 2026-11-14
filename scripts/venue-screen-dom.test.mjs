@@ -451,7 +451,11 @@ try {
     await page.goto(pathToFileURL(phonePath).href)
     await page.waitForFunction(() => window.__sockets.length === 1)
     await page.evaluate((state) => window.__sockets[0].emit(state), galleryState(true, 0, 1))
-    assert.equal(await page.locator('.lightbox').isVisible(), false, 'presenter gallery does not open on a phone')
+    // A phone follows the presenter's gallery too (c3372f18): the live image layer and its marks name
+    // the same image on every follower. The phone can still close it and open its own.
+    await page.locator('.lightbox:visible #lightboxImg').waitFor({ timeout: 2000 })
+    await page.keyboard.press('Escape')
+    assert.equal(await page.locator('.lightbox').isVisible(), false, 'the phone closes the followed gallery itself')
     await page.keyboard.press('z')
     assert.equal(await page.locator('.lightbox').isVisible(), true, 'phone keeps its local Z gallery')
     await page.keyboard.press('Escape')

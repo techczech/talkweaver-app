@@ -10,9 +10,10 @@ import { performance } from 'node:perf_hooks'
 import { applyEditOp, effectiveCuts, emptyEdits, fitEditsBudget, parseEdits, parseEditsText, RECORDING_EDITS_VERSION, serialiseEdits, EDITS_WRITE_BUDGET } from '../src/shared/recording-edits.ts'
 import { captionCues, chaptersFor, frameOf, keptSpans, msOfFrame } from '../src/shared/recording-video.ts'
 import { alignedCutEdge, CLEAN_CUT } from '../src/shared/transcript-contract.ts'
-import { boundaryTargets, planDigest, cutWordsOp, edgeQuality, EDITOR_THRESHOLDS, editorWords, isLeftOut, leaveOutOp, moveBoundaryOp, nearestCleanEdge, projectWordTimes, putBackOp, putBoundaryBackOp, resolveRecording, restoreOp, slideRows, slideVisits, tidyProposals, wordAt, wordsRange } from '../src/shared/recording-editor.ts'
+import { boundaryTargets, joinsAtSentence, TARGET_WORDS, planDigest, cutWordsOp, edgeQuality, EDITOR_THRESHOLDS, editorWords, isLeftOut, leaveOutOp, moveBoundaryOp, nearestCleanEdge, projectWordTimes, putBackOp, putBoundaryBackOp, resolveRecording, restoreOp, slideRows, slideVisits, tidyProposals, wordAt, wordsRange } from '../src/shared/recording-editor.ts'
 import { createRecordingEditsStore } from '../src/main/recording-edits-store.ts'
 import { registerRecordingVideoIpc } from '../src/main/recording-video-ipc.ts'
+import { TAKE_STEP_OFF_ERROR, TAKES_OFF_ERROR } from '../src/shared/recording-takes.ts'
 import { makeEditorFixture, ORIGINAL_LATE_MS, ORIGINAL_RUN_ON_MS } from './fixtures/recording-editor-fixture.mjs'
 
 let count = 0
@@ -518,23 +519,80 @@ try {
     pass('round 3, item 4: the plan fingerprint covers the caption cues actually written, from words or from segments')
   }
 
-  // ---- Sidecar version 4 ------------------------------------------------------------------------
+  // ---- Record one slide again is off in 0.44.5 (takesEnabled): main refuses take requests, finds no takes,
+  // and a recording whose edits file already names a take (written by a development build) opens, plays and
+  // exports exactly as one without takes, the choice kept in the file. ----
   {
-    assert.equal(RECORDING_EDITS_VERSION, 4)
+    const dir = join(root, 'takes-off'), vault = join(dir, 'vault'), ud = join(dir, 'ud'), runs = join(vault, '_PRESENTATIONS', 'talk'), rec = join(ud, 'recordings')
+    mkdirSync(runs, { recursive: true }); mkdirSync(join(rec, 'take1'), { recursive: true })
+    const marks = [{ event: 'enter', slideId: 'A', tMs: 0 }, { event: 'enter', slideId: 'B', tMs: 2000 }]
+    writeFileSync(join(runs, 'run1.json'), JSON.stringify({ id: 'run1', talkSlug: 'talk', startedAt: '2026-11-11T10:00:00Z', recordingMs: 4000, audio: { segments: [] }, slideTimeIndex: marks, capture: { layers: {} } }))
+    writeFileSync(join(runs, 'take1.json'), JSON.stringify({ id: 'take1', talkSlug: 'talk', startedAt: '2026-11-11T11:00:00Z', recordingMs: 1500, takeOf: { runId: 'run1', change: 2000, slideId: 'B' }, audio: { segments: [{ file: 'take1.webm', startMs: 0, endMs: 1500 }] }, capture: { layers: { slides: { file: 'slides.webm', bytes: 4, startMs: 0 } } } }))
+    writeFileSync(join(rec, 'take1.webm'), 'webm'); writeFileSync(join(rec, 'take1', 'slides.webm'), 'webm')
+    let on = true, dialogs = 0
+    const handlers = new Map(), wc = { isDestroyed: () => false, send: () => {} }, win = { isDestroyed: () => false, webContents: wc }
+    registerRecordingVideoIpc({ ipcMain: { handle: (c, f) => handlers.set(c, f) }, toolsWindow: () => win, userDataDir: () => ud, vaultFor: () => vault, tempRecordFile: () => join(ud, 'temps.json'),
+      readiness: () => ({ ffmpeg: { found: false, path: null } }), readTranscript: async () => ({ state: 'none' }), showSaveDialog: async () => { dialogs++; return { canceled: true } }, reveal: () => {}, defaultFolder: () => dir, takesEnabled: () => on })
+    const ev = { sender: wc }, ref = { talkSlug: 'talk', runId: 'run1' }
+    // A development build (override on) chose the take.
+    const opened = await handlers.get('recording-video:open')(ev, ref)
+    assert.equal(opened.recordAgain, true); assert.deepEqual(opened.takes.map((t) => t.run), ['take1'])
+    const chosen = await handlers.get('recording-video:edit')(ev, ref, { kind: 'take', change: 2000, run: 'take1' }, 0)
+    assert.equal(chosen.ok, true, JSON.stringify(chosen))
+    // A release build (off).
+    on = false
+    const off = await handlers.get('recording-video:open')(ev, ref)
+    assert.equal(off.ok, true); assert.equal(off.recordAgain, false, 'the editor is told it is off'); assert.deepEqual(off.takes, [], 'no take is found')
+    assert.deepEqual(off.edits.edits.takes, [{ change: 2000, run: 'take1' }], 'the choice stays in the edits file')
+    assert.deepEqual(await handlers.get('recording-video:takes')(ev, ref), { ok: false, error: TAKES_OFF_ERROR }, 'listing takes is refused')
+    const choose = await handlers.get('recording-video:edit')(ev, ref, { kind: 'take', change: 2000, run: null }, off.edits.edits.revision)
+    assert.equal(choose.ok, false); assert.equal(choose.error, TAKES_OFF_ERROR, 'choosing a take is refused')
+    const cut = await handlers.get('recording-video:edit')(ev, ref, { kind: 'cut', ranges: [{ start: 500, end: 900 }] }, off.edits.edits.revision)
+    assert.equal(cut.ok, true); assert.deepEqual(cut.edits.edits.takes, [{ change: 2000, run: 'take1' }], 'other edits keep the choice in the file')
+    // The export resolves the plan without takes (not refused as a missing take) and goes on to the save panel.
+    const plan = planDigest(resolveRecording({ durationMs: 4000, edits: { ...cut.edits.edits, takes: [] }, marks, transcript: null }))
+    const exp = await handlers.get('recording-video:export')(ev, ref, { captions: false, chapterList: false, sound: false, revision: cut.edits.edits.revision, plan })
+    assert.equal(exp.cancelled, true, JSON.stringify(exp)); assert.equal(dialogs, 1)
+    assert.equal(planDigest(resolveRecording({ durationMs: 4000, edits: cut.edits.edits, marks, transcript: null, takes: [] })), plan, 'the same plan as a recording without takes')
+    // Undo and Redo while off never change the hidden choice: the cut undoes; the step that chose the take is refused.
+    const undoCut = await handlers.get('recording-video:edit')(ev, ref, { kind: 'undo' }, cut.edits.edits.revision)
+    assert.equal(undoCut.ok, true, 'an ordinary undo works'); assert.deepEqual(undoCut.edits.edits.cuts, [])
+    assert.deepEqual(undoCut.edits.edits.takes, [{ change: 2000, run: 'take1' }])
+    const undoTake = await handlers.get('recording-video:edit')(ev, ref, { kind: 'undo' }, undoCut.edits.edits.revision)
+    assert.equal(undoTake.ok, false, `the take-choosing step is refused: ${JSON.stringify(undoTake)}`); assert.equal(undoTake.error, TAKE_STEP_OFF_ERROR)
+    const kept = await handlers.get('recording-video:open')(ev, ref)
+    assert.deepEqual(kept.edits.edits.takes, [{ change: 2000, run: 'take1' }], 'the choice is unchanged in the file')
+    const redoCut = await handlers.get('recording-video:edit')(ev, ref, { kind: 'redo' }, kept.edits.edits.revision)
+    assert.equal(redoCut.ok, true, 'an ordinary redo works'); assert.deepEqual(redoCut.edits.edits.cuts, [{ start: 500, end: 900 }])
+    // A redo whose step would change the choice is refused too (on: undo the choice; off: redo it).
+    on = true
+    const back = await handlers.get('recording-video:edit')(ev, ref, { kind: 'undo' }, redoCut.edits.edits.revision)
+    const unchose = await handlers.get('recording-video:edit')(ev, ref, { kind: 'undo' }, back.edits.edits.revision)
+    assert.deepEqual(unchose.edits.edits.takes, [], '(on: the choice undone)')
+    on = false
+    const redoTake = await handlers.get('recording-video:edit')(ev, ref, { kind: 'redo' }, unchose.edits.edits.revision)
+    assert.equal(redoTake.ok, false); assert.equal(redoTake.error, TAKE_STEP_OFF_ERROR)
+    pass('Record one slide again off: takes are not found, listing or choosing one is refused, and a recording whose edits name a take opens and exports as one without takes, the choice kept; Undo and Redo never change it')
+  }
+
+  // ---- Sidecar version 4 (written as version 5 since 0.44.5: the finishing choices join each step) ----
+  {
+    assert.equal(RECORDING_EDITS_VERSION, 5)
+    const F = { camera: true, evenVolume: true, smoothJoins: true }, FACES = { all: { layout: 'corner', corner: 'bottom-right', size: 'medium' }, slides: [] }
     const D = 60_000
     const v3 = parseEdits({ version: 3, revision: 2, cuts: [{ start: 0, end: 1000 }], undo: [[], [{ start: 0, end: 500 }]], redo: [], finish: { camera: false } }, D)
     assert.equal(v3.ok, true); assert.equal(v3.from, 3)
-    assert.deepEqual(v3.edits.boundaries, []); assert.deepEqual(v3.edits.leftOut, []); assert.deepEqual(v3.edits.undo, [{ cuts: [], boundaries: [], leftOut: [] }, { cuts: [{ start: 0, end: 500 }], boundaries: [], leftOut: [] }])
+    assert.deepEqual(v3.edits.boundaries, []); assert.deepEqual(v3.edits.leftOut, []); assert.deepEqual(v3.edits.undo, [{ cuts: [], boundaries: [], leftOut: [], finish: { ...F, camera: false }, faces: FACES, takes: [] }, { cuts: [{ start: 0, end: 500 }], boundaries: [], leftOut: [], finish: { ...F, camera: false }, faces: FACES, takes: [] }])
     assert.equal(applyEditOp(v3.edits, { kind: 'undo' }, D).cuts[0].end, 500, 'a 0.44 history still undoes')
     assert.equal(parseEdits({ version: 3, revision: 1, cuts: [], undo: [], redo: [], boundaries: [] }, D).problem.kind, 'corrupt', 'version 3 never had boundaries')
     assert.equal(parseEdits({ version: 3, revision: 1, cuts: [], undo: [], redo: [], leftOut: [] }, D).problem.kind, 'corrupt', 'nor slides left out')
     for (const bad of [{ boundaries: [{ change: 'x', at: 1 }] }, { boundaries: [{ change: 1, at: 2, any: 'yes' }] }, { boundaries: 'x' }, { undo: [[]] }, { leftOut: ['x'] }, { undo: [{ cuts: [], boundaries: [], leftOut: 'x' }] }])
       assert.equal(parseEdits({ version: 4, revision: 1, cuts: [], boundaries: [], leftOut: [], undo: [], redo: [], ...bad }, D).problem.kind, 'corrupt')
-    assert.equal(parseEdits({ version: 5 }, D).problem.kind, 'newer')
+    assert.equal(parseEdits({ version: 6 }, D).problem.kind, 'newer')
     // The first build of version 4 wrote no leftOut, at the top or in its history: read as none.
     const first = parseEdits({ version: 4, revision: 3, cuts: [{ start: 0, end: 900 }], boundaries: [], undo: [{ cuts: [], boundaries: [] }], redo: [] }, D)
-    assert.equal(first.ok, true); assert.deepEqual(first.edits.leftOut, []); assert.deepEqual(first.edits.undo, [{ cuts: [], boundaries: [], leftOut: [] }])
-    // The store writes version 4 and reads it back with the history.
+    assert.equal(first.ok, true); assert.deepEqual(first.edits.leftOut, []); assert.deepEqual(first.edits.undo, [{ cuts: [], boundaries: [], leftOut: [], finish: F, faces: FACES, takes: [] }])
+    // The store writes the current version and reads it back with the history.
     const folder = join(root, 'v4'); mkdirSync(folder)
     const path = join(folder, 'run.edits.json')
     writeFileSync(path, JSON.stringify({ version: 3, revision: 1, recording: 'fp', cuts: [{ start: 0, end: 900 }], undo: [[]], redo: [] }))
@@ -542,19 +600,279 @@ try {
     assert.equal(store.get({}).problem, null)
     const s = store.apply({}, { kind: 'boundary', change: 12_000, at: 11_500, any: true }, 1)
     const disk = JSON.parse(readFileSync(path, 'utf8'))
-    assert.equal(disk.version, 4); assert.deepEqual(disk.boundaries, [{ change: 12_000, at: 11_500, any: true }])
-    assert.deepEqual(disk.undo, [{ cuts: [], boundaries: [], leftOut: [] }, { cuts: [{ start: 0, end: 900 }], boundaries: [], leftOut: [] }]); assert.deepEqual(disk.leftOut, [])
+    assert.equal(disk.version, 5); assert.deepEqual(disk.boundaries, [{ change: 12_000, at: 11_500, any: true }])
+    assert.deepEqual(disk.undo, [{ cuts: [], boundaries: [], leftOut: [], finish: F, faces: FACES, takes: [] }, { cuts: [{ start: 0, end: 900 }], boundaries: [], leftOut: [], finish: F, faces: FACES, takes: [] }]); assert.deepEqual(disk.leftOut, [])
     assert.deepEqual(store.apply({}, { kind: 'undo' }, s.edits.revision).edits.boundaries, [])
     assert.throws(() => applyEditOp(emptyEdits(), { kind: 'boundary', change: NaN, at: 1 }, D), /Invalid/)
     assert.equal(applyEditOp(emptyEdits(), { kind: 'boundary', change: 5, at: null }, D).revision, 0, 'putting back what was never moved changes nothing')
     // At the byte budget with many boundaries and slides left out in every step: the oldest steps go, and what is written reopens.
     const many = Array.from({ length: 2000 }, (_, i) => ({ change: i * 10, at: i * 10 + 3, any: true }))
     const outs = Array.from({ length: 2000 }, (_, i) => i * 10)
-    const huge = { ...emptyEdits(), revision: 1, boundaries: many, leftOut: outs, undo: Array.from({ length: 100 }, () => ({ cuts: [], boundaries: many, leftOut: outs })), redo: [] }
+    const huge = { ...emptyEdits(), revision: 1, boundaries: many, leftOut: outs, undo: Array.from({ length: 100 }, () => ({ cuts: [], boundaries: many, leftOut: outs, finish: F, faces: FACES, takes: [] })), redo: [] }
     const fitted = fitEditsBudget(huge)
     assert.ok(fitted && Buffer.byteLength(serialiseEdits(fitted)) <= EDITS_WRITE_BUDGET && fitted.undo.length < 100)
     assert.equal(parseEditsText(serialiseEdits(fitted), D).ok, true, 'what is written at the budget reopens')
     pass('sidecar version 4 stores moved slide starts and slides left out in the same history; version 3 files read with their history; malformed ones are refused; the byte budget holds')
+  }
+
+  // ---- Sentence starts (0.44.5): stored sentence boundaries as places a slide can start --------------
+  // Twenty words run on with 40 ms gaps from 1.0 s to 9.0 s; a clean pause before and after. Word i is
+  // said 1000+400i .. 1360+400i; the gap before word i is at 980+400i. The slide changes at 5.0 s.
+  const runOn = Array.from({ length: 20 }, (_, i) => w(`w${i}`, 1000 + i * 400, 1360 + i * 400))
+  const runOnSilence = [{ start: 0, end: 1000 }, { start: 9000, end: 12000 }]
+  const sentencesEnding = (lasts, source = 'punctuation') => { let from = 0; return lasts.map((last) => { const s = { id: `sentence-${from}-${last}`, firstWord: from, lastWord: last, start: runOn[from].start, end: runOn[last].end, boundarySource: source }; from = last + 1; return s }) }
+  const twoSlides = [{ event: 'enter', slideId: 'one', tMs: 0 }, { event: 'enter', slideId: 'two', tMs: 5000 }]
+  {
+    // Ends after w5 and w11 (sentences start before w6 and w12), and the transcriber's last one.
+    const ctx = editorWords({ words: runOn, silence: runOnSilence, sentences: sentencesEnding([5, 11, 19]) }, 12_000)
+    assert.equal(ctx.sentences, true)
+    assert.deepEqual(ctx.gaps.flatMap((g) => (g.sentence ? [g.index] : [])), [6, 12], 'a sentence starts after each stored end; none after the last word')
+    assert.equal(ctx.gaps[12].quality, 'close', 'a sentence start in continuous speech keeps its gap\'s quality: close')
+    assert.equal(ctx.gaps[12].point, editorWords({ words: runOn, silence: runOnSilence }, 12_000).gaps[12].point, 'sentence data never moves a cut point')
+    // Only the transcriber's, the tokenizer's and the owner's ends count; a pause end is a pause, not a sentence.
+    assert.equal(editorWords({ words: runOn, silence: runOnSilence, sentences: sentencesEnding([5, 19], 'acoustic-pause') }, 12_000).sentences, false)
+    assert.equal(editorWords({ words: runOn, silence: runOnSilence, sentences: sentencesEnding([5, 19], 'transcriber') }, 12_000).gaps[6].sentence, true)
+    assert.equal(editorWords({ words: runOn, silence: runOnSilence, sentences: sentencesEnding([5, 19], 'manual') }, 12_000).gaps[6].sentence, true)
+    // Sentences that index other words (a word was dropped as invalid) are not used.
+    assert.equal(editorWords({ words: [...runOn, { text: 'bad', start: NaN, end: 1 }], silence: runOnSilence, sentences: sentencesEnding([5, 11, 19]) }, 12_000).sentences, false)
+    // No sentence data: nothing marked.
+    const plain = editorWords({ words: runOn, silence: runOnSilence }, 12_000)
+    assert.equal(plain.sentences, false); assert.ok(plain.gaps.every((g) => !g.sentence))
+    pass('stored sentence ends mark the next word as a sentence start (transcriber, tokenizer and owner ends; not pause ends); the gap keeps its point and quality')
+  }
+  {
+    // Aligned: a sentence start at a confident shared midpoint inside one segment is clean.
+    const a = (s, e) => ({ status: 'aligned', confidence: 0.9, normalised: 'x', unsupported: [], start: s, end: e })
+    const words = runOn.map((x) => ({ ...x, alignment: a(x.start, x.end) }))
+    const alignment = { version: 1, model: 'm', revision: 'r', sha256: 'x', alignedAt: 'now', normalisation: 'ctc-nfc-v1', midpoints: words.slice(0, -1).map((x, i) => (x.end + words[i + 1].start) / 2) }
+    const ctx = editorWords({ words, alignment, segments: [{ start: 1000, end: 9000 }], silence: runOnSilence, sentences: sentencesEnding([5, 11, 19]) }, 12_000)
+    assert.equal(ctx.gaps[12].sentence, true); assert.equal(ctx.gaps[12].quality, 'clean'); assert.equal(ctx.gaps[12].aligned, true)
+    const rows = slideRows(ctx, twoSlides)
+    assert.equal(rows[1].firstWord, 12); assert.equal(rows[1].startsAt, 'sentence'); assert.equal(rows[1].startQuality, 'clean')
+    const t = boundaryTargets(ctx, rows, 1, false)
+    assert.deepEqual(t.map((x) => [x.word, x.kind, x.quality]), [[6, 'sentence', 'clean'], [12, 'sentence', 'clean']])
+    pass('aligned transcript: a sentence start at a confident shared midpoint is a clean place for a slide to start')
+  }
+  {
+    // Case 1: a clear pause separates the words around the change. Sentence data changes nothing there.
+    const words = [w('a1', 500, 1000), w('a2', 1050, 2000), w('b1', 2600, 3000), w('b2', 3050, 4000), w('b3', 4050, 5000), w('c1', 5600, 6400)]
+    const silence = [{ start: 0, end: 500 }, { start: 2000, end: 2600 }, { start: 5000, end: 5600 }, { start: 6400, end: 8000 }]
+    const sentences = [{ id: 's0', firstWord: 0, lastWord: 1, start: 500, end: 2000, boundarySource: 'punctuation' }, { id: 's1', firstWord: 2, lastWord: 4, start: 2600, end: 5000, boundarySource: 'punctuation' }, { id: 's2', firstWord: 5, lastWord: 5, start: 5600, end: 6400, boundarySource: 'punctuation' }]
+    const marks = [{ event: 'enter', slideId: 'one', tMs: 100 }, { event: 'enter', slideId: 'two', tMs: 3200 }]
+    const ctx = editorWords({ words, silence, sentences }, 8000)
+    const rows = slideRows(ctx, marks)
+    const before = slideRows(editorWords({ words, silence }, 8000), marks)
+    assert.deepEqual(rows.map((r) => [r.firstWord, r.endWord, r.start, r.startQuality, r.noClearPause]), before.map((r) => [r.firstWord, r.endWord, r.start, r.startQuality, r.noClearPause]))
+    assert.equal(rows[1].startsAt, 'pause'); assert.equal(rows[1].sentenceNear, null)
+    const t = boundaryTargets(ctx, rows, 1, false)
+    assert.ok(t.every((x) => x.kind === 'pause'), 'a gap that is both a clear pause and a sentence start is named after the pause')
+    assert.equal(TARGET_WORDS[t[0].kind], 'after a pause')
+    // Leaving slide 2 out cuts it at the clean pause, as before.
+    const r = resolve(ctx, applyEditOp(emptyEdits(), leaveOutOp(rows[1]), 8000), marks)
+    assert.deepEqual(cutWords(r), [2, 3, 4, 5]); assert.equal(r.views.at(-1).startQuality, 'clean')
+    // A clear pause within two seconds of the change, but the stretch after it is spoken across the change
+    // and holds a sentence boundary: not divided (the clean pause stays the place, as in 0.44.0).
+    const gapped = runOn.map((x, i) => (i >= 6 ? { ...x, start: x.start + 600, end: x.end + 600 } : x))
+    const gappedSilence = [{ start: 0, end: 1000 }, { start: 3360, end: 4000 }, { start: 9600, end: 12000 }]
+    const near = editorWords({ words: gapped, silence: gappedSilence, sentences: sentencesEnding([8, 19]) }, 12_000)
+    const nearRows = slideRows(near, twoSlides)
+    const nearPlain = slideRows(editorWords({ words: gapped, silence: gappedSilence }, 12_000), twoSlides)
+    assert.equal(near.gaps[6].cleanPause, true); assert.equal(near.gaps[9].sentence, true); assert.equal(nearRows[1].noClearPause, false)
+    assert.equal(nearPlain[1].firstWord, 6)
+    assert.equal(nearRows[1].firstWord, 6, 'the clear pause 1.3 s before the change stays the place; the sentence start at w9 is not used to divide')
+    assert.equal(nearRows[1].startsAt, 'pause'); assert.equal(nearRows[1].sentenceNear, null)
+    assert.ok(boundaryTargets(near, nearRows, 1, false).some((t) => t.word === 9 && t.kind === 'sentence'), 'but it is still offered to the handle')
+    pass('case 1, a clear pause between the slides: the words go with the slide holding more of their spoken time, as before; leaving the slide out cuts at the pause')
+  }
+  {
+    // Case 2: no clear pause near the change, a sentence boundary in the stretch: divided at the sentence.
+    // Sentences w0–w5 | w6–w11 | w12–w19. The middle one is said 3.4–5.76 s: 1.44 s before the change, 0.72 s after.
+    const ctx = editorWords({ words: runOn, silence: runOnSilence, sentences: sentencesEnding([5, 11, 19]) }, 12_000)
+    const rows = slideRows(ctx, twoSlides)
+    assert.deepEqual([rows[0].endWord, rows[1].firstWord], [12, 12], 'slide 2 starts where the sentence straddling the change ends')
+    assert.equal(rows[1].start, 5780); assert.equal(rows[1].startsAt, 'sentence'); assert.equal(rows[1].startQuality, 'close', 'continuous speech: needs a listen')
+    assert.equal(rows[1].noClearPause, true, 'still no clear pause within two seconds')
+    assert.equal(rows[1].sentenceNear, 12, 'the nearest sentence start within two seconds is where it starts')
+    // Without sentence data the whole run-on stretch stays with slide 1 (the 0.44.0 rule).
+    const old = slideRows(editorWords({ words: runOn, silence: runOnSilence }, 12_000), twoSlides)
+    assert.equal(old[1].firstWord, 20); assert.equal(old[1].sentenceNear, null); assert.equal(old[1].startsAt, null)
+    // The handle snaps to the sentence starts (and clear pauses); Option still gives any word.
+    const snap = boundaryTargets(ctx, rows, 1, false)
+    assert.deepEqual(snap.map((t) => [t.word, t.kind, t.quality, t.at]), [[6, 'sentence', 'close', 3380], [12, 'sentence', 'close', 5780]])
+    assert.equal(TARGET_WORDS.sentence, 'at a sentence start')
+    const any = boundaryTargets(ctx, rows, 1, true)
+    assert.ok(any.length > 10 && any.find((t) => t.word === 9).kind === 'word')
+    assert.equal(boundaryTargets(editorWords({ words: runOn, silence: runOnSilence }, 12_000), old, 1, false).length, 0, 'no sentence data: nothing to snap to, as before')
+    // Snapping to a sentence start stores a move that is not "any word"; undo puts it back.
+    const op = moveBoundaryOp(ctx, rows[1], 6, true)
+    assert.equal(op.at, 3380); assert.equal(op.any, false, 'a sentence start is a place, not any word')
+    let e = applyEditOp(emptyEdits(), op, 12_000)
+    assert.deepEqual(e.boundaries, [{ change: 5000, at: 3380 }])
+    const moved = slideRows(ctx, twoSlides, e.boundaries)
+    assert.equal(moved[1].firstWord, 6); assert.equal(moved[1].startsAt, 'sentence'); assert.equal(moved[1].noClearPause, false); assert.equal(moved[1].sentenceNear, null)
+    e = applyEditOp(e, { kind: 'undo' }, 12_000)
+    assert.deepEqual(e.boundaries, []); assert.deepEqual(slideRows(ctx, twoSlides, e.boundaries), rows)
+    // Moving to the default sentence start is putting it back.
+    assert.deepEqual(moveBoundaryOp(ctx, rows[1], 12, false), { kind: 'boundary', change: 5000, at: null })
+    // Leaving slide 2 out cuts from that sentence start; the cut's start is close (Listen to the join).
+    const r = resolve(ctx, applyEditOp(emptyEdits(), leaveOutOp(rows[1]), 12_000), twoSlides)
+    assert.deepEqual(cutWords(r), Array.from({ length: 8 }, (_, i) => 12 + i))
+    assert.equal(r.views.length, 1); assert.equal(r.views[0].startQuality, 'close'); assert.equal(r.views[0].leftOut, true)
+    // Leaving slide 1 out instead keeps the whole of the sentence that ends after the change on slide 1.
+    const r1 = resolve(ctx, applyEditOp(emptyEdits(), leaveOutOp(rows[0]), 12_000), twoSlides)
+    assert.deepEqual(cutWords(r1), Array.from({ length: 12 }, (_, i) => i))
+    pass('case 2, only a sentence boundary near the change: divided at the sentence; it is offered, snapped to and marked close; leaving either slide out cuts there')
+  }
+  {
+    // Case 3: neither. The only sentence boundary is far from the change (after w2, 2.8 s before it): it is
+    // treated as absent, so the 0.44.0 rule holds and no sentence start is offered.
+    const far = editorWords({ words: runOn, silence: runOnSilence, sentences: sentencesEnding([2, 19]) }, 12_000)
+    const farRows = slideRows(far, twoSlides)
+    assert.equal(farRows[1].firstWord, 20, 'a sentence end 2.8 s from the change does not divide'); assert.equal(farRows[1].noClearPause, true); assert.equal(farRows[1].sentenceNear, null, 'none within two seconds')
+    assert.deepEqual(farRows, slideRows(editorWords({ words: runOn, silence: runOnSilence }, 12_000), twoSlides).map((r) => ({ ...r })), 'exactly the 0.44.0 rows')
+    // No sentence boundary at all in the stretch: the 0.44.0 rule, the whole stretch to one slide.
+    const none = editorWords({ words: runOn, silence: runOnSilence, sentences: sentencesEnding([19]) }, 12_000)
+    const noneRows = slideRows(none, twoSlides)
+    assert.equal(none.sentences, false, 'the end after the last word is no sentence start')
+    assert.equal(noneRows[1].firstWord, 20); assert.equal(noneRows[1].noClearPause, true); assert.equal(noneRows[1].sentenceNear, null)
+    const r = resolve(none, applyEditOp(emptyEdits(), leaveOutOp(noneRows[1]), 12_000), twoSlides)
+    assert.deepEqual(cutWords(r), [], 'slide 2 has no words of its own to cut')
+    const r0 = resolve(none, applyEditOp(emptyEdits(), leaveOutOp(noneRows[0]), 12_000), twoSlides)
+    assert.equal(cutWords(r0).length, 20)
+    // The review's case: 100 words of continuous speech from 1 to 41 s, a change at 22 s, one sentence end
+    // after w9 (at 4.98 s). Before 0.44.5 slide 2 starts at 40.96 s and leaving it out cuts 3,040 ms; so it stays.
+    const long = Array.from({ length: 100 }, (_, i) => w(`w${i}`, 1000 + i * 400, 1360 + i * 400))
+    const longSilence = [{ start: 0, end: 1000 }, { start: 41_000, end: 45_000 }]
+    const change22 = [{ event: 'enter', slideId: 'one', tMs: 0 }, { event: 'enter', slideId: 'two', tMs: 22_000 }]
+    const longS = editorWords({ words: long, silence: longSilence, sentences: [{ id: 'a', firstWord: 0, lastWord: 9, start: 1000, end: 4960, boundarySource: 'punctuation' }, { id: 'b', firstWord: 10, lastWord: 99, start: 5000, end: 40_960, boundarySource: 'transcriber' }] }, 45_000)
+    const longPlain = editorWords({ words: long, silence: longSilence }, 45_000)
+    const lr = slideRows(longS, change22), lp = slideRows(longPlain, change22)
+    assert.equal(lp[1].start, 40_960); assert.equal(lr[1].start, lp[1].start, 'slide 2 starts where it did'); assert.equal(lr[1].startsAt, lp[1].startsAt)
+    const leaveLong = (ctx, rows) => resolve(ctx, applyEditOp(emptyEdits(), leaveOutOp(rows[1]), 45_000), change22)
+    assert.equal(leaveLong(longS, lr).views[0].end - leaveLong(longS, lr).views[0].start, leaveLong(longPlain, lp).views[0].end - leaveLong(longPlain, lp).views[0].start, 'leaving it out cuts the same')
+    assert.equal(planDigest(leaveLong(longS, lr)), planDigest(leaveLong(longPlain, lp)))
+    pass('case 3, neither a clear pause nor a sentence start within two seconds of the change: exactly the 0.44.0 rule, with "Choose the word"; a sentence end far away divides nothing (the review\'s 100-word case)')
+  }
+  {
+    // One stretch spoken across two changes: the first (12 s) has no clear pause near it, the second (29 s)
+    // has one 1.5 s after it. Sentences end near both. Only the first start moves (to its sentence); the
+    // second stays on its pause.
+    const blocks = [...Array.from({ length: 10 }, (_, i) => w(`a${i}`, 1000 + i * 400, 1360 + i * 400)), ...Array.from({ length: 60 }, (_, i) => w(`b${i}`, 6000 + i * 400, 6360 + i * 400)), ...Array.from({ length: 10 }, (_, i) => w(`c${i}`, 31_000 + i * 400, 31_360 + i * 400))]
+    const silence = [{ start: 0, end: 1000 }, { start: 4960, end: 6000 }, { start: 29_960, end: 31_000 }, { start: 34_960, end: 40_000 }]
+    // Word 10+j is b_j, said 6000+400j. Ends after words 34 (b24, 15.6–15.96 s), 38 (b28) and 66 (b56, 28.4–28.76 s).
+    const ends = [9, 34, 38, 66, 69, 79]
+    let from = 0
+    const sentences = ends.map((last) => { const x = { id: `s${from}`, firstWord: from, lastWord: last, start: blocks[from].start, end: blocks[last].end, boundarySource: 'punctuation' }; from = last + 1; return x })
+    const marks = [{ event: 'enter', slideId: 'one', tMs: 0 }, { event: 'enter', slideId: 'two', tMs: 17_000 }, { event: 'enter', slideId: 'three', tMs: 29_000 }]
+    const ctx = editorWords({ words: blocks, silence, sentences }, 40_000)
+    const plain = slideRows(editorWords({ words: blocks, silence }, 40_000), marks)
+    const rows = slideRows(ctx, marks)
+    assert.equal(plain[1].noClearPause, true); assert.equal(plain[2].noClearPause, false)
+    assert.equal(rows[2].start, plain[2].start, 'the change with a clear pause near it keeps its pause'); assert.equal(rows[2].startsAt, 'pause')
+    // Sentence b29–b56 (word 39 to 66) is said 17.6–28.76 s: all after the 17 s change; b25–b28 (35–38) 16.0–17.36 s: mostly before.
+    assert.equal(rows[1].firstWord, 39, 'slide 2 starts at the sentence start 0.58 s after its change'); assert.equal(rows[1].startsAt, 'sentence')
+    assert.ok(Math.abs(rows[1].start - 17_000) <= 2000)
+    assert.equal(rows[1].sentenceNear, 39)
+    pass('one stretch across two changes: the change with no clear pause near it moves to its sentence start; the other keeps its clear pause')
+  }
+  {
+    // A sentence boundary inside a cut: the cut is the same with or without sentence data, and the row's
+    // division ignores what is cut (rows are about where slides start, not what is kept).
+    const withS = editorWords({ words: runOn, silence: runOnSilence, sentences: sentencesEnding([5, 11, 19]) }, 12_000)
+    const without = editorWords({ words: runOn, silence: runOnSilence }, 12_000)
+    const a = cutWordsOp(withS, 10, 13), b = cutWordsOp(without, 10, 13)
+    assert.deepEqual(a.range, b.range, 'a cut across a sentence start falls at the same frames')
+    const e = applyEditOp(emptyEdits(), a.op, 12_000)
+    const r = resolve(withS, e, twoSlides)
+    assert.deepEqual(cutWords(r), [10, 11, 12, 13])
+    assert.equal(r.rows[1].firstWord, 12, 'the slide still starts at the sentence start inside the cut')
+    assert.equal(r.views[0].close, true)
+    // Leaving slide 2 out with that cut in place: one stretch removed, from w10 to the end.
+    const r2 = resolve(withS, applyEditOp(e, leaveOutOp(r.rows[1]), 12_000), twoSlides)
+    assert.deepEqual(cutWords(r2), Array.from({ length: 10 }, (_, i) => 10 + i)); assert.equal(r2.views.length, 1)
+    pass('a sentence boundary inside a cut: the cut falls where it would without sentences; the slide start and leaving it out are unchanged')
+  }
+  {
+    // "To check": a slide left out, or played from a take, whose stretch starts or ends at a sentence start.
+    const ctx = editorWords({ words: runOn, silence: runOnSilence, sentences: sentencesEnding([5, 11, 19]) }, 12_000)
+    const rows = slideRows(ctx, twoSlides)
+    assert.equal(rows[1].startsAt, 'sentence')
+    assert.deepEqual(joinsAtSentence(rows, new Set([1]), new Map()), [1], 'slide 2 left out: its start is a sentence start')
+    assert.deepEqual(joinsAtSentence(rows, new Set([0]), new Map()), [0], 'slide 1 left out: its end is slide 2\'s sentence start')
+    assert.deepEqual(joinsAtSentence(rows, new Set(), new Map([[1, 'take']])), [1], 'a take on slide 2 goes in at a sentence start')
+    assert.deepEqual(joinsAtSentence(rows, new Set(), new Map()), [])
+    const fx = makeEditorFixture({ slides: 8, wordsPerSlide: 40, sentences: true })
+    const fctx = editorWords(fx.transcript, fx.durationMs), frows = slideRows(fctx, fx.marks)
+    const atPause = frows.filter((r) => r.index > 0 && r.startsAt === 'pause' && frows[r.index + 1]?.startsAt !== 'sentence').map((r) => r.index)
+    assert.ok(atPause.length); assert.deepEqual(joinsAtSentence(frows, new Set(atPause), new Map()), [], 'slides left out at clear pauses are not listed')
+    pass('To check lists a slide left out, or a take, whose start or end is a sentence start, and not one at clear pauses')
+  }
+  {
+    // Edits made before this change resolve as before: every slide with a clear pause near its change has the
+    // same start and the same leave-out cut, and an edit list touching only those (cuts, a moved start, slides
+    // left out, a take) gives the same plan digest. A start the owner moved always wins.
+    for (const aligned of [true, false]) {
+      const fx = makeEditorFixture({ slides: 12, wordsPerSlide: 40, aligned, seed: 9, sentences: true })
+      const ctx = editorWords(fx.transcript, fx.durationMs), old = editorWords({ ...fx.transcript, sentences: undefined }, fx.durationMs)
+      const rows = slideRows(ctx, fx.marks), before = slideRows(old, fx.marks)
+      const paused = before.filter((r) => r.index > 0 && !r.noClearPause && !before[r.index + 1]?.noClearPause).map((r) => r.index)
+      assert.ok(paused.length >= 3)
+      for (const r of before) if (r.index > 0 && !r.noClearPause) assert.equal(rows[r.index].start, r.start, `slide ${r.index + 1} starts where it did`)
+      for (const i of paused) {
+        const e = applyEditOp(emptyEdits(), leaveOutOp(before[i]), fx.durationMs)
+        assert.deepEqual(resolve(ctx, e, fx.marks).cuts, resolve(old, e, fx.marks).cuts, `leaving slide ${i + 1} out cuts the same`)
+      }
+      let e = emptyEdits()
+      e = applyEditOp(e, cutOp(old, 30, 33), fx.durationMs)
+      e = applyEditOp(e, leaveOutOp(before[paused[0]]), fx.durationMs)
+      const t = boundaryTargets(old, before, paused[1], false).find((x) => x.word < before[paused[1]].firstWord)
+      if (t) e = applyEditOp(e, moveBoundaryOp(old, before[paused[1]], t.word, false), fx.durationMs)
+      // A start moved by hand on a slide with no clear pause near it wins over the sentence rule.
+      const flagged = before.find((r) => r.noClearPause)
+      if (flagged) e = applyEditOp(e, moveBoundaryOp(old, flagged, flagged.firstWord - 2, true), fx.durationMs)
+      const takes = [{ change: before[paused[2]].change, run: 'take-1', durationMs: 2500, words: null }]
+      const a = resolve(ctx, e, fx.marks, { takes }), b = resolve(old, e, fx.marks, { takes })
+      assert.equal(planDigest(a), planDigest(b), 'same plan digest'); assert.deepEqual(a.cuts, b.cuts); assert.deepEqual(a.chapterMarks, b.chapterMarks)
+      if (flagged) assert.equal(a.rows[flagged.index].start, b.rows[flagged.index].start, 'a moved start wins')
+    }
+    pass('earlier edits resolve as before: slides with a clear pause near their change keep their starts, leave-out cuts and plan digest, aligned and not; a moved start wins')
+  }
+  {
+    // The generated talk, aligned and not, with stored sentences: every word in one row; each row starts at
+    // a clear pause, at a sentence start, or says it has no clear pause; leaving each slide out cuts its words.
+    for (const aligned of [true, false]) {
+      const fx = makeEditorFixture({ slides: 8, wordsPerSlide: 40, aligned, sentences: true })
+      const ctx = editorWords(fx.transcript, fx.durationMs)
+      assert.equal(ctx.sentences, true)
+      const rows = slideRows(ctx, fx.marks)
+      assert.equal(rows[0].firstWord, 0); assert.equal(rows.at(-1).endWord, ctx.words.length)
+      for (let i = 1; i < rows.length; i++) assert.equal(rows[i].firstWord, rows[i - 1].endWord)
+      for (const r of rows.slice(1)) {
+        assert.ok(r.startsAt === 'pause' || r.startsAt === 'sentence', `slide ${r.index + 1} starts at a pause or a sentence start (${r.startsAt})`)
+        if (r.startsAt === 'pause') assert.equal(r.startQuality, 'clean')
+        else assert.equal(r.startQuality, ctx.gaps[r.firstWord].quality, 'a sentence start carries its gap\'s quality')
+      }
+      const plainRows = slideRows(editorWords({ ...fx.transcript, sentences: undefined }, fx.durationMs), fx.marks)
+      assert.ok(rows.some((r) => r.startsAt === 'sentence' && plainRows[r.index].noClearPause), 'a slide change with no clear pause near it now starts at a sentence')
+      for (const r of rows) if (!plainRows[r.index].noClearPause) assert.equal(r.firstWord, plainRows[r.index].firstWord, 'a slide with a clear pause near its change starts where it did')
+      for (const row of rows.slice(1, 4)) {
+        const res = resolve(ctx, applyEditOp(emptyEdits(), leaveOutOp(row), fx.durationMs), fx.marks)
+        assert.deepEqual(cutWords(res), Array.from({ length: row.endWord - row.firstWord }, (_, i) => row.firstWord + i), `leaving slide ${row.index + 1} out cuts exactly its words`)
+      }
+    }
+    // Takes keep their own words, shown as text; nothing is cut inside a take, so sentence data in a take changes nothing.
+    pass('the generated talk with stored sentences, aligned and not: every word in one row, each slide starts at a pause or a sentence start, leaving a slide out cuts its words')
+  }
+  {
+    // No sentence data: rows, targets and the plan are as they were (the old fixture, and only pause ends).
+    const fx = makeEditorFixture({ slides: 8, wordsPerSlide: 40 })
+    const ctx = editorWords(fx.transcript, fx.durationMs)
+    const pauseOnly = editorWords({ ...fx.transcript, sentences: [{ id: 'x', firstWord: 0, lastWord: 3, start: 0, end: 1, boundarySource: 'acoustic-pause' }] }, fx.durationMs)
+    const a = resolve(ctx, emptyEdits(), fx.marks), b = resolve(pauseOnly, emptyEdits(), fx.marks)
+    assert.deepEqual(b.rows, a.rows); assert.equal(planDigest(b), planDigest(a))
+    for (let i = 1; i < a.rows.length; i++) assert.deepEqual(boundaryTargets(pauseOnly, b.rows, i, false), boundaryTargets(ctx, a.rows, i, false))
+    assert.ok(a.rows.every((r) => r.sentenceNear === null))
+    pass('no sentence data (older Runs, segments only, pause ends only): rows, snap targets and the export plan are unchanged')
   }
 
   // ---- Performance: an hour-long Run ------------------------------------------------------------
@@ -579,6 +897,16 @@ try {
     assert.equal(wordAt(ctx, ctx.words[100].start + 1), 100)
     assert.deepEqual(wordsRange(ctx, 100, 100), { start: Math.round(ctx.gaps[100].point), end: Math.round(ctx.gaps[101].point) })
     pass(`an hour-long Run (${result.words} words, ${result.slides} slides): prepare ${result.prepareMs} ms, rows ${result.rowsMs} ms, Tidy up ${result.tidyMs} ms, cut ${result.cutMs} ms`)
+  }
+  {
+    const fx = makeEditorFixture({ slides: 80, wordsPerSlide: 113, seed: 11, sentences: true })
+    const t0 = performance.now()
+    const ctx = editorWords(fx.transcript, fx.durationMs)
+    const rows = resolve(ctx, emptyEdits(), fx.marks).rows
+    for (let i = 1; i < rows.length; i++) boundaryTargets(ctx, rows, i, false)
+    const ms = performance.now() - t0
+    assert.ok(ms < 1000, `words, rows and every slide's snap targets with sentences within a second (${ms.toFixed(0)} ms)`)
+    pass(`an hour-long Run with stored sentences: words, rows and snap targets in ${ms.toFixed(0)} ms`)
   }
   console.log(`\n${count} passed`)
 } finally {

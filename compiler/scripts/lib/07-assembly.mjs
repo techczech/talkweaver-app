@@ -9,7 +9,7 @@ import { accentForSectionIndex, accentForSectionName, accentForDeckColour, extra
 import { findSlideSections, updateDeckTitle, withoutScripts } from "./04-html-extraction.mjs";
 import { createIconVocabulary, buildDeckIconMap, applySlideMonochrome } from "./05-icons.mjs";
 import { withScreenshotStyle, sizeScreenshotRows, screenshotBand, isLoneScreenshot } from "./screenshot-row.mjs";
-import { groupImageRows, groupQrRows, groupActionBlocks, loadCompilerSvgSanitiser, renderBlock, renderBlocks, renderMediaBlocks, withTitleIcon } from "./06-block-renderers.mjs";
+import { groupImageRows, groupQrRows, groupActionBlocks, legacyQrCaptions, loadCompilerSvgSanitiser, renderBlock, renderBlocks, renderMediaBlocks, withTitleIcon } from "./06-block-renderers.mjs";
 import { renderLicenseBody } from "./08-source-adapters.mjs";
 import { withColumnWidth } from "./narrow-columns.mjs";
 import { pollFrameEligible, renderPollFrame } from "./poll-frame.mjs";
@@ -498,6 +498,8 @@ function oceanGround(layout, contentHtml) {
 // The Ocean loop (round-9 frame l2-4): one ring through the stops with an arrowhead before each stop, so the
 // direction reads, and the repeat mark (Lucide "repeat") at the centre. Drawn as one SVG behind the stops from the
 // stops' own positions; it is not a reveal unit (the stops still appear one by one). Classic keeps its arcs.
+const OCEAN_LOOP_LONG = 22;
+const OCEAN_LOOP_LONG_STOP = 30;
 const OCEAN_LOOP_STOP = 8.2; // the stop's radius plus air, in % of the square diagram
 const OCEAN_LOOP_REPEAT = '<g class="oc-loop-mark" transform="translate(%X %Y) scale(.8) translate(-12 -12)" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m17 2 4 4-4 4"/><path d="M3 11v-1a4 4 0 0 1 4-4h14"/><path d="m7 22-4-4 4-4"/><path d="M21 13v1a4 4 0 0 1-4 4H3"/></g>';
 function stampOceanLoop(contentHtml) {
@@ -536,7 +538,39 @@ function stampOceanLoop(contentHtml) {
     });
     const mark = OCEAN_LOOP_REPEAT.replace("%X", f(cx)).replace("%Y", f(cy));
     const svg = `<svg class="oc-loop-ring" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" focusable="false">${parts.join("")}${mark}</svg>`;
-    return `<div class="cycle-diagram"${attrs}>${svg}${inner}</div>`;
+    // long labels take a smaller ring, leaving the labels room above and below it: a text over OCEAN_LOOP_LONG characters,
+    // or a stop's role and text together over OCEAN_LOOP_LONG_STOP (a long role with a short text is long too)
+    const stopLabels = [...inner.matchAll(/<div class="cycle-node[^"]*" style="[^"]*">([\s\S]*?)<\/div>/g)].map((m) => {
+      const role = m[1].match(/^<span class="cycle-stage">([\s\S]*?)<\/span><span class="cycle-cap">/);
+      const all = plainLength(m[1]);
+      return { all, text: all - (role ? plainLength(role[1]) : 0) };
+    });
+    const long = stopLabels.some((stop) => stop.text > OCEAN_LOOP_LONG || stop.all > OCEAN_LOOP_LONG_STOP) ? " data-oc-long" : "";
+    return `<div class="cycle-diagram"${attrs}${long}>${svg}${oceanLoopLabels(inner, cx, cy)}</div>`;
+  });
+}
+
+// Each stop's labels (its role and its text) go in one box set outward from the ring, along the line from the ring's
+// centre through the stop (zz-x-ocean-60-loop-labels.css): the box's anchor point moves round its edge with the
+// stop's direction, so a label at the top grows upward, one on the right grows rightward, one at the bottom grows
+// downward, and none reaches back over the ring, its own stop or a neighbour's. --oc-x and --oc-y give the
+// direction on a square round the stop (one of them is 1 or -1), data-oc-at its side (start, end, top, bottom). The safe drawing (slide-fit.js) ignores all three and the box.
+// The box is its own element, not a span: the role and text keep the place among the slide's spans they had in 0.43,
+// so the safe drawing reads as the 0.43 markup to anything that counts spans.
+function oceanLoopLabels(inner, cx, cy) {
+  const f = (n) => n.toFixed(3);
+  return inner.replace(/<div class="(cycle-node[^"]*)" style="left:([\d.]+)%;top:([\d.]+)%">([\s\S]*?)<\/div>/g, (whole, cls, left, top, labels) => {
+    const dx = Number(left) - cx;
+    const dy = Number(top) - cy;
+    const d = Math.hypot(dx, dy);
+    if (!(d > 0)) return whole;
+    const cos = dx / d;
+    const sin = dy / d;
+    // the direction on a square round the stop (the label is a box): the larger of the two parts is 1
+    const m = Math.max(Math.abs(cos), Math.abs(sin));
+    // a stop near the top or the bottom of the ring takes its label centred above or below it ("top", "bottom")
+    const at = cos > 0.38 ? "start" : cos < -0.38 ? "end" : sin < 0 ? "top" : "bottom";
+    return `<div class="${cls}" data-oc-at="${at}" style="left:${left}%;top:${top}%;--oc-x:${f(cos / m)};--oc-y:${f(sin / m)}"><oc-loop-label class="oc-loop-label">${labels}</oc-loop-label></div>`;
   });
 }
 
@@ -622,10 +656,13 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
   // The 0.44 look rides on every slide <section> (not only the deck container), so the slide keeps it
   // wherever it is drawn on its own: thumbnails, the handout, exports.
   const oceanLook = deckLookForPalette(palette) === "ocean";
-  const lookAttrs = oceanLook ? ` data-look="ocean" data-companion="${companionLevelForPalette(palette)}"` : "";
+  const deckLookAttrs = oceanLook ? ` data-look="ocean" data-companion="${companionLevelForPalette(palette)}"` : "";
   // A section divider in the Ocean look shows its section's number, large (handoff 0.44: "large section number").
   const sectionNumbers = new Map(sectionOrder.filter(Boolean).map((key, at) => [key, at + 1]));
-  return slides.map((slide, index) => {
+  const sectionsHtml = slides.map((slide, index) => {
+    // The section's lead colour (section-leads.mjs, resolved by the source adapter), on the slide itself so every
+    // place that draws the slide alone (thumbnails, handout, export, audience view) shows the same colour.
+    const lookAttrs = oceanLook ? `${deckLookAttrs} data-lead="${escapeHtml(slide.sectionLead || "blue")}"` : "";
     const sectionNumber = oceanLook && slide.role === "section-title" ? sectionNumbers.get(slide.section || "") : undefined;
     const id = slide.id || `slide-${index + 1}`;
     // Per-section skin (ADR-0005): accentForSectionIndex now returns { accent, tint }. Stamp
@@ -829,6 +866,9 @@ ${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
 ${cornerQrHtml ? `  ${cornerQrHtml}\n` : ""}${cornerSectionHtml ? `  ${cornerSectionHtml}\n` : ""}  ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
   });
+  // the whole-address QR caption is the look's (zz-x-ocean-45-title.css, slide-fit.js fitQrCaptions); elsewhere the
+  // caption is drawn as before
+  return oceanLook ? sectionsHtml : sectionsHtml.map(legacyQrCaptions);
 }
 
 function replaceSlideSections(templateHtml, slideMarkup) {

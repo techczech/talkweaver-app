@@ -155,6 +155,9 @@ try {
       else await page.keyboard.press(exit)
       console.log(`FOCUS ${mode}/${exit}`)
       check(await page.waitForFunction(() => !document.body.classList.contains('share-embed-expanded'), null, { timeout: 1000 }).then(() => true).catch(() => false), `${mode}/${exit}: exit clears expansion`)
+      // A browser ends every print it starts with afterprint; without it the page holds its print
+      // arrangement until the next key press (slideFit.managePrint), which would be the next pass's Tab.
+      if (exit === 'print') await page.evaluate(() => dispatchEvent(new Event('afterprint')))
       if (await ret.isVisible()) await ret.click()
       check(await restored(), `${mode}/${exit}: cleanup preserves authored inert and tabindex attributes`)
       if (exit === 'navigation' || exit === 'stage') {

@@ -348,3 +348,53 @@ A second, supporting thought.
 - 1 billion: weekly users
 - ISO 9001: quality management
 - Version 2: now available
+
+### A loop of five, long labels
+{cycle}{id=r-loop5-long}
+
+- Planner
+  - Writes the brief and hands it on
+- Drafter
+  - Turns the brief into a first version
+- Reviewer
+  - Reads the version and returns notes to drafter
+- Editor
+  - Tidies the wording for the layout desk
+- Layout
+  - Sets the pages and sends them back
+
+### A loop of five, long labels, revealed
+{cycle}{reveal}{id=r-loop5-long-reveal}
+
+- Planner
+  - Writes the brief and hands it on
+- Drafter
+  - Turns the brief into a first version
+- Reviewer
+  - Reads the version and returns notes to drafter
+- Editor
+  - Tidies the wording for the layout desk
+- Layout
+  - Sets the pages and sends them back
+
+### Seven icon items, long, beside the title
+{iconlist}{id=r-icon7-long}
+
+- Responsibility for what neighbours need {icon=lucide:sprout}
+- Readiness to follow planting directions {icon=lucide:cloud-rain}
+- Shelves of maps and seed catalogues {icon=lucide:map}
+- Patience with slow results {icon=lucide:hourglass}
+- Talent for explaining choices clearly {icon=lucide:message-square}
+- Willingness to rethink the plan {icon=lucide:refresh-cw}
+- Care for the soil underneath {icon=lucide:shovel}
+
+### Seven icon items, long, under the title
+{iconlist=list}{titletop}{id=r-icon7-long-top}
+
+- Responsibility for what neighbours need {icon=lucide:sprout}
+- Readiness to follow planting directions {icon=lucide:cloud-rain}
+- Shelves of maps and seed catalogues {icon=lucide:map}
+- Patience with slow results {icon=lucide:hourglass}
+- Talent for explaining choices clearly {icon=lucide:message-square}
+- Willingness to rethink the plan {icon=lucide:refresh-cw}
+- Care for the soil underneath {icon=lucide:shovel}

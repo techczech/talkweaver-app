@@ -45,6 +45,10 @@ async function record(presenter, choice, ms, firstTime) {
   await presenter.waitForFunction(() => document.querySelector('#twrec-module').dataset.rec === 'saved', {}, { timeout: 30000 })
 }
 
+// A hard stop inside the script: a hung app never outlives the slot (13 minutes; the slot allows 15).
+const hardStop = setTimeout(() => { console.error('HARD TIMEOUT: the journey did not finish in 13 minutes'); try { app?.process()?.kill('SIGKILL') } catch {} process.exit(124) }, 13 * 60 * 1000)
+hardStop.unref()
+
 try {
   app = await electron.launch({ timeout: 30000, cwd: repo, args: ['.', '--user-data-dir=' + userData, '--use-fake-device-for-media-stream'], env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' } })
   const main = await app.firstWindow(); await main.waitForLoadState('domcontentloaded')

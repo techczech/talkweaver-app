@@ -6,7 +6,8 @@ import { join } from 'node:path'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
-import { buildLayoutSampler } from './build-layout-sampler.mjs'
+import { buildLayoutSampler, samplerArtefactsDir } from './build-layout-sampler.mjs'
+import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 // Ticket 18: the default type scale is the former XL and long lists spend leading and air before type.
 const LIST_IDS = ['t18-list-4', 't18-list-12', 't18-list-grouped', 't18-list-keyvalue']
@@ -56,7 +57,10 @@ const RAIL_CQW = 3.8
 const TITLE_CQW = 3.9
 const FLOOR_PX_AT_1600 = 31
 
-const { html, outPath } = await buildLayoutSampler()
+// These checks encode the classic look's type and spacing rules (ticket 18, ADR-0028, ADR-0033): compile in the
+// classic look, as 11c6e9d2 did for whole fixtures. 0.44 made Ocean the default; its fit rules and tests are its own
+// (test:ocean-look-dom). Written beside the default sampler, so the two never overwrite each other.
+const { html, outPath } = await buildLayoutSampler(join(samplerArtefactsDir, 'classic'), { classic: true })
 for (const id of [...LIST_IDS, LADDER_ID, ICON_LIST_ID, ICON_ROW_ID, NUMBERED_CARDS_ID, ...SLOT_FITS_IDS, SLOT_LONG_ID]) {
   assert(html.includes(`data-id="${id}"`), `${id}: sampler fixture compiles`)
 }
@@ -372,7 +376,7 @@ try {
     '### Next slide', '{id=after}', '', '- one', ''].join('\n')
   const longTitlePath = join(longTitleDir, 'long-title-outline.md')
   writeFileSync(longTitlePath, longTitleSource, 'utf8')
-  const longTitleModel = await prepareSource(longTitlePath, longTitleSource, 'long-title', statSync(longTitlePath))
+  const longTitleModel = await prepareSource(longTitlePath, inClassicLook(longTitleSource), 'long-title', statSync(longTitlePath))
   const longTitleHtml = join(longTitleDir, 'long-title.html')
   writeFileSync(longTitleHtml, await buildDeckHtmlFromModel(longTitleModel), 'utf8')
   const longPage = await browser.newPage({ viewport: { width: 1280, height: 720 } })

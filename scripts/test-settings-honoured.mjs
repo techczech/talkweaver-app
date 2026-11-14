@@ -275,6 +275,21 @@ const EFFECTS = {
     expect: { '': '#1273C4 accent', bold: '#1273C4 bold', classic: '#0f4bd8 classic', green: '#166534 classic' },
     unknown: { value: 'purple', warning: 'palette-unknown' }
   },
+  'section-colours': {
+    effect: 'each section’s lead colour in the Ocean look: the rotation (absent), none (off) or one colour for every section',
+    body: ['One', 'Two', 'Three', 'Four', 'Five', 'Six'].flatMap((name) => [`## ${name}`, '', `### In ${name}`, '', '- A point', '']),
+    probe: ({ document }) => [...document.querySelectorAll('section.slide[data-role="section-title"]')].map((slide) => slide.getAttribute('data-lead')).join(' '),
+    expect: {
+      '': 'blue amber light deep-blue light-amber blue',
+      off: 'blue blue blue blue blue blue',
+      blue: 'blue blue blue blue blue blue',
+      amber: 'amber amber amber amber amber amber',
+      'deep-blue': 'deep-blue deep-blue deep-blue deep-blue deep-blue deep-blue',
+      light: 'light light light light light light',
+      'light-amber': 'light-amber light-amber light-amber light-amber light-amber light-amber'
+    },
+    unknown: { value: 'purple', warning: 'section-colours-unknown' }
+  },
   'logo-colour': {
     effect: 'a mixed logo row keeps each brand’s own colours instead of the unified accent',
     body: LOGO_BODY,

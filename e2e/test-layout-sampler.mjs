@@ -82,6 +82,9 @@ assert(imageMetadata.format === 'png' && imageMetadata.width > 1 && imageMetadat
 assert(existsSync(reportPath), 'unverified sampler report is present')
 
 const { model, html, outPath } = await buildLayoutSampler()
+// The vs disc check below is a design check of the classic look (ADR-0039); 0.44 made Ocean the default,
+// with its own compare design and tests (test:ocean-look-dom), so that check uses the sampler compiled in the classic look.
+const { outPath: classicPath } = await buildLayoutSampler(join(samplerArtefactsDir, 'classic'), { classic: true })
 assert(existsSync(outPath) && statSync(outPath).size > 1000, 'sampler bundle is written by the real compiler')
 assert(html.includes('<section'), 'sampler bundle contains compiled slide sections')
 const unknownWarnings = (model.warnings ?? []).filter((warning) => String(warning).startsWith('unknown-trigger:'))
@@ -178,9 +181,9 @@ try {
   // stage, divided by its scale; the fixed footer too, so its top is where it lands on the canvas).
   // At scale 1 (1280×720) the media row balances its air against the navigation exactly; on a
   // larger window the navigation covers less of the canvas, so the air below can only grow.
-  const openMeasuredVideo = async (viewport) => {
+  const openMeasuredVideo = async (viewport, path = outPath) => {
     const page = await geometryBrowser.newPage({ viewport })
-    await page.goto(`file://${outPath}`, { waitUntil: 'load' })
+    await page.goto(`file://${path}`, { waitUntil: 'load' })
     await page.evaluate(() => {
       document.body.classList.add('chrome-pinned')
       const slides = [...document.querySelectorAll('.stage > .slide')]
@@ -249,8 +252,8 @@ try {
   }
 
   const geometryPage = await openMeasuredVideo({ width: 1600, height: 900 })
-  const activate = async (slideId) => {
-    await geometryPage.evaluate((id) => {
+  const activate = async (slideId, target = geometryPage) => {
+    await target.evaluate((id) => {
       location.hash = `#${id}`
       window.dispatchEvent(new HashChangeEvent('hashchange'))
       const slides = [...document.querySelectorAll('.stage > .slide')]
@@ -258,7 +261,7 @@ try {
       slides.forEach((slide) => slide.classList.toggle('active', slide === target))
       window.__autofitForTest?.()
     }, slideId)
-    await geometryPage.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))))
+    await target.evaluate(() => new Promise((resolveFrame) => requestAnimationFrame(() => requestAnimationFrame(resolveFrame))))
   }
   const bodyFont = async () => geometryPage.evaluate(() => {
     const probe = document.createElement('span')
@@ -337,8 +340,16 @@ try {
   assert(compareGeometry.labelFonts.every((px) => px + 0.01 >= compareFloor),
     `compare heads meet the type floor (${compareGeometry.labelFonts.join('/')}px)`)
   assert.deepEqual(compareGeometry.copyWeights, ['400', '400'], 'compare rows are regular weight')
-  assert(Math.abs(compareGeometry.discMid - compareGeometry.canvasWidth / 2) <= 2 || Math.abs(compareGeometry.discMid - compareGeometry.stageWidth / 2) <= 2,
-    'the vs disc is centred between the panels')
+  const classicPage = await openMeasuredVideo({ width: 1600, height: 900 }, classicPath)
+  await activate('t19-compare-body', classicPage)
+  const classicDisc = await classicPage.evaluate(() => {
+    const stageRect = document.querySelector('.stage').getBoundingClientRect()
+    const disc = document.querySelector('.slide.active .vs-disc').getBoundingClientRect()
+    return { canvasWidth: document.querySelector('.stage').offsetWidth, stageWidth: stageRect.width, discMid: (disc.left + disc.right) / 2 - stageRect.left }
+  })
+  await classicPage.close()
+  assert(Math.abs(classicDisc.discMid - classicDisc.canvasWidth / 2) <= 2 || Math.abs(classicDisc.discMid - classicDisc.stageWidth / 2) <= 2,
+    `classic look: the vs disc is centred between the panels (${classicDisc.discMid.toFixed(1)}px of ${classicDisc.stageWidth.toFixed(1)}px)`)
 
   await activate('t19-list-markers')
   const markerGaps = await geometryPage.evaluate(() => [...document.querySelectorAll('.slide.active .fl-sublist > li')].map((item) => ({

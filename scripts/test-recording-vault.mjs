@@ -89,7 +89,11 @@ const PRESENTER = 41 // presents the talk in B
 const STUDIO = 42 // not a presenter window
 const OTHER_PRESENTER = 43 // a second presenter window of a talk in B
 let presenterPick = { root: B }
+// Record one slide again is off in 0.44.5 release builds (takesEnabled). The take-deletion cases run with the
+// development override on, as a development build sees them; the last case checks deletion with it off.
+let takesOn = true
 recording.registerRecordingIpc({
+  takesEnabled: () => takesOn,
   compilerDir: () => resolve('compiler/scripts'),
   userDataDir: () => userData,
   vaultRoot: () => A,
@@ -258,6 +262,28 @@ const runPayload = (extra = {}) => ({ talkSlug: SLUG, talkTitle: 'AI for researc
   assert.equal(realDelete.ok, true, realDelete.error)
   assert.deepEqual(trashed.sort(), [join(B, '_PRESENTATIONS', SLUG, `${rec.sessionId}.json`), recAudio].sort(), 'B\'s Run and its audio are trashed')
   trashed.length = 0
+  // Release 0.44.5: a Run's new takes (Record this slide again) go to the Bin with it, each by the same rules.
+  {
+    const parent = await handlers.get('recording:save')({ sender: presenter }, { ...runPayload({ mode: 'recording', kind: 'delivery' }), rawMarks: [{ event: 'start', tMs: 0 }, { event: 'stop', tMs: 30_000 }], audio })
+    assert.equal(parent.ok, true, parent.error)
+    const folder = join(B, '_PRESENTATIONS', SLUG)
+    const takeRun = (id) => ({ ...readRun(B, parent.sessionId), id, takeOf: { runId: parent.sessionId, change: 4000, slideId: 'b' }, audio: { r2Key: 'x', bytes: 3, uploaded: false, segments: [{ file: `${id}.webm`, bytes: 3, startMs: 0, endMs: 2000 }] } })
+    for (const id of ['sess-20261112-take1', 'sess-20261112-take2']) { writeFileSync(join(folder, `${id}.json`), JSON.stringify(takeRun(id))); writeFileSync(join(userData, 'recordings', `${id}.webm`), 'tak') }
+    // take2's id is also a Run in vault A: its media is shared and stays.
+    mkdirSync(join(A, '_PRESENTATIONS', SLUG), { recursive: true })
+    writeFileSync(join(A, '_PRESENTATIONS', SLUG, 'sess-20261112-take2.json'), JSON.stringify({ ...takeRun('sess-20261112-take2'), takeOf: undefined }))
+    assert.equal(listRuns(B).some((r) => r.id.includes('take')), false, 'takes are not in the list')
+    trashed.length = 0
+    const gone = await handlers.get('recording:delete-session')({ sender: other }, { talkSlug: SLUG, sessionId: parent.sessionId })
+    assert.equal(gone.ok, true, gone.error)
+    assert.ok(trashed.includes(join(folder, `${parent.sessionId}.json`)), 'the Run')
+    assert.ok(trashed.includes(join(folder, 'sess-20261112-take1.json')) && trashed.includes(join(userData, 'recordings', 'sess-20261112-take1.webm')), 'its take and the take\'s media')
+    assert.ok(trashed.includes(join(folder, 'sess-20261112-take2.json')), 'the second take\'s Run file')
+    assert.ok(!trashed.includes(join(userData, 'recordings', 'sess-20261112-take2.webm')), 'media another Run names stays')
+    rmSync(join(A, '_PRESENTATIONS'), { recursive: true, force: true })
+    trashed.length = 0
+    console.log('ok  a Run\'s takes go to the Bin with it; media another Run names stays')
+  }
   // The same for a kept Run: TalkWeaver's folder names it by id alone, so its talk must match.
   const wrongKept = await handlers.get('recording:delete-session')({ sender: presenter }, { talkSlug: 'no-such-talk', sessionId: nul.sessionId })
   assert.equal(wrongKept.ok, false, 'a kept Run asked for under another talk is refused')
@@ -751,6 +777,64 @@ for (const home of [null, A]) {
     }
   })
 }
+
+// Review 2 of the 0.44.5 takes, item 4: a Run of another talk in the same vault can name the same id (a
+// Run's own media, or a take's). The Run's own vault is searched too, leaving out only the Run deleted.
+await test('delete keeps media a Run of another talk in the same vault names, for a Run and for its take', async () => {
+  const recDir = join(userData, 'recordings'), otherTalk = 'same-vault-other-talk'
+  const run = (id, talkSlug, extra = {}) => ({ id, talkSlug, startedAt: '2026-11-13T12:00:00Z', audio: { segments: [{ file: `${id}.webm`, startMs: 0, endMs: 1000 }] }, ...extra })
+  const parentId = 'same-vault-parent', takeId = 'same-vault-take', ownId = 'same-vault-own'
+  const files = {
+    own: join(A, '_PRESENTATIONS', SLUG, `${ownId}.json`), ownOther: join(A, '_PRESENTATIONS', otherTalk, `${ownId}.json`),
+    parent: join(A, '_PRESENTATIONS', SLUG, `${parentId}.json`), take: join(A, '_PRESENTATIONS', SLUG, `${takeId}.json`), takeOther: join(A, '_PRESENTATIONS', otherTalk, `${takeId}.json`)
+  }
+  const audio = { own: join(recDir, `${ownId}.webm`), parent: join(recDir, `${parentId}.webm`), take: join(recDir, `${takeId}.webm`) }
+  mkdirSync(join(A, '_PRESENTATIONS', SLUG), { recursive: true }); mkdirSync(join(A, '_PRESENTATIONS', otherTalk), { recursive: true })
+  writeFileSync(files.own, JSON.stringify(run(ownId, SLUG))); writeFileSync(files.ownOther, JSON.stringify(run(ownId, otherTalk)))
+  writeFileSync(files.parent, JSON.stringify(run(parentId, SLUG)))
+  writeFileSync(files.take, JSON.stringify(run(takeId, SLUG, { takeOf: { runId: parentId, change: 4000, slideId: 'b' } })))
+  writeFileSync(files.takeOther, JSON.stringify(run(takeId, otherTalk)))
+  for (const path of Object.values(audio)) writeFileSync(path, 'AUDIO')
+  const originalTrash = globalThis.__recordingVaultTest.shell.trashItem
+  globalThis.__recordingVaultTest.shell.trashItem = async (path) => { trashed.push(path); rmSync(path) }
+  const event = { sender: sender(STUDIO) }
+  try {
+    trashed.length = 0
+    assert.deepEqual(await handlers.get('recording:delete-session')(event, { talkSlug: SLUG, sessionId: ownId, home: A }), { ok: true })
+    assert.deepEqual(trashed, [files.own], 'only the Run file: another talk\'s Run in the same vault names its id')
+    assert.equal(readFileSync(audio.own, 'utf8'), 'AUDIO', 'the Run\'s media stays')
+    trashed.length = 0
+    assert.deepEqual(await handlers.get('recording:delete-session')(event, { talkSlug: SLUG, sessionId: parentId, home: A }), { ok: true })
+    assert.deepEqual(trashed.sort(), [files.parent, audio.parent, files.take].sort(), 'the Run, its media and its take\'s Run file')
+    assert.equal(readFileSync(audio.take, 'utf8'), 'AUDIO', 'the take\'s media stays: another talk\'s Run in the same vault names its id')
+  } finally {
+    globalThis.__recordingVaultTest.shell.trashItem = originalTrash
+    for (const path of [...Object.values(files), ...Object.values(audio)]) rmSync(path, { force: true })
+  }
+})
+
+await test('with Record one slide again off, deleting a Run sees no takes: a take\'s Run file and media stay', async () => {
+  const recDir = join(userData, 'recordings'), folder = join(A, '_PRESENTATIONS', SLUG)
+  const run = (id, extra = {}) => ({ id, talkSlug: SLUG, startedAt: '2026-11-14T12:00:00Z', audio: { segments: [{ file: `${id}.webm`, startMs: 0, endMs: 1000 }] }, ...extra })
+  const parent = join(folder, 'takes-off-parent.json'), take = join(folder, 'takes-off-take.json')
+  const media = { parent: join(recDir, 'takes-off-parent.webm'), take: join(recDir, 'takes-off-take.webm') }
+  mkdirSync(folder, { recursive: true })
+  writeFileSync(parent, JSON.stringify(run('takes-off-parent'))); writeFileSync(take, JSON.stringify(run('takes-off-take', { takeOf: { runId: 'takes-off-parent', change: 4000, slideId: 'b' } })))
+  for (const path of Object.values(media)) writeFileSync(path, 'AUDIO')
+  const originalTrash = globalThis.__recordingVaultTest.shell.trashItem
+  globalThis.__recordingVaultTest.shell.trashItem = async (path) => { trashed.push(path); rmSync(path) }
+  takesOn = false
+  try {
+    trashed.length = 0
+    assert.deepEqual(await handlers.get('recording:delete-session')({ sender: sender(STUDIO) }, { talkSlug: SLUG, sessionId: 'takes-off-parent', home: A }), { ok: true })
+    assert.deepEqual(trashed.sort(), [parent, media.parent].sort(), 'the Run and its own media only')
+    assert.ok(existsSync(take) && existsSync(media.take), 'the take is not seen')
+  } finally {
+    takesOn = true
+    globalThis.__recordingVaultTest.shell.trashItem = originalTrash
+    for (const path of [parent, take, ...Object.values(media)]) rmSync(path, { force: true })
+  }
+})
 
 await test('a Run without a valid duplicate still trashes its audio', async () => {
   const recDir = join(userData, 'recordings')

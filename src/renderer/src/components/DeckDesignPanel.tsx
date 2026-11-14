@@ -2,7 +2,7 @@
 // were a modal, "Talk design"; the modal is gone and the command ids open the tab). Details = TALK_DETAILS_KEYS, Design = the rest.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Search, Save, Lock, Wand2 } from 'lucide-react'
-import { METADATA_REGISTRY } from '../../../shared/metadata-registry'
+import { METADATA_REGISTRY, metadataListError } from '../../../shared/metadata-registry'
 import {
   applyMetadataDefaults,
   deckSettingsViewModel,
@@ -299,6 +299,34 @@ function FieldRow({ field, value, appDefault, showKey, onChange }: { field: Surf
   )
 }
 
+/** The typed list of a list-capable key (registry listOf): the items in order, with commas; the item that is not one of
+ *  them is named. Checked as it is typed, against the same rule the compiler and Settings use. */
+function ListEntry({ id, field, value, onChange }: { id: string; field: SurfaceFieldModel; value: string; onChange: (value: string) => void }) {
+  const list = field.list!
+  const entry = METADATA_REGISTRY.find((candidate) => candidate.key === field.key)
+  // The box keeps what is typed: a list that starts with a single choice ("blue, …") must not be cleared when the
+  // value briefly reads as that choice. A change from elsewhere (the choices above) replaces it.
+  const [text, setText] = useState(value)
+  const typed = useRef(value)
+  useEffect(() => { if (value !== typed.current) { typed.current = value; setText(value) } }, [value])
+  const error = entry && text.trim() ? metadataListError(entry, text) : null
+  return (
+    <div style={{ marginTop: 7 }}>
+      <label htmlFor={id} style={S.description}>Or rotate through your own list, in order:</label>
+      <input
+        id={id}
+        type="text"
+        value={text}
+        placeholder={list.placeholder}
+        onChange={(event) => { const next = event.target.value; typed.current = next; setText(next); onChange(next) }}
+        aria-invalid={error ? true : undefined}
+        style={{ ...S.input, ...S.inputEmbedded }}
+      />
+      {error && <div style={S.custom}>{error}</div>}
+    </div>
+  )
+}
+
 /** A closed vocabulary, always as choices: segmented up to five, a select above that. */
 function Picker({ id, field, value, onChange }: { id: string; field: SurfaceFieldModel; value: string; onChange: (value: string) => void }) {
   const options = field.options as SurfaceOptionModel[]
@@ -308,7 +336,7 @@ function Picker({ id, field, value, onChange }: { id: string; field: SurfaceFiel
       {field.control === 'select'
         ? (
             <select id={id} value={value} onChange={(event) => onChange(event.target.value)} style={{ ...S.input, ...S.inputEmbedded }}>
-              {!chosen && <option value={value}>custom: {value}</option>}
+              {!chosen && <option value={value}>{field.list && !field.list.error ? `your list: ${value}` : `custom: ${value}`}</option>}
               {options.map((option) => (
                 <option key={option.value || '(default)'} value={option.value} title={option.explanation}>{option.label}</option>
               ))}
@@ -334,7 +362,10 @@ function Picker({ id, field, value, onChange }: { id: string; field: SurfaceFiel
               })}
             </div>
           )}
-      {!chosen && value !== '' && (
+      {field.list && (
+        <ListEntry id={`${id}-list`} field={field} value={value} onChange={onChange} />
+      )}
+      {!chosen && value !== '' && !field.list && (
         <div style={S.custom}>
           This outline holds <code style={S.code}>{value}</code>, which is not one of the documented choices. Pick one above to return to them.
         </div>

@@ -8,7 +8,7 @@ export async function videoPackageWords(tx: Transcription, input: VideoPackReque
   if (!current?.hasWords) {
     const made = await tx.run(input.talkSlug,input.sessionId,null,signal)
     if (!made.ok) throw new Error(made.error === 'busy' ? 'Another Run is being transcribed. Try again when it finishes.' : made.error === 'cancelled' ? 'Package cancelled.' : made.error)
-    if (!made.hasWords) throw new Error('The transcription script did not make word timings. Check Settings → Transcription.')
+    if (!made.hasWords) throw new Error('The transcription script did not make word timings. Check Settings → Get started → Transcription.')
     current = await tx.get(input.talkSlug,input.sessionId)
   }
   if (!current?.hasWords || !Array.isArray(current.words) || !current.words.length) throw new Error('Word timings could not be read from this transcript.')

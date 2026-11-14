@@ -95,3 +95,5 @@
 /* R17: on a narrow monitor column, labels collapse to icons in a fixed order; nothing wraps or overlaps. */
 @container (max-width: 560px) { .twrp-of { display: none; } }
 @container (max-width: 470px) { .twrp-l-export { display: none; } }
+/* Smooth joins: a still of the frame before a join, faded out over it (LayeredPlayer's fadeFromHere). */
+.twrp-dissolve { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; pointer-events: none; }

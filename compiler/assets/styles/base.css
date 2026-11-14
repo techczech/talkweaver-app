@@ -2222,19 +2222,39 @@
   }/* @order 1303 */
 
   @media print {
-    body { overflow: visible; background: white; }
+    /* One slide per landscape page: the screen slide, scaled uniformly to the paper (ADR-0018: slides
+       scale, they do not reflow). For the print, slideFit.preparePrint gives every slide a parent
+       canvas (.tw-print-canvas), a 1280x720 size container like the projector's stage, so the slide
+       keeps every screen rule (its padding, background and rail) and every cqw/cqh resolves as on
+       screen; it fits each slide in this layout before the browser paginates. */
+    @page { size: landscape; margin: 8mm; }
+    html, body { background: #fff; height: auto; overflow: visible; }
     .footer, .drawer, .notes-drawer, .progress, .presenter-root { display: none !important; }
-    .deck, .stage { display: block; min-height: auto; height: auto; overflow: visible; }
-    /* Paper is not a scaled canvas: slides flow as pages at the page width (ADR-0030 applies on screen). */
-    .deck > .stage { position: static; width: auto; transform: none !important; }
-    .deck { background: none !important; }
-    .slide {
-      position: relative;
-      display: block !important;
-      min-height: 90vh;
-      page-break-after: always;
-      padding: 7vh 8vw;
+    /* The presenter window prints the deck, not the presenter's console: nothing beside the deck prints
+       (the console, and every notice, toast, prompt, bar or palette the app lays over it). */
+    body.presenter-mode .deck { display: block !important; }
+    body.presenter-mode > :not(.deck) { display: none !important; }
+    .deck { display: block; position: static; height: auto; min-height: 0; overflow: visible; background: none !important; container-type: inline-size; }
+    .deck > .stage { position: static; display: block; width: 1280px; height: auto; overflow: visible; transform: none !important; container-type: normal; zoom: calc(100cqw / 1280px); }
+    .stage > .tw-print-canvas { position: relative; display: block; box-sizing: border-box; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; container-type: size; break-after: page; break-inside: avoid; }
+    .stage > .tw-print-canvas > .slide { display: grid !important; position: absolute; inset: 0; }
+    .stage > :last-child { break-after: auto; }
+    /* The side rail spans 99 grid rows (grid-row: 1 / span 99), so any row gap is paid 98 times. The
+       fixed 1280px canvas never enters the narrow-stage rules; a narrow print fallback (a slide at a
+       portrait paper's width, below) does, and its list and statement rules (row-gap: 20px) would push
+       a rail slide's later items off the page. There, and only there, the rail takes no row gaps. */
+    @container (max-width: 950px) {
+      .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content { row-gap: 0 !important; }
     }
+    /* The one paper exception to "the screen slide, scaled": a rail statement with a picture stacks the
+       picture over its paragraphs (layouts/statement.css), but a picture written after the paragraphs
+       leaves the first one on the 99-row span and the rest below the slide, on screen as in 0.44.0.
+       0.44.0's flowing print still showed them; on paper every paragraph takes its own row below the
+       picture, so none is lost. */
+    .slide:is([data-title-layout="left"], [data-title-layout="hidden"]) > .slide-content.layout-statement:has(> .slide-figure) > :not(.slide-head):not(.slide-figure) { grid-row: auto !important; }
+    /* Speaker notes print under their slide's box (moved after the slide for the print). */
+    .deck > .stage > .tw-print-canvas:has(+ aside.notes) { break-after: avoid; }
+    .deck > .stage > aside.notes { break-after: page; break-inside: auto; }
     aside.notes {
       display: block;
       margin-top: 32px;
@@ -2244,6 +2264,12 @@
       color: #333;
     }
     [data-fragment].hidden-fragment { opacity: 1; transform: none; }
+    /* A video prints its poster, its current frame or its placeholder note (slideFit.preparePrint). */
+    figure.tw-print-video-on > video { display: none !important; }
+    figure.tw-print-video-on > img.tw-print-video, figure.tw-print-video-on > canvas.tw-print-video { display: block; width: 100%; height: auto; max-height: 100%; object-fit: contain; }
+    figure.tw-print-video-on > .video-placeholder-note.tw-print-video { display: flex; }
+    /* A carousel prints one page per item (slideFit.preparePrint clones the slide per item). */
+    .carousel-print-src { display: none !important; }
   }/* @order 1304 */
 
   /* === Reveal / Focus stepping modes (Dominik's redesign) ===

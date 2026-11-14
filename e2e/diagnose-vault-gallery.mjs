@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import {_electron as electron} from 'playwright'
 import {mkdirSync,mkdtempSync,cpSync,writeFileSync,readFileSync,rmSync} from 'node:fs'
 import {resolve,join} from 'node:path'
-const repo=resolve('.'),evidence=join(repo,'evidence/vault-gallery/redesign-repairs/e2e')
+// Screenshots and results go to the git-ignored artefacts/ folder, never over tracked files; to refresh the
+// recorded evidence (evidence/vault-gallery/redesign-repairs/e2e), name it: VAULT_GALLERY_EVIDENCE=<folder>.
+const repo=resolve('.'),evidence=process.env.VAULT_GALLERY_EVIDENCE?resolve(process.env.VAULT_GALLERY_EVIDENCE):join(repo,'artefacts/vault-gallery-e2e')
 mkdirSync(evidence,{recursive:true})
 const fixture=mkdtempSync(join(evidence,'fixture-')),vault=join(fixture,'vault'),userData=join(fixture,'userData'),home=join(fixture,'home')
 let app

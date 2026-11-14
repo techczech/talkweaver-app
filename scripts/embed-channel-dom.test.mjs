@@ -208,7 +208,11 @@ async function deck() {
   const frame = (name) => page.frames().find((candidate) => candidate.name() === name)
   await frame('h').waitForFunction(() => typeof window.stolen === 'string')
   await frame('h2').waitForFunction(() => typeof window.stolen === 'string')
-  const state = () => page.evaluate(() => ({ forwarded: window.forwarded, keys: window.keys, fromProjector: window.fromProjector }))
+  // Each capture frame reports where it starts once paired (embed-agent.js, 800f8bb2): part of the
+  // handshake, not of what the checks below do, so the record starts empty after them.
+  await page.waitForFunction(() => [0, 1].every((index) => window.forwarded.some((entry) => entry.index === index && entry.event.k === 'scroll')))
+  await page.evaluate(() => { window.forwarded.length = 0 })
+  const state =() => page.evaluate(() => ({ forwarded: window.forwarded, keys: window.keys, fromProjector: window.fromProjector }))
   const settle = () => page.waitForTimeout(200)
   return { context, page, frame, state, settle, warnings, mount, ready }
 }

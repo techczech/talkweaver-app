@@ -16,15 +16,17 @@
   background: var(--look-lead); clip-path: circle(23.75cqw at calc(100% - 5.75cqw) 50%);
 }
 /* the logo and QR leave the side rail: the logo sits above the kicker, the QR in the bottom-left corner beside the
-   byline, so the title has the whole width left of the disc */
+   byline, so the title has the whole width left of the disc. The byline stands well clear of the QR (24cqw), so a
+   short handout address (17 characters, about 17cqw) stays on one line under the code; a longer address breaks
+   after a slash (the compiler marks those places), never inside a word. */
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-side {
   position: absolute; left: 5cqw; top: 4.4cqw; bottom: 4.4cqw; width: auto; min-width: 0; background: none; border: 0; padding: 0; z-index: 1;
   display: flex; flex-direction: column; justify-content: space-between; pointer-events: none;
 }
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-side > * { pointer-events: auto; }
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-side .tp-qr { margin: auto 0 0; }
-.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-side .tp-qr .qr-caption { max-width: 15.6cqw; font-size: 1.5cqw; color: var(--look-muted); }
-.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing):has(> .tp-side .tp-qr) .tp-foot { padding-left: 17.5cqw; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-side .tp-qr .qr-caption { max-width: 21cqw; font-size: 1.5cqw; color: var(--look-muted); overflow-wrap: normal; }
+.slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing):has(> .tp-side .tp-qr) .tp-foot { padding-left: 24cqw; }
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing):has(> .tp-side .tp-logo) .tp-main { padding-top: 10cqw; }
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-side:empty { display: none; }
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-main {
@@ -52,3 +54,16 @@
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-foot { flex-wrap: wrap; row-gap: .4em; }
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-who { max-width: none; }
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-whenweb { text-align: left; }
+
+/* A QR code's address, in the look and its safe drawing, on the title and closing slides and in a slide's corner (the
+   rail too): always shown whole, never cut. It breaks only after a slash (each part between slashes is one .qr-part
+   that does not wrap); a part that alone is wider than the caption opens its marked break places (slide-fit.js
+   fitQrCaptions sets data-qr-long), and breaks anywhere only where none of those fits. It takes the lines it needs. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"]) .qr-caption {
+  white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
+  overflow-wrap: normal !important; word-break: normal !important; hyphens: manual;
+}
+.slide:is([data-look="ocean"], [data-look="ocean-safe"]) .qr-caption .qr-part { white-space: nowrap; }
+/* a <wbr> breaks a line even inside nowrap: a part's own break places are taken out of layout until it is too long */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"]) .qr-caption .qr-part:not([data-qr-long]) > wbr { display: none; }
+.slide:is([data-look="ocean"], [data-look="ocean-safe"]) .qr-caption .qr-part[data-qr-long] { white-space: normal; overflow-wrap: anywhere; }

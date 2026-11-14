@@ -271,29 +271,15 @@
   content: counter(cy); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   font: 700 2.8cqw/1 var(--look-face-display); color: var(--look-on-main);
 }
-/* the label sits outside the stop: to the right of stops on the right half and the centre line, to the left of the rest */
-.slide[data-look="ocean"] .cycle-diagram .cycle-node > :is(.cycle-cap, .cycle-stage) {
-  position: absolute; top: 50%; left: calc(100% + 1.4cqw); transform: translateY(-50%);
-  width: 22cqw; text-align: left; margin: 0 !important;
-}
-.slide[data-look="ocean"] .cycle-diagram .cycle-node:is([style^="left:0"], [style^="left:1"], [style^="left:2"], [style^="left:3"], [style^="left:4"]) > :is(.cycle-cap, .cycle-stage) {
-  left: auto; right: calc(100% + 1.4cqw); text-align: right;
-}
-.slide[data-look="ocean"] .cycle-diagram .cycle-node:has(> .cycle-stage) > .cycle-stage { transform: translateY(calc(-100% - .2cqw)); }
-.slide[data-look="ocean"] .cycle-diagram .cycle-node:has(> .cycle-stage) > .cycle-cap { transform: none; }
+/* the labels sit outside the stop, in one box set outward from the ring: zz-x-ocean-60-loop-labels.css */
 .slide[data-look="ocean"] .cycle-diagram .cycle-cap {
   font: 700 var(--look-size-label)/1.15 var(--look-face-display) !important; color: var(--look-ink) !important;
-  overflow-wrap: break-word;
 }
 .slide[data-look="ocean"] .cycle-diagram .cycle-stage {
   font: 700 var(--look-size-body)/1.15 var(--look-face-text) !important; letter-spacing: 0 !important; text-transform: none !important; color: var(--look-main) !important;
 }
 .slide[data-look="ocean"].mode-reveal .cycle-diagram .cycle-node[data-mode-state="current"] { background: var(--look-current) !important; }
 .slide[data-look="ocean"].mode-reveal .cycle-diagram .cycle-node[data-mode-state="current"]::before { color: var(--look-on-marker); }
-/* a stop on the vertical centre line: the ring leaves it sideways, so its label sits right of it and clear of the
-   ring: above the stop's middle at the top of the circle, below it at the bottom */
-.slide[data-look="ocean"] .cycle-diagram .cycle-node[style^="left:50.00%"]:is([style*="top:0"], [style*="top:1"], [style*="top:2"], [style*="top:3"], [style*="top:4"]) > .cycle-cap:only-child { transform: translateY(-100%); }
-.slide[data-look="ocean"] .cycle-diagram .cycle-node[style^="left:50.00%"]:is([style*="top:5"], [style*="top:6"], [style*="top:7"], [style*="top:8"], [style*="top:9"]) > .cycle-cap:only-child { transform: none; }
 
 /* =====================================================================================
    BIG NUMBERS ({stats}): fields that fill the band, the number very large; colour by count

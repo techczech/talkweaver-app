@@ -27,7 +27,7 @@ export type ConnectionId =
 export type ConnectionState = 'on' | 'part' | 'off' | 'wait'
 
 /** What an action does. The renderer names one of these; main holds every URL and the Settings route. */
-export type ConnectionActionId = 'open-settings' | 'open-cloudflare' | 'get-slidewell' | 'none'
+export type ConnectionActionId = 'open-settings' | 'open-transcription' | 'open-cloudflare' | 'get-slidewell' | 'none'
 
 export interface ConnectionAction { id: ConnectionActionId; label: string; enabled: boolean }
 
@@ -55,6 +55,8 @@ export interface ConnectionSources {
   recording: RecordingStorageRow
   /** The Transcription row (Python, script and the ffmpeg that ships with the app). */
   transcription: TranscriptionRow
+  /** The built-in helper is present on macOS 26 or later; language models may still need downloading. */
+  builtinTranscription?: boolean
   /** On this Mac: a program found where the app looks for it. */
   tools: { libreoffice: boolean; poppler: boolean; agents: string[] }
   /** The person's own open vaults (never the example) and what each sits in or holds. */
@@ -103,7 +105,7 @@ function partly(found: string[], missing: string[]): string {
 export function connectionRows(sources: ConnectionSources): ConnectionRow[] {
   const T = CONNECTION_TEXT
   const settings: ConnectionAction = { id: 'open-settings', label: T.setUpInSettings, enabled: true }
-  // Every Cloudflare-backed row (Pages, live, share address, recording storage, transcription) opens Settings → Cloudflare.
+  // Every Cloudflare-backed row (Pages, live, share address, recording storage) opens Settings → Cloudflare.
   const cloudflare: ConnectionAction = { id: 'open-cloudflare', label: T.setUpInSettings, enabled: true }
   const base = (id: ConnectionId, icon: string, name: string, need: string, without: string): ConnectionRow =>
     ({ id, icon, name, need, without, state: 'off', stateText: T.notSetUp, action: null, missing: [] })
@@ -154,10 +156,20 @@ export function connectionRows(sources: ConnectionSources): ConnectionRow[] {
   follow(r2, recordingRowEdge(sources.recording))
   if (sources.recording.checking) r2.state = 'part'
 
-  // 5. Local transcription: Settings' Transcription row (ffmpeg ships with the app).
+  // 5. Local transcription: built in on macOS 26 or later (the helper is there); otherwise the
+  // optional external engine, as Settings → Get started → Transcription shows it.
   const transcription = base('transcription', 'mic', 'Local transcription',
-    'Scripts and notes from a recording (Python and a speech model; ffmpeg ships with TalkWeaver)', 'Recording and playback work')
+    'Scripts and notes from a recording: built in on macOS 26 or later, or an external Python engine you set up',
+    'Recording and playback work. Precise word timing is a separate setting under Recording')
   follow(transcription, transcriptionRowEdge(sources.transcription))
+  if (sources.builtinTranscription) {
+    transcription.state = 'on'
+    transcription.stateText = 'Built in on this Mac; a language may download once'
+    transcription.action = null
+  } else {
+    transcription.stateText = `External engine: ${transcription.stateText}`
+    if (transcription.action) transcription.action = { id: 'open-transcription', label: T.setUpInSettings, enabled: true }
+  }
 
   const t = sources.tools
   // 5. LibreOffice and Poppler: both, for pictures of the original slides.

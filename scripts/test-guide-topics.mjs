@@ -45,8 +45,8 @@ const FORBIDDEN = [
 ]
 const prose = (t) => (t.sentences ?? [t.title ?? '']).join(' ')
 
-await test('How it works: ten topics, one to three plain sentences each, in the owner’s words for the outline topic', () => {
-  assert.equal(HOW_TOPICS.length, 10)
+await test('How it works: fifteen topics, one to three plain sentences each, in the owner’s words for the outline topic', () => {
+  assert.equal(HOW_TOPICS.length, 15)
   HOW_TOPICS.forEach((topic, i) => {
     assert.equal(topic.id, `how.${i + 1}`)
     assert.ok(topic.title.trim())
@@ -76,13 +76,15 @@ await test('Features to delight you: four section headings the drawing’s; ever
   FEATURE_ROWS.forEach((row, i) => {
     assert.equal(row.n, i + 1)
     assert.equal(row.id, `feature.${i + 1}`)
-    assert.match(row.title, /^(Make|Ask|Search|Reveal|Start|Scroll|Paste|Open|Read|Copy|Show|Record|Publish|Send)\b/, `${row.id} starts with a verb: ${row.title}`)
+    assert.match(row.title, /^(Make|Ask|Search|Reveal|Start|Scroll|Paste|Open|Read|Copy|Show|Record|Publish|Send|Edit|Export)\b/, `${row.id} starts with a verb: ${row.title}`)
     assert.ok(/[⌘⇧⌥]|›|\bmenu\b|^[A-Z](, [A-Z])*$|Copy venue-screen link/.test(row.hint), `${row.id} names a key or a menu route: ${row.hint}`)
     for (const [pattern, name] of FORBIDDEN) assert.ok(!pattern.test(row.title), `${row.id} uses ${name}`)
     assert.ok(!HOW_TOPICS.some((t) => t.title.toLowerCase() === row.title.toLowerCase().replace(/\.$/, '')), `${row.id} repeats a How it works topic`)
   })
-  assert.equal(FEATURE_ROWS.length, 16)
-  assert.deepEqual(FEATURE_SECTIONS.slice(0, 3).map((s) => s.groups.reduce((a, g) => a + g.rows.length, 0)), [3, 9, 4])
+  assert.equal(FEATURE_ROWS.length, 18)
+  assert.deepEqual(FEATURE_SECTIONS.slice(0, 3).map((s) => s.groups.reduce((a, g) => a + g.rows.length, 0)), [3, 9, 6])
+  // Rows added after the drawing are appended, so a kept read mark (feature.N) still names its row.
+  assert.deepEqual(FEATURE_ROWS.slice(16).map((r) => r.title), ['Edit a recording: trim it, cut words, move a slide change.', 'Export a video with chapters, captions and a YouTube chapter list.'])
   // Rows that only described how TalkWeaver works moved to How it works (owner check 10 Oct).
   for (const gone of ['A talk is a folder.', 'A handout comes with every talk.', 'Every delivery is on record.']) assert.ok(!FEATURE_ROWS.some((r) => r.title === gone), gone)
 })
@@ -136,7 +138,7 @@ const talks = readdirSync(BUNDLE, { withFileTypes: true }).filter((e) => e.isDir
 const byTitle = new Map(talks.map((t) => [t.title, t]))
 
 await test('every topic has one working Try it: an example talk that exists, or a registered command that needs no talk', async () => {
-  const commandHandlers = { 'search-talks': 'search-talks', history: 'history', settings: 'settings' }
+  const commandHandlers = { 'search-talks': 'search-talks', history: 'history', settings: 'settings', studio: 'studio' }
   for (const topic of HOW_TOPICS) {
     const { target, lead, does } = topic.tryIt
     assert.ok(lead.trim() && does.trim(), `${topic.id} says what Try it does`)
@@ -149,8 +151,8 @@ await test('every topic has one working Try it: an example talk that exists, or 
   }
   // The App runs commands through three window events; each has a listener there and nowhere needs a talk open.
   const app = readFileSync(join(REPO, 'src/renderer/src/App.tsx'), 'utf8')
-  for (const event of ['tw-open-settings', 'tw-open-history', 'tw-search-talks']) assert.ok(app.includes(`addEventListener('${event}'`), event)
-  assert.deepEqual(new Set(HOW_TOPICS.filter((t) => t.tryIt.target.kind === 'command').map((t) => t.tryIt.target.id)), new Set(['search-talks', 'history', 'settings']))
+  for (const event of ['tw-open-settings', 'tw-open-history', 'tw-open-studio', 'tw-search-talks']) assert.ok(app.includes(`addEventListener('${event}'`), event)
+  assert.deepEqual(new Set(HOW_TOPICS.filter((t) => t.tryIt.target.kind === 'command').map((t) => t.tryIt.target.id)), new Set(['search-talks', 'history', 'settings', 'studio']))
 })
 
 await test('each Try it caption says what the example talk holds', async () => {
@@ -175,21 +177,52 @@ await test('each Try it caption says what the example talk holds', async () => {
   assert.ok(readdirSync(join(BUNDLE, '_PRESENTATIONS', 'lightning-round')).some((f) => f.startsWith('delivery-')), 'one kept delivery for History to list')
 })
 
+await test('topics 11 to 15 name on-screen labels this build has, and the Ocean Try it opens a talk in the Ocean look', () => {
+  const read = (path) => readFileSync(join(REPO, path), 'utf8')
+  const labels = [
+    ['src/preload/present-rec-ui.ts', ['Slides and voice', 'Slides, voice and camera']],
+    ['src/shared/command-registry.ts', ["'TalkWeaver Studio…'"]],
+    ['src/renderer/src/components/recording/RecordingPanel.tsx', ['Edit video', 'Export video…', '<span>Camera</span>']],
+    ['src/renderer/src/components/recording/RecordingEditor.tsx', ['Tidy up…', 'Look and sound…', 'Record this slide again']],
+    ['src/renderer/src/components/recording/LookAndSound.tsx', ['Smooth each join with a quick fade, so your face does not jump', 'Even out the volume']],
+    ['src/renderer/src/components/recording/FacePosition.tsx', ["'Face: corner'", "'In the corner'", "'Side by side'", "'Face only'", "'Slide only'"]],
+    ['src/renderer/src/components/recording/RecordSlideAgain.tsx', ["'Use this take'", "'Use the first take'"]],
+    ['src/renderer/src/components/recording/useRecordingExport.tsx', ['Also save', 'Captions file (SRT and WebVTT)', 'Chapter list to paste into YouTube', 'Sound only (M4A)']],
+    ['src/shared/settings-schema.ts', ["label: 'Words written out by'", "label: 'Language for words'", "label:'This Mac (built in)'"]],
+    ['src/renderer/src/components/PreciseWordTimingSettings.tsx', ['Precise word timing']],
+    ['src/shared/metadata-registry.ts', ["label: 'Ocean'", "label: 'Ocean, bold amber'", "label: 'Classic'", "label: 'Green (classic)'", "label: 'Palette'"]],
+    ['src/renderer/src/components/DeckDesignPanel.tsx', ['>Design<']]
+  ]
+  for (const [path, wanted] of labels) for (const label of wanted) assert.ok(read(path).includes(label), `${path} has ${label}`)
+  // Topic 13 says the Camera switch puts the camera in the video or leaves it out; where it appears is each
+  // slide's Face: corner choice. The switch and the export summary say the same and never say "in the corner".
+  const panel = read('src/renderer/src/components/recording/RecordingPanel.tsx'), exportSheet = read('src/renderer/src/components/recording/useRecordingExport.tsx')
+  assert.ok(panel.includes("'Your camera is in the video. Click to leave it out.'") && panel.includes("'Your camera is left out of the video. Click to put it in.'"), 'the Camera switch')
+  assert.ok(exportSheet.includes("'with camera · '") && exportSheet.includes("'without camera · '"), 'the export summary')
+  for (const [path, text] of [['RecordingPanel.tsx', panel], ['useRecordingExport.tsx', exportSheet]]) assert.ok(!/camera[^'\n]{0,40}in the corner|put it in the corner/i.test(text), `${path} does not place the camera in the corner`)
+  const body = HOW_TOPICS.slice(10).map((t) => topicBody(t)).join(' ')
+  for (const label of ['Slides and voice', 'Slides, voice and camera', 'TalkWeaver Studio…', 'Edit video', 'Tidy up…', 'Export video…', 'Also save', 'Captions file (SRT and WebVTT)', 'Chapter list to paste into YouTube', 'Sound only (M4A)', 'Camera', 'Look and sound…', 'Smooth each join with a quick fade, so your face does not jump', 'Even out the volume', 'Face: corner', 'In the corner', 'Side by side', 'Face only', 'Slide only', 'Words written out by', 'This Mac (built in)', 'Precise word timing', 'Ocean, bold amber', 'Green (classic)', 'Design › Palette']) assert.ok(body.includes(label), label)
+  // Record one slide again is off in 0.44.5: no topic names it or its take choices.
+  for (const label of ['Record this slide again', 'Use this take', 'Use the first take', 'take']) assert.ok(!new RegExp(`\\b${label}\\b`).test(body), `no topic mentions ${label} while it is off`)
+  // No example talk sets a palette, so each compiles in Ocean, the default.
+  for (const t of talks) assert.ok(!/^palette:/m.test(t.text), `${t.title} sets no palette`)
+})
+
 await test('read marks: kept by the progress module, across a restart, apart from the chapters and the example vault', () => {
   let learn = emptyGuideLearn()
-  assert.equal(howReadCount(learn), '0 of 10 read')
+  assert.equal(howReadCount(learn), '0 of 15 read')
   assert.equal(topicStatusText(learn, 'how.3'), 'Not opened')
   learn = withTopicRead(learn, 'how.3')
   assert.equal(topicStatusText(learn, 'how.3'), 'Read')
-  assert.equal(howReadCount(learn), '1 of 10 read')
+  assert.equal(howReadCount(learn), '1 of 15 read')
   assert.equal(withTopicRead(learn, 'how.3'), learn, 'opening again changes nothing')
   assert.equal(withTopicRead(learn, ''), learn)
   assert.equal(withTopicRead(learn, 42), learn)
-  assert.ok(isHowTopicId('how.9') && isHowTopicId('how.10') && !isHowTopicId('how.11') && isFeatureId('feature.16') && !isFeatureId('feature.17'))
+  assert.ok(isHowTopicId('how.9') && isHowTopicId('how.15') && !isHowTopicId('how.16') && isFeatureId('feature.18') && !isFeatureId('feature.19'))
   // The two lists keep their marks side by side, and a chapter or a command does not touch them.
   learn = withTopicRead(withChapterOpened(withCommandRan(learn, 'palette-1'), 'Present'), 'feature.2')
   assert.ok(isRead(learn, 'how.3') && isRead(learn, 'feature.2'))
-  assert.equal(howReadCount(learn), '1 of 10 read', 'feature marks are not topics')
+  assert.equal(howReadCount(learn), '1 of 15 read', 'feature marks are not topics')
   // Main is the one writer: a store over a config, then a new store (a restart) over what was saved.
   let saved
   const heard = []
@@ -233,20 +266,20 @@ try {
   const noop = () => {}
   const learn = { ...emptyGuideLearn(), read: ['how.1', 'how.2', 'feature.1', 'feature.6'] }
 
-  await test('render, state 08: ten topics, two Read, the rest Not opened', () => {
+  await test('render, state 08: fifteen topics, two Read, the rest Not opened', () => {
     const html = m.how({ learn, openId: null, onOpen: noop, onBack: noop, onTry: noop })
-    assert.equal((html.match(/data-topic-row=/g) ?? []).length, 10)
+    assert.equal((html.match(/data-topic-row=/g) ?? []).length, 15)
     assert.equal((html.match(/data-topic-state="read"/g) ?? []).length, 2)
-    assert.equal((html.match(/Not opened/g) ?? []).length, 8)
+    assert.equal((html.match(/Not opened/g) ?? []).length, 13)
     const t = text(html)
-    assert.ok(t.includes('How it works') && t.includes('2 of 10 read'))
+    assert.ok(t.includes('How it works') && t.includes('2 of 15 read'))
     for (const topic of HOW_TOPICS) assert.ok(t.includes(topic.title), topic.title)
   })
 
   await test('render, state 09: a topic is a heading, its sentences, one picture and one Try it', () => {
     const html = m.how({ learn, openId: 'how.3', onOpen: noop, onBack: noop, onTry: noop })
     const t = text(html)
-    assert.ok(t.includes('3 of 10') && t.includes('Headings become slides.'))
+    assert.ok(t.includes('3 of 15') && t.includes('Headings become slides.'))
     for (const s of HOW_TOPICS[2].sentences) assert.ok(t.includes(s.replace(/`/g, '')), s)
     assert.equal((html.match(/data-topic-sentence/g) ?? []).length, 2)
     assert.equal((html.match(/data-guide-picture=/g) ?? []).length, 1)
@@ -256,12 +289,12 @@ try {
     const button = (page, name) => page.match(new RegExp(`<button[^>]*${name}[^>]*>`))[0]
     assert.ok(!button(html, 'data-topic-prev').includes('disabled') && !button(html, 'data-topic-next').includes('disabled'))
     assert.ok(button(m.how({ learn, openId: 'how.1', onOpen: noop, onBack: noop, onTry: noop }), 'data-topic-prev').includes('disabled'), 'no previous before the first')
-    assert.ok(button(m.how({ learn, openId: 'how.10', onOpen: noop, onBack: noop, onTry: noop }), 'data-topic-next').includes('disabled'), 'no next after the last')
+    assert.ok(button(m.how({ learn, openId: 'how.15', onOpen: noop, onBack: noop, onTry: noop }), 'data-topic-next').includes('disabled'), 'no next after the last')
   })
 
   await test('every topic draws its own picture', () => {
     const keys = HOW_TOPICS.map((t) => t.picture)
-    assert.equal(new Set(keys).size, 10)
+    assert.equal(new Set(keys).size, 15)
     for (const key of keys) assert.ok(m.picture(key).includes(`data-guide-picture="${key}"`) && m.picture(key).includes('<rect'), key)
   })
 
@@ -272,7 +305,7 @@ try {
     for (const row of FEATURE_ROWS) assert.ok(t.includes(row.title), row.title)
     assert.ok(t.includes('1. What presentations are') && t.includes('4. How you connect, and what each needs'))
     assert.ok(t.includes('Without any connection') && t.includes('Live, if you choose to connect'))
-    assert.equal((html.match(/data-feature-row=/g) ?? []).length, 16)
+    assert.equal((html.match(/data-feature-row=/g) ?? []).length, 18)
     assert.equal((html.match(/data-feature-state="read"/g) ?? []).length, 2)
     assert.ok(t.includes('Share menu') && t.includes('Tools › Studio'))
     assert.ok(t.includes('What it connects to. States are read from this Mac.'))

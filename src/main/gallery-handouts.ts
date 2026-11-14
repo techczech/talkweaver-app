@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { normaliseRun } from './runs.ts'
+import { isTakeRun } from '../shared/recording-takes.ts'
 import { readHandoutUrl } from './publishing-logic.ts'
 import { collectPublishedPages, type PublishedPagesDeps, type linkedPages } from './published-pages.ts'
 import { galleryHandouts } from '../shared/gallery-handouts.ts'
@@ -24,7 +25,7 @@ export async function collectGalleryHandouts(talk:GalleryTalk, root:string, io:{
   for(const file of names){
    if(!io.current())return null
    if(!file.endsWith('.json') || file.endsWith('/manifest.json'))continue
-   try {const run=normaliseRun(JSON.parse((await io.read(file)).text));if(run.handoutUrl && run.talkSlug===talk.slug)snapshot.runs.push({vaultId:talk.vaultId,root,run})}catch{snapshot.unreadable++}
+   try {const run=normaliseRun(JSON.parse((await io.read(file)).text));if(run.handoutUrl && run.talkSlug===talk.slug && !isTakeRun(run))snapshot.runs.push({vaultId:talk.vaultId,root,run})}catch{snapshot.unreadable++}
   }
  }catch{snapshot.unreadable++}
  if(!io.current())return null

@@ -33,11 +33,12 @@ For AI chat and terminal slides, also read `talkweaver-ai-chat-and-terminal-slid
 
 ## 0. The deck's look and colours (0.44)
 
-A talk with no `palette:` draws the Ocean look: every section in Ocean blue, Deeper Ocean as the second strength, white and light grounds, near-black text, and amber only for the current item of a reveal, the key words of a light statement and highlighted bars. Colour follows the count of things on the slide: one idea fills the slide (statement, section divider); two things are a light half and an Ocean half (`{contrast}`); three are Ocean, Deeper Ocean and light (`{iconrow}`, boxed `{iconlist}` of three); four or more are white boxes with large Ocean icons and near-black labels. Boxed icon lists, annotated lists and statements fill the stage under the top title tab.
+A talk with no `palette:` draws the Ocean look: Ocean blue for the detail slides, Deeper Ocean as the second strength, white and light grounds, near-black text, and amber only for the current item of a reveal, the key words of a light statement and highlighted bars. Colour follows the count of things on the slide: one idea fills the slide (statement, section divider); two things are a light half and an Ocean half (`{contrast}`); three are Ocean, Deeper Ocean and light (`{iconrow}`, boxed `{iconlist}` of three); four or more are white boxes with large Ocean icons and near-black labels. Boxed icon lists, annotated lists and statements fill the stage under the top title tab.
 
+- Section colours: each `##` section has a lead colour, which paints its divider, full statements, the light statement's rule, the side rail beside a title and the title tab (detail slides stay Ocean; the current item of a reveal stays Ocean). The five are `blue`, `amber` (near-black type), `deep-blue`, `light` (white divider with a large Ocean number, statements in Ocean type, light rail) and `light-amber` (white divider with the number in an amber disc, statements in Deeper Ocean type). By default the sections rotate blue, amber, light, deep-blue, light-amber, then start again. Frontmatter `section-colours: off` stops the rotation (every section blue; amber with `palette: bold`); `section-colours: blue, light` rotates through your list; one name gives every section that colour. `{section-colour=amber}` on a `##` heading sets that one section and moves no other. The rotation counts sections: adding a slide changes no colour; adding a section moves the colours of the sections after it. Slides outside a section (title, closing) take the first colour. Set it in Talk tab → Design → Section colours (one choice, or a list typed in the box under it); names may be written in any case. Ignored with `palette: classic` or `green`.
 - `palette: bold` (frontmatter): the same look with amber leading the title slide (its disc turns amber with a near-black icon), the statement and section divider slides; key words on a light statement stay Ocean with an amber underline.
 - Set the palette in Talk tab → Design → Palette. Omitted `palette` uses Ocean; `palette: bold` selects Ocean, bold amber; `palette: classic` selects Classic.
-- `palette: classic`: the look before 0.44 (sections cycle cobalt, emerald, vermilion). Use it only when a talk must keep its old appearance. `palette: green` is the old green cycle.
+- `palette: classic`: the look before 0.44 (sections cycle cobalt, emerald, vermilion). Use it when a talk needs the earlier styling. It includes the broken-layout repairs and numeric-colon stats parsing repair (`40 min: the route` now treats `40 min` as the value), so it is not exact 0.43 identity. `palette: green` is the old green cycle.
 - A section `{accent=…}` and the deck `colour:` keep working: in the Ocean look `cobalt` is Ocean; `emerald`, `vermilion` and `forest` keep their own hue with matching deeper and light strengths.
 - A statement is full Ocean by default; `{statement-bg=rule}` gives the light form (white, a short Ocean rule, the bold words in Ocean).
 - In a bar chart, write a bar's label in bold (`- **Local model E**: 22`) to highlight it.
@@ -1461,6 +1462,22 @@ The visible heading is suppressed.
 ### Every child keeps the pin
 
 - Named colour, never a hex value
+````
+
+### `section-colour`  (modifier (flag on a slide; no layout of its own); registry status: stable)
+
+- Trigger: `{section-colour=amber}` (on a `##` heading only)
+- Option `section-colour`: (none = the rotation), `section-colour=blue`, `section-colour=amber`, `section-colour=deep-blue`, `section-colour=light`, `section-colour=light-amber`
+- Renders: Give this section one of the five lead colours of the Ocean look, whatever the rotation gives it.
+- Fits: A section that should keep one lead colour; the other sections keep theirs.
+
+````markdown
+## section-colour — this section in amber
+{section-colour=amber}
+
+### Every slide of the section takes it
+
+- The divider, the statements, the side rail and the title tab
 ````
 
 ### `nostep`  (modifier (flag on a slide; no layout of its own); registry status: stable)

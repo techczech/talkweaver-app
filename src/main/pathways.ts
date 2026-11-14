@@ -262,12 +262,12 @@ function selectPathwayBeats(beats: RuntimeBeat[], slideIds: string[]): { beats: 
   const selected: RuntimeBeat[] = []
   const runtimeIds: string[] = []
   for (const id of slideIds) {
-    let matches = beats.filter((beat) => beat?.slideId === id)
-    if (!matches.length) {
-      matches = beats.filter((beat) =>
-        beat?.context?.container === 'carousel' && beat.context.sectionId === id
-      )
-    }
+    // A carousel slide's id takes all its card beats (a leading picture card's beat carries the
+    // slide's own id too); any other id takes the beats addressed by it.
+    let matches = beats.filter((beat) =>
+      beat?.context?.container === 'carousel' && beat.context.sectionId === id
+    )
+    if (!matches.length) matches = beats.filter((beat) => beat?.slideId === id)
     selected.push(...matches)
     const first = matches[0]
     const runtimeId = first?.context?.container === 'carousel' && typeof first.context.sectionId === 'string'

@@ -1,4 +1,5 @@
 import type { LayerManifest } from './recording-layers.ts'
+import { isTakeRun } from '../shared/recording-takes.ts'
 import type { RunAudioFields } from '../shared/run-audio.ts'
 import { AUDIENCE_FEEDBACK_LIMITS, parsePollDefinition, parsePollChoice, parseQuestionInput, parseReactionInput, type InstantSlide, type PollDefinition, type PollChoice } from '../../worker/protocol.ts'
 import { preworkWindow } from '../shared/plan-run.ts'
@@ -842,8 +843,11 @@ export function readRun(vaultRoot: string, talkSlug: string, runId: string): Run
   try { return normaliseRun(JSON.parse(readFileSync(runPath(vaultRoot, talkSlug, runId), 'utf8'))) } catch { return null }
 }
 
-/** `strictSessionId` is only for shared-audio deletion: uncertainty must retain that session's audio. */
-export function listRuns(vaultRoot: string, talkSlug?: string, options?: { strictSessionId: string }): RunRecord[] {
+/**
+ * `strictSessionId` is only for shared-audio deletion: uncertainty must retain that session's audio.
+ * New takes of a slide (`takeOf`) are left out unless `includeTakes` (always included in strict mode).
+ */
+export function listRuns(vaultRoot: string, talkSlug?: string, options?: { strictSessionId: string }, includeTakes = !!options): RunRecord[] {
   const root = join(vaultRoot, '_PRESENTATIONS')
   if (!options && !existsSync(root)) return []
   // A named talk comes from the renderer (history:list-runs): list only its guarded folder.
@@ -877,7 +881,7 @@ export function listRuns(vaultRoot: string, talkSlug?: string, options?: { stric
       }
       try {
         const run = normaliseRun(JSON.parse(readFileSync(file, 'utf8')))
-        if (run.id && run.talkSlug) runs.push(run)
+        if (run.id && run.talkSlug && (includeTakes || !isTakeRun(run))) runs.push(run)
       } catch (error) {
         if (options && name === `${options.strictSessionId}.json`) throw error
         // One malformed Run must not blank History or block deletion of unrelated audio.

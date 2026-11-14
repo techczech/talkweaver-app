@@ -22,6 +22,38 @@
     align-items: stretch;
     gap: clamp(10px, 1.8cqh, 24px);
   }
+  /* The band under a top title (the carousel's own regime, ADR-0023). A side-title carousel keeps its 0.44 drawing, and
+     so does a carousel the fitter marks data-carousel-legacy (a card that cannot be fitted; see the end of this block).
+     - Every child of a top-title slide is `flex: 0 1 auto` (stage.css), so the gallery was only as tall as its card,
+       and the card's slide min-height (86cqh, base.css) stood in for the band: the card was taller than the room
+       between the title and the dots and ran over them. The gallery now takes that room and the card fills it.
+     - `safe center`: a card, or an item's copy, taller than the band starts at its top instead of spilling over the
+       slide title. A card that needs more than the band is the fitter's (runtime/slide-fit.js fitCarouselCard).
+     - A carousel card is not a scroll box, so the "more below" fade of a scrollable stepped card (densifyActiveCards,
+       .is-scrollable) would only paint over its words. */
+  .slide[data-title-layout="top"] > .slide-content.layout-carousel:not([data-carousel-legacy]) > .card-gallery.carousel { flex: 1 1 auto; min-height: 0; }
+  .slide[data-title-layout="top"] > .slide-content.layout-carousel:not([data-carousel-legacy]) > .card-gallery.carousel > .card.carousel-subslide > .slide-content {
+    justify-content: safe center;
+    min-height: 0;
+  }
+  .slide[data-title-layout="top"] > .slide-content.layout-carousel:not([data-carousel-legacy]) > .card-gallery.carousel > .card.carousel-subslide > .slide-content > .slot { align-items: safe center; }
+  .slide[data-title-layout="top"] > .slide-content.layout-carousel:not([data-carousel-legacy]) > .card-gallery.carousel > .card.carousel-subslide.is-scrollable::after { content: none; }
+  /* A carousel one of whose cards needs the dots' band (fitCarouselCard): the dots sit in the slide's foot padding,
+     clear of the content, and the gallery takes the whole band. While the deck's control bar shows, the dots rise
+     clear of it (--carousel-chrome-clear: how far the bar reaches into the slide, canvas px, set by the fitter) so
+     they stay visible and take their own clicks. */
+  .slide[data-title-layout="top"] > .slide-content.layout-carousel:not([data-carousel-legacy])[data-carousel-dots="foot"] > .gallery-nav {
+    position: absolute; left: var(--slide-pad-x); right: var(--slide-pad-x); bottom: 0;
+    width: auto; height: var(--slide-pad-y); margin: 0;
+    transition: bottom 300ms ease;
+  }
+  body:not(.chrome-idle) .slide[data-title-layout="top"] > .slide-content.layout-carousel:not([data-carousel-legacy])[data-carousel-dots="foot"] > .gallery-nav,
+  body.chrome-pinned .slide[data-title-layout="top"] > .slide-content.layout-carousel:not([data-carousel-legacy])[data-carousel-dots="foot"] > .gallery-nav {
+    bottom: var(--carousel-chrome-clear, 0px);
+  }
+  /* A card that cannot be fitted at all (still too long at the type floor, its words reaching the dots) is drawn as 0.44
+     drew it, so it shows at least what 0.44 showed: the fitter marks the carousel data-carousel-legacy and none of the
+     rules above apply to it (runtime/slide-fit.js fitContent). */
   .card-gallery.carousel .card.carousel-subslide > .slide-content > .slide-head {
     display: block !important;
     flex: 0 0 auto;

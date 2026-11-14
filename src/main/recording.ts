@@ -102,7 +102,13 @@ export interface RecordingContext {
   timerTargetMin: number
   pathwayId: string | null
   preferredPlannedRunId: string | null
+  /** Record one slide again: the Run, the slide (by its slide change) and whether the Run has a camera. */
+  retake?: import('../shared/recording-takes.ts').RetakeContext
 }
+export { parseRetake, verifyRetake, type RetakeContext } from '../shared/recording-takes.ts'
+import { isTakeRun } from '../shared/recording-takes.ts'
+/** A Run saved as a new take of another Run's slide is listed with that Run, never as a recording of its own. */
+const isTake = isTakeRun
 
 // The one upload call (recording-storage.ts). It holds the endpoint, the bucket and the access keys;
 // this file never sees a key. `failure` is one fixed word, never the text of an error.
@@ -119,6 +125,8 @@ export interface RecordingDeps {
   openVaultRoots?: () => string[]
   /** An open vault that cannot be scanned may own a same-id Run; retain audio without touching it. */
   hasUnavailableOpenVaults?: () => boolean
+  /** Record one slide again (takesEnabled); off or absent: deleting a Run sees no takes. */
+  takesEnabled?: () => boolean
   /** Removes a deleted Run's derived playback copies (recording-video.ts); only when its recording is not shared. */
   retirePlaybackCopies?: (sessionId: string) => void
   /**
@@ -453,7 +461,8 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
     sessionRand: deps.sessionRand
   })
 
-  const layerStore = registerPresenterLayers({ userData: deps.userDataDir, streams: streamStore, allowed: id => contexts.has(id), settingsAllowed: id => deviceListWindow() === id, grantDevices: (id, camera, preview) => recordingPermissions.grantDevices(id, camera, preview), getSettings: () => deps.recordingDevices?.(), setSettings: value => deps.setRecordingDevices?.(value) })
+  const layerStore = registerPresenterLayers({ userData: deps.userDataDir, streams: streamStore,
+    takeIds: () => new Set([...listKeptRuns(deps.userDataDir(), undefined, undefined, true), ...(deps.openVaultRoots?.() ?? [deps.vaultRoot()]).flatMap((root) => root ? listRuns(root, undefined, undefined, true) : [])].filter(isTakeRun).map((r) => r.id)), allowed: id => contexts.has(id), settingsAllowed: id => deviceListWindow() === id, grantDevices: (id, camera, preview) => recordingPermissions.grantDevices(id, camera, preview), getSettings: () => deps.recordingDevices?.(), setSettings: value => deps.setRecordingDevices?.(value) })
 
   ipcMain.handle('recording:capture-choice', (event, value: unknown) => {
     if (event.senderFrame !== event.sender.mainFrame || !contexts.has(event.sender.id) || (value !== 'voice' && value !== 'camera')) throw Error('Invalid capture choice')
@@ -467,10 +476,12 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       timerTargetMin: ctx?.timerTargetMin ?? 0,
       pathwayId: ctx?.pathwayId ?? null,
       preferredPlannedRunId: ctx?.preferredPlannedRunId ?? null,
-      discardThresholdMs: deps.discardThresholdMs(),
+      // A new take is kept however short it is, and records the layers its Run has.
+      discardThresholdMs: ctx?.retake ? 0 : deps.discardThresholdMs(),
       testMode: deps.testMode ? deps.testMode() : process.env.TW_REC_TEST === '1',
       layered: true,
-      captureChoice: deps.captureChoice?.() ?? 'voice',
+      captureChoice: ctx?.retake ? (ctx.retake.camera ? 'camera' : 'voice') : deps.captureChoice?.() ?? 'voice',
+      ...(ctx?.retake ? { retake: ctx.retake } : {}),
       microphone: deps.microphone?.() ?? ''
     }
   })
@@ -498,7 +509,7 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       const discardMs = mode === 'run' ? runWallClockMs : recordingMs
       // A short run normally prompts Keep/Discard in the bridge, which sends force=true on Keep.
       // This is the backstop: discard a short unforced save (e.g. a stale caller), never a kept one.
-      if (!payload?.force && L.isDiscardable(discardMs, deps.discardThresholdMs())) {
+      if (!payload?.force && !contexts.get(event.sender.id)?.retake && L.isDiscardable(discardMs, deps.discardThresholdMs())) {
         return { ok: true, discarded: true }
       }
 
@@ -635,6 +646,9 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
         slideTimeIndex: L.buildSlideTimeIndex(rawMarks) as SlideTimeMark[]
       }
       if (captureUnknown) session.captureUnknown = true
+      // A new take of one slide of another Run (Record this slide again): named so, and listed with that Run.
+      const retake = contexts.get(event.sender.id)?.retake
+      if (retake) (session as SessionJson & { takeOf?: unknown }).takeOf = { runId: retake.runId, change: retake.change, slideId: retake.slideId }
       const baseSession = planned
         ? attachDeliveryToPlanned(planned, normaliseRun(session))
         : normaliseRun(session)
@@ -685,13 +699,13 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   ipcMain.handle('recording:list-sessions', async (_event, talkSlug: string) => {
     try {
       const vault = deps.vaultRoot()
-      const out: unknown[] = listKeptRuns(deps.userDataDir(), talkSlug)
+      const out: unknown[] = listKeptRuns(deps.userDataDir(), talkSlug).filter((r) => !isTake(r))
       for (const file of vault ? await listSessionJsonFiles(vault, talkSlug) : []) {
         try {
           // A file whose root is not a session (null, an array, a number) is skipped: it would
           // break the sort below and blank the whole list.
           const session = sessionForList(JSON.parse(await readFileAsync(file, 'utf8')))
-          if (session) out.push({ ...session, home: vault })
+          if (session && !isTake(session)) out.push({ ...session, home: vault })
         } catch {
           /* skip an unreadable session file rather than failing the whole list */
         }
@@ -711,14 +725,14 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   ipcMain.handle('recording:list-all-sessions', async () => {
     try {
       const vault = deps.vaultRoot()
-      const out: unknown[] = listKeptRuns(deps.userDataDir())
+      const out: unknown[] = listKeptRuns(deps.userDataDir()).filter((r) => !isTake(r))
       // Every talk folder and session file is checked to resolve inside the vault first.
       for (const file of vault ? await listSessionJsonFiles(vault) : []) {
         try {
           // A file whose root is not a session (null, an array, a number) is skipped: it would
           // break the sort below and blank the whole list.
           const session = sessionForList(JSON.parse(await readFileAsync(file, 'utf8')))
-          if (session) out.push({ ...session, home: vault })
+          if (session && !isTake(session)) out.push({ ...session, home: vault })
         } catch {
           /* skip an unreadable session file */
         }
@@ -928,25 +942,45 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
     try {
       const resolvedHome = runHomeFor(deps, event.sender.id, sessionId, talkSlug, home)
       if (!resolvedHome.ok) return resolvedHome
+      const own = runTrashTargets(resolvedHome.root, talkSlug, sessionId, event.sender.id)
+      if (!own.ok) return { ok: false, error: own.error }
+      // New takes of this Run's slides (Record this slide again) are part of it: they go to the Bin with it,
+      // each by the same rules (its media only when no other Run names that id).
+      const takes = own.saved && deps.takesEnabled?.() ? (resolvedHome.root === null ? listKeptRuns(deps.userDataDir(), talkSlug, undefined, true) : listRuns(resolvedHome.root, talkSlug, undefined, true))
+        .filter((r) => isTakeRun(r) && (r as { takeOf?: { runId?: unknown } }).takeOf?.runId === sessionId) : []
+      const taken = takes.map((t) => runTrashTargets(resolvedHome.root, talkSlug, t.id, event.sender.id)).filter((t): t is Extract<typeof t, { ok: true }> => t.ok)
+      for (const path of new Set([...own.targets, ...taken.flatMap((t) => t.targets)])) await shell.trashItem(path)
+      for (const done of [own, ...taken]) if (!done.shared) deps.retirePlaybackCopies?.(done.id)
+      runHomes.get(event.sender.id)?.delete(sessionId)
+      return { ok: true }
+    } catch (e) {
+      return { ok: false, error: String(e) }
+    }
+  })
+
+  /** What deleting one Run moves to the Bin: its Run file, its edits and, when no other Run names its id, its media. */
+  function runTrashTargets(root: string | null, talkSlug: string, sessionId: string, senderId: number): { ok: true; id: string; saved: boolean; shared: boolean; targets: string[] } | { ok: false; error: string } {
       // The session id alone proves nothing (audio is addressed by id only): delete only a Run this window can see,
       // the Run JSON in the vault it resolves to (or kept in TalkWeaver's folder) that itself names this talk and session.
-      const json = sessionPath(deps, resolvedHome.root, talkSlug, sessionId)
-      if (!json.ok) return { ok: false, error: json.error }
+      const json = sessionPath(deps, root, talkSlug, sessionId)
+    if (!json.ok) return { ok: false, error: json.error }
       const p = json.path
       const saved = existsSync(p)
       if (saved && !runIsFor(p, talkSlug, sessionId)) return { ok: false, error: 'session-not-found' }
-      const source = readRecordingSource(resolvedHome.root, deps.userDataDir(), talkSlug, sessionId)
+      const source = readRecordingSource(root, deps.userDataDir(), talkSlug, sessionId)
       if (!source || (!saved && (source.kind !== 'marker' || streamStore.isOpen(sessionId)))) return { ok: false, error: 'session-not-found' }
       // Audio and recovery metadata are named by id globally. Another valid Run with that id
       // keeps all of it, even when it belongs to a different talk; only this Run's JSON is trashed.
-      const otherHomes = new Set([null, deps.vaultRoot(), vaultFor(deps, event.sender.id).root, ...(deps.openVaultRoots?.() ?? [])])
-      otherHomes.delete(resolvedHome.root)
+      // Every home is searched, this Run's own too (another talk there can name the id); only the
+      // Run being deleted (this home, this talk, this id) is left out.
+      const homes = new Set([root, null, deps.vaultRoot(), vaultFor(deps, senderId).root, ...(deps.openVaultRoots?.() ?? [])])
+      const isThisRun = (home: string | null, talk: unknown): boolean => home === root && talk === talkSlug
       let shared = true
       try {
         const strict = { strictSessionId: sessionId }
-        shared = !!deps.hasUnavailableOpenVaults?.() || [...otherHomes].some((root) => root === null
-          ? listKeptRuns(deps.userDataDir(), undefined, strict).some((run) => run.id === sessionId)
-          : listRuns(root, undefined, strict).some((run) => run.id === sessionId && readRunForTalk(root, run.talkSlug, sessionId, strict) !== null))
+        shared = !!deps.hasUnavailableOpenVaults?.() || [...homes].some((home) => home === null
+          ? listKeptRuns(deps.userDataDir(), undefined, strict).some((run) => run.id === sessionId && !isThisRun(home, run.talkSlug))
+          : listRuns(home, undefined, strict).some((run) => run.id === sessionId && !isThisRun(home, run.talkSlug) && readRunForTalk(home, run.talkSlug, sessionId, strict) !== null))
       } catch {
         // A failed listing or unreadable same-id Run cannot prove that the audio is unshared.
       }
@@ -960,16 +994,12 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       if (!shared && marker.ok && existsSync(marker.path) && !streamStore.isOpen(sessionId)) targets.push(marker.path)
       // The Run's edit sidecar sits beside its Run file and belongs to this Run alone: it goes to the Bin with it,
       // so a later Run with the same talk and id never inherits its cuts.
-      const edits = saved ? editsPath(resolvedHome.root, deps.userDataDir(), talkSlug, sessionId) : null
+      const edits = saved ? editsPath(root, deps.userDataDir(), talkSlug, sessionId) : null
       if (edits?.ok && existsSync(edits.path) && lstatSync(edits.path).isFile()) targets.push(edits.path)
-      for (const path of new Set(targets)) await shell.trashItem(path)
-      if (!shared) deps.retirePlaybackCopies?.(sessionId)
-      runHomes.get(event.sender.id)?.delete(sessionId)
-      return { ok: true }
-    } catch (e) {
-      return { ok: false, error: String(e) }
-    }
-  })
+      // Copies an upgrade kept of older edits files (recording-edits-store.ts) go with them.
+      if (edits?.ok) for (let v = 1; v < 5; v++) { const old = join(dirname(edits.path), `${sessionId}.edits.version-${v}.json`); try { if (lstatSync(old).isFile()) targets.push(old) } catch { /* none */ } }
+      return { ok: true, id: sessionId, saved, shared, targets }
+  }
 }
 
 // The first owned segment for the existing single-file player; legacy Runs retain the old lookup.

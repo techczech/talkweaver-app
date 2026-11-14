@@ -20,6 +20,7 @@
 
 import {
   METADATA_REGISTRY,
+  metadataListError,
   type MetadataEntry,
   type MetadataVocabulary
 } from './metadata-registry.ts'
@@ -73,8 +74,14 @@ export interface SurfaceFieldModel {
   present: boolean
   /** The documented choices, or null for a typed field. */
   options: SurfaceOptionModel[] | null
-  /** Set when the outline holds a value outside a closed vocabulary. */
+  /** Set when the outline holds a value outside a closed vocabulary (a valid list on a list-capable key is not custom). */
   custom: { value: string; label: string } | null
+  /**
+   * Present on a list-capable key (registry `listOf`): besides its single choices, the value may be a typed,
+   * comma-separated list of `items`. `isList` says the present value is such a list; `error` names the item that is
+   * not one of `items` (null when the value fits).
+   */
+  list?: { items: string[]; isList: boolean; error: string | null; placeholder: string }
   readOnly: boolean
   ownership: 'user' | 'system'
   /** For a system key: what breaks if it is changed or deleted. */
@@ -161,7 +168,9 @@ export function frontmatterFieldViewModel(
         selected: option.value === raw
       }))
     : null
-  const custom = options && !options.some((option) => option.selected) && raw !== ''
+  const listError = entry.listOf ? metadataListError(entry, raw) : null
+  const isList = Boolean(entry.listOf) && raw !== '' && !!options && !options.some((option) => option.selected) && listError === null
+  const custom = options && !options.some((option) => option.selected) && raw !== '' && !isList
     ? { value: raw, label: `custom: ${raw}` }
     : null
   return {
@@ -182,7 +191,8 @@ export function frontmatterFieldViewModel(
     note: entry.ownership === 'system'
       ? `${SYSTEM_NOTE_PREFIX}. If it is removed: ${entry.deleteConsequence ?? 'TalkWeaver loses what it recorded here.'}`
       : null,
-    unregistered: false
+    unregistered: false,
+    ...(entry.listOf ? { list: { items: [...entry.listOf], isList, error: listError, placeholder: entry.listOf.slice(0, 2).join(', ') } } : {})
   }
 }
 

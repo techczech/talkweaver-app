@@ -156,6 +156,16 @@ jobs:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
       - run: bun install --frozen-lockfile
+      # Hosted rehearsal only: the same step as the release workflow. The built-in transcription helper
+      # (native/transcription.swift) needs the macOS 26 SDK, which the macos-15 image's default Xcode lacks;
+      # the self-hosted Studio already has it.
+      - name: Select Xcode 26 (macOS 26 SDK for the transcription helper)
+        if: ${{ inputs.hosted }}
+        run: |
+          XCODE=$(ls -d /Applications/Xcode_26.[0-9]*.app | sort -V | tail -1)
+          echo "Using $XCODE"
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
       - name: Worker compile integrity
         run: npm run test:worker-compile-integrity
       - name: Live service upload unit tests

@@ -231,6 +231,8 @@
 #presenterTopBar.c4 #presenterEndLive { width: 26px; padding: 0; justify-content: center; }
 #presenterTopBar.c4 #presenterEndLive > .tw-btn-label { display: none; }
 /* c5: "Not recording" / "Recording paused" go; the dot's colour and the button's tooltip carry it. */
+#presenterTopBar.tw-no-mic-name #twrec-idle-name { display: none; }
+#presenterTopBar.tw-no-rec-extras #twrec-module:is([data-rec="recording"], [data-rec="paused"]) :is(#twrec-again, #twrec-mic) { display: none; }
 #presenterTopBar.c5 #twrec-label[data-collapse="c5"] { display: none; }
 /* c6: Record and Change become icon-only (their tooltips name them). */
 #presenterTopBar.c6 :is(#twrec-primary, #twrec-change-kind) { width: 26px; padding: 0; justify-content: center; }

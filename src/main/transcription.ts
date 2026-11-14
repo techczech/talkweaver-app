@@ -1,5 +1,5 @@
 // Transcription — main-process bridge to a local speech-to-text engine (Parakeet via Python).
-// The engine command + script are set in Settings -> Transcription (unset by default; the feature
+// The engine command + script are set in Settings → Get started → Transcription (unset by default; the feature
 // is optional and stays dormant until set up, spec docs/plans/cloudflare-setup-in-app D16). Whether
 // it can run, and which ffmpeg it uses, is decided once in transcription-setup.ts (ffmpeg: the one
 // set in Settings, else the one that ships with the app). Runs one job at a time, stores small
@@ -31,7 +31,7 @@ import { childEnvWithFfmpegDir, type FfmpegResolution } from './ffmpeg-path.ts'
 import { transcriptionActionMessage, type TranscriptionRow } from '../shared/transcription-status.ts'
 
 // Empty by default — the person (or their agent, resources/agent-setup/transcription) sets these in
-// Settings -> Transcription. Until then a transcription action says where to set it up instead of running.
+// Settings → Get started → Transcription. Until then a transcription action says where to set it up instead of running.
 export const DEFAULT_TRANSCRIPTION_PYTHON = ''
 export const DEFAULT_TRANSCRIPTION_SCRIPT = ''
 
@@ -74,7 +74,7 @@ export interface TranscriptionDeps {
   userDataDir: () => string // app.getPath('userData')
   vaultForHome?: (home:unknown)=>string|null|undefined
   vaultRoot: () => string | null // the current vault's root (vault registry)
-  config: () => TranscriptionConfig // Settings -> Transcription, with defaults expanded
+  config: () => TranscriptionConfig // Settings → Get started → Transcription, with defaults expanded
   // The Transcription row and the ffmpeg to use, for these settings (transcription-setup.ts).
   readiness: () => { row: TranscriptionRow; ffmpeg: FfmpegResolution }
   selection?: () => Pick<TranscriptionConfig, 'engine' | 'locale'>
@@ -332,7 +332,7 @@ function humanProcessError(prefix: string, result: { error: string; stderr: stri
 
 function humanFfmpegError(result: { error: string; stderr: string }): string {
   if (/ENOENT|EACCES|spawn/i.test(result.error)) {
-    return 'ffmpeg could not be started. Check it in Settings → Transcription.'
+    return 'ffmpeg could not be started. Check it in Settings → Get started → Transcription.'
   }
   return humanProcessError('ffmpeg audio conversion failed', result)
 }
@@ -511,7 +511,7 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
         const nativeHelper = native ? deps.nativeHelper?.() : null
         if (native && (!nativeHelper || (deps.nativeAvailable && !await deps.nativeAvailable(cfg.locale || 'en-US')))) return {ok:false,error:'Built-in words are unavailable for this language on this Mac.'}
         const refusal = native ? null : transcriptionActionMessage(ready.row)
-        if (refusal || !ready.ffmpeg.found) return { ok: false, error: refusal ?? transcriptionActionMessage({ ...ready.row, state: 'ffmpeg-not-found' }) ?? 'ffmpeg could not be found. Check it in Settings → Transcription.' }
+        if (refusal || !ready.ffmpeg.found) return { ok: false, error: refusal ?? transcriptionActionMessage({ ...ready.row, state: 'ffmpeg-not-found' }) ?? 'ffmpeg could not be found. Check it in Settings → Get started → Transcription.' }
         const ffmpegPath = ready.ffmpeg.path
 
         const source = readRecordingSource(deps.vaultRoot(), deps.userDataDir(), slug, sid)

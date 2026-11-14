@@ -3,6 +3,7 @@ import { transcriptPath as transcriptPathForAlignment } from './recording-paths'
 import { modelPin as modelPinForAlignment } from './alignment-models'
 import { createAlignmentService } from './alignment-service'
 import { alignmentUtility } from './alignment-utility'
+import { RECORD_AGAIN_ENV, TAKES_OFF_ERROR, takesEnabled } from '../shared/recording-takes'
 import { AlignmentModels, readAlignmentManifests } from './alignment-models'
 import { cancelRecordingRefresh, prepareRecordingRefresh, registerPresenterRefresh } from './presenter-refresh'
 import { ImageEditRecipeSizeError, readImageEdit, saveImageEdit } from './image-edit'
@@ -42,6 +43,8 @@ process.stdout.on('error', () => {})
 process.stderr.on('error', () => {})
 
 const E2E = process.env.TW_E2E === '1'
+// Record one slide again: off in release builds; a development build started with TW_RECORD_AGAIN=1 turns it on.
+const TAKES_ENABLED = takesEnabled({ packaged: app.isPackaged, flag: process.env[RECORD_AGAIN_ENV] })
 
 // `TalkWeaver setup …` (ticket 07, spec D14): the set-up command for an agent. Found here, before
 // the single-instance lock: it opens no window and shows no Dock icon, runs its one command once the
@@ -315,6 +318,9 @@ import { savedRecordingHome,
   registerAppWindowPermissions,
   registerRecordingIpc,
   registerRecordingContext,
+  parseRetake,
+  verifyRetake,
+  type RetakeContext,
   unregisterRecordingContext,
   shouldOfferRunSave,
   recordingAudioArmed,
@@ -335,7 +341,7 @@ import {
   registerTranscriptionIpc, stopActiveTranscription, sweepTranscriptionTemps, nativeLocaleAvailable, transcribeSavedRun as runSavedTranscription
 } from './transcription'
 import { defaultWordsEngine } from '../shared/transcript-contract'
-import { recordedSegmentPaths, readRecordingSource } from './recording-paths'
+import { recordedSegmentPaths, readRecordingSource, runAtHome } from './recording-paths'
 import { createTranscriptionSetup, type TranscriptionSetup } from './transcription-setup'
 import { resolveFfmpeg, shippedFfmpegCandidates, systemFfmpegCandidates } from './ffmpeg-path'
 import { registerTalkTextIpc } from './talkTextIpc'
@@ -426,6 +432,7 @@ import { isTerminalLiveStatus, type LiveStatus } from './live-presenter-client'
 import { createLiveSessionManager, livePresenterContext, type LivePresenterContext } from './live-session-manager'
 import { createPresenterPublications, liveLinkFolder, presenterLink } from './presenter-publication'
 import { presentedTalkVault, type PresentedVaultDeps } from './presented-vault'
+import { isToolsWindowSender } from './talkTextSender'
 import { createLiveSessionStore, type SessionRecoveryRecord } from './live-session-store'
 import { secretsSlot, type SecretSlot, type SecretsStore } from './secrets-store'
 import { openSecretsStore } from './secrets-store-electron'
@@ -577,7 +584,7 @@ type Config = {
   recordingMicrophone?: string
   recordingR2Endpoint?: string
   recordingR2Bucket?: string
-  // Transcription engine (Settings -> Transcription; optional, spec D16). Non-secret local paths:
+  // Transcription engine (Settings → Get started → Transcription; optional, spec D16). Non-secret local paths:
   // the Python of an environment and the script (both set up from resources/agent-setup/transcription),
   // and an ffmpeg of the person's own (unset: the one that ships with the app). `~` is expanded at runtime.
   transcriptionEngine?: 'auto' | 'native' | 'parakeet'
@@ -1391,7 +1398,7 @@ ipcMain.handle('recording:check-storage', () => recordingStorage().check())
 // "Recording storage: enter your access keys", once, for a set-up that took its keys from Bitwarden.
 ipcMain.handle('recording:take-setup-notice', () => recordingStorage().takeNotice())
 
-// ── Transcription engine (Settings → Transcription) ─────────────────────────
+// ── Transcription engine (Settings → Get started → Transcription) ─────────────────────────
 // Non-secret local paths only. Optional (spec D16): whether it can run is the one row decided in
 // transcription-setup.ts, which Settings shows and Studio's Transcribe obeys. The same operations
 // are what the `setup transcription` command will call (ticket 07: setPaths and status).
@@ -2729,6 +2736,7 @@ function readConnections(): Promise<ConnectionRow[]> {
     goingLive: () => liveService().row(),
     recording: () => recordingStorage().status(),
     transcription: () => transcriptionSetup().status(),
+    builtinTranscription: !!nativeSpeechHelper(),
     vaults: () => vaultViews().filter((v) => v.open && !v.unavailable && !v.example).map((v) => ({ name: v.name, service: v.service }))
   }).finally(() => { connectionsInFlight = null })
   return connectionsInFlight
@@ -2866,7 +2874,7 @@ interface TalkInfo {
 // sees a stale list after its own operation.
 // Per vault (several-vaults ticket 02): vault root → that vault's walk.
 const talkCache = new Map<string, { at: number; talks: TalkInfo[] }>()
-// productName is TalkWeaver, so this resolves to ~/Library/Application Support/TalkWeaver/.
+// With no top-level productName, app data resolves to ~/Library/Application Support/talk-weaver/.
 // One persisted snapshot per vault: vault-index/<vault id>.json. The single-vault
 // vault-index.json of older builds seeds the vault it names and is left for them.
 // Conflict copies (several-vaults ticket 09; conflict-copies.mjs): the vault walk hands each talk
@@ -6001,7 +6009,16 @@ function outlineUrlOnDisk(outlinePath: string): string | null {
   } catch { return null }
 }
 
-ipcMain.handle('talk:present', async (_event, outlinePath: string, content: string, mode?: string, startSlideId?: string, pathwayId?: string, plannedRunId?: string) => {
+ipcMain.handle('talk:present', async (event, outlinePath: string, content: string, mode?: string, startSlideId?: string, pathwayId?: string, plannedRunId?: string, retakeRequest?: unknown) => {
+  // Record one slide again (the recording editor): a presenter view of its own, at that slide, recording a take.
+  const asked = retakeRequest !== undefined && retakeRequest !== null
+  const requested = asked ? parseRetake(retakeRequest) : null
+  // Record one slide again is off in this release unless a development build is started with TW_RECORD_AGAIN=1.
+  if (asked && !TAKES_ENABLED) return { success: false, error: TAKES_OFF_ERROR }
+  // Only Studio (the Tools window) asks for a retake.
+  if (asked && !isToolsWindowSender(event.sender, toolsWindow)) return { success: false, error: 'Invalid retake' }
+  if (asked && (mode !== 'presenter' || !requested || (typeof plannedRunId === 'string' && plannedRunId) || pathwayId)) return { success: false, error: 'Invalid retake' }
+  let retake: RetakeContext | null = null
   const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
   if (refusal) return { success: false, error: refusal }
   const blocked = unresolvedOutboundFailure(content)
@@ -6010,6 +6027,18 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
     const build = await buildTalkPresentFile(outlinePath, content, true, pathwayId, startSlideId, typeof plannedRunId === 'string' ? plannedRunId : undefined)
     const { slug, title, presentPath } = build
     startSlideId = build.startSlideId
+    if (requested) {
+      // The request is checked against the Run on disk, in the presented talk's vault: the Run, the slide
+      // and the camera choice are the Run's own, never the renderer's word for them.
+      const picked = presentedTalkVault(presentedVaultDeps, outlinePath)
+      const root = !picked ? currentVaultRoot() ?? null : 'error' in picked ? null : picked.root
+      // The Run at exactly the home the take will be saved in (recording:save uses the same vault), never a
+      // Run of that id kept elsewhere: the take is then found beside its Run.
+      const verified = verifyRetake(requested, runAtHome(root, app.getPath('userData'), slug, requested.runId), slug)
+      if (!verified.ok) return { success: false, error: verified.error }
+      if (startSlideId !== requested.slideId) return { success: false, error: 'Invalid retake' }
+      retake = verified.retake
+    }
     // Read here, after the compile and with no await before the window's context is set: a publication
     // that finished meanwhile is in the file, the Run or the successful-publication cache by now.
     // Earlier renderer text can contain a withdrawn link, so it never restores publication identity.
@@ -6034,7 +6063,7 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
     // it) — just focus and hint. Menu-launched audience windows dedupe the same way (repeated clicks
     // used to multiply them); the runtime-launched audience (F5 inside the presenter) is a child
     // window that never comes through this handler.
-    if (mode === 'presenter' || mode === 'window' || mode === 'audience') {
+    if ((mode === 'presenter' || mode === 'window' || mode === 'audience') && !retake) {
       for (const [wcId, info] of presentWindows) {
         if (info.outlinePath !== outlinePath || info.mode !== mode || info.pathwayId !== pathwayId) continue
         const existing = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === wcId)
@@ -6118,7 +6147,8 @@ ipcMain.handle('talk:present', async (_event, outlinePath: string, content: stri
         talkTitle: title,
         timerTargetMin: timerSettings().warnAtMinutes,
         pathwayId: pathwayId ?? null,
-        preferredPlannedRunId: plannedRunId ?? null
+        preferredPlannedRunId: plannedRunId ?? null,
+        ...(retake ? { retake } : {})
       })
       win.on('closed', () => unregisterRecordingContext(wcId))
     }
@@ -6461,6 +6491,7 @@ ipcMain.handle('replay:build', async (_event, talkSlug: string): Promise<{ succe
 // Presentation recording IPC (recording:context + recording:save). Registered once; the
 // deps are read lazily per call, so this is safe at module scope (app not yet ready).
 registerRecordingIpc({
+  takesEnabled: () => TAKES_ENABLED,
   configuredFfmpeg: () => expandHomePath(transcriptionSettings().ffmpeg.trim()),
   compilerDir: () => getCompilerPath(),
   userDataDir: () => app.getPath('userData'),
@@ -6725,6 +6756,7 @@ function savedTranscriptionDeps(root: string | null) {
 // The Run view's recording panel: play back a layered Run, trim its ends, export one video (slice 3a).
 const recordingVideo = registerRecordingVideoIpc({
   ipcMain,
+  takesEnabled: () => TAKES_ENABLED,
   toolsWindow: () => toolsWindow,
   userDataDir: () => app.getPath('userData'),
   vaultFor: (home) => home === undefined ? writableVaultRoot() ?? null : transcriptVaultForHome(home),

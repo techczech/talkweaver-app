@@ -9,9 +9,12 @@ import type { RecordingOpen } from '../../../../main/recording-video-ipc'
 import type { EditsSnapshot } from '../../../../main/recording-edits-store'
 import { trimEndAt, trimStartAt, type EditOp, type TimeRange } from '../../../../shared/recording-edits'
 import { planDigest, resolveRecording } from '../../../../shared/recording-editor'
-import { chaptersFor, planRunToEdited, silentEndSuggestions } from '../../../../shared/recording-video'
+import { chaptersFor, faceTrack, faceTrackOnClock, planRunToEdited, silentEndSuggestions } from '../../../../shared/recording-video'
 import { recordingRunHome } from '../../../../shared/recording-run-home'
 import { LayeredPlayer, type LayeredPlayerHandle, type PlayerSource } from './LayeredPlayer'
+import { useEvenVoice } from './LookAndSound'
+import { chosenTakes, missingTakeNotice, unavailableTakes, useTakes, useTakeSource } from './RecordSlideAgain'
+import { takesInUse } from '../../../../shared/recording-takes'
 import { useRecordingExport } from './useRecordingExport'
 import './recording-panel.css'
 
@@ -61,6 +64,7 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   useImperativeHandle(ref, () => ({
     play: () => player.current?.play(), pause: () => player.current?.pause(), toggle: () => player.current?.toggle(),
     seekRun: (ms: number) => player.current?.seekRun(ms), runMs: () => player.current?.runMs() ?? runMs, playing: () => player.current?.playing() ?? false,
+    seekVideo: (ms: number) => player.current?.seekVideo(ms), videoMs: () => player.current?.videoMs() ?? runMs,
     trimStart: () => actions.current.trimStart(), trimEnd: () => actions.current.trimEnd(), undo: () => actions.current.undo(), redo: () => actions.current.redo()
   }), [runMs])
 
@@ -96,9 +100,17 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   // The one resolved edit state the editor and the export use: the editor's cuts, slides left out and
   // moved slide starts play here exactly as they export.
   const boundaries = edits?.edits.boundaries, leftOut = edits?.edits.leftOut
-  const resolved = useMemo(() => resolveRecording({ durationMs, edits: { cuts: sidecarCuts, boundaries: boundaries ?? [], leftOut: leftOut ?? [], restoredTrims: restoredTrims ?? [] }, runTrims: run.trims as TimeRange[] | undefined, marks: run.slideTimeIndex, transcript: words }),
-    [durationMs, sidecarCuts, boundaries, leftOut, restoredTrims, run.trims, run.slideTimeIndex, words])
-  planOf.current = (e) => planDigest(resolveRecording({ durationMs, edits: e.edits, runTrims: run.trims as TimeRange[] | undefined, marks: run.slideTimeIndex, transcript: words }), words?.segments)
+  // New takes chosen in the editor (Record this slide again) play here too, as they export.
+  // Off unless main says otherwise (takesEnabled): take choices in the edits file are kept but not used.
+  const takesOn = !!opened?.recordAgain
+  const takesList = useTakes(runRef, opened?.takes, takesOn)
+  const savedChoices = edits?.edits.takes
+  const chosenList = useMemo(() => takesInUse(takesOn, savedChoices), [takesOn, savedChoices])
+  const takes = useMemo(() => chosenTakes(chosenList ?? [], takesList), [chosenList, takesList])
+  const missingTakes = useMemo(() => unavailableTakes(chosenList ?? [], takesList), [chosenList, takesList])
+  const resolved = useMemo(() => resolveRecording({ durationMs, edits: { cuts: sidecarCuts, boundaries: boundaries ?? [], leftOut: leftOut ?? [], restoredTrims: restoredTrims ?? [] }, runTrims: run.trims as TimeRange[] | undefined, marks: run.slideTimeIndex, transcript: words, takes }),
+    [durationMs, sidecarCuts, boundaries, leftOut, restoredTrims, run.trims, run.slideTimeIndex, words, takes])
+  planOf.current = (e) => planDigest(resolveRecording({ durationMs, edits: e.edits, runTrims: run.trims as TimeRange[] | undefined, marks: run.slideTimeIndex, transcript: words, takes: chosenTakes(takesInUse(takesOn, e.edits.takes), takesList) }), words?.segments)
   // Words or their timing that change while the panel is open are followed at once, with a quiet note.
   const wordsKey = `${transcript?.createdAt ?? ''}|${transcript?.alignment?.alignedAt ?? ''}|${transcript?.words?.length ?? 0}`
   const lastWordsKey = useRef<string | null>(null)
@@ -110,9 +122,14 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   const cuts = resolved.cuts
   const spans = resolved.spans
   const editedMs = resolved.editedMs
+  const faces = useMemo(() => edits ? faceTrackOnClock(faceTrack(resolved.rows, edits.edits.faces, durationMs), resolved.clock) : undefined, [edits, resolved.rows, resolved.clock, durationMs])
   const startAt = drag?.side === 'start' ? drag.at : trimStartAt(sidecarCuts)
   const endAt = drag?.side === 'end' ? drag.at : trimEndAt(sidecarCuts, durationMs)
   const camera = edits?.edits.finish.camera !== false
+  // Even out the volume (chosen in the editor's Look and sound) plays here too.
+  const even = useEvenVoice(runRef, source, edits?.edits.finish.evenVolume !== false)
+  const composed = useTakeSource(runRef, even.source, resolved.clock, durationMs, edits?.edits.finish.evenVolume !== false)
+  const [videoMs, setVideoMs] = useState(0)
   const enters = useMemo(() => (run.slideTimeIndex ?? []).filter((m) => m.event === 'enter' && Number.isFinite(m.tMs)).sort((a, b) => a.tMs - b.tMs), [run.slideTimeIndex])
   const slideAt = useCallback((t: number): PanelSlide | null => {
     let found: string | undefined
@@ -149,7 +166,7 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
     void window.tw.recordingVideo?.open(runRef).then((r) => { if (r.ok) { editsRef.current = r.edits; setEdits(r.edits) } }).catch(() => {})
   }, [onReloadWords, runRef])
 
-  const time = useCallback((t: number) => { setRunMs(t); onTime(t) }, [onTime])
+  const time = useCallback((t: number, v: number) => { setRunMs(t); setVideoMs(v); onTime(t) }, [onTime])
   const playingChanged = useCallback((p: boolean) => { setPlaying(p); onPlaying(p) }, [onPlaying])
 
   const atPointer = (clientX: number): number => {
@@ -187,7 +204,7 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   const audioOnlyRun = !!opened && opened.slides.length === 0
   const exportCtl = useRecordingExport({
     runRef, title: run.talkTitle, slides, fixed: exportOnly, audioOnly: audioOnlyRun, hasCamera: !!opened?.hasCamera, camera,
-    editedMs, chapterCount: audioOnlyRun ? 0 : chaptersFor(resolved.chapterMarks, slides, spans).length, hasCaptionText: !!transcript?.segments?.length, settle, onStale: refresh, withoutWords, setWithoutWords
+    editedMs, chapterCount: audioOnlyRun ? 0 : chaptersFor(resolved.chapterMarks, slides, spans).length, hasCaptionText: !!transcript?.segments?.length, captionNote: resolved.takesWithoutWords ? (resolved.takesWithoutWords === 1 ? 'The new take in this video has no words written out yet, so that part has no captions.' : `${resolved.takesWithoutWords} new takes in this video have no words written out yet, so those parts have no captions.`) : null, settle, onStale: refresh, withoutWords, setWithoutWords
   })
   const { exporting, setExporting, sheet } = exportCtl
 
@@ -219,13 +236,13 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
         <button className="twrp-play" aria-label={playing ? 'Pause' : 'Play'} title={playing ? 'Pause (Space)' : 'Play (Space)'} disabled={!source} onClick={() => player.current?.toggle()}>
           {playing ? <Pause className="lt-icon" /> : <Play className="lt-icon" />}
         </button>
-        <span className="twrp-clock" aria-live="off"><b>{clock(planRunToEdited(spans, runMs))}</b> / {clock(editedMs)}{cuts.length ? <span className="twrp-of"> of {clock(durationMs)}</span> : null}</span>
+        <span className="twrp-clock" aria-live="off"><b>{clock(planRunToEdited(spans, videoMs))}</b> / {clock(editedMs)}{cuts.length ? <span className="twrp-of"> of {clock(durationMs)}</span> : null}</span>
  <span className="twrp-sep" />
         <button className="twrp-icon" aria-label="Undo" title="Undo (⌘Z)" disabled={!!problem || !edits.edits.undo.length} onClick={() => void edit({ kind: 'undo' })}><Undo2 className="lt-icon" /></button>
         <button className="twrp-icon" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!!problem || !edits.edits.redo.length} onClick={() => void edit({ kind: 'redo' })}><Redo2 className="lt-icon" /></button>
         <span className="twrp-grow" />
         {opened.hasCamera ? (
-          <button className={`twrp-switch ${camera ? 'on' : ''}`} role="switch" aria-checked={camera} aria-label="Camera" disabled={!!problem} onClick={() => void edit({ kind: 'finish', finish: { camera: !camera } })} title={camera ? 'Your camera is in the corner of the video. Click to leave it out.' : 'Your camera is left out of the video. Click to put it in the corner.'}>
+          <button className={`twrp-switch ${camera ? 'on' : ''}`} role="switch" aria-checked={camera} aria-label="Camera" disabled={!!problem} onClick={() => void edit({ kind: 'finish', finish: { camera: !camera } })} title={camera ? 'Your camera is in the video. Click to leave it out.' : 'Your camera is left out of the video. Click to put it in.'}>
             {camera ? <Video className="lt-icon" /> : <VideoOff className="lt-icon" />}<span>Camera</span><span className="twrp-switch-track" aria-hidden="true"><span className="twrp-switch-knob" /></span><span className="twrp-switch-state">{camera ? 'On' : 'Off'}</span>
           </button>
         ) : null}
@@ -243,8 +260,8 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
 
       <div className="twrp-stage">
         <div className="twrp-unit">
-        {source ? (
-          <LayeredPlayer ref={player} source={source} spans={spans} durationMs={durationMs} camera={camera} notice={notice} onTime={time} onPlaying={playingChanged} />
+        {composed.source ? (
+          <LayeredPlayer ref={player} source={composed.source} spans={spans} durationMs={resolved.clockMs} clock={resolved.clock} camera={camera} dissolve={edits?.edits.finish.smoothJoins !== false} faces={faces} notice={composed.problem ?? missingTakeNotice(missingTakes) ?? notice} onTime={time} onPlaying={playingChanged} />
         ) : (
           <div className="twrp-player"><div className="twrp-frame twrp-wait">{preparing ? <><Loader2 className="lt-icon spin" /> Preparing playback…</> : null}</div></div>
         )}

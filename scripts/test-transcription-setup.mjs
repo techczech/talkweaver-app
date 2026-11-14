@@ -109,11 +109,11 @@ try {
       const { row } = status({}, lists)
       assert.equal(row.state, 'not-set-up', 'with or without an ffmpeg, nothing set is "not set up"')
       assert.equal(transcriptionRowLabel(row), NOT_SET_UP_OPTIONAL)
-      assert.equal(transcriptionActionMessage(row), 'Transcription is not set up. It is optional: Settings → Transcription has the set-up steps.')
+      assert.equal(transcriptionActionMessage(row), 'Transcription is not set up. It is optional: Settings → Get started → Transcription has the set-up steps.')
     }
     for (const state of TRANSCRIPTION_STATES.filter((name) => name !== 'ready')) {
       const message = transcriptionActionMessage({ state, pythonVersion: null, ffmpeg: null, ffmpegConfigured: false })
-      assert.ok(message && message.includes('Settings → Transcription'), `${state}: the action names where to set it up`)
+      assert.ok(message && message.includes('Settings → Get started → Transcription'), `${state}: the action names where to set it up`)
     }
     assert.equal(transcriptionActionMessage(status({ python, script }).row), null, 'Ready: nothing is refused')
     // The Transcribe action asks this row before it runs (the refusal is the row's sentence), and
@@ -251,7 +251,7 @@ try {
       for (const pattern of personal) assert.ok(!pattern.test(text), `${where} names something from Dominik's machines (${pattern})`)
     }
     // Settings names no skill at all (the agent prompt may mention the public TalkWeaver skill).
-    for (const where of ['Settings → Transcription', 'Settings search words', 'every row text']) {
+    for (const where of ['Settings › Recording › Transcription', 'Settings › Get started', 'every row text']) {
       assert.ok(!/\bskill\b/i.test(shown[where]), `${where} names a skill`)
     }
     ok('Settings, the row, the prompt and the shipped steps name no path, skill or person from Dominik\'s machines')

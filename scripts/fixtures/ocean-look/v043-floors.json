@@ -1,0 +1,536 @@
+{
+  "revision": "6771720babdb12bb0802e676f51f57c369243154",
+  "fingerprint": "ac300b9a6b2f3ea666c93c1ccb628d616388dfc53546868a998c02ddf473bd1b",
+  "floors": {
+    "ocean": {
+      "lists-beside-the-rail#0": [],
+      "tc-iconlist-focus-3#0": [],
+      "tc-iconlist-focus-3#1": [],
+      "tc-iconlist-focus-3#2": [],
+      "tc-iconlist-focus-3#3": [],
+      "tc-iconlist-focus-3#4": [],
+      "tc-iconlist-focus-5#0": [],
+      "tc-iconlist-focus-5#1": [],
+      "tc-iconlist-focus-5#2": [],
+      "tc-iconlist-focus-5#3": [],
+      "tc-iconlist-focus-5#4": [],
+      "tc-iconlist-focus-5#5": [],
+      "tc-iconlist-focus-5#6": [],
+      "tc-iconlist-details#0": [],
+      "tc-iconlist-eight#0": [],
+      "tc-iconlist-eight#1": [],
+      "tc-iconlist-eight#2": [],
+      "tc-iconlist-eight#3": [],
+      "tc-iconlist-eight#4": [],
+      "tc-iconlist-eight#5": [],
+      "tc-iconlist-eight#6": [],
+      "tc-iconlist-eight#7": [],
+      "tc-iconlist-eight#8": [],
+      "tc-iconlist-eight#9": [],
+      "tc-statement-list#0": [],
+      "plain-lists#0": [],
+      "tc-plain-3#0": [],
+      "tc-plain-5#0": [],
+      "tc-plain-9#0": [],
+      "tc-plain-details#0": [],
+      "tc-plain-details#1": [],
+      "tc-plain-details#2": [],
+      "tc-plain-details#3": [],
+      "tc-plain-details#4": [],
+      "tc-plain-details#5": [],
+      "tc-plain-details#6": [],
+      "tc-plain-details#7": [],
+      "combinations-from-the-audit#0": [],
+      "tc-bands#0": [],
+      "tc-bands#1": [],
+      "tc-bands#2": [],
+      "tc-bands#3": [],
+      "tc-bands#4": [],
+      "tc-bands-long#0": [],
+      "tc-iconrow-focus-4#0": [],
+      "tc-iconrow-focus-4#1": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-iconrow-focus-4#2": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Writer",
+          "text": "Writer",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-iconrow-focus-4#3": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Writer",
+          "text": "Writer",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|5|0|Checker",
+          "text": "Checker",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-iconrow-focus-4#4": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Writer",
+          "text": "Writer",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|5|0|Checker",
+          "text": "Checker",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|7|0|Runner",
+          "text": "Runner",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-iconrow-focus-4#5": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Writer",
+          "text": "Writer",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|5|0|Checker",
+          "text": "Checker",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|7|0|Runner",
+          "text": "Runner",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-iconrow-rail#0": [
+        {
+          "key": "STRONG|0|0|Research tool",
+          "text": "Research tool",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "STRONG|1|0|Phenomenal writer",
+          "text": "Phenomenal writer",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "STRONG|2|0|Patient tutor",
+          "text": "Patient tutor",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-named-ground#0": [],
+      "tc-annotated-numbered#0": [],
+      "tc-cards-nested#0": [],
+      "tc-stats-caption#0": [],
+      "tc-lead-marks#0": [],
+      "review-cases-marked-with-a-link-https-example-com#0": [],
+      "tc-statement-action#0": [],
+      "tc-annotated-links#0": [],
+      "tc-quote-picture#0": [],
+      "tc-title-para-picture#0": [],
+      "tc-title-paras-picture#0": [],
+      "tc-tab-marks#0": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Writer",
+          "text": "Writer",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|5|0|Checker",
+          "text": "Checker",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-tab-marks-ground#0": [],
+      "tc-panel-lines-2x4#0": [
+        {
+          "key": "SPAN|1|0|Chat assistant",
+          "text": "Chat assistant",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|11|0|Coding assistant",
+          "text": "Coding assistant",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-panel-lines-3x3#0": [
+        {
+          "key": "SPAN|1|0|Browser",
+          "text": "Browser",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|9|0|Desktop",
+          "text": "Desktop",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|17|0|Terminal",
+          "text": "Terminal",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "long-content#0": [],
+      "tc-long-timeline#0": [],
+      "tc-long-items#0": [],
+      "tc-long-cycle#0": [
+        {
+          "key": "SPAN|0|0|Harness: sends instructions and the latest results to the model",
+          "text": "Harness: sends instructions and the latest resul",
+          "px": 25.5,
+          "small": false
+        },
+        {
+          "key": "SPAN|1|0|Model: makes a plan for the next step of the work",
+          "text": "Model: makes a plan for the next step of the wor",
+          "px": 25.5,
+          "small": false
+        },
+        {
+          "key": "SPAN|2|0|Model: sends a command back to the harness to run",
+          "text": "Model: sends a command back to the harness to ru",
+          "px": 25.5,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Harness: passes the command to the computer and waits",
+          "text": "Harness: passes the command to the computer and ",
+          "px": 25.5,
+          "small": false
+        },
+        {
+          "key": "SPAN|4|0|Computer: executes the command and returns the output to the harness",
+          "text": "Computer: executes the command and returns the o",
+          "px": 25.5,
+          "small": false
+        }
+      ],
+      "tc-long-title#0": [],
+      "end#0": [],
+      "tc-end#0": []
+    },
+    "bold": {
+      "lists-beside-the-rail#0": [],
+      "tc-iconlist-focus-3#0": [],
+      "tc-iconlist-focus-3#1": [],
+      "tc-iconlist-focus-3#2": [],
+      "tc-iconlist-focus-3#3": [],
+      "tc-iconlist-focus-3#4": [],
+      "tc-iconlist-focus-5#0": [],
+      "tc-iconlist-focus-5#1": [],
+      "tc-iconlist-focus-5#2": [],
+      "tc-iconlist-focus-5#3": [],
+      "tc-iconlist-focus-5#4": [],
+      "tc-iconlist-focus-5#5": [],
+      "tc-iconlist-focus-5#6": [],
+      "tc-iconlist-details#0": [],
+      "tc-iconlist-eight#0": [],
+      "tc-iconlist-eight#1": [],
+      "tc-iconlist-eight#2": [],
+      "tc-iconlist-eight#3": [],
+      "tc-iconlist-eight#4": [],
+      "tc-iconlist-eight#5": [],
+      "tc-iconlist-eight#6": [],
+      "tc-iconlist-eight#7": [],
+      "tc-iconlist-eight#8": [],
+      "tc-iconlist-eight#9": [],
+      "tc-statement-list#0": [],
+      "plain-lists#0": [],
+      "tc-plain-3#0": [],
+      "tc-plain-5#0": [],
+      "tc-plain-9#0": [],
+      "tc-plain-details#0": [],
+      "tc-plain-details#1": [],
+      "tc-plain-details#2": [],
+      "tc-plain-details#3": [],
+      "tc-plain-details#4": [],
+      "tc-plain-details#5": [],
+      "tc-plain-details#6": [],
+      "tc-plain-details#7": [],
+      "combinations-from-the-audit#0": [],
+      "tc-bands#0": [],
+      "tc-bands#1": [],
+      "tc-bands#2": [],
+      "tc-bands#3": [],
+      "tc-bands#4": [],
+      "tc-bands-long#0": [],
+      "tc-iconrow-focus-4#0": [],
+      "tc-iconrow-focus-4#1": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-iconrow-focus-4#2": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Writer",
+          "text": "Writer",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-iconrow-focus-4#3": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Writer",
+          "text": "Writer",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|5|0|Checker",
+          "text": "Checker",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-iconrow-focus-4#4": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Writer",
+          "text": "Writer",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|5|0|Checker",
+          "text": "Checker",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|7|0|Runner",
+          "text": "Runner",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-iconrow-focus-4#5": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Writer",
+          "text": "Writer",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|5|0|Checker",
+          "text": "Checker",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|7|0|Runner",
+          "text": "Runner",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-iconrow-rail#0": [
+        {
+          "key": "STRONG|0|0|Research tool",
+          "text": "Research tool",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "STRONG|1|0|Phenomenal writer",
+          "text": "Phenomenal writer",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "STRONG|2|0|Patient tutor",
+          "text": "Patient tutor",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-named-ground#0": [],
+      "tc-annotated-numbered#0": [],
+      "tc-cards-nested#0": [],
+      "tc-stats-caption#0": [],
+      "tc-lead-marks#0": [],
+      "review-cases-marked-with-a-link-https-example-com#0": [],
+      "tc-statement-action#0": [],
+      "tc-annotated-links#0": [],
+      "tc-quote-picture#0": [],
+      "tc-title-para-picture#0": [],
+      "tc-title-paras-picture#0": [],
+      "tc-tab-marks#0": [
+        {
+          "key": "SPAN|1|0|Reader",
+          "text": "Reader",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Writer",
+          "text": "Writer",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|5|0|Checker",
+          "text": "Checker",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-tab-marks-ground#0": [],
+      "tc-panel-lines-2x4#0": [
+        {
+          "key": "SPAN|1|0|Chat assistant",
+          "text": "Chat assistant",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|11|0|Coding assistant",
+          "text": "Coding assistant",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "tc-panel-lines-3x3#0": [
+        {
+          "key": "SPAN|1|0|Browser",
+          "text": "Browser",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|9|0|Desktop",
+          "text": "Desktop",
+          "px": 21.7,
+          "small": false
+        },
+        {
+          "key": "SPAN|17|0|Terminal",
+          "text": "Terminal",
+          "px": 21.7,
+          "small": false
+        }
+      ],
+      "long-content#0": [],
+      "tc-long-timeline#0": [],
+      "tc-long-items#0": [],
+      "tc-long-cycle#0": [
+        {
+          "key": "SPAN|0|0|Harness: sends instructions and the latest results to the model",
+          "text": "Harness: sends instructions and the latest resul",
+          "px": 25.5,
+          "small": false
+        },
+        {
+          "key": "SPAN|1|0|Model: makes a plan for the next step of the work",
+          "text": "Model: makes a plan for the next step of the wor",
+          "px": 25.5,
+          "small": false
+        },
+        {
+          "key": "SPAN|2|0|Model: sends a command back to the harness to run",
+          "text": "Model: sends a command back to the harness to ru",
+          "px": 25.5,
+          "small": false
+        },
+        {
+          "key": "SPAN|3|0|Harness: passes the command to the computer and waits",
+          "text": "Harness: passes the command to the computer and ",
+          "px": 25.5,
+          "small": false
+        },
+        {
+          "key": "SPAN|4|0|Computer: executes the command and returns the output to the harness",
+          "text": "Computer: executes the command and returns the o",
+          "px": 25.5,
+          "small": false
+        }
+      ],
+      "tc-long-title#0": [],
+      "end#0": [],
+      "tc-end#0": []
+    }
+  }
+}

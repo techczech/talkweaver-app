@@ -16,20 +16,72 @@ export type TimeRange = { start: number; end: number }
  * `at` is the new start in Run time. `any` is true when it was put on a word rather than a clear pause.
  */
 export type EditBoundary = { change: number; at: number; any?: true }
-/** One step of the history: the whole cut list and the whole boundary list before (or after) a change. */
 /**
- * One step of the history: the whole cut list, the whole boundary list and the slides left out, before
- * (or after) a change.
+ * One step of the history: the whole cut list, the whole boundary list, the slides left out and the
+ * finishing choices, before (or after) a change.
  */
-export type EditsHistoryEntry = { cuts: TimeRange[]; boundaries: EditBoundary[]; leftOut: number[] }
+export type EditsHistoryEntry = { cuts: TimeRange[]; boundaries: EditBoundary[]; leftOut: number[]; finish: RecordingFinish; faces: RecordingFaces; takes: ChosenTake[] }
+
+/** The take used for a slide ("Record this slide again"): its slide change and the take's Run id. None: the first take. */
+export type ChosenTake = { change: number; run: string }
+const TAKE_ID = /^[A-Za-z0-9_-]{1,80}$/
+function validTakes(v: unknown): v is ChosenTake[] {
+  return Array.isArray(v) && v.length <= MAX_RANGES && v.every((t) => t && typeof t === 'object' && Number.isFinite((t as ChosenTake).change) && typeof (t as ChosenTake).run === 'string' && TAKE_ID.test((t as ChosenTake).run))
+}
+function normaliseTakes(v: readonly ChosenTake[]): ChosenTake[] {
+  const by = new Map<number, string>()
+  for (const t of v) by.set(Math.max(0, Math.round(t.change)), t.run)
+  return [...by.entries()].sort((a, b) => a[0] - b[0]).map(([change, run]) => ({ change, run }))
+}
 
 /**
- * Version written by this build. 4 adds `boundaries` (moved slide starts), `leftOut` (slides left out of
- * the video, named by their slide change) and history entries holding all three; 3 (release 0.44) is read
- * with none of either and its history as cut lists. 1 and 2 are PR 316's
- * flat-recording sidecars, read as cuts only.
+ * Where the face appears (the design's "picture" contract): In the corner (a corner and a size), Side by
+ * side, Face only, Slide only (the camera hidden). Only the bottom corners are offered: a talk's slide
+ * titles sit at the top, and a face in a top corner would cover them.
  */
-export const RECORDING_EDITS_VERSION = 4
+export type FaceLayout = 'corner' | 'side' | 'face' | 'slide'
+export type FaceCorner = 'bottom-right' | 'bottom-left'
+export type FaceSize = 'small' | 'medium' | 'large'
+export type FacePlacement = { layout: FaceLayout; corner: FaceCorner; size: FaceSize }
+/** 0.44's one placement, and every slide's until it is changed. */
+export const DEFAULT_FACE: FacePlacement = { layout: 'corner', corner: 'bottom-right', size: 'medium' }
+/** The whole video's placement, and slides placed otherwise, each named by its slide change. */
+export type RecordingFaces = { all: FacePlacement; slides: Array<{ change: number; face: FacePlacement }> }
+const FACE_LAYOUTS: readonly FaceLayout[] = ['corner', 'side', 'face', 'slide']
+const FACE_CORNERS: readonly FaceCorner[] = ['bottom-right', 'bottom-left']
+const FACE_SIZES: readonly FaceSize[] = ['small', 'medium', 'large']
+export function emptyFaces(): RecordingFaces { return { all: { ...DEFAULT_FACE }, slides: [] } }
+export function validFace(v: unknown): v is FacePlacement {
+  const f = v as FacePlacement
+  return !!f && typeof f === 'object' && !Array.isArray(f) && FACE_LAYOUTS.includes(f.layout) && FACE_CORNERS.includes(f.corner) && FACE_SIZES.includes(f.size)
+}
+function validFaces(v: unknown): v is RecordingFaces {
+  const f = v as RecordingFaces
+  return !!f && typeof f === 'object' && validFace(f.all) && Array.isArray(f.slides) && f.slides.length <= MAX_RANGES && f.slides.every((e) => e && Number.isFinite(e.change) && validFace(e.face))
+}
+const sameFace = (a: FacePlacement, b: FacePlacement): boolean => a.layout === b.layout && a.corner === b.corner && a.size === b.size
+/** Sorted by change, one entry per slide, and none that says what the whole video says. */
+function normaliseFaces(f: RecordingFaces): RecordingFaces {
+  const by = new Map<number, FacePlacement>()
+  for (const e of f.slides) by.set(Math.max(0, Math.round(e.change)), { layout: e.face.layout, corner: e.face.corner, size: e.face.size })
+  const all = { layout: f.all.layout, corner: f.all.corner, size: f.all.size }
+  return { all, slides: [...by.entries()].filter(([, face]) => !sameFace(face, all)).sort((a, b) => a[0] - b[0]).map(([change, face]) => ({ change, face })) }
+}
+/** The placement of the slide that starts at slide change `change`. */
+export function faceOf(faces: RecordingFaces, change: number): FacePlacement {
+  return faces.slides.find((e) => e.change === Math.round(change))?.face ?? faces.all
+}
+const sameFaces = (a: RecordingFaces, b: RecordingFaces): boolean => sameFace(a.all, b.all) && a.slides.length === b.slides.length && a.slides.every((e, i) => e.change === b.slides[i].change && sameFace(e.face, b.slides[i].face))
+
+/**
+ * Version written by this build. 5 (release 0.44.5) adds where the face appears (`faces`) and makes it and
+ * the finishing choices (camera, even volume, smooth joins) part of the history, so each is one undoable step; 4 (release 0.44) is read with its
+ * history steps keeping the finishing choices the file has. 4 added `boundaries` (moved slide starts),
+ * `leftOut` (slides left out of the video, named by their slide change) and history entries holding all
+ * three; 3 is read with none of either and its history as cut lists. 1 and 2 are PR 316's flat-recording
+ * sidecars, read as cuts only.
+ */
+export const RECORDING_EDITS_VERSION = 5
 /** Undo and redo each keep at most this many steps, also across reopening (persisted in the sidecar). */
 export const EDIT_HISTORY_LIMIT = 100
 /** A sidecar larger than this is refused rather than parsed. */
@@ -42,7 +94,15 @@ export const EDITS_MAX_BYTES = 8 * 1024 * 1024
 export const EDITS_WRITE_BUDGET = 6 * 1024 * 1024
 const MAX_RANGES = 10_000
 
-export type RecordingFinish = { camera: boolean }
+/**
+ * The finishing choices for the whole video ("Look and sound"). `camera`: the camera picture is in the
+ * video. `evenVolume`: the voice is evened out (EVEN_VOLUME in recording-video.ts). `smoothJoins`: every
+ * join an edit made crossfades the sound and dissolves the picture; off, the sound only fades out and in.
+ */
+export type RecordingFinish = { camera: boolean; evenVolume: boolean; smoothJoins: boolean }
+/** A new recording, and a sidecar written before a choice existed: everything on (the design's defaults). */
+export const DEFAULT_FINISH: RecordingFinish = { camera: true, evenVolume: true, smoothJoins: true }
+const FINISH_KEYS = ['camera', 'evenVolume', 'smoothJoins'] as const
 export type RecordingEdits = {
   version: typeof RECORDING_EDITS_VERSION
   /** Increments on every saved change; a write naming an older revision is refused. */
@@ -68,8 +128,12 @@ export type RecordingEdits = {
   undo: EditsHistoryEntry[]
   /** States undone, oldest first; the last entry is what Redo returns to. */
   redo: EditsHistoryEntry[]
-  /** Export choices. Not part of the cut history. */
+  /** Finishing choices for the whole video; each change is one undo step (version 5). */
   finish: RecordingFinish
+  /** Where the face appears, for the whole video and per slide (version 5). */
+  faces: RecordingFaces
+  /** The take used for each slide recorded again (version 5); a slide not listed uses the recording's own. */
+  takes: ChosenTake[]
 }
 
 export type EditOp =
@@ -88,6 +152,13 @@ export type EditOp =
   | { kind: 'undo' }
   | { kind: 'redo' }
   | { kind: 'finish'; finish: Partial<RecordingFinish> }
+  /**
+   * Where the face appears. `changes: null` is the whole video (every slide follows it again);
+   * otherwise those slides, by their slide changes. `face: null` puts those slides back to the whole video's.
+   */
+  | { kind: 'face'; changes: number[] | null; face: FacePlacement | null }
+  /** Use take `run` for the slide that starts at slide change `change`; `run: null` goes back to the first take. */
+  | { kind: 'take'; change: number; run: string | null }
 
 export type EditsProblem = { kind: 'newer' | 'corrupt' | 'stale'; message: string }
 /** What a sidecar is checked against when read. */
@@ -99,10 +170,10 @@ export type EditsContext = {
   /** PR 316's source identity of this recording for its sidecar version, or null when it cannot be computed. */
   legacySource?: (version: 1 | 2) => string | null
 }
-export type ParsedEdits = { ok: true; edits: RecordingEdits; from: 1 | 2 | 3 | 4 | null } | { ok: false; problem: EditsProblem }
+export type ParsedEdits = { ok: true; edits: RecordingEdits; from: 1 | 2 | 3 | 4 | 5 | null } | { ok: false; problem: EditsProblem }
 
 export function emptyEdits(): RecordingEdits {
-  return { version: RECORDING_EDITS_VERSION, revision: 0, cuts: [], boundaries: [], leftOut: [], restoredTrims: [], undo: [], redo: [], finish: { camera: true } }
+  return { version: RECORDING_EDITS_VERSION, revision: 0, cuts: [], boundaries: [], leftOut: [], restoredTrims: [], undo: [], redo: [], finish: { ...DEFAULT_FINISH }, faces: emptyFaces(), takes: [] }
 }
 
 /** Sorted, merged, whole milliseconds inside [0, duration]; empty and invalid ranges dropped. */
@@ -231,18 +302,18 @@ function nextCuts(cuts: TimeRange[], op: EditOp, durationMs: number): TimeRange[
 
 /**
  * Apply one operation. Each change is one undo step; a change clears Redo. Returns the same object when
- * nothing changes (the caller then writes nothing). The finish choice changes no history.
+ * nothing changes (the caller then writes nothing).
  */
 export function applyEditOp(edits: RecordingEdits, op: EditOp, durationMs: number): RecordingEdits {
   if (!op || typeof op !== 'object') throw Error('Unknown edit')
-  const now: EditsHistoryEntry = { cuts: edits.cuts, boundaries: edits.boundaries, leftOut: edits.leftOut }
+  const now: EditsHistoryEntry = { cuts: edits.cuts, boundaries: edits.boundaries, leftOut: edits.leftOut, finish: edits.finish, faces: edits.faces, takes: edits.takes }
   if (op.kind === 'undo' || op.kind === 'redo') {
     const from = op.kind === 'undo' ? edits.undo : edits.redo
     const target = from.at(-1)
     if (!target) return edits
     const rest = from.slice(0, -1)
     const other = [...(op.kind === 'undo' ? edits.redo : edits.undo), now].slice(-EDIT_HISTORY_LIMIT)
-    return { ...edits, revision: edits.revision + 1, cuts: target.cuts, boundaries: target.boundaries, leftOut: target.leftOut, undo: op.kind === 'undo' ? rest : other, redo: op.kind === 'undo' ? other : rest }
+    return { ...edits, revision: edits.revision + 1, cuts: target.cuts, boundaries: target.boundaries, leftOut: target.leftOut, finish: target.finish, faces: target.faces, takes: target.takes, undo: op.kind === 'undo' ? rest : other, redo: op.kind === 'undo' ? other : rest }
   }
   if (op.kind === 'boundary') {
     const next = nextBoundaries(edits.boundaries, op, durationMs)
@@ -258,11 +329,34 @@ export function applyEditOp(edits: RecordingEdits, op: EditOp, durationMs: numbe
     if (next.length > MAX_RANGES) throw Error('Too many slides left out')
     return { ...edits, revision: edits.revision + 1, leftOut: next, undo: [...edits.undo, now].slice(-EDIT_HISTORY_LIMIT), redo: [] }
   }
+  if (op.kind === 'take') {
+    if (!Number.isFinite(op.change) || (op.run !== null && (typeof op.run !== 'string' || !TAKE_ID.test(op.run)))) throw Error('Invalid take')
+    const change = Math.max(0, Math.round(op.change))
+    const next = normaliseTakes([...edits.takes.filter((t) => t.change !== change), ...(op.run ? [{ change, run: op.run }] : [])])
+    if (next.length === edits.takes.length && next.every((t, i) => t.change === edits.takes[i].change && t.run === edits.takes[i].run)) return edits
+    return { ...edits, revision: edits.revision + 1, takes: next, undo: [...edits.undo, now].slice(-EDIT_HISTORY_LIMIT), redo: [] }
+  }
+  if (op.kind === 'face') {
+    if ((op.face !== null && !validFace(op.face)) || (op.changes !== null && (!Array.isArray(op.changes) || op.changes.length > MAX_RANGES || !op.changes.every(Number.isFinite)))) throw Error('Invalid face position')
+    if (op.changes === null && op.face === null) throw Error('Invalid face position')
+    const changes = op.changes?.map((c) => Math.max(0, Math.round(c))) ?? []
+    const next = normaliseFaces(op.changes === null
+      ? { all: op.face as FacePlacement, slides: [] }
+      : { all: edits.faces.all, slides: [...edits.faces.slides.filter((e) => !changes.includes(e.change)), ...(op.face ? changes.map((change) => ({ change, face: op.face as FacePlacement })) : [])] })
+    if (sameFaces(next, edits.faces)) return edits
+    return { ...edits, revision: edits.revision + 1, faces: next, undo: [...edits.undo, now].slice(-EDIT_HISTORY_LIMIT), redo: [] }
+  }
   if (op.kind === 'finish') {
-    const camera = op.finish?.camera
-    if (camera === undefined || camera === edits.finish.camera) return edits
-    if (typeof camera !== 'boolean') throw Error('Invalid export choice')
-    return { ...edits, revision: edits.revision + 1, finish: { ...edits.finish, camera } }
+    const asked = op.finish
+    if (!asked || typeof asked !== 'object') throw Error('Invalid export choice')
+    const next = { ...edits.finish }
+    for (const key of FINISH_KEYS) {
+      if (asked[key] === undefined) continue
+      if (typeof asked[key] !== 'boolean') throw Error('Invalid export choice')
+      next[key] = asked[key] as boolean
+    }
+    if (FINISH_KEYS.every((k) => next[k] === edits.finish[k])) return edits
+    return { ...edits, revision: edits.revision + 1, finish: next, undo: [...edits.undo, now].slice(-EDIT_HISTORY_LIMIT), redo: [] }
   }
   const next = nextCuts(edits.cuts, op, durationMs)
   if (!next) return edits
@@ -303,23 +397,35 @@ export function parseEdits(raw: unknown, durationMs: number, context: EditsConte
       : normaliseRanges(cuts.reduce((rest, c) => restoreRange(rest, c), trims), durationMs)
     return { ok: true, from: version, edits: { ...emptyEdits(), cuts, restoredTrims } }
   }
-  if (version !== 3 && version !== RECORDING_EDITS_VERSION) return corrupt
+  if (version !== 3 && version !== 4 && version !== RECORDING_EDITS_VERSION) return corrupt
   const revision = value.revision
-  // Version 3 (release 0.44) kept cut lists only; version 4 keeps cuts, boundaries and slides left out in each step.
+  // Version 3 kept cut lists only; version 4 keeps cuts, boundaries and slides left out in each step;
+  // version 5 adds the finishing choices to each step.
   const entryOk = (e: unknown): boolean => version === 3 ? validRanges(e)
     : !!e && typeof e === 'object' && !Array.isArray(e) && validRanges((e as EditsHistoryEntry).cuts) && validBoundaries((e as EditsHistoryEntry).boundaries) && ((e as EditsHistoryEntry).leftOut === undefined || validLeftOut((e as EditsHistoryEntry).leftOut))
+      // A version 5 step names its finish, faces and takes; one without them keeps the document's (as a version 4 step does).
+      && (version === 4 ? (e as EditsHistoryEntry).finish === undefined && (e as EditsHistoryEntry).faces === undefined
+        : ((e as EditsHistoryEntry).finish === undefined || validFinish((e as EditsHistoryEntry).finish)) && ((e as EditsHistoryEntry).faces === undefined || validFaces((e as EditsHistoryEntry).faces)) && ((e as EditsHistoryEntry).takes === undefined || validTakes((e as EditsHistoryEntry).takes)))
   const history = (h: unknown): h is unknown[] => Array.isArray(h) && h.length <= EDIT_HISTORY_LIMIT && h.every(entryOk)
   const finish = value.finish as Record<string, unknown> | undefined
   if (!Number.isSafeInteger(revision) || (revision as number) < 0 || !validRanges(value.cuts) || !history(value.undo) || !history(value.redo)) return corrupt
-  if (version === RECORDING_EDITS_VERSION ? !validBoundaries(value.boundaries) || (value.leftOut !== undefined && !validLeftOut(value.leftOut)) : value.boundaries !== undefined || value.leftOut !== undefined) return corrupt
-  if (finish !== undefined && (typeof finish !== 'object' || finish === null || (finish.camera !== undefined && typeof finish.camera !== 'boolean'))) return corrupt
+  if (version !== 3 ? !validBoundaries(value.boundaries) || (value.leftOut !== undefined && !validLeftOut(value.leftOut)) : value.boundaries !== undefined || value.leftOut !== undefined) return corrupt
+  if (finish !== undefined && !validFinish(finish)) return corrupt
+  if (version === RECORDING_EDITS_VERSION ? !validFaces(value.faces) || !validTakes(value.takes) : value.faces !== undefined || value.takes !== undefined) return corrupt
   if (value.restoredTrims !== undefined && !validRanges(value.restoredTrims)) return corrupt
   if (value.recording !== undefined && typeof value.recording !== 'string') return corrupt
   if (typeof value.recording === 'string' && context.fingerprint !== undefined && value.recording !== context.fingerprint) return stale
   const norm = (r: TimeRange[]): TimeRange[] => normaliseRanges(r, durationMs)
+  const finishNow = readFinish(finish)
+  const facesNow = version === RECORDING_EDITS_VERSION ? normaliseFaces(value.faces as RecordingFaces) : emptyFaces()
+  const takesNow = version === RECORDING_EDITS_VERSION ? normaliseTakes(value.takes as ChosenTake[]) : []
+  // Before version 5 the finishing choices were not in the history: undoing an older step keeps them as they are.
   const step = (e: unknown): EditsHistoryEntry => version === 3
-    ? { cuts: norm(e as TimeRange[]), boundaries: [], leftOut: [] }
-    : { cuts: norm((e as EditsHistoryEntry).cuts), boundaries: normaliseBoundaries((e as EditsHistoryEntry).boundaries, durationMs), leftOut: normaliseLeftOut((e as EditsHistoryEntry).leftOut ?? []) }
+    ? { cuts: norm(e as TimeRange[]), boundaries: [], leftOut: [], finish: finishNow, faces: facesNow, takes: takesNow }
+    : { cuts: norm((e as EditsHistoryEntry).cuts), boundaries: normaliseBoundaries((e as EditsHistoryEntry).boundaries, durationMs), leftOut: normaliseLeftOut((e as EditsHistoryEntry).leftOut ?? []),
+      finish: (e as EditsHistoryEntry).finish === undefined ? finishNow : readFinish((e as EditsHistoryEntry).finish),
+      faces: (e as EditsHistoryEntry).faces === undefined ? facesNow : normaliseFaces((e as EditsHistoryEntry).faces),
+      takes: (e as EditsHistoryEntry).takes === undefined ? takesNow : normaliseTakes((e as EditsHistoryEntry).takes) }
   return {
     ok: true,
     from: version,
@@ -334,9 +440,22 @@ export function parseEdits(raw: unknown, durationMs: number, context: EditsConte
       restoredTrims: norm((value.restoredTrims as TimeRange[] | undefined) ?? []),
       undo: (value.undo as unknown[]).map(step),
       redo: (value.redo as unknown[]).map(step),
-      finish: { camera: finish?.camera !== false }
+      finish: finishNow,
+      faces: facesNow,
+      takes: takesNow
     }
   }
+}
+
+/** A stored finish: an object whose known choices, where present, are true or false. */
+function validFinish(value: unknown): boolean {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  return FINISH_KEYS.every((k) => (value as Record<string, unknown>)[k] === undefined || typeof (value as Record<string, unknown>)[k] === 'boolean')
+}
+/** The stored choices, each absent one at its default. */
+function readFinish(value: unknown): RecordingFinish {
+  const v = (value ?? {}) as Partial<RecordingFinish>
+  return { camera: v.camera !== false, evenVolume: v.evenVolume !== false, smoothJoins: v.smoothJoins !== false }
 }
 
 /**

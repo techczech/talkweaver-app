@@ -326,6 +326,16 @@ const POLL_TYPE_TOKENS = [
  */
 const ANSWER_POLL_TYPE_TOKENS = POLL_TYPE_TOKENS.filter((token) => token !== 'poll=board')
 /** A board's settings (ADR-0032 §2): written after `{poll=board}` in this order, never after the id. */
+// The five section lead colours of the Ocean look (compiler/scripts/lib/section-leads.mjs SECTION_LEADS): name, label,
+// swatch, description.
+const SECTION_COLOUR_CHOICES: Array<[string, string, string, string?]> = [
+  ['blue', 'Blue', '#1273C4'],
+  ['amber', 'Amber', '#FF9F1C'],
+  ['deep-blue', 'Deep blue', '#0D5A9E'],
+  ['light', 'Light', '#F2F4F7', 'White grounds with Ocean type'],
+  ['light-amber', 'Light with amber', '#FFE2BA', 'White grounds, an amber disc, Deeper Ocean type']
+]
+
 const BOARD_SETTING_KEYS = ['poll', 'limit', 'length', 'cards', 'names', 'closes'] as const
 /**
  * A title look applies where the title is drawn at the top: the layouts whose regime is `top`. (A
@@ -2968,6 +2978,38 @@ The visible heading is suppressed.`,
         { token: 'accent=emerald', label: 'Emerald', swatch: '#0a7a5c' },
         { token: 'accent=vermilion', label: 'Vermilion', swatch: '#c2410c' },
         { token: 'accent=forest', label: 'Forest', description: 'Available in the green palette', swatch: '#166534' }
+      ]
+    }]
+  },
+  {
+    // 0.44 look: a section's lead colour, over the talk's rotation (compiler/scripts/lib/section-leads.mjs).
+    name: 'section-colour',
+    label: 'Section colour',
+    trigger: '{section-colour=amber}',
+    aliases: [],
+    triggerWords: [],
+    kind: 'modifier',
+    sectionOnly: true,
+    status: 'stable',
+    sample: `## section-colour — this section in amber
+{section-colour=amber}
+
+### Every slide of the section takes it
+
+- The divider, the statements, the side rail and the title tab`,
+    description: 'Give this section one of the five lead colours of the Ocean look, whatever the rotation gives it',
+    category: 'modes',
+    purpose: 'Modes',
+    whenItFits: 'A section that should keep one lead colour; the other sections keep theirs.',
+    // Not a layout to pick (the layout picker is locked by ADR-0032 §4): set in the talk's metadata or on the ## line.
+    pickerEligible: false,
+    options: [{
+      key: 'section-colour',
+      label: 'Section colour',
+      preview: 'segmented',
+      values: [
+        { token: '', label: 'Rotation', description: 'The colour the talk’s rotation gives this section' },
+        ...SECTION_COLOUR_CHOICES.map(([name, label, swatch, description]) => ({ token: `section-colour=${name}`, label, swatch, ...(description ? { description } : {}) }))
       ]
     }]
   },

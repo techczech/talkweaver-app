@@ -34,6 +34,10 @@ const pass = (name) => console.log(`PASS ${++count} ${name}`)
 const measured = {}
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
+// A hard stop inside the script: a hung app never outlives the slot (13 minutes; the slot allows 15).
+const hardStop = setTimeout(() => { console.error('HARD TIMEOUT: the journey did not finish in 13 minutes'); try { app?.process()?.kill('SIGKILL') } catch {} process.exit(124) }, 13 * 60 * 1000)
+hardStop.unref()
+
 try {
   app = await electron.launch({ timeout: 30000, cwd: repo, args: ['.', '--user-data-dir=' + userData, '--use-fake-device-for-media-stream'], env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' } })
   const main = await app.firstWindow(); await main.waitForLoadState('domcontentloaded')
@@ -166,7 +170,8 @@ try {
     await tools.waitForSelector('.tre-player .twrp-frame video', { state: 'attached', timeout: 300000 })
     await pictureReady(tools)
     assert.equal(await tools.locator('.tw-tools-bar').count(), 1, 'one bar above the content')
-    for (const gone of ['Look and sound…', 'Face: corner', 'Record this slide again']) assert.equal(await tools.getByText(gone).count(), 0, `${gone} belongs to a later slice`)
+    // Release 0.44.5 adds Look and sound…, the face control and Record this slide again (diagnose-recording-follow-ups.mjs).
+    assert.equal(await tools.getByRole('button', { name: 'Look and sound…' }).count(), 1)
     assert.equal(await tools.locator('[data-w]').count(), ctx.words.length, 'every word is shown')
     assert.equal(await tools.locator('.tre-len').textContent(), new Date(D).toISOString().slice(15, 19).replace(/^0/, ''))
     await shot(tools, 'ready')

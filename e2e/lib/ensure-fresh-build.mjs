@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, statSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 
 function newestFileMtime(directory, excludedDirectory = '') {
@@ -14,8 +14,24 @@ function newestFileMtime(directory, excludedDirectory = '') {
   return newest
 }
 
+// The presenter opens only once main has read the outline through the gallery helper (talk:present →
+// verifiedRunSource → native/vault-gallery on macOS). An unbuilt checkout would time out at every first
+// presenter window, so say what is missing at once. The helpers are built by npm run build:native, not here.
+function requireNativeHelpers(repoRoot) {
+  if (process.platform !== 'darwin') return
+  if (existsSync(`${repoRoot}/native/vault-gallery`)) return
+  throw new Error('[e2e] native/vault-gallery is missing: run `npm run build:native` first (presenting needs it; without it the presenter window never opens).')
+}
+
 export async function ensureFreshBuild(repoRoot) {
+  requireNativeHelpers(repoRoot)
+  // The compiler (templates, runtime, styles) and the native sources count as sources too.
+  const nativeSources = readdirSync(`${repoRoot}/native`, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.endsWith('.swift'))
+    .map((entry) => statSync(`${repoRoot}/native/${entry.name}`).mtimeMs)
   const sourceMtime = Math.max(
+    newestFileMtime(`${repoRoot}/compiler`),
+    ...nativeSources,
     newestFileMtime(`${repoRoot}/src/main`),
     newestFileMtime(`${repoRoot}/src/preload`),
     newestFileMtime(`${repoRoot}/src/shared`),

@@ -41,13 +41,11 @@ The picture for this slide has not been added yet.
 ### Copy, then Bin
 {id=h5}
 
-> **Try it.** On Harvest supper (draft) in the Talks panel, <kbd>⌘D</kbd> makes a copy. On the copy, <kbd>⌘⌫</kbd> moves it to the Bin once you confirm.
+> **Try it.** In the Talks panel, <kbd>⌘D</kbd> copies Harvest supper (draft); <kbd>⌘⌫</kbd> moves the copy to the Bin once you confirm.
 
-> **Try it.** **Add vault…** (<kbd>⌘⇧P</kbd>, or at the foot of the sidebar) adds a folder of your own talks.
+> **Try it.** **Add vault…** (<kbd>⌘⇧P</kbd>) adds a folder of your own talks; **Vault Gallery** shows the talks in your vaults.
 
-> **Try it.** In All commands (<kbd>⌘⇧P</kbd>), **Vault Gallery** opens the gallery of talks in your vaults.
-
-> **Try it.** <kbd>N</kbd>, <kbd>S</kbd>, <kbd>R</kbd> and <kbd>C</kbd> work in Manage notes, which opens from a recording in Studio. This vault has no recording.
+> **Try it.** <kbd>N</kbd>, <kbd>S</kbd>, <kbd>R</kbd> and <kbd>C</kbd> work in Manage notes, from a recording in Studio (this vault has none).
 
 ## 09 Check and repair
 {id=09-check-and-repair}

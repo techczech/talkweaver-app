@@ -8,21 +8,27 @@
 //     through the app's ffmpeg, to a temporary name beside the chosen file, renamed only after it is
 //     checked. No Electron import here: recording-video-ipc.ts binds it to the app.
 import { spawn } from 'node:child_process'
+import { Readable, Transform } from 'node:stream'
 import { createHash, randomUUID } from 'node:crypto'
 import { closeSync, constants, existsSync, fstatSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmdirSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
 import { basename, dirname, extname, join, sep } from 'node:path'
 import { recordingAudioTimeline } from './recording-audio-timeline.ts'
 import { isSafeRunId } from './runs.ts'
-import { shownFrom, chapterListText, chaptersFor, captionCues, cameraRect, editedDurationMs, ffmetadata, keptSpans, layerClips, toSrt, toWebVtt, JOIN_FADE_MS, VIDEO_FRAME, type CaptionWord, type CaptureLike, type ChapterSlide, type KeptSpan, type LayerClip, type LayerName } from '../shared/recording-video.ts'
+import { shownFrom, chapterListText, chaptersFor, captionCues, editedDurationMs, ffmetadata, frameOf, keptSpans, layerClips, placementRects, toSrt, toWebVtt, VIDEO_FRAME, withoutCamera, type FaceSegment, type Rect, type CaptionWord, type CaptureLike, type ChapterSlide, type KeptSpan, type LayerClip, type LayerName } from '../shared/recording-video.ts'
 import type { TimeRange } from '../shared/recording-edits.ts'
+import { createVoiceSplicer, dissolveWindows, JOIN_DISSOLVE_FRAMES, splicedLength, voiceSplicePlan } from '../shared/recording-joins.ts'
+import { clipsOnVideoClock, toVideoClock, type TakeClock } from '../shared/recording-takes.ts'
 
-export type VoiceSegment = { path: string; startMs: number; endMs: number }
+/** `offsetMs`: where in its file the segment starts (0 when absent). */
+export type VoiceSegment = { path: string; startMs: number; endMs: number; offsetMs?: number }
+/** A picture file on the clock. `offsetMs`: its media time at `startMs` (0 when absent); `shownFromMs`: its first frame is held from here. */
+export type PlacedClip = LayerClip & { path: string; offsetMs?: number; shownFromMs?: number }
 export type MissingLayer = { layer: 'slides' | 'camera' | 'voice'; file: string }
 export type ResolvedLayers = {
   runId: string
   durationMs: number
-  slides: Array<LayerClip & { path: string }>
-  camera: Array<LayerClip & { path: string }>
+  slides: PlacedClip[]
+  camera: PlacedClip[]
   voice: VoiceSegment[]
   missing: MissingLayer[]
 }
@@ -78,15 +84,24 @@ export function resolvePictureLayers(userDataDir: string, runId: string, capture
 // ---- ffmpeg process ---------------------------------------------------------------------------------
 
 export type FfmpegRun = { stderr: string; outMs: number }
-/** One ffmpeg process: arguments as an array (never a shell), progress from -progress, cancelled by the signal. */
-export function runFfmpeg(ffmpeg: string, args: string[], signal: AbortSignal | null, progress?: (outMs: number) => void): Promise<FfmpegRun> {
+/**
+ * One ffmpeg process: arguments as an array (never a shell), progress from -progress, cancelled by the
+ * signal. `stdin`, when given, is piped to the process (the export's edited voice).
+ */
+export function runFfmpeg(ffmpeg: string, args: string[], signal: AbortSignal | null, progress?: (outMs: number) => void, stdin?: Readable): Promise<FfmpegRun> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) { reject(Object.assign(Error('cancelled'), { cancelled: true })); return }
-    const child = spawn(ffmpeg, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(ffmpeg, args, { stdio: [stdin ? 'pipe' : 'ignore', 'pipe', 'pipe'] })
+    if (stdin && child.stdin) {
+      // ffmpeg may close its input early (a failure, or cancelling): that is reported by its exit, not here.
+      child.stdin.on('error', () => {})
+      stdin.on('error', () => child.kill('SIGTERM'))
+      stdin.pipe(child.stdin)
+    }
     let stderr = '', buffer = '', outMs = 0, killTimer: ReturnType<typeof setTimeout> | undefined
     const abort = (): void => { child.kill('SIGTERM'); killTimer = setTimeout(() => child.kill('SIGKILL'), 1500) }
     signal?.addEventListener('abort', abort, { once: true })
-    child.stdout.on('data', (chunk) => {
+    child.stdout!.on('data', (chunk) => {
       buffer += String(chunk)
       let nl: number
       while ((nl = buffer.indexOf('\n')) >= 0) {
@@ -98,7 +113,7 @@ export function runFfmpeg(ffmpeg: string, args: string[], signal: AbortSignal | 
       }
       if (buffer.length > 8192) buffer = buffer.slice(-8192)
     })
-    child.stderr.on('data', (chunk) => { stderr = (stderr + String(chunk)).slice(-32768) })
+    child.stderr!.on('data', (chunk) => { stderr = (stderr + String(chunk)).slice(-32768) })
     child.once('error', (error) => { signal?.removeEventListener('abort', abort); reject(error) })
     child.once('close', (code) => {
       signal?.removeEventListener('abort', abort)
@@ -111,33 +126,107 @@ export function runFfmpeg(ffmpeg: string, args: string[], signal: AbortSignal | 
 }
 
 const sec = (ms: number): string => (ms / 1000).toFixed(6).replace(/\.?0+$/, '') || '0'
+
+// ---- Even volume ----------------------------------------------------------------------------------
+
+/**
+ * Even out the volume (Look and sound › Sound). Two steps on the voice on the Run clock, before any cut:
+ *  1. dynamic normalisation (ffmpeg `dynaudnorm`): gain follows the speech over 250 ms frames smoothed by
+ *     a 15-frame Gaussian window (about 3.75 s), at most +26 dB, and anything quieter than −46 dBFS (room
+ *     noise in a pause) is never raised. This evens out a quiet stretch against a loud one;
+ *  2. two-pass EBU R128 loudness normalisation (`loudnorm`): the first pass measures the evened voice, the
+ *     second applies one linear gain to reach −16 LUFS integrated with true peaks at most −1.5 dBTP.
+ * The player's evened voice and the export use the same measurement, so they sound the same. Changing
+ * these numbers changes what an evened voice is: bump PLAYBACK_COPY_VERSION so old copies are remade.
+ */
+export const EVEN_VOLUME = { dynamic: 'dynaudnorm=f=250:g=15:p=0.9:m=20:t=0.005', targetLufs: -16, truePeakDb: -1.5, loudnessRange: 11 } as const
+/** The first pass's measurement (loudnorm's own figures), or null when the voice is silent. */
+export type EvenMeasure = { i: number; lra: number; tp: number; thresh: number; offset: number }
+const loudnorm = `loudnorm=I=${EVEN_VOLUME.targetLufs}:TP=${EVEN_VOLUME.truePeakDb}:LRA=${EVEN_VOLUME.loudnessRange}`
+/** The filters that even a voice, ending in 48 kHz mono 16-bit. Without a measurement (silence) only the dynamic step runs. */
+export function evenVolumeChain(measure: EvenMeasure | null): string {
+  const out = 'aresample=48000,aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=mono'
+  if (!measure) return `${EVEN_VOLUME.dynamic},${out}`
+  const f = (n: number): string => String(Math.round(n * 100) / 100)
+  return `${EVEN_VOLUME.dynamic},${loudnorm}:measured_I=${f(measure.i)}:measured_LRA=${f(measure.lra)}:measured_TP=${f(measure.tp)}:measured_thresh=${f(measure.thresh)}:offset=${f(measure.offset)}:linear=true,${out}`
+}
+/** loudnorm's JSON report (the last {…} block of its log), or null when it measured silence or printed nothing usable. */
+export function parseEvenMeasure(log: string): EvenMeasure | null {
+  const start = log.lastIndexOf('{'), end = log.lastIndexOf('}')
+  if (start < 0 || end < start) return null
+  try {
+    const v = JSON.parse(log.slice(start, end + 1)) as Record<string, string>
+    const m = { i: Number(v.input_i), lra: Number(v.input_lra), tp: Number(v.input_tp), thresh: Number(v.input_thresh), offset: Number(v.target_offset) }
+    return Object.values(m).every(Number.isFinite) ? m : null
+  } catch { return null }
+}
+/** The voice on the whole Run clock as filters ending in `label` (for measuring, playback copies and export). */
+function voiceOnRunClock(voice: readonly VoiceSegment[], durationMs: number, label: string, chain: string | null): { inputs: string[]; filters: string[] } {
+  const timeline = recordingAudioTimeline(voice, durationMs)
+  return { inputs: timeline.inputs, filters: [...timeline.filters, `${timeline.label}${chain ? chain + ',' : ''}apad,atrim=duration=${sec(durationMs)}${label}`] }
+}
+/** First pass of even volume: measure the dynamically evened voice. */
+export async function measureEvenVolume(ffmpeg: string, voice: readonly VoiceSegment[], durationMs: number, signal: AbortSignal | null = null): Promise<EvenMeasure | null> {
+  const run = voiceOnRunClock(voice, durationMs, '[out]', `${EVEN_VOLUME.dynamic},${loudnorm}:print_format=json`)
+  const { stderr } = await runFfmpeg(ffmpeg, ['-nostdin', '-hide_banner', '-nostats', '-v', 'info', ...run.inputs, '-filter_complex', run.filters.join(';'), '-map', '[out]', '-f', 'null', '-'], signal)
+  return parseEvenMeasure(stderr)
+}
+/** One measurement per voice (its files, sizes and times): the player's copy and every export share it. */
+export function createEvenVolume(deps: { ffmpeg: () => string | null }) {
+  const cache = new Map<string, Promise<EvenMeasure | null>>()
+  const keyOf = (voice: readonly VoiceSegment[], durationMs: number): string => JSON.stringify([durationMs, voice.map((v) => { const st = statSync(v.path); return [v.path, st.size, st.mtimeMs, v.startMs, v.endMs] })])
+  return {
+    measure(voice: readonly VoiceSegment[], durationMs: number, signal: AbortSignal | null = null): Promise<EvenMeasure | null> {
+      const ffmpeg = deps.ffmpeg()
+      if (!ffmpeg) return Promise.reject(Error('ffmpeg could not be found'))
+      const key = keyOf(voice, durationMs)
+      const known = cache.get(key)
+      if (known) return known
+      // A cancelled export's measurement is not kept: the next one measures again.
+      const job = measureEvenVolume(ffmpeg, voice, durationMs, signal).catch((error) => { cache.delete(key); throw error })
+      if (cache.size > 32) cache.delete(cache.keys().next().value as string)
+      cache.set(key, job)
+      return job
+    }
+  }
+}
+export type EvenVolume = ReturnType<typeof createEvenVolume>
 const fsec = (frame: number): string => sec((frame * 1000) / VIDEO_FRAME.fps)
 
-/** Keep a frame (video, or a 1/30 s audio block) whose start time lies in a kept span; half-frame margins keep float rounding out. */
+/** Keep a frame whose start time lies in a kept span; half-frame margins keep float rounding out. */
 function keepExpression(spans: readonly KeptSpan[]): string {
-  const terms = spans.map((s) => `gte(t,${fsec(s.startFrame - 0.5)})*lt(t,${fsec(s.endFrame - 0.5)})`)
-  // Balanced sums keep FFmpeg's expression parser shallow with many spans.
-  const sum = (t: string[]): string => (t.length === 1 ? t[0] : `(${sum(t.slice(0, t.length >> 1))}+${sum(t.slice(t.length >> 1))})`)
-  return sum(terms)
+  return balancedSum(spans.map((s) => `gte(t,${fsec(s.startFrame - 0.5)})*lt(t,${fsec(s.endFrame - 0.5)})`))
 }
 
 export type ExportPlanInput = {
   durationMs: number
   cuts: TimeRange[]
-  slides: Array<{ path: string; startMs: number; endMs: number }>
-  camera: Array<{ path: string; startMs: number; endMs: number }>
+  /** Smooth joins: the sound crossfades and the picture dissolves at every join an edit made. */
+  smooth?: boolean
+  /** Where the face appears over the Run (faceTrack); absent: 0.44's corner throughout. */
+  faces?: FaceSegment[]
+  slides: Array<{ path: string; startMs: number; endMs: number; offsetMs?: number; shownFromMs?: number }>
+  camera: Array<{ path: string; startMs: number; endMs: number; offsetMs?: number; shownFromMs?: number }>
   voice: VoiceSegment[]
   metadataFile?: string | null
   /** No picture: a sound file only. */
   audioOnly: boolean
+  /** Even out the volume with this measurement (null: silent voice, dynamic step only); absent or false: as recorded. */
+  even?: EvenMeasure | null | false
+}
+
+/** Balanced sums keep FFmpeg's expression parser shallow with many terms. */
+function balancedSum(terms: string[]): string {
+  return terms.length === 1 ? terms[0] : `(${balancedSum(terms.slice(0, terms.length >> 1))}+${balancedSum(terms.slice(terms.length >> 1))})`
 }
 
 /**
  * The ffmpeg arguments for the edited recording, before the output options. Picture: black 1920×1080 at
  * 30 fps on the Run clock; each slides file over it at its Run time; each camera file in the camera
- * rectangle while it ran. Sound: the voice on the Run clock (recording-audio-timeline.ts, as for
- * transcription), cut into 1/30 s blocks so it is removed at exactly the picture's frames, with a
- * JOIN_FADE_MS fade on each side of every join an edit made. Both then keep the same spans.
+ * rectangle while it ran; the spans' frames kept; with smooth joins the first frames after each join
+ * dissolve from those before it (a JOIN_DISSOLVE_FRAMES-frame average shown only in dissolveWindows).
+ * Sound: already edited, 16-bit mono 48 kHz on standard input (editedVoice: the voice on the Run clock,
+ * evened if chosen, spliced at exactly the picture's frames with a crossfade or fades at each join).
  */
 export function exportGraph(input: ExportPlanInput): { inputs: string[]; graph: string; spans: KeptSpan[]; editedMs: number; metadataIndex: number | null } {
   const spans = keptSpans(input.cuts, input.durationMs)
@@ -145,50 +234,125 @@ export function exportGraph(input: ExportPlanInput): { inputs: string[]; graph: 
   const editedMs = editedDurationMs(spans)
   const inputs: string[] = [], filters: string[] = []
   let index = 0
-  // Sound on the Run clock.
-  if (input.voice.length) {
-    const timeline = recordingAudioTimeline(input.voice, input.durationMs)
-    inputs.push(...timeline.inputs)
-    index += timeline.inputs.filter((a) => a === '-i').length
-    filters.push(...timeline.filters)
-    filters.push(`${timeline.label}apad,atrim=duration=${sec(input.durationMs)}[voice]`)
-  } else {
-    inputs.push('-f', 'lavfi', '-t', sec(input.durationMs), '-i', 'anullsrc=r=48000:cl=mono')
-    filters.push(`[${index++}:a]aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=mono[voice]`)
-  }
-  const fade = sec(JOIN_FADE_MS)
-  const fades = spans.flatMap((s) => [
-    ...(s.fadeIn ? [`afade=t=in:st=${fsec(s.startFrame)}:d=${fade}:enable='gte(t,${fsec(s.startFrame - 0.5)})*lt(t,${fsec(s.startFrame + 0.5)})'`] : []),
-    ...(s.fadeOut ? [`afade=t=out:st=${sec((s.endFrame * 1000) / VIDEO_FRAME.fps - JOIN_FADE_MS)}:d=${fade}:enable='gte(t,${fsec(s.endFrame - 1.5)})*lt(t,${fsec(s.endFrame - 0.5)})'`] : [])
-  ])
+  inputs.push('-f', 's16le', '-ar', '48000', '-ac', '1', '-i', 'pipe:0')
+  filters.push(`[${index++}:a]aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=mono,asetpts=N/SR/TB[aout]`)
   const keep = keepExpression(spans)
-  filters.push(`[voice]asetnsamples=n=${48000 / VIDEO_FRAME.fps}:p=0${fades.length ? ',' + fades.join(',') : ''},aselect='${keep}',asetpts=N/SR/TB[aout]`)
   if (!input.audioOnly) {
     const { width: W, height: H, fps } = VIDEO_FRAME
     filters.push(`color=c=black:s=${W}x${H}:r=${fps}:d=${sec(input.durationMs)},format=yuv420p[base0]`)
     let base = 'base0', n = 0
-    const place = (clip: { path: string; startMs: number; endMs: number }, from: number, picture: string, x: number, y: number): void => {
+    // Each layer file is shown in one rectangle per face placement it meets, each only over its stretches.
+    type Place = { rect: Rect; when: TimeRange[] }
+    const place = (clip: { path: string; startMs: number; endMs: number; offsetMs?: number }, from: number, places: Place[], picture: (r: Rect) => string): void => {
+      const shown = places.filter((p) => p.when.some((w) => w.end > from && w.start < clip.endMs))
+      if (!shown.length) return
       inputs.push('-i', clip.path)
       const span = sec(clip.endMs - from)
       const label = `layer${n}`
       // Held first frame from `from` to the file's start (shownFrom in the shared plan), last frame to its end.
       const lead = clip.startMs > from ? `tpad=start_mode=clone:start_duration=${sec(clip.startMs - from)},` : ''
-      filters.push(`[${index++}:v]setpts=PTS-STARTPTS,fps=${fps},${picture},setsar=1,format=yuv420p,${lead}tpad=stop_mode=clone:stop_duration=${span},trim=duration=${span},setpts=PTS+${sec(from)}/TB[${label}]`)
-      const next = `base${++n}`
-      filters.push(`[${base}][${label}]overlay=x=${x}:y=${y}:eof_action=pass:enable='gte(t,${sec(from)})*lt(t,${sec(clip.endMs)})'[${next}]`)
-      base = next
+      // A piece of a file (Record this slide again) starts `offsetMs` into it.
+      const skip = clip.offsetMs && clip.offsetMs > 0 ? `trim=start=${sec(clip.offsetMs)},setpts=PTS-STARTPTS,` : ''
+      filters.push(`[${index++}:v]setpts=PTS-STARTPTS,fps=${fps},${skip}setsar=1,format=yuv420p,${lead}tpad=stop_mode=clone:stop_duration=${span},trim=duration=${span},setpts=PTS+${sec(from)}/TB${shown.length > 1 ? `,split=${shown.length}` : ''}${shown.map((_, i) => `[${label}s${i}]`).join('')}`)
+      shown.forEach((p, i) => {
+        const sized = `${label}p${i}`
+        filters.push(`[${label}s${i}]${picture(p.rect)},setsar=1,format=yuv420p[${sized}]`)
+        const next = `base${++n}`
+        const whole = places.length === 1 && p.when.length === 1 && p.when[0].start <= from && p.when[0].end >= clip.endMs
+        const when = whole ? `gte(t,${sec(from)})*lt(t,${sec(clip.endMs)})`
+          : `gte(t,${sec(from)})*lt(t,${sec(clip.endMs)})*${balancedSum(p.when.map((w) => `gte(t,${sec(w.start)})*lt(t,${sec(w.end)})`))}`
+        filters.push(`[${base}][${sized}]overlay=x=${p.rect.x}:y=${p.rect.y}:eof_action=pass:enable='${when}'[${next}]`)
+        base = next
+      })
     }
-    input.slides.forEach((clip, i) => place(clip, shownFrom({ layer: 'slides', startMs: clip.startMs }, i === 0), `scale=${W}:${H}:force_original_aspect_ratio=decrease,pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2`, 0, 0))
-    const cam = cameraRect()
-    for (const clip of input.camera) place(clip, clip.startMs, `scale=${cam.width}:${cam.height}:force_original_aspect_ratio=increase,crop=${cam.width}:${cam.height}`, cam.x, cam.y)
-    filters.push(`[${base}]select='${keep}',setpts=N/${fps}/TB,format=yuv420p[vout]`)
+    // The placements over the Run, grouped by the rectangle each layer takes. Without a camera to show,
+    // every placement is the slides alone.
+    const track = (input.faces?.length ? input.faces : [{ start: 0, end: input.durationMs, face: { layout: 'corner', corner: 'bottom-right', size: 'medium' } as const }])
+      .map((seg) => ({ ...seg, face: input.camera.length ? seg.face : withoutCamera(seg.face) }))
+    const group = (layer: 'slides' | 'camera'): Place[] => {
+      const by = new Map<string, Place>()
+      for (const seg of track) {
+        const rect = placementRects(seg.face)[layer]
+        if (!rect) continue
+        const key = `${rect.x},${rect.y},${rect.width},${rect.height}`
+        const known = by.get(key)
+        if (known) known.when.push({ start: seg.start, end: seg.end }); else by.set(key, { rect, when: [{ start: seg.start, end: seg.end }] })
+      }
+      return [...by.values()]
+    }
+    const slidePlaces = group('slides'), cameraPlaces = group('camera')
+    input.slides.forEach((clip, i) => place(clip, clip.shownFromMs ?? shownFrom({ layer: 'slides', startMs: clip.startMs }, i === 0), slidePlaces, (r) => `scale=${r.width}:${r.height}:force_original_aspect_ratio=decrease,pad=${r.width}:${r.height}:(ow-iw)/2:(oh-ih)/2`))
+    for (const clip of input.camera) place(clip, clip.shownFromMs ?? clip.startMs, cameraPlaces, (r) => `scale=${r.width}:${r.height}:force_original_aspect_ratio=increase,crop=${r.width}:${r.height}`)
+    const windows = input.smooth ? dissolveWindows(spans) : []
+    if (!windows.length) filters.push(`[${base}]select='${keep}',setpts=N/${fps}/TB,format=yuv420p[vout]`)
+    else {
+      // The dissolve: a running average of the last frames, shown only just after each join.
+      const show = balancedSum(windows.map((w) => `gte(t,${fsec(w.first - 0.5)})*lt(t,${fsec(w.last + 0.5)})`))
+      filters.push(`[${base}]select='${keep}',setpts=N/${fps}/TB,format=yuv420p,split=2[cut0][cut1]`)
+      filters.push(`[cut1]tmix=frames=${JOIN_DISSOLVE_FRAMES}:weights='${Array(JOIN_DISSOLVE_FRAMES).fill(1).join(' ')}'[mixed]`)
+      filters.push(`[cut0][mixed]overlay=x=0:y=0:eof_action=pass:enable='${show}',format=yuv420p[vout]`)
+    }
   }
   let metadataIndex: number | null = null
   if (input.metadataFile) { inputs.push('-f', 'ffmetadata', '-i', input.metadataFile); metadataIndex = index++ }
   return { inputs, graph: filters.join(';'), spans, editedMs, metadataIndex }
 }
 
-/** The full encoding command for a temporary output file. */
+/**
+ * The edited voice for the export, as 16-bit mono 48 kHz samples: the voice decoded on the Run clock
+ * (evened if chosen) by one ffmpeg, spliced in this process by the plan (recording-joins.ts). Without a
+ * voice, silence of the edited length. `done` settles when the decoder has finished (rejects if it failed).
+ */
+export function editedVoice(ffmpeg: string, input: ExportPlanInput, signal: AbortSignal | null): { stream: Readable; done: Promise<void> } {
+  const spans = keptSpans(input.cuts, input.durationMs)
+  const plan = voiceSplicePlan(spans, frameOf(input.durationMs), !!input.smooth)
+  if (!input.voice.length) {
+    let left = splicedLength(spans) * 2
+    const stream = new Readable({ read() { const n = Math.min(left, 1 << 16); left -= n; this.push(n ? Buffer.alloc(n) : null) } })
+    return { stream, done: Promise.resolve() }
+  }
+  const run = voiceOnRunClock(input.voice, input.durationMs, '[out]', input.even === undefined || input.even === false ? 'aresample=48000,aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=mono' : evenVolumeChain(input.even))
+  const child = spawn(ffmpeg, ['-nostdin', '-hide_banner', '-v', 'error', ...run.inputs, '-filter_complex', run.filters.join(';'), '-map', '[out]', '-f', 's16le', '-ar', '48000', '-ac', '1', 'pipe:1'], { stdio: ['ignore', 'pipe', 'pipe'] })
+  const splicer = createVoiceSplicer(plan)
+  let carry: Buffer | null = null
+  const toBuffers = (parts: Int16Array[], push: (b: Buffer) => void): void => { for (const p of parts) if (p.length) push(Buffer.from(p.buffer, p.byteOffset, p.byteLength)) }
+  const stream = new Transform({
+    transform(chunk: Buffer, _enc, callback) {
+      let bytes = carry ? Buffer.concat([carry, chunk]) : chunk
+      carry = bytes.length % 2 ? bytes.subarray(bytes.length - 1) : null
+      if (carry) bytes = bytes.subarray(0, bytes.length - 1)
+      // A copy aligned for Int16Array (a Buffer slice may start at an odd offset).
+      const samples = new Int16Array(bytes.length / 2)
+      Buffer.from(samples.buffer).set(bytes)
+      toBuffers(splicer.push(samples), (b) => this.push(b))
+      callback()
+    },
+    flush(callback) { toBuffers(splicer.end(), (b) => this.push(b)); callback() }
+  })
+  let stderr = ''
+  child.stderr.on('data', (d) => { stderr = (stderr + String(d)).slice(-8192) })
+  // Stopped (the export was cancelled or the encoder ended first): close the pipe it may be blocked on,
+  // ask it to stop, and make sure it does.
+  let killTimer: ReturnType<typeof setTimeout> | undefined
+  const abort = (): void => { child.stdout?.destroy(); child.kill('SIGTERM'); killTimer = setTimeout(() => child.kill('SIGKILL'), 1500) }
+  signal?.addEventListener('abort', abort, { once: true })
+  const done = new Promise<void>((resolve, reject) => {
+    child.once('error', (error) => { stream.destroy(error); reject(error) })
+    child.once('close', (code) => {
+      if (killTimer) clearTimeout(killTimer)
+      signal?.removeEventListener('abort', abort)
+      if (code === 0 || signal?.aborted) { resolve(); return }
+      const error = Object.assign(Error(stderr.trim().split('\n').slice(-3).join(' ').slice(0, 800) || `ffmpeg exited ${code}`), { ffmpegLog: stderr })
+      stream.destroy(error)
+      reject(error)
+    })
+  })
+  done.catch(() => {})
+  child.stdout.pipe(stream)
+  return { stream, done }
+}
+
+/** The full encoding command for a temporary output file (its sound comes from editedVoice on standard input). */
 export function exportArgs(input: ExportPlanInput, output: string): { args: string[]; editedMs: number } {
   const plan = exportGraph(input)
   const meta = plan.metadataIndex === null ? [] : ['-map_metadata', String(plan.metadataIndex), '-map_chapters', String(plan.metadataIndex)]
@@ -224,17 +388,39 @@ export async function inspectMedia(ffmpeg: string, path: string, signal: AbortSi
   }
 }
 
+/**
+ * A Run's layers on the video clock (Record this slide again): its own files split where takes go in,
+ * later parts moved by the takes before them, each chosen take's files placed where its take starts, and
+ * the voice the same way. Pure: the export and the tests use it.
+ */
+export function layersOnVideoClock(layers: Pick<ResolvedLayers, 'slides' | 'camera' | 'voice' | 'missing'>, takeLayers: ReadonlyMap<string, Pick<ResolvedLayers, 'slides' | 'camera' | 'voice' | 'missing'>>, clock: TakeClock, clockMs: number): Pick<ResolvedLayers, 'durationMs' | 'slides' | 'camera' | 'voice' | 'missing'> {
+  const movedAt = (a: number): number => clock.inserts.reduce((n, x) => n + (x.at <= a ? x.length : 0), 0)
+  const hold = (layer: 'slides' | 'camera') => (clip: { startMs: number }, first: boolean): number => shownFrom({ layer, startMs: clip.startMs }, first)
+  const slides = clipsOnVideoClock(clock, layers.slides, (run) => takeLayers.get(run)?.slides ?? [], hold('slides'))
+  const camera = clipsOnVideoClock(clock, layers.camera, (run) => takeLayers.get(run)?.camera ?? [], hold('camera'))
+  const voice = [
+    ...layers.voice.flatMap((v) => {
+      // Each part of a voice file between insertion points, later parts moved by the takes before them.
+      const points = [v.startMs, ...clock.inserts.map((x) => x.at).filter((at) => at > v.startMs && at < v.endMs), v.endMs]
+      return points.slice(0, -1).map((a, k) => { const m = movedAt(a); return { path: v.path, startMs: a + m, endMs: points[k + 1] + m, offsetMs: (v.offsetMs ?? 0) + a - v.startMs } })
+    }),
+    ...clock.inserts.flatMap((i) => (takeLayers.get(i.run)?.voice ?? []).flatMap((v) => { const at = toVideoClock(clock, i.at), end = Math.min(v.endMs, i.length); return end > v.startMs ? [{ path: v.path, startMs: at + v.startMs, endMs: at + end, offsetMs: v.offsetMs ?? 0 }] : [] }))
+  ]
+  return { durationMs: clockMs, slides, camera, voice, missing: [...layers.missing, ...[...takeLayers.values()].flatMap((t) => t.missing)] }
+}
+
 // ---- Playback copies ------------------------------------------------------------------------------
 
 export type PlaybackSet = {
   identity: string
   voice: string | null
-  slides: Array<{ name: string; startMs: number; endMs: number }>
-  camera: Array<{ name: string; startMs: number; endMs: number }>
+  /** Each piece of a picture file on the clock, by its copy's name (pieces of one file share a copy). */
+  slides: Array<{ name: string; startMs: number; endMs: number; offsetMs?: number; shownFromMs?: number }>
+  camera: Array<{ name: string; startMs: number; endMs: number; offsetMs?: number; shownFromMs?: number }>
   /** Layer files that could not be prepared this time (retried on the next open). */
   unreadable: MissingLayer[]
 }
-const PLAY_NAME = /^(voice|slides-\d{1,3}|camera-\d{1,3})\.webm$/
+const PLAY_NAME = /^(voice|voice-even|slides-\d{1,3}|camera-\d{1,3})\.webm$/
 const IDENTITY = /^[a-f0-9]{24}$/
 const PLAYBACK_ROOT = 'recording-playback'
 
@@ -257,7 +443,7 @@ export function playbackFile(userDataDir: string, runId: string, identity: strin
 }
 
 /** The only files this app writes in a playback-copy folder. Nothing else there is ever removed. */
-const COPY_FILE = /^((voice|slides-\d{1,3}|camera-\d{1,3})\.webm|ready\.json|\.(voice|slides-\d{1,3}|camera-\d{1,3})\.webm\.[0-9a-f-]{36}\.part)$/
+const COPY_FILE = /^((voice|voice-even|slides-\d{1,3}|camera-\d{1,3})\.webm|ready\.json|\.(voice|voice-even|slides-\d{1,3}|camera-\d{1,3})\.webm\.[0-9a-f-]{36}\.part)$/
 
 /** Names in a folder, or none if it cannot be listed. */
 function namesIn(folder: string): string[] {
@@ -299,15 +485,18 @@ export function removePlaybackCopies(userDataDir: string, runId: string): void {
   if (folder) removeRunCopies(folder)
 }
 
+/** Part of every copy folder's identity: a new value makes every copy again (2: release 0.44). */
+const PLAYBACK_COPY_VERSION = 2
 function identityOf(layers: ResolvedLayers): string {
   const files = [...layers.slides, ...layers.camera, ...layers.voice].map((f) => {
     const st = statSync(f.path)
-    return [f.path, st.size, st.mtimeMs, f.startMs, f.endMs]
+    return [f.path, st.size, st.mtimeMs, f.startMs, f.endMs, f.offsetMs ?? 0]
   })
-  return createHash('sha256').update(JSON.stringify([2, layers.durationMs, files])).digest('hex').slice(0, 24)
+  return createHash('sha256').update(JSON.stringify([PLAYBACK_COPY_VERSION, layers.durationMs, files])).digest('hex').slice(0, 24)
 }
 
-export function createPlaybackPreparer(deps: { userDataDir: () => string; ffmpeg: () => string | null }) {
+export function createPlaybackPreparer(deps: { userDataDir: () => string; ffmpeg: () => string | null; even?: EvenVolume }) {
+  const even = deps.even ?? createEvenVolume({ ffmpeg: deps.ffmpeg })
   const running = new Map<string, Promise<PlaybackSet>>()
   /** Copies of Runs whose recording folder is gone (the Run was deleted) are removed; the cache stays bounded by the recordings. */
   function sweepGoneRuns(root: string, keep: string): void {
@@ -355,17 +544,44 @@ export function createPlaybackPreparer(deps: { userDataDir: () => string; ffmpeg
       if (ok) set.voice = 'voice.webm'; else set.unreadable.push({ layer: 'voice', file: basename(layers.voice[0].path) })
     }
     for (const layer of ['slides', 'camera'] as const) {
+      // One copy per file, named by its place among this layer's files; every piece of it plays from that copy.
+      const files = [...new Set(layers[layer].map((c) => c.path))]
+      const made = new Map<string, string | null>()
       for (const clip of layers[layer]) {
-        const name = `${layer}-${clip.part}.webm`
-        // Re-wrapped, not re-encoded: the same frames, with the index a player needs to seek.
-        if (await make(name, ['-nostdin', '-hide_banner', '-v', 'error', '-i', clip.path, '-map', '0:v:0', '-c', 'copy', '-avoid_negative_ts', 'make_zero'])) set[layer].push({ name, startMs: clip.startMs, endMs: clip.endMs })
-        else set.unreadable.push({ layer, file: clip.file })
+        if (!made.has(clip.path)) {
+          const name = `${layer}-${files.indexOf(clip.path)}.webm`
+          // Re-wrapped, not re-encoded: the same frames, with the index a player needs to seek.
+          made.set(clip.path, await make(name, ['-nostdin', '-hide_banner', '-v', 'error', '-i', clip.path, '-map', '0:v:0', '-c', 'copy', '-avoid_negative_ts', 'make_zero']) ? name : null)
+          if (!made.get(clip.path)) set.unreadable.push({ layer, file: clip.file })
+        }
+        const name = made.get(clip.path)
+        if (name) set[layer].push({ name, startMs: clip.startMs, endMs: clip.endMs, ...(clip.offsetMs ? { offsetMs: clip.offsetMs } : {}), ...(clip.shownFromMs !== undefined ? { shownFromMs: clip.shownFromMs } : {}) })
       }
     }
     // Only a complete set is recorded as reusable.
     if (!set.unreadable.length) writeFileSync(manifest, JSON.stringify(set))
     return set
   }
+  /** The evened voice beside the other copies (made on first use; the copies must exist first). */
+  async function buildEven(layers: ResolvedLayers): Promise<{ identity: string; name: string } | null> {
+    const ffmpeg = deps.ffmpeg()
+    if (!ffmpeg) throw Error('The app’s ffmpeg could not be found, so the recording cannot be prepared for playback.')
+    if (!layers.voice.length) return null
+    const identity = identityOf(layers)
+    const folder = playbackFolder(deps.userDataDir(), layers.runId, identity)
+    if (!folder) throw Error('Open the recording again; its playback copies are not ready.')
+    const name = 'voice-even.webm'
+    if (playbackFile(deps.userDataDir(), layers.runId, identity, name)) return { identity, name }
+    const measure = await even.measure(layers.voice, layers.durationMs)
+    const run = voiceOnRunClock(layers.voice, layers.durationMs, '[out]', evenVolumeChain(measure))
+    const temp = join(folder, `.${name}.${randomUUID()}.part`)
+    try {
+      await runFfmpeg(ffmpeg, ['-nostdin', '-hide_banner', '-v', 'error', ...run.inputs, '-filter_complex', run.filters.join(';'), '-map', '[out]', '-c:a', 'libopus', '-b:a', '64k', '-f', 'webm', temp], null)
+      renameSync(temp, join(folder, name))
+    } catch (error) { try { unlinkSync(temp) } catch { /* none */ } throw error }
+    return { identity, name }
+  }
+  const evenRunning = new Map<string, Promise<{ identity: string; name: string } | null>>()
   return {
     prepare(layers: ResolvedLayers): Promise<PlaybackSet> {
       const key = layers.runId
@@ -373,6 +589,15 @@ export function createPlaybackPreparer(deps: { userDataDir: () => string; ffmpeg
       if (existing) return existing
       const job = build(layers).finally(() => running.delete(key))
       running.set(key, job)
+      return job
+    },
+    /** The evened voice for the player (Look and sound › Even out the volume), or null for a Run without a voice. */
+    prepareEven(layers: ResolvedLayers): Promise<{ identity: string; name: string } | null> {
+      const key = layers.runId
+      const existing = evenRunning.get(key)
+      if (existing) return existing
+      const job = buildEven(layers).finally(() => evenRunning.delete(key))
+      evenRunning.set(key, job)
       return job
     }
   }
@@ -385,6 +610,12 @@ export type ExportRequest = {
   layers: ResolvedLayers
   cuts: TimeRange[]
   camera: boolean
+  /** Even out the volume (measured once per voice, as for the player's evened copy). */
+  evenVolume?: boolean
+  /** Smooth joins: crossfade the sound and dissolve the picture at every join an edit made. */
+  smoothJoins?: boolean
+  /** Where the face appears over the Run (faceTrack of the resolved rows); absent: 0.44's corner. */
+  faces?: FaceSegment[]
   extras: ExportExtras
   /** Where the video goes. */
   destination: string
@@ -571,7 +802,8 @@ export function createTempRecord(file: string) {
 export type TempRecord = ReturnType<typeof createTempRecord>
 
 /** One export at a time. Writes only temporary files beside the destination until the checked, all-or-nothing commit. */
-export function createVideoExporter(deps: { ffmpeg: () => string | null; now?: () => number; temps?: TempRecord; io?: { link?: typeof linkSync; copy?: (from: string, to: string) => FileIdentity | void; rename?: typeof renameSync } }) {
+export function createVideoExporter(deps: { ffmpeg: () => string | null; now?: () => number; temps?: TempRecord; even?: EvenVolume; io?: { link?: typeof linkSync; copy?: (from: string, to: string) => FileIdentity | void; rename?: typeof renameSync } }) {
+  const even = deps.even ?? createEvenVolume({ ffmpeg: deps.ffmpeg })
   let active: { id: string; controller: AbortController; done: Promise<ExportState> } | null = null
   const now = deps.now ?? Date.now
   const rename = deps.io?.rename ?? renameSync
@@ -622,12 +854,21 @@ export function createVideoExporter(deps: { ffmpeg: () => string | null; now?: (
       let metadataFile: string | null = null
       if (chapters.length) metadataFile = temp('.ffmeta', ffmetadata(chapters, request.title))
       const output = temp(audioOnly ? '.m4a.part' : '.mp4.part')
-      const { args, editedMs } = exportArgs({
-        durationMs: request.layers.durationMs, cuts: request.cuts, audioOnly, metadataFile,
-        slides: request.layers.slides, camera: request.camera ? request.layers.camera : [], voice: request.layers.voice
-      }, output)
       report({ state: 'working', fraction: 0 })
-      await runFfmpeg(ffmpeg, args, signal, (outMs) => report({ state: 'working', fraction: Math.min(0.99, outMs / Math.max(1, editedMs)) }))
+      const measure = request.evenVolume && request.layers.voice.length ? await even.measure(request.layers.voice, request.layers.durationMs, signal) : false
+      if (signal.aborted) cancelled()
+      const plan: ExportPlanInput = {
+        durationMs: request.layers.durationMs, cuts: request.cuts, audioOnly, metadataFile, even: measure, smooth: !!request.smoothJoins, faces: request.faces,
+        slides: request.layers.slides, camera: request.camera ? request.layers.camera : [], voice: request.layers.voice
+      }
+      const { args, editedMs } = exportArgs(plan, output)
+      // The decoder of the voice stops with the encoder, whichever ends first.
+      const decoding = new AbortController()
+      const stopDecoding = (): void => decoding.abort()
+      signal.addEventListener('abort', stopDecoding, { once: true })
+      const voice = editedVoice(ffmpeg, plan, decoding.signal)
+      try { await Promise.all([runFfmpeg(ffmpeg, args, signal, (outMs) => report({ state: 'working', fraction: Math.min(0.99, outMs / Math.max(1, editedMs)) }), voice.stream), voice.done]) }
+      finally { signal.removeEventListener('abort', stopDecoding); decoding.abort(); voice.stream.destroy() }
       const checked = await inspectMedia(ffmpeg, output, signal)
       // One frame of the picture, plus the AAC encoder's priming, is the allowed difference.
       if (!Number.isFinite(checked.durationMs) || Math.abs(checked.durationMs - editedMs) > 1000 / VIDEO_FRAME.fps + 50 || !checked.audio || (!audioOnly && !/h264/.test(checked.video ?? ''))) throw Error(`The exported file did not check out (${checked.durationMs} ms against ${Math.round(editedMs)} ms).`)

@@ -201,7 +201,7 @@ function makePicker(field: SurfaceFieldModel, setKey: SetKey): HTMLElement {
   if (field.control === 'select') {
     const select = el('select', 'cm-fm-select')
     if (!options.some((option) => option.value === field.value)) {
-      const current = el('option', undefined, `custom: ${field.value}`)
+      const current = el('option', undefined, field.list?.isList ? `your list: ${field.value}` : `custom: ${field.value}`)
       current.value = field.value
       current.selected = true
       select.appendChild(current)
@@ -242,6 +242,19 @@ function makeControl(field: SurfaceFieldModel, setKey: SetKey, appDefault: strin
   if (field.readOnly || field.control === 'map') {
     const value = el('div', 'cm-fm-ro', field.value.trim() ? field.value.trim() : '(not set)')
     return value
+  }
+  if (field.options && field.list) {
+    // A list-capable key: the single choices, and a typed list beside them (written when the field is left).
+    const wrap = el('div', 'cm-fm-listwrap')
+    wrap.appendChild(makePicker(field, setKey))
+    const list = el('input', 'cm-fm-input')
+    list.type = 'text'
+    list.value = field.list.isList ? field.value : ''
+    list.placeholder = `or a list: ${field.list.placeholder}`
+    list.title = `A list of ${field.list.items.join(', ')}, with commas between them`
+    list.addEventListener('change', () => setKey(field.key, list.value.trim() === '' ? null : list.value.trim(), field.aliases))
+    wrap.appendChild(list)
+    return wrap
   }
   if (field.options) return makePicker(field, setKey)
   const input = el('input', 'cm-fm-input')
@@ -289,7 +302,9 @@ function makeRow(field: SurfaceFieldModel, setKey: SetKey, appDefault = '', requ
   if (field.control === 'map' && !field.readOnly) {
     helpBlock.appendChild(el('div', 'cm-fm-note', 'Structured value — edit it in Talk design or the raw view.'))
   }
-  if (field.custom) {
+  if (field.list?.error) {
+    helpBlock.appendChild(el('div', 'cm-fm-note', field.list.error))
+  } else if (field.custom) {
     helpBlock.appendChild(el('div', 'cm-fm-note', `This outline holds “${field.custom.value}”, which is not one of the documented choices. Pick one to return to them.`))
   }
   if (field.options) helpBlock.appendChild(makeChoiceList(field.options))

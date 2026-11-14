@@ -122,6 +122,12 @@
   "a-month-with-agents-carousel#0": [
    "div|Scheduled my calendar Codex read the invitation "
   ],
+  "a-month-with-agents-carousel#1": [
+   "div|Built my own slide tools The presentation system"
+  ],
+  "a-month-with-agents-carousel#2": [
+   "div|Rescued old websites Fifteen years of abandoned "
+  ],
   "structural#0": [],
   "title-slide#0": [],
   "section-divider#0": [],
@@ -252,7 +258,14 @@
   "titletop#0": [],
   "nostep#0": [],
   "image-steps#0": [],
+  "image-steps#1": [],
+  "image-steps#2": [],
+  "image-steps#3": [],
   "emphasis-steps#0": [],
+  "emphasis-steps#1": [],
+  "emphasis-steps#2": [],
+  "emphasis-steps#3": [],
+  "emphasis-steps#4": [],
   "page-70#0": [],
   "embedded-page#0": [],
   "local#0": [],
@@ -555,7 +568,22 @@
   "r-reveal-stmt#1": [],
   "r-reveal-stmt#2": [],
   "r-reveal-stmt#3": [],
-  "r-stats#0": []
+  "r-stats#0": [],
+  "r-loop5-long#0": [],
+  "r-loop5-long-reveal#0": [],
+  "r-loop5-long-reveal#1": [],
+  "r-loop5-long-reveal#2": [],
+  "r-loop5-long-reveal#3": [],
+  "r-loop5-long-reveal#4": [],
+  "r-loop5-long-reveal#5": [],
+  "r-loop5-long-reveal#6": [],
+  "r-loop5-long-reveal#7": [],
+  "r-loop5-long-reveal#8": [],
+  "r-loop5-long-reveal#9": [],
+  "r-loop5-long-reveal#10": [],
+  "r-loop5-long-reveal#11": [],
+  "r-icon7-long#0": [],
+  "r-icon7-long-top#0": []
  },
  "statement-combinations": {
   "quotes-and-pictures#0": [],
@@ -606,20 +634,14 @@
    "strong|working apps on my phone"
   ],
   "sc-focus-quotes#3": [
-   "blockquote|Now (i.e., while I write this), I have an assist",
    "blockquote|One season ago, the strongest public model was a",
    "blockquote|Two seasons ago, the planning tools did not exis",
    "cite|Autumn",
-   "cite|B. Author, Social post, October 2026",
    "div|Autumn Two seasons ago, the planning tools did n",
-   "p|Now (i.e., while I write this), I have an assist",
    "p|One season ago, the strongest public model was a",
    "p|Two seasons ago, the planning tools did not exis",
-   "span|B. Author, Social post, October 2026",
-   "strong|October",
    "strong|One season ago",
-   "strong|Two seasons ago",
-   "strong|built entirely by the assistant"
+   "strong|Two seasons ago"
   ],
   "sc-focus-quotes#4": [
    "blockquote|One season ago, the strongest public model was a",
@@ -724,7 +746,7 @@
    "sampler": "3afdf6f88354cfc5be3dd7d4fd3c6df779cea96110020d140041e6a42bfb6b01",
    "ten-kinds": "b1cb9f561504a8af41496c86162a56749d1ca7bf605c51e3932e288f86e271fd",
    "edge-cases": "447a921d16c8be2c355ff0b2992926f68b85e7003d372aed55d71ec8ea0e0c8b",
-   "review-cases": "4cc9cfbfcde3cdf9c178e3ffb9b3f86948a9c90ef09c687f876a8ded2f9577fd",
+   "review-cases": "770fb88f8eaba4d2cfae7cf76eb41297004a706202528998cb49a9b7cf6086c3",
    "statement-combinations": "b71ae3451066a341da1deb142e3c2fdf6ead4bacffe8be1316f902eb1db4032b",
    "talk-combinations": "ac300b9a6b2f3ea666c93c1ccb628d616388dfc53546868a998c02ddf473bd1b"
   }

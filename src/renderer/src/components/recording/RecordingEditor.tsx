@@ -13,23 +13,27 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsLeftRight, ChevronsRightLeft, Clock, Download, Ear, EyeOff, Flag, GripVertical,
-  Image as ImageIcon, ListChecks, Loader2, MessageSquareOff, Pause, Play, Presentation, Redo2, RefreshCw, RotateCcw, Scissors, Settings, TextCursorInput, Undo2, Video, AudioLines, Check, X
+  Image as ImageIcon, ListChecks, SquareUser, CircleDot, Loader2, MessageSquareOff, Pause, Play, Presentation, Redo2, RefreshCw, RotateCcw, Scissors, Settings, SlidersHorizontal, TextCursorInput, Undo2, Video, AudioLines, Check, X
 } from 'lucide-react'
 import type { RecordingSession, Transcript } from '../../../../preload/index'
 import type { RecordingOpen } from '../../../../main/recording-video-ipc'
 import type { EditsSnapshot } from '../../../../main/recording-edits-store'
-import { applyEditOp, normaliseRanges, type EditOp, type TimeRange } from '../../../../shared/recording-edits'
-import { chaptersFor, keptSpans, planEditedToRun, planRunToEdited } from '../../../../shared/recording-video'
+import { applyEditOp, DEFAULT_FINISH, emptyFaces, faceOf, normaliseRanges, type EditOp, type TimeRange } from '../../../../shared/recording-edits'
+import { chaptersFor, faceTrack, faceTrackOnClock, keptSpans, type FaceSegment, planEditedToRun, planRunToEdited, withoutCamera } from '../../../../shared/recording-video'
 import {
-  boundaryTargets, coveredMs, cutWordsOp, edgeQuality, EDITOR_THRESHOLDS, editorWords, leaveOutOp, moveBoundaryOp, nearestCleanEdge,
-  markedStretch, planDigest, putBackOp, putBoundaryBackOp, quoteWords, resolveRecording, restoreOp, tidyProposals, wordAt, wordsRange,
+  boundaryTargets, coveredMs, cutWordsOp, joinsAtSentence, edgeQuality, EDITOR_THRESHOLDS, editorWords, leaveOutOp, moveBoundaryOp, nearestCleanEdge,
+  markedStretch, planDigest, putBackOp, putBoundaryBackOp, quoteWords, resolveRecording, restoreOp, TARGET_WORDS, targetKind, tidyProposals, wordAt, wordsRange,
   type CutView, type EditorRow, type EditorWords, type TidyKind, type TidyProposal
 } from '../../../../shared/recording-editor'
 import { recordingRunHome } from '../../../../shared/recording-run-home'
+import { rangesToVideoClock, rowTakeControls, takesInUse, toVideoClock } from '../../../../shared/recording-takes'
 import { shortcutEventMatches } from '../../../../shared/shortcut-registry'
 import { commandRan } from '../../commands/command-ran'
 import { LayeredPlayer, type LayeredPlayerHandle, type PlayerSource } from './LayeredPlayer'
 import { useRecordingExport } from './useRecordingExport'
+import { LookAndSoundSheet, useEvenVoice } from './LookAndSound'
+import { FacePositionSheet, faceLabel } from './FacePosition'
+import { chosenTakes, missingTakeNotice, missingTakeText, TakesPanel, unavailableTakes, useTakes, useTakeSource } from './RecordSlideAgain'
 import './recording-panel.css'
 import './recording-editor.css'
 
@@ -56,7 +60,7 @@ type Preview = { cuts: TimeRange[]; until: number } | null
 const selRange = (s: Selection | null): [number, number] | null => (s ? [Math.min(s.anchor, s.focus), Math.max(s.anchor, s.focus)] : null)
 
 /** Shared by every row: the parts of the editor's state a row reads, and the handlers it calls. */
-type RowCtx = {
+export type RowCtx = {
   ctx: EditorWords
   rows: EditorRow[]
   cuts: CutView[]
@@ -68,7 +72,7 @@ type RowCtx = {
   sidecarCuts: TimeRange[]
 }
 
-export function RecordingEditor({ run, slides, transcript, writing, parakeetReady, suspended = false, onWriteOut, onStopWriting, onBack, onHelp, onSettings, onReloadWords }: {
+export function RecordingEditor({ run, slides, transcript, writing, parakeetReady, suspended = false, onWriteOut, onStopWriting, onBack, onHelp, onSettings, onReloadWords, onRecordSlideAgain }: {
   run: RecordingSession
   slides: Record<string, EditorSlide>
   transcript: Transcript | null
@@ -83,6 +87,8 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   onSettings: () => void
   /** Read the Run's words again (an export found them changed). */
   onReloadWords?: () => void
+  /** Record one slide again: open the presenter view for a new take; resolves to an error to show, or null. */
+  onRecordSlideAgain?: (retake: { change: number; slideId: string; slideN: number; camera: boolean }) => Promise<string | null>
 }): ReactNode {
   const home = recordingRunHome(run)
   const runRef = useMemo(() => ({ talkSlug: run.talkSlug, runId: run.id, home }), [run.talkSlug, run.id, home])
@@ -93,6 +99,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   const [edits, setEdits] = useState<EditsSnapshot | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
   const [runMs, setRunMs] = useState(0)
+  const [videoMs, setVideoMs] = useState(0)
   const [playing, setPlaying] = useState(false)
   const [sel, setSel] = useState<Selection | null>(null)
   const [pop, setPop] = useState<Pop>(null)
@@ -101,6 +108,8 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   const [choose, setChoose] = useState<number | null>(null)
   const [timeline, setTimeline] = useState(false)
   const [tidyOpen, setTidyOpen] = useState(false)
+  const [lookOpen, setLookOpen] = useState(false)
+  const [faceRow, setFaceRow] = useState<number | null>(null)
   const [kept, setKept] = useState<Set<string>>(() => new Set())
   const [preview, setPreview] = useState<Preview>(null)
   const [models, setModels] = useState<import('../../../../shared/alignment-status').AlignmentModelRow[]>([])
@@ -210,11 +219,19 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   const boundaries = edits?.edits.boundaries ?? EMPTY_B
   const leftOutFacts = edits?.edits.leftOut ?? EMPTY_N
   const restoredTrims = edits?.edits.restoredTrims ?? EMPTY
+  // Record this slide again: the takes on disk, and the ones the edits choose that can be played.
+  // Record one slide again is off unless main says otherwise (takesEnabled): take choices in the edits file are then kept but not used.
+  const takesOn = !!opened?.recordAgain
+  const takesList = useTakes(runRef, opened?.takes, takesOn)
+  const savedChoices = edits?.edits.takes ?? EMPTY_TAKES
+  const chosenList = useMemo(() => (takesOn ? savedChoices : EMPTY_TAKES), [takesOn, savedChoices])
+  const takes = useMemo(() => chosenTakes(chosenList, takesList), [chosenList, takesList])
+  const missingTakes = useMemo(() => unavailableTakes(chosenList, takesList), [chosenList, takesList])
   // The one resolved edit state: what the words show, the length, the player and the export all read.
-  const resolved = useMemo(() => resolveRecording({ durationMs, ctx, edits: { cuts: sidecarCuts, boundaries, leftOut: leftOutFacts, restoredTrims }, runTrims: run.trims as TimeRange[] | undefined, marks: run.slideTimeIndex }),
-    [durationMs, ctx, sidecarCuts, boundaries, leftOutFacts, restoredTrims, run.trims, run.slideTimeIndex])
+  const resolved = useMemo(() => resolveRecording({ durationMs, ctx, edits: { cuts: sidecarCuts, boundaries, leftOut: leftOutFacts, restoredTrims }, runTrims: run.trims as TimeRange[] | undefined, marks: run.slideTimeIndex, takes, segments: words?.segments }),
+    [durationMs, ctx, sidecarCuts, boundaries, leftOutFacts, restoredTrims, run.trims, run.slideTimeIndex, takes, words?.segments])
   const { rows, cuts, spans, views, leftOutRows, editedMs } = resolved
-  planOf.current = (e) => planDigest(resolveRecording({ durationMs, ctx, edits: e.edits, runTrims: run.trims as TimeRange[] | undefined, marks: run.slideTimeIndex }), words?.segments)
+  planOf.current = (e) => planDigest(resolveRecording({ durationMs, ctx, edits: e.edits, runTrims: run.trims as TimeRange[] | undefined, marks: run.slideTimeIndex, takes: chosenTakes(takesInUse(takesOn, e.edits.takes), takesList), segments: words?.segments }))
   // Words or their timing that change while the editor is open (writing out, precise word timing) are
   // followed at once: the plan is resolved again, and a quiet note says so.
   const wordsKey = `${transcript?.createdAt ?? ''}|${transcript?.alignment?.alignedAt ?? ''}|${n}`
@@ -229,8 +246,16 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
     views.forEach((v, i) => { for (let w = v.firstWord; w < v.endWord; w++) out[w] = i })
     return out
   }, [views, n])
-  const playSpans = useMemo(() => (preview ? keptSpans(normaliseRanges([...cuts, ...preview.cuts], durationMs), durationMs) : spans), [preview, cuts, spans, durationMs])
+  const playSpans = useMemo(() => (preview ? keptSpans(normaliseRanges(rangesToVideoClock(resolved.clock, normaliseRanges([...cuts, ...preview.cuts], durationMs)), resolved.clockMs), resolved.clockMs) : spans), [preview, cuts, spans, durationMs, resolved.clock, resolved.clockMs])
   const camera = edits?.edits.finish.camera !== false
+  const finish = edits?.edits.finish ?? DEFAULT_FINISH
+  // The player plays the evened voice when Even out the volume is on (made in main on first use).
+  const even = useEvenVoice(runRef, source, finish.evenVolume)
+  // With a new take chosen for a slide, the player plays on the video clock (recording-takes.ts).
+  const composed = useTakeSource(runRef, even.source, resolved.clock, durationMs, finish.evenVolume)
+  const faces = edits?.edits.faces ?? EMPTY_FACES
+  const track = useMemo(() => faceTrack(rows, faces, durationMs), [rows, faces, durationMs])
+  const clockTrack = useMemo(() => faceTrackOnClock(track, resolved.clock), [track, resolved.clock])
   const enters = useMemo(() => (run.slideTimeIndex ?? []).filter((m) => m.event === 'enter' && Number.isFinite(m.tMs)).sort((a, b) => a.tMs - b.tMs), [run.slideTimeIndex])
   const flagsAfter = useMemo(() => {
     const out = new Map<number, number>()
@@ -256,10 +281,37 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   const tidy = useMemo(() => (tidyOpen ? tidyProposals(ctx, rows, run.slideTimeIndex, cuts) : null), [tidyOpen, ctx, rows, run.slideTimeIndex, cuts])
   // Leaving a slide out is refused when nothing would be left to play.
   const leaveOut = useCallback((row: EditorRow) => {
-    const after = resolveRecording({ durationMs, ctx, edits: { cuts: sidecarCuts, boundaries, leftOut: [...leftOutFacts, row.change], restoredTrims }, runTrims: run.trims as TimeRange[] | undefined, marks: run.slideTimeIndex })
+    const after = resolveRecording({ durationMs, ctx, edits: { cuts: sidecarCuts, boundaries, leftOut: [...leftOutFacts, row.change], restoredTrims }, runTrims: run.trims as TimeRange[] | undefined, marks: run.slideTimeIndex, takes })
     if (after.editedMs <= 0) { setEditError('That would leave nothing in the video.'); return }
     edit(leaveOutOp(row))
-  }, [durationMs, ctx, sidecarCuts, boundaries, leftOutFacts, restoredTrims, run.trims, run.slideTimeIndex, edit])
+  }, [durationMs, ctx, sidecarCuts, boundaries, leftOutFacts, restoredTrims, run.trims, run.slideTimeIndex, takes, edit])
+  // ---- Record this slide again ----------------------------------------------------------------------------
+  const [retakeNote, setRetakeNote] = useState<{ text: string; warn: boolean } | null>(null)
+  const recordAgain = useCallback(async (row: EditorRow): Promise<void> => {
+    if (!onRecordSlideAgain) return
+    const n = slides[row.slideId]?.n ?? row.index + 1
+    setRetakeNote({ text: `Opening the presenter view at slide ${n}…`, warn: false })
+    const error = await onRecordSlideAgain({ change: row.change, slideId: row.slideId, slideN: n, camera: !!opened?.hasCamera }).catch((e) => String(e))
+    setRetakeNote(error ? { text: error, warn: true } : { text: `Record slide ${n} in the presenter view, then come back here to choose the take.`, warn: false })
+  }, [onRecordSlideAgain, slides, opened?.hasCamera])
+  const takesOfRow = (row: EditorRow) => takesList.filter((t) => t.change === row.change)
+  const takesKeyOf = (row: EditorRow): string => { const list = takesOfRow(row); const gone = missingTakes.find((t) => t.change === row.change); if (gone) return `missing:${gone.run}:${gone.reason}|${!!problem}`; return list.length ? `${list.map((t) => t.run).join(',')}|${chosenList.find((c) => c.change === row.change)?.run ?? ''}|${!!problem}` : '' }
+  const takesNodeOf = (row: EditorRow): ReactNode => {
+    if (!takesOn) return null
+    const missing = missingTakes.find((t) => t.change === row.change)
+    if (missing) return (
+      <div className="tre-inrow warn" role="alert" data-take-missing><AlertTriangle className="lt-icon" /><span className="tre-grow">{missingTakeText(missing.reason)}</span>
+        <button className="tw-btn tw-btn--sm" disabled={!!problem} onClick={() => edit({ kind: 'take', change: row.change, run: null })}>Use the first take</button></div>
+    )
+    const list = takesOfRow(row)
+    if (!rowTakeControls(takesOn, { hasPicture: true, slideId: row.slideId, leftOut: leftOutRows.has(row.index), takes: list.length }).chooser) return null
+    const chosenRun = resolved.replacedRows.get(row.index) ?? null
+    const n = slides[row.slideId]?.n ?? row.index + 1
+    return <TakesPanel runRef={runRef} slideN={n} firstMs={Math.max(0, row.end - row.start)} takes={list} chosen={chosenRun} disabled={!!problem}
+      firstVoice={source?.voice ? { url: source.voice, from: row.start, to: row.end } : null}
+      onPlayInVideo={() => { player.current?.seekRun(row.start); player.current?.play() }}
+      onChoose={(take) => edit({ kind: 'take', change: row.change, run: take })} />
+  }
   const rowAtMs = useCallback((t: number): number => { let r = 0; for (let i = 0; i < rows.length; i++) if (rows[i].start <= t) r = i; return r }, [rows])
   const range = useMemo(() => selRange(sel), [sel])
   const currentRow = rowAtMs(runMs)
@@ -275,8 +327,8 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   // ---- Playing follows the words ------------------------------------------------------------------------
   const nowWord = useRef(-1)
   const nowRow = useRef(-1)
-  const onTime = useCallback((t: number) => {
-    setRunMs(t)
+  const onTime = useCallback((t: number, v: number) => {
+    setRunMs(t); setVideoMs(v)
     if (playUntil.current !== null && t >= playUntil.current) { playUntil.current = null; player.current?.pause(); setPreview(null) }
     let w = n ? wordAt(ctx, t) : -1
     while (w >= 0 && !ctx.words[w].timed) w--
@@ -349,25 +401,31 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   // wait; Escape closes the topmost of them first and focus goes back where it was.
   const exportState = useRef<{ open: boolean; close: () => void }>({ open: false, close: () => {} })
   const cutPopRef = useRef<{ playJoin: () => void } | null>(null)
-  const keyState = useRef({ range, cutSelection, moveSel, playSelection, edit, pop, choose, tidyOpen, leave, suspended })
-  keyState.current = { range, cutSelection, moveSel, playSelection, edit, pop, choose, tidyOpen, leave, suspended }
+  const sheetUp = lookOpen || faceRow !== null
+  const keyState = useRef({ range, cutSelection, moveSel, playSelection, edit, pop, choose, tidyOpen, lookOpen, faceRow, sheetUp, leave, suspended })
+  keyState.current = { range, cutSelection, moveSel, playSelection, edit, pop, choose, tidyOpen, lookOpen, faceRow, sheetUp, leave, suspended }
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const t = e.target as HTMLElement | null
-      if (t && t.closest('input, textarea, select, [contenteditable="true"]')) return
+      // Text entry keeps its keys; a sheet's tick box or option still closes with Escape.
+      const typing = !!t && !!t.closest('input:not([type="checkbox"]):not([type="radio"]), textarea, select, [contenteditable="true"]')
+      const inChoice = !!t && !!t.closest('input[type="checkbox"], input[type="radio"]')
+      if (typing || (inChoice && e.key !== 'Escape')) return
       const k = keyState.current
       if (k.suspended) return
       if (e.key === 'Escape') {
         e.preventDefault()
         if (exportState.current.open) exportState.current.close()
         else if (k.tidyOpen) setTidyOpen(false)
+        else if (k.lookOpen) setLookOpen(false)
+        else if (k.faceRow !== null) setFaceRow(null)
         else if (k.pop) setPop(null)
         else if (k.choose !== null) setChoose(null)
         else if (k.range) setSel(null)
         else void k.leave()
         return
       }
-      if (exportState.current.open || k.tidyOpen) return
+      if (exportState.current.open || k.tidyOpen || k.sheetUp) return
       // The cut popover owns the keys: Space plays across the join (its hint), nothing else acts behind it.
       if (k.pop?.kind === 'cut') {
         if (shortcutEventMatches(e, 'studio.editor-play')) { e.preventDefault(); cutPopRef.current?.playJoin() }
@@ -396,11 +454,12 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
 
   // Focus goes into a sheet when it opens and back where it was when it closes.
   const focusBack = useRef<HTMLElement | null>(null)
+  // Tidy up moves focus itself; Look and sound and the face sheet are modal dialogs that put focus back on their opener.
   const sheetOpen = tidyOpen
   useEffect(() => {
     if (sheetOpen) {
       focusBack.current = document.activeElement as HTMLElement | null
-      requestAnimationFrame(() => (rootRef.current?.querySelector('.tre-sheet button, .twrp-sheet button') as HTMLElement | null)?.focus())
+      requestAnimationFrame(() => (rootRef.current?.querySelector('.tre-sheet input:not(:disabled), .tre-sheet button, .twrp-sheet button') as HTMLElement | null)?.focus())
     } else if (focusBack.current) { focusBack.current.focus?.(); focusBack.current = null }
   }, [sheetOpen])
 
@@ -456,7 +515,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
   }
 
-  // Dragging a slide's start: snaps to clear pauses (blue bars); with Option any word.
+  // Dragging a slide's start: snaps to clear pauses and sentence starts (blue bars); with Option any word.
   const startBoundaryDrag = (rowIndex: number) => (e: React.PointerEvent): void => {
     e.preventDefault(); e.stopPropagation()
     const row = rows[rowIndex]
@@ -533,7 +592,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
       const marked = markedStretch(ctx, m.tMs)
       const isCut = marked ? coveredMs(cuts, marked.range) * 2 >= marked.range.end - marked.range.start : false
       const slideN = r ? slides[r.slideId]?.n ?? r.index + 1 : 1
-      out.push({ id: `flag:${m.tMs}`, kind: 'flag', title: `You marked a mistake on slide ${slideN}`, sub: isCut && marked ? `Cut: ${plural(marked.lastWord + 1 - marked.firstWord, 'word')} before the mark` : `“${marked ? quoteWords(ctx, Math.max(marked.firstWord, marked.lastWord - 5), marked.lastWord + 1) : ''}” · ${clock(planRunToEdited(spans, m.tMs))}`, go: () => { goToRow(r?.index ?? 0, false); player.current?.seekRun(Math.max(0, m.tMs - 3000)) } })
+      out.push({ id: `flag:${m.tMs}`, kind: 'flag', title: `You marked a mistake on slide ${slideN}`, sub: isCut && marked ? `Cut: ${plural(marked.lastWord + 1 - marked.firstWord, 'word')} before the mark` : `“${marked ? quoteWords(ctx, Math.max(marked.firstWord, marked.lastWord - 5), marked.lastWord + 1) : ''}” · ${clock(planRunToEdited(spans, toVideoClock(resolved.clock, m.tMs)))}`, go: () => { goToRow(r?.index ?? 0, false); player.current?.seekRun(Math.max(0, m.tMs - 3000)) } })
     }
     views.forEach((v, i) => {
       if (!v.close || kept.has(`${v.start}-${v.end}`)) return
@@ -542,7 +601,15 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
     })
     for (const r of rows) if (r.noClearPause && !leftOutRows.has(r.index)) {
       const sn = slides[r.slideId]?.n ?? r.index + 1
-      out.push({ id: `boundary:${r.change}`, kind: 'boundary', title: `Slide ${sn} has no clear pause where it starts`, sub: 'Choose the word where it starts', go: () => { goToRow(r.index, false); setChoose(r.index) } })
+      const sub = r.sentenceNear === null ? 'Choose the word where it starts' : r.sentenceNear === r.firstWord ? 'It starts at a sentence start; listen to check it' : 'A sentence starts nearby; choose where it starts'
+      out.push({ id: `boundary:${r.change}`, kind: 'boundary', title: `Slide ${sn} has no clear pause where it starts`, sub, go: () => { goToRow(r.index, false); setChoose(r.index) } })
+    }
+    // A slide left out, or played from a new take, whose stretch starts or ends at a sentence start rather
+    // than a clear pause: the join falls inside speech, so it is listed to listen to.
+    for (const i of joinsAtSentence(rows, leftOutRows, resolved.replacedRows)) {
+      const r = rows[i]
+      const sn = slides[r.slideId]?.n ?? r.index + 1
+      out.push({ id: `sentence:${r.change}`, kind: 'close', title: leftOutRows.has(i) ? `Slide ${sn} is left out at a sentence start` : `Slide ${sn}'s new take goes in at a sentence start`, sub: 'There is no clear pause there; listen to the join before you export', go: () => goToRow(r.index, false) })
     }
     if (offer) out.unshift({ id: 'timing', kind: 'timing', title: 'Cuts in this recording snap to pauses', sub: `With precise word timing for ${offer.label}, you can cut cleanly between any two words. One download, kept on this Mac.`,
       action: offer.state === 'downloading' ? <span className="tre-quiet"><Loader2 className="lt-icon spin" /> Downloading… {offer.received && offer.bytes ? `${Math.round((100 * offer.received) / offer.bytes)}%` : ''}</span>
@@ -550,20 +617,20 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
     return out
     // downloadOffer and goToRow change with the Run and rows only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasWords, run.slideTimeIndex, rows, ctx, cuts, views, kept, slides, spans, offer, rowAtMs, leftOutRows])
+  }, [hasWords, run.slideTimeIndex, rows, ctx, cuts, views, kept, slides, spans, offer, rowAtMs, leftOutRows, resolved.clock, resolved.replacedRows])
 
   // ---- Render -----------------------------------------------------------------------------------------
   const problem = edits?.problem ?? null
   const audioOnly = !!opened && opened.slides.length === 0
   const exportCtl = useRecordingExport({
     runRef, title: run.talkTitle, slides, audioOnly, hasCamera: !!opened?.hasCamera, camera, editedMs,
-    chapterCount: audioOnly ? 0 : chaptersFor(resolved.chapterMarks, slides, spans).length, hasCaptionText: !!transcript?.segments?.length, settle, onStale: refresh, withoutWords, setWithoutWords
+    chapterCount: audioOnly ? 0 : chaptersFor(resolved.chapterMarks, slides, spans).length, hasCaptionText: !!transcript?.segments?.length, captionNote: resolved.takesWithoutWords ? (resolved.takesWithoutWords === 1 ? 'The new take in this video has no words written out yet, so that part has no captions.' : `${resolved.takesWithoutWords} new takes in this video have no words written out yet, so those parts have no captions.`) : null, settle, onStale: refresh, withoutWords, setWithoutWords
   })
   const exportOpen = exportCtl.exporting.state !== 'closed' && !(exportCtl.exporting.state === 'working' && exportCtl.exporting.hidden)
   exportState.current = { open: exportOpen, close: () => { const x = exportCtl.exporting; if (x.state === 'working') exportCtl.setExporting({ ...x, hidden: true }); else exportCtl.setExporting({ state: 'closed' }) } }
   useEffect(() => {
     if (exportOpen) { focusBack.current = document.activeElement as HTMLElement | null; requestAnimationFrame(() => (rootRef.current?.querySelector('.twrp-sheet button') as HTMLElement | null)?.focus()) }
-    else if (focusBack.current && !tidyOpen) { focusBack.current.focus?.(); focusBack.current = null }
+    else if (focusBack.current && !sheetOpen) { focusBack.current.focus?.(); focusBack.current = null }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [exportOpen])
   const when = (() => {
@@ -587,6 +654,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
         <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!!problem || !edits?.edits.redo.length} onClick={() => edit({ kind: 'redo' })}><Redo2 className="lt-icon" /></button>
         <span className="tre-sep" />
         <button className="tw-btn" disabled={!hasWords || !!problem} onClick={() => { setPop(null); setTidyOpen(true) }}><ListChecks className="lt-icon" /> Tidy up…</button>
+        <button className="tw-btn" disabled={!opened || !!problem} onClick={() => { setPop(null); setLookOpen(true) }}><SlidersHorizontal className="lt-icon" /> Look and sound…</button>
         <span className="tre-len" data-edited-ms={Math.round(editedMs)} title="Length of the video / of the recording">{cuts.length ? <><b>{clock(editedMs)}</b> of {clock(durationMs)}</> : <b>{clock(durationMs)}</b>}</span>
         <button className="tw-btn tw-btn--primary" disabled={!opened || !!problem || exportCtl.exporting.state === 'working'} onClick={() => void exportCtl.open()}><Download className="lt-icon" /> {exportCtl.exporting.state === 'working' ? `Exporting ${Math.round(exportCtl.exporting.fraction * 100)}%` : 'Export…'}</button>
         <span className="tre-sep" />
@@ -601,6 +669,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
             <div className="tre-note warn" role="alert"><AlertTriangle className="lt-icon" /><span className="tre-grow">{problem.message} It is kept unchanged.</span>
               <button className="tw-btn tw-btn--sm" onClick={() => void window.tw.recordingVideo.startFresh(runRef).then((r) => { if (r.ok) { confirmed.current = r.edits; shown.current = r.edits; setEdits(r.edits) } else setEditError(r.error) })}>Start new edits</button></div>
           ) : null}
+          {retakeNote ? <div className={`tre-note${retakeNote.warn ? ' warn' : ''}`} role="status"><CircleDot className="lt-icon tre-rec-ico" /><span className="tre-grow">{retakeNote.text}</span><button className="tw-btn tw-btn--quiet tw-btn--icon tw-btn--sm" aria-label="Dismiss" onClick={() => setRetakeNote(null)}><X className="lt-icon" /></button></div> : null}
           {editError ? <div className="tre-note warn" role="alert"><AlertTriangle className="lt-icon" /><span className="tre-grow">{editError}</span><button className="tw-btn tw-btn--quiet tw-btn--icon tw-btn--sm" aria-label="Dismiss" onClick={() => { setEditError(null); saveFailed.current = null }} title="The edit was not saved; what you see is what is saved"><X className="lt-icon" /></button></div> : null}
           {state === 'writing' ? (
             <div className="tre-note tre-progress-note" role="status"><Loader2 className="lt-icon spin" /><div className="tre-grow"><div><b>Writing out your words</b> · about a minute</div><div className="tre-progress indeterminate"><i /></div></div><button className="tw-btn tw-btn--quiet tw-btn--sm" onClick={onStopWriting}>Stop</button></div>
@@ -616,15 +685,21 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
 
           {rows.map((row) => (
             <RowView key={`${row.index}:${row.change}`} row={row} rc={rowCtx} state={state} on={row.index === currentRow}
-              leftOut={leftOutRows.has(row.index)} keptMs={Math.max(0, row.end - row.start - coveredMs(cuts, row))}
+              leftOut={leftOutRows.has(row.index)} keptMs={resolved.replacedRows.has(row.index) ? takes.find((t) => t.change === row.change)?.durationMs ?? 0 : Math.max(0, row.end - row.start - coveredMs(cuts, row))}
               selA={range && range[1] >= row.firstWord && range[0] < Math.max(row.endWord, row.firstWord + 1) ? range[0] : -1} selB={range ? range[1] : -1}
               drag={drag && (drag.row === row.index || drag.row === row.index + 1) ? drag : null} choosing={choose === row.index || choose === row.index + 1}
+              faceText={faceLabel(opened?.hasCamera && camera ? faceOf(faces, row.change) : withoutCamera(faceOf(faces, row.change)))} onFace={opened && opened.slides.length ? () => { setPop(null); setFaceRow(row.index) } : undefined}
               onLeaveOut={() => leaveOut(row)} onPutBack={() => edit(putBackOp(row))}
               onPutBoundaryBack={() => edit(putBoundaryBackOp(row))} onChoose={() => setChoose(row.index)} onDragStart={startBoundaryDrag(row.index)}
-              onRestore={(c) => edit(restoreOp(c))} />
+              onSentence={() => { if (row.sentenceNear !== null) edit(moveBoundaryOp(ctx, row, row.sentenceNear, false)) }}
+              onRestore={(c) => edit(restoreOp(c))}
+              onRetake={onRecordSlideAgain && rowTakeControls(takesOn, { hasPicture: !!opened?.slides.length, slideId: row.slideId, leftOut: leftOutRows.has(row.index), takes: 0 }).recordAgain ? () => void recordAgain(row) : undefined}
+              replacedMs={resolved.replacedRows.has(row.index) ? takes.find((t) => t.change === row.change)?.durationMs ?? 0 : -1}
+              replacedWords={resolved.replacedRows.has(row.index) ? takes.find((t) => t.change === row.change)?.words?.map((w) => w.text).join(' ') ?? null : null}
+              takesKey={takesKeyOf(row)} takesNode={takesNodeOf(row)} />
           ))}
 
-          {drag ? <div className="tre-ghost" style={{ left: drag.x + 14, top: drag.y - 34 }}><GripVertical className="lt-icon" />Slide {slides[rows[drag.row].slideId]?.n ?? drag.row + 1} starts here<span className="tre-gsub">{ctx.gaps[drag.word]?.cleanPause ? `pause ${secs(ctx.gaps[drag.word].pauseMs)}` : 'on a word'} · ⌥ any word</span></div> : null}
+          {drag ? <div className="tre-ghost" style={{ left: drag.x + 14, top: drag.y - 34 }}><GripVertical className="lt-icon" />Slide {slides[rows[drag.row].slideId]?.n ?? drag.row + 1} starts here<span className="tre-gsub" data-target-kind={ctx.gaps[drag.word] ? targetKind(ctx.gaps[drag.word]) : 'word'}>{targetText(ctx, drag.word)} · ⌥ any word</span></div> : null}
 
           {pop && popAt ? (
             <div className="tre-pop" ref={popRef} style={{ left: popAt.left, top: popAt.top, ['--arrow' as string]: `${popAt.arrow}px` }} onPointerDown={(e) => e.stopPropagation()} role="dialog" aria-label={pop.kind === 'selection' ? 'Selected words' : 'Cut'}>
@@ -638,13 +713,13 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
 
         <aside className="tre-side">
           <div className="tre-player">
-            {source ? <LayeredPlayer ref={player} source={source} spans={playSpans} durationMs={durationMs} camera={camera} onTime={onTime} onPlaying={onPlaying} />
+            {composed.source ? <LayeredPlayer ref={player} source={composed.source} spans={playSpans} durationMs={resolved.clockMs} clock={resolved.clock} camera={camera} dissolve={finish.smoothJoins} faces={clockTrack} notice={composed.problem ?? missingTakeNotice(missingTakes) ?? (composed.pending ? 'Preparing the new take…' : null)} onTime={onTime} onPlaying={onPlaying} />
               : <div className="twrp-player"><div className="twrp-frame twrp-wait">{preparing ? <><Loader2 className="lt-icon spin" /> Preparing playback…</> : null}</div></div>}
           </div>
           <div className="tre-transport">
             <button className="tre-playbtn" aria-label={playing ? 'Pause' : 'Play'} title={playing ? 'Pause (Space)' : 'Play (Space)'} disabled={!source} onClick={() => player.current?.toggle()}>{playing ? <Pause className="lt-icon" /> : <Play className="lt-icon" />}</button>
-            <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Back five seconds" title="Back five seconds" disabled={!source} onClick={() => player.current?.seekRun(planEditedToRun(spans, Math.max(0, planRunToEdited(spans, runMs) - 5000)))}><RotateCcw className="lt-icon" /></button>
-            <span className="tre-time" aria-live="off"><b>{clock(planRunToEdited(spans, runMs))}</b> <span>/ {clock(editedMs)}</span></span>
+            <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Back five seconds" title="Back five seconds" disabled={!source} onClick={() => player.current?.seekVideo(planEditedToRun(spans, Math.max(0, planRunToEdited(spans, videoMs) - 5000)))}><RotateCcw className="lt-icon" /></button>
+            <span className="tre-time" aria-live="off"><b>{clock(planRunToEdited(spans, videoMs))}</b> <span>/ {clock(editedMs)}</span></span>
             <span className="tre-sp" />
             <span className="tre-where">{curSlide ? `Slide ${curSlide.n} of ${slideCount}` : ''}</span>
           </div>
@@ -669,7 +744,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
       <footer className="tre-foot">
         {timeline ? (
           <Timeline rows={rows} leftOut={leftOutRows} slides={slides} durationMs={durationMs} editedMs={editedMs} cuts={views} ctx={ctx} runMs={runMs} range={range} marks={run.slideTimeIndex ?? []}
-            hasCamera={!!opened?.hasCamera && camera} cameraClips={source?.camera ?? []} currentRow={currentRow} curSlideN={curSlide?.n}
+            hasCamera={!!opened?.hasCamera && camera} cameraClips={source?.camera ?? []} faces={track} currentRow={currentRow} curSlideN={curSlide?.n}
             onSeek={(t) => player.current?.seekRun(t)} onSelect={(a, b) => { setSel({ anchor: a, focus: b }); setPop(null); listRef.current?.querySelector(`[data-w="${a}"]`)?.scrollIntoView({ block: 'center' }) }}
             onCut={cutSelection} onPlay={playSelection} onClose={() => setTimeline(false)} />
         ) : (
@@ -683,6 +758,12 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
 
       {tidyOpen && tidy ? <TidySheet tidy={tidy} ctx={ctx} rows={rows} slides={slides} onClose={() => setTidyOpen(false)}
         onPlay={(p) => playJoin(p.range, [p.range])} onApply={(ranges) => { if (edit({ kind: 'cut', ranges })) setTidyOpen(false) }} /> : null}
+      {faceRow !== null && rows[faceRow] ? <FacePositionSheet row={{ index: faceRow, change: rows[faceRow].change, n: slides[rows[faceRow].slideId]?.n ?? faceRow + 1 }}
+        rows={rows.filter((r) => !leftOutRows.has(r.index)).map((r) => ({ index: r.index, change: r.change, n: slides[r.slideId]?.n ?? r.index + 1 }))}
+        faces={faces} hasCamera={!!opened?.hasCamera} cameraOn={camera} disabled={!!problem}
+        onApply={(changes, face) => edit({ kind: 'face', changes, face })} onClose={() => setFaceRow(null)} /> : null}
+      {lookOpen ? <LookAndSoundSheet finish={finish} hasVoice={source ? !!source.voice : true} evening={even.evening} evenError={even.error} disabled={!!problem}
+        onChange={(f) => edit({ kind: 'finish', finish: f })} onClose={() => setLookOpen(false)} /> : null}
       {exportCtl.sheet}
     </div>
   )
@@ -691,16 +772,24 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
 const EMPTY: TimeRange[] = []
 const EMPTY_B: import('../../../../shared/recording-edits').EditBoundary[] = []
 const EMPTY_N: number[] = []
+const EMPTY_FACES = emptyFaces()
+const EMPTY_TAKES: import('../../../../shared/recording-edits').ChosenTake[] = []
 
 // ---- One slide row --------------------------------------------------------------------------------------
 
 type RowProps = {
   row: EditorRow; rc: RowCtx; state: string; on: boolean; leftOut: boolean; keptMs: number; selA: number; selB: number
   drag: Drag; choosing: boolean
-  onLeaveOut: () => void; onPutBack: () => void; onPutBoundaryBack: () => void; onChoose: () => void; onDragStart: (e: React.PointerEvent) => void; onRestore: (c: TimeRange) => void
+  /** The face control's words ("Face: corner"); the control is there when the Run has a picture. */
+  faceText: string; onFace?: () => void
+  /** Record this slide again (absent: not offered); the row plays a new take (its length) or not (-1); the takes panel. */
+  onRetake?: () => void; replacedMs: number; takesKey: string; takesNode: ReactNode
+  /** The words of the take in the video (its own transcript), or null while they are being written out. */
+  replacedWords?: string | null
+  onLeaveOut: () => void; onPutBack: () => void; onPutBoundaryBack: () => void; onChoose: () => void; onSentence: () => void; onDragStart: (e: React.PointerEvent) => void; onRestore: (c: TimeRange) => void
 }
 /** A row re-renders only when something it shows changed (its words, cuts in it, the selection in it). */
-const RowView = memo(function RowView({ row, rc, state, on, leftOut, keptMs, selA, selB, drag, choosing, onLeaveOut, onPutBack, onPutBoundaryBack, onChoose, onDragStart, onRestore }: RowProps) {
+const RowView = memo(function RowView({ row, rc, state, on, leftOut, keptMs, selA, selB, drag, choosing, faceText, onFace, onRetake, replacedMs, replacedWords, takesNode, onLeaveOut, onPutBack, onPutBoundaryBack, onChoose, onSentence, onDragStart, onRestore }: RowProps) {
   const { ctx, slides } = rc
   const slide = slides[row.slideId]
   const n = slide?.n ?? row.index + 1
@@ -729,7 +818,7 @@ const RowView = memo(function RowView({ row, rc, state, on, leftOut, keptMs, sel
       <div className="tre-wcol">
         {marker ? (
           <div className={`tre-marker${markerInFlow ? '' : ' floating'}`}>
-            <span className="tre-handle" role="slider" aria-label={`Where slide ${n} starts`} aria-valuenow={row.firstWord} tabIndex={0} onPointerDown={onDragStart} title="Drag to move where this slide starts; it snaps to clear pauses. Hold Option for any word.">
+            <span className="tre-handle" role="slider" aria-label={`Where slide ${n} starts`} aria-valuenow={row.firstWord} tabIndex={0} onPointerDown={onDragStart} title={`Drag to move where this slide starts; it snaps to clear pauses${ctx.sentences ? ' and sentence starts' : ''}. Hold Option for any word.`}>
               <GripVertical className="lt-icon" /> Slide {n} starts here
             </span>
             {row.moved ? <><span className="tre-moved">Moved</span><button className="tw-btn tw-btn--text" onClick={onPutBoundaryBack}>Put back</button></> : null}
@@ -738,29 +827,41 @@ const RowView = memo(function RowView({ row, rc, state, on, leftOut, keptMs, sel
         ) : null}
         <div className="tre-stitle">{title}</div>
         {row.noClearPause && state === 'ready' ? (
-          <div className="tre-inrow"><AlertTriangle className="lt-icon" /><span className="tre-grow">No clear pause within two seconds of this slide change. Choose the word where slide {n} starts.</span>
+          <div className="tre-inrow" {...(row.sentenceNear !== null ? { 'data-sentence-near': row.sentenceNear } : {})}><AlertTriangle className="lt-icon" /><span className="tre-grow">No clear pause within two seconds of this slide change. {row.sentenceNear === null ? `Choose the word where slide ${n} starts.`
+              : row.sentenceNear === row.firstWord ? `Slide ${n} starts at a sentence start; listen to check it.`
+              : `A sentence starts at “${quoteWords(ctx, row.sentenceNear, Math.min(ctx.words.length, row.sentenceNear + 3), 3)}…”.`}</span>
+            {row.sentenceNear !== null && row.sentenceNear !== row.firstWord ? <button className="tw-btn tw-btn--sm" data-start-at-sentence onClick={onSentence}>Start at the sentence</button> : null}
             <button className="tw-btn tw-btn--sm" aria-pressed={choosing} onClick={onChoose}><TextCursorInput className="lt-icon" /> {choosing ? 'Click a word' : 'Choose the word'}</button></div>
         ) : null}
-        {state === 'ready' ? <Words row={row} rc={rc} selA={selA} selB={selB} drag={drag} choosing={choosing} onRestore={onRestore} />
+        {replacedMs >= 0 ? <>
+          <div className="tre-waiting tre-replaced"><CircleDot className="lt-icon tre-rec-ico" /> This slide plays its new take ({clock(replacedMs)}). The first take and its words are kept.</div>
+          {replacedWords ? <div className="tre-words tre-take-words" data-take-words>{replacedWords}</div>
+            : <div className="tre-waiting" data-take-words-pending><Clock className="lt-icon" /> The new take's words are not written out yet, so this slide has no captions.</div>}
+        </>
+          : state === 'ready' ? <Words row={row} rc={rc} selA={selA} selB={selB} drag={drag} choosing={choosing} onRestore={onRestore} />
           : state === 'nowords' ? <div className="tre-waiting"><MessageSquareOff className="lt-icon" /> No words for this slide.</div>
           : <><div className="tre-waiting">{state === 'writing' ? <><Loader2 className="lt-icon spin" /> Writing out the words on this slide</> : <><Clock className="lt-icon" /> Waiting for words</>}</div><div className="tre-skel"><i style={{ width: '82%' }} /><i style={{ width: '74%' }} /><i style={{ width: '51%' }} /></div></>}
+        {takesNode}
         <div className="tre-acts">
+          {onFace ? <button className="tw-btn tw-btn--sm" data-face-control onClick={onFace} title="Choose where your face appears on this slide"><SquareUser className="lt-icon" /> {faceText}</button> : null}
+          {onRetake ? <button className="tw-btn tw-btn--sm" data-record-again onClick={onRetake} title="Record what you say on this slide again; the rest of the video is kept"><CircleDot className="lt-icon tre-rec-ico" /> Record this slide again</button> : null}
           <button className="tw-btn tw-btn--sm" onClick={onLeaveOut} title="Leave this slide's words and picture out of the video"><EyeOff className="lt-icon" /> Leave this slide out</button>
         </div>
       </div>
     </div>
   )
-}, (a, b) => a.row === b.row && a.rc === b.rc && a.state === b.state && a.on === b.on && a.leftOut === b.leftOut && a.keptMs === b.keptMs && a.selA === b.selA && (a.selA < 0 || a.selB === b.selB) && a.drag === b.drag && a.choosing === b.choosing)
+}, (a, b) => a.row === b.row && a.rc === b.rc && a.state === b.state && a.on === b.on && a.leftOut === b.leftOut && a.keptMs === b.keptMs && a.selA === b.selA && (a.selA < 0 || a.selB === b.selB) && a.drag === b.drag && a.choosing === b.choosing && a.faceText === b.faceText && !!a.onFace === !!b.onFace && !!a.onRetake === !!b.onRetake && a.replacedMs === b.replacedMs && a.replacedWords === b.replacedWords && a.takesKey === b.takesKey)
 
 /** The row's words with its marks: pauses of a second or more, steps, the real click, flags, cuts. */
-function Words({ row, rc, selA, selB, drag, choosing, onRestore }: { row: EditorRow; rc: RowCtx; selA: number; selB: number; drag: Drag; choosing: boolean; onRestore: (c: TimeRange) => void }): ReactNode {
+/** A row's words with its marks (pauses, sentence starts, where the picture changed, steps, cuts); exported for the DOM test. */
+export function Words({ row, rc, selA, selB, drag, choosing, onRestore }: { row: EditorRow; rc: RowCtx; selA: number; selB: number; drag: Drag; choosing: boolean; onRestore: (c: TimeRange) => void }): ReactNode {
   const { ctx, cuts, byWord, flagsAfter, stepsBefore, clickBefore } = rc
   const out: ReactNode[] = []
   const last = ctx.words.length
   const snapTargets = drag ? new Set(boundaryTargets(ctx, rc.rows, drag.row, drag.any).map((t) => t.word)) : null
-  const pauseChip = (g: number): void => {
+  const pauseChip = (g: number): boolean => {
     const gap = ctx.gaps[g]
-    if (!gap?.pause || gap.pauseMs < EDITOR_THRESHOLDS.pauseMarkerMs) return
+    if (!gap?.pause || gap.pauseMs < EDITOR_THRESHOLDS.pauseMarkerMs) return false
     const covered = coveredMs(cuts, gap.pause)
     const keptP = gap.pauseMs - covered
     const lead = g === 0 ? ' before your first word' : g === last ? ' after your last word' : ''
@@ -771,11 +872,13 @@ function Words({ row, rc, selA, selB, drag, choosing, onRestore }: { row: Editor
         {covered > 0 ? (keptP > 0 ? <><s>{(gap.pauseMs / 1000).toFixed(1)}</s> → {secs(keptP)}</> : <s>{secs(gap.pauseMs)}{lead}</s>) : <>{secs(gap.pauseMs)}{lead}</>}
       </span>
     )
+    return true
   }
   if (row.index === 0) pauseChip(0)
   for (let i = row.firstWord; i < row.endWord; i++) {
-    if (i > row.firstWord) pauseChip(i)
-    if (snapTargets?.has(i)) out.push(<span key={`s${i}`} className={`tre-snap${drag?.word === i ? ' hit' : ''}`} />)
+    // A sentence starts here (stored with the transcript): a thin mark, unless a pause or snap mark already shows the place.
+    if (i > row.firstWord && !pauseChip(i) && ctx.gaps[i].sentence && !snapTargets?.has(i)) out.push(<span key={`b${i}`} className="tre-sb" data-sentence={i} aria-hidden="true" title="A sentence starts here" />)
+    if (snapTargets?.has(i)) out.push(<span key={`s${i}`} className={`tre-snap${drag?.word === i ? ' hit' : ''}`} data-snap={i} data-snap-kind={targetKind(ctx.gaps[i])} />)
     const click = clickBefore.get(i)
     if (click) out.push(<span key={`c${i}`} className="tre-pic" title="Where the picture changed">{click.moved ? <span className="tre-picnote"><ImageIcon className="lt-icon" />picture changed</span> : null}</span>)
     const steps = stepsBefore.get(i)
@@ -803,6 +906,15 @@ function Words({ row, rc, selA, selB, drag, choosing, onRestore }: { row: Editor
   if (row.index === rc.rows.length - 1) pauseChip(last)
   if (row.endWord === row.firstWord && !out.length) return <div className="tre-words dim">No words on this slide.</div>
   return <div className="tre-words">{out}</div>
+}
+
+/** What the place before word `w` is, for the drag label: "after a pause of 1.2 s", "at a sentence start", "on a word". */
+function targetText(ctx: EditorWords, w: number): string {
+  const g = ctx.gaps[w]
+  if (!g) return TARGET_WORDS.word
+  const kind = targetKind(g)
+  if (kind === 'pause') return `${TARGET_WORDS.pause} of ${secs(g.pauseMs)}`
+  return kind === 'sentence' && g.quality === 'close' ? `${TARGET_WORDS.sentence} · needs a listen` : TARGET_WORDS[kind]
 }
 
 function CloseChip({ c }: { c: number }): ReactNode {
@@ -874,9 +986,9 @@ function Overview({ rows, leftOut, slides, durationMs, cuts, runMs, range, marks
   )
 }
 
-function Timeline({ rows, leftOut, slides, durationMs, editedMs, cuts, ctx, runMs, range, marks, hasCamera, cameraClips, currentRow, curSlideN, onSeek, onSelect, onCut, onPlay, onClose }: {
+function Timeline({ rows, leftOut, slides, durationMs, editedMs, cuts, ctx, runMs, range, marks, hasCamera, cameraClips, faces, currentRow, curSlideN, onSeek, onSelect, onCut, onPlay, onClose }: {
   rows: EditorRow[]; leftOut: Set<number>; slides: Record<string, EditorSlide>; durationMs: number; editedMs: number; cuts: CutView[]; ctx: EditorWords; runMs: number; range: [number, number] | null
-  marks: RecordingSession['slideTimeIndex']; hasCamera: boolean; cameraClips: Array<{ startMs: number; endMs: number }>; currentRow: number; curSlideN?: number
+  marks: RecordingSession['slideTimeIndex']; hasCamera: boolean; cameraClips: Array<{ startMs: number; endMs: number }>; faces: FaceSegment[]; currentRow: number; curSlideN?: number
   onSeek: (t: number) => void; onSelect: (a: number, b: number) => void; onCut: () => void; onPlay: () => void; onClose: () => void
 }): ReactNode {
   const pct = (t: number): string => `${((100 * t) / Math.max(1, durationMs)).toFixed(3)}%`
@@ -957,7 +1069,11 @@ function Timeline({ rows, leftOut, slides, durationMs, editedMs, cuts, ctx, runM
             })}
           </div>
           <div className="tre-trk camtrk" onPointerDown={scrub}>
-            {hasCamera && cameraClips.length ? cameraClips.map((c, i) => <div key={i} className="tre-cblk" style={{ left: pct(c.startMs), width: pct(Math.min(durationMs, c.endMs) - c.startMs) }}><Video className="lt-icon" />Corner</div>)
+            {hasCamera && cameraClips.length ? cameraClips.flatMap((c, i) => faces.filter((f) => f.end > c.startMs && f.start < c.endMs).map((f, j) => {
+              const a = Math.max(c.startMs, f.start), b = Math.min(durationMs, c.endMs, f.end)
+              const name = f.face.layout === 'corner' ? 'Corner' : f.face.layout === 'side' ? 'Side by side' : f.face.layout === 'face' ? 'Face only' : 'Hidden'
+              return <div key={`${i}:${j}`} className={`tre-cblk${f.face.layout === 'slide' ? ' off' : ''}`} style={{ left: pct(a), width: pct(b - a) }}><Video className="lt-icon" />{name}</div>
+            }))
               : <div className="tre-cblk" style={{ left: 0, width: '100%' }}>No camera</div>}
           </div>
           <div className="tre-trk voice" onPointerDown={select} title="Drag to select">

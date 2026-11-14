@@ -41,7 +41,7 @@ interface Props {
 }
 
 export const tone = { good: 'var(--oxford)', quiet: 'var(--faint)', warn: '#b8860b' }
-// The feature rows: one bounded list, a rule between rows (Settings → Transcription's row uses the same form), in the Settings panel's own colours and
+// The feature rows: one bounded list, a rule between rows (Settings → Get started → Transcription's row uses the same form), in the Settings panel's own colours and
 // corner radius (the same border the panel's inputs and buttons use).
 export const featureList: React.CSSProperties = { border: '1px solid var(--line)', borderRadius: 8, overflow: 'hidden', margin: '8px 0 10px', background: 'var(--panel)' }
 export const featureRow: React.CSSProperties = {

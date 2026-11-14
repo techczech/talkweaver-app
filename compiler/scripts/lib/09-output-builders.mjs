@@ -360,21 +360,24 @@ ${audienceMyNotesStyles}
 @media (pointer: coarse) { .car-dot { width: 44px; height: 44px; } .carousel-bar .btn { min-width: 44px; min-height: 44px; } .car-count { font-size: 15px; } }
 @media (max-width: 699px) { body.phone-detail-mode .stage-fit.has-carousel-bar { aspect-ratio: auto; height: calc(100vw * 9 / 16 + var(--car-bar-h, 56px)); max-height: calc(52dvh + var(--car-bar-h, 56px)); } }
 .carousel-print-count { display: none; }
+.stage > .slide.tw-predraw:not(.active) { display: grid !important; visibility: hidden !important; pointer-events: none; }
 @media print {
   .share-footer, .nav-panel, .notes-panel, .mynotes-panel, .help-fab, .help-overlay, .note-pop, .audience-poll-surface, .rx-dock { display: none !important; }
-  /* One slide per landscape page, every slide, each scaled uniformly to the page width (ADR-0018:
-     slides scale, they do not reflow). The slide itself becomes the 16:9 size container, so the deck's
-     cqw/cqh sizes resolve against the page-wide slide exactly as they do against the 1280x720 canvas
-     on screen; the safe-area padding moves to the content, where it resolves against the same box. */
+  /* One slide per landscape page, uniformly scaled (ADR-0018: slides do not reflow). Keep the
+     1280x720 layout canvas during pagination too, including fixed pixel minima. */
   @page { size: landscape; margin: 8mm; }
   html, body { background: #fff; height: auto; overflow: visible; }
   .share-shell { display: block; min-height: 0; height: auto; }
   .phone-bar, .phone-list, .phone-script, .focus-banner, .fs-overlay, .gallery-nav, .now-live-badge, .live-follow-status, .lightbox { display: none !important; }
-  .stage-fit { display: block !important; position: static; width: auto; height: auto; overflow: visible; }
-  .stage { position: static; display: block; width: auto; height: auto; overflow: visible; transform: none !important; container-type: normal; }
-  .slide { display: grid !important; position: relative; inset: auto; box-sizing: border-box; width: 100%; height: auto; min-height: 0 !important; aspect-ratio: 16 / 9; padding: 0 !important; overflow: hidden; container-type: size; break-after: page; break-inside: avoid; }
-  .slide:last-of-type { break-after: auto; }
-  .slide > .slide-content { box-sizing: border-box; width: 100%; height: 100%; padding: var(--slide-pad-y) var(--slide-pad-x); }
+  .stage-fit { display: block !important; position: static; width: auto; height: auto; overflow: visible; container-type: inline-size; }
+  /* Keep fixed pixel minima and fitted lengths on the same canvas during pagination. CSS zoom
+     scales layout and page breaks together; its container width follows the final paper area. */
+  .stage { position: static; display: block; width: 1280px; height: auto; overflow: visible; transform: none !important; container-type: normal; zoom: calc(100cqw / 1280px); }
+  /* Each printed slide sits in its own 1280x720 page canvas (slideFit.preparePrint adds .tw-print-canvas
+     for the print), so it keeps its screen padding and rules and prints as the screen slide, scaled. */
+  .stage > .tw-print-canvas { position: relative; display: block; box-sizing: border-box; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; container-type: size; break-after: page; break-inside: avoid; }
+  .stage > .tw-print-canvas > .slide { display: grid !important; position: absolute; inset: 0; }
+  .stage > :last-child { break-after: auto; }
   .slide .notes { display: none !important; }
   .slide.mode-active .mode-el { opacity: 1 !important; visibility: visible !important; filter: none !important; }
   [data-fragment].hidden-fragment { opacity: 1; transform: none; }
@@ -384,6 +387,16 @@ ${audienceMyNotesStyles}
   .carousel-bar { display: none !important; }
   .carousel-print-count { display: block; position: absolute; right: 2.2cqw; bottom: 1.4cqw; font: 600 1.15cqw/1 system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .04em; color: #5b6572; }
 }
+/* A browser that cannot divide a length by a length drops the zoom above and would cut the 1280px
+   canvas off at the paper edge: there the slide takes the paper width instead (the 0.44.0 print). */
+@supports not (zoom: calc(100cqw / 1280px)) {
+  @media print {
+    .stage-fit { container-type: normal; }
+    .stage { width: auto; zoom: normal; }
+  }
+}
+/* beforeprint measures every slide in this print layout at scale 1 (slideFit.preparePrint). */
+html.tw-print-layout .stage { zoom: 1 !important; }
 ${venue ? `
 /* The venue keeps the share slide renderer and live poll surface, but none of its reading chrome. */
 html, body, .share-shell { width: 100%; height: 100%; overflow: hidden; }
@@ -807,6 +820,11 @@ ${hasMermaid ? mermaidVendorSource : ""}
       var want = Boolean(showing && shareEmbedChannel && slideIndex === index && slide.classList.contains("active")
         && frame.hasAttribute("sandbox") && !frame.sandbox.contains("allow-same-origin") && (!inUse || inUse === frame) && !figure.hasAttribute("data-embed-stopped"));
       if (want && !live) {
+        // Only once the frame has its place (asking lays the slide out): a page given its document
+        // before that starts at 0x0 and is resized with no resize event, as in the deck
+        // (embedFrameLaidOut). A frame in a carousel card not shown is loaded when the card is.
+        var box = frame.getBoundingClientRect();
+        if (!(box.width > 0 && box.height > 0)) return;
         var order = shareEmbedOrder(slide, frame);
         // The record first, then the document: the agent's ready must find it.
         if (!shareEmbedChannel.activate(frame, { slide: slide.dataset.id || "", index: order, role: "replay" })) return;
@@ -947,7 +965,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // compiler/assets/runtime/slide-fit.js, the SAME source the presenter template runs. It measures
   // in canvas units, so it fits the 1280x720 canvas identically whatever scale fitStage() applies.
   ${slideFitRuntimeSource}
-  const slideFit = createSlideFit();
+  // An asset wait that ends asks for the normal fit pass (densify, fit, connector lines).
+  const slideFit = createSlideFit({ refit: () => scheduleSlideFit() });
   function fitSlideClone(slide) {
     const content = slide ? slide.querySelector(":scope > .slide-content") : null;
     if (content) slideFit.fitContent(content);
@@ -972,7 +991,11 @@ ${hasMermaid ? mermaidVendorSource : ""}
     const target = event.target;
     if (target && target.tagName === "IMG" && target.closest && target.closest(".stage > .slide.active")) scheduleSlideFit();
   }, true);
+  document.addEventListener("error", (event) => {
+    if (event.target?.tagName === "IMG" && event.target.closest(".stage > .slide.active")) scheduleSlideFit();
+  }, true);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleSlideFit);
+  document.fonts?.addEventListener("loadingdone", scheduleSlideFit);
 
   /* ---- ADR-0018 phone view: LIST of slides -> slide detail -> rotated full screen ----
      The list clones each real slide onto its own fixed canvas (the mechanism the overview
@@ -1371,6 +1394,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   let sharedTalkController = null;
   let audienceRevealIndex = 0;
   function go(nextIndex, options = {}) {
+    slideFit.leavePrint();
     index = Math.max(0, Math.min(slides.length - 1, nextIndex));
     // Handouts default to COMPLETE slides: a handout is for reading, so authored {data-mode} is
     // NOT auto-entered here. Reveal/Focus is opt-in (the Reveal button / R / F); once the reader
@@ -1636,6 +1660,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // last state this way.
   function releaseLiveSlideState() {
     if (VENUE_MODE) return;
+    slideFit.leavePrint();
     if (liveLightbox) { liveLightbox = false; closeLightbox(); }
     if (!liveFocus) return;
     liveFocus = null;
@@ -1992,6 +2017,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (!syncCarouselBar(gallery, cards.length, visible)) ensureGalleryNav(gallery, cards.length, visible);
     densifyActiveCards();
     scheduleSlideFit();
+    // A page in the card now shown has its place only now (syncLocalShareEmbeds loads it then).
+    syncLocalShareEmbeds();
   }
   // Parity with the full deck's D6 in-card browsability: an overflowing visible card first
   // tries a one-notch type shrink (.card-dense, quote cards only), then .is-scrollable for the
@@ -2064,12 +2091,42 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // once. Branch colours rotate the section palette to start from this slide's accent; node text
   // inherits the deck --sans via the extracted stylesheet's --markmap-font rule.
   const MM_ACCENTS = ["#0f4bd8", "#0a7a5c", "#c2410c"];
+  // markmap's fit() sizes the map to the svg's getBoundingClientRect(), which is in screen pixels; the slide is a
+  // canvas scaled to the screen, so the map came out scaled by the canvas scale (too large on a large screen, too small
+  // on a small one). The same fit in the svg's own canvas pixels (clientWidth, clientHeight).
+  function fitMarkmapInCanvas(inst) {
+    inst.fit = function (max = this.options.maxInitialScale) {
+      const node = this.svg.node();
+      const width = node.clientWidth, height = node.clientHeight;
+      const { x1, y1, x2, y2 } = this.state.rect;
+      const w = x2 - x1, h = y2 - y1;
+      if (!(width > 0 && height > 0 && w > 0 && h > 0)) return Promise.resolve();
+      const ratio = this.options.fitRatio;
+      const scale = Math.min(width / w * ratio, height / h * ratio, max);
+      const t = window.d3.zoomIdentity.translate((width - w * scale) / 2 - x1 * scale, (height - h * scale) / 2 - y1 * scale).scale(scale);
+      return this.transition(this.svg).call(this.zoom.transform, t).end().catch(() => {});
+    };
+  }
   function initMarkmaps(root) {
     if (!root) return;
     const mm = window.markmap;
     if (!mm || !mm.Transformer || !mm.Markmap) return;
     const hosts = root.querySelectorAll ? root.querySelectorAll(".mindmap-mm") : [];
     hosts.forEach((host) => {
+      // Drawn ahead of time for paper (predrawDiagrams): on its slide's first show it is drawn afresh,
+      // exactly as a map drawn on show (its reveal state, its entrance).
+      // The old instance is destroyed first (its ResizeObserver and global subscription go with it).
+      // Marked __twGone, it starts no new render and skips the fit that ends its first drawing; a
+      // render already past its first step finishes on the old SVG, which is out of the page by then.
+      if (host.__mmAhead && host.closest(".slide.active")) {
+        const old = host.__mmInstance;
+        if (old) { old.__twGone = true; try { old.destroy(); } catch (e) { /* already detached */ } }
+        host.querySelectorAll(":scope > svg").forEach((svg) => svg.remove());
+        delete host.__mmInstance; delete host.__mmFullRoot; delete host.__mmShown; delete host.__mmDrawn;
+        host.__mmAhead = false;
+        delete host.dataset.mmAhead;
+        delete host.dataset.mmDone;
+      }
       if (host.dataset.mmDone) return;
       const box = host.getBoundingClientRect();
       if (box.width <= 0 || box.height <= 0) return;
@@ -2089,11 +2146,26 @@ ${hasMermaid ? mermaidVendorSource : ""}
       try {
         const opts = mm.deriveOptions({ colorFreezeLevel: 2, maxWidth: 340, color: colors, fitRatio: 0.92 });
         opts.maxInitialScale = 6;
-        const inst = mm.Markmap.create(svg, opts, node);
+        // Markmap.create, keeping its drawing's promise (a slide drawn ahead of time waits for it).
+        // Drawn ahead of time (its slide not on screen) it draws without animation, then takes the
+        // normal animation back for its own reveal steps.
+        const ahead = !host.closest(".slide.active");
+        const duration = opts.duration ?? mm.defaultOptions?.duration ?? 500;
+        if (ahead) opts.duration = 0;
+        const inst = new mm.Markmap(svg, opts);
+        fitMarkmapInCanvas(inst);
+        // Markmap re-measures its labels when they resize; with its slide hidden (left, or drawn ahead of
+        // time) that measures every label at zero and a print shows the map collapsed. Skip it then.
+        const renderData = inst.renderData.bind(inst);
+        inst.renderData = (...args) => { const box = host.getBoundingClientRect(); return !inst.__twGone && box.width > 0 && box.height > 0 ? renderData(...args) : Promise.resolve(); };
+        host.__mmDrawn = inst.setData(node).then(() => inst.__twGone ? undefined : inst.fit()).then(() => { if (ahead && inst.options && !inst.__twGone) inst.options.duration = duration; });
+        if (ahead) { host.__mmAhead = true; host.dataset.mmAhead = "1"; }
         host.__mmInstance = inst;
         host.__mmFullRoot = node;
         host.dataset.mmDone = "1";
-        applyMindmapRevealForSlide(host.closest(".slide"), modeKind, modeStep);
+        // A slide drawn ahead of time (not on screen) keeps its whole tree, as paper shows it.
+        const ownSlide = host.closest(".slide");
+        if (ownSlide && ownSlide.classList.contains("active")) applyMindmapRevealForSlide(ownSlide, modeKind, modeStep);
       } catch (e) {
         svg.remove();
         if (typeof console !== "undefined") console.error("MARKMAP-FAIL:", e && e.message);
@@ -2112,14 +2184,18 @@ ${hasMermaid ? mermaidVendorSource : ""}
   function applyMindmapRevealForSlide(slide, kind, step) {
     if (!slide) return;
     const host = slide.querySelector(".mindmap-mm");
-    if (!host || !host.__mmInstance || !host.__mmFullRoot) return;
+    // A map drawn ahead of time is for paper only; it is drawn afresh when its slide is first shown.
+    if (!host || !host.__mmInstance || !host.__mmFullRoot || host.__mmAhead) return;
     const total = (host.__mmFullRoot.children || []).length;
     const showN = kind === "reveal" ? Math.max(0, Math.min(Number(step) || 0, total)) : total;
     if (host.__mmShown === showN) return;
     host.__mmShown = showN;
     try {
-      host.__mmInstance.setData(pruneMarkmapBranches(host.__mmFullRoot, showN));
-      if (typeof host.__mmInstance.fit === "function") host.__mmInstance.fit();
+      // fit once the new branches are laid out (fit() reads the drawing's extent, which setData updates when it resolves)
+      const inst = host.__mmInstance;
+      Promise.resolve(inst.setData(pruneMarkmapBranches(host.__mmFullRoot, showN))).then(() => {
+        if (!inst.__twGone && host.__mmShown === showN && typeof inst.fit === "function") return inst.fit();
+      }).catch((e) => { if (typeof console !== "undefined") console.error("MARKMAP-REVEAL-FAIL:", e && e.message); });
     } catch (e) { if (typeof console !== "undefined") console.error("MARKMAP-REVEAL-FAIL:", e && e.message); }
   }
   window.addEventListener("resize", () => {
@@ -2290,86 +2366,49 @@ ${hasMermaid ? mermaidVendorSource : ""}
       if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5) stepGallery(dx < 0 ? 1 : -1);
     }, { passive: true });
   })();
-  // Printing: a carousel slide prints one page per item. On beforeprint each such slide is hidden and replaced
-  // by one copy of the slide per item (title, layout and styles repeat; the item's number sits in a corner);
-  // afterprint puts the original back. An item taller than its page is shrunk to fit, measured on a copy laid
-  // out on the 1280x720 canvas (the ratio is the same at any page size).
-  let carouselPrintPages = [];
-  function removeCarouselPrintPages() {
-    carouselPrintPages.forEach((page) => page.remove());
-    carouselPrintPages = [];
-    document.querySelectorAll(".carousel-print-src").forEach((el) => el.classList.remove("carousel-print-src"));
+  // Mind maps and Mermaid diagrams draw when their slide is first shown, and beforeprint cannot wait
+  // for a drawing: once the page has loaded, the rest are drawn during idle time, one slide at a time,
+  // laid out but invisible (.tw-predraw, as in the deck), so a print finds every diagram drawn.
+  function predrawDiagrams() {
+    const idle = (fn) => (typeof window.requestIdleCallback === "function" ? window.requestIdleCallback(fn, { timeout: 3000 }) : setTimeout(fn, 300));
+    const tried = new Set();
+    const pending = () => slides.find((slide) => !slide.classList.contains("active") && !tried.has(slide)
+      && slide.querySelector(".mindmap-mm:not([data-mm-done]), .mermaid-mm:not([data-mmd-done]), figure.slide-video > video"));
+    const step = () => {
+      const slide = pending();
+      if (!slide) return;
+      tried.add(slide);
+      slide.classList.add("tw-predraw");
+      try { initMarkmaps(slide); initMermaids(slide); } catch (e) { /* drawn on show instead */ }
+      // A video in a slide never shown has no frame to print until it has been laid out and drawn: it is
+      // laid out here with the diagrams, once its first frame has loaded (the print's stand-in, slideFit).
+      const frames = [...slide.querySelectorAll("figure.slide-video > video")].map((video) => (video.readyState >= 2
+        ? Promise.resolve() : new Promise((resolve) => video.addEventListener("loadeddata", resolve, { once: true }))));
+      const drawn = [...slide.querySelectorAll(".mindmap-mm")].map((host) => host.__mmDrawn).filter(Boolean).concat(frames);
+      Promise.race([Promise.all(drawn), new Promise((resolve) => setTimeout(resolve, 2000))]).then(() => {
+        // A short settle while laid out, then hidden again (markmap skips re-measuring while hidden).
+        setTimeout(() => {
+          slide.classList.remove("tw-predraw");
+          idle(step);
+        }, 300);
+      });
+    };
+    idle(step);
   }
-  // The content is laid out in a box 1/s times as large, then scaled by s from its top-left corner.
-  function shrinkItemContent(inner, s) {
-    if (s >= 1) { inner.style.cssText = ""; return; }
-    inner.style.cssText = "width:" + (100 / s) + "%;max-width:none;height:" + (100 / s) + "%;min-height:0;margin:0;transform:scale(" + s + ");transform-origin:0 0";
-  }
-  function itemShrink(slide, itemIndex) {
-    const stage = document.getElementById("stage");
-    if (!stage) return 1;
-    const probe = slide.cloneNode(true);
-    probe.removeAttribute("data-id");
-    probe.classList.add("active");
-    probe.querySelectorAll(":scope > .slide-content").forEach((el) => { el.style.zoom = ""; });
-    probe.style.cssText += ";visibility:hidden;pointer-events:none;position:absolute;inset:0;display:grid";
-    const cards = Array.from(probe.querySelectorAll(".card-gallery.carousel > .card"));
-    cards.forEach((card, i) => { if (i !== itemIndex) card.remove(); else { card.classList.add("active-card"); card.classList.remove("is-scrollable", "card-dense"); } });
-    stage.appendChild(probe);
-    let shrink = 1;
-    const card = probe.querySelector(".card-gallery.carousel > .card");
-    const inner = card && card.querySelector(":scope > .slide-content");
-    // Scale the item's content down until it fits its page, re-measuring after each step (the text reflows).
-    for (let step = 0; inner && step < 8; step++) {
-      shrinkItemContent(inner, shrink);
-      const ratio = inner.scrollHeight > 0 ? inner.clientHeight / inner.scrollHeight : 1;
-      if (ratio >= 0.995 || shrink <= 0.45) break;
-      shrink = Math.max(0.45, shrink * ratio * 0.97);
-    }
-    probe.remove();
-    return shrink;
-  }
-  function prepareCarouselPrint() {
-    removeCarouselPrintPages();
-    slides.forEach((slide) => {
-      const gallery = slide.querySelector(".card-gallery.carousel[data-exclusive]");
-      if (!gallery) return;
-      const count = gallery.querySelectorAll(":scope > .card").length;
-      if (count < 2) return;
-      const pages = [];
-      for (let i = 0; i < count; i++) {
-        const shrink = itemShrink(slide, i);
-        const page = slide.cloneNode(true);
-        page.removeAttribute("data-id");
-        page.classList.remove("active");
-        page.classList.add("carousel-print-page");
-        page.querySelectorAll(":scope > .slide-content").forEach((el) => { el.style.zoom = ""; });
-        const cards = Array.from(page.querySelectorAll(".card-gallery.carousel > .card"));
-        cards.forEach((card, k) => { if (k !== i) card.remove(); else { card.classList.add("active-card"); card.classList.remove("is-scrollable", "card-dense"); } });
-        const keep = cards[i];
-        const inner = keep && keep.querySelector(":scope > .slide-content");
-        if (inner) shrinkItemContent(inner, shrink);
-        const mark = document.createElement("div");
-        mark.className = "carousel-print-count";
-        mark.setAttribute("aria-hidden", "true");
-        mark.textContent = (i + 1) + " / " + count;
-        page.appendChild(mark);
-        pages.push(page);
-      }
-      slide.classList.add("carousel-print-src");
-      pages.reduce((after, page) => { after.after(page); return page; }, slide);
-      carouselPrintPages.push(...pages);
-    });
-  }
-  window.addEventListener("beforeprint", prepareCarouselPrint);
-  window.addEventListener("afterprint", removeCarouselPrintPages);
-  // Print keeps the trace as it was (0.41 ticket 11 leaves print alone): from its top, no tail room.
-  window.addEventListener("beforeprint", function () { resetTraceWindows(document); });
-  window.addEventListener("afterprint", function () { applyModeDimming(); });
+  if (document.readyState === "complete") predrawDiagrams();
+  else window.addEventListener("load", predrawDiagrams, { once: true });
+  // Printing: every slide is fitted on its paper canvas, and a carousel slide prints one page per item
+  // (slideFit.preparePrint, shared with the deck); afterprint puts the screen back.
+  // One print arrangement at a time (slideFit.managePrint, as in the deck): a new beforeprint first
+  // undoes the previous one; afterprint, or the first input after a print the browser never reported
+  // finished, undoes it once. Print keeps the trace as it was (0.41 ticket 11 leaves print alone):
+  // from its top, no tail room.
+  slideFit.managePrint(() => { slideFit.preparePrint(document); resetTraceWindows(document); },
+    [() => slideFit.restorePrint(), () => scheduleSlideFit(), () => applyModeDimming()]);
   document.getElementById("revealBtn").addEventListener("click", () => toggleMode("reveal"));
   document.getElementById("overviewBtn").addEventListener("click", () => overview.open());
   document.getElementById("closeOverview").addEventListener("click", () => overview.close());
-  document.getElementById("printBtn").addEventListener("click", () => window.print());
+  document.getElementById("printBtn").addEventListener("click", () => slideFit.print());
   document.getElementById("notesBtn")?.addEventListener("click", () => notesPanel.classList.add("open"));
   document.getElementById("closeNotes")?.addEventListener("click", () => notesPanel.classList.remove("open"));
   // === Reader notes ("My Notes") ==============================================================

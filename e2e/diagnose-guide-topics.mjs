@@ -1,10 +1,10 @@
 // Onboarding 0.38.1 ticket 11, in the real app: How it works, Features to delight you, What it connects to.
 // A profile with a vault of its own opens the example vault and its start talk, then the Guide.
-//   - How it works lists ten topics, 0 of 10 read; opening topic 3 shows its heading, two sentences, one
+//   - How it works lists fifteen topics, 0 of 15 read; opening topic 3 shows its heading, two sentences, one
 //     picture and a Try it; back on the list they read Read, and the marks are in app config;
 //   - Try it on topic 3 (the start talk is open here) brings that window forward; Try it on topic 5 opens
 //     Garden notes in its own window and leaves the start talk where it is; Try it on topic 9 opens Settings;
-//   - Features to delight you: 19 rows in three sections; a clicked row reads Read and the mark is kept;
+//   - Features to delight you: 18 rows in three sections; a clicked row reads Read and the mark is kept;
 //   - What it connects to shows ten rows from a stubbed machine (TW_E2E_MACHINE): the drawn partly-found
 //     transcription row, Git on a vault, no secret value in the page; the live row is fixed with a disabled
 //     action; Show what is missing says what is missing; Set up in Settings opens Settings; Check again re-reads;
@@ -88,8 +88,8 @@ try {
     // How it works, state 08.
     await page.locator('[data-guide-segment="how"]').click()
     await page.waitForSelector('[data-guide-how]', { timeout: 4000 })
-    record('How it works lists ten topics, none read', (await page.locator('[data-topic-row]').count()) === 10 && clean(await page.locator('[data-guide-how-count]').innerText()) === '0 of 10 read')
-    record('every row reads Not opened', (await page.locator('[data-topic-state="none"]').count()) === 10)
+    record('How it works lists fifteen topics, none read', (await page.locator('[data-topic-row]').count()) === 15 && clean(await page.locator('[data-guide-how-count]').innerText()) === '0 of 15 read')
+    record('every row reads Not opened', (await page.locator('[data-topic-state="none"]').count()) === 15)
     await shot(page, '11-how-list.png')
 
     // A topic, state 09.
@@ -100,14 +100,14 @@ try {
       && (await page.locator('[data-topic-sentence]').count()) === 2
       && (await page.locator('[data-guide-picture]').count()) === 1
       && (await page.locator('[data-topic-try-button]').count()) === 1
-      && clean(await page.locator('[data-topic-position]').innerText()) === '3 of 10')
+      && clean(await page.locator('[data-topic-position]').innerText()) === '3 of 15')
     record('opening it was kept as Read in app config', await waitFor(() => learnOnDisk().read.includes('how.3'), 4000))
     await shot(page, '11-how-topic.png')
     await page.locator('[data-topic-next]').click()
     await page.waitForSelector('[data-topic-detail="how.4"]', { timeout: 3000 })
     await page.locator('[data-topic-back]').click()
     await page.waitForSelector('[data-guide-how]', { timeout: 3000 })
-    record('back on the list: topics 3 and 4 read, 2 of 10 read', (await page.locator('[data-topic-state="read"]').count()) === 2 && clean(await page.locator('[data-guide-how-count]').innerText()) === '2 of 10 read')
+    record('back on the list: topics 3 and 4 read, 2 of 15 read', (await page.locator('[data-topic-state="read"]').count()) === 2 && clean(await page.locator('[data-guide-how-count]').innerText()) === '2 of 15 read')
 
     // Try it: the start talk is open here, so its window is the one brought forward (no second window).
     // Hidden thumbnail renderers are windows too: count the app's own (index.html) only.
@@ -141,10 +141,19 @@ try {
     await closeSettingsWindow(app)
     await page.waitForTimeout(300)
 
+    // Try it: Studio (topic 12) opens the Tools window on Studio.
+    await page.locator('[data-topic-back]').click()
+    await page.locator('[data-topic-row="how.12"]').click()
+    const [topicStudio] = await Promise.all([app.waitForEvent('window', { timeout: 15000 }), page.locator('[data-topic-try-button]').click()])
+    await topicStudio.waitForLoadState('domcontentloaded')
+    record('Try it on topic 12 opens Studio', await waitFor(async () => (await topicStudio.locator('.tws-sidebar-title-row h2').count()) > 0, 8000))
+    await topicStudio.close()
+    await page.bringToFront()
+
     // Features: states 10 and 18.
     await page.locator('[data-guide-segment="features"]').click()
     await page.waitForSelector('[data-guide-features]', { timeout: 4000 })
-    record('Features lists 16 rows in three sections and a fourth, What it connects to', (await page.locator('[data-feature-row]').count()) === 16 && (await page.locator('[data-feature-section]').count()) === 4)
+    record('Features lists 18 rows in three sections and a fourth, What it connects to', (await page.locator('[data-feature-row]').count()) === 18 && (await page.locator('[data-feature-section]').count()) === 4)
     record('hints are drawn (a key or a menu) on unread rows', clean(await page.locator('[data-feature-row="feature.2"] [data-feature-hint]').innerText()) === '⌘K, Explain rendering')
     await page.locator('[data-feature-row="feature.2"]').click()
     record('a clicked feature reads Read and is kept', await waitFor(async () => (await page.locator('[data-feature-row="feature.2"]').getAttribute('data-feature-state')) === 'read' && learnOnDisk().read.includes('feature.2'), 4000))
@@ -156,7 +165,9 @@ try {
     const text = async (id) => clean(await page.locator(`[data-connection="${id}"] [data-connection-text]`).innerText())
     record('Cloudflare Pages follows Settings: connected, no site yet', (await text('pages')) === 'No site yet')
     record('the live service row follows Settings: not set up, its action open', (await text('live')) === 'Not set up' && (await page.locator('[data-connection="live"] button').isEnabled()))
-    record('Local transcription follows Settings: not set up, optional', (await text('transcription')) === 'Not set up — optional')
+    // On macOS 26 the built-in engine is there; elsewhere the row is the external engine's Settings state.
+    const transcriptionText = await text('transcription')
+    record('Local transcription follows Settings: built in on this Mac, or the external engine not set up', ['Built in on this Mac; a language may download once', 'External engine: Not set up — optional'].includes(transcriptionText), transcriptionText)
     record('LibreOffice and Poppler: found', (await text('office')) === 'Found on this Mac')
     record('A synced folder: Git on vault Personal', (await text('synced')) === 'Found on this Mac: Git, on vault Personal')
     record('SlideWell: not found, with Get SlideWell', (await text('slidewell')) === 'Not found on this Mac' && clean(await page.locator('[data-connection="slidewell"] button').innerText()) === 'Get SlideWell')
@@ -180,7 +191,7 @@ try {
     await page.locator('[data-guide-segment="how"]').click()
     await page.waitForSelector('[data-guide-how]', { timeout: 6000 })
     const saved = learnOnDisk().read
-    record('after a restart How it works shows the saved count of topics read', clean(await page.locator('[data-guide-how-count]').innerText()) === `${saved.filter((id) => id.startsWith('how.')).length} of 10 read` && saved.includes('how.3') && saved.includes('feature.2'), saved.join(', '))
+    record('after a restart How it works shows the saved count of topics read', clean(await page.locator('[data-guide-how-count]').innerText()) === `${saved.filter((id) => id.startsWith('how.')).length} of 15 read` && saved.includes('how.3') && saved.includes('feature.2'), saved.join(', '))
     await page.locator('[data-guide-segment="features"]').click()
     await page.waitForSelector('[data-feature-row]', { timeout: 6000 })
     record('and the feature row is still Read', (await page.locator('[data-feature-row="feature.2"]').getAttribute('data-feature-state')) === 'read')

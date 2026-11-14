@@ -41,3 +41,6 @@ agent-skill-dist/
 
 /native/transcription
 /release-security-test/
+
+# Private library audit decks, screenshots and measurement records.
+/.audit-local/

@@ -8,7 +8,7 @@ import { recordingRunKey, recordingRunHome } from '../../../shared/recording-run
 // surface: a grouped session sidebar, a slide-time-marker timeline over a real waveform, and the current
 // slide (rendered by ledger id from the talk's CURRENT outline). Playback is a real <audio>
 // element served the local file over twrec://. Upload to R2 is on request, per session.
-import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
+import { slideTitlesFromRows } from '../../../shared/talk-title-text'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   AlertTriangle, Check, ChevronDown, ChevronRight, FileText, HardDrive, Loader2, PanelLeftClose,
@@ -427,11 +427,13 @@ export default function Studio({
         ])
         if (cancelled || !rows) return
         const map: Record<string, SlideInfo> = {}
+        // Titles as the presenter sees them: a section by its name, never its id (chapters, the slide label).
+        const named = slideTitlesFromRows(rows)
         rows.forEach((r, i) => {
           const key = r.render_hash || r.content_hash || r.slide_id
           map[r.slide_id] = {
-            title: plainInlineText(r.nav_title || r.title) || '(untitled)',
-            section: r.section || '',
+            title: named[r.slide_id]?.title || '(untitled)',
+            section: named[r.slide_id]?.section ?? '',
             thumbUrl: thumbs && key ? thumbs[key] ?? null : null,
             n: i + 1,
             tag: r.layout || ''
@@ -869,6 +871,14 @@ export default function Studio({
         onHelp={() => setSheet(true)}
         onSettings={() => openSettingsAt('recording')}
         onReloadWords={reloadWords}
+        onRecordSlideAgain={async (retake) => {
+          // A presenter view of its own, at that slide, records the new take (main names it a take of this Run).
+          const talk = await studioTalkForRun(active)
+          const content = talk ? await window.tw.talk.readOutline(talk.outlinePath) : null
+          if (!talk || content == null) return 'This talk could not be opened: it is not in an open vault, or its file could not be read.'
+          const r = await window.tw.talk.present(talk.outlinePath, content, 'presenter', retake.slideId, undefined, { runId: active.id, ...retake })
+          return r.success ? null : r.error ?? 'The presenter view could not be opened.'
+        }}
       />
       <KeyboardHelp isOpen={sheet} onClose={() => setSheet(false)} view="studio" />
     </div>

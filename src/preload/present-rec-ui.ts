@@ -34,13 +34,19 @@ import { SHORTCUT_REGISTRY } from '../shared/shortcut-registry.ts'
 export const SAVED_TOAST_VISIBLE_MS = RECORDING_OFFER_VISIBLE_MS
 
 const REC_CSS = `
-  #twrec-module, .twrec-toast, .twrec-mic-panel { --lt-amber:#a3630e; --lt-amber-bright:#d98a2b; --lt-red-live:#ec5b56;
+  #twrec-countdown, #twrec-module, .twrec-toast, .twrec-mic-panel { --lt-amber:#a3630e; --lt-amber-bright:#d98a2b; --lt-red-live:#ec5b56;
     --twrec-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,monospace;
     --twrec-sans:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
     --rec-text:#f7f3ea; --rec-muted:#a3b3c2; --rec-dim:#71849a; --rec-line:#ffffff1c; --rec-ctl:#1f2c39; --rec-ctl-hover:#283a4c;
     --rec-red:#ef4444; --rec-amber:#f5b64a; --rec-amber-bg:#3a2a10; --rec-blue:#5b93f0; --rec-primary:#2f6db5; --rec-ok:#3fb970;
     --rec-ui:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif;
     --rec-mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,monospace; }
+  /* The 3-2-1 before a layered recording: the digit on a dark disc of its own (the toasts' panel
+     colours), so it reads over a white slide as well as a dark one and hides only the middle. */
+  #twrec-countdown { position:fixed; top:50%; left:50%; transform:translate(-50%,-50%);
+    z-index:200; width:128px; height:128px; box-sizing:border-box; display:grid; place-items:center; border-radius:50%;
+    background:#0f1720eb; border:1px solid #ffffff2a; box-shadow:0 12px 34px rgba(0,0,0,.45);
+    color:var(--rec-text); font:600 80px/1 var(--rec-ui); font-variant-numeric:tabular-nums; pointer-events:none; }
   /* The controls set display:inline-flex, which outranks the UA [hidden]{display:none} rule —
      so state-hidden parts need this explicit !important, or every control shows at once. */
   #twrec-module [hidden], .twrec-toast [hidden] { display: none !important; }
@@ -110,8 +116,16 @@ const REC_CSS = `
     height:auto; min-height:44px; padding:8px 12px; flex-wrap:wrap; white-space:normal; }
   .twrec-saved-note { width:min(720px,calc(100vw - 24px)); height:auto; min-height:44px;
     padding:12px; flex-wrap:wrap; white-space:normal; }
-  .twrec-saved-note .rt-text { flex:1 1 calc(100% - 40px); line-height:1.4; }
-  .twrec-saved-note #twrec-words { flex:1 1 calc(100% - 180px); }
+  /* The saved offer (docs/design/2026-11-10-record-and-edit-video, drawings/saved.html): what was
+     saved, with its close button, on the first line; the words being written out and the actions
+     (Change, Edit video) on the second. */
+  .twrec-saved-note { row-gap:8px; }
+  .twrec-saved-note .rt-text { line-height:1.4; }
+  .twrec-saved-note #twrec-saved-text { flex:1 1 calc(100% - 80px); }
+  .twrec-saved-note #twrec-saved-dismiss { order:1; }
+  .twrec-saved-note::after { content:''; order:1; flex-basis:100%; height:0; margin-top:-8px; }
+  .twrec-saved-note > :not(.rt-ok, #twrec-saved-text, #twrec-saved-dismiss) { order:2; }
+  .twrec-saved-note #twrec-words { flex:1 1 0; min-width:0; }
   .twrec-saved-note progress { width:110px; height:8px; }
   .twrec-lost-note .rt-text { flex:1 1 320px; line-height:1.4; }
   .twrec-toast.show { transform:translateY(0); opacity:1; pointer-events:auto; }
@@ -157,7 +171,12 @@ const REC_CSS = `
   .twrec-close-panel .danger { color:#ffd6d2; border-color:#7d3b37; background:#2a1618; }
 
   /* The Microphone button beside Record, and its menu with the level meter. */
-  #twrec-module .rec-btn.rec-mic { width:26px; padding:0; }
+  #twrec-module .rec-btn:is(.rec-mic, .rec-again) { width:26px; padding:0; }
+  /* The microphone's level beside Record while it is previewed, and its name (the name is the
+     first thing to go when the top bar runs short: fitTopBar in the presenter template). */
+  #twrec-idle-meter { display:inline-block; flex:none; width:42px; height:5px; border-radius:3px; overflow:hidden; background:#ffffff26; }
+  #twrec-idle-level { display:block; height:100%; width:0; background:var(--rec-ok); }
+  #twrec-idle-name { flex:none; color:var(--rec-dim); }
   #twrec-module .rec-btn.rec-mic[aria-expanded="true"] { background:var(--rec-ctl-hover); border-color:#6ea8e6; }
   .twrec-mic-panel { position:fixed; z-index:196; display:grid; gap:8px; width:340px; box-sizing:border-box; padding:10px 12px 12px;
     background:#0f1720; border:1px solid #ffffff2a; border-radius:10px; box-shadow:0 12px 34px rgba(0,0,0,.55);
@@ -179,7 +198,8 @@ const RECORDING_CONTROL_IDS = [
   'twrec-toast-yes', 'twrec-toast-no', 'twrec-save-delivery', 'twrec-save-as', 'twrec-save-dismiss',
   'twrec-start-record', 'twrec-start-dismiss', 'twrec-saved-change', 'twrec-saved-dismiss',
   'twrec-lost-resume', 'twrec-lost-dismiss', 'twrec-back-dismiss', 'twrec-disk-dismiss', 'twrec-export',
-  'twrec-flag', 'twrec-mic', 'twrec-mic-use', 'twrec-mic-dismiss'
+  'twrec-flag', 'twrec-mic', 'twrec-mic-use', 'twrec-mic-dismiss', 'twrec-again',
+  'twrec-words-retry', 'twrec-words-manual', 'twrec-edit-video', 'twrec-lost-switch'
 ] as const
 const CLUSTER_BUTTONS: RecButton[] = ['primary', 'pause', 'resume', 'stop', 'change-kind', 'keep', 'export', 'discard']
 const recKeys = (id: string): string => presenterControlKeys(presenterControl(id), SHORTCUT_REGISTRY)
@@ -213,7 +233,6 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
       void ipcRenderer.invoke('recording:layers-warm').catch(() => {})
       const countdown = document.createElement('div')
       countdown.setAttribute('role', 'status'); countdown.id = 'twrec-countdown'
-      countdown.style.cssText = 'position:fixed;inset:40% 45%;z-index:200;font:80px -apple-system;color:white;pointer-events:none'
       document.body.appendChild(countdown)
       try { for (const number of [3, 2, 1]) { countdown.textContent = String(number); await new Promise(resolve => setTimeout(resolve, 1000)) } }
       finally { countdown.remove() }
@@ -240,8 +259,7 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
     <span id="twrec-spinner" hidden>${presenterIconSvg('loader-circle').replace('class="tw-ico', 'class="rec-mark rec-spin tw-ico')}</span>
     <span id="twrec-ok" hidden>${presenterIconSvg('circle-check').replace('class="tw-ico', 'class="rec-mark tw-ico')}</span>
     <span class="rec-word" id="twrec-label">Not recording</span>
-    <span id="twrec-idle-meter" role="meter" aria-label="Microphone level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" style="width:42px;height:5px;background:#ffffff26"><span id="twrec-idle-level" style="display:block;height:100%;background:#3fb970;width:0"></span></span><span id="twrec-idle-name"></span>
-    <button type="button" class="rec-btn" id="twrec-again" hidden>Start again</button>
+    <span id="twrec-idle-meter" role="meter" aria-label="Microphone level" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" hidden><span id="twrec-idle-level"></span></span><span id="twrec-idle-name" hidden></span>
     <span class="rec-clock" id="twrec-clock" hidden>00:00</span>
     <button type="button" class="rec-btn rec-go" id="twrec-primary"><span class="tw-btn-label">Record</span></button>
     <select id="twrec-capture" class="rec-btn" aria-label="Capture"><option value="voice">Slides and voice</option><option value="camera">Slides, voice and camera</option></select>
@@ -250,6 +268,7 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
     <button type="button" class="rec-btn icon" id="twrec-pause" hidden><span class="tw-btn-label">Pause recording</span></button>
     <button type="button" class="rec-btn icon rec-amber" id="twrec-resume" hidden><span class="tw-btn-label">Resume recording</span></button>
     <button type="button" class="rec-btn icon rec-stop" id="twrec-stop" hidden><span class="tw-btn-label">Stop and save recording</span></button>
+    <button type="button" class="rec-btn icon rec-again" id="twrec-again" hidden><span class="tw-btn-label">Start again</span></button>
     <button type="button" class="rec-btn" id="twrec-change-kind" hidden><span class="tw-btn-label">Change</span></button>
     <button type="button" class="rec-btn rec-keep" id="twrec-keep" hidden><span class="tw-btn-label">Keep</span></button>
     <button type="button" class="rec-btn" id="twrec-export" hidden><span class="tw-btn-label">Save audio elsewhere…</span></button>
@@ -467,7 +486,12 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
     wordsDismissed = false
     window.clearTimeout(wordsTimer)
     void refreshWords()
-    if (savedText) savedText.innerHTML = `<b>Saved to History</b> as ${kindLabel(controller.currentKind())} · ${fmtClock(savedLengthMs)} · ${captureSummary()}`
+    if (savedText) savedText.innerHTML = retake
+      ? `<b>New take of slide ${retake.slideN} saved</b> · ${fmtClock(savedLengthMs)} · ${captureSummary()} · choose it in the editor`
+      : `<b>Saved to History</b> as ${kindLabel(controller.currentKind())} · ${fmtClock(savedLengthMs)} · ${captureSummary()}`
+    const editVideo = $('twrec-edit-video'), change = $('twrec-saved-change')
+    if (editVideo) dressPresenterButton(editVideo, presenterControl('twrec-edit-video'), SHORTCUT_REGISTRY, retake ? { label: 'Back to the editor', name: 'Back to the editor' } : { label: 'Edit video' })
+    if (change) change.hidden = !!retake
     showOnly(savedToast)
     if (savedToastTimer !== null) window.clearTimeout(savedToastTimer)
     // Keep the saved offer available through transcription; dismissing only hides this UI.
@@ -478,16 +502,19 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
   let lostAlternative: AudioInput | null = null
   let lostMenuRevision = 0
   let micPicking = 0
+  // The switch's words change with what it will do; its name on hover follows them.
+  const labelLostSwitch = (button: HTMLElement, text: string): void =>
+    dressPresenterButton(button, presenterControl('twrec-lost-switch'), SHORTCUT_REGISTRY, { label: text, name: text })
   async function pickMicrophone(input: Parameters<typeof controller.chooseMicrophone>[0]): Promise<boolean> {
     micPicking += 1
     const button = $('twrec-lost-switch') as HTMLButtonElement | null
-    if (button) { button.disabled = true; button.textContent = 'Still reconnecting…' }
+    if (button) { button.disabled = true; labelLostSwitch(button, 'Still reconnecting…') }
     try { return await controller.chooseMicrophone(input) }
     finally {
       micPicking -= 1
       if (button) {
         button.disabled = micPicking > 0
-        button.textContent = micPicking ? 'Still reconnecting…' : lostAlternative ? `Use ${inputName(lostAlternative)}` : 'Choose microphone'
+        labelLostSwitch(button, micPicking ? 'Still reconnecting…' : lostAlternative ? `Use ${inputName(lostAlternative)}` : 'Choose microphone')
       }
       if (controller.audioStatus().lost) showLostToast()
     }
@@ -516,7 +543,7 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
       if (button) {
         button.hidden = alternatives.length === 0
         button.disabled = micPicking > 0
-        button.textContent = micPicking ? 'Still reconnecting…' : lostAlternative ? `Use ${inputName(lostAlternative)}` : 'Choose microphone'
+        labelLostSwitch(button, micPicking ? 'Still reconnecting…' : lostAlternative ? `Use ${inputName(lostAlternative)}` : 'Choose microphone')
       }
     })
     showOnly(lostToast)
@@ -561,6 +588,16 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
       meter = null
     }
     setLevel(0)
+    showIdleMeter()
+  }
+  // The level and the name beside Record show only while the meter runs (Preview on, or the
+  // Microphone menu open, before a recording): a still bar would say nothing. The Microphone
+  // button's tooltip names the input too.
+  function showIdleMeter(): void {
+    const on = !!meter && ['idle', 'saved'].includes(controller.getState())
+    const level = $('twrec-idle-meter'), name = $('twrec-idle-name')
+    if (level) level.hidden = !on
+    if (name) name.hidden = !on || !name.textContent
   }
   async function startMeter(input: AudioInput | null): Promise<void> {
     stopMeter()
@@ -591,6 +628,7 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
     }
     const samples = new Float32Array(analyser.fftSize)
     meter = { stream, context, frame: 0 }
+    showIdleMeter()
     const tick = (): void => {
       if (!meter || meter.context !== context) return
       analyser.getFloatTimeDomainData(samples)
@@ -632,6 +670,7 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
     fillMicMenu(chosen)
     if (previewWanted()) await startMeter(chosen)
     const name = $('twrec-idle-name'); if (name) name.textContent = chosen ? inputName(chosen) : ''
+    showIdleMeter()
     if (note && micPanelNote && !micPanelNote.textContent) micPanelNote.textContent = note
   }
   function placeMicPanel(): void {
@@ -769,7 +808,8 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
   // Edit video opens the saved Run in Studio, where it plays back, is trimmed and exported (slice 3a).
   document.getElementById('twrec-edit-video')?.addEventListener('click', () => {
     const saved = controller.lastSave()
-    const runId = saved && saved.ok && !saved.discarded ? saved.sessionId : undefined
+    // A new take goes back to the Run it is a take of.
+    const runId = retake ? retake.runId : saved && saved.ok && !saved.discarded ? saved.sessionId : undefined
     void ipcRenderer.invoke('tools:open', 'studio', runId).catch(() => {})
   })
   const updateSelfView = mountSelfView(controller, layered, previewWanted)
@@ -796,6 +836,22 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
     dialog.addEventListener('cancel', () => dialog.remove())
   })
   let savingAudio = false
+  // Record one slide again (the recording editor): a second bar says so, Record reads "Record slide n",
+  // the layers are the Run's (no capture choice), and the saved take is named as a take of that Run.
+  let retake: { runId: string; slideN: number } | null = null
+  void ipcRenderer.invoke('recording:context').then((c: { retake?: { runId: string; slideN: number } } | null) => {
+    if (!c?.retake) return
+    retake = { runId: c.retake.runId, slideN: c.retake.slideN }
+    const banner = document.createElement('div')
+    banner.id = 'twrec-retake-banner'
+    banner.setAttribute('role', 'status')
+    banner.innerHTML = `<span class="rt-dot red" aria-hidden="true"></span><span>Recording slide ${retake.slideN} again. The rest of your video is kept as it is.</span>`
+    banner.style.cssText = 'position:fixed;left:0;right:0;z-index:140;display:flex;align-items:center;gap:8px;padding:6px 16px;font:500 13px -apple-system,system-ui,sans-serif;color:#fff;background:#7a1f1f;box-shadow:0 1px 0 #0003'
+    const place = (): void => { banner.style.top = `${Math.round(document.querySelector('#presenterRoot header')?.getBoundingClientRect().bottom ?? 0)}px` }
+    document.body.appendChild(banner); place()
+    window.addEventListener('resize', place)
+    render()
+  }).catch(() => {})
   function render(): void {
     const st = controller.getState()
     const gate = controller.runGate()
@@ -811,8 +867,7 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
       if (idle && layered && previewWanted()) void refreshMicMenu(); else stopMeter()
       updateSelfView()
     }
-    $('twrec-idle-meter')!.hidden = !idle
-    $('twrec-idle-name')!.hidden = !idle
+    showIdleMeter()
     $('twrec-again')!.hidden = st !== 'recording' && st !== 'paused'
     const audio = controller.audioStatus()
     const view = recView({ state: st, displayMs: controller.displayMs(), kind: controller.currentKind(), audioHeld: gate.audioArmed, audio })
@@ -846,6 +901,12 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
     else if (st === 'saved' && savingAudio) { savedLengthMs = controller.displayMs(); savingAudio = false; showSavedToast() }
     if (st !== 'paused' || audio.lost) hideToast()
     if (!audio.lost || (st !== 'recording' && st !== 'paused')) { hideLostToast(); lostDismissed = false }
+    if (retake) {
+      captureChoice.hidden = true
+      if (label && (st === 'recording' || st === 'paused')) label.textContent = `${st === 'paused' ? 'Paused' : 'Recording'} slide ${retake.slideN}`
+      const word = primary?.querySelector('.tw-btn-label')
+      if (word) word.textContent = `Record slide ${retake.slideN}`
+    }
     if (st !== 'idle') hideStartToast()
     if (st === 'recording' || st === 'paused' || st === 'confirm') hideSavedToast()
     if (gate.saved || gate.audioArmed) hideSaveToast()

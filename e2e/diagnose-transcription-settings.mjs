@@ -103,7 +103,7 @@ try {
 
   const refused = await page.evaluate(() => window.tw.transcript.run('probe', 'run-0001'))
   const stillWorks = await page.evaluate(() => window.tw.settings.getTranscription().then(() => true))
-  record(2, !refused.ok && refused.error === 'Transcription is not set up. It is optional: Settings → Transcription has the set-up steps.' && stillWorks, refused.error)
+  record(2, !refused.ok && refused.error === 'Transcription is not set up. It is optional: Settings → Get started → Transcription has the set-up steps.' && stillWorks, refused.error)
 
   await part('steps-toggle').click()
   await part('steps').waitFor({ state: 'visible' })

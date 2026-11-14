@@ -28,7 +28,7 @@ function record(name, pass, detail) {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`)
 }
 
-const TALKS = [['The Saturday market', 25], ['Garden notes', 14], ['Walking the old town', 30], ['Lightning round', 9], ['Harvest supper (draft)', 10]]
+const TALKS = [['The Saturday market', 25], ['Garden notes', 14], ['Walking the old town', 30], ['Lightning round', 10], ['Harvest supper (draft)', 10]]
 const PASSIVE = 'editor.protect-heading-delete'
 const write = deriveChapters().find((c) => c.task === 'Write the outline')
 

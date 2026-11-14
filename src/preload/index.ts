@@ -791,6 +791,10 @@ const api = {
   recordingVideo: {
     open: (ref: RecordingVideoRef): Promise<import('../main/recording-video-ipc').RecordingOpen | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:open', ref),
     prepare: (ref: RecordingVideoRef): Promise<import('../main/recording-video-ipc').RecordingPlayback> => ipcRenderer.invoke('recording-video:prepare', ref),
+    /** The evened voice for the player (made on first use); null for a Run without a voice. */
+    /** The new takes of a Run's slides (Record this slide again), read again. */
+    takes: (ref: RecordingVideoRef): Promise<{ ok: true; takes: import('../main/recording-video-ipc').TakeInfo[] } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:takes', ref),
+    prepareEven: (ref: RecordingVideoRef): Promise<{ ok: true; voice: string | null } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:prepare-even', ref),
     edit: (ref: RecordingVideoRef, op: import('../shared/recording-edits').EditOp, revision: number): Promise<{ ok: true; edits: import('../main/recording-edits-store').EditsSnapshot } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:edit', ref, op, revision),
     startFresh: (ref: RecordingVideoRef): Promise<{ ok: true; edits: import('../main/recording-edits-store').EditsSnapshot } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:start-fresh', ref),
     export: (ref: RecordingVideoRef, options: import('../main/recording-video-ipc').ExportOptions): Promise<{ ok: true; jobId: string; name: string } | { ok: false; cancelled?: boolean; stale?: boolean; wordsUnreadable?: boolean; error?: string }> => ipcRenderer.invoke('recording-video:export', ref, options),
@@ -1063,9 +1067,11 @@ const api = {
       // Ledger {id=…} to open on. The deck runtime reads the URL hash on init and starts on the
       // slide whose dataset.id matches (present-from-here / ⇧F5). Omit to start at the top.
       startSlideId?: string,
-      plannedRunId?: string
+      plannedRunId?: string,
+      /** Record one slide again: the Run and the slide a new take is for (a presenter view of its own). */
+      retake?: { runId: string; change: number; slideId: string; slideN: number; camera: boolean }
     ): Promise<{ success: boolean; error?: string }> =>
-      ipcRenderer.invoke('talk:present', outlinePath, content, mode, startSlideId, undefined, plannedRunId),
+      ipcRenderer.invoke('talk:present', outlinePath, content, mode, startSlideId, undefined, plannedRunId, retake),
     build: (outlinePath: string, content: string): Promise<{ success: boolean; outPath?: string; error?: string }> =>
       ipcRenderer.invoke('talk:build', outlinePath, content),
     buildVariants: (

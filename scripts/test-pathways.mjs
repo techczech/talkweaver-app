@@ -274,6 +274,23 @@ assert.equal(
 )
 assert.match(filtered, /<\/body>\s*<\/html>\s*$/, 'pathway output keeps the real document body tail')
 
+// A carousel led by a picture: its first card's beat carries the carousel slide's own id. A pathway
+// naming the carousel keeps every card's beat, in order.
+{
+  const carouselPath = join(dirname(outlinePath), 'carousel-pathway.md')
+  const carouselOutline = [
+    '---', 'title: Carousel pathway', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+    '## Part', '', '### Plain', '{id=p1}', '', 'Plain.', '',
+    '### Pictures', '{id=car} {carousel}', '', '![](missing-picture.png)', '',
+    '#### Alpha {id=car-a}', '', 'First.', '', '#### Beta {id=car-b}', '', 'Second.', ''
+  ].join('\n')
+  writeFileSync(carouselPath, carouselOutline, 'utf8')
+  const carouselHtml = (await prepareSource(carouselPath, carouselOutline, 'pathway-carousel', statSync(carouselPath))).fullHtml
+  const lensed = injectPathwayRuntime(carouselHtml, ['car'], 'pictures')
+  assert.deepEqual(outerSlideIds(lensed), ['car'], 'a pathway naming a carousel keeps its slide')
+  assert.deepEqual(outerBeatIds(lensed), ['car', 'car-a', 'car-b'], 'a pathway naming a carousel keeps every card beat, picture card first')
+}
+
 console.log('pathways: manifest, resolution, and compiled injection checks passed')
 
 // Exercise the actual main-process mutation/broadcast functions without starting Electron.

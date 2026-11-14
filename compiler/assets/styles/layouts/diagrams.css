@@ -212,7 +212,9 @@
   .mindmap-mm { position: relative; width: 100%; height: 100%; align-self: stretch; min-height: 68cqh; margin: 16px auto 0; max-width: none; }/* @order 0424 */
   .mindmap-mm svg { font-size: max(22px, 1.7cqw); }/* @order 0425 */
   .mindmap-mm > svg.markmap {
-    width: 100%; height: 100%; display: block;
+    /* the svg fills its host: the host's height comes from its flex parent (a percentage of an indefinite height),
+       so height:100% fell back to the svg default of 150px and markmap fitted the map into that strip */
+    position: absolute; inset: 0; width: 100%; height: 100%; display: block;
     --markmap-font: 500 16px/1.34 var(--sans);
     --markmap-text-color: var(--ink);
     --markmap-a-color: var(--accent);

@@ -39,6 +39,7 @@ import { preworkFeedsFromTree, preworkFindings, preworkFromTree, preworkRetiredF
 import { readReactionsValue, reactionWarnings } from "./reaction-sets.mjs";
 import { placeRunExtraNodes, runCompileOption, settleRunExtraTail } from "./run-extras.mjs";
 import { SECTION_ONLY_TRIGGER_KEYS } from "../triggers.mjs";
+import { readSectionColours, resolveSectionLeads, sectionLeadName } from "./section-leads.mjs";
 import { resolveStatementOptions } from "./statement-options.mjs";
 import { LIST_STYLES, cardsLayoutDecision, deckTriggerDefaultsFrom, foldChildLayoutNodes, impliedListStyle, nodeContentLinesAndAttrs, sectionDividerDecision, slideLayoutPlan } from "./authored-layout.mjs";
 import { pictureKeyForSlide } from "./10-projections.mjs";
@@ -446,6 +447,10 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
   const paletteChoice = readDeckChoice(meta.palette, DECK_PALETTES);
   if (paletteChoice.state === "unknown") warnings.push(`palette-unknown:${paletteChoice.raw}`);
   let deckPalette = paletteChoice.value;
+  // Section lead colours (0.44 look; section-leads.mjs): `section-colours:` rotates, lists or switches off.
+  const sectionColours = readSectionColours(meta["section-colours"] ?? meta.section_colours ?? meta["section-colors"]);
+  for (const name of sectionColours.unknown) warnings.push(`section-colours-unknown:${name}`);
+  const sectionLeadOverrides = new Map();
   // Frame defaults (Wave 1, task 2): frontmatter `defaults:` sets deck-level frame attrs;
   // `sections:` maps section titles to per-section frame overrides. Attached to every slide.
   const deckDefaults = (meta.defaults && typeof meta.defaults === "object") ? meta.defaults : {};
@@ -1077,6 +1082,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
           return buildCarouselSubSlide(c.title, subBlocks, subKicker);
         });
         slide.carousel = [...leadSubs, ...cardSubs];
+        // The leading media cards come before the #### cards: the sequencer gives them beats of
+        // their own, so a beat's card index is the card's place in the drawn carousel.
+        if (slide.treeNode) slide.treeNode._carouselLeadCards = leadSubs.length;
         blocks = mapBlocksToLayout("cards", leadProse);
       } else {
         // {carousel}/{cards=stepped}: every top-level block becomes a sub-slide — nothing is left
@@ -1601,6 +1609,13 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
         } else {
           current.sectionAccent = requestedAccent;
         }
+        // {section-colour=…} on the `##` heading: this section's lead colour, over the rotation.
+        const leadWord = attrs["section-colour"];
+        if (leadWord != null && leadWord !== true) {
+          const lead = sectionLeadName(leadWord);
+          if (lead) sectionLeadOverrides.set(node.id, lead);
+          else warnings.push(`section-colour-unknown:${String(leadWord).trim()}`);
+        }
         const timer = sectionTimerFrom(attrs);
         current.sectionTimer = timer || null;
         current.subsection = null;
@@ -1934,6 +1949,14 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
     }
     return rawBeats;
   };
+  // Each slide's section lead (the Ocean look stamps it; classic ignores it). Resolved here, once, from the talk's own
+  // sections, so a slide copied from another talk ({from=…}) takes this talk's colour for the section it sits in.
+  const sectionLeads = resolveSectionLeads({
+    sections: sections.map((section) => ({ id: section.id, override: sectionLeadOverrides.get(section.id), prework: prework?.sectionId === section.id })),
+    setting: sectionColours,
+    bold: modelPaletteFor(DECK_PALETTES.includes(deckPalette) ? deckPalette : "") === "ocean-bold",
+  });
+  for (const s of slides) s.sectionLead = (s.section && sectionLeads.bySection.get(s.section)) || sectionLeads.outside;
   const beats = assertBeatRecordAgreement(
     applyOpeningFirstBeatPatch(sequence(root, { warn: (warning) => warnings.push(warning) }))
   );

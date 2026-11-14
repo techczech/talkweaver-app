@@ -613,6 +613,13 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "reveal",
     "focus"
   ],
+  "section-colour": [
+    "blue",
+    "amber",
+    "deep-blue",
+    "light",
+    "light-amber"
+  ],
   "font-body": [
     "l",
     "xs",
@@ -982,6 +989,10 @@ export const SECTION_ONLY_TRIGGER_KEYS = [
   {
     "name": "accent",
     "key": "accent"
+  },
+  {
+    "name": "section-colour",
+    "key": "section-colour"
   },
   {
     "name": "prework",

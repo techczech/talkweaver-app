@@ -25,14 +25,22 @@ export function contentsVariant(node) {
 // its own; only its children enter the sequence.
 export function sequence(root, { warn } = {}) {
   const beats = []
-  for (const child of root.children || []) emitNode(child, warn, beats, undefined)
+  // Every id the talk already uses, so an address made here for a leading media card never takes one of them.
+  const taken = new Set()
+  const collect = (node) => {
+    if (node?.id) taken.add(String(node.id))
+    for (const id of node?._sequenceContinuationIds || []) taken.add(String(id))
+    for (const child of [...(node?.children || []), ...(node?._sequenceCarouselChildren || [])]) collect(child)
+  }
+  for (const child of root.children || []) collect(child)
+  for (const child of root.children || []) emitNode(child, warn, beats, undefined, taken)
   return beats
 }
 
 // context, if given, decorates the beat this node emits for *itself* (its own
 // slide/grid beat) — used when a parent carousel/contents container places this
 // node as one of its indexed children.
-function emitNode(node, warn, beats, context) {
+function emitNode(node, warn, beats, context, taken = new Set()) {
   // ADR-0022 folds authored carousel children into one parent DOM slide before sequencing.
   // Their preserved sequence-only identities still emit addressable child beats.
   const children = (node.children || []).length
@@ -56,7 +64,7 @@ function emitNode(node, warn, beats, context) {
 
   if (mode === 'grid-linear') {
     beats.push(own('grid'))
-    for (const child of children) emitNode(child, warn, beats, undefined)
+    for (const child of children) emitNode(child, warn, beats, undefined, taken)
     return
   }
 
@@ -64,7 +72,7 @@ function emitNode(node, warn, beats, context) {
     beats.push(own('grid'))
     const completed = []
     for (const child of children) {
-      emitNode(child, warn, beats, undefined)
+      emitNode(child, warn, beats, undefined, taken)
       completed.push(child.id)
       beats.push({ kind: 'grid-return', slideId: node.id, context: { completed: [...completed] } })
     }
@@ -75,13 +83,29 @@ function emitNode(node, warn, beats, context) {
   // parent's single DOM slide. Omitting a separate parent beat prevents child 0 being displayed
   // twice (once as the parent reveal and again as its own beat). The canonical authored child id
   // remains beat.slideId; context.sectionId is the folded DOM render target.
+  // A picture or embed written before the first #### card is drawn as the carousel's first card(s)
+  // (_carouselLeadCards, set by the source adapter): each gets a beat, and the #### cards' indices
+  // follow them, so beat index = drawn card index and Next reaches the last card. The first is
+  // addressed by the carousel's own id; a second or later one by `<id>-media-<n>` (n its place among
+  // the cards, kept clear of every id in the talk), so a reload, a copied link and the recorder's
+  // slide changes tell them apart.
   if (mode === 'carousel' && Array.isArray(node._sequenceCarouselChildren)) {
-    const count = children.length
+    const lead = Math.max(0, Math.floor(Number(node._carouselLeadCards) || 0))
+    const count = lead + children.length
+    for (let index = 0; index < lead; index += 1) {
+      let slideId = node.id
+      if (index > 0) {
+        slideId = `${node.id}-media-${index + 1}`
+        for (let n = 2; taken.has(slideId); n += 1) slideId = `${node.id}-media-${index + 1}-${n}`
+        taken.add(slideId)
+      }
+      beats.push({ kind: 'slide', slideId, context: { container: 'carousel', sectionId: node.id, index, count } })
+    }
     children.forEach((child, index) => {
       beats.push({
         kind: 'slide',
         slideId: child.id,
-        context: { container: 'carousel', sectionId: node.id, index, count }
+        context: { container: 'carousel', sectionId: node.id, index: lead + index, count }
       })
     })
     return
@@ -101,9 +125,9 @@ function emitNode(node, warn, beats, context) {
         index,
         count,
         ...(variant ? { variant } : {})
-      })
+      }, taken)
     } else {
-      emitNode(child, warn, beats, undefined)
+      emitNode(child, warn, beats, undefined, taken)
     }
   })
 }

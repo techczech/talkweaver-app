@@ -43,11 +43,12 @@ The prompt you were given names two folders on this computer:
    `<venv python> -c "from huggingface_hub import snapshot_download; snapshot_download('mlx-community/parakeet-tdt-0.6b-v3')"`
    Skip this step on a computer where the shipped engine cannot run.
 6. Give TalkWeaver the two paths: the venv's Python and `parakeet_to_srt.py` in the set-up folder.
-   Either ask the person to paste them into Settings → Transcription and press Save, or run
+   Either ask the person to paste them into Settings → Recording → Advanced recording settings
+   (Transcription Python and Transcription script; each saves as it is entered), or run
    `TalkWeaver setup transcription --python <venv python> --script <set-up folder>/parakeet_to_srt.py`
    where that command is available (both as full paths: the command refuses a relative path or `~`).
    Leave ffmpeg unset unless the person wants their own.
-7. Settings → Transcription should now read "Ready". If it names a missing thing, fix that one.
+7. Settings → Get started → Transcription should now read "Ready". If it names a missing thing, fix that one.
 
 ## Do not
 

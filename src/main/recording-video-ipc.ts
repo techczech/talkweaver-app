@@ -7,14 +7,15 @@
 // research verbs only).
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron'
 import { createHash } from 'node:crypto'
-import { realpathSync, statSync } from 'node:fs'
+import { readFileSync, realpathSync, statSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { editsPath, readRecordingSource, recordedSegmentPaths, audibleSegmentPaths } from './recording-paths.ts'
+import { editsPath, listKeptRuns, listSessionJsonFiles, readRecordingSource, recordedSegmentPaths, audibleSegmentPaths } from './recording-paths.ts'
 import { createRecordingEditsStore, type EditsSnapshot } from './recording-edits-store.ts'
-import { createPlaybackPreparer, createTempRecord, createVideoExporter, removePlaybackCopies, resolvePictureLayers, type ExportState, type MissingLayer, type ResolvedLayers } from './recording-video.ts'
+import { createEvenVolume, createPlaybackPreparer, layersOnVideoClock, createTempRecord, createVideoExporter, removePlaybackCopies, resolvePictureLayers, type ExportState, type MissingLayer, type ResolvedLayers } from './recording-video.ts'
 import { recordingFingerprint, type EditOp, type TimeRange } from '../shared/recording-edits.ts'
-import { planDigest, resolveRecording, type EditorTranscript } from '../shared/recording-editor.ts'
-import { hasPictureLayers, type CaptureLike, type CaptionWord, type ChapterSlide } from '../shared/recording-video.ts'
+import { editorWords, planDigest, resolveRecording, type EditorTranscript } from '../shared/recording-editor.ts'
+import { faceTrack, faceTrackOnClock, hasPictureLayers, type CaptureLike, type CaptionWord, type ChapterSlide } from '../shared/recording-video.ts'
+import { TAKE_STEP_OFF_ERROR, TAKES_OFF_ERROR, takesInUse, type TakeClock } from '../shared/recording-takes.ts'
 import { isToolsWindowSender } from './talkTextSender.ts'
 
 export type RecordingRef = { talkSlug: string; runId: string; home?: string | null }
@@ -28,8 +29,20 @@ export type RecordingOpen = {
   missing: MissingLayer[]
   runTrims: TimeRange[]
   edits: EditsSnapshot
+  /** New takes of this Run's slides (Record this slide again), oldest first; none while it is off. */
+  takes: TakeInfo[]
+  /** Whether Record one slide again is on in this build (takesEnabled); off, the editor offers nothing of it. */
+  recordAgain: boolean
 }
-export type RecordingPlayback = { ok: true; identity: string; voice: string | null; slides: Array<{ url: string; startMs: number; endMs: number }>; camera: Array<{ url: string; startMs: number; endMs: number }>; unreadable: MissingLayer[] } | { ok: false; error: string }
+/** A new take of one slide: its own Run, kept beside this one. */
+export type TakeInfo = {
+  run: string; change: number; slideId: string; durationMs: number; startedAt: string; hasCamera: boolean
+  /** The take's own timed words on its own clock (its transcript, precise word timing where it placed them); null until written out. */
+  words: Array<{ text: string; start: number; end: number }> | null
+  /** Whether its recorded files are all there (`missing`: a picture or voice file is gone or unreadable). */
+  media: 'ok' | 'missing'
+}
+export type RecordingPlayback = { ok: true; identity: string; voice: string | null; slides: Array<{ url: string; startMs: number; endMs: number; offsetMs?: number; shownFromMs?: number }>; camera: Array<{ url: string; startMs: number; endMs: number; offsetMs?: number; shownFromMs?: number }>; unreadable: MissingLayer[] } | { ok: false; error: string }
 /**
  * `revision`: the saved edits the window waited for; `plan`: planDigest of the state the window shows. Main
  * resolves the same from the saved files after its last read and refuses (with `stale: true`) when either
@@ -38,6 +51,7 @@ export type RecordingPlayback = { ok: true; identity: string; voice: string | nu
 export type ExportOptions = { captions: boolean; chapterList: boolean; sound: boolean; title?: string; slides?: Record<string, ChapterSlide>; revision?: number; plan?: string; withoutWords?: boolean }
 export type WordsRead = { state: 'none' } | { state: 'unreadable' } | { state: 'ok'; transcript: EditorTranscript & { segments?: Array<{ start: number; end: number; text: string }> } }
 const UNREADABLE = 'The words for this recording could not be read, so TalkWeaver cannot check the cuts that follow them. You can export without captions: the video then follows the plan without words, which the editor shows first.'
+const TAKE_MISSING = 'A new take chosen for a slide cannot be found, or some of its files are missing, so nothing was exported. On that slide, choose Use the first take, or put the take’s files back.'
 const STALE = 'What would be exported differs from what the editor shows: the edits, the words or their timing changed. The editor has been refreshed; check it and choose Export again.'
 export type ExportProgress = { jobId: string } & ExportState
 
@@ -59,6 +73,8 @@ type Host = {
   showSaveDialog: (win: BrowserWindow | null, options: { title: string; defaultPath: string; filters: Array<{ name: string; extensions: string[] }>; buttonLabel: string }) => Promise<{ canceled: boolean; filePath?: string }>
   reveal: (path: string) => void
   defaultFolder: () => string
+  /** Record one slide again (takesEnabled in recording-takes.ts); absent: off. */
+  takesEnabled?: () => boolean
 }
 
 const STRING_MAX = 300
@@ -91,6 +107,9 @@ function parseRef(value: unknown): RecordingRef {
 }
 
 export function registerRecordingVideoIpc(host: Host) {
+  const takesOn = (): boolean => !!host.takesEnabled?.()
+  /** The edits as playback and export use them: take choices ignored (kept in the file) while takes are off. */
+  const inUse = (edits: EditsSnapshot): EditsSnapshot => (takesOn() ? edits : { ...edits, edits: { ...edits.edits, takes: takesInUse(false, edits.edits.takes) } })
   const ffmpeg = (): string | null => { const found = host.readiness().ffmpeg; return found.found ? found.path : null }
   const vaultOf = (ref: RecordingRef): string | null => {
     const vault = host.vaultFor(ref.home)
@@ -132,6 +151,50 @@ export function registerRecordingVideoIpc(host: Host) {
     const voice = tool ? await audibleSegmentPaths(host.userDataDir(), ref.runId, source, tool) : listed
     return { runId: ref.runId, durationMs, slides: pictures.slides, camera: pictures.camera, voice, missing, runTrims: Array.isArray(record.trims) ? record.trims : [], record, vault }
   }
+  /** The takes recorded for a Run: Runs of the same talk and home that name it in `takeOf`. */
+  async function takesOf(ref: RecordingRef): Promise<TakeInfo[]> {
+    // Off: no take is discovered, so nothing downstream sees one.
+    if (!takesOn()) return []
+    const vault = vaultOf(ref)
+    // Takes are left out of every list of Runs; this is the one place that asks for them.
+    const records: unknown[] = vault ? [] : listKeptRuns(host.userDataDir(), ref.talkSlug, undefined, true)
+    if (vault) for (const file of await listSessionJsonFiles(vault, ref.talkSlug)) { try { records.push(JSON.parse(readFileSync(file, 'utf8'))) } catch { /* unreadable: not listed */ } }
+    const out: TakeInfo[] = []
+    for (const raw of records) {
+      const r = raw as { id?: unknown; talkSlug?: unknown; takeOf?: { runId?: unknown; change?: unknown; slideId?: unknown }; recordingMs?: unknown; startedAt?: unknown; capture?: CaptureLike | null }
+      if (!r || typeof r !== 'object' || r.talkSlug !== ref.talkSlug || r.takeOf?.runId !== ref.runId || typeof r.id !== 'string' || !Number.isFinite(r.takeOf?.change)) continue
+      const durationMs = Math.round(Number(r.recordingMs))
+      if (!(durationMs > 0)) continue
+      // Its own words, written out after it was saved like any Run's; never another take's.
+      let words: TakeInfo['words'] = null
+      try {
+        const read = await host.readTranscript(vault, ref.talkSlug, r.id)
+        if (read.state === 'ok') words = editorWords(read.transcript, durationMs).words.filter((w) => w.timed).map((w) => ({ text: w.text, start: w.start, end: w.end }))
+      } catch { /* not written out: no captions for this take yet */ }
+      let media: TakeInfo['media'] = 'missing'
+      try { const l = await layersOf({ talkSlug: ref.talkSlug, runId: r.id, home: ref.home }); if (!l.missing.length && l.voice.length && l.slides.length) media = 'ok' } catch { /* missing */ }
+      out.push({ run: r.id, change: Math.round(Number(r.takeOf.change)), slideId: typeof r.takeOf.slideId === 'string' ? r.takeOf.slideId : '', durationMs, startedAt: String(r.startedAt ?? ''), hasCamera: !!r.capture?.layers?.camera?.bytes || !!r.capture?.layers?.camera?.segments?.some((x) => x.bytes > 0), words, media })
+    }
+    return out.sort((a, b) => a.startedAt.localeCompare(b.startedAt))
+  }
+  /** The chosen takes that can be played, with their lengths, as the plan takes them. */
+  function chosenTakes(edits: EditsSnapshot, takes: TakeInfo[]): Array<{ change: number; run: string; durationMs: number; words: TakeInfo['words'] }> {
+    return edits.edits.takes.flatMap((t) => { const found = takes.find((x) => x.run === t.run && x.change === t.change); return found && found.media === 'ok' ? [{ change: t.change, run: t.run, durationMs: found.durationMs, words: found.words }] : [] })
+  }
+  /** Chosen takes that cannot be played: their Run is gone, or some of its files are. Export waits for them. */
+  function unavailableTakes(edits: EditsSnapshot, takes: TakeInfo[]): Array<{ change: number; run: string; reason: 'gone' | 'media' }> {
+    return edits.edits.takes.flatMap<{ change: number; run: string; reason: 'gone' | 'media' }>((t) => { const found = takes.find((x) => x.run === t.run && x.change === t.change); return !found ? [{ ...t, reason: 'gone' as const }] : found.media !== 'ok' ? [{ ...t, reason: 'media' as const }] : [] })
+  }
+  /**
+   * A Run's layers on the video clock: its own files split where takes go in, each chosen take's files
+   * placed where its take starts, and the voice the same way. Without takes, the Run's layers as they are.
+   */
+  async function layersOnClock(ref: RecordingRef, layers: Awaited<ReturnType<typeof layersOf>>, clock: TakeClock, clockMs: number): Promise<ResolvedLayers> {
+    if (!clock.inserts.length) return layers
+    const takeLayers = new Map<string, Awaited<ReturnType<typeof layersOf>>>()
+    for (const i of clock.inserts) takeLayers.set(i.run, await layersOf({ talkSlug: ref.talkSlug, runId: i.run, home: ref.home }))
+    return { ...layers, ...layersOnVideoClock(layers, takeLayers, clock, clockMs) }
+  }
   const sender = (event: IpcMainInvokeEvent): boolean => isToolsWindowSender(event.sender, host.toolsWindow())
   const refuse = { ok: false as const, error: 'Open the Run in Studio first.' }
   const failed = (error: unknown) => ({ ok: false as const, error: error instanceof Error ? error.message : String(error) })
@@ -146,27 +209,55 @@ export function registerRecordingVideoIpc(host: Host) {
         hasPicture: hasPictureLayers(layers.record.capture), hasCamera: layers.camera.length > 0,
         slides: layers.slides.map(({ part, startMs, endMs }) => ({ part, startMs, endMs })),
         camera: layers.camera.map(({ part, startMs, endMs }) => ({ part, startMs, endMs })),
-        missing: layers.missing, runTrims: layers.runTrims, edits: store.get(ref)
+        missing: layers.missing, runTrims: layers.runTrims, edits: store.get(ref), takes: await takesOf(ref), recordAgain: takesOn()
       }
       return result
     } catch (error) { return failed(error) }
   })
 
-  const preparer = createPlaybackPreparer({ userDataDir: host.userDataDir, ffmpeg })
+  // One measurement of each voice for even volume, shared by the player's evened copy and the export.
+  const even = createEvenVolume({ ffmpeg })
+  const preparer = createPlaybackPreparer({ userDataDir: host.userDataDir, ffmpeg, even })
   host.ipcMain.handle('recording-video:prepare', async (event, raw): Promise<RecordingPlayback> => {
     if (!sender(event)) return refuse
     try {
       const ref = parseRef(raw)
       const set = await preparer.prepare(await layersOf(ref))
       const url = (name: string): string => `twrec://${ref.runId}?play=${encodeURIComponent(name)}&copy=${set.identity}`
-      return { ok: true, identity: set.identity, voice: set.voice ? url(set.voice) : null, slides: set.slides.map((s) => ({ url: url(s.name), startMs: s.startMs, endMs: s.endMs })), camera: set.camera.map((s) => ({ url: url(s.name), startMs: s.startMs, endMs: s.endMs })), unreadable: set.unreadable }
+      return { ok: true, identity: set.identity, voice: set.voice ? url(set.voice) : null, slides: set.slides.map((s) => ({ ...s, url: url(s.name) })), camera: set.camera.map((s) => ({ ...s, url: url(s.name) })), unreadable: set.unreadable }
     } catch (error) { return failed(error) }
+  })
+
+  // The evened voice for the player, made on first use (Look and sound › Even out the volume).
+  host.ipcMain.handle('recording-video:prepare-even', async (event, raw): Promise<{ ok: true; voice: string | null } | { ok: false; error: string }> => {
+    if (!sender(event)) return refuse
+    try {
+      const ref = parseRef(raw)
+      const made = await preparer.prepareEven(await layersOf(ref))
+      return { ok: true, voice: made ? `twrec://${ref.runId}?play=${encodeURIComponent(made.name)}&copy=${made.identity}` : null }
+    } catch (error) { return failed(error) }
+  })
+
+  // The takes of a Run, read again (the editor asks when it comes back from recording one).
+  host.ipcMain.handle('recording-video:takes', async (event, raw) => {
+    if (!sender(event)) return refuse
+    if (!takesOn()) return { ok: false, error: TAKES_OFF_ERROR }
+    try { return { ok: true, takes: await takesOf(parseRef(raw)) } } catch (error) { return failed(error) }
   })
 
   host.ipcMain.handle('recording-video:edit', (event, raw, op, revision) => {
     if (!sender(event)) return refuse
     try {
       if (!Number.isSafeInteger(revision)) throw Error('Reopen the recording to edit it.')
+      // Choosing a take (Use this take, Use the first take) is refused while Record one slide again is off.
+      if ((op as EditOp | null)?.kind === 'take' && !takesOn()) throw Error(TAKES_OFF_ERROR)
+      // So is an Undo or Redo step that would change the take choices kept in the file; other steps work as ever.
+      const kind = (op as EditOp | null)?.kind
+      if ((kind === 'undo' || kind === 'redo') && !takesOn()) {
+        const now = store.get(parseRef(raw)).edits
+        const target = (kind === 'undo' ? now.undo : now.redo).at(-1)
+        if (target && JSON.stringify(target.takes ?? []) !== JSON.stringify(now.takes ?? [])) throw Error(TAKE_STEP_OFF_ERROR)
+      }
       return { ok: true, edits: store.apply(parseRef(raw), op as EditOp, revision as number) }
     } catch (error) { return failed(error) }
   })
@@ -178,7 +269,7 @@ export function registerRecordingVideoIpc(host: Host) {
   const temps = createTempRecord(host.tempRecordFile?.() ?? join(host.userDataDir(), 'recording-export-temps.json'))
   // Files an earlier session left behind (a crash or forced quit during an export): only those it recorded.
   temps.sweep()
-  const exporter = createVideoExporter({ ffmpeg, temps })
+  const exporter = createVideoExporter({ ffmpeg, temps, even })
   const finished = new Map<string, string>()
   host.ipcMain.handle('recording-video:export', async (event, raw, rawOptions) => {
     if (!sender(event)) return refuse
@@ -187,6 +278,7 @@ export function registerRecordingVideoIpc(host: Host) {
       const ref = parseRef(raw)
       const options = (rawOptions ?? {}) as ExportOptions
       const layers = await layersOf(ref)
+      const takes = await takesOf(ref)
       // Words, then the sidecar (after the last await), then the plan and its fingerprint. Done before the
       // save panel and again after it, immediately before the export is scheduled: words or edits that
       // changed meanwhile refuse the export and write nothing.
@@ -198,11 +290,13 @@ export function registerRecordingVideoIpc(host: Host) {
         // wordless plan is stale: refuse and let the window go back to the plan with its words.
         if (options.withoutWords && words.state === 'ok') return { refuse: { ok: false, stale: true, error: STALE } }
         const transcript = options.withoutWords || words.state !== 'ok' ? null : words.transcript
-        const edits = store.get(ref)
+        const edits = inUse(store.get(ref))
         if (edits.problem) throw Error(`${edits.problem.message} Choose Start new edits first.`)
+        // A chosen take that cannot be played is never exported as the first take or as silence.
+        if (unavailableTakes(edits, takes).length) return { refuse: { ok: false, error: TAKE_MISSING } }
         // The one resolved edit state (as the window shows it): saved cuts, the Run's Trims, slides left out,
         // moved slide starts, and word times from precise word timing where it placed a word.
-        const resolved = resolveRecording({ durationMs: layers.durationMs, edits: edits.edits, runTrims: layers.runTrims, marks: layers.record.slideTimeIndex ?? [], transcript })
+        const resolved = resolveRecording({ durationMs: layers.durationMs, edits: edits.edits, runTrims: layers.runTrims, marks: layers.record.slideTimeIndex ?? [], transcript, takes: chosenTakes(edits, takes) })
         const segments = Array.isArray(transcript?.segments) ? transcript.segments : []
         if ((options.revision !== undefined && options.revision !== edits.edits.revision) || (options.plan !== undefined && options.plan !== planDigest(resolved, segments))) return { refuse: { ok: false, stale: true, error: STALE } }
         return { edits, resolved, segments }
@@ -233,11 +327,13 @@ export function registerRecordingVideoIpc(host: Host) {
       const target = event.sender
       const send = (state: ExportState): void => { if (!target.isDestroyed()) target.send('recording-video:export-progress', { jobId, ...state } satisfies ExportProgress) }
       // Started after this reply, so the window knows the job before its first progress report.
+      // On the video clock: the Run's layers with each chosen take where its slide starts.
+      const onClock = await layersOnClock(ref, layers, resolved.clock, resolved.clockMs)
       setImmediate(() => void exporter.run({
-        layers, cuts: resolved.cuts, camera: edits.edits.finish.camera, replace,
+        layers: onClock, cuts: resolved.clockCuts, camera: edits.edits.finish.camera, evenVolume: edits.edits.finish.evenVolume, smoothJoins: edits.edits.finish.smoothJoins, faces: faceTrackOnClock(faceTrack(resolved.rows, edits.edits.faces, layers.durationMs), resolved.clock), replace,
         extras: { captions: !!options.captions && !options.withoutWords, chapterList: !!options.chapterList && !audioOnly, sound: !!options.sound && !audioOnly },
         destination, title, enters: resolved.chapterMarks, slides,
-        words: resolved.captionWords, segments
+        words: resolved.captionSource === 'words' ? resolved.captionWords : [], segments: resolved.captionSegments
       }, (state) => { if (state.state === 'done') finished.set(jobId, state.file); send(state) }, jobId))
       return { ok: true, jobId, name: basename(destination) }
     } catch (error) { return failed(error) }

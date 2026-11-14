@@ -74,9 +74,13 @@
 .tre-close { display: inline-flex; align-items: center; gap: 4px; vertical-align: 1px; height: 20px; padding: 0 7px 0 5px; margin: 0 3px; border-radius: 10px; background: var(--amber-bg); border: 1px solid color-mix(in srgb, var(--amber) 55%, transparent); color: var(--amber); font: 600 11.5px/1 var(--font-ui); white-space: nowrap; cursor: pointer; }
 .tre-close .lt-icon { width: 12px; height: 12px; stroke-width: 2.2; }
 .tre-pic { display: inline-block; position: relative; width: 0; height: 1.2em; margin: 0 5px; vertical-align: -3px; border-left: 2px dotted var(--muted); }
+/* With its "picture changed" note (a moved slide start) the mark takes the note's room, so the note never covers the words after it. */
+.tre-pic:has(.tre-picnote) { width: auto; white-space: nowrap; }
 .tre-pic::before { content: ''; position: absolute; top: -4px; left: -5px; border: 4px solid transparent; border-top: 5px solid var(--muted); }
 .tre-picnote { display: inline-flex; align-items: center; gap: 4px; position: relative; left: 4px; white-space: nowrap; font: 500 11.5px var(--font-ui); color: var(--muted); margin-right: 8px; vertical-align: 3px; }
 .tre-picnote .lt-icon { width: 12px; height: 12px; }
+/* Where a sentence starts (stored with the transcript): a thin quiet rule before its first word, in the pause and picture marks' grey. */
+.tre-sb { display: inline-block; width: 0; height: .95em; margin: 0 4px 0 1px; vertical-align: -2px; border-left: 1.5px solid color-mix(in srgb, var(--muted) 55%, transparent); }
 .tre-snap { display: inline-block; position: relative; width: 10px; height: 1.1em; vertical-align: -2px; margin: 0 1px; }
 .tre-snap::before { content: ''; position: absolute; left: 3px; top: 2px; bottom: 2px; width: 4px; border-radius: 2px; background: color-mix(in srgb, var(--oxford) 28%, transparent); }
 .tre-snap.hit::before { background: var(--oxford); left: 2px; width: 6px; }
@@ -256,3 +260,64 @@
 .tre .tre-mi .tre-k { margin-left: auto; }
 .tre-words .tre-untimed { color: var(--muted); text-decoration: underline dotted color-mix(in srgb, var(--muted) 60%, transparent); text-underline-offset: 3px; }
 .tre-words-note { flex: none; padding: 0 2px; }
+
+/* Look and sound (the whole video's finishing choices): a narrow sheet, one row per group. */
+.tre-sheet.tre-look { width: min(620px, calc(100% - 80px)); }
+.tre-look-set { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 14px 16px; align-items: start; padding: 12px 0 4px; }
+.tre-look-name { font-weight: 600; font-size: 13.5px; padding-top: 2px; }
+.tre-look-choice { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tre-look-choice label { display: flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; }
+.tre-look-choice input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--oxford); }
+.tre-look-choice input:focus-visible { outline: 2px solid var(--oxford); outline-offset: 2px; }
+.tre-look-note { display: flex; align-items: center; gap: 6px; padding-left: 24px; font-size: 12.5px; color: var(--muted); }
+.tre-look-note.warn { color: var(--amber); }
+.tre-look-note .lt-icon { width: 13px; height: 13px; }
+.tre-look-foot { font-size: 12.5px; color: var(--muted); }
+
+/* Where your face appears: four layout tiles drawn from the export's rectangles. */
+.tre-sheet.tre-face { width: min(640px, calc(100% - 80px)); }
+.tre-face-layouts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; padding: 12px 0 6px; }
+.tre .tre-face-tile { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 8px; border: 1.5px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink); font: 500 12.5px var(--font-ui); cursor: pointer; }
+.tre .tre-face-tile:hover:not(.off) { background: var(--hover); }
+.tre .tre-face-tile.on { border-color: var(--oxford); background: color-mix(in srgb, var(--oxford) 8%, var(--panel)); }
+.tre .tre-face-tile:focus-visible { outline: 2px solid var(--oxford); outline-offset: 2px; }
+.tre .tre-face-tile:disabled { opacity: .5; cursor: default; }
+.tre-face-pic { position: relative; width: 100%; aspect-ratio: 16 / 9; background: color-mix(in srgb, var(--ink) 10%, var(--paper)); border-radius: 5px; overflow: hidden; }
+.tre-face-pic i { position: absolute; display: block; border-radius: 2px; }
+.tre-face-pic i.slide { background: var(--paper); box-shadow: inset 0 0 0 1px var(--line); }
+.tre-face-pic i.cam { background: var(--oxford); }
+.tre-seg { flex-direction: row; gap: 6px; }
+.tre .tre-seg .tw-btn.on { border-color: var(--oxford); color: var(--oxford); background: color-mix(in srgb, var(--oxford) 8%, var(--panel)); }
+.tre-look-choice select { font: 13px var(--font-ui); padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); width: max-content; }
+.tre-look-choice select:focus-visible, .tre-look-choice input[type="radio"]:focus-visible { outline: 2px solid var(--oxford); outline-offset: 2px; }
+.tre-look-choice input[type="radio"] { margin: 0; accent-color: var(--oxford); }
+.tre-face-none { padding: 10px 0 0; }
+.tre-cblk.off { opacity: .45; }
+
+/* Record this slide again: the red dot, the takes of a slide. */
+.tre .tre-rec-ico { color: #c0392b; }
+.tre-takes { margin: 8px 0 4px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; background: var(--panel); }
+.tre-takes-h { font-weight: 600; font-size: 13px; margin-bottom: 2px; }
+.tre-take { display: flex; align-items: center; gap: 8px; font-size: 13px; padding: 3px 0; }
+.tre-take .tre-take-dot { width: 10px; height: 10px; flex: none; }
+.tre-take.on .tre-take-dot { color: var(--oxford); fill: var(--oxford); }
+.tre-take.on .tre-take-name { font-weight: 600; }
+.tre-take-in { font-size: 11.5px; color: var(--oxford); background: color-mix(in srgb, var(--oxford) 10%, var(--panel)); border-radius: 10px; padding: 1px 8px; }
+.tre-takes-note { font-size: 12px; color: var(--muted); }
+.tre-replaced { color: var(--ink); }
+.tre-take-words { color: var(--ink); font-size: 14px; line-height: 1.6; margin: 6px 0 2px; }
+
+/* The editor's sheets as native modal dialogs (ModalSheet): the window behind is inert. */
+dialog.tre-sheet.tre-modal { position: fixed; inset: 64px auto auto 50%; margin: 0; padding: 0; transform: translateX(-50%); color: var(--ink); max-height: calc(100vh - 100px); }
+dialog.tre-sheet.tre-modal[open] { display: flex; }
+dialog.tre-sheet.tre-modal::backdrop { background: rgba(23, 32, 42, .30); }
+.tre-face-tile { position: relative; }
+.tre .tre-face-tile.off, .tre-modal .tre-face-tile.off { opacity: .5; cursor: default; }
+.tre-face-radio { position: absolute; top: 50%; left: 50%; opacity: 0; width: 1px; height: 1px; margin: 0; }
+.tre-face-tile:has(.tre-face-radio:focus-visible) { outline: 2px solid var(--oxford); outline-offset: 2px; }
+.tre-seg-opt { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 6px; cursor: pointer; background: var(--panel); }
+.tre-seg-opt.on { border-color: var(--oxford); color: var(--oxford); background: color-mix(in srgb, var(--oxford) 8%, var(--panel)); }
+.tre-seg-opt input { margin: 0; accent-color: var(--oxford); }
+.tre-seg-opt:has(input:focus-visible) { outline: 2px solid var(--oxford); outline-offset: 2px; }
+.tre-seg { background: none; }
+.tre-face-tile .tre-face-pic, .tre-face-tile > span { pointer-events: none; }

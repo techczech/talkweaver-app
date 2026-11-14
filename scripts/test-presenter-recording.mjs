@@ -50,8 +50,11 @@ const GREY = 'rgb(93, 109, 124)', RED = 'rgb(239, 68, 68)', AMBER = 'rgb(245, 18
 const EXPECT = {
   // Microphone (9 Nov 2026 incident): beside Record, icon-only, before recording starts.
   idle: { mark: 'dot', dot: GREY, word: 'Not recording', wordCollapses: true, time: false, buttons: ['twrec-primary', 'twrec-mic'] },
-  recording: { mark: 'dot', dot: RED, word: 'REC', time: true, buttons: ['twrec-pause', 'twrec-stop'] },
-  paused: { mark: 'dot', dot: AMBER, word: 'Recording paused', wordCollapses: true, time: true, timeColor: AMBER, buttons: ['twrec-resume', 'twrec-stop'] },
+  // Start again (aaef11ad, drawn in the recording drawing of the record-and-edit-video design, 10 Nov 2026)
+  // and the Microphone menu (b687ac4db: switching stays available throughout the talk) show while
+  // recording and paused, icon-only and 26px like the Microphone button; Start again last, as drawn.
+  recording: { mark: 'dot', dot: RED, word: 'REC', time: true, buttons: ['twrec-mic', 'twrec-pause', 'twrec-stop', 'twrec-again'] },
+  paused: { mark: 'dot', dot: AMBER, word: 'Recording paused', wordCollapses: true, time: true, timeColor: AMBER, buttons: ['twrec-mic', 'twrec-resume', 'twrec-stop', 'twrec-again'] },
   saving: { mark: 'spinner', word: 'Saving recording…', time: true, buttons: [] },
   saved: { mark: 'check', word: 'Saved as Delivery', time: false, buttons: ['twrec-change-kind'] }
 }
@@ -62,7 +65,8 @@ const TIPS = {
   'twrec-primary': ['Start recording', '⇧R'], 'twrec-pause': ['Pause recording', '⇧P'], 'twrec-resume': ['Resume recording', '⇧P'],
   'twrec-stop': ['Stop and save recording', '⇧R'], 'twrec-change-kind': ['Change run kind', 'L'],
   'twrec-start-record': ['Start recording', '⇧R'], 'twrec-toast-yes': ['Resume recording', '⇧P'], 'twrec-save-delivery': ['Save this run as a delivery', '↵'],
-  'twrec-save-as': ['Save run as…', 'L'], 'twrec-saved-change': ['Change run kind', 'L'], 'twrec-mic': ['Microphone', '']
+  'twrec-save-as': ['Save run as…', 'L'], 'twrec-saved-change': ['Change run kind', 'L'], 'twrec-mic': ['Microphone', ''],
+  'twrec-again': ['Start again', ''], 'twrec-edit-video': ['Edit video', '']
 }
 const failures = []
 const check = (ok, message) => { if (!ok) failures.push(message) }
@@ -213,7 +217,8 @@ export const clipboard = { writeText() {} }
       labelShown: Object.fromEntries(buttons.map((b) => [b.id, vis(b.querySelector(':scope > .tw-btn-label')) && getComputedStyle(b.querySelector(':scope > .tw-btn-label')).clipPath !== 'inset(50%)'])),
       icons: Object.fromEntries(buttons.map((b) => [b.id, [...(b.querySelector(':scope > svg.tw-ico')?.classList || [])].find((c) => c.startsWith('lucide-')) || null])),
       boxes: Object.fromEntries(buttons.map((b) => { const r = b.getBoundingClientRect(); const svg = b.querySelector(':scope > svg.tw-ico'); return [b.id, { w: Math.round(r.width), h: Math.round(r.height), icon: svg ? getComputedStyle(svg).width : null }] })),
-      picker: !!document.querySelector('.twrec-picker')
+      picker: !!document.querySelector('.twrec-picker'),
+      extrasGone: !!document.getElementById('presenterTopBar')?.classList.contains('tw-no-rec-extras')
     }
   })
   const measure = () => {
@@ -256,7 +261,10 @@ export const clipboard = { writeText() {} }
     check(e.time ? /^\d\d:\d\d$/.test(c.time || '') : c.time === null, `${name}: recorded length ${e.time ? 'shows' : 'does not show'} (${c.time})`)
     if (e.time) check(c.timePx === 16, `${name}: recorded length at 16px (${c.timePx})`)
     if (e.timeColor) check(c.timeColor === e.timeColor, `${name}: recorded length in ${e.timeColor} (${c.timeColor})`)
-    check(JSON.stringify(c.buttons) === JSON.stringify(e.buttons), `${name}: buttons ${e.buttons.join(', ') || 'none'} (${c.buttons.join(', ') || 'none'})`)
+    // Start again and Microphone leave the bar after c2 while recording or paused when it runs short
+    // (fitTopBar in the template); they stay in the command palette.
+    const want = c.extrasGone && (st === 'recording' || st === 'paused') ? e.buttons.filter((id) => id !== 'twrec-again' && id !== 'twrec-mic') : e.buttons
+    check(JSON.stringify(c.buttons) === JSON.stringify(want), `${name}: buttons ${want.join(', ') || 'none'} (${c.buttons.join(', ') || 'none'})`)
     for (const id of c.buttons) {
       if (TIPS[id]) check(JSON.stringify(c.tips[id]) === JSON.stringify(TIPS[id]), `${name}: ${id} tooltip "${TIPS[id].join('  ')}" (${c.tips[id]?.join('  ')})`)
       check(!!c.icons[id], `${name}: ${id} has its lucide icon`)
@@ -268,9 +276,9 @@ export const clipboard = { writeText() {} }
       check(b?.w === REC_ICON_BUTTON && b.h === REC_ICON_BUTTON && b.icon === '16px', `${name}: ${id} is ${REC_ICON_BUTTON}px square with its 16px icon (${JSON.stringify(b)})`)
     }
     for (const id of ['twrec-primary', 'twrec-change-kind']) if (c.buttons.includes(id)) check(c.labelShown[id] === !steps.includes('c6'), `${name}: ${id} ${steps.includes('c6') ? 'is icon-only at c6' : 'shows its label'} (${c.labelShown[id]})`)
-    if (c.buttons.includes('twrec-mic')) {
-      const b = c.boxes['twrec-mic']
-      check(!c.labelShown['twrec-mic'] && b?.w === 26 && b.icon === '16px', `${name}: twrec-mic is icon-only, 26px wide with its 16px icon (${JSON.stringify(b)})`)
+    for (const id of ['twrec-mic', 'twrec-again']) if (c.buttons.includes(id)) {
+      const b = c.boxes[id]
+      check(!c.labelShown[id] && b?.w === 26 && b.icon === '16px', `${name}: ${id} is icon-only, 26px wide with its 16px icon (${JSON.stringify(b)})`)
     }
     check(!c.picker, `${name}: no run-kind picker`)
   }
@@ -382,16 +390,21 @@ export const clipboard = { writeText() {} }
       clearOfNav: !nav || r.bottom <= nav.top,
       sizes: [...new Set(textEls.map((el) => parseFloat(getComputedStyle(el).fontSize)))].sort((a, b) => a - b),
       icons: [...new Set(icons)], tips: Object.fromEntries(buttons.filter((b) => b.id).map((b) => [b.id, [b.dataset.tip, b.dataset.key ?? '']])),
-      wraps: t.getBoundingClientRect().height > 46
+      wraps: t.getBoundingClientRect().height > 46, height: Math.round(r.height), inView: r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight
     }
   }, selector)
-  const checkToast = (name, t, text, ids) => {
+  // `card`: the saved offer is the card of the record-and-edit-video design of 10 Nov 2026 (journeys.md
+  // step 3, drawings/saved.html; built in 6dd036f3 and the words commits, e.g. 6c96bcd4f): the
+  // length and what was captured on its first line, the words being written out and its actions
+  // (Change, Edit video) under it, so it is two lines, not the one-line toast of ticket 03.
+  const checkToast = (name, t, text, ids, { card = false } = {}) => {
     if (!t) { check(false, `${name}: no toast`); return }
     check(t.show, `${name}: shows`)
     check(text.test(t.text), `${name}: reads ${text} (${t.text})`)
     check(t.underStrip, `${name}: sits under the status strip`)
     check(t.clearOfNext && t.clearOfNav, `${name}: clear of the Next preview and the bottom bar`)
-    check(!t.wraps, `${name}: one line`)
+    if (card) check(t.height <= 100 && t.inView, `${name}: two lines at most, in the window (${t.height}px)`)
+    else check(!t.wraps, `${name}: one line`)
     check(t.sizes.every((px) => px === 13 || px === 14), `${name}: chrome sizes 14px text, 13px buttons (${t.sizes.join(', ')})`)
     check(t.icons.every((w) => w === '16px'), `${name}: lucide icons at 16px (${t.icons.join(', ')})`)
     for (const id of ids) check(JSON.stringify(t.tips[id]) === JSON.stringify(TIPS[id]), `${name}: ${id} tooltip "${TIPS[id].join('  ')}" (${t.tips[id]?.join('  ')})`)
@@ -446,12 +459,47 @@ export const clipboard = { writeText() {} }
     const runs = await page.evaluate(() => window.__ipcCalls.filter((c) => c.channel === 'recording:save').map((c) => c.payload))
     check(runs.length === 1 && runs[0].mode === 'run' && runs[0].kind === 'delivery', `save toast: Enter saves the run as a delivery (${JSON.stringify(runs)})`)
     const s = await readToast(page, '.twrec-saved-note')
-    checkToast('saved toast', s, /^Saved to History as Delivery · \d\d:\d\d Change L$/, ['twrec-saved-change'])
+    checkToast('saved toast', s, /^Saved to History as Delivery · \d\d:\d\d · Voice saved · slides: none · camera: none Change L Edit video$/, ['twrec-saved-change', 'twrec-edit-video'], { card: true })
     await toastShot(page, 'toast-saved-1440x900.png')
     await tap(page, '#twrec-saved-change')
     check(await page.waitForSelector('.twrec-picker', { timeout: 3000 }).then(() => true).catch(() => false), 'saved toast: Change opens the run-kind picker')
     await page.keyboard.press('Escape')
     check(page.errors.length === 0, `toasts: no page errors (${page.errors.join('; ')})`)
+    await context.close()
+  }
+
+  // The 3-2-1 countdown before a layered recording (present-rec-ui.ts): the digit sits on a dark
+  // disc of its own, so it reads over a white slide and a blue one alike, and the disc stays small
+  // enough not to hide the slide. The element is made as the preload makes it (id and role only;
+  // every style comes from the recording stylesheet). Reduced motion: nothing moves.
+  {
+    const { page, context } = await open([1440, 900], SLIDE_L1)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const rgba = (text) => { const n = (text.match(/[\d.]+/g) || []).map(Number); return { r: n[0], g: n[1], b: n[2], a: n.length > 3 ? n[3] : 1 } }
+    const over = (top, under) => ({ r: top.r * top.a + under.r * (1 - top.a), g: top.g * top.a + under.g * (1 - top.a), b: top.b * top.a + under.b * (1 - top.a), a: 1 })
+    const lum = ({ r, g, b }) => [r, g, b].map((v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4 }).reduce((sum, v, i) => sum + v * [0.2126, 0.7152, 0.0722][i], 0)
+    const ratio = (x, y) => { const [hi, lo] = [lum(x), lum(y)].sort((a, b) => b - a); return (hi + 0.05) / (lo + 0.05) }
+    for (const [name, slide] of [['white', '#ffffff'], ['blue', '#164e8c']]) {
+      const c = await page.evaluate((slide) => {
+        document.getElementById('twrec-countdown')?.remove()
+        const cover = document.createElement('div')
+        cover.id = 'countdown-fixture-slide'
+        cover.style.cssText = `position:fixed;inset:0;z-index:150;background:${slide}`
+        document.body.appendChild(cover)
+        const countdown = document.createElement('div')
+        countdown.setAttribute('role', 'status'); countdown.id = 'twrec-countdown'; countdown.textContent = '3'
+        document.body.appendChild(countdown)
+        const s = getComputedStyle(countdown), r = countdown.getBoundingClientRect()
+        return { bg: s.backgroundColor, colour: s.color, w: r.width, h: r.height, font: parseFloat(s.fontSize), animation: s.animationName, transition: s.transitionDuration, pointer: s.pointerEvents, z: Number(s.zIndex) }
+      }, slide)
+      const backing = over(rgba(c.bg), rgba(slide.replace(/^#(..)(..)(..)$/, (_, r, g, b) => `rgb(${parseInt(r, 16)}, ${parseInt(g, 16)}, ${parseInt(b, 16)})`)))
+      check(rgba(c.bg).a >= 0.85, `countdown over a ${name} slide: the digit has an opaque backing (${c.bg})`)
+      check(ratio(rgba(c.colour), backing) >= 4.5, `countdown over a ${name} slide: digit to backing contrast ${ratio(rgba(c.colour), backing).toFixed(1)}:1, at least 4.5:1`)
+      check(c.font >= 64 && c.w >= c.font && c.w <= 160 && c.h <= 160, `countdown over a ${name} slide: a digit of at least 64px on a disc no wider than 160px (${c.font}px on ${c.w}x${c.h})`)
+      check(c.animation === 'none' && c.transition === '0s' && c.pointer === 'none' && c.z === 200, `countdown over a ${name} slide: still, not clickable, above the slide (${c.animation}, ${c.transition}, ${c.pointer}, z ${c.z})`)
+      if (SHOTS) await page.screenshot({ path: join(SHOTS, `countdown-${name}-1440x900.png`) })
+      await page.evaluate(() => document.getElementById('countdown-fixture-slide')?.remove())
+    }
     await context.close()
   }
 

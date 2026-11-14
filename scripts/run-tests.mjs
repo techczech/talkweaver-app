@@ -11,7 +11,9 @@
 // the npm "test" script sits in exactly one tier, so a new test cannot be left
 // out of CI silently. Scripts listed under "serial" (wall-clock budget checks)
 // run one at a time after the parallel pool, so CPU contention from other
-// tests cannot push them over their budget. Dependency-free on purpose.
+// tests cannot push them over their budget. A script that exits 0 after printing a line
+// "TEST NOT RUN: <reason>" (it cannot run on this computer) is counted as not run, not as a pass.
+// Dependency-free on purpose.
 import { spawn } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { availableParallelism, cpus } from 'node:os'
@@ -148,7 +150,9 @@ function runScript(name, timeoutSeconds) {
       let output = Buffer.concat(chunks).toString('utf8')
       if (error) output += `\n[run-tests] failed to start: ${error.message}`
       if (timedOut) output += `\n[run-tests] killed after ${timeoutSeconds}s timeout`
-      resolve({ name, ok: code === 0 && !timedOut && !error, code, seconds: (Date.now() - started) / 1000, output })
+      const ok = code === 0 && !timedOut && !error
+      const notRun = ok ? /^TEST NOT RUN: (.*)$/m.exec(output)?.[1] ?? null : null
+      resolve({ name, ok, notRun, code, seconds: (Date.now() - started) / 1000, output })
     }
     child.on('error', (error) => finish(null, error))
     child.on('close', (code) => finish(code))
@@ -178,7 +182,7 @@ async function runAll(names, jobs, timeout, serial) {
       running--
       results[index] = result
       done++
-      console.log(`[${String(done).padStart(String(names.length).length)}/${names.length}] ${result.ok ? 'pass' : 'FAIL'} ${result.name} (${result.seconds.toFixed(1)}s)`)
+      console.log(`[${String(done).padStart(String(names.length).length)}/${names.length}] ${result.notRun !== null ? 'not run' : result.ok ? 'pass' : 'FAIL'} ${result.name} (${result.seconds.toFixed(1)}s)`)
     }
   }
   let running = 0
@@ -229,9 +233,11 @@ const width = Math.max(6, ...results.map((result) => result.name.length))
 console.log(`\n${'script'.padEnd(width)}  result  seconds`)
 console.log(`${'-'.repeat(width)}  ------  -------`)
 for (const result of results) {
-  console.log(`${result.name.padEnd(width)}  ${(result.ok ? 'pass' : 'FAIL').padEnd(6)}  ${result.seconds.toFixed(1).padStart(7)}`)
+  console.log(`${result.name.padEnd(width)}  ${(result.notRun !== null ? 'notrun' : result.ok ? 'pass' : 'FAIL').padEnd(6)}  ${result.seconds.toFixed(1).padStart(7)}`)
 }
 const wall = ((Date.now() - started) / 1000).toFixed(1)
-console.log(`\n${results.length - failed.length} passed, ${failed.length} failed, ${wall}s wall clock`)
+const notRun = results.filter((result) => result.notRun !== null)
+console.log(`\n${results.length - failed.length - notRun.length} passed, ${failed.length} failed, ${notRun.length} not run, ${wall}s wall clock`)
+for (const result of notRun) console.log(`not run: ${result.name}: ${result.notRun}`)
 if (failed.length) console.log(`failed: ${failed.map((result) => result.name).join(' ')}`)
 process.exit(failed.length ? 1 : 0)

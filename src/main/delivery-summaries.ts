@@ -1,4 +1,5 @@
 import { readFileSync, readdirSync, statSync } from 'fs'
+import { isTakeRun } from '../shared/recording-takes.ts'
 import { join } from 'path'
 
 // Light per-talk delivery summaries for talk search: where and when each talk was given.
@@ -91,7 +92,9 @@ export function createDeliverySummaries(options: {
         let summary: DeliverySummary | null = null
         try {
           parsed += 1
-          summary = summariseRun(JSON.parse(readFileSync(path, 'utf8')), slug)
+          const raw = JSON.parse(readFileSync(path, 'utf8'))
+          // A new take of a slide is part of its Run, never a delivery of its own.
+          summary = isTakeRun(raw) ? null : summariseRun(raw, slug)
         } catch { /* a malformed Run never breaks search */ }
         next.set(path, { mtimeMs: st.mtimeMs, size: st.size, summary })
       }

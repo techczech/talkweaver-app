@@ -38,7 +38,7 @@ export default function GuideFeatures({ learn, onRead, readConnections, onAction
                     const read = isRead(learn, row.id)
                     return (
                       <li key={row.id}>
-                        <button type="button" className="guide-crow guide-frow" data-feature-row={row.id} data-feature-state={read ? 'read' : 'none'} onClick={() => onRead(row.id)}>
+                        <button type="button" className="guide-crow guide-frow" data-feature-row={row.id} data-feature-state={read ? 'read' : 'none'} title={`${row.title} ${row.hint}`} onClick={() => onRead(row.id)}>
                           <span className="guide-n">{row.n}</span>
                           <span className="guide-crow-name">{row.title}</span>
                           {read

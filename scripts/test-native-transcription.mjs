@@ -1,8 +1,18 @@
 import {spawnSync} from 'node:child_process'
-import {mkdirSync,mkdtempSync,writeFileSync,rmSync} from 'node:fs'
+import {existsSync,mkdirSync,mkdtempSync,readFileSync,readdirSync,writeFileSync,rmSync} from 'node:fs'
 import {join} from 'node:path'
 import assert from 'node:assert/strict'
-if(process.platform!=='darwin'||Number(spawnSync('sw_vers',['-productVersion'],{encoding:'utf8'}).stdout.split('.')[0])<26){console.log('SKIP: native speech fixture requires macOS 26 SDK');process.exit(0)}
+// The helper runs on macOS 26 or later and builds only against an SDK whose Speech framework has
+// SpeechAnalyzer (Xcode 26 or matching Command Line Tools; an older SDK, such as 15.x, lacks it).
+// Without both this test is not run: scripts/run-tests.mjs counts "TEST NOT RUN:" apart from passes.
+const notRun=(why)=>{console.log(`TEST NOT RUN: ${why}`);process.exit(0)}
+if(process.platform!=='darwin')notRun('the native speech helper is macOS only')
+const osMajor=Number(spawnSync('sw_vers',['-productVersion'],{encoding:'utf8'}).stdout.split('.')[0])
+if(!(osMajor>=26))notRun(`the native speech helper runs on macOS 26 or later (this computer: ${osMajor})`)
+const sdkPath=spawnSync('xcrun',['--show-sdk-path'],{encoding:'utf8'}).stdout?.trim()??''
+const speechModule=join(sdkPath,'System/Library/Frameworks/Speech.framework/Modules/Speech.swiftmodule')
+const sdkHasAnalyzer=!!sdkPath&&existsSync(speechModule)&&readdirSync(speechModule).some((f)=>f.endsWith('-macos.swiftinterface')&&readFileSync(join(speechModule,f),'utf8').includes('SpeechAnalyzer'))
+if(!sdkHasAnalyzer)notRun(`the SDK ${sdkPath||'(none found)'} has no SpeechAnalyzer; the helper needs the macOS 26 SDK`)
 const built=spawnSync('xcrun',['swiftc','-parse-as-library','native/transcription.swift','-o','native/transcription'],{encoding:'utf8'})
 assert.equal(built.status,0,built.stderr)
 const scratch=mkdtempSync(join(process.cwd(),'.tw-native-fixture-'))

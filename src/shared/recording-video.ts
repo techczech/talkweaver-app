@@ -1,12 +1,17 @@
 // One plan for the layered player and the video export (ADR-0043, contract C6: what the player shows
 // is what the export produces). Pure: the same functions give the camera rectangle, the kept spans on
 // the frame grid, chapters and captions to the renderer and to main.
-import { normaliseRanges, type TimeRange } from './recording-edits.ts'
+import { DEFAULT_FACE, faceOf, normaliseRanges, type FacePlacement, type RecordingFaces, type TimeRange } from './recording-edits.ts'
+import { rangesToVideoClock, toVideoClock, type TakeClock } from './recording-takes.ts'
 
 /** The exported picture. A capture with another size or rate keeps these: the slides layer is always 1920×1080 at 30 fps. */
 export const VIDEO_FRAME = { width: 1920, height: 1080, fps: 30 } as const
-/** The camera inset in the player and the export: one corner, one size. Per-slide face position comes later. */
-export const CAMERA_INSET = { corner: 'bottom-right', widthFraction: 0.22, marginFraction: 0.025, aspect: 16 / 9 } as const
+/** The camera inset "In the corner": its width for each size, the margin, the shape. Medium is 0.44's one inset. */
+export const CAMERA_INSET = { corner: 'bottom-right', widthFraction: 0.22, widths: { small: 0.16, medium: 0.22, large: 0.3 }, marginFraction: 0.025, aspect: 16 / 9 } as const
+/** Side by side: the slide's share of the frame's width; the face takes the rest at the slide's height. */
+export const SIDE_BY_SIDE = { slideFraction: 0.7 } as const
+/** The top of a slide holds its title: no face position may reach into this share of the slide's height. */
+export const TITLE_BAND_FRACTION = 0.25
 /** Audio fade at each join an edit makes (PR 316's value). */
 export const JOIN_FADE_MS = 15
 /** Suggest trimming a silent start or end only when it lasts at least this long. */
@@ -17,18 +22,84 @@ export const SILENT_END_KEEP_MS = 300
 export type Rect = { x: number; y: number; width: number; height: number }
 const even = (n: number): number => 2 * Math.round(n / 2)
 
-/** The camera rectangle in a frame, in pixels (even numbers, as H.264 needs). */
+/** The camera rectangle in a frame, in pixels (even numbers, as H.264 needs): 0.44's one corner. */
 export function cameraRect(frame: { width: number; height: number } = VIDEO_FRAME): Rect {
-  const width = even(frame.width * CAMERA_INSET.widthFraction)
-  const height = even(width / CAMERA_INSET.aspect)
-  const margin = Math.round(frame.height * CAMERA_INSET.marginFraction)
-  return { x: frame.width - margin - width, y: frame.height - margin - height, width, height }
+  return placementRects(DEFAULT_FACE, frame).camera as Rect
 }
 
 /** The camera rectangle as percentages of the frame, for the player's CSS. */
 export function cameraRectPercent(): { left: number; top: number; width: number; height: number } {
-  const r = cameraRect()
-  return { left: (100 * r.x) / VIDEO_FRAME.width, top: (100 * r.y) / VIDEO_FRAME.height, width: (100 * r.width) / VIDEO_FRAME.width, height: (100 * r.height) / VIDEO_FRAME.height }
+  return toPercent(cameraRect())
+}
+
+export type PercentRect = { left: number; top: number; width: number; height: number }
+export function toPercent(r: Rect, frame: { width: number; height: number } = VIDEO_FRAME): PercentRect {
+  return { left: (100 * r.x) / frame.width, top: (100 * r.y) / frame.height, width: (100 * r.width) / frame.width, height: (100 * r.height) / frame.height }
+}
+
+/**
+ * Where the slides picture and the camera go for a face placement, in pixels of `frame` (even numbers);
+ * null where a layer is not shown. The slides picture is always whole (fitted, never cropped); the camera
+ * fills its rectangle (cropped to it). The player (as percentages) and the export use this one function.
+ */
+export function placementRects(face: FacePlacement, frame: { width: number; height: number } = VIDEO_FRAME): { slides: Rect | null; camera: Rect | null } {
+  const W = frame.width, H = frame.height
+  const full: Rect = { x: 0, y: 0, width: W, height: H }
+  const margin = Math.round(H * CAMERA_INSET.marginFraction)
+  if (face.layout === 'slide') return { slides: full, camera: null }
+  if (face.layout === 'face') return { slides: null, camera: full }
+  if (face.layout === 'side') {
+    const width = even(W * SIDE_BY_SIDE.slideFraction), height = even(width * 9 / 16)
+    const y = even((H - height) / 2)
+    const cx = margin + width + margin
+    return { slides: { x: margin, y, width, height }, camera: { x: cx, y, width: 2 * Math.floor((W - cx - margin) / 2), height } }
+  }
+  const width = even(W * CAMERA_INSET.widths[face.size])
+  const height = even(width / CAMERA_INSET.aspect)
+  return { slides: full, camera: { x: face.corner === 'bottom-left' ? margin : W - margin - width, y: H - margin - height, width, height } }
+}
+
+/** One placement over a stretch of the Run [start, end). */
+export type FaceSegment = { start: number; end: number; face: FacePlacement }
+/**
+ * The face placement over the Run: each slide's placement from its edit boundary to the next slide's,
+ * the first from 0 and the last to the end; neighbours with the same placement are merged.
+ */
+export function faceTrack(rows: ReadonlyArray<{ change: number; start: number }>, faces: RecordingFaces, durationMs: number): FaceSegment[] {
+  const out: FaceSegment[] = []
+  const sorted = [...rows].sort((a, b) => a.start - b.start)
+  if (!sorted.length) return [{ start: 0, end: durationMs, face: faces.all }]
+  sorted.forEach((r, i) => {
+    const start = i === 0 ? 0 : Math.max(0, Math.round(r.start)), end = i + 1 < sorted.length ? Math.round(sorted[i + 1].start) : durationMs
+    if (end <= start) return
+    const face = faceOf(faces, r.change)
+    const last = out.at(-1)
+    if (last && last.face.layout === face.layout && last.face.corner === face.corner && last.face.size === face.size && last.end === start) last.end = end
+    else out.push({ start, end, face })
+  })
+  return out
+}
+/**
+ * The face track on the video clock (Record this slide again): each stretch moved as the Run's time is,
+ * and each take shown with its slide's placement.
+ */
+export function faceTrackOnClock(track: readonly FaceSegment[], clock: TakeClock): FaceSegment[] {
+  if (!clock.inserts.length) return [...track]
+  const out: FaceSegment[] = []
+  for (const seg of track) for (const r of rangesToVideoClock(clock, [seg])) out.push({ ...r, face: seg.face })
+  for (const i of clock.inserts) {
+    const at = toVideoClock(clock, i.at)
+    out.push({ start: at, end: at + i.length, face: (track.find((s) => i.at >= s.start && i.at < s.end) ?? track.at(-1))?.face ?? DEFAULT_FACE })
+  }
+  return out.sort((a, b) => a.start - b.start)
+}
+/** The placement at a moment of the Run. */
+export function faceAt(track: readonly FaceSegment[], runMs: number): FacePlacement {
+  return track.find((s) => runMs >= s.start && runMs < s.end)?.face ?? track.at(-1)?.face ?? DEFAULT_FACE
+}
+/** The same placement with no camera to show (none recorded, or the Camera switch off): the slides alone. */
+export function withoutCamera(face: FacePlacement): FacePlacement {
+  return face.layout === 'slide' ? face : { ...face, layout: 'slide' }
 }
 
 export const frameOf = (ms: number): number => Math.round((ms * VIDEO_FRAME.fps) / 1000)

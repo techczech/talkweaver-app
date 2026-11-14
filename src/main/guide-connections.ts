@@ -43,6 +43,7 @@ export interface ProbeDeps {
   goingLive: () => GoingLiveRow
   recording: () => RecordingStorageRow
   transcription: () => Promise<TranscriptionRow>
+  builtinTranscription?: boolean
   /** The person's own vaults as the Talks panel shows them (the example is left out by the caller). */
   vaults: () => Array<{ name: string; service: string }>
 }
@@ -108,6 +109,7 @@ export async function gatherConnectionSources(deps: ProbeDeps): Promise<Connecti
     goingLive: attempt(deps.goingLive, NO_SOURCES.goingLive),
     recording: attempt(deps.recording, NO_SOURCES.recording),
     transcription,
+    builtinTranscription: deps.builtinTranscription === true,
     tools: { libreoffice, poppler, agents },
     vaults,
     backup: {

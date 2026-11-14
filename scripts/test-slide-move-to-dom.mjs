@@ -300,6 +300,12 @@ try {
   await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body style="margin:0"><div id="stage" style="padding:20px 0 0 20px"></div></body></html>' }))
   await page.goto(`${ORIGIN}/`)
   await page.addStyleTag({ content: readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8') })
+  // The preload's picture-text calls, which the search asks for after a short pause (lib/slideSearch.ts,
+  // usePictureText). This talk has no pictures, so every answer is empty; without the stub a late call threw
+  // into "no page errors" whenever the pause ran out before the run ended (only under load).
+  await page.evaluate(() => {
+    window.tw = { talk: { slidePictureGeneration: async () => 0, slidePictureText: async (_outline, refs) => refs.map(() => '') } }
+  })
   await page.addScriptTag({ content: readFileSync(outfile, 'utf8') })
 
   const ORG = '.slides-organizer'

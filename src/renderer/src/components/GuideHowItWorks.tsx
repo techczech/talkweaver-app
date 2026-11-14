@@ -4,7 +4,7 @@ import { HOW_BAR, HOW_TOPICS, TOPIC_STATUS, TOPIC_TRY_LABEL, howReadCount, isRea
 import type { GuideLearn } from '../../../shared/guide-learn'
 import TopicPicture from './GuideTopicPictures'
 
-// How it works (onboarding ticket 11; locked drawing states 08 and 09): ten topics, each Not opened or
+// How it works (onboarding ticket 11; locked drawing states 08 and 09): the topics, each Not opened or
 // Read, and one topic open as a heading, its sentences, one picture and one Try it. Pure presentation:
 // App owns the open topic, the read marks and what Try it does.
 

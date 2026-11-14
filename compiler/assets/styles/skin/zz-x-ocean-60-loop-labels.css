@@ -1,0 +1,58 @@
+/* 0.44 look ("ocean"), the loop ({cycle}): each stop's labels in one box set outward from the ring.
+   The compiler (07-assembly oceanLoopLabels) wraps a stop's role and text in .oc-loop-label and gives the stop its
+   direction from the ring's centre on a square round it (--oc-x, --oc-y; one of them is 1 or -1) and a side (data-oc-at: start, end, top, bottom). The box's
+   anchor point sits on a square just outside the stop and moves round the box's edge with the direction, so the box
+   always lies on the far side of its stop from the ring and clear of the stop's own square: a stop at the top carries its label above it, one on the
+   right to its right, one at the bottom below it. The box has a bounded width, so a long label wraps between words
+   instead of running towards a neighbour. Where the labels still meet (many stops with long labels), the fitter
+   (slide-fit.js loopLabelsMeet) gives the slide the safe drawing: the 0.43 boxes on the ring in the look's colours. */
+
+.slide[data-look="ocean"] .slide-content > .cycle-diagram {
+  --cy-gap: 1.2cqw;
+  /* side room: from the diagram's edge to the stage's padding, plus the part of the diagram outside the ring */
+  --cy-side: calc((100cqw - var(--cy-w)) / 2 - 3.5cqw + var(--cy-w) * .133 - var(--stop) / 2 - var(--cy-gap));
+  --cy-lw: min(28cqw, var(--cy-side));
+  /* a label above or below the ring: as wide as the neighbouring labels leave room for */
+  --cy-lw-centre: 34cqw;
+}
+.slide[data-look="ocean"] .slide-content > .cycle-diagram:has(> .cycle-node:nth-of-type(6)) { --cy-lw-centre: 28cqw; }
+.slide[data-look="ocean"] .slide-content > .cycle-diagram:has(> .cycle-node:nth-of-type(7)) { --cy-lw-centre: 22cqw; }
+/* long labels (07-assembly stampOceanLoop), or labels that met another block of the slide (slide-fit.js fitOceanLoop,
+   data-oc-tight): a smaller ring, so the labels above and below it have room */
+.slide[data-look="ocean"] .slide-content > .cycle-diagram:is([data-oc-long], [data-oc-tight]) { --cy-w: min(50cqh, 38cqw); --stop: 4.6cqw; }
+/* the stop's number keeps its place in the smaller stop (the ring's arcs end the same share of the ring before it) */
+.slide[data-look="ocean"] .slide-content > .cycle-diagram:is([data-oc-long], [data-oc-tight]) .cycle-node::before { font-size: 2.4cqw; }
+.slide[data-look="ocean"] .cycle-diagram .cycle-node > .oc-loop-label {
+  position: absolute; z-index: 3;
+  left: calc(50% + (var(--stop) / 2 + var(--cy-gap)) * var(--oc-x, 1));
+  top: calc(50% + (var(--stop) / 2 + var(--cy-gap)) * var(--oc-y, 0));
+  transform: translate(calc((var(--oc-x, 1) - 1) * 50%), calc((var(--oc-y, 0) - 1) * 50%));
+  display: flex; flex-direction: column; align-items: stretch; gap: .2cqw;
+  width: max-content; max-width: var(--cy-lw); margin: 0; padding: 0;
+  text-align: left;
+}
+.slide[data-look="ocean"] .cycle-diagram .cycle-node[data-oc-at="end"] > .oc-loop-label { text-align: right; }
+.slide[data-look="ocean"] .cycle-diagram .cycle-node:is([data-oc-at="top"], [data-oc-at="bottom"]) > .oc-loop-label { text-align: center; max-width: var(--cy-lw-centre); }
+.slide[data-look="ocean"] .cycle-diagram .oc-loop-label > :is(.cycle-cap, .cycle-stage) {
+  position: static; display: block; width: auto; transform: none; margin: 0 !important;
+  white-space: normal; overflow-wrap: normal !important; word-break: normal !important; hyphens: manual;
+}
+
+/* outside the look the box draws nothing of its own (classic never has it; after a fall-back it stays in the markup):
+   the role and text lay out as the stop's own children, the 0.43 drawing */
+.slide:not([data-look="ocean"]) .cycle-diagram .oc-loop-label { display: contents; }
+
+/* a passed stop of {focus} stays readable, as the look's other passed items do (zz-x-ocean-50-readability.css): no
+   fade; the disc and the labels take the muted ink (8.2:1 on the ground) instead of the generic .6 opacity, under which
+   the Ocean role line fell to 2.4:1 */
+.slide[data-look="ocean"].mode-focus .cycle-diagram .cycle-node[data-mode-state="soft"]:not(#oc-passed) {
+  opacity: 1 !important; filter: none !important; background: var(--look-muted) !important;
+}
+.slide[data-look="ocean"].mode-focus .cycle-diagram .cycle-node[data-mode-state="soft"]:not(#oc-passed) :is(.cycle-cap, .cycle-stage) { color: var(--look-muted) !important; }
+
+/* the top stop's label beside the stop, as 0.44 drew it (slide-fit.js fitOceanLoop, data-oc-top-beside): to its right,
+   the box's foot level with the stop's middle, so the ring leaving the stop sideways passes under it; tried when the
+   label above the stop meets the slide's other blocks, before the smaller ring */
+.slide[data-look="ocean"] .cycle-diagram[data-oc-top-beside] .cycle-node[data-oc-at="top"] > .oc-loop-label {
+  left: calc(100% + var(--cy-gap)); top: 50%; transform: translateY(-100%); text-align: left; max-width: var(--cy-lw);
+}

@@ -784,7 +784,10 @@ try {
 
   await check('idle microphone meter is inline and Start again discards only the live take after confirmation', async () => {
     const p = await roomPage()
-    await p.waitForSelector('#twrec-idle-meter')
+    // In the bar, but shown only while it moves (Preview on, or the Microphone menu open: the
+    // devices are opened only on request since 66a1e055a / 4a94e0397); a still bar says nothing.
+    await p.waitForSelector('#twrec-idle-meter', { state: 'attached' })
+    assert.equal(await p.locator('#twrec-idle-meter').isVisible(), false)
     assert.equal((await callsNamed(p, 'recording:stream-open')).length, 0)
     await p.locator('#twrec-primary').click()
     await p.waitForFunction(() => window.calls.some(([c]) => c === 'recording:stream-append'))

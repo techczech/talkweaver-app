@@ -156,7 +156,7 @@ export const clipboard = { writeText() {} }
   }
   // Every table control that is on the page carries its table name (or a state name), its
   // registry key and its lucide icon.
-  const stateNames = { twClockBtn: ['Start timer', 'Pause timer', 'Resume timer'], twStartTimerBtn: ['Start timer', 'Resume timer'], liveGoButton: ['Go live', 'End live session', 'Connecting to the live session', 'Start a new live session', 'Retry starting a live session', 'Retry after updating the live service', 'Waiting for the live session to end'] }
+  const stateNames = { twClockBtn: ['Start timer', 'Pause timer', 'Resume timer'], twStartTimerBtn: ['Start timer', 'Resume timer'], 'twrec-self-view-toggle': ['Hide self-view', 'Show self-view'], 'twrec-lost-switch': ['Choose microphone', 'Still reconnecting…'], 'twrec-edit-video': ['Edit video', 'Back to the editor'], liveGoButton: ['Go live', 'End live session', 'Connecting to the live session', 'Start a new live session', 'Retry starting a live session', 'Retry after updating the live service', 'Waiting for the live session to end'] }
   let tableSeen = 0
   for (const control of PRESENTER_CONTROLS) {
     const c = byId.get(control.id)

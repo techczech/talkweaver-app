@@ -1,0 +1,191 @@
+/* 0.44 look ("ocean"): section lead colours. Design record docs/design/2026-11-10-native-slide-redesign/
+   (handoff-0.44-basics.md "Locked on 11 Nov 23:09" and "Added 11 Nov 23:27"; frames round-9-amber-sections l1 to l5,
+   round-10-sampler S01 to S06, round-11-fixes S02, S04, S13 and s13-four-leads.png).
+
+   The compiler stamps data-lead on every Ocean slide (compiler/scripts/lib/section-leads.mjs: the talk's rotation,
+   its `section-colours:` list or a section's own {section-colour=…}). This file turns the stamp into the look's lead
+   tokens. What takes the lead: the section divider, the full statement, the light statement's rule, the title
+   slide's disc, the side rail beside a title and the title tab. Detail slides (cards, rows, flows, charts) keep
+   colour by count in Ocean whatever the section's lead, and the current item of a reveal stays an Ocean fill.
+
+     blue         Ocean field, white type. Exactly the tokens of 00-tokens.css (and it undoes Bold's amber when a
+                  bold talk names blue for a section).
+     amber        amber field, near-black type (8.65:1); the tokens Bold already uses.
+     deep-blue    Deeper Ocean field, white type (7.06:1); the tab on the field is Ocean (4.91:1).
+     light        light-led: white divider with a large Ocean number and near-black title; the full statement in
+                  Ocean type on white; light neutral rail with an Ocean title and an Ocean edge rule.
+     light-amber  light-led: white divider with the number in a large amber disc; the full statement in Deeper Ocean
+                  type on white; light neutral rail with a Deeper Ocean title and an amber edge rule.
+
+   Contrast pairs are asserted in scripts/test-section-colours.mjs. `palette: classic` and `green` stamp no data-look,
+   so nothing here applies to them. */
+
+/* ---------- the tokens of each lead ---------- */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"]) {
+  --look-rail: var(--look-lead);                 /* the side rail beside a title (S13) */
+  --look-on-rail: var(--look-on-lead);
+  --look-rail-edge: var(--look-rail);            /* the thin rule at the rail's edge (light leads only) */
+  --look-tab: var(--look-main);                  /* the title tab on a slide that is not a field */
+  --look-on-tab: var(--look-on-main);
+  --look-disc: var(--look-lead);                 /* the title slide's disc and its icon */
+  --look-on-disc: var(--look-on-lead);
+  --look-lead-shape: var(--look-lead);           /* the light statement's rule */
+}
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead="blue"] {
+  --look-lead: var(--look-main);
+  --look-on-lead: var(--look-on-main);
+  --look-tab-on-lead: var(--look-deep);
+  --look-keyword-mark: transparent;
+}
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead="amber"] {
+  --look-lead: var(--look-companion);
+  --look-on-lead: var(--look-on-companion);
+  --look-tab-on-lead: var(--look-main);
+  --look-keyword-mark: var(--look-companion);
+  --look-tab: var(--look-companion);
+  --look-on-tab: var(--look-on-companion);
+}
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead="deep-blue"] {
+  --look-lead: var(--look-deep);
+  --look-on-lead: var(--look-on-deep);
+  --look-tab-on-lead: var(--look-main);
+  --look-keyword: var(--look-deep);              /* round-9 l3-3: key words in Deeper Ocean (7.06:1 on white) */
+  --look-keyword-mark: transparent;
+  --look-tab: var(--look-deep);
+  --look-on-tab: var(--look-on-deep);
+}
+/* The light leads: the field is white and the type on it is the lead's colour; shapes (disc, rule, rail edge, tab)
+   keep a colour of their own. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead="light"] {
+  --look-lead: var(--look-ground);
+  --look-on-lead: var(--look-main);
+  --look-tab-on-lead: var(--look-main);
+  --look-keyword-mark: transparent;
+  --look-lead-shape: var(--look-main);
+  --look-disc: var(--look-main);
+  --look-on-disc: var(--look-on-main);
+  --look-rail: var(--look-ground-neutral);
+  --look-on-rail: var(--look-main);
+  --look-rail-edge: var(--look-main);
+}
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead="light-amber"] {
+  --look-lead: var(--look-ground);
+  --look-on-lead: var(--look-deep);
+  --look-tab-on-lead: var(--look-companion);
+  --look-keyword-mark: var(--look-companion);
+  --look-lead-shape: var(--look-companion);
+  --look-disc: var(--look-companion);
+  --look-on-disc: var(--look-on-companion);
+  --look-rail: var(--look-ground-neutral);
+  --look-on-rail: var(--look-deep);
+  --look-rail-edge: var(--look-companion);
+  --look-tab: var(--look-companion);
+  --look-on-tab: var(--look-on-companion);
+}
+
+/* ---------- the side rail beside a title (S13): painted where the stage paints its tint rail ----------
+   Not important, so a layout that gives its slide a ground of its own (statements, the title and closing posters)
+   keeps it; only the rail's paint changes, never its width. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead][data-title-layout="left"]:not([data-ground="lead"]):not([data-layout="statement"]):not([style*="--slide-bg"]):has(> .slide-content > .slide-head:not(.slide-head-quiet)) {
+  background-image: linear-gradient(to right, var(--look-rail) 0, var(--look-rail) calc(var(--rail-w) - .5cqw), var(--look-rail-edge) calc(var(--rail-w) - .5cqw), var(--look-rail-edge) var(--rail-w), transparent var(--rail-w));
+}
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead][data-title-layout="left"]:not([data-ground="lead"]):not([data-layout="statement"]):not([style*="--slide-bg"]) > .slide-content > .slide-head:not(.slide-head-quiet),
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead][data-title-layout="left"]:not([data-ground="lead"]):not([data-layout="statement"]):not([style*="--slide-bg"]) > .slide-content > .slide-head:not(.slide-head-quiet) :is(h1, h2, p, .kicker, a, span) {
+  color: var(--look-on-rail) !important;
+}
+
+/* A slide that also shows its section's contents rail (.ct-rail-host, contents-rail-title-column.css) has its title
+   column after the contents rail: the lead paints that column, not the slide's left edge. Not in print, where the
+   contents rail is hidden and the title panel starts at the edge again. */
+@media not print {
+  .slide.ct-rail-host:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead][data-title-layout="left"]:not([data-ground="lead"]):not([data-layout="statement"]):not([style*="--slide-bg"]):has(> .slide-content > .slide-head:not(.slide-head-quiet)) {
+    background-image: linear-gradient(to right, transparent 0, transparent var(--ct-rail-w), var(--look-rail) var(--ct-rail-w), var(--look-rail) calc(var(--ct-rail-w) + var(--ct-title-w) - .5cqw), var(--look-rail-edge) calc(var(--ct-rail-w) + var(--ct-title-w) - .5cqw), var(--look-rail-edge) calc(var(--ct-rail-w) + var(--ct-title-w)), transparent calc(var(--ct-rail-w) + var(--ct-title-w)));
+  }
+}
+
+/* The corner QR sits at the foot of the rail, on its own white card. Its address may be wider than the rail, so it is
+   set on white too, in the look's supporting grey (8.2:1 on white): readable on the rail and past it. The white margin
+   is a shadow, so nothing moves. A slide with its own background ({bg=…}) keeps the stage's tint rail and its own
+   colours, so none of this applies. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead][data-title-layout="left"]:not([data-ground="lead"]):not([data-layout="statement"]):not([style*="--slide-bg"]):has(> .slide-content > .slide-head:not(.slide-head-quiet)) .slide-qr.slide-qr-corner .qr-caption {
+  color: var(--look-muted) !important; background: var(--look-ground); box-shadow: 0 0 0 .35em var(--look-ground); border-radius: .15em;
+}
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead][data-title-layout="left"]:not([data-ground="lead"]):not([data-layout="statement"]):not([style*="--slide-bg"]):has(> .slide-content > .slide-head:not(.slide-head-quiet)) .slide-qr.slide-qr-corner .qr-caption a { color: inherit !important; }
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead][data-title-layout="left"]:not([data-ground="lead"]):not([data-layout="statement"]):not([style*="--slide-bg"]):has(> .slide-content > .slide-head:not(.slide-head-quiet)) .slide-qr.slide-qr-corner.qr-too-long a {
+  color: var(--look-deep) !important; background: var(--look-ground); box-shadow: 0 0 0 .35em var(--look-ground); border-radius: .15em;
+}
+
+/* ---------- the title tab (the app's title tick) on a slide that is not a field ---------- */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-lead]:not([data-ground="lead"])[data-title-layout="top"][data-title-look="tab"]:not([data-title-look-tone="soft"]) {
+  --titlelook-fill: var(--look-tab);
+  --titlelook-ink: var(--look-on-tab);
+}
+/* a kicker title on a field is drawn in the field's type colour (white would be 2.05:1 on amber and invisible on the
+   light leads' white field) */
+.slide[data-look="ocean"][data-ground="lead"]:is([data-lead="amber"], [data-lead^="light"])[data-title-look="kicker"] { --titlelook-ink: var(--look-on-lead) !important; }
+/* the tab on a light-amber field is amber, so its type is near-black */
+.slide[data-look="ocean"][data-lead="light-amber"][data-ground="lead"][data-layout="statement"] { --titlelook-ink: var(--look-on-companion); }
+.slide[data-look="ocean"][data-lead="light-amber"][data-ground="lead"][data-layout="statement"]:has(> .slide-content.statement-bg-strong) { --titlelook-ink: var(--look-on-companion) !important; }
+
+/* ---------- the light statement's rule and the title slide's disc take the lead's shape colour ---------- */
+.slide[data-look="ocean"][data-lead][data-layout="statement"] > .slide-content.layout-statement:is(.statement-bg-rule, .statement-bg-lower-third) > :is(p, .content-p):not(.kicker):first-of-type::before {
+  background: var(--look-lead-shape) !important;
+}
+.slide[data-look="ocean"][data-lead] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing)::after { background: var(--look-disc); }
+.slide[data-look="ocean"][data-lead] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-title > .title-with-icon > .title-icon { color: var(--look-on-disc); }
+
+/* ---------- light leads: the divider ---------- */
+/* light: a large Ocean number above a near-black title (round-9 l4-1, round-10 S02 light: 440px) */
+.slide[data-look="ocean"][data-ground="lead"][data-lead^="light"] > .slide-content.layout-section-title :is(h1, .kicker, p) { color: var(--look-ink) !important; }
+.slide[data-look="ocean"][data-ground="lead"][data-lead="light"] > .slide-content.layout-section-title[data-section-number]::before {
+  font-size: 27.5cqw; line-height: .86; color: var(--look-main);
+}
+.slide[data-look="ocean"][data-ground="lead"][data-lead="light"] > .slide-content.layout-section-title[data-oc-title="long"][data-section-number]::before { font-size: 18cqw; }
+.slide[data-look="ocean"][data-ground="lead"][data-lead="light"] > .slide-content.layout-section-title[data-oc-title="very-long"][data-section-number]::before { font-size: 7cqw; line-height: 1; }
+/* light-amber: the number in a large amber disc bleeding off the right edge, the title left of it (round-9 l5-1:
+   an 820px disc, a third off the edge, the number 220px). The disc is cut from a box inside the slide, as the title
+   slide's disc is, so nothing overflows the stage. */
+.slide[data-look="ocean"][data-ground="lead"][data-lead="light-amber"] > .slide-content.layout-section-title[data-section-number]::before {
+  position: absolute; z-index: 0; top: 0; bottom: 0; right: 0; width: 34.85cqw; margin: 0;
+  display: flex; align-items: center; box-sizing: border-box; padding-left: 8.7cqw;
+  background: var(--look-companion); clip-path: circle(25.625cqw at 25.625cqw 50%);
+  font-size: 13.75cqw; line-height: 1; color: var(--look-on-companion);
+}
+.slide[data-look="ocean"][data-ground="lead"][data-lead="light-amber"] > .slide-content.layout-section-title > .slide-head { position: relative; z-index: 1; max-width: 56cqw; }
+.slide[data-look="ocean"][data-ground="lead"][data-lead="light-amber"] > .slide-content.layout-section-title h1 { max-width: 56cqw !important; }
+
+/* ---------- light leads: what sits on the white field ---------- */
+/* The floating section timer over a field takes the field's type colour: near-black over amber and over the light leads'
+   white (white was 2.05:1 on amber), white over Ocean and Deeper Ocean. In its last ten seconds too: the flash still marks
+   them, and the deck accent it took there was unreadable on the blue fields (1.42:1 on Ocean, 1.02:1 on Deeper Ocean). */
+body:has(.slide.active[data-look="ocean"][data-ground="lead"]) .section-timer-float.countdown-final { color: #FFFFFF; }
+body:has(.slide.active[data-look="ocean"][data-ground="lead"]:is([data-lead="amber"], [data-lead^="light"])) :is(.section-timer-float, .section-timer-float.countdown-final) { color: #16181D; }
+/* a button on a white field is the look's Ocean button, not the white button of a coloured field */
+.slide[data-look="ocean"][data-ground="lead"][data-lead^="light"] .slide-action { background: var(--look-main) !important; color: var(--look-on-main) !important; border-color: var(--look-main) !important; }
+
+/* ---------- the fall-back drawing (data-look="ocean-safe": a slide the runtime could not fit, drawn on the 0.43
+   structure in the look's colours) keeps its section's lead on the same elements ----------
+   A divider or a full statement keeps its field in the lead with the field's type colours (its 0.43 tint panels and
+   the accent line take the field's type colour too); a statement's side rail is the lead rail, as on every other slide
+   with a rail; the rail and the title tab already read the lead tokens. */
+.slide[data-look="ocean-safe"][data-lead][data-ground="lead"] {
+  background: var(--look-lead) !important; --accent: var(--look-on-lead) !important; --tint: var(--look-lead); color: var(--look-on-lead);
+}
+.slide[data-look="ocean-safe"][data-lead][data-ground="lead"] > .slide-content { background: none !important; }
+.slide[data-look="ocean-safe"][data-lead][data-ground="lead"] > .slide-content :is(h1, h2, h3, p, li, blockquote, cite, figcaption, span, a, strong, em, b, mark, .kicker):not(svg *):not(.slide-action):not(.slide-action *) {
+  color: var(--look-on-lead) !important; background-color: transparent !important;
+}
+.slide[data-look="ocean-safe"][data-lead^="light"][data-ground="lead"][data-role="section-title"] > .slide-content :is(h1, h2, p, span, a, .kicker):not(svg *):not(.slide-action):not(.slide-action *) { color: var(--look-ink) !important; }
+.slide[data-look="ocean-safe"][data-lead][data-ground="lead"] .slide-action { background: var(--look-ground) !important; color: var(--look-ink) !important; border-color: var(--look-ground) !important; }
+.slide[data-look="ocean-safe"][data-lead^="light"][data-ground="lead"] .slide-action { background: var(--look-main) !important; color: var(--look-on-main) !important; border-color: var(--look-main) !important; }
+body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]) .section-timer-float.countdown-final,
+body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]) .section-timer-float { color: #FFFFFF; }
+body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead="amber"], [data-lead^="light"])) :is(.section-timer-float, .section-timer-float.countdown-final) { color: #16181D; }
+/* a statement that is not a field, fallen back beside its title: the lead rail and its title colour */
+.slide[data-look="ocean-safe"][data-lead][data-layout="statement"][data-title-layout="left"]:not([data-ground="lead"]):not([style*="--slide-bg"]):has(> .slide-content > .slide-head:not(.slide-head-quiet)) {
+  background-image: linear-gradient(to right, var(--look-rail) 0, var(--look-rail) calc(var(--rail-w) - .5cqw), var(--look-rail-edge) calc(var(--rail-w) - .5cqw), var(--look-rail-edge) var(--rail-w), transparent var(--rail-w)) !important;
+}
+.slide[data-look="ocean-safe"][data-lead][data-layout="statement"][data-title-layout="left"]:not([data-ground="lead"]):not([style*="--slide-bg"]) > .slide-content > .slide-head:not(.slide-head-quiet) :is(h1, h2, p, .kicker, a, span) {
+  color: var(--look-on-rail) !important;
+}
+

@@ -68,7 +68,7 @@ export function registerVideoPackageIpc(host: VideoPackHost) {
     if (!listed.length || (Array.isArray(run.audio?.segments) && listed.length !== run.audio.segments.length)) throw new Error('Part of the local recording is missing.')
     // Empty segments (a 0-byte file, no recorded span) hold no audio and are left out.
     const ready = host.transcription.readiness()
-    if (!ready.ffmpeg.found) throw new Error('ffmpeg could not be found. Check Settings → Transcription.')
+    if (!ready.ffmpeg.found) throw new Error('ffmpeg could not be found. Check Settings → Get started → Transcription.')
     const segments = await audibleSegmentPaths(host.userDataDir(),input.sessionId,recording,ready.ffmpeg.path)
     if (!segments.length) throw new Error('The local recording has no audio segments.')
     run.recordingMs = Math.max(run.recordingMs || 0, ...segments.map(s => s.endMs))

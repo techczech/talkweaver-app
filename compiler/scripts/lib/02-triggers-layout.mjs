@@ -4,6 +4,7 @@ import { parseVideoEmbed, isVideoEmbedUrl } from "./image-line-rules.mjs";
 export { parseVideoEmbed, isVideoEmbedUrl };
 import { LIST_VALUE_KEYS, TRIGGER_LINE_RE, tokenizeTriggerBody } from "./trigger-tokenizer.mjs";
 import { TITLE_REGIME_BY_LAYOUT } from "./trigger-dictionary.generated.mjs";
+import { normaliseTriggerValue } from "./trigger-value-spelling.mjs";
 
 export { renderInline };
 // Tokenise the inside of a `{…}` attribute trailer into tokens separated by whitespace OR a
@@ -150,7 +151,7 @@ export function parseHeadingAttrs(rawTitle) {
         // Explicit `key=value` (a double-quoted value is already unwrapped by the tokeniser, so a
         // value may contain spaces). Kept verbatim — explicit form is unchanged by the resolver.
         const key = tok.slice(0, eq);
-        const value = tok.slice(eq + 1);
+        const value = normaliseTriggerValue(key, tok.slice(eq + 1));
         setKey(key, value);
         validateExplicitToken(key, value, "equals", warnings);
         continue;

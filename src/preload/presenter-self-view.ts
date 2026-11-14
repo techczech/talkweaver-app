@@ -1,5 +1,7 @@
 import { ipcRenderer } from 'electron'
 import type { RecorderController } from './present-recorder'
+import { dressPresenterButton, presenterControl } from '../shared/presenter-controls.ts'
+import { SHORTCUT_REGISTRY } from '../shared/shortcut-registry.ts'
 
 /** Presenter-only DOM; never sent through audience sync or drawn onto the slides canvas. */
 export function mountSelfView(controller: RecorderController, layered: boolean, previewWanted: () => boolean = () => false): () => void {
@@ -14,13 +16,19 @@ export function mountSelfView(controller: RecorderController, layered: boolean, 
     #presenterRoot[data-notes-placement="bottom"]:has(#twrec-self-view:not([hidden])) #presenterNotes { grid-column:1; }
   `
   document.head.appendChild(style)
-  panel.innerHTML = '<button type="button" class="rec-btn" aria-expanded="true">Hide self-view</button><video autoplay muted playsinline style="width:100%;max-height:100px;object-fit:contain"></video><p>Position and size are chosen later</p>'
+  panel.innerHTML = '<button type="button" class="rec-btn" id="twrec-self-view-toggle" aria-expanded="true">Hide self-view</button><video autoplay muted playsinline style="width:100%;max-height:100px;object-fit:contain"></video><p>Position and size are chosen later</p>'
   ;(document.querySelector('.presenter-side') ?? document.body).appendChild(panel)
   const video = panel.querySelector('video')!
   const toggle = panel.querySelector('button')!
+  // Its words say what a click does, and its name on hover follows them.
+  const label = (): void => {
+    const text = video.hidden ? 'Show self-view' : 'Hide self-view'
+    dressPresenterButton(toggle, presenterControl('twrec-self-view-toggle'), SHORTCUT_REGISTRY, { label: text, name: text })
+  }
+  label()
   toggle.addEventListener('click', () => {
     video.hidden = !video.hidden
-    toggle.textContent = video.hidden ? 'Show self-view' : 'Hide self-view'
+    label()
     toggle.setAttribute('aria-expanded', String(!video.hidden))
   })
   let preview: MediaStream | null = null, revision = 0

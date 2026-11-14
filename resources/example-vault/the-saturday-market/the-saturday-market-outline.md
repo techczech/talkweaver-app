@@ -135,7 +135,7 @@ Saturdays, eight until one.
 
 > **Try it.** In All commands (<kbd>⌘⇧P</kbd>) choose **Insert table**, **Insert mindmap**, **Insert Chart**, **Insert Mermaid diagram**, **Insert diagram…** or **Insert SVG**.
 
-> **Try it.** The same list (<kbd>⌘⇧P</kbd>) has **Insert Code**, **Insert QR code**, **Insert Action button**, **Insert embed / simulation**, **Insert HTML page…**, **Insert auto-embed** or **Insert countdown**, **Insert speaker notes** or **Capture embed…**. **Save offline HTML snapshot…** saves a sanitised local copy of a slide’s HTML page and its supporting data. **Insert speaker notes** adds notes.
+> **Try it.** The same list (<kbd>⌘⇧P</kbd>) has **Insert Code**, **Insert QR code**, **Insert Action button**, **Insert embed / simulation**, **Insert HTML page…**, **Insert auto-embed**, **Insert countdown** and **Capture embed…**; **Save offline HTML snapshot…** keeps a local copy of a slide’s web page.
 
 ### Notes and saved page views
 {id=practice-page-capture}

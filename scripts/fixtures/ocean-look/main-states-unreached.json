@@ -1,0 +1,12 @@
+[
+ {
+  "outline": "sampler",
+  "slide": "t22-horizontal-2",
+  "why": "The reference compiler (6771720b) splits the timeline into a continuation slide that is in its compiled model and DOM but has no beat in its beat list (window.__deckBeats), so Next never reaches it; nothing to compare against. The current walk measures it and any clip there fails as newly clipped."
+ },
+ {
+  "outline": "sampler",
+  "slide": "t22-pills-split-2",
+  "why": "The reference compiler (6771720b) splits the timeline into a continuation slide that is in its compiled model and DOM but has no beat in its beat list (window.__deckBeats), so Next never reaches it; nothing to compare against. The current walk measures it and any clip there fails as newly clipped."
+ }
+]

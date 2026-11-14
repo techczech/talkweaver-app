@@ -38,7 +38,8 @@ try {
  const marker=join(root,'annotating')
  exe('helper',`require('fs').writeFileSync(${JSON.stringify(marker)},'started');setTimeout(()=>{},10000)`)
  const tx=createTranscription({...deps,annotationTimeoutMs:10000})
- const waitFor=async predicate=>{const until=Date.now()+5000;while(!predicate()){assert.ok(Date.now()<until,'timed out');await new Promise(r=>setTimeout(r,10))}}
+ // 20 s, not 5: on a loaded machine a killed grandchild can take several seconds to be reaped (the wait still ends as soon as the condition holds).
+ const waitFor=async predicate=>{const until=Date.now()+20000;while(!predicate()){assert.ok(Date.now()<until,'timed out');await new Promise(r=>setTimeout(r,10))}}
  const abort=new AbortController(),pending=tx.run('fixture',sid,null,abort.signal)
  await waitFor(()=>existsSync(marker));abort.abort();assert.deepEqual(await pending,{ok:false,error:'cancelled'});check('cancel during annotation stays cancelled')
  const spawnSpy=mock.method(childProcess,'spawn');syncBuiltinESMExports()
@@ -111,11 +112,16 @@ try {
  })
  await regression('Studio clears busy on the final retry note',()=>assert.ok(readFileSync('src/renderer/src/components/Studio.tsx','utf8').includes("event.note === 'Words were not written. Retry from the Run.'")))
  const childPid=join(root,'child-pid'),wav=join(root,'wav-path')
- exe('helper',`const fs=require('fs');fs.writeFileSync(${JSON.stringify(wav)},process.argv[2]);const child=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>{},100000)'],{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(childPid)},String(child.pid));setTimeout(()=>{},100000)`)
+ exe('helper',`const fs=require('fs');fs.writeFileSync(${JSON.stringify(wav)},process.argv[2]);const child=require('child_process').spawn(process.execPath,['-e','setTimeout(()=>{},100000)'],{stdio:'ignore'});fs.writeFileSync(${JSON.stringify(childPid+'.tmp')},String(child.pid));fs.renameSync(${JSON.stringify(childPid+'.tmp')},${JSON.stringify(childPid)});setTimeout(()=>{},100000)`)
  const quitting=nativeTx.run('fixture',sid,null);await waitFor(()=>existsSync(childPid))
  const busyNotes=[];await transcribeSavedRun({...nativeDeps,nativeAvailable:async()=>true},'fixture',sid,n=>busyNotes.push(n));assert.deepEqual(busyNotes,[]);check('busy automatic run is silent and leaves manual job active')
  stopActiveTranscription();assert.equal(existsSync(readFileSync(wav,'utf8')),false);assert.equal((await quitting).error,'cancelled')
- await waitFor(()=>{try{process.kill(Number(readFileSync(childPid,'utf8')),0);return false}catch{return true}});check('quit kills child tree and removes WAV immediately')
+ // The pid file is renamed into place, so it is never read half-written: an empty read gave pid 0, and kill(0, 0) signals our own group and always succeeds.
+ const grandchild=Number(readFileSync(childPid,'utf8'));assert.ok(Number.isInteger(grandchild)&&grandchild>0,`grandchild pid ${grandchild}`)
+ // Gone, or a zombie waiting to be reaped: either way it no longer runs. kill(pid, 0) alone also succeeds on a zombie.
+ // ps exits 1 when no process has that pid; any other failure (ps missing, not permitted) is a broken check, not a stopped process.
+ const stillRuns=()=>{try{return !/^Z/.test(childProcess.execFileSync('ps',['-o','stat=','-p',String(grandchild)]).toString().trim())}catch(error){if(error.status===1)return false;throw error}}
+ await waitFor(()=>!stillRuns());check('quit kills child tree and removes WAV immediately')
  const {EventEmitter}=await import('node:events')
  const exited=new EventEmitter();Object.assign(exited,{pid:99999999,exitCode:0,signalCode:null,stdout:new EventEmitter(),stderr:new EventEmitter(),kill:()=>{throw Error('exited child killed')}})
  const killSpy=mock.method(process,'kill',()=>{throw Error('stale group signalled')})

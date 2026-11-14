@@ -4,7 +4,8 @@ import { audibleSegments } from '../shared/recording-clock.ts'
  * The one ffmpeg recording clock: measured segments are trimmed/padded to their declared span.
  * Segments with no recorded span hold no audio and are left out (audibleSegments).
  */
-export function recordingAudioTimeline(all:ReadonlyArray<{path:string;startMs:number;endMs:number}>,recordingMs:number){
+/** `offsetMs` (optional): where in its file a segment starts (a piece of a file placed by Record this slide again). */
+export function recordingAudioTimeline(all:ReadonlyArray<{path:string;startMs:number;endMs:number;offsetMs?:number}>,recordingMs:number){
   const segments=audibleSegments(all)
   if(!segments.length)throw new Error('The local recording has no audio segments.')
   const legacy=segments.every(s=>s.startMs===0&&s.endMs===0)
@@ -20,7 +21,8 @@ export function recordingAudioTimeline(all:ReadonlyArray<{path:string;startMs:nu
     const input=i+(legacy?0:1)
     if(!legacy&&(!Number.isFinite(s.startMs)||!Number.isFinite(s.endMs)||s.startMs<0||s.endMs<=s.startMs))throw new Error('An audio segment has invalid recording times.')
     const span=(s.endMs-s.startMs)/1000
-    const bounds=legacy?'':`atrim=duration=${span},apad=whole_dur=${span},atrim=duration=${span},`
+    const skip=!legacy&&s.offsetMs&&s.offsetMs>0?`atrim=start=${s.offsetMs/1000},asetpts=PTS-STARTPTS,`:''
+    const bounds=legacy?'':`${skip}atrim=duration=${span},apad=whole_dur=${span},atrim=duration=${span},`
     const delay=legacy?'':`,adelay=${Math.round(s.startMs)}:all=1`
     filters.push(`[${input}:a]${bounds}asetpts=PTS-STARTPTS,aresample=48000,aformat=sample_fmts=s16:sample_rates=48000:channel_layouts=mono${delay}[segment${i}]`)
     labels.push(`[segment${i}]`)

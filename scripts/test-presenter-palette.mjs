@@ -114,7 +114,7 @@ let browser
 try {
   // ── Static: the table against the registry ──────────────────────────────────────────────────
   check(same(PRESENTER_PALETTE.map(([g]) => g), GROUPS), `palette groups are the drawn eight (${PRESENTER_PALETTE.map(([g]) => g).join(', ')})`)
-  check(ENTRIES.length === 75, `the palette has the drawn 56 commands, the two phone switches, the five board commands, Pointer, Embedded page: full screen, the Pen's eight (ticket 08) the Guide (onboarding ticket 10) and Return Live, 75 (${ENTRIES.length})`)
+  check(ENTRIES.length === 78, `the palette has the drawn 56 commands, the two phone switches, the five board commands, Pointer, Embedded page: full screen, the Pen's eight (ticket 08) the Guide (onboarding ticket 10), Return Live, Mark a mistake, and the recording cluster's Start again and Microphone (every cluster control runs a listed command), 78 (${ENTRIES.length})`)
   check(new Set(ENTRIES.map((e) => e.id)).size === ENTRIES.length, 'palette ids are unique')
   const presenterKeys = SHORTCUT_REGISTRY.filter((e) => e.scope === 'presenter')
   for (const entry of presenterKeys) {
@@ -191,7 +191,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     check(await page.evaluate(() => document.activeElement?.id === 'presenterCommandSearch'), 'the search field has focus')
     check(await page.evaluate(() => document.getElementById('presenterCommandSearch').placeholder) === 'Search presenter commands', 'the search field reads "Search presenter commands"')
     const count = await page.textContent('#presenterCommandCount')
-    check(count === '75 commands', `the count reads "75 commands" (${count})`)
+    check(count === '78 commands', `the count reads "78 commands" (${count})`)
     const list = await rows(page)
     check(list.length === ENTRIES.length, `every entry has a row (${list.length} of ${ENTRIES.length})`)
     for (const [group, entries] of PRESENTER_PALETTE) {

@@ -29,6 +29,8 @@ export type RecordingExportOptions = {
   editedMs: number
   chapterCount: number
   hasCaptionText: boolean
+  /** Said under Captions when part of the video has no captions (a new take whose words are not written out yet). */
+  captionNote?: string | null
   /**
    * Wait for every edit the window has made to be saved, then name the saved revision the export must use.
    * An error (a save failed) stops the export before the sheet opens, and says what failed.
@@ -44,7 +46,7 @@ export type RecordingExportOptions = {
   setWithoutWords?: (on: boolean) => void
 }
 
-export function useRecordingExport({ runRef, title, slides, fixed = false, audioOnly, hasCamera, camera, editedMs, chapterCount, hasCaptionText, settle, onStale, withoutWords = false, setWithoutWords }: RecordingExportOptions): {
+export function useRecordingExport({ runRef, title, slides, fixed = false, audioOnly, hasCamera, camera, editedMs, chapterCount, hasCaptionText, captionNote = null, settle, onStale, withoutWords = false, setWithoutWords }: RecordingExportOptions): {
   exporting: Exporting
   setExporting: (e: Exporting) => void
   /** Open the sheet once every edit is saved (Export… buttons call this). */
@@ -104,12 +106,13 @@ export function useRecordingExport({ runRef, title, slides, fixed = false, audio
           <div className="twrp-sheet" role="dialog" aria-modal="true" aria-label="Export">
             {exporting.state === 'choose' ? <>
               <h3>{audioOnly ? 'Export sound' : 'Export video'}</h3>
-              <p className="twrp-summary">{minutes(editedMs)}{audioOnly ? ' · sound only' : ` · Full HD · ${hasCamera ? (camera ? 'camera in the corner · ' : 'no camera · ') : ''}${chapterCount} ${chapterCount === 1 ? 'chapter' : 'chapters'}`}</p>
+              <p className="twrp-summary">{minutes(editedMs)}{audioOnly ? ' · sound only' : ` · Full HD · ${hasCamera ? (camera ? 'with camera · ' : 'without camera · ') : ''}${chapterCount} ${chapterCount === 1 ? 'chapter' : 'chapters'}`}</p>
               <fieldset>
                 <legend>Also save</legend>
                 {withoutWords
                   ? <p className="twrp-quiet" role="note">Without captions: the words could not be read. The editor shows the video as it will be exported, without words.</p>
                   : <label><input type="checkbox" checked={extras.captions} onChange={(e) => setExtras({ ...extras, captions: e.target.checked })} /> <Captions className="lt-icon" /> Captions file (SRT and WebVTT){hasCaptionText ? '' : ' — no words yet'}</label>}
+                {!withoutWords && captionNote ? <p className="twrp-quiet" role="note">{captionNote}</p> : null}
                 {!audioOnly ? <label><input type="checkbox" checked={extras.chapterList} onChange={(e) => setExtras({ ...extras, chapterList: e.target.checked })} /> Chapter list to paste into YouTube</label> : null}
                 {!audioOnly ? <label><input type="checkbox" checked={extras.sound} onChange={(e) => setExtras({ ...extras, sound: e.target.checked })} /> Sound only (M4A)</label> : null}
               </fieldset>

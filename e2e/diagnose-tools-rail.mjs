@@ -85,8 +85,8 @@ async function openTools(app, page, view, ...rest) {
     for (const [view, texts] of Object.entries(empty)) {
       await tools.locator(`[data-tools-rail="${view}"]`).click()
       await tools.waitForSelector(`[data-tools-view="${view}"]`, { timeout: 5000 }).catch(() => {})
-      // Work files and Published pages ask main for their lists first; the empty state shows once the answer is in.
-      if (view === 'workfiles' || view === 'published') await tools.waitForSelector(`[data-tools-view="${view}"] .tw-tools-empty`, { timeout: 5000 }).catch(() => {})
+      // Runs, Work files and Published pages ask main for their lists first; the empty state shows once the answer is in.
+      await tools.waitForSelector(`[data-tools-view="${view}"] .tw-tools-empty`, { timeout: 5000 }).catch(() => {})
       const body = (await tools.locator(`[data-tools-view="${view}"]`).textContent().catch(() => '')) ?? ''
       if (shotsDir) await tools.screenshot({ path: join(shotsDir, `${view}.png`) }).catch(() => {})
       rec(`${view} shows its empty state`, texts.every((t) => body.includes(t)), body.trim().slice(0, 100))

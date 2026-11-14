@@ -35,6 +35,17 @@ async function until(read, ok, timeout = 8_000) {
     await sleep(100)
   }
 }
+// ⇧R starts a recording. Every presenter recording is layered (6dd036f3): the camera and microphone
+// check comes first (unless this computer's devices are already confirmed), then a 3-2-1 countdown.
+async function startRecording(page) {
+  await page.keyboard.press('Shift+R')
+  const check = page.locator('.twrec-device-check')
+  if (await check.waitFor({ timeout: 5_000 }).then(() => true, () => false)) {
+    await page.waitForFunction(() => document.querySelector('.twrec-device-check [data-continue]')?.disabled === false, null, { timeout: 15_000 })
+    await check.locator('[data-continue]').click()
+  }
+  return until(() => page.evaluate(() => document.getElementById('twrec-module')?.dataset.rec ?? ''), (rec) => rec === 'recording', 10_000)
+}
 
 const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), 'tw-e2e-presenter-publication-')))
 const userData = join(tempRoot, 'userData')
@@ -93,7 +104,8 @@ mkdirSync(clean.HOME, { recursive: true })
 try {
   await ensureFreshBuild(REPO)
   app = await electron.launch({
-    args: ['.', `--user-data-dir=${userData}`], cwd: REPO, timeout: 60_000,
+    // Fake camera and microphone (as diagnose-presenter-layers.mjs): a presenter recording checks its devices first.
+    args: ['.', `--user-data-dir=${userData}`, '--use-fake-device-for-media-stream'], cwd: REPO, timeout: 60_000,
     env: { ...clean, TW_E2E: '1', TW_REC_TEST: '1', TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: 'stand-in-admin-secret' },
   })
   await app.evaluate(({ shell, BrowserWindow, app: electronApp }) => {
@@ -222,8 +234,7 @@ try {
   const otherRemoved = await unpublishRun('run-one')
   record('another Run unpublish leaves this presenter link alone', otherRemoved.success === true && await stamp(runPage) === notThis.url)
   await runPage.evaluate(() => { document.querySelector('button[data-minutes]')?.click(); document.getElementById('twStartTimerBtn')?.click() })
-  await runPage.keyboard.press('Shift+R')
-  await until(() => runPage.evaluate(() => document.getElementById('twrec-module')?.dataset.rec), (value) => value === 'recording')
+  await startRecording(runPage)
   const removingBefore = await pageMark(runPage)
   const removalClockBefore = await runPage.evaluate(() => document.getElementById('twClock')?.textContent)
   await press(runPage, 'u')
@@ -259,8 +270,7 @@ try {
   // ---- A recording in progress keeps its window, and the window keeps its Run.
   const held = await openPresenter(zeta, 'run-held')
   const heldPage = held.presenter
-  await heldPage.keyboard.press('Shift+R')
-  const armed = await until(() => heldPage.evaluate(() => document.getElementById('twrec-module')?.dataset.rec ?? ''), (rec) => rec === 'recording')
+  const armed = await startRecording(heldPage)
   record('a recording is running', armed === 'recording', armed)
   const heldBefore = await pageMark(heldPage)
   const refused = await editor.evaluate(({ path, text }) => window.tw.talk.present(path, text, 'presenter', undefined, 'run-other'), { path: zeta.path, text: zeta.text })

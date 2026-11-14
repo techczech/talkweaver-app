@@ -10,14 +10,14 @@
 // a stated reason and kept unchanged; nothing is written until the owner chooses "Start new edits",
 // which moves it aside to `<runId>.edits.kept-<time>.json` first.
 import { randomUUID } from 'node:crypto'
-import { closeSync, constants, fstatSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs'
+import { closeSync, constants, fstatSync, fsyncSync, linkSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync, writeSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { applyEditOp, EDITS_MAX_BYTES, emptyEdits, fitEditsBudget, parseEditsText, serialiseEdits, type EditOp, type EditsContext, type EditsProblem, type RecordingEdits } from '../shared/recording-edits.ts'
+import { applyEditOp, EDITS_MAX_BYTES, emptyEdits, RECORDING_EDITS_VERSION, fitEditsBudget, parseEditsText, serialiseEdits, type EditOp, type EditsContext, type EditsProblem, type RecordingEdits } from '../shared/recording-edits.ts'
 
 export type EditsLocation = { path: string; runId: string; durationMs: number; fingerprint: string; context?: Omit<EditsContext, 'fingerprint'> }
 export type EditsSnapshot = { edits: RecordingEdits; problem: (EditsProblem & { file: string }) | null; keptAs?: string }
 /** File operations a test can make fail. */
-export type EditsIo = { write?: (fd: number, bytes: Uint8Array, offset: number) => number; flushFolder?: (folder: string) => void }
+export type EditsIo = { write?: (fd: number, bytes: Uint8Array, offset: number) => number; flushFolder?: (folder: string) => void; link?: (from: string, to: string) => void; beforeCreate?: () => void }
 
 function readSidecar(path: string): { text: string } | { missing: true } | { unreadable: true } {
   let fd: number
@@ -72,6 +72,81 @@ export function writeTextAtomic(target: string, text: string, beforeRename?: () 
   ;(io.flushFolder ?? flushFolder)(folder)
 }
 
+/**
+ * The name an edits file written by an older release is kept under when this release first saves over it:
+ * `<runId>.edits.version-<n>.json` beside it. A Mac still on that release cannot read the new version
+ * (it says the edits were made by a newer version); this copy is what that release last wrote.
+ */
+export function olderVersionPath(path: string, runId: string, version: number): string {
+  return join(dirname(path), `${runId}.edits.version-${version}.json`)
+}
+
+/**
+ * Whether a whole kept copy is already under its name: a plain file that reads as a complete edits file of that
+ * version for this recording (the same reading the editor itself gives it). Anything else under that name (a
+ * folder, a link, an empty file, a file cut short, an edits file of another version or recording) is left as it
+ * is and stops the save.
+ */
+function keptWhole(kept: string, version: number, loc: EditsLocation): boolean {
+  const read = readSidecar(kept)
+  if ('missing' in read) return false
+  if ('text' in read) try {
+    if ((JSON.parse(read.text) as { version?: unknown }).version === version && parseEditsText(read.text, loc.durationMs, { ...loc.context, fingerprint: loc.fingerprint }).ok) return true
+  } catch { /* cut short or not an edits file */ }
+  throw Error(`${basename(kept)} is already there and is not a complete copy of the earlier edits. It was left as it is; move it away to save.`)
+}
+
+/**
+ * Before the first save that upgrades an older edits file, keep its bytes once. Keeping it is a condition of
+ * the save: when the copy cannot be made, this throws and the edits file is left exactly as the older release
+ * wrote it. Nothing under the kept name is ever replaced: the copy is put there by a hard link (which fails
+ * when the name is taken and shows the copy whole or not at all) or, on a volume without hard links, by
+ * creating the file exclusively and writing it. Once that file exists under its name this save never removes
+ * it, whatever happens next: a copy cut short there (a crash, a full disk) does not read as whole, so it never
+ * stands in for one, and later saves are refused until it is moved away.
+ */
+function keepOlderVersion(loc: EditsLocation, io: EditsIo = {}): void {
+  const read = readSidecar(loc.path)
+  if (!('text' in read)) return
+  let version: unknown
+  try { version = (JSON.parse(read.text) as { version?: unknown }).version } catch { return }
+  if (typeof version !== 'number' || !Number.isInteger(version) || version >= RECORDING_EDITS_VERSION || version < 1) return
+  const kept = olderVersionPath(loc.path, loc.runId, version)
+  const temp = join(dirname(loc.path), `.${loc.runId}.edits.version-${version}.${randomUUID()}.tmp`)
+  const bytes = new TextEncoder().encode(read.text)
+  const writeWhole = (fd: number, write: NonNullable<EditsIo['write']> = (f, b, offset) => writeSync(f, b, offset, b.length - offset)) => {
+    for (let offset = 0; offset < bytes.length;) { const wrote = write(fd, bytes, offset); if (!(wrote > 0)) throw Error('The disk stopped accepting data'); offset += wrote }
+    fsyncSync(fd)
+  }
+  let ownTemp = false
+  try {
+    if (keptWhole(kept, version, loc)) return
+    const fd = openSync(temp, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
+    ownTemp = true
+    try { writeWhole(fd) } finally { closeSync(fd) }
+    try {
+      ;(io.link ?? linkSync)(temp, kept)
+    } catch {
+      // The name is taken, or this volume has no hard links (some network and removable disks).
+      if (keptWhole(kept, version, loc)) return // another window kept it first
+      io.beforeCreate?.()
+      let direct: number
+      try { direct = openSync(kept, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600) } catch (error) {
+        // Exclusive creation never replaces: whatever took the name in that moment is judged as it stands.
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST' && keptWhole(kept, version, loc)) return
+        throw error
+      }
+      // From here the name is public: another save may already have read this file. It is never removed here.
+      try { writeWhole(direct, io.write) } finally { closeSync(direct) }
+    }
+  } catch (error) {
+    throw Error(`The earlier version of these edits could not be kept, so nothing was changed. ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    if (ownTemp) try { unlinkSync(temp) } catch { /* already gone */ }
+  }
+  ;(io.flushFolder ?? flushFolder)(dirname(loc.path))
+}
+
 export function createRecordingEditsStore(deps: { locate: (key: unknown) => EditsLocation; beforeRename?: () => void; now?: () => Date; io?: EditsIo }) {
   function load(loc: EditsLocation): EditsSnapshot {
     const read = readSidecar(loc.path)
@@ -96,6 +171,7 @@ export function createRecordingEditsStore(deps: { locate: (key: unknown) => Edit
       const text = next && serialiseEdits(next)
       // Exactly what the reader would make of these bytes: a change it would refuse is never written.
       if (!next || !text || !parseEditsText(text, loc.durationMs, { ...loc.context, fingerprint: loc.fingerprint }).ok) throw Error('There are too many cuts to save. Use the whole recording, then cut again.')
+      keepOlderVersion(loc, deps.io)
       writeTextAtomic(loc.path, text, () => {
         deps.beforeRename?.()
         // A second writer between our read and rename loses nothing: we refuse instead.

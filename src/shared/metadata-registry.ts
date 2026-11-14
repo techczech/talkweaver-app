@@ -72,6 +72,33 @@ export interface MetadataEntry {
    * instead.
    */
   outsideDeck?: string
+  /**
+   * Closed keys only: the value may also be a comma-separated list of these option values, in order
+   * (`section-colours: blue, light`). The single choices stay offered as choices; a list is typed. Checked by
+   * metadataListError, which names the item that is not one of them.
+   */
+  listOf?: string[]
+}
+
+/** How a list item is spelled for comparison: lower case, hyphens for spaces and underscores. */
+const listItemSpelling = (item: string): string => item.trim().toLowerCase().replace(/[\s_]+/g, '-')
+
+/**
+ * Whether a value fits a list-capable key (one with `listOf`): empty, one of its documented choices, or a
+ * comma-separated list of `listOf` items. Returns null when it fits, otherwise a sentence naming the first item
+ * that does not. Keys without `listOf` always return null.
+ */
+export function metadataListError(entry: MetadataEntry, raw: string): string | null {
+  if (!entry.listOf) return null
+  const value = String(raw ?? '').trim()
+  if (!value) return null
+  const choices = entry.vocabulary.kind === 'closed' ? entry.vocabulary.options.map((option) => option.value) : []
+  if (choices.includes(listItemSpelling(value))) return null
+  const items = value.split(',').map(listItemSpelling)
+  const empty = items.findIndex((item) => !item)
+  if (empty >= 0) return `Item ${empty + 1} of the list is empty: write the names with a comma between them.`
+  const bad = items.find((item) => !entry.listOf!.includes(item))
+  return bad ? `“${bad}” is not one of: ${entry.listOf.join(', ')}.` : null
 }
 
 const bool = (onWhat: string, offWhat: string): MetadataVocabulary => ({
@@ -530,6 +557,31 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     ownership: 'user'
   },
   {
+    key: 'section-colours',
+    aliases: ['section_colours', 'section-colors'],
+    location: 'frontmatter',
+    type: 'text',
+    vocabulary: {
+      kind: 'closed',
+      options: [
+        { value: '', label: 'Rotate', explanation: 'Key absent — the sections take blue, amber, light, deep blue and light with amber in turn, then start again. With palette: bold every section is amber.' },
+        { value: 'off', label: 'Off', explanation: 'No rotation: every section takes the look’s own lead colour (blue; amber with palette: bold).' },
+        { value: 'blue', label: 'Blue', explanation: 'Every section blue: Ocean dividers, full statements, side rails and title tabs, with white type.' },
+        { value: 'amber', label: 'Amber', explanation: 'Every section amber, with near-black type; the detail slides stay blue.' },
+        { value: 'deep-blue', label: 'Deep blue', explanation: 'Every section Deeper Ocean, with white type.' },
+        { value: 'light', label: 'Light', explanation: 'Every section light: white dividers with a large Ocean number, statements in Ocean type, light side rails.' },
+        { value: 'light-amber', label: 'Light with amber', explanation: 'Every section light, with the divider’s number in a large amber disc and statements in Deeper Ocean type.' }
+      ]
+    },
+    listOf: ['blue', 'amber', 'deep-blue', 'light', 'light-amber'],
+    label: 'Section colours',
+    group: 'Appearance',
+    explanation:
+      'The lead colour of each section in the Ocean look: its divider, full statements, side rail and title tab. Absent: the sections rotate through blue, amber, light, deep blue and light with amber. Write a list to rotate through your own colours (section-colours: blue, light) or one colour for every section; off stops the rotation. A {section-colour=…} on a section’s ## heading sets that section alone. The rotation counts sections, so adding a slide changes no colour, and adding a section moves the colours of the sections after it. Slides outside a section (title, closing) take the first colour. Ignored with palette: classic or green. An unknown colour name raises a compiler warning.',
+    defaultable: true,
+    ownership: 'user'
+  },
+  {
     key: 'section_labels',
     aliases: ['section-labels'],
     location: 'frontmatter',
@@ -869,6 +921,19 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     explanation: 'Names the work file for after the Run (the picker shows file names). The line under the Talk details says whether a published Run has sent that file to anyone. Plan a Run starts from it: a new Run offers this file for the phase, and you can pick another file or None there.',
     ownership: 'user',
     outsideDeck: 'names the work file sent after the Run; its effect is the editor strip (test:work-strips) and the Work files view (test:work-files-view)'
+  },
+  {
+    key: 'section-colour', location: 'trigger', type: 'text',
+    vocabulary: { kind: 'closed', options: [
+      { value: 'blue', label: 'Blue', explanation: 'Written {section-colour=blue} on a ## section: Ocean divider, full statements, side rail and title tab, white type.' },
+      { value: 'amber', label: 'Amber', explanation: 'The section in amber, with near-black type; its detail slides stay blue.' },
+      { value: 'deep-blue', label: 'Deep blue', explanation: 'The section in Deeper Ocean, with white type.' },
+      { value: 'light', label: 'Light', explanation: 'The section light: a white divider with a large Ocean number, statements in Ocean type, a light side rail.' },
+      { value: 'light-amber', label: 'Light with amber', explanation: 'The section light, with the divider’s number in a large amber disc and statements in Deeper Ocean type.' }
+    ] },
+    label: 'Section colour',
+    explanation: 'On a ## heading: this section’s lead colour in the Ocean look, over the talk’s section-colours rotation. The other sections keep the colours the rotation gives them. Ignored with palette: classic or green.',
+    ownership: 'user'
   },
   {
     // The trigger token is {prework}; this entry is keyed prework-section so that `prework` stays free for the front-matter key above.

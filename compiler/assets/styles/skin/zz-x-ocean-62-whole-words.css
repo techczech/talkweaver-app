@@ -1,0 +1,33 @@
+/* 0.44 look ("ocean"): words in the look's boxes break only between words, never inside one. Replaces the earlier
+   last resort (overflow-wrap: break-word) in zz-x-ocean-10-layouts.css, -15-boxes-and-contrast.css and
+   -30-icon-list-rows.css: a word too long for its box now stands out of the box, the fitter (slide-fit.js itemsBreak)
+   reads that as "does not fit" and the slide takes the safe drawing, the 0.43 arrangement in the look's colours.
+   A carousel's card lists (.card-gallery) are left as drawn: the carousel fits its cards itself.
+   The doubled .slide outranks the earlier rules' own !important (the icon rows' label rule is seven classes deep). */
+.slide.slide[data-look="ocean"] .slide-content :is(.feature-list.fl-cards > li > .fl-text, .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-lead, .feature-list.fl-annotated:not([data-oc-fit="dense"]) .fl-text, .icon-row .ir-label, .steps-diagram .step-label, .equation-row .eq-term, .orgchart .org-box, .system-map .system-sat, .system-map .system-centre, .timeline.timeline-rail .tl-body) {
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+}
+.slide.slide[data-look="ocean"] .slide-content :is(.feature-list:not(.card-gallery .feature-list) > li > .fl-text, .feature-list:not(.card-gallery .feature-list) > li > .fl-sublist > li, .icon-row > .ir-item > .ir-label, .icon-row > .ir-item .ir-desc > li) {
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+}
+
+/* a row whose names do not fit beside their icons at any size down to the floor (slide-fit.js fitOceanItemLabels sets
+   data-oc-stack): the icon goes above the name and the name takes the panel's whole width */
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows[data-oc-fit="long"][data-oc-stack] > .ir-item { grid-template-columns: minmax(0, 1fr); }
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows[data-oc-fit="long"][data-oc-stack] > .ir-item > :is(.ir-icon, .ir-label, .ir-desc) { grid-column: 1 !important; }
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows[data-oc-fit="long"][data-oc-stack] > .ir-item > .ir-icon { grid-row: 1 !important; }
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows[data-oc-fit="long"][data-oc-stack] > .ir-item > .ir-label { grid-row: 2 !important; }
+.slide[data-look="ocean"] .slide-content > .icon-row.ir-rows[data-oc-fit="long"][data-oc-stack] > .ir-item > .ir-desc { grid-row: 3 !important; }
+
+/* the last resort (slide-fit.js oceanDecide sets data-oc-last-resort when a word is itself too long for its box: an
+   e-mail or web address, a path, a long compound): that word breaks inside its own box, in the look and in the safe
+   drawing, never standing out over the next box. break-word, not anywhere: a word breaks only when it cannot fit, and a
+   column's minimum width is not narrowed (anywhere let short words break in auto-sized columns) (the :not(#…) outranks the whole-words rules above) */
+.slide.slide[data-look="ocean"][data-oc-last-resort]:not(#oc-last-resort) .slide-content :is(.feature-list > li, .icon-row > .ir-item, .steps-diagram > .step-col, .equation-row .eq-term, .stats-row > .stat, .orgchart .org-box, .system-map > div),
+.slide.slide[data-look="ocean"][data-oc-last-resort]:not(#oc-last-resort) .slide-content :is(.feature-list > li, .icon-row > .ir-item, .steps-diagram > .step-col, .equation-row .eq-term, .stats-row > .stat, .orgchart .org-box, .system-map > div) *,
+.slide[data-look="ocean-safe"][data-oc-last-resort]:not(#oc-last-resort) .slide-content :is(.feature-list > li, .icon-row > .ir-item, .steps-diagram > .step-col, .equation-row .eq-term, .stats-row > .stat, .orgchart .org-box, .system-map > div),
+.slide[data-look="ocean-safe"][data-oc-last-resort]:not(#oc-last-resort) .slide-content :is(.feature-list > li, .icon-row > .ir-item, .steps-diagram > .step-col, .equation-row .eq-term, .stats-row > .stat, .orgchart .org-box, .system-map > div) * {
+  overflow-wrap: break-word !important;
+}

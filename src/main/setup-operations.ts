@@ -15,7 +15,7 @@
 //                            that one address when a live service is set up from this computer
 //   disconnect               Disconnect
 //   recording                Recording storage: endpoint and bucket (Save), keys, Check
-//   transcription            Settings → Transcription: Save
+//   transcription            Settings → Get started → Transcription: Save
 //   status                   Check again on each row
 //
 // No Electron import and erasable TypeScript only: scripts/test-setup-cli.mjs drives it with stand-ins.

@@ -29,10 +29,19 @@ Open the presenter, step through, then show the outline.
 
 > **Try it.** <kbd>P</kbd> starts or pauses the timer, <kbd>T</kbd> sets the length; **Reset timer** is in the presenter's list (<kbd>⌘⇧P</kbd>).
 
-> **Try it.** <kbd>⇧R</kbd> records and <kbd>⇧P</kbd> pauses. <kbd>⇧M</kbd> marks a mistake. <kbd>L</kbd> saves the run; at the last slide <kbd>↵</kbd> keeps it as a delivery.
-
 :::notes
 Five minutes go quickly. Start the timer before the first word.
+:::
+
+### Record the run
+{id=practice-record}
+
+> **Try it.** <kbd>⇧R</kbd> records and <kbd>⇧P</kbd> pauses. <kbd>⇧M</kbd> marks a mistake. <kbd>L</kbd> saves the run; at the last slide <kbd>↵</kbd> keeps it as a delivery.
+
+> **Try it.** While recording, **Start again…** throws the take away and records afresh; **Choose microphone…** switches the input. Both are in the presenter's list (<kbd>⌘⇧P</kbd>).
+
+:::notes
+Record a short run, then save it.
 :::
 
 ### Show and point

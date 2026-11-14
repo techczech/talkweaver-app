@@ -12,7 +12,7 @@
 // Pure; erasable TypeScript only (node tests import it as it is).
 import { SPEECH_LOCALES, speechLanguageName } from './speech-locales.ts'
 import { checkValue, defineSchema, type Migrated, type SettingDef } from '@app-patterns/settings'
-import { METADATA_REGISTRY } from './metadata-registry.ts'
+import { METADATA_REGISTRY, metadataListError } from './metadata-registry.ts'
 import { metadataDefaultsViewModel } from './metadata-surfaces.ts'
 import { DEFAULT_IMPORTER_SETTINGS } from './importer.ts'
 import { PLAIN_FONTS, PLAIN_FONT_DEFAULT, PLAIN_TEXT_SIZE_DEFAULT, PLAIN_TEXT_SIZE_MAX, PLAIN_TEXT_SIZE_MIN } from './plain-view-look.ts'
@@ -35,6 +35,12 @@ const talkDefaultEntries = METADATA_REGISTRY.filter((e) => (e as { defaultable?:
 const talkDefaults: SettingDef[] = metadataDefaultsViewModel(METADATA_REGISTRY as never, {}).flatMap((group) => group.fields.map((f): SettingDef => {
   const base = { key: `${TALK_DEFAULT_PREFIX}${f.key}`, label: f.label, section: 'talk-defaults', group: `New talks start with: ${group.label}`, default: '' as const }
   const help = `${f.explanation ? `${f.explanation} ` : ''}Filled into the details of every new talk; a talk's own value always wins.`
+  if (f.list) {
+    // A list-capable key (registry listOf): typed, so a list can be written; the single choices are named in the help.
+    const entry = METADATA_REGISTRY.find((candidate) => candidate.key === f.key)!
+    const choices = (f.options ?? []).filter((o) => o.value !== '').map((o) => o.value).join(', ')
+    return { ...base, type: 'text', validate: (v: unknown) => (typeof v === 'string' ? metadataListError(entry, v) : 'Write the names as text.'), help: `${help} One of ${choices}, or a list of ${f.list.items.join(', ')} with commas between them. Empty: not filled in.` }
+  }
   if (f.options && f.options.length > 0) {
     const options = [{ value: '', label: 'Not filled in' }, ...f.options.filter((o) => o.value !== '').map((o) => ({ value: o.value, label: o.label }))]
     return { ...base, type: 'choice', options, help }

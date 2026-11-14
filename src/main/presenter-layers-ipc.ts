@@ -32,6 +32,8 @@ export async function settleBeforeFirstFrame(contents: Pick<Electron.WebContents
 
 export function registerPresenterLayers(deps: {
   userData: () => string
+  /** Ids of Runs that are new takes of a slide (isTakeRun): not counted as recordings in the library. */
+  takeIds?: () => Set<string>
   streams: RecordingStreams
   allowed: (id: number) => boolean
   settingsAllowed: (id: number) => boolean
@@ -109,7 +111,9 @@ export function registerPresenterLayers(deps: {
       }
       if (reveal === true) await shell.openPath(root)
     } catch { /* A Mac with no recordings has an empty library. */ }
-    return { count: runs.size, bytes }
+    // New takes of a slide are part of their Run, not recordings of their own (their bytes still count).
+    const takes = (() => { try { return deps.takeIds?.() ?? new Set<string>() } catch { return new Set<string>() } })()
+    return { count: [...runs].filter((id) => !takes.has(id)).length, bytes }
   })
   ipcMain.handle('recording:device-preview', (event, camera: boolean, preview: boolean) => {
     if (!mayCheckDevices(event.senderFrame === event.sender.mainFrame, deps.allowed(event.sender.id), deps.settingsAllowed(event.sender.id))) throw Error('Device settings window required')

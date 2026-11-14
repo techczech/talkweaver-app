@@ -8,7 +8,7 @@
 // The section headings are the drawing's. Topic 3's claim is checked against the compiler (lock decision 6).
 //
 // Read marks live in the Guide's record (guide-learn.ts, `read`): how.N for a How it works topic,
-// feature.N for a Features row (N is the row's number in the drawing, 1 to 19).
+// feature.N for a Features row (N is the row's number in the drawing; rows added later are appended, so a kept mark keeps its row).
 import type { GuideLearn } from './guide-learn.ts'
 
 export const TOPIC_STATUS = { none: 'Not opened', read: 'Read' } as const
@@ -20,7 +20,10 @@ export const CONNECTS_NOTE = 'What it connects to. States are read from this Mac
 /** What Try it does: open an example talk in its own window, or run a command that needs no talk open. */
 export type TopicTarget =
   | { kind: 'talk'; talk: string }
-  | { kind: 'command'; id: 'search-talks' | 'history' | 'settings' }
+  | { kind: 'command'; id: TopicCommand }
+
+/** The commands a Try it may run: each opens a view that needs no talk open. */
+export type TopicCommand = 'search-talks' | 'history' | 'settings' | 'studio'
 
 export interface TopicTry {
   target: TopicTarget
@@ -31,6 +34,7 @@ export interface TopicTry {
 }
 
 export type TopicPicture = 'outline' | 'vault' | 'headings' | 'layouts' | 'identity' | 'pathways' | 'presenter' | 'deliveries' | 'cloudflare' | 'handout'
+  | 'layers' | 'studio' | 'export' | 'transcription' | 'ocean'
 
 export interface HowTopic {
   id: string
@@ -41,7 +45,7 @@ export interface HowTopic {
 }
 
 const talk = (name: string, lead: string, does: string): TopicTry => ({ target: { kind: 'talk', talk: name }, lead, does })
-const command = (id: 'search-talks' | 'history' | 'settings', lead: string, does: string): TopicTry => ({ target: { kind: 'command', id }, lead, does })
+const command = (id: TopicCommand, lead: string, does: string): TopicTry => ({ target: { kind: 'command', id }, lead, does })
 
 export const HOW_TOPICS: readonly HowTopic[] = [
   {
@@ -123,6 +127,53 @@ export const HOW_TOPICS: readonly HowTopic[] = [
       'Because the handout and the slides are built from the same outline, they match each time you build them. In PowerPoint a handout is a separate export.'
     ],
     tryIt: talk('The Saturday market', 'Open The Saturday market.', 'Opens the example talk, whose Share menu builds and publishes its handout.')
+  },
+  // Topics 11 to 15 (0.44): recording, the Studio editor, export, transcription and the Ocean look. Facts and
+  // labels match talkweaver.app/guide (recording, studio, exporting, transcription, slide-look) and the code.
+  {
+    id: 'how.11', title: 'A recording is kept in layers.', picture: 'layers',
+    sentences: [
+      'In the presenter view, choose Slides and voice or Slides, voice and camera, then choose Record or press ⇧R.',
+      'TalkWeaver records the slides, your voice and the camera as separate layers and saves them with the Run. The slides layer shows only your slides, never your desktop.'
+    ],
+    tryIt: talk('Lightning round', 'Open Lightning round.', 'Opens the example talk. In its presenter view, Record starts a recording after a 3, 2, 1 countdown.')
+  },
+  {
+    id: 'how.12', title: 'Studio edits a recording without changing it.', picture: 'studio',
+    sentences: [
+      // Record one slide again is off in 0.44.5 (recording-takes.ts, takesEnabled). When it ships, the first
+      // sentence ends "…, leave a slide out, and use Record this slide again to record one slide anew and then
+      // Use this take or Use the first take." and the second says "…camera files, and every take, are never changed."
+      'In Tools › TalkWeaver Studio…, select a Run and choose Edit video. You can trim the start and end, cut words from the transcript, apply the cuts Tidy up… suggests, move a slide change and leave a slide out.',
+      'Every edit is saved in a separate edits file, and Undo takes it back; the recorded slides, voice and camera files are never changed.'
+    ],
+    tryIt: command('studio', 'Open TalkWeaver Studio.', 'Opens Studio, which lists the Runs you have recorded.')
+  },
+  {
+    id: 'how.13', title: 'A video is made from the edited recording.', picture: 'export',
+    sentences: [
+      'In Studio, Export video… makes an MP4 that follows your edits, with a chapter for each slide.',
+      'Under Also save, you can tick Captions file (SRT and WebVTT), Chapter list to paste into YouTube and Sound only (M4A).',
+      'Look and sound… in the editor has Smooth each join with a quick fade, so your face does not jump, and Even out the volume. The Camera switch in the player puts your camera in the video or leaves it out, and Face: corner on a slide chooses where it appears there: In the corner, Side by side, Face only or Slide only.'
+    ],
+    tryIt: command('studio', 'Open TalkWeaver Studio.', 'Opens Studio. Select a recorded Run and choose Export video… to see what it saves.')
+  },
+  {
+    id: 'how.14', title: 'Your words are written out on this Mac.', picture: 'transcription',
+    sentences: [
+      'In Settings › Recording, the Words written out by setting chooses the engine. This Mac (built in) needs macOS 26, and on an older Mac you set up an engine in Settings › Get started › Transcription.',
+      'Precise word timing places cuts on word boundaries in English and Czech and needs macOS 14 or newer. Without it, cuts snap to clear pauses.'
+    ],
+    tryIt: command('settings', 'Open Settings.', 'Opens Settings, where Recording holds Words written out by, Language for words and Precise word timing.')
+  },
+  {
+    id: 'how.15', title: 'Slides use the Ocean look.', picture: 'ocean',
+    sentences: [
+      'Every talk you compile uses the Ocean look, including talks made before, and your outline stays as it is.',
+      'In the Talk tab, Design › Palette has four choices: Ocean; Ocean, bold amber; Classic, the earlier look; and Green (classic).',
+      'A slide that does not fit the Ocean arrangement falls back to the earlier arrangement in the new colours, and a slide that still does not fit is flagged.'
+    ],
+    tryIt: talk('The Saturday market', 'Open The Saturday market.', 'Opens the example talk in the Ocean look. Its Talk tab holds Design › Palette.')
   }
 ]
 
@@ -150,7 +201,9 @@ const FEATURE_SOURCE: Source = [
   ]],
   ['What you can do with a presentation afterwards', [
     ['Record the talk and keep the recording.', '⇧R, Tools › Studio'], ['Publish the handout to Cloudflare.', 'Share menu'],
-    ['Send a talk to colleagues for comments.', 'Share menu'], ['Make a shorter version without copying any slides.', '⌘⌥P']
+    ['Send a talk to colleagues for comments.', 'Share menu'], ['Make a shorter version without copying any slides.', '⌘⌥P'],
+    ['Edit a recording: trim it, cut words, move a slide change.', 'Tools › Studio'],
+    ['Export a video with chapters, captions and a YouTube chapter list.', 'Studio › Export video…']
   ]]
 ]
 
