@@ -2,7 +2,13 @@ name: Release
 
 # Build installers for macOS (Apple Silicon) and Windows and upload them to a GitHub Release.
 # Trigger by pushing a version tag, e.g.  git tag v0.18.0 && git push origin v0.18.0
+# An alpha is tagged the same way (v0.45.0-alpha.2) and published from its draft as a PRERELEASE, so the
+# public "latest" stays the last release (docs/RELEASING.md, "Publishing an alpha"; ADR-0044).
 # Everything goes to a DRAFT release for that version; review it, then publish.
+# Notarisation is on. In a rush: cancel the tag's run and start this workflow by hand on the tag with
+# skip_notarisation (gh workflow run release.yml --ref vX.Y.Z-alpha.N -f skip_notarisation=true). A download
+# of that version from the website then needs System Settings › Privacy & Security › Open Anyway; an
+# in-place update of it works as usual (the app checks the Developer ID signature, not notarisation).
 # Mac files are uploaded only by scripts/release-mac-assets.mjs, which runs the release gate
 # (scripts/verify-mac-package.mjs) on the very copies it uploads, with the ffmpeg corresponding
 # source. The demo vault zip is attached to the same draft. Windows: electron-builder publishes.
@@ -17,7 +23,12 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      skip_notarisation:
+        description: 'Skip Apple notarisation (in a rush only; see docs/RELEASING.md)'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -44,11 +55,15 @@ jobs:
       - name: Verify release tag matches package version
         if: startsWith(github.ref, 'refs/tags/')
         run: node -e 'const expected = "refs/tags/v" + require("./package.json").version; if (process.env.GITHUB_REF !== expected) process.exit(1)'
+      # An alpha (vX.Y.Z-alpha.N) does not wait for the skill: the public skill follows releases only.
       - name: Install dependencies
+        if: ${{ !contains(github.ref_name, '-alpha.') }}
         run: bun install --frozen-lockfile
       - name: Build the agent skill of this release
+        if: ${{ !contains(github.ref_name, '-alpha.') }}
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-agent-skill.mjs --out agent-skill-dist
       - name: Check the public copy of the agent skill (every file, by SHA-256)
+        if: ${{ !contains(github.ref_name, '-alpha.') }}
         run: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-published-skill.mjs --skill agent-skill-dist/talkweaver
 
   macos:
@@ -89,9 +104,17 @@ jobs:
       - name: Assemble the ffmpeg corresponding source (GPL)
         run: node scripts/build-ffmpeg-source-bundle.mjs
       # Packaged without publishing: nothing reaches GitHub from electron-builder on the Mac.
+      # The zip is also the file the app downloads to update itself in place (ADR-0044).
       - name: Package (signed + notarized dmg, zip)
-        run: npx electron-builder --mac --publish never
+        run: |
+          if [ "$SKIP_NOTARISATION" = "true" ]; then
+            echo "::warning::Notarisation skipped (skip_notarisation). Website downloads of this version need Open Anyway."
+            npx electron-builder --mac --publish never -c.mac.notarize=false
+          else
+            npx electron-builder --mac --publish never
+          fi
         env:
+          SKIP_NOTARISATION: ${{ inputs.skip_notarisation == true && 'true' || 'false' }}
           # Developer ID code signing — electron-builder imports this .p12 into a temp keychain
           CSC_LINK: ${{ secrets.APPLE_DEVID_P12_BASE64 }}
           CSC_KEY_PASSWORD: ${{ secrets.APPLE_DEVID_P12_PASSWORD }}
@@ -115,6 +138,23 @@ jobs:
           BASE="TalkWeaver-$VERSION-ffmpeg-$FFMPEG-corresponding-source"
           REPO=$(node -p "const p=require('./package.json').build.publish; p.owner + '/' + p.repo")
           node scripts/release-mac-assets.mjs --repo "$REPO" --tag "v$VERSION" "${DMG[0]}" "${ZIP[0]}" "ffmpeg-mac-source/$BASE.tar" "ffmpeg-mac-source/$BASE.SHA256SUMS"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # Published without notarisation (skip_notarisation): people who download it must be told, in words they read.
+      # NOT-NOTARISED.txt on the release is the marker scripts/make-update-feed.mjs and npm run check:update-feed
+      # read: the feed's summary and these release notes must then carry the same line, or the check fails.
+      - name: Say so on the release when notarisation was skipped
+        if: ${{ inputs.skip_notarisation == true }}
+        run: |
+          REPO=$(node -p "const p=require('./package.json').build.publish; p.owner + '/' + p.repo")
+          VERSION=$(node -p "require('./package.json').version")
+          case "$VERSION" in *-alpha.*) KIND=alpha ;; *) KIND=version ;; esac
+          LINE="This $KIND is not notarised: after downloading it from the website, macOS asks you to allow it in System Settings."
+          printf '%s\n' "$LINE" > NOT-NOTARISED.txt
+          gh release upload "v$VERSION" NOT-NOTARISED.txt --repo "$REPO" --clobber
+          BODY=$(gh release view "v$VERSION" --repo "$REPO" --json body -q .body)
+          printf '%s\n\n%s\n' "$LINE" "$BODY" > release-notes.md
+          gh release edit "v$VERSION" --repo "$REPO" --notes-file release-notes.md
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       # The demo vault (twelve small talks) goes on the same draft, after the Mac files, so the
