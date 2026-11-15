@@ -1254,24 +1254,91 @@ function createSlideFit(options = {}) {
     }
   }
   // Icon-row panels with detail lines: the lines start at the size for their count (zz-x-ocean-50-readability.css) and
-  // step down the same ladder, one size for the whole row, until the slide fits; past the floor the slide falls back.
+  // step down, one size for the whole row. The rule: among the arrangements that fit, the one whose smallest text is
+  // largest; ties keep the order below.
+  // The candidates, in order (the row's other choices held as drawn):
+  //   1. the size for the row's count (no step);
+  //   2. PANEL_DETAIL_STEPS below that size (today's ladder, which stopped at 2.4cqw);
+  //   3. PANEL_DETAIL_STEPS_PAST, down to the type floor (1.9375cqw, stage.css), tried only because 1 and 2 are.
+  // Not candidates: columns and row breaks (one column per panel, set by the markup; five panels or more are drawn as
+  // rows, .ir-rows, which have no detail ladder); the names' size and stacking (fitOceanItemLabels, decided before for
+  // whole words and held here: the rule measures only the smallest text, so it would shrink names to keep the details
+  // a step larger and flatten the panel's hierarchy); line wrapping (the browser's, inside each candidate).
+  // Each candidate is measured as drawn: it fits when the look's own checks pass (nothing past the stage or clipped,
+  // no block over another, no word broken or out of its box: the checks main's ladder used), and its smallest text is
+  // smallestTextPx before the whole-slide zoom (autofitContent zooms whatever arrangement is chosen, as before).
+  // Down the list the details only get smaller (both lists strictly decreasing, asserted in test:panel-arrangement), so
+  // the smallest text never grows: the first candidate that fits is the rule's choice, and choosePanelArrangement
+  // stops there, measuring and drawing nothing after it. Where today's ladder fits this is main's walk exactly (the
+  // same steps measured, the same writes); a step past 2.4cqw is drawn only where nothing on today's ladder fits.
+  // Where nothing fits, today's last step is put back and the fall-back is decided as before (oceanDecide).
   const PANEL_DETAIL_STEPS = [3.75, 3.45, 3, 2.5, 2.4];
+  const PANEL_DETAIL_STEPS_PAST = [2.2, 2, TYPE_FLOOR_CQW];
+  const PANEL_FALL_BACK = -1;
+  // The rule, stated once. candidates: an iterable of { fits, smallest } in order, read lazily (a candidate's fields
+  // may be getters that measure it as drawn). Returns the index of the fitting candidate with the largest smallest
+  // text (the exact maximum; equal values keep the order), or PANEL_FALL_BACK when none fits. `ordered` declares that
+  // the smallest text never grows down the list: the first that fits is then that maximum, so the rest are not read.
+  function choosePanelArrangement(candidates, { ordered = false } = {}) {
+    let best = PANEL_FALL_BACK;
+    let bestSmallest = 0;
+    let i = 0;
+    for (const candidate of candidates) {
+      if (candidate.fits) {
+        if (ordered) return i;
+        const smallest = candidate.smallest;
+        if (best === PANEL_FALL_BACK || smallest > bestSmallest) { best = i; bestSmallest = smallest; }
+      }
+      i += 1;
+    }
+    return best;
+  }
   function fitOceanPanelDetails(content) {
     const slide = content.closest(".slide");
     if (!slide || slide.dataset.look !== "ocean") return;
     const rows = [...content.querySelectorAll(":scope > .icon-row:not(.ir-rows)")].filter((row) => row.querySelector(":scope > .ir-item .ir-desc > li"));
     if (!rows.length) return;
     const items = rows.flatMap((row) => [...row.querySelectorAll(":scope > .ir-item")]);
-    items.forEach((item) => item.style.removeProperty("--oc-detail"));
-    if (!lookOverflows(slide) && !blocksMeet(content) && !itemsBreak(content)) return;
-    const li = rows[0].querySelector(":scope > .ir-item .ir-desc > li");
-    const cqw = (rows[0].closest(".slide-content")?.getBoundingClientRect().width || 0) / 100;
-    const start = cqw > 0 ? parseFloat(getComputedStyle(li).fontSize) / (cqw / (slide.getBoundingClientRect().width / (slide.offsetWidth || 1))) : 0;
-    for (const step of PANEL_DETAIL_STEPS) {
-      if (start && step >= start - 0.01) continue;
-      items.forEach((item) => item.style.setProperty("--oc-detail", `max(var(--type-floor, 31px), ${step}cqw)`));
-      if (!lookOverflows(slide) && !blocksMeet(content) && !itemsBreak(content)) return;
+    const apply = (step) => items.forEach((item) => {
+      if (step === null) item.style.removeProperty("--oc-detail");
+      else item.style.setProperty("--oc-detail", `max(var(--type-floor, 31px), ${step}cqw)`);
+    });
+    // the drawing on the page, measured when the chooser reads it
+    const drawn = { get fits() { return !lookOverflows(slide) && !blocksMeet(content) && !itemsBreak(content); }, get smallest() { return smallestTextPx(content); } };
+    let steps = [null];
+    let today = [];
+    let shown = 0;
+    // The candidates, each drawn as the chooser reaches it. The ladder below the size for the count is read only
+    // when that size does not fit (as main did).
+    function* arrangements() {
+      apply(null);
+      yield drawn;
+      const li = rows[0].querySelector(":scope > .ir-item .ir-desc > li");
+      const cqw = (rows[0].closest(".slide-content")?.getBoundingClientRect().width || 0) / 100;
+      const start = cqw > 0 ? parseFloat(getComputedStyle(li).fontSize) / (cqw / (slide.getBoundingClientRect().width / (slide.offsetWidth || 1))) : 0;
+      const below = (list) => list.filter((step) => !(start && step >= start - 0.01));
+      today = below(PANEL_DETAIL_STEPS);
+      // past today's last step only (a row whose size for its count is already under 2.4cqw starts below it)
+      const past = below(PANEL_DETAIL_STEPS_PAST).filter((step) => step < (today.length ? today[today.length - 1] : start || Infinity) - 0.01);
+      steps = [null, ...today, ...past];
+      for (let i = 1; i < steps.length; i += 1) {
+        shown = i;
+        apply(steps[i]);
+        yield drawn;
+      }
     }
+    let chosen;
+    try {
+      chosen = choosePanelArrangement(arrangements(), { ordered: true });
+    } catch (error) {
+      // a measurement threw part-way down the ladder: leave today's last step (where main's ladder ended), not the
+      // size being tried, and let the error through
+      apply(steps[Math.min(today.length, steps.length - 1)]);
+      throw error;
+    }
+    // nothing fits: today's last step (where main's ladder ended), so the fall-back is decided exactly as before
+    const keep = chosen === PANEL_FALL_BACK ? today.length : chosen;
+    if (keep !== shown) apply(steps[keep]);
   }
   // A loop whose labels meet the slide's other blocks or each other tries, in order: the top stop's label beside the stop
   // (as 0.44 drew it) instead of above it, the smaller ring (as long labels take), the smaller ring with the top label
@@ -1996,5 +2063,5 @@ function createSlideFit(options = {}) {
     });
   }
 
-  return { fitContent, canvasScale, preparePrint, restorePrint, managePrint, endPrint, leavePrint, print, oceanCompare: { lessThan, sameFaults, safeIsBetter } };
+  return { fitContent, canvasScale, preparePrint, restorePrint, managePrint, endPrint, leavePrint, print, oceanCompare: { lessThan, sameFaults, safeIsBetter }, panelChoice: { choosePanelArrangement, PANEL_FALL_BACK, PANEL_DETAIL_STEPS, PANEL_DETAIL_STEPS_PAST } };
 }

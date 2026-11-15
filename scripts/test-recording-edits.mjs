@@ -9,6 +9,9 @@ import { tmpdir } from 'node:os'
 import { applyEditOp, editedToRun, effectiveCuts, emptyEdits, EDIT_HISTORY_LIMIT, keptMs, normaliseRanges, parseEdits, restoreRange, runToEdited, trimEndAt, trimStartAt } from '../src/shared/recording-edits.ts'
 import { cameraRect, captionCues, chapterListText, chaptersFor, editedDurationMs, ffmetadata, keptSpans, layerClips, planEditedToRun, planRunToEdited, silentEndSuggestions, toSrt, toWebVtt, VIDEO_FRAME, hasPictureLayers } from '../src/shared/recording-video.ts'
 import { createRecordingEditsStore } from '../src/main/recording-edits-store.ts'
+import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+import { buildPerSlideProjections } from '../compiler/scripts/lib/10-projections.mjs'
+import { slideTitlesFromRows } from '../src/shared/talk-title-text.ts'
 import { createPlaybackPreparer, createVideoExporter, exportArgs, exportFailureMessage, freeName, inspectMedia, playbackFile, resolvePictureLayers } from '../src/main/recording-video.ts'
 
 let count = 0
@@ -108,6 +111,19 @@ try {
   assert.equal(existsSync(join(root, 'elsewhere.json')), false, 'never writes through a link')
   pass('a corrupt or newer sidecar is refused and kept; Start new edits keeps it beside a fresh one; links are refused')
 
+  // 0.45, second Mac: Git conflict markers are named as a Git conflict, before the generic "could not be read".
+  const conflicted = '<<<<<<< HEAD\n{"version":5,"revision":3,"cuts":[]}\n=======\n{"version":5,"revision":4,"cuts":[]}\n>>>>>>> origin/main\n'
+  writeFileSync(path, conflicted)
+  const marked = store.get({})
+  assert.equal(marked.problem.kind, 'git-conflict')
+  assert.equal(marked.problem.message, 'The saved edits for this recording have a Git conflict from syncing (sess-a.edits.json). Resolve it in Git, then open the recording again.')
+  assert.equal(marked.problem.file, path, 'the problem names the file to reveal')
+  assert.throws(() => store.apply({}, { kind: 'trim-start', at: 40 }, 0), /Git conflict from syncing/)
+  assert.equal(readFileSync(path, 'utf8'), conflicted, 'nothing is written over a conflicted file')
+  // Copies of what this Mac saw before (every save keeps one, and so does a replaced version) are not this file.
+  assert.ok(readdirSync(folder).filter((n) => n.startsWith('sess-a.edits.') && n !== 'sess-a.edits.json').every((n) => readFileSync(join(folder, n), 'utf8') !== conflicted), 'the conflicted file is not moved aside without the owner choosing Start new edits')
+  pass('an edits file with Git conflict markers says "Git conflict from syncing", names the file and is kept unchanged')
+
   // ---- plan ------------------------------------------------------------------------------------
   const rect = cameraRect()
   assert.deepEqual(rect, { x: 1471, y: 815, width: 422, height: 238 })
@@ -133,6 +149,50 @@ try {
   assert.equal(chapterListText(sectioned), '0:00 Start\n0:03 Middle\n')
   assert.match(ffmetadata(sectioned, 'My = talk'), /^;FFMETADATA1\ntitle=My \\= talk\n\[CHAPTER\]\nTIMEBASE=1\/1000\nSTART=0\nEND=3000\ntitle=Start/)
   pass('chapters come from slide changes in edited time, by section where the talk has sections')
+
+  {
+    // The talk as compiled: section dividers, a carousel whose cards are steps of their own (the presenter and the
+    // recorder name the card: journey gate, the 0.44.5 chapter "Slide"), an untitled slide. The slide map is built
+    // as Studio builds it (slideTitlesFromRows; a card list from the row's carousel_cards).
+    const dir = mkdtempSync(join(root, 'chapters-'))
+    const outline = ['---', 'title: River walk', 'auto_thanks_slide: false', '---', '# River walk', '',
+      '## Before the walk', '', '### Why we walk', '', '- One good reason', '',
+      '## Along the river', '', '### Places on the way', '{carousel}', '',
+      '#### The old mill', '', '- Built in 1820', '', '#### What to say at the mill', '', '- Ask who remembers it', '',
+      '### After the mill', '', '- Lunch', ''].join('\n')
+    const path = join(dir, 'river-walk-outline.md')
+    writeFileSync(path, outline)
+    const model = await prepareSource(path, outline, null, statSync(path), {}, {})
+    const rows = buildPerSlideProjections(model, 'river-walk')
+    const carousel = rows.find((r) => r.title === 'Places on the way')
+    assert.deepEqual(carousel?.carousel_cards, ['the-old-mill', 'what-to-say-at-the-mill'], 'the carousel\'s row lists its cards')
+    assert.equal(rows.filter((r) => r.carousel_cards).length, 1, 'no other row lists cards')
+    const named = slideTitlesFromRows(rows)
+    const slides = Object.fromEntries(rows.map((r) => [r.slide_id, { title: named[r.slide_id]?.title || '(untitled)', section: named[r.slide_id]?.section ?? '', ...(r.carousel_cards ? { cards: r.carousel_cards } : {}) }]))
+    const id = (title) => rows.find((r) => r.title === title)?.slide_id
+    const dividers = rows.filter((r) => r.role === 'section-title').map((r) => r.slide_id)
+    assert.equal(dividers.length, 2, 'two section dividers')
+    const at = (ids) => ids.map((slideId, i) => ({ tMs: i * 1000, slideId }))
+    const whole = keptSpans([], 10_000)
+    // Forward through the talk, the carousel's cards entered by their own ids.
+    const walk = at([rows[0].slide_id, dividers[0], id('Why we walk'), dividers[1], id('Places on the way'), 'the-old-mill', 'what-to-say-at-the-mill', id('After the mill')])
+    const bySection = chaptersFor(walk, slides, whole)
+    assert.deepEqual(bySection.map((c) => [c.startMs, c.title]), [[0, 'River walk'], [1000, 'Before the walk'], [3000, 'Along the river']], 'by section: the title slide by its title, then the sections; the cards are part of their slide\'s section')
+    assert.ok(!chapterListText(bySection).includes('Slide'), 'no chapter is called "Slide"')
+    // The same talk without sections: one chapter per slide, the carousel one chapter, its cards none of their own.
+    const flat = Object.fromEntries(Object.entries(slides).map(([k, v]) => [k, { title: v.title, ...(v.cards ? { cards: v.cards } : {}) }]))
+    assert.deepEqual(chaptersFor(walk.slice(2), flat, whole).map((c) => [c.startMs, c.title]),
+      [[0, 'Why we walk'], [3000, 'Along the river'], [4000, 'Places on the way'], [7000, 'After the mill']], 'by slide: a section divider is titled by its section; the carousel is one chapter')
+    // Back into the carousel from the slide after it: the last card is entered first, and is still the carousel.
+    assert.deepEqual(chaptersFor(at([id('After the mill'), 'what-to-say-at-the-mill', 'the-old-mill']), flat, whole).map((c) => [c.startMs, c.title]),
+      [[0, 'After the mill'], [1000, 'Places on the way']], 'a card entered on its own reads back to its slide')
+    // An untitled slide is named as the slide browser names it; a slide gone from the talk adds no chapter.
+    assert.deepEqual(chaptersFor(at(['a', 'b', 'gone', 'c']), { a: { title: 'Start' }, b: { title: '' }, c: { title: 'End' } }, whole).map((c) => [c.startMs, c.title]),
+      [[0, 'Start'], [1000, '(untitled)'], [3000, 'End']], 'untitled: "(untitled)"; an unknown id: the chapter before goes on')
+    assert.deepEqual(chaptersFor(at(['gone', 'a']), { a: { title: 'Start' } }, whole).map((c) => [c.startMs, c.title]), [[0, 'Start']], 'the first chapter still starts at 0')
+    assert.deepEqual(chaptersFor(at(['gone']), {}, whole), [{ startMs: 0, endMs: 10_000, title: 'Recording' }], 'nothing known: one chapter for the whole recording')
+    pass('chapters: a carousel card is a step of its slide, never a chapter; section dividers by section; untitled as the slide browser names it; never "Slide"')
+  }
 
   const words = [{ text: 'Hello', start: 1100, end: 1400 }, { text: 'there.', start: 1450, end: 1800 }, { text: 'gone', start: 3200, end: 3600 }, { text: 'Next', start: 4100, end: 4400, alignment: { status: 'aligned', start: 4200, end: 4500 } }, { text: 'part', start: 4600, end: 4900 }]
   const { cues } = captionCues(words, spans)

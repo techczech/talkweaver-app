@@ -1619,7 +1619,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // slide's lone full-bleed figure).
   function imageSequenceHere(slide) {
     if (!slide.hasAttribute("data-image-steps") || slide.hasAttribute("data-carousel") || slide.hasAttribute("data-nostep") || galleryIn(slide)) return false;
-    const stills = slide.querySelectorAll("figure.slide-figure img, .image-grid .ig-media img");
+    const stills = ownedStepElements(slide, "figure.slide-figure img, .image-grid .ig-media img");
     if (stills.length !== 1) return stills.length > 0;
     const figure = stills[0].closest("figure.slide-figure");
     return !(figure && figure.parentElement && figure.parentElement.matches(".slide-content.layout-media"));
@@ -1643,7 +1643,8 @@ ${hasMermaid ? mermaidVendorSource : ""}
     const gallery = galleryIn(slide);
     const card = gallery ? (gallery.querySelector(".card.active-card") || gallery.querySelector(".card")) : null;
     const blocks = !gallery ? MODE_SELECTOR : (card && !card.classList.contains("card-title") ? CARD_UNIT_SELECTOR : "");
-    const els = emphasisStepElements(gallery ? card : slide, blocks, isVisibleUnit);
+    const scope = gallery ? card : slide;
+    const els = emphasisStepElements(scope, blocks, function (el) { return ownsStepElement(scope, el) && isVisibleUnit(el); });
     // Something steps with no mode on: an emphasis span or a {play-on-next} file.
     const units = emphasisStepUnits(els);
     if (!units.some((unit) => unit.kind !== "block")) return null;
@@ -1696,19 +1697,20 @@ ${hasMermaid ? mermaidVendorSource : ""}
     }
     return true;
   }
-  function galleryIn(slide) { return slide ? slide.querySelector(".card-gallery[data-exclusive]") : null; }
+  // The slide's own elements only (runtime/step-ownership.js, inlined with the emphasis steps): the
+  // same rule as the deck runtime, which draws other slides' miniatures over a slide in a contents
+  // strip. This page draws none today; the rule is here so the two collectors stay one definition.
+  function galleryIn(slide) { return slide ? ownedStepElement(slide, ".card-gallery[data-exclusive]") : null; }
   function cardUnits(card) {
     if (!card || card.classList.contains("card-title")) return [];
-    const raw = Array.from(card.querySelectorAll(CARD_UNIT_SELECTOR));
-    return raw.filter((el, i) => isVisibleUnit(el) && raw.indexOf(el) === i);
+    return ownedStepElements(card, CARD_UNIT_SELECTOR).filter(function (el) { return isVisibleUnit(el); });
   }
   function modeElements() {
     const slide = slides[index];
     if (!slide) return [];
     const gallery = galleryIn(slide);
     if (gallery) return cardUnits(gallery.querySelector(".card.active-card") || gallery.querySelector(".card"));
-    const raw = Array.from(slide.querySelectorAll(MODE_SELECTOR));
-    return raw.filter((el, i) => isVisibleUnit(el) && raw.indexOf(el) === i);
+    return ownedStepElements(slide, MODE_SELECTOR).filter(function (el) { return isVisibleUnit(el); });
   }
   // collapse: every unit is a simulation step (.sim .sim-step), which never dims, so the extra
   // "all full" step would change nothing on screen; it folds onto the last reveal (deck runtime same).
@@ -1891,8 +1893,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     return true;
   }
   function activeGallery() {
-    const slide = slides[index];
-    return slide ? slide.querySelector(".card-gallery[data-exclusive]") : null;
+    return galleryIn(slides[index]);
   }
   // Exclusive card galleries (#### groups): the stylesheet hides every card except .active-card,
   // and only the FULL deck runtime used to set that class — share exports rendered these slides

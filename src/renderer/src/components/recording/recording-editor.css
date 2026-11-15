@@ -321,3 +321,20 @@ dialog.tre-sheet.tre-modal::backdrop { background: rgba(23, 32, 42, .30); }
 .tre-seg-opt:has(input:focus-visible) { outline: 2px solid var(--oxford); outline-offset: 2px; }
 .tre-seg { background: none; }
 .tre-face-tile .tre-face-pic, .tre-face-tile > span { pointer-events: none; }
+
+/* Kept edits (0.45, second Mac): the list sheet, Start new edits asked, the read-only banner. */
+.tre.tre-look-host { display: contents; }
+.tre-sheet.tre-kept { width: min(640px, calc(100% - 80px)); }
+.tre-kept-intro { margin: 6px 0 0; font-size: 13px; color: var(--muted); line-height: 1.45; max-width: 60ch; }
+.tre-kept-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.tre-kept-row:last-child { border-bottom: 0; }
+.tre-kept-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.tre-kept-when { font-weight: 600; font-size: 13.5px; overflow-wrap: anywhere; }
+.tre-kept-why, .tre-kept-what { font-size: 12.5px; color: var(--muted); }
+.tre-kept-what.warn { color: var(--amber); }
+.tre-kept-acts { display: flex; gap: 6px; flex: none; }
+.tre-kept-empty, .tre-kept-error { display: flex; align-items: center; gap: 8px; padding: 14px 0; font-size: 13px; color: var(--muted); }
+.tre-kept-error { color: var(--amber); }
+.tre-note.tre-viewing { background: var(--tre-oxford-soft); border-color: color-mix(in srgb, var(--oxford) 35%, transparent); align-items: center; flex-wrap: wrap; }
+.tre-note[data-edits-notice] { align-items: center; flex-wrap: wrap; }
+.tw-btn.tw-btn--icon.on { background: var(--tre-oxford-soft); }

@@ -144,7 +144,42 @@ function stateProbe() {
   }
   const icons = slide.querySelectorAll('.fl-icon svg, .fl-icon img, .ir-icon svg, .ir-icon img, .vs-ico svg, .vs-head-ico svg, .card-icon svg').length
   const brand = slide.querySelectorAll('[data-brand]').length
-  return { id: slide.dataset.id, clips: clips.sort(), overlaps: overlaps.slice(0, 20), body: [...kinds].sort().join('+') || 'empty', icons, brand }
+  // The fit's decisions on this state, recorded for the decision table (not compared by the gate): the drawing
+  // (data-look), the ladders' stamps, the list body size and an icon-row panel's detail size, in canvas px.
+  const fitted = slide.querySelector(':scope > .slide-content')
+  const card = fitted?.querySelector('.card.carousel-subslide.active-card > .slide-content')
+  const detail = fitted?.querySelector('.icon-row > .ir-item .ir-desc > li')
+  const decision = {
+    look: slide.dataset.look || '', listFit: (card || fitted)?.dataset.listFit || '', textFit: fitted?.dataset.textFit || '',
+    statementFit: fitted?.dataset.statementFit || '', fsBody: (card || fitted)?.style.getPropertyValue('--fs-body') || '',
+    detailPx: detail ? Math.round(parseFloat(getComputedStyle(detail).fontSize) * 100) / 100 : null,
+    zoom: fitted?.style.zoom || '',
+    // an icon-row with panel details: its number of panels and of detail lines in the longest panel
+    panels: detail ? (() => { const row = detail.closest('.icon-row'); const items = [...row.querySelectorAll(':scope > .ir-item')]; return `${items.length}x${Math.max(...items.map((i) => i.querySelectorAll('.ir-desc > li').length))}` })() : '',
+    // the smallest drawn text on the state (canvas px times the whole-slide zoom), and a fingerprint of the drawing
+    // (every drawn element's box and type size, to half a px) so two sides can be compared for "drawn the same"
+    smallestPx: 0, drawing: '',
+  }
+  {
+    let smallest = Infinity
+    let h = 0x811c9dc5
+    const add = (s) => { for (let i = 0; i < s.length; i += 1) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0 } }
+    const half = (n) => Math.round(n * 2) / 2
+    for (const e of slide.querySelectorAll('*')) {
+      if (e.closest('.notes, .sr-only')) continue
+      const cs = getComputedStyle(e)
+      if (cs.display === 'none') continue
+      const r = e.getBoundingClientRect()
+      add(`${e.tagName}|${half(r.left - stage.left)}|${half(r.top - stage.top)}|${half(r.width)}|${half(r.height)}|${cs.fontSize}|${cs.visibility}|${cs.opacity};`)
+      if (cs.visibility !== 'hidden' && [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) {
+        const zoomed = parseFloat(cs.fontSize) * (parseFloat(fitted?.style.zoom) || 1)
+        if (zoomed > 0 && zoomed < smallest) smallest = zoomed
+      }
+    }
+    decision.smallestPx = Number.isFinite(smallest) ? Math.round(smallest * 100) / 100 : 0
+    decision.drawing = h.toString(16)
+  }
+  return { id: slide.dataset.id, clips: clips.sort(), overlaps: overlaps.slice(0, 20), body: [...kinds].sort().join('+') || 'empty', icons, brand, decision }
 }
 
 async function auditDeck(htmlPath, slides, shotsDir) {
@@ -168,7 +203,7 @@ async function auditDeck(htmlPath, slides, shotsDir) {
       clips: probe.clips, contrast: read.contrast.filter((r) => !r.overImage), overImage: read.contrast.filter((r) => r.overImage).length,
       unresolved: read.unresolved || [], exclusions: read.exclusions,
       floor: read.floor, emptyShare: read.emptyShare, emptyBand: read.emptyBand, overlaps: probe.overlaps,
-      autoIcons: Math.max(0, probe.icons - authoredIcons), brandIcons: probe.brand,
+      autoIcons: Math.max(0, probe.icons - authoredIcons), brandIcons: probe.brand, decision: probe.decision,
     }
     record.shot = `${String(state.index + 1).padStart(3, '0')}-${state.id.replace(/[^a-z0-9]+/gi, '-')}${state.direct ? `-card${state.card}` : ''}-s${state.step}.jpg`
     try {

@@ -39,6 +39,7 @@ import { startLiveWorker } from '../scripts/lib/live-worker-harness.mjs'
 import { appWrittenLoopback } from '../src/main/handout-publishing.ts'
 import { loadWranglerBlake3, pagesAssetHash } from '../src/main/pages-direct-upload.ts'
 import { SITE_RECORD_PATH, serialiseSiteRecord } from '../src/main/site-record.ts'
+import { testProfileEnv } from './lib/test-profile.mjs'
 
 const root = process.cwd()
 const scratch = mkdtempSync(join(tmpdir(), 'tw-core-journey-'))
@@ -150,7 +151,7 @@ try {
 
   // Only what the app needs from this shell: no credential of the person running the test goes in.
   // No TW_LIVE_LOCAL and no TW_REC_TEST: the publish is the real one, as in an installed app.
-  const env = { TW_E2E: '1', TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl, TW_SHIM_HOST: LIVE_HOST, TW_SHIM_BASE: worker.baseUrl, TW_SHIM_ADMIN: worker.adminSecret }
+  const env = { TW_E2E: '1', ...testProfileEnv(userData), TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl, TW_SHIM_HOST: LIVE_HOST, TW_SHIM_BASE: worker.baseUrl, TW_SHIM_ADMIN: worker.adminSecret }
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }

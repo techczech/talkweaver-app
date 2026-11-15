@@ -1,5 +1,8 @@
-// Update notices (ADR-0041): the check's decisions and every state's words (@app-patterns/updates, with
-// TalkWeaver's identity in src/shared/update-identity.ts), with no network, no Electron and a clock the test turns.
+// Update notices (ADR-0041, kept by ADR-0044): the check's decisions and every state's words (TalkWeaver's
+// channel checker, src/shared/update-checker.ts, a port of @app-patterns/updates' checker; the words from
+// @app-patterns/updates, with TalkWeaver's identity in src/shared/update-identity.ts), with no network, no
+// Electron and a clock the test turns. Channels, the click and the restart gate: test-update-channels.mjs and
+// test-update-install.mjs.
 //  1. when a check runs: store copy, development run, first check, a launch within a day, checking off,
 //     presenting (waits, then runs), a failed check, a second check joining the first;
 //  2. the result: newer, equal, older, a preview against its own release, rejected feed;
@@ -14,7 +17,7 @@ import { createRequire } from 'node:module'
 const require = createRequire(import.meta.url)
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { createUpdateChecker } from '@app-patterns/updates'
+import { createChannelChecker, readChannelState } from '../src/shared/update-checker.ts'
 import {
   CHECK_INTERVAL_MS, FIRST_CHECK_DELAY_MS, BUSY_RETRY_MS, WHATS_NEW_DAYS, aboutLines, answerView, availableMark, cardView, copySource,
   dateText, localDay, noteReducer, noteLaunch, parseWhatsNew, readUpdateState as readState, whatsNewMark, whenText, updatedMarkText, availableMarkText,
@@ -48,10 +51,11 @@ function harness(over = {}) {
     requests: 0, answers: [], told: [], timers: [],
   }
   h.nextAnswer = (answer) => h.answers.push(answer)
-  h.checker = createUpdateChecker({
+  h.checker = createChannelChecker({
     identity: UPDATE_IDENTITY, arch: 'arm64', running: '0.41.0', platform: 'darwin', source: 'website',
     fetchFeed: async () => { h.requests += 1; return h.answers.shift() ?? { ok: true, text: feedText() } },
-    readState: () => readUpdateState(JSON.parse(JSON.stringify(h.state))),
+    readState: () => readChannelState(JSON.parse(JSON.stringify(h.state)), FEED_URL),
+    alpha: () => h.config.alpha === true,
     writeState: (state) => { h.state = JSON.parse(JSON.stringify(state)) },
     enabled: () => h.config.enabled,
     isBusy: () => h.config.presenting,
@@ -224,7 +228,7 @@ await test('every presenting transition pushes a snapshot that says so (windows 
 await test('the windows close their popover and note when presenting starts, and the Settings card follows the latest snapshot', () => {
   const read = (rel) => readFileSync(join(REPO, rel), 'utf8')
   const notices = read('src/renderer/src/components/UpdateNotices.tsx')
-  assert.ok(/snap\.busy\) setOpen\(false\)/.test(notices), 'the popover closes')
+  assert.ok(/snap\??\.busy\) setOpen\(false\)/.test(notices), 'the popover closes')
   assert.ok(/kind: 'busy', busy: presenting/.test(notices), 'the note closes')
   const card = read('src/renderer/src/components/AboutUpdatesSettings.tsx')
   assert.ok(!/setLocal|useState<AnswerView/.test(card), 'no local answer outlives a newer snapshot')
@@ -495,11 +499,15 @@ await test('Check for Updates… and What’s new are registry commands in the p
   assert.ok(menuCommands().some((c) => c.id === 'check-for-updates'))
 })
 
-await test('the files: one place makes the request, nothing is run or installed, no other site is named', () => {
+await test('the files: one place makes the request, one place downloads and installs (only on the click), no other site is named', () => {
   const ts = require('typescript')
   const WIRING = 'src/main/update-notices.ts'
   const IDENTITY = 'src/shared/update-identity.ts'
-  const ALLOWED_HOSTS = new Set(['talkweaver.app', 'apps.microsoft.com'])
+  // ADR-0044: the one file that downloads and installs, and the pure modules that read the feed address only to check links.
+  const INSTALLER = 'src/main/update-installer.ts'
+  const ENGINE = 'src/main/update-engine.ts'
+  const FEED_READERS = new Set([WIRING, IDENTITY, 'src/shared/update-checker.ts', 'src/shared/update-channels.ts'])
+  const ALLOWED_HOSTS = new Set(['talkweaver.app', 'apps.microsoft.com', 'github.com'])
   const walk = (dir) => readdirSync(join(REPO, dir), { withFileTypes: true }).flatMap((e) =>
     e.isDirectory() ? walk(`${dir}/${e.name}`) : [`${dir}/${e.name}`])
   const all = walk('src')
@@ -515,8 +523,8 @@ await test('the files: one place makes the request, nothing is run or installed,
   /** Every piece of text the code carries: string literals, template pieces, JSX text. */
   const textOf = (n) => (ts.isStringLiteralLike(n) || ts.isTemplateHead(n) || ts.isTemplateMiddle(n) || ts.isTemplateTail(n) || n.kind === ts.SyntaxKind.JsxText) ? n.text ?? '' : null
   const parsed = new Map(codeFiles.map((f) => [f, nodesOf(f)]))
-  const importsUpdates = (nodes) => nodes.some((n) => (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) && n.moduleSpecifier && /@app-patterns\/updates|update-identity/.test(n.moduleSpecifier.text))
-  const files = new Set(['src/main/app-menu.ts', WIRING, IDENTITY])
+  const importsUpdates = (nodes) => nodes.some((n) => (ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) && n.moduleSpecifier && /@app-patterns\/updates|update-identity|update-channels|update-install|update-checker|electron-updater/.test(n.moduleSpecifier.text))
+  const files = new Set(['src/main/app-menu.ts', WIRING, IDENTITY, INSTALLER, ENGINE])
   for (const [f, { nodes }] of parsed) if (importsUpdates(nodes)) files.add(f)
   for (const f of ['src/main/index.ts', 'src/preload/index.ts', 'src/preload/settings.ts']) assert.ok(files.has(f), `${f} is a listed update consumer`)
 
@@ -534,7 +542,7 @@ await test('the files: one place makes the request, nothing is run or installed,
       const text = textOf(n)
       if (text !== null && /https?:\/\/[^\s'"`]*updates\.json/.test(text)) feedHits.push(f)   // the address; the Settings sentence naming the file is wording
       if (!listed) continue
-      if (!SHARED.has(f) && (ts.isIdentifier(n) || text !== null)) assert.ok(!FORBIDDEN.test(text ?? n.text), `${f} runs, writes or downloads nothing`)
+      if (!SHARED.has(f) && f !== INSTALLER && f !== ENGINE && (ts.isIdentifier(n) || text !== null)) assert.ok(!FORBIDDEN.test(text ?? n.text), `${f} runs, writes or downloads nothing`)
       if (text !== null) {
         if (!SHARED.has(f)) assert.ok(!/persist:/.test(text), `${f} stores nothing the request receives`)
         if (!SHARED.has(f)) for (const host of hostsIn(text)) assert.ok(ALLOWED_HOSTS.has(host), `${f} names no other site (${host})`)
@@ -546,7 +554,7 @@ await test('the files: one place makes the request, nothing is run or installed,
       }
     }
   }
-  for (const f of new Set(feedHits)) assert.ok(f === WIRING || f === IDENTITY, `${f} does not reach the feed`)
+  for (const f of new Set(feedHits)) assert.ok(FEED_READERS.has(f), `${f} does not reach the feed`)
   assert.ok(feedHits.includes(WIRING) && feedHits.includes(IDENTITY), 'the feed address is used where expected')
   // stylesheets can name sites too (url(…))
   for (const f of all.filter((x) => x.endsWith('.css') && /update/i.test(x))) {
@@ -560,16 +568,32 @@ await test('the files: one place makes the request, nothing is run or installed,
   assert.ok(/ipcMain\.handle\('updates:open-store', \(\)/.test(main), 'Open in Microsoft Store takes no argument')
   assert.ok(!/ipcMain\.handle\('updates:(download|open-store)', \([^)]/.test(main), 'neither handler declares a parameter')
   assert.ok(readFileSync(join(REPO, IDENTITY), 'utf8').includes('https://talkweaver.app/updates.json'), 'the feed address lives in the identity file')
+  // The click (ADR-0044): Update, Cancel and Restart take nothing from the window; only the installer runs or installs.
+  for (const ch of ['update', 'cancel', 'restart']) assert.ok(new RegExp(`ipcMain\\.handle\\('updates:${ch}', (async )?\\(\\)`).test(main), `updates:${ch} takes no argument`)
+  const installer = readFileSync(join(REPO, INSTALLER), 'utf8')
+  const engine = readFileSync(join(REPO, ENGINE), 'utf8')
+  assert.match(engine, /u\.autoDownload = false/, 'nothing downloads before the click')
+  assert.match(engine, /u\.autoInstallOnAppQuit = false/, 'nothing installs on quit')
+  assert.match(engine, /u\.allowDowngrade = false/)
+  assert.match(installer, /closeDependencyInstallPath\(u, deps\.log\)/, 'the updater is configured and its own install path closed')
+  assert.match(installer, /'User-Agent': 'TalkWeaver'/, 'the download carries the fixed User-Agent')
+  for (const [f] of parsed) if (f !== INSTALLER && f !== ENGINE) assert.ok(!/from 'electron-updater'/.test(readFileSync(join(REPO, f), 'utf8')), `${f} does not use electron-updater`)
+  // One place calls the native install: quitIfPermitted in the engine; the installer calls none.
+  assert.equal((installer.match(/quitAndInstall\(/g) ?? []).length, 0, 'the installer never installs by itself')
+  assert.equal((engine.match(/\.quitAndInstall\(/g) ?? []).length, 1, 'one place installs')
+  const gate = engine.slice(engine.indexOf('function quitIfPermitted'), engine.indexOf('function nativeAnswer'))
+  assert.match(gate, /\.quitAndInstall\(/, 'the one place is quitIfPermitted')
+  assert.match(gate, /if \(!live\(a\) \|\| !a\.ready \|\| a\.quitting \|\| state\.phase !== 'restarting'\) return false/, 'only for the live, prepared attempt, from the restarting state')
+  assert.ok(gate.indexOf('blockersNow()') < gate.indexOf('.quitAndInstall('), 'the blockers are read immediately before')
 })
 
 await test('a rejected notes read does not escape the Updated mark: loadNotes resolves to [] so the notes tab opens', async () => {
-  const ts = require('typescript')
-  const src = readFileSync(join(REPO, 'src/renderer/src/lib/updateNotices.ts'), 'utf8')
-  const js = ts.transpileModule(src, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText
+  // Bundled (its wording comes from src/shared), packages left to node_modules.
+  const { buildSync } = require('esbuild')
   const dir = join(REPO, 'node_modules/.cache/tw-update-test')
   mkdirSync(dir, { recursive: true })
   const file = join(dir, 'updateNotices.mjs')
-  writeFileSync(file, js)
+  buildSync({ entryPoints: [join(REPO, 'src/renderer/src/lib/updateNotices.ts')], bundle: true, packages: 'external', format: 'esm', platform: 'node', outfile: file, logLevel: 'silent' })
   const { updateActions } = await import(pathToFileURL(file).href)
   const actions = updateActions({ whatsNew: () => Promise.reject(new Error('ipc closed')) })
   assert.deepEqual(await actions.loadNotes('1.0.0'), [])
@@ -602,6 +626,8 @@ await test('About and updates lives in the shared Settings window and its prefer
   assert.ok(read('src/renderer/src/settings-main.tsx').includes('AboutUpdatesSettings'))
   assert.ok(read('src/preload/settings.ts').includes("'updates:get'"))
   assert.ok(read('src/shared/settings-schema.ts').includes("key: 'updates.checkForNewVersions', label:"))
+  assert.ok(read('src/shared/settings-schema.ts').includes("key: 'updates.alphaVersions', label: 'Get early versions (alpha)'"))
+  assert.ok(read('src/shared/settings-schema.ts').includes("{ config: 'updatesAlphaVersions', key: 'updates.alphaVersions' }"), 'stored per Mac in config.json')
   assert.ok(read('src/shared/bridle-commands.ts').includes("'app.check-for-updates': 'check-for-updates'"))
 })
 

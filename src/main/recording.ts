@@ -13,7 +13,7 @@ import { registerPresenterLayers } from './presenter-layers-ipc'
 
 import { BrowserWindow, ipcMain, shell } from 'electron'
 import { dirname, join } from 'path'
-import { existsSync, lstatSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from 'fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, writeFileSync, readFileSync, appendFileSync } from 'fs'
 import { readFile as readFileAsync } from 'fs/promises'
 import { pathToFileURL } from 'url'
 import {
@@ -24,17 +24,26 @@ import {
   persistRunForTalk,
   plannedRunCandidates,
   readRun,
+  readRunFileRaw,
   readRunForTalk,
+  runFileProblem,
   runPathForTalk,
   talkRunFolderForTalk,
   writeNewRunFile,
   writeRunFile,
+  writeRunFileRaw,
   type RunPoll,
   type RunPollResponse,
   type RunRecord,
 } from './runs'
+import { mediaPlaceOf, recordedOnFor, recordedOnOf } from '../shared/recording-place'
+import { isReplaceRefused } from './replace-guard'
+
+/** What a Run write's failure says: a refused replacement in its own words (it names the file), anything else as before. */
+const runErrorText = (e: unknown): string => isReplaceRefused(e) ? e.message : String(e)
 import {
   listKeptRuns,
+  createRunVoiceProbe,
   recordedSegmentPaths,
   existingRecordedSegmentPath,
   segmentIndexOfFile,
@@ -156,6 +165,9 @@ export interface RecordingDeps {
   onSessionSaved?: (saved: { talkSlug: string; kind: RunKind; runId: string; vaultRoot?: string | null }) => void
   /** The [0,1) source for new session ids; crypto-backed by default (tests pass a repeating one). */
   sessionRand?: () => number
+  /** The name this computer is listed under (the live service's computer list, else the host name): written into
+   *  each new Run that has a recording as `recordedOn` (0.45), and compared with it when Studio lists Runs. */
+  computerName?: () => string
 }
 
 /** How many fresh ids a first save tries before it refuses rather than reuse a taken one. */
@@ -309,17 +321,21 @@ export function sendRecordingCloseOffer(win: BrowserWindow, offer?: { live: bool
 // ── R2 upload — direct, on request only (never automatic) ────────────────────
 
 // Flip a session.json's audio.uploaded to true once its audio is safely in R2, so History/Studio
-// stop showing "upload pending". Plain JSON so it never depends on the compiler being present.
-function patchSessionUploaded(sessionJsonPath: string): void {
+// stop showing "upload pending". Plain JSON so it never depends on the compiler being present. A Run
+// file that no longer reads as a Run when the upload ends (a Git conflict from a sync, 0.45) is left
+// exactly as it is, and the upload says the Run was not marked: 'run-not-saved'.
+function patchSessionUploaded(sessionJsonPath: string): 'run-not-saved' | null {
   try {
-    if (!existsSync(sessionJsonPath)) return
-    const s = JSON.parse(readFileSync(sessionJsonPath, 'utf8')) as { audio?: { uploaded?: boolean } }
-    if (s?.audio) {
+    if (!existsSync(sessionJsonPath)) return null
+    const s = readRunFileRaw(sessionJsonPath) as { audio?: { uploaded?: boolean } }
+    if (s?.audio && typeof s.audio === 'object') {
       s.audio.uploaded = true
-      writeFileSync(sessionJsonPath, JSON.stringify(s, null, 2), 'utf8')
+      writeRunFileRaw(sessionJsonPath, s)
     }
+    return null
   } catch (e) {
     console.warn('[recording] could not patch session.json uploaded flag:', e)
+    return isReplaceRefused(e) ? 'run-not-saved' : null
   }
 }
 
@@ -458,7 +474,8 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       return compilerDir ? await loadLedger(compilerDir) : null
     },
     onSessionSaved: deps.onSessionSaved,
-    sessionRand: deps.sessionRand
+    sessionRand: deps.sessionRand,
+    computerName: deps.computerName
   })
 
   const layerStore = registerPresenterLayers({ userData: deps.userDataDir, streams: streamStore,
@@ -525,6 +542,9 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       if(planned?.sourceOutline && exactContext?.sourceOutline && planned.sourceOutline!==exactContext.sourceOutline)return {ok:false,error:'run-source-conflict'}
       // Kept in TalkWeaver's folder: the planned Run is in a vault that is not open, so the delivery is saved as its own Run.
       if (requestedPlannedId && !picked.kept && (!planned || planned.status !== 'planned')) {
+        // A planned Run whose file is there but unreadable (a Git conflict from syncing) is named, not "not found".
+        const problem = !planned && vault ? runFileProblem(vault, talkSlug, requestedPlannedId) : null
+        if (problem) return { ok: false, error: problem.message, message: problem.message }
         return { ok: false, error: 'planned-run-not-found' }
       }
       // Audio already streamed to disk while recording: the session id is the stream's, and the
@@ -646,6 +666,11 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
         slideTimeIndex: L.buildSlideTimeIndex(rawMarks) as SlideTimeMark[]
       }
       if (captureUnknown) session.captureUnknown = true
+      // The Mac that holds this Run's recording (0.45): another Mac reading the Run from the vault says so.
+      if (session.audio || session.capture) {
+        const recordedOn = recordedOnFor(deps.computerName?.())
+        if (recordedOn) (session as SessionJson & { recordedOn?: unknown }).recordedOn = recordedOn
+      }
       // A new take of one slide of another Run (Record this slide again): named so, and listed with that Run.
       const retake = contexts.get(event.sender.id)?.retake
       if (retake) (session as SessionJson & { takeOf?: unknown }).takeOf = { runId: retake.runId, change: retake.change, slideId: retake.slideId }
@@ -690,22 +715,34 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       return { ok: true, sessionId, discarded: false, kind, capture: session.capture, captureUnknown, ...(picked.kept ? { kept: 'app-data' as const, message: KEPT_IN_APP_DATA } : {}) }
     } catch (e) {
       console.error('[recording:save]', e)
-      return { ok: false, error: String(e) }
+      // A refused Run write (the planned Run's file became unreadable while saving) is said in its own words;
+      // the presenter window keeps the captured audio (it can be exported), and the audio file already written stays on this Mac.
+      return { ok: false, error: runErrorText(e), ...(isReplaceRefused(e) ? { message: e.message } : {}) }
     }
   })
+
+  // Where a listed Run's recording is (0.45): read-time only, never written into the Run. Decided by its
+  // files; the Mac the Run names only words the answer.
+  // One look at the recordings folder per list request, not one per Run (createRunVoiceProbe).
+  const placer = (): ((record: unknown) => ReturnType<typeof mediaPlaceOf>) => {
+    const voiceHere = createRunVoiceProbe(deps.userDataDir())
+    const computer = deps.computerName?.() ?? null
+    return (record) => mediaPlaceOf(voiceHere(record), recordedOnOf(record), computer)
+  }
 
   // The minimum Studio/History (Plans 2–3) need now: the Sessions recorded for a talk, read
   // from the current vault and this Mac’s kept Runs, newest first.
   ipcMain.handle('recording:list-sessions', async (_event, talkSlug: string) => {
     try {
+      const placeOf = placer()
       const vault = deps.vaultRoot()
-      const out: unknown[] = listKeptRuns(deps.userDataDir(), talkSlug).filter((r) => !isTake(r))
+      const out: unknown[] = listKeptRuns(deps.userDataDir(), talkSlug).filter((r) => !isTake(r)).map((r) => ({ ...r, mediaPlace: placeOf(r) }))
       for (const file of vault ? await listSessionJsonFiles(vault, talkSlug) : []) {
         try {
           // A file whose root is not a session (null, an array, a number) is skipped: it would
           // break the sort below and blank the whole list.
           const session = sessionForList(JSON.parse(await readFileAsync(file, 'utf8')))
-          if (session && !isTake(session)) out.push({ ...session, home: vault })
+          if (session && !isTake(session)) out.push({ ...session, home: vault, mediaPlace: placeOf(session) })
         } catch {
           /* skip an unreadable session file rather than failing the whole list */
         }
@@ -724,15 +761,16 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
   // Every recorded Session across all talks (Studio’s rail), including kept Runs, newest first.
   ipcMain.handle('recording:list-all-sessions', async () => {
     try {
+      const placeOf = placer()
       const vault = deps.vaultRoot()
-      const out: unknown[] = listKeptRuns(deps.userDataDir()).filter((r) => !isTake(r))
+      const out: unknown[] = listKeptRuns(deps.userDataDir()).filter((r) => !isTake(r)).map((r) => ({ ...r, mediaPlace: placeOf(r) }))
       // Every talk folder and session file is checked to resolve inside the vault first.
       for (const file of vault ? await listSessionJsonFiles(vault) : []) {
         try {
           // A file whose root is not a session (null, an array, a number) is skipped: it would
           // break the sort below and blank the whole list.
           const session = sessionForList(JSON.parse(await readFileAsync(file, 'utf8')))
-          if (session && !isTake(session)) out.push({ ...session, home: vault })
+          if (session && !isTake(session)) out.push({ ...session, home: vault, mediaPlace: placeOf(session) })
         } catch {
           /* skip an unreadable session file */
         }
@@ -798,14 +836,14 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       if (deps.testMode && deps.testMode()) {
         // e2e: record the intended Key without a network, then flip uploaded.
         appendUploadMock(deps, r2Key, session.audio?.bytes ?? 0)
-        patchSessionUploaded(sessionJsonPath)
-        return { ok: true, uploaded: true }
+        const notMarked = patchSessionUploaded(sessionJsonPath)
+        return notMarked ? refused(notMarked) : { ok: true, uploaded: true }
       }
 
       const sent = await deps.storage().upload(r2Key, readFileSync(audioPath), 'audio/webm')
       if (!sent.ok) return refused(sent.failure)
-      patchSessionUploaded(sessionJsonPath)
-      return { ok: true, uploaded: true }
+      const notMarked = patchSessionUploaded(sessionJsonPath)
+      return notMarked ? refused(notMarked) : { ok: true, uploaded: true }
     } catch {
       // Nothing is lost: the recording is still on this computer. What was thrown is not passed on.
       return refused('failed')
@@ -821,12 +859,12 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       if (!target.ok) return { ok: false, error: target.error }
       const p = target.path
       if (!existsSync(p)) return { ok: false, error: 'session-not-found' }
-      const s = JSON.parse(readFileSync(p, 'utf8')) as { context?: string | null }
+      const s = readRunFileRaw(p) as { context?: string | null }
       s.context = context && String(context).trim() ? String(context).trim() : null
-      writeFileSync(p, JSON.stringify(s, null, 2), 'utf8')
+      writeRunFileRaw(p, s)
       return { ok: true }
     } catch (e) {
-      return { ok: false, error: String(e) }
+      return { ok: false, error: runErrorText(e) }
     }
   })
 
@@ -838,12 +876,12 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       if (!target.ok) return { ok: false, error: target.error }
       const p = target.path
       if (!existsSync(p)) return { ok: false, error: 'session-not-found' }
-      const s = JSON.parse(readFileSync(p, 'utf8')) as { kind?: RunKind }
+      const s = readRunFileRaw(p) as { kind?: RunKind }
       s.kind = normaliseKind(kind)
-      writeFileSync(p, JSON.stringify(s, null, 2), 'utf8')
+      writeRunFileRaw(p, s)
       return { ok: true, kind: s.kind }
     } catch (e) {
-      return { ok: false, error: String(e) }
+      return { ok: false, error: runErrorText(e) }
     }
   })
 
@@ -855,14 +893,14 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       if (!target.ok) return { ok: false, error: target.error }
       const p = target.path
       if (!existsSync(p)) return { ok: false, error: 'session-not-found' }
-      const s = JSON.parse(readFileSync(p, 'utf8')) as { trims?: TrimRange[] }
+      const s = readRunFileRaw(p) as { trims?: TrimRange[] }
       const next = normaliseTrims(trims)
       if (next.length) s.trims = next
       else delete s.trims
-      writeFileSync(p, JSON.stringify(s, null, 2), 'utf8')
+      writeRunFileRaw(p, s)
       return { ok: true, trims: next }
     } catch (e) {
-      return { ok: false, error: String(e) }
+      return { ok: false, error: runErrorText(e) }
     }
   })
 
@@ -880,7 +918,7 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       if (!target.ok) return { ok: false, error: target.error }
       const p = target.path
       if (!existsSync(p)) return { ok: false, error: 'session-not-found' }
-      const s = JSON.parse(readFileSync(p, 'utf8')) as SessionJson
+      const s = readRunFileRaw(p) as unknown as SessionJson
       if (s.audio !== null) return { ok: false, error: 'audio-run' }
       const rawMarks: SlideTimeMark[] = Array.isArray(payload?.rawMarks) ? payload.rawMarks : []
       const endedAt = String(payload?.endedAt ?? new Date().toISOString())
@@ -896,7 +934,7 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       writeRunFile(p, s as unknown as RunRecord)
       return { ok: true }
     } catch (e) {
-      return { ok: false, error: String(e) }
+      return { ok: false, error: runErrorText(e) }
     }
   })
 
@@ -954,7 +992,7 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       runHomes.get(event.sender.id)?.delete(sessionId)
       return { ok: true }
     } catch (e) {
-      return { ok: false, error: String(e) }
+      return { ok: false, error: runErrorText(e) }
     }
   })
 
@@ -997,7 +1035,12 @@ export function registerRecordingIpc(deps: RecordingDeps): void {
       const edits = saved ? editsPath(root, deps.userDataDir(), talkSlug, sessionId) : null
       if (edits?.ok && existsSync(edits.path) && lstatSync(edits.path).isFile()) targets.push(edits.path)
       // Copies an upgrade kept of older edits files (recording-edits-store.ts) go with them.
-      if (edits?.ok) for (let v = 1; v < 5; v++) { const old = join(dirname(edits.path), `${sessionId}.edits.version-${v}.json`); try { if (lstatSync(old).isFile()) targets.push(old) } catch { /* none */ } }
+      if (edits?.ok) {
+        const kept = new RegExp(`^${sessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.edits\\.version-\\d+(?:-[0-9a-f-]{36})?\\.json$`)
+        let names: string[] = []
+        try { names = readdirSync(dirname(edits.path)) } catch { /* none */ }
+        for (const name of names) if (kept.test(name)) { const old = join(dirname(edits.path), name); try { if (lstatSync(old).isFile()) targets.push(old) } catch { /* gone */ } }
+      }
       return { ok: true, id: sessionId, saved, shared, targets }
   }
 }

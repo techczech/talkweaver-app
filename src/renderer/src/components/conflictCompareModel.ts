@@ -50,6 +50,8 @@ export function serviceLine(service: string): string {
     case 'onedrive': return 'OneDrive made a second copy because the talk was edited on two Macs'
     case 'dropbox': return 'Dropbox made a conflicted copy because the talk was edited in two places'
     case 'gdrive': return 'Google Drive made a second copy because the talk was edited in two places'
+    case 'icloud': return 'iCloud Drive kept a second copy because the talk was edited in two places'
+    case 'syncthing': return 'Syncthing kept a conflict copy because the talk was edited in two places'
     case 'git': return 'Git left conflict markers in the talk after a merge'
     default: return 'A second copy of the talk was made'
   }

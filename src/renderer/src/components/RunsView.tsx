@@ -77,6 +77,8 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
   const [sources, setSources] = useState<SessionSource[] | null>(null)
   const [live, setLive] = useState<ReadonlySet<string>>(new Set())
   const [recovery, setRecovery] = useState<RecordingRecovery[]>([])
+  /** Run files that hold Git conflict markers (0.45): named here, since the list cannot show their Runs. */
+  const [runConflicts, setRunConflicts] = useState<Array<{ vaultId: string; name: string; message: string }>>([])
   const [now, setNow] = useState(() => new Date())
   const [version, setVersion] = useState(0)
   const [filters, setFilters] = useState<SessionFilter[]>([])
@@ -99,6 +101,7 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
       ])
       setSources([...result.runs, ...all.filter((candidate) => candidate.kept === 'app-data').map(keptSource)])
       setLive(new Set(result.live))
+      setRunConflicts(result.conflicts ?? [])
       setRecovery(interrupted)
     } catch { setSources((current) => current ?? []) }
     setNow(new Date())
@@ -505,6 +508,11 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
           {recovery.length > 0 && (
             <div className="tw-run-note-list" aria-label="Recording recovery">
               {recovery.map((item) => <div className="tw-run-note" key={item.sessionId} data-recording-recovery={item.sessionId}>{item.talkTitle}: {item.message}</div>)}
+            </div>
+          )}
+          {runConflicts.length > 0 && (
+            <div className="tw-run-note-list" aria-label="Run files with a Git conflict">
+              {runConflicts.map((item) => <div className="tw-run-note" role="alert" key={`${item.vaultId}|${item.name}`} data-run-git-conflict={item.name}>{item.message} <button type="button" className="tw-btn tw-btn--sm" onClick={() => { void window.tw.sessions.showConflict({ vaultId: item.vaultId, name: item.name }) }}>Show in Finder</button></div>)}
             </div>
           )}
           {empty ? (

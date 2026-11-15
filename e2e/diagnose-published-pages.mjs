@@ -133,7 +133,7 @@ const rows = (tools) => tools.evaluate(() => [...document.querySelectorAll('[dat
     await tools.locator(`[data-published-row="${vaultId}|run|ai-research/said"] .tw-pub-pick`).click()
     await tools.waitForSelector(`[data-published-detail="${vaultId}|run|ai-research/said"]`, { timeout: 5000 })
     const links = await tools.locator('[data-published-link]').evaluateAll((els) => els.map((el) => `${el.getAttribute('data-published-link')}=${el.querySelector('b')?.textContent}`))
-    rec('a Run row\'s detail: handout, pre-work and post-work links', JSON.stringify(links) === JSON.stringify(['handout=Handout link', 'pre-work=Pre-work link', 'post-work=Post-work link · opens after the session']), links.join(' | '))
+    rec('a Run row\'s detail: handout, pre-work and post-work links', JSON.stringify(links) === JSON.stringify(['handout=Handout link', 'pre-work=Pre-work link', 'post-work=Post-work link · opens after the Run']), links.join(' | '))
     rec('Open run is offered', await tools.locator('[data-published-open="run"]').count() === 1)
     await tools.locator(`[data-published-unpublish="${vaultId}|run|ai-research/said"]`).click()
     await tools.waitForSelector('[data-unpublish-confirm]', { timeout: 5000 })

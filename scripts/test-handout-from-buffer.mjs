@@ -34,7 +34,7 @@ import { handoutHomeDetails, handoutHomePostwork, handoutHomePrework } from '../
 import { planRunWork, sendRunWork, writeRunWorkPages, runLineFor } from '../src/main/run-work-publish.ts'
 import { RUN_FOLDER_UNCLEAR, RUN_FOLDER_UNPROVEN, legacyRunUnproven, runPublishFolder, runSiteFolder } from '../src/main/run-unpublish.ts'
 import { runPublicationFixture } from './lib/run-publication-fixture.mjs'
-import { persistRunForTalk, readRunForTalk, normaliseRun, stampRunWork } from '../src/main/runs.ts'
+import { persistRunForTalk, readRunForTalk, requireRunForTalk, runFileProblem, normaliseRun, stampRunWork } from '../src/main/runs.ts'
 import { WORK_PAGE_FOLDER } from '../src/shared/run-work.ts'
 // The pages are built and written as the main process's worker thread does it, here in this process.
 import { buildHandoutPages } from '../src/main/handout-pages.ts'
@@ -467,6 +467,8 @@ function runDeps(path, built, extra = {}) {
     writableVaultRoot: () => root, // a write resolves the vault only while its folder is there (vaults 07)
     vaultRootFor: () => root,
     readRunForTalk,
+    requireRunForTalk,
+    runFileProblem,
     talkBySlug: () => talk,
     flushTalkForPublish,
     readFileSync,

@@ -9,6 +9,7 @@ import { createSocket } from 'node:dgram'
 import { createServer as createTcpServer } from 'node:net'
 import { captureAttack } from './lib/capture-network-attack.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { testProfileEnv } from './lib/test-profile.mjs'
 const repo = resolve('.')
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'tw-offline-e2e-')))
 const userData = join(scratch, 'userData'), vault = join(scratch, 'vault'), talk = join(vault, 'offline-page'), assets = join(talk, 'assets')
@@ -43,7 +44,7 @@ try {
   writeFileSync(join(assets, 'data.json'), '{"count":42,"label":"SUPPORTING-DATA"}')
   writeFileSync(join(assets, 'widget.html'), `<!doctype html><title>Widget</title><h1 id="result">Waiting</h1><table><tr><td>Offline table</td></tr></table><canvas width="20" height="20"></canvas><script>fetch('data.json').then(r=>r.json()).then(d=>document.querySelector('h1').textContent='Count '+d.count);fetch('http://127.0.0.1:${port}/leak').catch(()=>{});window.open('https://example.org');</script>`)
   await ensureFreshBuild(repo)
-  const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1', TW_E2E_LIVE_PAGE_ALLOW: `127.0.0.1:${port}` }; delete env.ELECTRON_RUN_AS_NODE
+  const env = { ...process.env, TW_E2E: '1', ...testProfileEnv(userData), TW_REC_TEST: '1', TW_E2E_LIVE_PAGE_ALLOW: `127.0.0.1:${port}` }; delete env.ELECTRON_RUN_AS_NODE
   app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: repo, env })
   app.on('console', message => { if (message.text().includes('[offline-page]')) console.log(message.text()) })
   const page = await app.firstWindow(); page.setDefaultTimeout(30000)

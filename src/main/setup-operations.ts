@@ -23,7 +23,7 @@ import { TOKEN_SHAPE_ERROR, type CloudflareConnectionService } from './cloudflar
 import type { LiveService } from './live-service.ts'
 import { KEYS_SHAPE_ERROR, recordingKeysAcceptable, type RecordingStorage } from './recording-storage.ts'
 import type { TranscriptionSetup } from './transcription-setup.ts'
-import type { ImporterRow, OpResult, SetupOperations, SetupSnapshot } from './setup-cli.ts'
+import type { AgentSkillRow, ImporterRow, OpResult, SetupOperations, SetupSnapshot, WordTimingRow } from './setup-cli.ts'
 import type { GoingLiveRow } from '../shared/live-service-status.ts'
 import { goingLiveRowDetail } from '../shared/live-service-status.ts'
 
@@ -45,6 +45,10 @@ export interface SetupOperationPorts {
   applyShareAddress(): Promise<{ ok: true } | { ok: false; error: string } | null>
   /** Every new Going live row while a set-up runs. Answers a function that stops listening. */
   watchLiveRow(listener: (row: GoingLiveRow) => void): () => void
+  /** Precise word timing's models, as Settings › Recording reads them (the second-Mac check, 0.45). */
+  wordTiming?: () => Promise<WordTimingRow[]>
+  /** The agent skill, as Settings and `TalkWeaver agent status` read it (the second-Mac check, 0.45). */
+  agentSkill?: () => Promise<AgentSkillRow>
 }
 
 const failed = (error: string, usage = false): OpResult => ({ ok: false, error, ...(usage ? { usage: true } : {}) })
@@ -87,15 +91,21 @@ export function createSetupOperations(ports: SetupOperationPorts): SetupOperatio
       if (recording.status().state !== 'not-set-up') await recording.check()
     },
 
-    async snapshot(): Promise<SetupSnapshot> {
+    async snapshot(options): Promise<SetupSnapshot> {
       // A command that did not touch Cloudflare still prints the connection as it is, not "Checking…".
       const now = connection.status()
       if (now.connection.state === 'checking' && !now.busy) await checkCloudflare()
-      const [transcriptionRow, importer] = await Promise.all([
+      const second = options?.secondMac === true
+      const [transcriptionRow, importer, wordTiming, agentSkill] = await Promise.all([
         transcription.status().catch(() => null),
         ports.importer().catch(() => null),
+        second && ports.wordTiming ? ports.wordTiming().catch(() => null) : Promise.resolve(null),
+        second && ports.agentSkill ? ports.agentSkill().catch(() => null) : Promise.resolve(null),
       ])
-      return { cloudflare: connection.status(), goingLive: liveService.row(), recording: recording.status(), transcription: transcriptionRow, importer }
+      return {
+        cloudflare: connection.status(), goingLive: liveService.row(), recording: recording.status(), transcription: transcriptionRow, importer,
+        ...(second ? { wordTiming, agentSkill } : {}),
+      }
     },
 
     async connect(token) {

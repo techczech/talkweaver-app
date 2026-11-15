@@ -29,6 +29,7 @@ import { PRE_WORK, POST_WORK } from '../scripts/lib/work-page-fixture.mjs'
 import { REPLY_TEXT_MARK, WORKERS_SUBDOMAIN, startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
 import { APP_CONFIG_MARK, appWrittenLoopback } from '../src/main/handout-publishing.ts'
 import { PUBLISH_REFUSED } from '../src/main/publishing-logic.ts'
+import { testProfileEnv } from './lib/test-profile.mjs'
 
 const root = process.cwd()
 const scratch = mkdtempSync(join(tmpdir(), 'tw-publish-handout-'))
@@ -153,7 +154,7 @@ try {
   })
   // Only what the app needs from this shell: no credential of the person running the test goes in.
   // No TW_LIVE_LOCAL: a live service on this computer is not allowed here, as in an installed app.
-  const env = { TW_E2E: '1', TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl }
+  const env = { TW_E2E: '1', ...testProfileEnv(userData), TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl }
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }

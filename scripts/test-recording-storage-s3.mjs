@@ -338,7 +338,8 @@ try {
     }
     // audio-missing is a local reason (the audio file is not on disk), never an S3 answer: the
     // handler reaches the five storage kinds only.
-    const fromStorage = UPLOAD_FAILURES.filter((kind) => kind !== 'audio-missing')
+    // Local words, not the storage's: audio missing, and a Run not marked after an upload (test:replace-guard).
+    const fromStorage = UPLOAD_FAILURES.filter((kind) => kind !== 'audio-missing' && kind !== 'run-not-saved')
     assert.deepEqual([...produced].sort(), fromStorage.sort(), 'every storage kind was reached through the handler')
     assert.equal(new Set([...produced].map((failure) => uploadFailureMessage(failure))).size, fromStorage.length, 'each with its own sentence')
     // A refused upload turns the row, as a refused check would.

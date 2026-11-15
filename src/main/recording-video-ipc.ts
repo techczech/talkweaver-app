@@ -16,6 +16,7 @@ import { recordingFingerprint, type EditOp, type TimeRange } from '../shared/rec
 import { editorWords, planDigest, resolveRecording, type EditorTranscript } from '../shared/recording-editor.ts'
 import { faceTrack, faceTrackOnClock, hasPictureLayers, type CaptureLike, type CaptionWord, type ChapterSlide } from '../shared/recording-video.ts'
 import { TAKE_STEP_OFF_ERROR, TAKES_OFF_ERROR, takesInUse, type TakeClock } from '../shared/recording-takes.ts'
+import { mediaPlaceOf, recordedOnFor, recordedOnOf, type MediaPlace } from '../shared/recording-place.ts'
 import { isToolsWindowSender } from './talkTextSender.ts'
 
 export type RecordingRef = { talkSlug: string; runId: string; home?: string | null }
@@ -33,6 +34,8 @@ export type RecordingOpen = {
   takes: TakeInfo[]
   /** Whether Record one slide again is on in this build (takesEnabled); off, the editor offers nothing of it. */
   recordAgain: boolean
+  /** None of the Run's recorded files is on this Mac (0.45): where it is, as far as the Run says. Null when any file is here. */
+  away: MediaPlace | null
 }
 /** A new take of one slide: its own Run, kept beside this one. */
 export type TakeInfo = {
@@ -75,6 +78,10 @@ type Host = {
   defaultFolder: () => string
   /** Record one slide again (takesEnabled in recording-takes.ts); absent: off. */
   takesEnabled?: () => boolean
+  /** The name this computer is listed under, compared with the Mac a Run names (0.45). */
+  computerName?: () => string
+  /** This app's version, written into every edits save with the computer's name (0.45). */
+  appVersion?: () => string
 }
 
 const STRING_MAX = 300
@@ -138,9 +145,13 @@ export function registerRecordingVideoIpc(host: Host) {
         fingerprint: recordingFingerprint({ id: ref.runId, talkSlug: ref.talkSlug, startedAt: record.startedAt, recordingMs: record.recordingMs }),
         context: { runTrims: Array.isArray(record.trims) ? record.trims : [], legacySource: (version) => pr316Source(version, dirname(target.path), record, media) }
       }
-    }
+    },
+    // Who saves: the same computer name a Run's recordedOn uses, and this version (0.45, second Mac).
+    saver: () => ({ mac: recordedOnFor(host.computerName?.())?.computer ?? 'a Mac with no name', app: host.appVersion?.() ?? 'unknown version' }),
+    // The edits this Mac last saved or opened, per edits file, so a version a sync replaced is kept on the next open.
+    seenDir: () => join(host.userDataDir(), 'recording-edits-seen')
   })
-  async function layersOf(ref: RecordingRef): Promise<ResolvedLayers & { runTrims: TimeRange[]; record: ReturnType<typeof runOf>['record']; vault: string | null }> {
+  async function layersOf(ref: RecordingRef): Promise<ResolvedLayers & { here: boolean; runTrims: TimeRange[]; record: ReturnType<typeof runOf>['record']; vault: string | null }> {
     const { vault, source, record, durationMs } = runOf(ref)
     const pictures = resolvePictureLayers(host.userDataDir(), ref.runId, record.capture, durationMs)
     const listed = recordedSegmentPaths(host.userDataDir(), ref.runId, source)
@@ -149,7 +160,9 @@ export function registerRecordingVideoIpc(host: Host) {
     for (const seg of declared) if (typeof seg?.file === 'string' && !listed.some((l) => basename(l.path) === seg.file)) missing.push({ layer: 'voice', file: seg.file })
     const tool = ffmpeg()
     const voice = tool ? await audibleSegmentPaths(host.userDataDir(), ref.runId, source, tool) : listed
-    return { runId: ref.runId, durationMs, slides: pictures.slides, camera: pictures.camera, voice, missing, runTrims: Array.isArray(record.trims) ? record.trims : [], record, vault }
+    // Any recorded file on this Mac, judged by the files themselves (0.45).
+    const here = listed.length > 0 || pictures.slides.length > 0 || pictures.camera.length > 0
+    return { runId: ref.runId, durationMs, slides: pictures.slides, camera: pictures.camera, voice, missing, here, runTrims: Array.isArray(record.trims) ? record.trims : [], record, vault }
   }
   /** The takes recorded for a Run: Runs of the same talk and home that name it in `takeOf`. */
   async function takesOf(ref: RecordingRef): Promise<TakeInfo[]> {
@@ -209,7 +222,8 @@ export function registerRecordingVideoIpc(host: Host) {
         hasPicture: hasPictureLayers(layers.record.capture), hasCamera: layers.camera.length > 0,
         slides: layers.slides.map(({ part, startMs, endMs }) => ({ part, startMs, endMs })),
         camera: layers.camera.map(({ part, startMs, endMs }) => ({ part, startMs, endMs })),
-        missing: layers.missing, runTrims: layers.runTrims, edits: store.get(ref), takes: await takesOf(ref), recordAgain: takesOn()
+        missing: layers.missing, runTrims: layers.runTrims, edits: store.get(ref), takes: await takesOf(ref), recordAgain: takesOn(),
+        away: layers.here || (!layers.missing.length && !layers.record.audio) ? null : mediaPlaceOf(false, recordedOnOf(layers.record), host.computerName?.() ?? null)
       }
       return result
     } catch (error) { return failed(error) }
@@ -245,7 +259,7 @@ export function registerRecordingVideoIpc(host: Host) {
     try { return { ok: true, takes: await takesOf(parseRef(raw)) } } catch (error) { return failed(error) }
   })
 
-  host.ipcMain.handle('recording-video:edit', (event, raw, op, revision) => {
+  host.ipcMain.handle('recording-video:edit', (event, raw, op, revision, digest) => {
     if (!sender(event)) return refuse
     try {
       if (!Number.isSafeInteger(revision)) throw Error('Reopen the recording to edit it.')
@@ -254,16 +268,31 @@ export function registerRecordingVideoIpc(host: Host) {
       // So is an Undo or Redo step that would change the take choices kept in the file; other steps work as ever.
       const kind = (op as EditOp | null)?.kind
       if ((kind === 'undo' || kind === 'redo') && !takesOn()) {
-        const now = store.get(parseRef(raw)).edits
+        const now = store.read(parseRef(raw)).edits
         const target = (kind === 'undo' ? now.undo : now.redo).at(-1)
         if (target && JSON.stringify(target.takes ?? []) !== JSON.stringify(now.takes ?? [])) throw Error(TAKE_STEP_OFF_ERROR)
       }
-      return { ok: true, edits: store.apply(parseRef(raw), op as EditOp, revision as number) }
+      // The bytes the editor's edits came from (0.45): a string, null for "no file yet", anything else is not given.
+      const base = typeof digest === 'string' && /^[0-9a-f]{16}$/.test(digest) ? digest : digest === null ? null : undefined
+      return { ok: true, edits: store.apply(parseRef(raw), op as EditOp, revision as number, base) }
     } catch (error) { return failed(error) }
   })
   host.ipcMain.handle('recording-video:start-fresh', (event, raw) => {
     if (!sender(event)) return refuse
     try { return { ok: true, edits: store.startFresh(parseRef(raw)) } } catch (error) { return failed(error) }
+  })
+  // Kept edits (0.45): the copies set aside, one opened read only, one restored as the edits.
+  host.ipcMain.handle('recording-video:kept-list', (event, raw) => {
+    if (!sender(event)) return refuse
+    try { return { ok: true, kept: store.listKept(parseRef(raw)) } } catch (error) { return failed(error) }
+  })
+  host.ipcMain.handle('recording-video:kept-open', (event, raw, id) => {
+    if (!sender(event)) return refuse
+    try { return { ok: true, ...store.openKept(parseRef(raw), id) } } catch (error) { return failed(error) }
+  })
+  host.ipcMain.handle('recording-video:kept-restore', (event, raw, id) => {
+    if (!sender(event)) return refuse
+    try { return { ok: true, edits: store.restoreKept(parseRef(raw), id) } } catch (error) { return failed(error) }
   })
 
   const temps = createTempRecord(host.tempRecordFile?.() ?? join(host.userDataDir(), 'recording-export-temps.json'))
@@ -290,7 +319,7 @@ export function registerRecordingVideoIpc(host: Host) {
         // wordless plan is stale: refuse and let the window go back to the plan with its words.
         if (options.withoutWords && words.state === 'ok') return { refuse: { ok: false, stale: true, error: STALE } }
         const transcript = options.withoutWords || words.state !== 'ok' ? null : words.transcript
-        const edits = inUse(store.get(ref))
+        const edits = inUse(store.read(ref))
         if (edits.problem) throw Error(`${edits.problem.message} Choose Start new edits first.`)
         // A chosen take that cannot be played is never exported as the first take or as silence.
         if (unavailableTakes(edits, takes).length) return { refuse: { ok: false, error: TAKE_MISSING } }
@@ -322,7 +351,11 @@ export function registerRecordingVideoIpc(host: Host) {
       const { edits, resolved, segments } = now
       const { destination, replace } = exportDestination(chosen.filePath, audioOnly ? '.m4a' : '.mp4')
       const slides: Record<string, ChapterSlide> = {}
-      for (const [id, s] of Object.entries(options.slides ?? {}).slice(0, 5000)) if (s && typeof s.title === 'string') slides[id.slice(0, STRING_MAX)] = { title: s.title.slice(0, STRING_MAX), ...(typeof s.section === 'string' ? { section: s.section.slice(0, STRING_MAX) } : {}) }
+      for (const [id, s] of Object.entries(options.slides ?? {}).slice(0, 5000)) {
+        if (!s || typeof s.title !== 'string') continue
+        const cards = Array.isArray(s.cards) ? s.cards.filter((c): c is string => typeof c === 'string').slice(0, 500).map((c) => c.slice(0, STRING_MAX)) : []
+        slides[id.slice(0, STRING_MAX)] = { title: s.title.slice(0, STRING_MAX), ...(typeof s.section === 'string' ? { section: s.section.slice(0, STRING_MAX) } : {}), ...(cards.length ? { cards } : {}) }
+      }
       const jobId = `${ref.runId}:${Date.now()}`
       const target = event.sender
       const send = (state: ExportState): void => { if (!target.isDestroyed()) target.send('recording-video:export-progress', { jobId, ...state } satisfies ExportProgress) }

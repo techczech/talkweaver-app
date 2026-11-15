@@ -125,7 +125,11 @@
 .tws-sc-up { margin-left: auto; display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--lt-green); }
 .tws-sc-up.local { color: var(--lt-amber); }
 .tws-sc-up.failed { color: var(--lt-red); }
-.tws-sc-up .lt-icon { width: 13px; height: 13px; }
+.tws-sc-up .lt-icon { width: 13px; height: 13px; flex: none; }
+/* The recording is on another Mac (0.45): a Mac's name can be long, so it is cut and the tooltip says it in full. */
+.tws-sc-up { min-width: 0; }
+.tws-sc-up-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tws-sc-up.away { color: var(--lt-ink-soft); max-width: 55%; }
 .tws-sc-name { font-size: 13px; font-weight: 600; color: var(--lt-ink); margin: 0 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tws-sc-ctx { font-size: 11.5px; color: var(--lt-ink-soft); margin: 0 0 7px; min-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tws-sc-len { display: flex; align-items: center; gap: 6px; min-width: 0; }

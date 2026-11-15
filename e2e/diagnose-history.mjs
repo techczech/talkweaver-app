@@ -367,7 +367,10 @@ try {
 
   await tools.locator('[data-run-upload]').click()
   const uploadSaved = await waitFor(() => JSON.parse(readFileSync(sessionPath(sessions[1]), 'utf8')).audio?.uploaded === true, 6000)
-  const uploadChip = ((await tools.locator('[data-run-recording] ~ .rl-actions').textContent().catch(() => '')) || '').trim()
+  // The chip follows the saved Run in a later render: waited for (bounded), then read.
+  const chipText = async () => ((await tools.locator('[data-run-recording] ~ .rl-actions').textContent().catch(() => '')) || '').trim()
+  await waitFor(async () => /uploaded/i.test(await chipText()), 6000)
+  const uploadChip = await chipText()
   const mockHasKey = existsSync(mockPath) && readFileSync(mockPath, 'utf8').split('\n').filter(Boolean).some((line) => {
     try { return JSON.parse(line).r2Key === `presentations/${sessions[1].talkSlug}/${sessions[1].id}/audio.webm` } catch { return false }
   })
@@ -466,9 +469,11 @@ try {
   const linkRow = detail(tools).locator('.isl-row').nth(0)
   await linkRow.locator('button.isl-add').click()
   const editorAdded = await waitFor(async () => /Added after slide 3/.test(((await linkRow.locator('.isl-add.done').textContent().catch(() => '')) || '')), 10000)
+  // The editor's lines, in either view: Plain view (the starting view since plain view 01) hides a title's
+  // `###`, so the slide's title line reads "example.org" there and "### example.org" in Markdown view.
   const bufferHasBoth = await waitFor(async () => {
-    const text = (await page.locator('.cm-content').first().textContent().catch(() => '')) || ''
-    return text.includes('UNSAVEDMARK') && text.includes('### example.org')
+    const lines = await page.locator('.cm-content').first().locator('.cm-line').allInnerTexts().catch(() => [])
+    return lines.some((line) => line.includes('UNSAVEDMARK')) && lines.some((line) => /^(### )?example\.org$/.test(line.trim()))
   }, 6000)
   await page.waitForTimeout(2500) // past the editor's 1.5s autosave debounce
   const diskA = readFileSync(outlineA, 'utf8')

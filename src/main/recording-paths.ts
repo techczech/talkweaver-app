@@ -266,6 +266,82 @@ export function recordedSegmentPaths(userDataDir: string, sessionId: unknown, so
 }
 
 /**
+ * Whether any of a saved Run's recorded voice files is on this Mac (0.45, second Mac). Decided by the
+ * files the Run lists (or, for Runs from before segment lists, the files under its id), never by the
+ * `uploaded` flag or by the Mac the Run names. A Run whose record is not valid has nothing here.
+ */
+export function runVoiceHere(userDataDir: string, record: unknown): boolean {
+  if (!record || typeof record !== 'object') return false
+  const run = record as RecordingRecord
+  if (typeof run.id !== 'string' || !run.id) return false
+  try { return recordedSegmentPaths(userDataDir, run.id, { kind: 'run', record: run }).length > 0 } catch { return false }
+}
+
+/**
+ * `runVoiceHere` for a whole list (0.45 fix round): the recordings folder is checked and read at most once
+ * per probe, however many Runs are asked about, and each Run stops at its first file that is there. Make
+ * one per list request (the Runs view, Studio): files added later are seen by the next request. The answer
+ * for each Run is exactly `runVoiceHere`'s.
+ */
+export function createRunVoiceProbe(userDataDir: string): (record: unknown) => boolean {
+  const recDir = resolve(userDataDir, 'recordings')
+  let dirOk: boolean | undefined
+  // Older Runs (no segment list): the folder's names, read once, by the Run id each could belong to.
+  let byRun: Map<string, string[]> | undefined
+  const listing = (): Map<string, string[]> => {
+    if (byRun) return byRun
+    byRun = new Map()
+    let names: string[] = []
+    try { names = readdirSync(recDir) } catch { /* nothing here */ }
+    const add = (id: string, name: string): void => { const list = byRun!.get(id); if (list) list.push(name); else byRun!.set(id, [name]) }
+    for (const name of names) {
+      if (!name.endsWith('.webm')) continue
+      add(name.slice(0, -'.webm'.length), name)
+      const seg = /^(.+)\.seg-\d{1,4}\.webm$/.exec(name)
+      if (seg) add(seg[1], name)
+    }
+    return byRun
+  }
+  const isFile = (path: string): boolean => { try { return lstatSync(path).isFile() } catch { return false } }
+  // The same two checks the one-Run path makes (existingSegmentPaths, then existingRecordedSegmentPath).
+  const olderFileHere = (id: string, name: string): boolean => {
+    let index: number
+    if (name === `${id}.webm`) index = 0
+    else {
+      const m = name.startsWith(`${id}.seg-`) ? /^\.seg-(\d{1,4})\.webm$/.exec(name.slice(id.length)) : null
+      if (!m) return false
+      index = Number(m[1]) - 1
+    }
+    const own = localSegmentPath(userDataDir, id, index)
+    if (!own.ok || own.path !== join(recDir, name)) return false
+    const target = segmentFilePath(userDataDir, id, segmentIndexOfFile(name), name)
+    return target.ok && isFile(target.path)
+  }
+  return (record: unknown): boolean => {
+    if (!record || typeof record !== 'object') return false
+    const run = record as RecordingRecord
+    if (typeof run.id !== 'string' || !run.id) return false
+    try {
+      const segments = run.audio?.segments
+      if (run.audio && segments === undefined) {
+        if (!isSafeRunId(run.id)) return false
+        const names = listing().get(run.id)
+        if (!names?.length || !(dirOk ??= recordingsDirOk(userDataDir))) return false
+        return names.some((name) => olderFileHere(run.id as string, name))
+      }
+      if (!Array.isArray(segments) || !segments.length) return false
+      if (!(dirOk ??= recordingsDirOk(userDataDir))) return false
+      return segments.some((seg) => {
+        if (!seg || typeof seg !== 'object' || typeof seg.file !== 'string') return false
+        const index = segmentIndexOfFile(seg.file)
+        const target = index === null ? null : segmentFilePath(userDataDir, run.id, index, seg.file)
+        return !!target?.ok && isFile(target.path)
+      })
+    } catch { return false }
+  }
+}
+
+/**
  * The segments transcription and video export hear: the Run's own files (recordedSegmentPaths)
  * less empty files and verified header-only WebM files. File packet times repair zero spans. Deleting a Run and checking that
  * every listed file is present still use recordedSegmentPaths, which keeps them.

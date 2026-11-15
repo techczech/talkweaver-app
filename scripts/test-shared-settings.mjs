@@ -104,7 +104,7 @@ await test('only the keys the app honours overrides for can be rebound', () => {
   // Keys the old Settings could rebind and the new one cannot: the system's Undo / Redo, and keys
   // that act on Enter or Tab where the caret is (one chord space cannot hold them).
   const dropped = ['editor.undo', 'editor.redo', 'editor.object-edit', 'editor.object-raw', 'editor.object-finish', 'editor.object-leave',
-    'editor.title-continue', 'editor.protected-line-continue', 'editor.list-continue', 'editor.quote-paragraph', 'editor.list-indent', 'editor.list-outdent']
+    'editor.title-continue', 'editor.protected-line-continue', 'editor.list-continue', 'editor.quote-paragraph', 'editor.list-indent', 'editor.list-outdent', 'editor.object-delete']
   for (const [shortcutId, id] of Object.entries(REBINDABLE)) assert.equal(local.get(shortcutId), id, shortcutId)
   for (const shortcutId of local.keys()) assert.ok(Object.hasOwn(REBINDABLE, shortcutId) || dropped.includes(shortcutId), `${shortcutId} is neither rebindable nor listed as dropped`)
   for (const d of registry.defs) {

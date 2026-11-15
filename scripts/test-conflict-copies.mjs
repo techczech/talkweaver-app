@@ -114,6 +114,78 @@ await test('conflictCandidateNames keeps listing order and only copies', () => {
   assert.deepEqual(conflictCandidateNames(names, S), ['ai-workshop-outline (1).md', 'ai-workshop-outline-MacBook-Air.md'])
 })
 
+// ── iCloud Drive and Syncthing (0.45, second Mac) ──
+// Real names: iCloud Drive keeps both versions as `S 2.md`, `S 3.md`, …; Syncthing renames the losing
+// version `S.sync-conflict-<YYYYMMDD>-<HHMMSS>-<first 7 characters of the device id>.md`.
+const syncTable = [
+  ['ai-workshop-outline 2.md', 'icloud'],
+  ['ai-workshop-outline 3.md', 'icloud'],
+  ['ai-workshop-outline 12.md', 'icloud'],
+  ['ai-workshop-outline.sync-conflict-20261114-093015-ABCDEFG.md', 'syncthing'],
+  ['ai-workshop-outline.sync-conflict-20261114-093015-7Q2XK4M.md', 'syncthing'],
+  // near misses: the author's own names, and other services' shapes that are not these
+  ['ai-workshop-outline 1.md', null], // iCloud starts at 2
+  ['ai-workshop-outline 0.md', null],
+  ['ai-workshop-outline 123.md', null],
+  ['ai-workshop-outline  2.md', null],
+  ['ai-workshop-outline 2 .md', null],
+  ['ai-workshop-outline v2.md', null],
+  ['ai-workshop-outline 2b.md', null],
+  ['ai-workshop-outline2.md', null],
+  ['ai-workshop 2-outline.md', null],
+  ['other-talk-outline 2.md', null],
+  ['ai-workshop-outline 2.txt', null],
+  ['ai-workshop-outline.sync-conflict-2026111-093015-ABCDEFG.md', null], // date has 7 digits
+  ['ai-workshop-outline.sync-conflict-20261114-0930-ABCDEFG.md', null], // time has 4 digits
+  ['ai-workshop-outline.sync-conflict-20261114-093015-ABC.md', null], // device id too short
+  ['ai-workshop-outline.sync-conflict-20261114-093015-abcdefg.md', null], // device ids are upper case
+  ['ai-workshop-outline.sync-conflict.md', null],
+  ['ai-workshop-outline-sync-conflict-20261114-093015-ABCDEFG.md', null] // hyphen, not the dot Syncthing writes
+]
+await test(`iCloud Drive and Syncthing names (${syncTable.length} rows), with near misses`, () => {
+  for (const [name, service] of syncTable) {
+    const got = conflictServiceOf(name, S)
+    assert.equal(got?.service ?? null, service, name)
+    if (service) assert.equal(got.source, null, `${name}: neither service names a machine the owner would recognise`)
+  }
+  // The same names for an outline whose base has spaces, dots and hyphens.
+  assert.equal(conflictServiceOf('talk v1.2 - final-outline 2.md', 'talk v1.2 - final-outline.md')?.service, 'icloud')
+  assert.equal(conflictServiceOf('talk v1.2 - final-outline.sync-conflict-20260101-000000-ZZZZZZZ.md', 'talk v1.2 - final-outline.md')?.service, 'syncthing')
+  // The walk's loose candidates include them, so the scanner gets to look.
+  assert.deepEqual(conflictCandidateNames(['ai-workshop-outline 2.md', 'ai-workshop-outline v2.md', 'ai-workshop-outline.sync-conflict-20261114-093015-ABCDEFG.md'], S, { loose: true }),
+    ['ai-workshop-outline 2.md', 'ai-workshop-outline.sync-conflict-20261114-093015-ABCDEFG.md'])
+})
+
+await test('an iCloud-style "S 2.md" is a copy only when its contents are related to S; Syncthing names need no such proof', () => {
+  const OTHER = '---\ntitle: A different talk\n---\n\n### Opening {id=zz999}\n'
+  const EDITED = '---\ntitle: AI and assessment workshop\n---\n\n### Slide {id=abc12}\nEdited on the other Mac.\n'
+  const RETITLED = '---\ntitle: AI and assessment (new title)\n---\n\n### Slide {id=abc12}\n'
+  const SAME_TITLE_NO_IDS = '---\ntitle: AI and assessment workshop\n---\n\n### Slide\n'
+  const NO_TITLE_NO_IDS = '### Slide\nNothing to tie it to the talk.\n'
+  const icloud = 'ai-workshop-outline 2.md'
+  const one = (bytes, canonical = TEXT, name = icloud) => classifyConflict([{ name, bytes }], { name: S, bytes: canonical })
+  // related: identical bytes; a shared slide id; the same title
+  assert.deepEqual(one(TEXT), [{ name: icloud, service: 'icloud', source: null, state: 'identical' }])
+  assert.deepEqual(one(EDITED), [{ name: icloud, service: 'icloud', source: null, state: 'differs' }])
+  assert.equal(one(RETITLED)[0]?.state, 'differs', 'a shared slide id ties it to the talk even under a new title')
+  assert.equal(one(SAME_TITLE_NO_IDS, '---\ntitle: AI and assessment workshop\n---\n\n### Other\n')[0]?.state, 'differs', 'the same title ties two outlines without ids')
+  // not related: a legitimately named second talk, or a file that cannot be read, is the author's own file
+  assert.deepEqual(one(OTHER), [], '"Talk 2" that is another talk is not a copy of "Talk"')
+  assert.deepEqual(one(NO_TITLE_NO_IDS), [])
+  assert.deepEqual(one(undefined), [], 'unread bytes cannot show it is related: not counted')
+  assert.deepEqual(one(''), [])
+  // Syncthing's name is proof enough: an unrelated or unread copy still counts (shown, never hidden).
+  const st = 'ai-workshop-outline.sync-conflict-20261114-093015-ABCDEFG.md'
+  assert.deepEqual(one(OTHER, TEXT, st), [{ name: st, service: 'syncthing', source: null, state: 'differs' }])
+  assert.deepEqual(one(TEXT, TEXT, st), [{ name: st, service: 'syncthing', source: null, state: 'identical' }])
+})
+
+await test('iCloud and Syncthing copies never enter the outline pick (they do not end in -outline.md)', () => {
+  const names = ['ai-workshop-outline 2.md', 'ai-workshop-outline.sync-conflict-20261114-093015-ABCDEFG.md', 'ai-workshop-outline.md']
+  assert.equal(pickOutlineName(names, 'renamed folder'), 'ai-workshop-outline.md')
+  assert.equal(pickOutlineName([...names, 'ai-workshop-MacBook-Air-outline.md'], 'renamed folder'), 'ai-workshop-outline.md')
+})
+
 const gitTable = [
   ['<<<<<<< HEAD\nmine\n=======\ntheirs\n>>>>>>> origin/main\n', true],
   ['intro\n<<<<<<< ours\na\n=======\nb\n>>>>>>> theirs\nrest\n', true],
@@ -237,6 +309,25 @@ await test('an identical copy goes to the Trash (never unlinked) with one Activi
       at: '2026-09-30T09:14:00.000Z', kind: 'identical-copy-removed', copyName: 'ai-workshop-outline-MacBook-Air.md', service: 'onedrive',
       title: 'Removed an identical copy from MacBook Air', detail: 'It matched this file byte for byte, so nothing was lost.'
     } })
+  } finally { h.done() }
+})
+
+await test('a folder scan: an identical iCloud copy is trashed, an edited one counted, "S 2.md" that is another talk left alone', async () => {
+  const h = harness()
+  try {
+    writeFileSync(join(h.folder, 'ai-workshop-outline 2.md'), TEXT)
+    writeFileSync(join(h.folder, 'ai-workshop-outline 3.md'), TEXT + 'Edited on the Air.\n')
+    writeFileSync(join(h.folder, 'ai-workshop-outline 4.md'), '---\ntitle: Something else\n---\n\n### X {id=qq111}\n')
+    writeFileSync(join(h.folder, 'ai-workshop-outline.sync-conflict-20261114-093015-ABCDEFG.md'), TEXT + 'Edited on the Pro.\n')
+    const r = await h.scan()
+    assert.deepEqual(r.trashed, ['ai-workshop-outline 2.md'])
+    assert.deepEqual(r.copies.map((c) => [c.name, c.service, c.state]).sort(), [
+      ['ai-workshop-outline 3.md', 'icloud', 'differs'],
+      ['ai-workshop-outline.sync-conflict-20261114-093015-ABCDEFG.md', 'syncthing', 'differs']
+    ])
+    assert.equal(r.conflicts, 2)
+    assert.ok(readdirSync(h.folder).includes('ai-workshop-outline 4.md'), 'the unrelated file is untouched')
+    assert.equal(h.lines[0].entry.title, 'Removed an identical copy (ai-workshop-outline 2.md)')
   } finally { h.done() }
 })
 

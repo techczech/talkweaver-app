@@ -14,6 +14,7 @@ import { iconPicturesExtension, type IconSvgSource } from './iconPictures'
 import { guardKeysExtension } from './guardKeys'
 import { settleCaretExtension } from './settleCaret'
 import type { EditorViewMode } from '../../../../shared/editor-view-mode'
+import { titleStartPastMarks } from '../outliner'
 
 export interface PlainViewOptions extends MarginMenuHandlers {
   /** Where icon pictures come from (`window.tw.icons.svg`). Without it a list item's `{icon=…}` stays a chip. */
@@ -22,7 +23,7 @@ export interface PlainViewOptions extends MarginMenuHandlers {
 }
 
 export function plainViewExtension(options: PlainViewOptions = {}): Extension {
-  return [plainLookExtension(), concealExtension(), iconPicturesExtension(options.iconSvg), listMarksExtension(), hiddenLinesExtension(), marginExtension(options), talkDetailsExtension(), guardKeysExtension(), settleCaretExtension(), placeholdersExtension()]
+  return [plainLookExtension(), concealExtension(), iconPicturesExtension(options.iconSvg), listMarksExtension(), hiddenLinesExtension(), marginExtension(options), talkDetailsExtension(), guardKeysExtension(), settleCaretExtension(), placeholdersExtension(), titleStartPastMarks.of(true)]
 }
 
 /** What the view compartment holds for a mode. Markdown = exactly today's editor. */

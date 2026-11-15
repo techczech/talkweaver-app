@@ -28,6 +28,7 @@ import {
   publishingRowDetail, publishingRowLink, suggestedShareHost, unknownPublishing,
 } from '../src/shared/cloudflare-status.ts'
 import { secretsFailureMessage } from '../src/main/secrets-store.ts'
+import { LIVE_STAND_IN_HOST_HEADER, fetchWithLiveStandIn, liveServiceStandIn } from '../src/main/live-service-stand-in.ts'
 import { LIVE_SETUP_FAILED, deployLiveService } from '../src/main/live-service-deploy.ts'
 import { INSTALLATION_INCOMPLETE } from '../src/main/live-service-upload.ts'
 import { workerDistFiles } from './lib/worker-dist.mjs'
@@ -1131,6 +1132,26 @@ const label = (t) => connectionLabel(t.connection.status().connection, NINE_FOUR
     'http://10.0.0.5:8123/client/v4', 'https://api.example.com/client/v4', '', undefined, null, 7]) {
     assert.equal(loopbackApiBase(elsewhere), null, `not a loopback stand-in: ${elsewhere}`)
     assert.equal(cloudflareApiBase({ ...dev, override: elsewhere }), CLOUDFLARE_API_BASE)
+  }
+  // The live service's stand-in (tests only): the same strictness as the API's, a bare 127.0.0.1 origin
+  // with an explicit port (the profile rule is test-network-guard.ts, scripts/test-test-network-guard.mjs).
+  assert.equal(liveServiceStandIn({ ...dev, override: 'http://127.0.0.1:8124' }), 'http://127.0.0.1:8124')
+  assert.equal(liveServiceStandIn({ packaged: true, e2e: true, override: 'http://127.0.0.1:8124' }), null, 'a packaged build ignores it')
+  assert.equal(liveServiceStandIn({ packaged: false, e2e: false, override: 'http://127.0.0.1:8124' }), null, 'so does an app not started as a test harness')
+  for (const elsewhere of ['http://localhost:8124', 'http://127.0.0.1', 'http://127.0.0.1:80', 'https://127.0.0.1:8124', 'http://127.0.0.1:8124/x', 'http://127.0.0.1:8124/?x=1', 'http://user:pass@127.0.0.1:8124', 'http://10.0.0.5:8124', 'https://a.workers.dev', '', undefined, 7]) {
+    assert.equal(liveServiceStandIn({ ...dev, override: elsewhere }), null, `not a loopback stand-in: ${elsewhere}`)
+  }
+  {
+    const seen = []
+    const sent = fetchWithLiveStandIn('http://127.0.0.1:8124', async (input, init) => { seen.push([String(input), new Headers(init?.headers).get(LIVE_STAND_IN_HOST_HEADER), new Headers(init?.headers).get('authorization')]); return new Response('') })
+    await sent('https://talkweaver-live-sessions.ada.workers.dev/computers?x=1', { headers: { authorization: 'Bearer k' } })
+    await sent('https://api.cloudflare.com/client/v4/accounts')
+    await sent('http://x.workers.dev/computers')
+    assert.deepEqual(seen, [
+      ['http://127.0.0.1:8124/computers?x=1', 'talkweaver-live-sessions.ada.workers.dev', 'Bearer k'],
+      ['https://api.cloudflare.com/client/v4/accounts', null, null],
+      ['http://x.workers.dev/computers', null, null],
+    ], 'only https workers.dev requests go to the stand-in, with the address they meant')
   }
   // `ask` sends nowhere else, whatever it is handed.
   const api = createFakeCloudflare()

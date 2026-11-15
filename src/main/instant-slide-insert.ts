@@ -27,9 +27,10 @@ import { access, readFile, realpath } from 'fs/promises'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
 import {
-  asInstantLink, decodeInstantImage, isSafeRunId, isSafeTalkSlug, markRunInstantSlideAdded, persistRunForTalk, readRunForTalk,
+  asInstantLink, decodeInstantImage, isSafeRunId, isSafeTalkSlug, markRunInstantSlideAdded, persistRunForTalk, readRunForTalk, requireRunForTalk,
   type InstantImageFormat, type RunInstantSlide, type RunRecord
 } from './runs.ts'
+import { isReplaceRefused } from './replace-guard.ts'
 import { retryPause, withTalkFileLock, writeTalkFileInPlace } from './talk-writer.ts'
 
 export interface SlideBlock { heading: string; occurrence: number; title: string; start: number; end: number }
@@ -402,14 +403,17 @@ export async function addRunInstantSlide(args: {
       { tools: args.tools, storeImage: args.storeImage, rng: args.rng })
     if (!result.ok) return result
     try {
-      const fresh = readRunForTalk(args.vaultRoot, args.talkSlug, args.runId) ?? run
+      // The Run as its file holds it now, never the copy read before the slide was added: a file that
+      // became unreadable meanwhile (a Git conflict from a sync) is left as it is and named below.
+      const fresh = requireRunForTalk(args.vaultRoot, args.talkSlug, args.runId)
       const marked = persistRunForTalk(args.vaultRoot, args.talkSlug, args.runId, markRunInstantSlideAdded(fresh, entry.id, {
         afterSlideNumber: result.afterSlideNumber, afterSlideTitle: result.afterSlideTitle,
         slideId: result.slideId, at: (args.now ?? (() => new Date()))().toISOString(),
       }))
       return { ok: true, afterSlideNumber: result.afterSlideNumber, afterSlideTitle: result.afterSlideTitle, run: marked }
-    } catch {
-      return { ok: false, error: `The slide was added to the talk after slide ${result.afterSlideNumber}, but the Run could not record it. Check the talk before adding it again.` }
+    } catch (error) {
+      const why = isReplaceRefused(error) ? ` ${error.message}` : ''
+      return { ok: false, error: `The slide was added to the talk after slide ${result.afterSlideNumber}, but the Run could not record it. Check the talk before adding it again.${why}` }
     }
   } finally {
     inFlight.delete(key)

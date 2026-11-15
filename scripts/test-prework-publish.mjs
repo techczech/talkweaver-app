@@ -44,7 +44,7 @@ import { configureTalkWriter, flushTalkForPublish, writeTalkOutline } from '../s
 import { SITE_FOLDER_REFUSED, checkPreconditions, publishUrl, resolveBase } from '../src/main/publishing-logic.ts'
 import { stampHandoutUrl } from '../src/shared/handout-stamp.ts'
 import { outlineRefusal } from '../src/main/vault-paths.ts'
-import { clearRunHandoutUrl, listRuns, persistRun, persistRunForTalk, readRun, readRunForTalk, normaliseRun, runPathForTalk, setRunExtras, setRunHandoutUrl, stampRunWork, updateRunExtraSlides } from '../src/main/runs.ts'
+import { clearRunHandoutUrl, listRuns, persistRun, persistRunForTalk, readRun, readRunForTalk, requireRunForTalk, runFileProblem, normaliseRun, runPathForTalk, setRunExtras, setRunHandoutUrl, stampRunWork, updateRunExtraSlides } from '../src/main/runs.ts'
 import { buildRunWorkPreview, planRunWork, sendRunWork, writeRunWorkPages, runLineFor, WORK_LEGACY_NOT_PUBLISHED, WORK_PREVIEW_NONE } from '../src/main/run-work-publish.ts'
 import { WORK_PAGE_FOLDER } from '../src/shared/run-work.ts'
 import { zonedLocalToMs } from '../src/shared/run-prework.ts'
@@ -180,7 +180,7 @@ const postWorkAsked = []
 const runHandlerDeps = {
   ...common,
   ...runPublicationFixture(sourceText,REPO,()=>[{id:'va',root:vault,open:true},{id:'vb',root:join(root,'vault-b'),open:true}],r=>r===vault?[talk]:[{slug,outlinePath:join(r,slug,`${slug}-outline.md`)}]),
-  readRunForTalk, readRun, persistRun, setRunHandoutUrl, clearRunHandoutUrl, talkBySlug: () => talk,
+  readRunForTalk, requireRunForTalk, runFileProblem, readRun, persistRun, setRunHandoutUrl, clearRunHandoutUrl, talkBySlug: () => talk,
   runHandoutSlug: () => 'agents-itss-2026-10-06',
   prepareTalk: async (path, content) => ({ model: await prepareSource(path, content, slug, statSync(path)) }),
   timerSettings: () => ({}),

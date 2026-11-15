@@ -105,6 +105,10 @@ try {
     return v.currentTime
   }, at)
   const pauseInAudience = () => audience.evaluate(() => document.querySelector('.slide.active video').pause())
+  // A play reaches the presenter's recorder as a new data-tw-clip-play on its root (present-recorder.ts); the
+  // checks wait for that, not for a fixed time, so a slow machine cannot reorder a play and a pause or a stop.
+  const lastClipPlay = () => presenter.evaluate(() => document.documentElement.dataset.twClipPlay ?? '')
+  const nextClipPlay = (prev) => presenter.waitForFunction((p) => (document.documentElement.dataset.twClipPlay ?? '') !== p, prev, { timeout: 10000 })
   const clipMarks = async () => (await presenter.evaluate(() => window.calls.filter(([c]) => c === 'recording:save').map(([, p]) => p.rawMarks)))[0]?.filter((m) => m.event === 'clip') ?? []
 
   await check('a play in the projector while not recording logs nothing', async () => {
@@ -122,12 +126,16 @@ try {
     await presenter.waitForTimeout(500) // both peer paths have delivered by now
     await pauseInAudience()
     await presenter.locator('#twrec-pause').click()
+    let prev = await lastClipPlay()
     await playInAudience() // paused: not logged
+    await nextClipPlay(prev) // it reached the recorder while paused
     await pauseInAudience()
     await presenter.waitForTimeout(400)
     await presenter.locator('#twrec-resume').click()
+    prev = await lastClipPlay()
     const resumedAt = await playInAudience() // a resume gives the position
-    await presenter.waitForTimeout(500)
+    await nextClipPlay(prev)
+    await presenter.waitForTimeout(500) // the second delivery path of the same play (dropped by its id)
     await presenter.locator('#twrec-stop').click()
     await presenter.waitForFunction(() => document.querySelector('#twrec-module').dataset.rec === 'saved')
     const marks = await clipMarks()
@@ -163,13 +171,15 @@ try {
   })
   await appPresenter.evaluate(() => { window.clipSeen = 0; document.addEventListener('tw-clip-play', () => window.clipSeen++) })
   const seenSoFar = () => appPresenter.evaluate(() => window.clipSeen)
+  // Waits until at least `n` plays have reached the presenter since `before` (bounded), then the settle, in which
+  // a duplicate would arrive; the caller asserts the exact count.
+  const plays = async (before, n) => { await appPresenter.waitForFunction(([b, n]) => window.clipSeen - b >= n, [before, n], { timeout: 10000 }).catch(() => {}); await settle(); return (await seenSoFar()) - before }
 
   await check(`two videos started in one tick, ${ROUNDS} times, the app's own windows: two marks each time`, async () => {
     for (let i = 0; i < ROUNDS; i++) {
       const before = await seenSoFar()
       await playAll(projector)
-      await settle()
-      const got = (await seenSoFar()) - before
+      const got = await plays(before, 2)
       assert.equal(got, 2, `round ${i}: ${got} clip plays reached the recorder`)
     }
   })
@@ -179,8 +189,7 @@ try {
     await projector.waitForFunction(() => document.querySelectorAll('.slide.active video').length === 1 && document.querySelector('.slide.active').dataset.id === 'solo')
     const before = await seenSoFar()
     await playAll(projector)
-    await settle()
-    assert.equal((await seenSoFar()) - before, 1)
+    assert.equal(await plays(before, 1), 1)
   })
 
   await check('a play in the lightbox (V) is one mark', async () => {
@@ -190,8 +199,7 @@ try {
     await projector.keyboard.press('v')
     await projector.waitForSelector('video.lightbox-video', { timeout: 3000 })
     await projector.evaluate(async () => { const v = document.querySelector('video.lightbox-video'); v.muted = true; v.currentTime = 0; await v.play() })
-    await settle()
-    assert.equal((await seenSoFar()) - before, 1)
+    assert.equal(await plays(before, 1), 1)
     await projector.keyboard.press('Escape')
     await projector.waitForSelector('video.lightbox-video', { state: 'detached', timeout: 3000 })
   })
@@ -201,14 +209,21 @@ try {
   // is still one mark.
   await check('a start in the presenter (M) that the projector follows is one mark', async () => {
     await projector.evaluate(() => { document.querySelectorAll('video').forEach((v) => { v.pause(); v.currentTime = 0 }) })
+    // M toggles the presenter's copy, which owns playback: it must be stopped first, or M stops it instead of
+    // starting it. The lightbox play above can still be playing there (the 3 s clip ends by itself), so this
+    // waits until both copies are stopped instead of a fixed time.
+    const stopped = () => Promise.all([
+      appPresenter.evaluate(() => document.querySelector('#currentPreview iframe')?.contentDocument?.querySelector('.slide.active video, video')?.paused ?? null),
+      projector.evaluate(() => document.querySelector('.slide.active video')?.paused ?? null)])
+    for (let i = 0; i < 80 && !(await stopped()).every((x) => x === true); i++) await appPresenter.waitForTimeout(100)
+    assert.deepEqual(await stopped(), [true, true], 'before M: the presenter\'s copy and the projector\'s are both stopped')
     await settle()
     const before = await seenSoFar()
     await appPresenter.keyboard.press('m')
-    await projector.waitForFunction(() => !document.querySelector('.slide.active video').paused, null, { timeout: 3000 })
-    await settle()
-    assert.equal((await seenSoFar()) - before, 1)
+    await projector.waitForFunction(() => !document.querySelector('.slide.active video').paused, null, { timeout: 10000 })
+    assert.equal(await plays(before, 1), 1)
     await appPresenter.keyboard.press('m') // stopped again
-    await projector.waitForFunction(() => document.querySelector('.slide.active video').paused, null, { timeout: 3000 })
+    await projector.waitForFunction(() => document.querySelector('.slide.active video').paused, null, { timeout: 10000 })
     await settle()
   })
 
@@ -244,7 +259,7 @@ try {
     await alone.locator('#twrec-primary').click()
     await alone.waitForFunction(() => window.calls.some(([c]) => c === 'recording:stream-append'))
     await alone.keyboard.press('m')
-    await alone.waitForTimeout(600)
+    await alone.waitForFunction(() => !!document.documentElement.dataset.twClipPlay, null, { timeout: 10000 })
     await alone.locator('#twrec-stop').click()
     await alone.waitForFunction(() => document.querySelector('#twrec-module').dataset.rec === 'saved')
     const marks = (await alone.evaluate(() => window.calls.filter(([c]) => c === 'recording:save').map(([, p]) => p.rawMarks)))[0]?.filter((m) => m.event === 'clip') ?? []

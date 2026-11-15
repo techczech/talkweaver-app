@@ -133,7 +133,10 @@ try {
   const shown = await tools.evaluate(() => { const v = document.querySelector('.twrp-slides'); return { t: v.currentTime, run: Number(document.querySelector('.twrp-player').dataset.runMs) } })
   assert.ok(Math.abs(shown.t * 1000 - (shown.run - withCamera.capture.layers.slides.startMs)) < 100, `the paused picture is at the playhead: ${JSON.stringify(shown)}`)
   const editsFile = join(runsDir, `${withCamera.id}.edits.json`)
-  let sidecar = JSON.parse(readFileSync(editsFile, 'utf8'))
+  // "Use the whole recording" shows after the first trim already: the second is waited for in the file (bounded).
+  const readEdits = () => { try { return JSON.parse(readFileSync(editsFile, 'utf8')) } catch { return null } }
+  for (let i = 0; i < 100 && (readEdits()?.cuts?.length ?? 0) < 2; i++) await tools.waitForTimeout(100)
+  let sidecar = readEdits()
   assert.equal(sidecar.cuts.length, 2); assert.equal(sidecar.cuts[0].start, 0); assert.equal(sidecar.cuts[1].end, duration)
   assert.ok(Math.abs(sidecar.cuts[0].end - duration * 0.2) < duration * 0.03 && Math.abs(sidecar.cuts[1].start - duration * 0.85) < duration * 0.03, JSON.stringify(sidecar.cuts))
   const trimmed = sidecar.cuts
@@ -191,10 +194,14 @@ try {
   const videoMs = Number(video.duration) * 1000
   assert.ok(Math.abs(videoMs - expectedMs) <= 1000 / 30 + 0.5, `video ${videoMs} ms against edited ${expectedMs} ms`)
   const run = readRuns().find((r) => r.id === withCamera.id)
-  const slides = { first: { title: 'First slide', section: 'Opening' }, second: { title: 'Second slide', section: 'Opening' }, third: { title: 'Third slide', section: 'Closing' } }
+  // Every slide the deck shows, as the export names them: its title slide (the talk's title, no section) and
+  // the section slides too. Since chapters skip a slide the map does not name (a7b231254), a map without
+  // them undercounts; before, the missing ones were all called "Slide" and the count happened to agree.
+  const slides = { 'deck-title': { title: 'Layered recording' }, opening: { title: 'Opening', section: 'Opening' }, first: { title: 'First slide', section: 'Opening' }, second: { title: 'Second slide', section: 'Opening' },
+    closing: { title: 'Closing', section: 'Closing' }, third: { title: 'Third slide', section: 'Closing' } }
   const spans = keptSpans(effectiveCuts(trimmed, run.trims, duration), duration)
   const chapters = chaptersFor(run.slideTimeIndex.filter((m) => m.event === 'enter'), slides, spans)
-  assert.equal(probe.chapters.length, chapters.length, `chapters ${probe.chapters.length} against ${chapters.length}`)
+  assert.equal(probe.chapters.length, chapters.length, `chapters ${probe.chapters.length} against ${chapters.length}: in the file ${JSON.stringify(probe.chapters.map((c) => [c.start_time, c.end_time, c.tags?.title]))}; expected ${JSON.stringify(chapters)} from enters ${JSON.stringify(run.slideTimeIndex.filter((m) => m.event === 'enter').map((m) => [Math.round(m.tMs), m.slideId]))}, spans ${JSON.stringify(spans)}, cuts ${JSON.stringify(trimmed)}, run trims ${JSON.stringify(run.trims)}, duration ${duration}`)
   // The transcript as the app reads it (word times that fall outside the recorded voice are not used).
   const transcript = (await tools.evaluate(([slug, id]) => window.tw.transcript.get(slug, id), ['fixture', run.id])) ?? { words: [], segments: [] }
   const expectedCaptions = captionCues(transcript.words ?? [], spans, transcript.segments ?? []), expectedCues = expectedCaptions.cues.length

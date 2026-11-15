@@ -10,7 +10,7 @@
 // vault). Most are the same channel the editor window's preload uses (src/preload/index.ts), so main
 // answers it as it answers that window; the recording storage changes (endpoint, bucket, keys) and the
 // transcription paths are this window's only. No channel here returns a key.
-import type { UpdateSnapshot } from '@app-patterns/updates'
+import type { UpdateSnapshot } from '../shared/update-checker'
 import type { WhatsNewItem } from '@app-patterns/updates'
 import { contextBridge, ipcRenderer } from 'electron'
 import { exposeSettingsBridge } from '@app-patterns/settings-electron/preload'
@@ -51,6 +51,15 @@ const tw = {
     notNow: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:not-now'),
     /** The setting `updates.checkForNewVersions`. */
     setEnabled: (on: boolean): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:set-enabled', on),
+    /** The setting `updates.alphaVersions` (Get early versions). */
+    setAlpha: (on: boolean): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:set-alpha', on),
+    /** Update (ADR-0044): download the offered version for this computer, check it, then restart (or wait to). Takes nothing. */
+    update: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:update'),
+    /** Stop a download in progress; the partial file is deleted. */
+    cancel: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:cancel'),
+    /** Restart to finish updating: only when nothing holds it back. */
+    restart: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:restart'),
+    /** Opens the download page for this computer in the browser (where the app cannot update in place). */
     download: (): Promise<boolean> => ipcRenderer.invoke('updates:download'),
     openNotes: (version: string): Promise<boolean> => ipcRenderer.invoke('updates:open-notes', version),
     openStore: (): Promise<boolean> => ipcRenderer.invoke('updates:open-store'),

@@ -256,8 +256,9 @@ try {
     await page.keyboard.press(`${mod}+i`)
     await picker.waitFor()
     // The click that closes is one made after the panel is up (it arms on the next task, so the
-    // click that opened it, from a menu, is not taken for a click outside).
-    await page.waitForTimeout(50)
+    // click that opened it, from a menu, is not taken for a click outside). Waited for in the page, after
+    // the next frame and the task after it, not for a fixed time: under load 50 ms was not always enough.
+    await ev(() => new Promise((done) => requestAnimationFrame(() => setTimeout(done, 0))))
     await page.mouse.click(950, 880)
     await picker.waitFor({ state: 'detached' })
     assert.equal(await text(), DOC)
@@ -360,6 +361,9 @@ try {
   })
 
   await check('a line that takes no icon: the message, nothing changed, and it goes by itself', async () => {
+    // How long the message stays is measured on the page's own clock, from when it is drawn to when it goes:
+    // the checks below take time of their own, which under load used to eat into a fixed 1.5 s wait.
+    await ev(() => { const life = window.__noteLife = {}; const mo = new MutationObserver(() => { const n = document.querySelector('[data-plain-icon-note]'); if (n && life.shown === undefined) life.shown = performance.now(); if (!n && life.shown !== undefined) { life.gone = performance.now(); mo.disconnect() } }); mo.observe(document.body, { childList: true, subtree: true }) })
     await open(at('![picture]', 3))
     const note = page.locator('[data-plain-icon-note]')
     await note.waitFor()
@@ -370,9 +374,10 @@ try {
     const box = await note.boundingBox()
     const line = await ev(() => window.lineRect())
     assert.ok(box.y >= line.bottom && box.y - line.bottom < 16, 'the message is just under the caret\'s line')
-    await page.waitForTimeout(1500)
-    assert.equal(await note.count(), 1, 'still there after a second and a half')
-    await note.waitFor({ state: 'detached', timeout: 2500 })
+    await note.waitFor({ state: 'detached', timeout: 10000 })
+    const life = await ev(() => window.__noteLife.gone - window.__noteLife.shown)
+    assert.ok(life >= 1500, `still there after a second and a half (shown for ${Math.round(life)} ms)`)
+    assert.ok(life <= 4000, `gone by itself within four seconds (shown for ${Math.round(life)} ms)`)
     assert.equal(await text(), DOC)
     assert.equal(await ev(() => window.undoDepth()), 0)
     // A section title: the same message, with its own reason.

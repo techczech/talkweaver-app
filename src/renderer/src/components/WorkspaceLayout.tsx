@@ -170,6 +170,8 @@ import {
 
 // Handlers that report for themselves, because they can decline after they start (the slide picker's
 // talk-search actions answer "nothing to act on"): runPickerCommand reports once the action acted.
+// The action bar's line controls: unavailable (dimmed in place) while a closed object is selected.
+const ACTION_BAR_LINE_COMMANDS: ReadonlySet<string> = new Set(['bulleted-list', 'numbered-list', 'promote-heading', 'demote-heading'])
 const SELF_REPORTING_HANDLERS: ReadonlySet<string> = new Set(['add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section'])
 
 // The slide menu's actions that are registry commands (the menu now opens only from the triple-backtick
@@ -357,6 +359,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // The place chip (onboarding ticket 02): the caret's place from the editor, combined with where
   // the keyboard is; the setting "Show where I am in the status bar" (on by default).
   const [editorPlace, setEditorPlace] = useState<Place>('slide-text')
+  // A selected object in the editor: the bar's line controls (lists, heading levels) have nothing to act on.
+  const [lineCommandsUnavailable, setLineCommandsUnavailable] = useState(false)
   const { place, row: placeRow, activate: activatePlace } = usePlace(editorPlace)
   // The chip counts the list Actions here shows (shared/actions-here.ts), so the two always agree.
   const editorPlaceRef = useRef<Place>(editorPlace)
@@ -3775,6 +3779,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       focusLine={focusLine}
       onCursorLine={handleCursorLine}
       onPlace={setEditorPlace}
+      onLineCommandsUnavailable={setLineCommandsUnavailable}
       onImageWidgetClick={(id) => { imageMetaTalkRef.current = activeTalkRef.current?.outlinePath ?? null; setImageEditRequested(false); setImageMetaId(id) }}
       onOpenHelp={() => setHelpOpen(true)}
       registerInsert={(fn) => { editorInsertRef.current = fn }}
@@ -3830,6 +3835,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         label: command.label,
         ...(command.toolbar ? { icon: command.toolbar.icon } : {}),
         ...(keys && keys !== 'no default' ? { keys } : {}),
+        ...(lineCommandsUnavailable && ACTION_BAR_LINE_COMMANDS.has(command.id) ? { disabled: true } : {}),
         run: () => runRegisteredCommand(command.handlerId)
       }]
     })

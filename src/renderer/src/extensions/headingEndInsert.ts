@@ -250,9 +250,10 @@ export function caretLineInsertion(text: string, pos: number, source: string): C
   return { from, insert, cursor: from + insert.length }
 }
 
-/** Put `source` in at the caret as caretLineInsertion says: one transaction, one undo step. */
-export function insertAtCaretLine(view: EditorView, source: string): void {
-  const plan = caretLineInsertion(view.state.doc.toString(), view.state.selection.main.head, source)
+/** Put `source` in at the caret as caretLineInsertion says: one transaction, one undo step. `pos` is the
+ *  caret to anchor at (Editor.tsx passes the end of a selected object, so the block goes after it). */
+export function insertAtCaretLine(view: EditorView, source: string, pos = view.state.selection.main.head): void {
+  const plan = caretLineInsertion(view.state.doc.toString(), pos, source)
   view.dispatch({ changes: { from: plan.from, insert: plan.insert }, selection: EditorSelection.cursor(plan.cursor), scrollIntoView: true })
 }
 

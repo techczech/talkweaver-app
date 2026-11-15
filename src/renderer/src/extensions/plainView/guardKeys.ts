@@ -91,7 +91,8 @@
 import { EditorView, keymap, type Command, type KeyBinding } from '@codemirror/view'
 import { EditorSelection, Prec, Transaction, findClusterBreak, type EditorState, type Extension, type TransactionSpec } from '@codemirror/state'
 import { isolateHistory } from '@codemirror/commands'
-import { editorBaseKeymap, editorHistoryKeymap } from '../editorBaseKeymap'
+import { editorBaseKeymap, editorHistoryKeymap, lineCommandOf } from '../editorBaseKeymap'
+import { runLineCommand } from '../objectBlocks/field'
 import { enterFromHeading, headingEnterOwners } from '../outliner'
 import { lineEndCarets } from '../headingEndInsert'
 import { anyHeadingLine, headingLine } from '../../../../shared/plain-view-heading-line'
@@ -376,6 +377,12 @@ function held(view: EditorView, command: Command, partial = true, state: EditorS
 }
 
 const guard = (command: Command) => (view: EditorView): boolean => held(view, command)
+/** A line command (editorBaseKeymap.ts) acts on a new line under an object when the caret is in its gap,
+ *  so it is held or let through as it would be there: the guard runs on that line too. */
+const guardBinding = (command: Command): Command => {
+  const line = lineCommandOf.get(command)
+  return line ? (view) => runLineCommand(view, guard(line)) : guard(command)
+}
 
 /** A binding of the base keymap that this guard stands in front of. */
 function guarded(binding: KeyBinding): boolean {
@@ -395,8 +402,8 @@ export function guardBindings(base: readonly KeyBinding[] = editorBaseKeymap): K
       ...(binding.mac !== undefined ? { mac: binding.mac } : {}),
       ...(binding.win !== undefined ? { win: binding.win } : {}),
       ...(binding.linux !== undefined ? { linux: binding.linux } : {}),
-      ...(binding.run ? { run: guard(binding.run) } : {}),
-      ...(binding.shift ? { shift: guard(binding.shift) } : {})
+      ...(binding.run ? { run: guardBinding(binding.run) } : {}),
+      ...(binding.shift ? { shift: guardBinding(binding.shift) } : {})
     })
   }
   return out

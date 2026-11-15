@@ -1,4 +1,4 @@
-export type ConflictService = 'onedrive' | 'dropbox' | 'gdrive' | 'git'
+export type ConflictService = 'onedrive' | 'dropbox' | 'gdrive' | 'icloud' | 'syncthing' | 'git'
 export type ConflictState = 'identical' | 'differs' | 'git-markers'
 export type ConflictCopy = { name: string; service: ConflictService; source: string | null; state: ConflictState }
 export type ConflictActivity = {
@@ -14,6 +14,7 @@ export type MachineOptions = { knownMachines?: string[]; loose?: boolean }
 export function machineSlug(name: string): string
 export function isMachineName(token: string, options?: MachineOptions): boolean
 export function conflictServiceOf(name: string, canonicalName: string, options?: MachineOptions): { service: Exclude<ConflictService, 'git'>; source: string | null } | null
+export function relatedOutline(copyBytes: Uint8Array | string | null | undefined, canonicalBytes: Uint8Array | string | null | undefined): boolean
 export function conflictCandidateNames(names: string[], canonicalName: string, options?: MachineOptions): string[]
 export function hasGitConflictMarkers(text: string): boolean
 export function classifyConflict(

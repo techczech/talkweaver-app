@@ -1,11 +1,14 @@
 import { createPortal } from 'react-dom'
-import { ArrowUpCircle, Download } from 'lucide-react'
+import { ArrowUpCircle, Download, RotateCw, AlertTriangle } from 'lucide-react'
 import { useEffect, useReducer, useRef, useState } from 'react'
-import { noteReducer, answerView, availableMarkText, versionLabel, dateText, type UpdateSnapshot, type AnswerView } from '@app-patterns/updates'
-import { WhatsNewMark, AnswerButtons as SharedAnswerButtons, UpdatesProvider } from '@app-patterns/updates-react'
-import { UPDATE_ANSWER_EVENT, type AnswerEventDetail, useUpdateSnapshot, viewContext, updateActions, answerOf } from '../lib/updateNotices'
+import { noteReducer, availableMarkText, versionLabel, dateText } from '@app-patterns/updates'
+import { WhatsNewMark, UpdatesProvider } from '@app-patterns/updates-react'
+import { DOWNLOAD_FOOT, REFUSAL_TEXT, blockersSentence, installMarkText, reopenText, sizeText, updateFoot } from '../../../shared/update-install'
+import { UPDATE_ANSWER_EVENT, type AnswerEventDetail, type TwAnswerView, type UpdateSnapshot, useUpdateSnapshot, updateActions, answerOf } from '../lib/updateNotices'
 
-// 0.4.1 fixes its footer to “documents”; TalkWeaver keeps “talks” and its existing local-note mark.
+// The status-bar mark and its popover (ADR-0044; was ADR-0041's tell-and-link mark). One mark, whose text
+// follows the click's state: "0.45.0 is available" → "Downloading 0.45.0 · 42%" → "Restart to finish
+// updating" / "Restarting into 0.45.0…" / "Update to 0.45.0 failed" / "Reopen TalkWeaver to update". Hidden while presenting.
 export function UpdateMarks() {
   const snap = useUpdateSnapshot()
   const api = window.tw?.updates
@@ -26,38 +29,105 @@ export function UpdateMarks() {
     document.addEventListener('keydown', esc)
     return () => { document.removeEventListener('mousedown', away); document.removeEventListener('keydown', esc) }
   }, [open])
-  useEffect(() => { if (!snap?.mark || snap.busy) setOpen(false) }, [snap?.mark, snap?.busy])
+  const working = snap ? snap.install.phase !== 'idle' : false
+  useEffect(() => { if ((!snap?.mark && !working) || snap?.busy) setOpen(false) }, [snap?.mark, snap?.busy, working])
   if (!snap || !api) return null
   const latest = snap.mark
-  return <UpdatesProvider snapshot={snap} actions={updateActions(api)}>
-    {latest && <>
+  const showMark = !snap.busy && (working || latest !== null)
+  const installText = installMarkText(snap.install)
+  const failed = snap.install.phase === 'failed'
+  return <UpdatesProvider snapshot={snap as never} actions={updateActions(api) as never}>
+    {showMark && <>
       <span style={{ margin: '0 8px', color: 'var(--line)' }}>|</span>
       <span className="apu-update-anchor" ref={anchor}>
-        <button type="button" className="apu-update-mark" data-update-mark aria-expanded={open} title="A new version of TalkWeaver is out" onClick={() => setOpen((v) => !v)}>
-          <ArrowUpCircle size={11} aria-hidden /> {availableMarkText(latest)}
+        <button type="button" className={`apu-update-mark${failed ? ' tw-update-mark--failed' : ''}`} data-update-mark data-update-phase={snap.install.phase} aria-expanded={open}
+          title={working ? 'Updating TalkWeaver' : 'A new version of TalkWeaver is out'} onClick={() => setOpen((v) => !v)}>
+          {failed || snap.install.phase === 'reopen' ? <AlertTriangle size={11} aria-hidden /> : snap.install.phase === 'waiting' || snap.install.phase === 'restarting' ? <RotateCw size={11} aria-hidden /> : <ArrowUpCircle size={11} aria-hidden />}
+          {' '}{installText ?? (latest ? availableMarkText(latest) : '')}
         </button>
         {open && place && !snap.busy && createPortal(
-          <div className="apu-update-pop" ref={popover} style={{ position: 'fixed', left: place.left, bottom: place.bottom }} role="dialog" aria-label="A new version is available" data-update-popover>
-            <h3>TalkWeaver {latest.version} is available</h3>
-            <div className="apu-update-sub">You have {versionLabel(snap.running)}. Released {dateText(latest.released)}.</div>
-            <ul>{latest.summary.map((line, i) => <li key={i}>{line}</li>)}</ul>
-            <div className="apu-update-actions">
-              <button type="button" className="apu-update-btn apu-update-btn--primary" data-update-download onClick={() => { void api.download(); setOpen(false) }}><Download size={13} aria-hidden /> Download from talkweaver.app</button>
-              <button type="button" className="apu-update-btn" data-update-not-now onClick={() => { void api.notNow(); setOpen(false) }}>Not now</button>
-              <button type="button" className="apu-update-btn apu-update-btn--quiet" data-update-skip onClick={() => { void api.skip(latest.version); setOpen(false) }}>Skip this version</button>
-            </div>
-            <div className="apu-update-foot">Download opens the download page in your browser. Install it as you installed this one; your talks and settings stay as they are.{' '}
-              <button type="button" className="apu-update-link" data-update-notes onClick={() => void api.openNotes(latest.version)}>What&rsquo;s new in {latest.version}</button>
-            </div>
+          <div className="apu-update-pop" ref={popover} style={{ position: 'fixed', left: place.left, bottom: place.bottom }} role="dialog" aria-label="Updating TalkWeaver" data-update-popover>
+            <PopoverBody snap={snap} close={() => setOpen(false)} />
           </div>, document.body
         )}
       </span>
     </>}
     {snap.whatsNew && <>
       <span style={{ margin: '0 8px', color: 'var(--line)' }}>|</span>
-      <UpdatesProvider snapshot={{ ...snap, busy: false }} actions={updateActions(api)}><span title="What changed in this version"><WhatsNewMark /></span></UpdatesProvider>
+      <UpdatesProvider snapshot={{ ...snap, busy: false } as never} actions={updateActions(api) as never}><span title="What changed in this version"><WhatsNewMark /></span></UpdatesProvider>
     </>}
   </UpdatesProvider>
+}
+
+function PopoverBody({ snap, close }: { snap: UpdateSnapshot; close: () => void }) {
+  const api = window.tw!.updates
+  const s = snap.install
+  if (s.phase === 'downloading') {
+    const pct = s.total > 0 ? Math.floor((s.received / s.total) * 100) : 0
+    return <>
+      <h3>Downloading TalkWeaver {s.version}</h3>
+      <div className="tw-update-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} data-update-progress={pct}><span style={{ width: `${pct}%` }} /></div>
+      <div className="apu-update-sub">{sizeText(s.received)} of {sizeText(s.total)}. You can keep working.</div>
+      <div className="apu-update-actions">
+        <button type="button" className="apu-update-btn" data-update-cancel onClick={() => { void api.cancel() }}>Cancel</button>
+      </div>
+      <div className="apu-update-foot">TalkWeaver restarts into {s.version} when the download is finished and checked, unless you are presenting, recording or exporting.</div>
+    </>
+  }
+  if (s.phase === 'waiting') {
+    const held = snap.blockers.length > 0
+    return <>
+      <h3>TalkWeaver {s.version} is ready</h3>
+      <div className="apu-update-sub" data-update-held={held ? snap.blockers.join(' ') : ''}>It opens when you restart. {held ? blockersSentence(snap.blockers) : 'Your talks are saved first.'}</div>
+      <div className="apu-update-actions">
+        <button type="button" className="apu-update-btn apu-update-btn--primary" data-update-restart disabled={held} title={held ? blockersSentence(snap.blockers) : undefined} onClick={() => { void api.restart() }}><RotateCw size={13} aria-hidden /> Restart</button>
+        <button type="button" className="apu-update-btn" data-update-later onClick={close}>Later</button>
+      </div>
+    </>
+  }
+  if (s.phase === 'restarting') {
+    return <>
+      <h3>Restarting into {s.version}…</h3>
+      <div className="apu-update-sub" data-update-restarting>macOS checks the new version; then TalkWeaver closes and opens again as {s.version}. This takes a few seconds.</div>
+    </>
+  }
+  if (s.phase === 'reopen') {
+    const text = reopenText(s)
+    return <>
+      <h3>{text.title}</h3>
+      <div className="apu-update-sub" data-update-reopen={s.pending ? 'pending' : 'clear'} data-update-reopen-cause={s.cause}>{text.detail}</div>
+    </>
+  }
+  if (s.phase === 'failed') {
+    const view = answerOf(snap)
+    return <>
+      <h3>{view.title}</h3>
+      <div className="apu-update-sub" data-update-failed={s.reason}>{view.detail}</div>
+      <div className="apu-update-actions">
+        <button type="button" className="apu-update-btn apu-update-btn--primary" data-update-retry onClick={() => { void api.update() }}>Try again</button>
+        <button type="button" className="apu-update-btn" data-update-download onClick={() => { void api.download(); close() }}><Download size={13} aria-hidden /> Download from talkweaver.app</button>
+      </div>
+    </>
+  }
+  const latest = snap.mark
+  if (!latest) return null
+  const inPlace = snap.refusal === null && snap.file !== null
+  return <>
+    <h3>TalkWeaver {latest.version} is available</h3>
+    <div className="apu-update-sub">You have {versionLabel(snap.running)}. Released {dateText(latest.released)}.</div>
+    <ul>{latest.summary.map((line, i) => <li key={i}>{line}</li>)}</ul>
+    {!inPlace && snap.refusal && snap.refusal !== 'no-file' && <div className="apu-update-sub" data-update-refusal={snap.refusal}>{REFUSAL_TEXT[snap.refusal]}</div>}
+    <div className="apu-update-actions">
+      {inPlace
+        ? <button type="button" className="apu-update-btn apu-update-btn--primary" data-update-update onClick={() => { void api.update() }}><ArrowUpCircle size={13} aria-hidden /> Update</button>
+        : <button type="button" className="apu-update-btn apu-update-btn--primary" data-update-download onClick={() => { void api.download(); close() }}><Download size={13} aria-hidden /> Download from talkweaver.app</button>}
+      <button type="button" className="apu-update-btn" data-update-not-now onClick={() => { void api.notNow(); close() }}>Not now</button>
+      <button type="button" className="apu-update-btn apu-update-btn--quiet" data-update-skip onClick={() => { void api.skip(latest.version); close() }}>Skip this version</button>
+    </div>
+    <div className="apu-update-foot">{inPlace && snap.file ? updateFoot(latest.version, snap.file) : DOWNLOAD_FOOT}{' '}
+      <button type="button" className="apu-update-link" data-update-notes onClick={() => void api.openNotes(latest.version)}>What&rsquo;s new in {latest.version}</button>
+    </div>
+  </>
 }
 
 /** A deliberate check's answer as a note at the bottom right: it waits for a click when it offers a button, else a few seconds. */
@@ -65,17 +135,17 @@ export function UpdateAnswerNote() {
   const presenting = useUpdateSnapshot()?.busy === true
   const presentingNow = useRef(presenting)
   presentingNow.current = presenting
-  const [note, dispatch] = useReducer(noteReducer<AnswerView>, { shown: null, held: null })
+  const [note, dispatch] = useReducer(noteReducer<TwAnswerView>, { shown: null, held: null })
   const view = presenting ? null : note.shown
   useEffect(() => {
     const take = (event: Event): void => { const d = (event as CustomEvent<AnswerEventDetail>).detail; dispatch({ kind: 'answer', view: d?.view ?? null, busy: presentingNow.current || d?.busy === true }) }
     window.addEventListener(UPDATE_ANSWER_EVENT, take)
     // The answer of a check that waited for a talk to end: held if another talk has started since.
-    const off = window.tw?.updates?.onAnswer?.((snap) => dispatch({ kind: 'answer', view: answerView(snap.state, viewContext(snap)), busy: presentingNow.current || snap.busy }))
+    const off = window.tw?.updates?.onAnswer?.((snap) => dispatch({ kind: 'answer', view: answerOf(snap), busy: presentingNow.current || snap.busy }))
     return () => { window.removeEventListener(UPDATE_ANSWER_EVENT, take); off?.() }
   }, [])
   useEffect(() => { dispatch({ kind: 'busy', busy: presenting }) }, [presenting])
-  const setView = (next: AnswerView | null): void => dispatch(next ? { kind: 'answer', view: next, busy: presentingNow.current } : { kind: 'dismiss' })
+  const setView = (next: TwAnswerView | null): void => dispatch(next ? { kind: 'answer', view: next, busy: presentingNow.current } : { kind: 'dismiss' })
   useEffect(() => {
     if (!view || view.action !== null) return
     const timer = setTimeout(() => dispatch({ kind: 'dismiss' }), 6000)
@@ -93,13 +163,27 @@ export function UpdateAnswerNote() {
   )
 }
 
-
-export function AnswerButtons(props: Parameters<typeof SharedAnswerButtons>[0]) {
-  const snap = useUpdateSnapshot()
+/** The buttons under an answer (the note and the Settings card). Every action goes through window.tw.updates. */
+export function AnswerButtons({ view, onDone, onView, size }: { view: TwAnswerView; onDone?: () => void; onView?: (view: TwAnswerView) => void; size?: 'card' }) {
   const api = window.tw?.updates
-  if (!snap || !api) return null
-  // The shared retry button uses generic busy wording; keep TalkWeaver's presentation wording.
-  let checked: UpdateSnapshot | null = null
-  const actions = { ...updateActions(api), check: async () => { checked = await api.check(); return checked } }
-  return <UpdatesProvider snapshot={snap} actions={actions}><SharedAnswerButtons {...props} onView={(view) => props.onView?.(checked ? answerOf(checked) : view)} /></UpdatesProvider>
+  if (!api || view.action === null) return null
+  const cls = (primary: boolean): string => `apu-update-btn${primary ? ' apu-update-btn--primary' : ''}`
+  const again = async (): Promise<void> => { const snap = await api.check(); onView?.(answerOf(snap)) }
+  const after = (snap: UpdateSnapshot): void => onView?.(answerOf(snap))
+  const downloadButton = <button type="button" className={cls(view.action === 'download')} data-update-download onClick={() => { void api.download(); onDone?.() }}><Download size={13} aria-hidden /> {size === 'card' ? 'Download…' : 'Download from talkweaver.app'}</button>
+  return (
+    <div className="apu-update-actions">
+      {view.action === 'update' && <button type="button" className={cls(true)} data-update-update onClick={() => { void api.update().then(after); }}><ArrowUpCircle size={13} aria-hidden /> Update</button>}
+      {view.action === 'download' && downloadButton}
+      {view.action === 'cancel' && <button type="button" className={cls(false)} data-update-cancel onClick={() => { void api.cancel().then(after) }}>Cancel</button>}
+      {view.action === 'restart' && <button type="button" className={cls(true)} data-update-restart onClick={() => { void api.restart().then(after) }}><RotateCw size={13} aria-hidden /> Restart</button>}
+      {view.action === 'retry-update' && <button type="button" className={cls(true)} data-update-retry onClick={() => { void api.update().then(after) }}>Try again</button>}
+      {view.downloadLink && view.action !== 'download' && downloadButton}
+      {view.action === 'stop-skipping' && <button type="button" className={cls(false)} data-update-stop-skipping onClick={() => { void api.stopSkipping().then(after) }}>Stop skipping</button>}
+      {view.action === 'try-again' && <button type="button" className={cls(false)} data-update-try-again onClick={() => void again()}>Try again</button>}
+      {view.action === 'open-store' && <button type="button" className={cls(false)} data-update-open-store onClick={() => { void api.openStore(); onDone?.() }}>Open in Microsoft Store</button>}
+      {view.action === 'check' && <button type="button" className={cls(false)} data-update-check onClick={() => void again()}>Check for updates</button>}
+      {view.whatsNew && view.version && <button type="button" className="apu-update-link" data-update-notes onClick={() => void api.openNotes(view.version!)}>What&rsquo;s new in {view.version}</button>}
+    </div>
+  )
 }

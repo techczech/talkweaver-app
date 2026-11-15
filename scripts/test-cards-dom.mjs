@@ -29,6 +29,10 @@ createRoot(document.getElementById('root')).render(<App />)`
 let browser
 const failures = []
 const check = async (name, fn) => { try { await fn(); console.log('HOLD', name) } catch (e) { failures.push(name); console.log('FAIL', name, '-', String(e.message).split('\n')[0]) } }
+// The cards move the focus in an effect after they are drawn (Cancel; a name card's field one frame later), and
+// their Esc and Enter listeners are attached in the same effects. Under load a card can be on screen before that
+// has run, so a test waits for the focus (bounded) before judging it or pressing a key, never for a fixed time.
+const focusOn = (page, locator) => locator.evaluate((el) => new Promise((done) => { const t0 = performance.now(); const look = () => (el === document.activeElement || performance.now() - t0 > 5000 ? done() : requestAnimationFrame(look)); look() }))
 const open = async (which) => {
   const context = await browser.newContext({ viewport: { width: 900, height: 700 } })
   await context.route('http://tw.test/**', (r) => r.fulfill(r.request().url().includes('bundle.js') ? { contentType: 'text/javascript', path: join(dir, 'bundle.js') } : { contentType: 'text/html', body: '<!doctype html><body><div id="root"></div><script src="/bundle.js"></script></body>' }))
@@ -52,7 +56,7 @@ try {
     const { page, context } = await open('confirm')
     try {
       const cancel = page.getByRole('button', { name: 'Cancel', exact: true }), verb = page.getByRole('button', { name: 'Delete', exact: true })
-      await cancel.waitFor()
+      await cancel.waitFor(); await focusOn(page, cancel)
       assert.equal(await cancel.evaluate((el) => el === document.activeElement), true, 'Cancel has the focus')
       const [c, v] = [await cancel.boundingBox(), await verb.boundingBox()]
       assert.ok(c.x < v.x, 'Cancel is left of the verb')
@@ -65,7 +69,7 @@ try {
     const { page, context } = await open('confirm-enter')
     try {
       const cancel = page.getByRole('button', { name: 'Cancel', exact: true })
-      await cancel.waitFor()
+      await cancel.waitFor(); await focusOn(page, cancel)
       assert.equal(await cancel.evaluate((el) => el === document.activeElement), true, 'Cancel has the focus')
       await page.keyboard.press('Enter')
       assert.deepEqual(await page.evaluate(() => window.log), ['cancel'], 'Enter on Cancel is Cancel')
@@ -73,7 +77,7 @@ try {
   })
   await check('confirm card: Esc cancels, the red button confirms', async () => {
     const a = await open('confirm')
-    try { await a.page.getByRole('button', { name: 'Cancel' }).waitFor(); await a.page.keyboard.press('Escape'); assert.deepEqual(await a.page.evaluate(() => window.log), ['cancel']) } finally { await a.context.close() }
+    try { const cancel = a.page.getByRole('button', { name: 'Cancel' }); await cancel.waitFor(); await focusOn(a.page, cancel); await a.page.keyboard.press('Escape'); assert.deepEqual(await a.page.evaluate(() => window.log), ['cancel']) } finally { await a.context.close() }
     const b = await open('confirm')
     try { await b.page.getByRole('button', { name: 'Delete', exact: true }).click(); assert.deepEqual(await b.page.evaluate(() => window.log), ['confirm']) } finally { await b.context.close() }
   })
@@ -93,6 +97,8 @@ try {
     const { page, context } = await open('new')
     try {
       await page.getByRole('dialog', { name: 'New talk' }).waitFor()
+      const field = page.getByRole('textbox'); await focusOn(page, field)
+      assert.equal(await field.evaluate((el) => el === document.activeElement), true, 'the name field has the focus')
       assert.equal(await page.getByRole('button', { name: 'Create', exact: true }).isDisabled(), true)
       await page.keyboard.press('Enter'); assert.deepEqual(await page.evaluate(() => window.log), [], 'an empty name is refused')
       await page.keyboard.type('Autumn keynote'); await page.keyboard.press('Enter')

@@ -14,6 +14,7 @@ import { renderMermaid } from '../../objects/mermaid-render.ts'
 import { chartShapeForBlock } from '../../objects/chart-model.ts'
 import { objectBlockEditableSource, type ObjectBlock } from './detect.ts'
 import { setRawObjectBlock } from './effects.ts'
+import { deleteObjectBlock } from './remove.ts'
 
 /** Async widgets remember rendered height per source so re-renders do not jump the caret (WriteFlex C4). */
 export class BoundedHeightCache {
@@ -259,13 +260,30 @@ export abstract class ObjectWidget extends WidgetType {
       view.focus()
     })
 
-    header.append(kindLabel, step, slot)
+    // Delete: the whole object, one undo step (as Backspace or Delete on the selected object).
+    const actions = document.createElement('span')
+    actions.className = 'tw-obj-actions'
+    const remove = document.createElement('button')
+    remove.type = 'button'
+    remove.className = 'tw-obj-action tw-obj-action-remove'
+    remove.textContent = 'Delete'
+    remove.title = 'Delete this object (Undo restores it)'
+    remove.setAttribute('aria-label', remove.title)
+    remove.addEventListener('mousedown', (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      deleteObjectBlock(view, this.block)
+      view.focus()
+    })
+    actions.append(remove)
+
+    header.append(kindLabel, step, slot, actions)
     if (showRawToggle) header.append(raw)
     shell.appendChild(header)
 
     const hint = document.createElement('span')
     hint.className = 'tw-obj-hint'
-    hint.textContent = '↵ edit'
+    hint.textContent = '↵ edit · ⌫ delete'
     shell.appendChild(hint)
 
     return shell

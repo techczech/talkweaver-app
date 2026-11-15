@@ -42,6 +42,7 @@ import { readRun } from './runs'
 import { assertPathInsideVault, resolveTalkTextPaths, type TalkTextPaths } from './talkTextPathSafety'
 import { isToolsWindowSender } from './talkTextSender'
 import { createDirectoryWatcherRegistry } from './talkTextWatchers'
+import { isGitConflictError } from '../shared/git-conflict'
 
 type TalkInfo = { slug: string; title: string; outlinePath: string }
 export type TalkTextExportOptions = {
@@ -318,8 +319,9 @@ export function registerTalkTextIpc(deps: TalkTextIpcDeps): TalkTextIpcControlle
       if (!model) return null
       const parts = approvedPartsInOrder(notesStore((await pathsFor(vault, talkSlug, sessionId)).notesStorePath))
       return { parts, markdown: renderNotesMarkdown(model, parts) }
-    } catch {
-      return null
+    } catch (cause) {
+      // A Git conflict in the notes file is said as one (0.45); the Notes pane offers Reveal folder in Finder.
+      return isGitConflictError(cause) ? { gitConflict: cause.message } : null
     }
   })
 

@@ -252,6 +252,8 @@ for (const slug of GOOD_SLUGS) {
     assert.equal(deletePlannedRun(vault, slug, id), false, `missing run delete is not-found ${slug}/${id}`)
     checks += 6
   }
+  // act() above left `{}` at this Run's path as a stand-in: not a Run, so the Run writer would refuse to replace it (0.45).
+  rmSync(vaultSessionPath(vault, slug, GOOD_IDS[0]).path, { force: true })
   const delivered = persistRun(vault, fakeRun(slug, GOOD_IDS[0]))
   assert.equal(readRun(vault, slug, GOOD_IDS[0])?.id, delivered.id, `delivered run persists ${slug}`)
   assert.ok(listRuns(vault, slug).some((run) => run.id === GOOD_IDS[0]), `listRuns lists ${slug}`)

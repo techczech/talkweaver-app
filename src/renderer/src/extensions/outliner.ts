@@ -12,8 +12,10 @@
 // All ops rewrite the whole doc in one transaction and restore the caret to the same
 // logical line/column, so onContentChange + autosave stay in sync (ADR-0001 canonical).
 import { EditorView } from '@codemirror/view'
-import { EditorSelection, Facet, StateEffect, type Transaction } from '@codemirror/state'
-import { syntaxTree } from '@codemirror/language'
+import { EditorSelection, Facet, StateEffect, type EditorState, type Transaction } from '@codemirror/state'
+import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
+import type { SyntaxNode } from '@lezer/common'
+import { inlineMarkRanges } from './inlineMark'
 import {
   collapseDuplicateKeys,
   collapseDuplicateLayouts,
@@ -29,7 +31,7 @@ import {
 import { chartObjectTokenAt } from '../../../../compiler/scripts/lib/03-object-token.mjs'
 import { notify } from '../lib/notify'
 import { minimalChange } from '../lib/minimalChange'
-import { hasOpenObjectBlock } from './objectBlocks/field'
+import { hasOpenObjectBlock, objectBlocksIn } from './objectBlocks/field'
 import { typedByKey } from './keyTypedMark'
 import { currentFocusRange } from './focusScope'
 import { insertAtHeadingEnd } from './headingEndInsert'
@@ -693,7 +695,26 @@ function landAfterTriggerBlock(
     })
     return true
   }
-  view.dispatch({ selection: EditorSelection.cursor(view.state.doc.line(target.targetLine + 1).from) })
+  const at = view.state.doc.line(target.targetLine + 1).from
+  if (objectStartsAt(view, at)) return openLineAboveObject(view, at)
+  view.dispatch({ selection: EditorSelection.cursor(at) })
+  return true
+}
+
+// The slide's first body line is an object (a table, a chat, a page): Enter from the title opens a
+// new line between the title and the object, with a blank line before the object, instead of
+// selecting it. Without this there is no line above such an object to type on.
+function objectStartsAt(view: EditorView, pos: number): boolean {
+  return objectBlocksIn(view.state).some((block) => block.from === pos)
+}
+
+function openLineAboveObject(view: EditorView, at: number): boolean {
+  view.dispatch({
+    changes: { from: at, insert: '\n\n' },
+    selection: EditorSelection.cursor(at),
+    scrollIntoView: true,
+    ...typedByKey()
+  })
   return true
 }
 
@@ -721,11 +742,76 @@ function landAfterUnstampedHeading(
     })
     return true
   }
+  if (objectStartsAt(view, at)) return openLineAboveObject(view, at)
   view.dispatch({ selection: EditorSelection.cursor(at) })
   return true
 }
 
-// Enter anywhere in a canonical slide heading: skip over the protected Trigger block onto the
+/** The Plain view reads every caret before a title's first visible character as the title's start
+ *  (its `##` marks are hidden, so a click there lands after them); the Markdown view only column 0. */
+export const titleStartPastMarks = Facet.define<boolean, boolean>({ combine: (values) => values.some(Boolean) })
+
+/** The caret is at the very start of the slide title on `line` (`##` to `######`, with text after the
+ *  marks): before its marks, or (Plain view) anywhere up to its first visible letter. The talk's `#`
+ *  title keeps its own Enter, and marks with no text yet are a title being typed, whose Enter goes on
+ *  to the body. */
+function caretAtTitleStart(view: EditorView, line: { from: number; to: number; text: string }, head: number): boolean {
+  const marks = /^#{2,6}[ \t]+/.exec(line.text)?.[0].length ?? 0
+  if (!marks || line.text.slice(marks).trim() === '') return false
+  if (head === line.from) return true
+  return view.state.facet(titleStartPastMarks) && head > line.from && head <= titleFirstVisible(view.state, line, line.from + marks)
+}
+
+// The opening marks the Plain view hides in front of a title's text (plainView/conceal.ts hides the same
+// ones): `**` and `*`/`_` of emphasis, `~~` of strikethrough, the backticks of code, the `[` of a link,
+// and TalkWeaver's own `==`, `~~` and `++`, nested in any order.
+const OPENING_MARKS: Record<string, string> = {
+  StrongEmphasis: 'EmphasisMark', Emphasis: 'EmphasisMark', Strikethrough: 'StrikethroughMark', InlineCode: 'CodeMark', Link: 'LinkMark'
+}
+
+/** Where the title's first visible character starts: past every hidden opening mark at the start of its
+ *  text. A picture or icon at the start is visible, so the text starts before it. */
+export function titleFirstVisible(state: EditorState, line: { from: number; to: number; text: string }, textFrom: number): number {
+  const tree = ensureSyntaxTree(state, line.to, 50) ?? syntaxTree(state)
+  const own = inlineMarkRanges(line.text).map(({ from }) => line.from + from)
+  let at = textFrom
+  for (let guard = 0; guard < 32 && at < line.to; guard += 1) {
+    if (own.includes(at + 2)) { at += 2; continue }
+    let next = at
+    for (let node: SyntaxNode | null = tree.resolveInner(at, 1); node; node = node.parent) {
+      if (node.from !== at) break
+      const mark = OPENING_MARKS[node.name]
+      if (!mark) continue
+      const opening = node.getChild(mark)
+      // A link is hidden only with its address (`[text](address)`), as the Plain view shows it.
+      if (!opening || opening.from !== at || (node.name === 'Link' && !node.getChild('URL'))) continue
+      next = opening.to
+      break
+    }
+    if (next === at) break
+    at = next
+  }
+  return at
+}
+
+// Enter at the very start of a title: a new empty line above it, the caret on that line, the title
+// itself untouched (the way a new slide is begun above one). In Slide Focus the line above the
+// focused slide's title is outside the band, so there the ordinary rule below holds.
+function openLineAboveTitle(view: EditorView, line: { from: number }): boolean {
+  const focus = currentFocusRange(view.state)
+  if (focus && line.from <= focus.from) return false
+  view.dispatch({
+    changes: { from: line.from, insert: '\n' },
+    selection: EditorSelection.cursor(line.from),
+    scrollIntoView: true,
+    ...typedByKey()
+  })
+  return true
+}
+
+// Enter in a canonical slide heading: at its very start (column 0; in the Plain view anywhere before
+// the title's first visible character) a new empty line above the title, the caret on it. Anywhere
+// else in the heading: skip over the protected Trigger block onto the
 // first body line. A newly typed heading without a Trigger block lands on or creates its body line.
 // `headings` says which lines the rule covers: the app binds it for `##`–`######` followed by a
 // space. The Plain view calls it with its own answer to "is this line a heading"
@@ -746,6 +832,12 @@ export function enterFromHeading(view: EditorView, headings: { test(line: string
   const lines = view.state.doc.toString().split('\n')
   const fenced = fencedLineFlags(lines)
   if (!sel.empty) {
+    // Plain view: a click at the very start of a title can leave its hidden marks selected; that is
+    // still the start of the title.
+    const at = view.state.doc.lineAt(sel.from)
+    if (view.state.selection.ranges.length === 1 && view.state.facet(titleStartPastMarks) && headings.test(at.text)
+      && !fenced[at.number - 1] && !view.composing && !view.compositionStarted
+      && caretAtTitleStart(view, at, sel.from) && caretAtTitleStart(view, at, sel.to) && openLineAboveTitle(view, at)) return true
     return selectionIntersectsLines(view, sel.from, sel.to, (index) =>
       !fenced[index] && headings.test(lines[index])
     )
@@ -755,6 +847,8 @@ export function enterFromHeading(view: EditorView, headings: { test(line: string
     return view.state.facet(headingEnterOwners).some((own) => own(view)) || insertAtHeadingEnd(view, '\n', 'input')
   }
   if (fenced[line.number - 1]) return false
+  // (Not while an input method is composing: its Enter confirms the composition.)
+  if (!view.composing && !view.compositionStarted && caretAtTitleStart(view, line, sel.head) && openLineAboveTitle(view, line)) return true
   return landAfterTriggerBlock(view, lines, line.number - 1)
     || landAfterUnstampedHeading(view, lines, line.number - 1)
 }

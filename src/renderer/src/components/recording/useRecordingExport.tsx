@@ -86,7 +86,7 @@ export function useRecordingExport({ runRef, title, slides, fixed = false, audio
   const startExport = useCallback(async (): Promise<void> => {
     const ready = await settled()
     if (!ready) return
-    const chapterSlides = Object.fromEntries(Object.entries(slides).map(([id, s]) => [id, { title: s.title, ...(s.section ? { section: s.section } : {}) }]))
+    const chapterSlides = Object.fromEntries(Object.entries(slides).map(([id, s]) => [id, { title: s.title, ...(s.section ? { section: s.section } : {}), ...(s.cards?.length ? { cards: s.cards } : {}) }]))
     const r = await window.tw.recordingVideo.export(runRef, { ...extras, title: title, slides: chapterSlides, ...(ready.revision !== undefined ? { revision: ready.revision } : {}), ...(ready.plan !== undefined ? { plan: ready.plan } : {}), ...(withoutWords ? { withoutWords: true, captions: false } : {}) })
     if (r.ok) {
       const early = lastReport.current.get(r.jobId)

@@ -62,14 +62,22 @@ for (const name of ['MODE_SELECTOR', 'CARD_UNIT_SELECTOR']) {
   if (!EMPH_STEP_SELECTOR) { failed = true; console.error('FAIL emphasis steps: runtime/emphasis-steps.js no longer exports EMPH_STEP_SELECTOR') }
   const presenterSrc = readFileSync(PRESENTER_PATH, 'utf8')
   const audienceSrc = readFileSync(AUDIENCE_PATH, 'utf8')
+  // Each runtime lists a slide's units with the one ownership rule first (runtime/step-ownership.js, inlined with the
+  // emphasis steps): a miniature of another slide in a contents strip is never this slide's unit or its carousel.
   const inlined = {
-    presenter: presenterSrc.includes('<!--EMPHASIS_STEPS_RUNTIME-->') && /emphasisStepElements\(scope, blocks, isVisibleUnit\)/.test(presenterSrc),
-    audience: audienceSrc.includes('${emphasisStepsRuntimeSource()}') && /emphasisStepElements\(gallery \? card : slide, blocks, isVisibleUnit\)/.test(audienceSrc),
+    presenter: presenterSrc.includes('<!--EMPHASIS_STEPS_RUNTIME-->')
+      && /emphasisStepElements\(scope, blocks, \(el\) => ownsStepElement\(scope, el\) && isVisibleUnit\(el\)\)/.test(presenterSrc)
+      && /function galleryIn\(root\) \{\s*return root \? ownedStepElement\(root, "\.card-gallery\[data-exclusive\]"\) : null;/.test(presenterSrc)
+      && /ownedStepElements\(root, MODE_SELECTOR\)/.test(presenterSrc),
+    audience: audienceSrc.includes('${emphasisStepsRuntimeSource()}')
+      && /emphasisStepElements\(scope, blocks, function \(el\) \{ return ownsStepElement\(scope, el\) && isVisibleUnit\(el\); \}\)/.test(audienceSrc)
+      && /function galleryIn\(slide\) \{ return slide \? ownedStepElement\(slide, "\.card-gallery\[data-exclusive\]"\) : null; \}/.test(audienceSrc)
+      && /ownedStepElements\(slide, MODE_SELECTOR\)/.test(audienceSrc),
   }
   for (const [runtime, ok] of Object.entries(inlined)) {
     if (ok) continue
     failed = true
-    console.error(`FAIL emphasis steps: the ${runtime} runtime does not enumerate emphasis spans through runtime/emphasis-steps.js.`)
+    console.error(`FAIL emphasis steps: the ${runtime} runtime does not enumerate a slide's own units through runtime/emphasis-steps.js and runtime/step-ownership.js.`)
     console.error('  A slide with {emphasis-steps} would count its steps differently there and fall out of step.')
   }
   if (inlined.presenter && inlined.audience) console.log(`emphasis steps: both runtimes enumerate ${EMPH_STEP_SELECTOR} through the one shared module`)

@@ -8,7 +8,8 @@ import { readFile } from 'fs/promises'
 import { dirname, join } from 'path'
 import { readHandoutUrl } from './publishing-logic'
 import { listRuns } from './runs'
-import { listKeptRuns } from './recording-paths'
+import { createRunVoiceProbe, listKeptRuns } from './recording-paths'
+import { mediaPlaceOf, recordedOnOf } from '../shared/recording-place'
 import { createPlannedRunIn, deletePlannedRunIn, readRoot, updatePlannedRunIn, type PlannedRunsDeps } from './planned-runs-ipc'
 
 type TalkInfo = { slug: string; title: string; outlinePath: string }
@@ -21,6 +22,7 @@ export interface HistoryDeps {
   vaultRoot: () => string | null // the current vault's root (vault registry)
   listTalks: (vaultRoot: string) => Promise<TalkInfo[]> // persisted vault index; never a sync walk
   testMode?: () => boolean // TW_REC_TEST=1: deterministic live/offline checks, no network
+  computerName?: () => string // the name this computer is listed under: where a Run's recording is (0.45)
   /**
    * A planned Run was saved with a changed plan, or a delivered Run's work times changed, in this vault: work
    * already sent is given its new times (work-files ticket 13), and post-work owed now is opened (ticket 19).
@@ -142,7 +144,12 @@ export function registerHistoryIpc(deps: HistoryDeps): void {
     const slug = talkSlug === undefined ? undefined : String(talkSlug)
     // An explicitly named unavailable vault is still refused; no fallback to another vault.
     if (vaultId !== undefined && !vault) return []
-    return [...(vault ? listRuns(vault, slug).map((run) => ({ ...run, home: vault })) : []), ...listKeptRuns(deps.userDataDir(), slug)]
+    // Where each Run's recording is (0.45): read-time only, decided by its files (recording-place.ts).
+    // One look at the recordings folder for the whole list, not one per Run (createRunVoiceProbe).
+    const voiceHere = createRunVoiceProbe(deps.userDataDir())
+    const computer = deps.computerName?.() ?? null
+    const placed = <R extends object>(run: R) => ({ ...run, mediaPlace: mediaPlaceOf(voiceHere(run), recordedOnOf(run), computer) })
+    return [...(vault ? listRuns(vault, slug).map((run) => placed({ ...run, home: vault })) : []), ...listKeptRuns(deps.userDataDir(), slug).map(placed)]
   })
 
   // Planned Runs live in their talk's vault (planned-runs-ipc.ts): a request naming a vault writes there only.

@@ -65,7 +65,7 @@ async function launch(runs) {
     catch (error) { if (attempt === 3) throw error; await new Promise((r) => setTimeout(r, 15_000)) }
   }
 }
-async function openSessions(app) {
+async function openSessions(app, { empty = false } = {}) {
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
   await page.waitForTimeout(2000)
@@ -75,7 +75,7 @@ async function openSessions(app) {
   await tools.waitForLoadState('domcontentloaded')
   tools.on('pageerror', (e) => console.log('PAGEERROR:', e.message.slice(0, 150)))
   await tools.waitForSelector('[data-tools-view="runs"]', { timeout: 10_000 })
-  await tools.waitForSelector('[data-sessions-row]', { timeout: 10_000 })
+  await tools.waitForSelector(empty ? '.tw-tools-empty' : '[data-sessions-row]', { timeout: 10_000 })
   return { tools, main: page }
 }
 const shot = async (tools, name) => { if (shotsDir) await tools.screenshot({ path: join(shotsDir, `${name}.png`) }).catch(() => {}) }
@@ -116,7 +116,7 @@ const FOUR = [
     rec('Medical Sciences steps', (await steps(tools)) === 'planned:done pre-ready:done published:current pre-closes:todo delivered:todo post-open:todo post-closes:todo results:todo', await steps(tools))
     rec('Medical Sciences: Publish for this run and Preview page are wired', (await actionsOf(tools, 'published')) === 'publish preview-page', await actionsOf(tools, 'published'))
     rec('Delivered step offers Go live and Mark as delivered', (await actionsOf(tools, 'delivered')) === 'go-live mark-delivered', await actionsOf(tools, 'delivered'))
-    rec('Open results is disabled before the session, with its reason', (await actionsOf(tools, 'results')) === 'open-results!' && await tools.locator('[data-run-action="open-results"][title="Available after the session"]').count() === 1)
+    rec('Open results is disabled before the session, with its reason', (await actionsOf(tools, 'results')) === 'open-results!' && await tools.locator('[data-run-action="open-results"][title="Available after the Run"]').count() === 1)
     rec('sections: pre-work answers, post-work answers and extras', await tools.locator('[data-run-section]').evaluateAll((els) => els.map((el) => el.getAttribute('data-run-section')).join(',')) === 'pre-answers,post-answers,extras')
     await shot(tools, '3-not-published')
 
@@ -158,6 +158,10 @@ const FOUR = [
     await tools.locator('[data-run-action="open-pre-file"]').click()
     await tools.waitForTimeout(300)
     rec('Open file: the attached file opens without a notice', await tools.locator('[data-run-notice]').count() === 0)
+    // Since the one Runs view (consistency batch 3) Open file shows the work file in this window: back to the Run,
+    // as the app's own links bring a Run to the front.
+    await (await app.firstWindow()).evaluate(() => window.tw.tools.openRun('ai-research', 'said'))
+    await tools.waitForSelector('[data-sessions-detail="ai-research/said"]', { timeout: 10_000 })
     await tools.locator('[data-run-action="open-post-file"]').click()
     await tools.waitForSelector('[data-run-notice]', { timeout: 3000 }).catch(() => {})
     rec('Open file: a file that is not there says so', (await tools.locator('[data-run-notice]').innerText().catch(() => '')).includes('session-feedback'), await tools.locator('[data-run-notice]').innerText().catch(() => ''))
@@ -194,7 +198,8 @@ const FOUR = [
     status: 'delivered', plannedDate: dayOf(-1), startTime: '14:00', expectedPeople: 18, handoutUrl: 'https://handouts.fyi/dl/keble',
     startedAt: new Date(Date.now() - 86_400_000).toISOString(), endedAt: new Date(Date.now() - 86_400_000 + 3_600_000).toISOString(),
     prework: { entries: [], people: 16 }, postwork: { entries: [], people: 5 },
-    work: { pre: pre(`${dayOf(-9)}T09:00`, `${dayOf(-1)}T13:00`, { publishedAt: PUB }), post: post(`${dayOf(13)}T17:00`, { publishedAt: PUB }) }
+    // Opened at the Run's end, as the app stamps it (openedAt, ticket 19): only then is post-work open.
+    work: { pre: pre(`${dayOf(-9)}T09:00`, `${dayOf(-1)}T13:00`, { publishedAt: PUB }), post: post(`${dayOf(13)}T17:00`, { publishedAt: PUB, openedAt: new Date(Date.now() - 86_400_000 + 3_600_000).toISOString() }) }
   })
   const unpublished = planned('ai-research', 'med', T1, 'Medical Sciences', 21, {
     expectedPeople: 24, handoutUrl: 'https://handouts.fyi/dl/med', prework: { entries: [], people: 7 },
@@ -219,6 +224,20 @@ const FOUR = [
   } finally { await app.close().catch(() => {}) }
 }
 
+// ---- (g0) no Run to show (the only time none is selected since the Runs view opens on its first Run): the
+// palette offers the Run commands disabled, and Open run and New work file too
+{
+  const { app } = await launch([])
+  try {
+    const { tools } = await openSessions(app, { empty: true })
+    await tools.keyboard.press('Meta+Shift+p')
+    await tools.locator('[data-command-menu]').waitFor({ timeout: 5000 }).catch(() => {})
+    const offered = await tools.locator('[data-command-menu] [data-command]').evaluateAll((els) => els.filter((el) => el.getAttribute('aria-disabled')).map((el) => el.getAttribute('data-command')).sort().join(' '))
+    rec('with no Run selected the Run commands are disabled (and so are Open run and New work file)', offered === 'tools-animated-video tools-copy-invitation tools-copy-link tools-edit-plan tools-go-live tools-open-run tools-plan-like-this tools-publish tools-unpublish tools-new-work-file'.split(' ').sort().join(' '), offered)
+    await tools.keyboard.press('Escape')
+  } finally { await app.close().catch(() => {}) }
+}
+
 // ---- (g) work-files ticket 30: the Tools window's keys and its palette (⌘⇧P), on the same handlers as the buttons
 {
   const { app } = await launch(FOUR)
@@ -226,8 +245,13 @@ const FOUR = [
     const { tools } = await openSessions(app)
     const press = async (chord) => { await tools.keyboard.press(chord); await tools.waitForTimeout(250) }
     const view = () => tools.evaluate(() => document.querySelector('[data-tools-view]')?.getAttribute('data-tools-view'))
+    // The Runs view opens on its first Run (consistency batch 3), so a Run is on show from the start; with no Run
+    // selected the Run commands are disabled (checked below, after Work files).
     await press('Meta+Alt+e')
-    rec('no Run on show: Edit plan\'s key does nothing', await tools.locator('[data-testid="plan-run-sheet"]').count() === 0)
+    const atOpen = tools.locator('[data-testid="plan-run-sheet"]')
+    rec('on opening, the first Run is on show: Edit plan\'s key opens its plan sheet', await atOpen.count() === 1 && (await atOpen.locator('[data-field="event"]').inputValue()) === 'Saïd workshop')
+    await tools.keyboard.press('Escape')
+    await atOpen.waitFor({ state: 'detached', timeout: 5000 }).catch(() => {})
     await select(tools, 'ai-research/said')
     await press('Meta+Alt+e')
     rec('Edit plan\'s key (⌘⌥E) opens the plan sheet for this Run', await tools.locator('[data-testid="plan-run-sheet"]').count() === 1)
@@ -241,7 +265,7 @@ const FOUR = [
     await press('Meta+Shift+p')
     rec('⌘⇧P opens the Tools window\'s palette', await tools.locator('[data-command-menu]').count() === 1)
     const listed = await tools.locator('[data-command-menu] [data-command]').evaluateAll((els) => els.map((el) => `${el.getAttribute('data-command')}${el.getAttribute('aria-disabled') ? '!' : ''}`))
-    rec('the palette lists every Tools command; on a published Run, Publish (no button) and Open run (Published pages only) are disabled', listed.length === 13 && ['tools-edit-plan', 'tools-unpublish', 'tools-go-live', 'tools-copy-link', 'tools-copy-invitation'].every((id) => listed.includes(id)) && listed.includes('tools-publish!') && listed.includes('tools-open-run!'), listed.join(' '))
+    rec('the palette lists every Tools command; on a published Run, Publish (no button) and Open run (Published pages only) are disabled', listed.length === 14 && ['tools-edit-plan', 'tools-unpublish', 'tools-go-live', 'tools-copy-link', 'tools-copy-invitation'].every((id) => listed.includes(id)) && listed.includes('tools-publish!') && listed.includes('tools-open-run!'), listed.join(' '))
     rec('the palette shows the keys', (await tools.locator('[data-command-menu] [data-command="tools-go-live"] .command-menu-hint').innerText()) === '⌘⌥L')
     await tools.locator('[data-command-menu] input').fill('invitation')
     rec('palette keywords find a command', await tools.locator('[data-command-menu] [data-command="tools-copy-invitation"]').count() === 1)
@@ -256,10 +280,7 @@ const FOUR = [
     rec('⌘⇧N starts a new work file', await tools.locator('[data-wf-draft-row]').count() === 1)
     await press('Meta+4')
     rec('⌘4 shows Runs', (await view()) === 'runs')
-    await press('Meta+Shift+p')
-    const offered = await tools.locator('[data-command-menu] [data-command]').evaluateAll((els) => els.filter((el) => el.getAttribute('aria-disabled')).map((el) => el.getAttribute('data-command')).sort().join(' '))
-    rec('with no Run selected the Run commands are disabled (and so are Open run and New work file)', offered === 'tools-copy-invitation tools-copy-link tools-edit-plan tools-go-live tools-open-run tools-plan-like-this tools-publish tools-unpublish tools-new-work-file'.split(' ').sort().join(' '), offered)
-    await tools.keyboard.press('Escape')
+    // Back on Runs the first Run is on show again (the one Runs view, batch 3): no Run selected is checked on an empty vault below.
     await select(tools, 'ai-research/said')
     await app.evaluate(({ ipcMain }) => {
       globalThis.__presented = []

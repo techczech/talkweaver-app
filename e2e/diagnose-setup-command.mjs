@@ -8,9 +8,11 @@
 // file of the user-data folder (the secrets store holds them encrypted).
 //
 // The app is the built one (out/) run by this checkout's Electron, unpackaged and with TW_E2E=1, so
-// that the test-only override can point it at the fake API on loopback (a packaged build ignores it).
-// A throwaway user-data folder and vault, made-up secrets. Nothing here contacts Cloudflare, the
-// installed app or its data.
+// that the test-only overrides can point it at the fake API on loopback and, since the set-up asks the
+// live service itself whether it accepts this computer's key (several Macs, ticket 02), at a stand-in
+// live service on loopback too (live-worker-double.mjs over HTTP, answering from the fake API's model;
+// src/main/live-service-stand-in.ts). A packaged build ignores both. A throwaway user-data folder and
+// vault, made-up secrets. Nothing here contacts Cloudflare, the installed app or its data.
 import { _electron as electron } from 'playwright'
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
@@ -19,9 +21,13 @@ import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
 import { createHash } from 'node:crypto'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openSettingsAtCloudflare } from './lib/settings-window.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
 import { REPLY_TEXT_MARK, startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
 import { S3_REPLY_TEXT_MARK, startS3Stub } from '../scripts/lib/s3-stub.mjs'
+import { liveWorkerDouble } from '../scripts/lib/live-worker-double.mjs'
+import { createServer } from 'node:http'
+import { testProfileEnv } from './lib/test-profile.mjs'
 
 const root = process.cwd()
 const require = createRequire(import.meta.url)
@@ -91,6 +97,7 @@ function findIn(dir, values) {
 let app
 let api
 let s3
+let liveServer
 let appOutput = ''
 let setupOutput = ''
 const argvSeen = []
@@ -105,10 +112,27 @@ try {
     tokens: { [TOKEN]: { accounts: [ADA.id] } },
   })
   s3 = await startS3Stub({ buckets: ['talks'], keys: [KEYS.id] })
+  // The live service, as the app meets it at its workers.dev address: the stand-in the unit test of the
+  // set-up uses (test-setup-cli.mjs), served on loopback; the app names the address it meant in a header.
+  const LIVE_BUILD = /export const LIVE_WORKER_BUILD\s*=\s*'([^']+)'/.exec(readFileSync(join(root, 'worker', 'recovery-protocol.ts'), 'utf8'))[1]
+  const liveDouble = liveWorkerDouble(api, { account: ADA.id, name: 'talkweaver-live-sessions', address: null, build: LIVE_BUILD })
+  liveServer = createServer((request, response) => {
+    const chunks = []
+    request.on('data', (chunk) => chunks.push(chunk))
+    request.on('end', async () => {
+      const body = Buffer.concat(chunks).toString('utf8')
+      const headers = Object.fromEntries(['authorization', 'content-type', 'accept'].filter((name) => request.headers[name]).map((name) => [name, request.headers[name]]))
+      const answer = await liveDouble.fetch(`https://${request.headers['x-tw-e2e-live-host']}${request.url}`, { method: request.method, headers, ...(body ? { body } : {}) }).catch(() => null)
+      if (!answer) { response.destroy(); return }
+      response.writeHead(answer.status, { 'content-type': answer.headers.get('content-type') ?? 'text/plain' })
+      response.end(Buffer.from(await answer.arrayBuffer()))
+    })
+  })
+  await new Promise((done) => liveServer.listen(0, '127.0.0.1', done))
   // Only what the app needs from this shell: no credential of the person running the test goes in.
   // The S3 stand-in's loopback address is not an R2 endpoint: the unpackaged test app accepts this one
   // exact address as well (TW_E2E_RECORDING_ENDPOINT), as it accepts the fake Cloudflare API.
-  const env = { TW_E2E: '1', TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl, TW_E2E_RECORDING_ENDPOINT: s3.endpoint }
+  const env = { TW_E2E: '1', ...testProfileEnv(userData), TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl, TW_E2E_RECORDING_ENDPOINT: s3.endpoint, TW_E2E_LIVE_SERVICE_URL: `http://127.0.0.1:${liveServer.address().port}` }
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }
@@ -262,23 +286,25 @@ try {
   if (realpathSync(where) !== realpathSync(userData)) throw new Error('not on the throwaway user-data folder')
   const windowState = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((win) => win.isVisible()))
 
-  const SETTINGS = '[aria-label="Settings"]'
-  const settings = page.locator(SETTINGS).first()
-  const part = (name) => settings.locator(`[data-cloudflare="${name}"]`)
-  if (await page.locator(SETTINGS).count() === 0) await page.keyboard.press('ControlOrMeta+,')
-  await part('connection').waitFor({ state: 'visible' })
+  // Since 0.42 Settings is its own window: opened at its Cloudflare page as the app's own links open it.
+  const settingsWindow = await openSettingsAtCloudflare(app, page)
+  settingsWindow.setDefaultTimeout(30_000)
+  const part = (name) => settingsWindow.locator(`[data-cloudflare="${name}"]`).first()
+  await part('connection').waitFor({ state: 'attached' })
+  // It shows itself once drawn: hidden again, as every other window of this hidden run is.
+  if (hidden) await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((win) => { win.setPosition(-20000, -20000); win.hide() }))
   const text = async (name) => (await part(name).innerText()).replace(/\s+/g, ' ').trim()
-  const connectedInWindow = await page.waitForFunction(() => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === 'Connected · Ada Lovelace', null, { timeout: 40_000 }).then(() => true, () => false)
+  const connectedInWindow = await settingsWindow.waitForFunction(() => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === 'Connected · Ada Lovelace', null, { timeout: 40_000 }).then(() => true, () => false)
   if (!connectedInWindow) {
-    const seen = await page.evaluate(async () => ({ label: document.querySelector('[data-cloudflare="connection-label"]')?.textContent, status: await window.tw.cloudflare.status() }))
+    const seen = await settingsWindow.evaluate(async () => ({ label: document.querySelector('[data-cloudflare="connection-label"]')?.textContent, status: await window.tw.cloudflare.status() }))
     throw new Error(`the open app did not show the connection: ${JSON.stringify(seen)}`)
   }
-  await page.waitForFunction(() => /Ready/.test(document.querySelector('[data-cloudflare="publishing"]')?.textContent ?? '') && /Ready/.test(document.querySelector('[data-cloudflare="live-service"]')?.textContent ?? '')
+  await settingsWindow.waitForFunction(() => /Ready/.test(document.querySelector('[data-cloudflare="publishing"]')?.textContent ?? '') && /Ready/.test(document.querySelector('[data-cloudflare="live-service"]')?.textContent ?? '')
     && /Attached/.test(document.querySelector('[data-cloudflare="share-link"]')?.textContent ?? ''), null, { timeout: 40_000 }).catch(() => {})
   // The Recording storage row is checked by the open app too (in memory only): Check, as a person would.
   await part('recording-storage-check').click().catch(() => {})
-  await page.waitForFunction(() => /Ready/.test(document.querySelector('[data-cloudflare="recording-storage"]')?.textContent ?? ''), null, { timeout: 20_000 }).catch(() => {})
-  const shown = { header: await page.locator('[data-cloudflare="connection-label"]').innerText(), publishing: await text('publishing'), live: await text('live-service'), share: await text('share-link'), recording: await text('recording-storage') }
+  await settingsWindow.waitForFunction(() => /Ready/.test(document.querySelector('[data-cloudflare="recording-storage"]')?.textContent ?? ''), null, { timeout: 20_000 }).catch(() => {})
+  const shown = { header: await settingsWindow.locator('[data-cloudflare="connection-label"]').innerText(), publishing: await text('publishing'), live: await text('live-service'), share: await text('share-link'), recording: await text('recording-storage') }
   const printed = all.json.rows
   const same = shown.header === all.json.cloudflare.connection.label
     && shown.publishing.includes(printed.publishing.label) && shown.publishing.includes(printed.publishing.detail)
@@ -309,7 +335,7 @@ try {
   record(12, refusedOk && changedFiles.length === 0 && windowsOk && readdirSync(userData).includes('cf-pages-token.bin'),
     `${refused.map((run) => `exit ${run.code} in ${run.ms} ms`).join(' · ')} · changed files: ${changedFiles.join(', ') || 'none'} · app windows visible ${JSON.stringify(windowsBefore)} → ${JSON.stringify(windowsAfter)}`)
 
-  const windowText = await page.evaluate(() => document.documentElement.outerHTML)
+  const windowText = await page.evaluate(() => document.documentElement.outerHTML) + await settingsWindow.evaluate(() => document.documentElement.outerHTML).catch(() => '')
   await app.close()
   app = null
 
@@ -348,6 +374,7 @@ try {
   if (pid) { try { process.kill(pid) } catch { /* gone, as it should be */ } }
   await api?.close()
   await s3?.close()
+  liveServer?.close()
   rmSync(scratch, { recursive: true, force: true, maxRetries: 3 })
 }
 process.exit(exitCode)

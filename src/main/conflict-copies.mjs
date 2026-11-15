@@ -6,6 +6,8 @@
 //                                              to shadow the real outline in the scan's pick)
 //   Dropbox       `S (<…>conflicted copy<…>).md`
 //   Google Drive  `S (1).md` / `S(1).md`       (any 1–2 digit number)
+//   iCloud Drive  `S 2.md`, `S 3.md`, …          (2 to 99; only when the contents are related, below)
+//   Syncthing     `S.sync-conflict-<YYYYMMDD>-<HHMMSS>-<device>.md` (device: 7 upper-case letters or digits)
 // or when `S.md` itself holds Git conflict markers at line starts (`<<<<<<< `, `=======`, `>>>>>>> `).
 //
 // A `<Machine>` suffix (letters, digits, `-`, `_`) counts only when (review S3, orchestrator):
@@ -19,6 +21,15 @@
 // `loose` (the vault walk, the outline pick) accepts any suffix token: it only decides which folders
 // the scanner looks at, and the scanner applies the rule above.
 //
+// iCloud's ` 2` is also what a person gets from Finder's "Keep both", or types for a second talk, so
+// the name alone is not enough: an iCloud-named file counts only when it is related to `S` (0.45,
+// second Mac): byte-identical, or sharing a slide id (`{id=…}`) with it, or carrying the same
+// frontmatter title. A file that is none of these (another talk called "… 2", or one that cannot be
+// read) is the author's own and is neither counted nor moved. Syncthing's name is distinctive enough
+// on its own. Neither service names a machine the owner would recognise, so their `source` is null.
+// iCloud and Syncthing copies of `X-outline.md` end in ` 2.md` or `.md` after the conflict stamp,
+// never in `-outline.md`, so they never enter the outline pick (talk-scan.mjs pickOutlineName).
+//
 // This module has three layers:
 //   - pure naming and classification (`conflictServiceOf`, `conflictCandidateNames`,
 //     `hasGitConflictMarkers`, `classifyConflict`) — table-tested in scripts/test-conflict-copies.mjs;
@@ -29,8 +40,10 @@
 // scanner is called only for folders with a candidate or with markers, so no second tree walk runs.
 import { lstat, readFile, readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, sep } from 'node:path'
+import { ID_TOKEN_RE } from '../../compiler/scripts/lib/slide-id.mjs'
 
 const OUTLINE_SUFFIX = '-outline.md'
+const toBuffer = (b) => (b == null ? null : Buffer.isBuffer(b) ? b : typeof b === 'string' ? Buffer.from(b, 'utf8') : Buffer.from(b))
 const MACHINE = /^[A-Za-z0-9][A-Za-z0-9_-]*$/
 const MACHINE_TOKENS = new Set(['mac', 'macbook', 'imac', 'mini', 'pc', 'air', 'pro', 'studio'])
 const WINDOWS_DEFAULT = /^(desktop|laptop)-[A-Za-z0-9_]+/i
@@ -51,10 +64,34 @@ export function isMachineName(token, { knownMachines = [], loose = false } = {})
   return token.split('-').some((part) => MACHINE_TOKENS.has(part.toLowerCase()))
 }
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const SYNC_CONFLICT = /^\.sync-conflict-\d{8}-\d{6}-[A-Z0-9]{7}$/
+const ICLOUD_NUMBER = /^ ([2-9]|[1-9]\d)$/
+const ID_TOKENS = new RegExp(ID_TOKEN_RE.source, 'g')
+
+/** The slide ids an outline's text carries, and its frontmatter title (null when it has none). */
+function outlineMarks(text) {
+  const ids = new Set([...text.matchAll(ID_TOKENS)].map((m) => m[1]))
+  const front = text.match(/^\uFEFF?---\r?\n([\s\S]*?)\r?\n---\s*(?:\r?\n|$)/)
+  const raw = front?.[1].match(/^title:[ \t]*(.*?)[ \t]*$/m)?.[1] ?? ''
+  const title = raw.replace(/^(['"])(.*)\1$/, '$2').trim()
+  return { ids, title: title || null }
+}
+
+/** Whether a copy's bytes are related to the outline's: identical, a shared slide id, or the same title. */
+export function relatedOutline(copyBytes, canonicalBytes) {
+  const copy = toBuffer(copyBytes)
+  const canonical = toBuffer(canonicalBytes)
+  if (!copy || !canonical || copy.length === 0 || canonical.length === 0) return false
+  if (copy.equals(canonical)) return true
+  const a = outlineMarks(copy.toString('utf8'))
+  const b = outlineMarks(canonical.toString('utf8'))
+  for (const id of a.ids) if (b.ids.has(id)) return true
+  return a.title !== null && a.title === b.title
+}
 
 /**
  * The service that named `name` as a conflict copy of `canonicalName`, or null.
- * @returns {{ service: 'onedrive' | 'dropbox' | 'gdrive', source: string | null } | null}
+ * @returns {{ service: 'onedrive' | 'dropbox' | 'gdrive' | 'icloud' | 'syncthing', source: string | null } | null}
  */
 export function conflictServiceOf(name, canonicalName, options = {}) {
   if (typeof name !== 'string' || typeof canonicalName !== 'string') return null
@@ -85,6 +122,11 @@ export function conflictServiceOf(name, canonicalName, options = {}) {
   }
   // Google Drive: S (1).md / S(1).md
   if (new RegExp(`^${escapeRe(base)} ?\\(\\d{1,2}\\)$`).test(stem)) return { service: 'gdrive', source: null }
+  // Syncthing: S.sync-conflict-YYYYMMDD-HHMMSS-DEVICE.md
+  const rest = stem.startsWith(base) ? stem.slice(base.length) : null
+  if (rest !== null && SYNC_CONFLICT.test(rest)) return { service: 'syncthing', source: null }
+  // iCloud Drive: S 2.md (the contents decide: classifyConflict)
+  if (rest !== null && ICLOUD_NUMBER.test(rest)) return { service: 'icloud', source: null }
   return null
 }
 
@@ -114,14 +156,13 @@ export function hasGitConflictMarkers(text) {
   return false
 }
 
-const toBuffer = (b) => (b == null ? null : Buffer.isBuffer(b) ? b : typeof b === 'string' ? Buffer.from(b, 'utf8') : Buffer.from(b))
 
 /**
  * Pure classification of one talk folder.
  * @param {Array<{ name: string, bytes?: Buffer | Uint8Array | string | null }>} listing the folder's
  *   files; `bytes` is needed for a candidate to be judged identical (missing bytes → `differs`).
  * @param {{ name: string, bytes: Buffer | Uint8Array | string }} canonicalOutline the talk's outline.
- * @returns {Array<{ name: string, service: 'onedrive'|'dropbox'|'gdrive'|'git', source: string|null,
+ * @returns {Array<{ name: string, service: 'onedrive'|'dropbox'|'gdrive'|'icloud'|'syncthing'|'git', source: string|null,
  *   state: 'identical'|'differs'|'git-markers' }>} copies in listing order; a `git-markers` entry
  *   (named as the outline itself) comes first when the outline holds markers.
  */
@@ -136,6 +177,8 @@ export function classifyConflict(listing, canonicalOutline, options = {}) {
     const match = conflictServiceOf(entry?.name, canonicalOutline.name, options)
     if (!match) continue
     const bytes = toBuffer(entry.bytes)
+    // An iCloud-style name is a copy only when its contents are related to the outline (header).
+    if (match.service === 'icloud' && !relatedOutline(bytes, canonical)) continue
     // An empty outline is never the reference for "identical" (review T1): nothing is trashed.
     const identical = Boolean(canonical && canonical.length > 0 && bytes && bytes.equals(canonical))
     out.push({ name: entry.name, service: match.service, source: match.source, state: identical ? 'identical' : 'differs' })

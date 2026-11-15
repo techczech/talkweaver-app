@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { createServer } from 'node:http'
+import { testProfileEnv } from './lib/test-profile.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -47,7 +48,7 @@ writeFileSync(outlinePath, OUTLINE, 'utf8')
 writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2), 'utf8')
 
 await ensureFreshBuild(REPO)
-const env = { ...process.env, TW_E2E: '1', TW_E2E_LIVE_PAGE_ALLOW: `127.0.0.1:${fixture.address().port}` }
+const env = { ...process.env, TW_E2E: '1', ...testProfileEnv(userData), TW_E2E_LIVE_PAGE_ALLOW: `127.0.0.1:${fixture.address().port}` }
 delete env.ELECTRON_RUN_AS_NODE
 const app = await electron.launch({ args: ['.', '--user-data-dir=' + userData], cwd: REPO, env })
 const output = []

@@ -28,6 +28,8 @@ export default function PathwaysView({ talk, content, slides, thumbnails, docked
   const [pathwayId, setPathwayId] = useState<string | null>(null)
   const [matrix, setMatrix] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  /** The manifest holds a Git conflict (0.45): the file Show in Finder reveals. */
+  const [conflictFile, setConflictFile] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [dialog, setDialog] = useState<Dialog | null>(null)
   const [adding, setAdding] = useState<string[] | null>(null)
@@ -40,17 +42,17 @@ export default function PathwaysView({ talk, content, slides, thumbnails, docked
   const enqueue = (work: () => Promise<void>): void => {
     queue.current = queue.current.then(async () => {
       if (alive.current) setBusy(true)
-      try { await work(); if (alive.current) setError(null) }
+      try { await work(); if (alive.current) { setError(null); setConflictFile(null) } }
       catch (e) {
         const message = e instanceof Error ? e.message : String(e)
-        if (alive.current) setError(message)
+        if (alive.current) { setError(message); setConflictFile((e as { conflictFile?: string } | null)?.conflictFile ?? null) }
         else notify(message, 'error', 'pathway-edit')
       }
       finally { if (alive.current) setBusy(false) }
     })
   }
-  const accept = (next: PathwaySnapshot | { error: string }): PathwaySnapshot => {
-    if ('error' in next) throw new Error(next.error)
+  const accept = (next: PathwaySnapshot | { error: string; conflictFile?: string }): PathwaySnapshot => {
+    if ('error' in next) throw Object.assign(new Error(next.error), { conflictFile: next.conflictFile })
     current.current.snapshot = next
     if (alive.current) setSnapshot(next)
     return next
@@ -194,7 +196,7 @@ export default function PathwaysView({ talk, content, slides, thumbnails, docked
         <div className="pathway-actions"><button onClick={() => setDialog({ kind: 'new', name: '' })}>New</button><button disabled={!pathway} onClick={() => setDialog({ kind: 'rename', name: pathway?.name ?? '' })}>Rename</button><button disabled={!pathway} onClick={() => setDialog({ kind: 'delete', name: pathway?.name ?? '' })}>Delete</button></div>
         <div className="pathway-actions"><span>{ids.length} slides</span><button aria-pressed={!matrix} onClick={() => setMatrix(false)}>List</button><button aria-pressed={matrix} onClick={() => setMatrix(true)}>Matrix</button></div>
       </header>
-      {error && <p role="alert">{error} <button onClick={refresh}>Try again</button></p>}
+      {error && <p role="alert" data-pathway-error>{error} {conflictFile && <button onClick={() => { void window.tw.shell.showInFolder(conflictFile) }}>Show in Finder</button>} <button onClick={refresh}>Try again</button></p>}
       {missing.length > 0 && <p role="status" data-pathway-warning>{missing.length} slides no longer in the talk. <button onClick={() => pathway && writeIds(pathway.id, before => removePathwaySlides(before, current.current.snapshot?.pathways.find(p => p.id === pathway.id)?.missing ?? []))}>Drop missing</button></p>}
       {matrix ? <div className="pathway-matrix-scroll"><table data-pathway-matrix><thead><tr><th>Talk order</th>{snapshot?.pathways.map(p => <th key={p.id}><button onClick={() => setPathwayId(p.id)} aria-pressed={pathway?.id === p.id}>{p.name}</button></th>)}</tr></thead><tbody>
         {[...rows.map(r => r.slide_id), ...new Set(snapshot?.pathways.flatMap(p => p.slideIds.filter(id => !byId.has(id))) ?? [])].map(id => <tr key={id}><td>{title(id)}{snapshot?.pathways.some(p => p.missing.includes(id)) && ' — missing'}</td>{snapshot?.pathways.map(p => <td key={p.id}><button aria-label={`${p.slideIds.includes(id) ? 'Remove' : 'Add'} ${title(id)} ${p.slideIds.includes(id) ? 'from' : 'to'} ${p.name}`} onClick={() => writeIds(p.id, before => before.includes(id) ? removePathwaySlides(before, [id]) : addPathwaySlides(before, [id], rows.map(r => r.slide_id)))}>{p.slideIds.includes(id) ? p.slideIds.indexOf(id) + 1 : '+'}</button></td>)}</tr>)}
@@ -224,7 +226,7 @@ export default function PathwaysView({ talk, content, slides, thumbnails, docked
       </div>}
       <footer><button disabled={!pathway || !ids.some(id => byId.has(id)) || busy} onClick={present}>Present this pathway</button></footer>
     </aside>}
-    {!docked && error && <p role="alert">{error}</p>}
+    {!docked && error && <p role="alert" data-pathway-error>{error}{conflictFile && <> <button onClick={() => { void window.tw.shell.showInFolder(conflictFile) }}>Show in Finder</button></>}</p>}
     {adding && <div className="pathway-dialog-backdrop" onMouseDown={() => setAdding(null)}><section role="dialog" aria-label="Add to pathway" className="pathway-dialog" onMouseDown={e => e.stopPropagation()}><h3>Add {adding.length} slides in talk order</h3>{snapshot?.pathways.map(p => <button key={p.id} onClick={() => add(p.id, adding)}>{p.name} ({p.slideIds.length} slides)</button>)}<button onClick={() => { setDialog({ kind: 'new', name: '', add: adding }); setAdding(null) }}>New pathway…</button><button onClick={() => setAdding(null)}>Cancel</button></section></div>}
     {dialog?.kind === 'delete' && <ConfirmCard title="Delete this pathway?" itemName={dialog.name} consequence="The pathway is removed from this talk. The talk's slides are not affected." recovery="A deleted pathway cannot be recovered." cta="Delete" onCancel={() => setDialog(null)} onConfirm={() => submit()} />}
     {dialog && dialog.kind !== 'delete' && <NameCard kind="pathway" mode={dialog.kind} initial={dialog.name} cta={dialog.kind === 'new' ? 'Create' : 'Rename'} onCancel={() => setDialog(null)} onSubmit={(value) => submit(value)} />}

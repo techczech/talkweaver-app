@@ -7,8 +7,10 @@ import { taskGroupLabel } from '../../../shared/task-groups'
 import { notify } from '../lib/notify'
 import {
   closeOpenObject,
+  deleteSelectedObject,
   hasOpenObjectBlock,
   openSelectedObject,
+  runLineCommand,
   toggleExpandedObjectAtSelection,
   toggleRawObjectAtSelection
 } from '../extensions/objectBlocks/field'
@@ -330,9 +332,11 @@ function surfaceCommand(id: string, registryId: string): EditorCommand {
 // shortcut-id: app.sidebar-talks app.sidebar-outline app.sidebar-toggle
 // shortcut-id: editor.move-up editor.move-down editor.promote editor.demote
 // shortcut-id: editor.promote-subtree editor.demote-subtree editor.heading-same editor.heading-sub
-// shortcut-id: editor.jump-prev editor.jump-next editor.delete-slide editor.object-edit editor.object-raw editor.object-finish editor.object-leave editor.object-expand editor.object-discard editor.delete-comment editor.insert-notes editor.title-continue editor.protected-line-continue editor.list-continue
+// shortcut-id: editor.jump-prev editor.jump-next editor.delete-slide editor.object-edit editor.object-raw editor.object-finish editor.object-leave editor.object-expand editor.object-discard editor.object-delete editor.delete-comment editor.insert-notes editor.title-continue editor.protected-line-continue editor.list-continue
 // shortcut-id: editor.quote-paragraph editor.list-indent editor.list-outdent editor.bold
 // shortcut-id: editor.italic editor.inline-code editor.highlight editor.link
+// The line commands (lists, heading levels, indenting, moving) go through runLineCommand: under an
+// object they act on a new line below it, and on a selected object they do nothing (objectBlocks/field.ts).
 export const EDITOR_COMMANDS: EditorCommand[] = [
   command('sidebar.talks', () => false, 'app.sidebar-talks'),
   command('sidebar.outline', () => false, 'app.sidebar-outline'),
@@ -343,14 +347,14 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   command('new-slide', (view) => runActionBarEditing(view, 'new-slide')),
   command('bulleted-list', (view) => runActionBarEditing(view, 'bulleted-list')),
   command('numbered-list', (view) => runActionBarEditing(view, 'numbered-list')),
-  command('move-up', consume((view) => moveNode(view, 'up'))),
-  command('move-down', consume((view) => moveNode(view, 'down'))),
-  command('promote', consume((view) => reLevel(view, -1, false))),
-  command('demote', consume((view) => reLevel(view, 1, false))),
-  command('promote-subtree', consume((view) => reLevel(view, -1, true))),
-  command('demote-subtree', consume((view) => reLevel(view, 1, true))),
-  command('heading-same', (view) => setHeadingFromPrevious(view, 'same')),
-  command('heading-sub', (view) => setHeadingFromPrevious(view, 'sub')),
+  command('move-up', consume((view) => runLineCommand(view, (target) => moveNode(target, 'up')))),
+  command('move-down', consume((view) => runLineCommand(view, (target) => moveNode(target, 'down')))),
+  command('promote', consume((view) => runLineCommand(view, (target) => reLevel(target, -1, false)))),
+  command('demote', consume((view) => runLineCommand(view, (target) => reLevel(target, 1, false)))),
+  command('promote-subtree', consume((view) => runLineCommand(view, (target) => reLevel(target, -1, true)))),
+  command('demote-subtree', consume((view) => runLineCommand(view, (target) => reLevel(target, 1, true)))),
+  command('heading-same', (view) => runLineCommand(view, (target) => setHeadingFromPrevious(target, 'same'))),
+  command('heading-sub', (view) => runLineCommand(view, (target) => setHeadingFromPrevious(target, 'sub'))),
   command('jump-prev', (view) => jumpHeading(view, 'up')),
   command('jump-next', (view) => jumpHeading(view, 'down')),
   command('delete-slide', consume((view) => deleteSlideAtCursor(view))),
@@ -360,14 +364,15 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   command('object-leave', (view) => closeOpenObject(view)),
   command('object-expand', (view) => toggleExpandedObjectAtSelection(view)),
   command('object-discard', (view) => discardOpenObject(view)),
+  command('object-delete', (view) => deleteSelectedObject(view)),
   command('delete-comment', consume((view) => deleteCommentAtCaret(view))),
   command('insert-notes', (view) => insertSpeakerNotes(view)),
   command('title-continue', (view) => enterFromHeading(view)),
   command('protected-line-continue', (view) => enterFromProtectedLine(view)),
   command('list-continue', (view) => continueList(view) || leaveQuotation(view)),
   command('quote-paragraph', (view) => newQuotationParagraph(view)),
-  command('list-indent', (view) => indentList(view)),
-  command('list-outdent', (view) => outdentList(view)),
+  command('list-indent', (view) => runLineCommand(view, indentList)),
+  command('list-outdent', (view) => runLineCommand(view, outdentList)),
   command('bold', toggleBold),
   command('italic', toggleItalic),
   command('inline-code', toggleInlineCode),
@@ -418,6 +423,7 @@ export const NON_CONSUMING = new Set([
   'object-edit',
   'object-finish',
   'object-leave',
+  'object-delete',
   'title-continue',
   'protected-line-continue',
   'list-continue',

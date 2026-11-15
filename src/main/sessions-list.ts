@@ -1,7 +1,11 @@
 // What the Sessions view reads (work-files-and-sessions ticket 09): every planned and delivered Run
 // of every open vault, as plain data for src/shared/sessions-list.ts. Read-only: nothing is written.
-// The renderer asks with no argument and gets no path; a Run is named by its talk and Run id.
-import { listRuns, type RunRecord } from './runs.ts'
+// The renderer asks with no argument and gets no path; a Run is named by its talk and Run id. A Run file
+// that holds Git conflict markers (0.45) is named by its vault and its path inside the vault, and only
+// main turns that back into a file to show in Finder (`sessions:show-conflict`).
+import { join, relative, sep } from 'node:path'
+import { listRunsWithConflicts, type RunRecord } from './runs.ts'
+import { runGitConflict } from '../shared/git-conflict.ts'
 import { startedCount } from '../shared/run-prework-results.ts'
 import { newResponseCount } from '../shared/run-answers.ts'
 import { isSessionRun, sessionLiveKey, type SessionSource } from '../shared/sessions-list.ts'
@@ -24,6 +28,8 @@ export interface SessionsListIpcDeps {
   sentPhases?: SentPhasesOf
   /** Responses waiting on the live service for a Run of the vault at `root` (the timer's count; nothing is pulled). */
   waitingOf?: WaitingOf
+  /** Select a file in Finder (shell.showItemInFolder). */
+  reveal?: (path: string) => void
 }
 
 /** Responses waiting on the live service for a Run (both phases), as the work service last counted them. */
@@ -74,11 +80,22 @@ export function sessionSource(vaultId: string, run: RunRecord, sent: readonly Ph
  * marks only the Run of the vault it recorded (issue 256), never the same talk and Run id in another vault. A session
  * whose vault is not open, or that recorded none, marks nothing.
  */
-export function collectSessions(vaults: Array<{ id: string; root: string }>, liveRuns: LiveRunRef[] = [], sentPhases?: SentPhasesOf, waitingOf?: WaitingOf, includeAllKinds = false): { runs: SessionSource[]; live: string[] } {
+/** A Run file the list cannot show because it holds Git conflict markers (0.45): its vault, its path inside the vault, the words. */
+export type RunFileConflict = { vaultId: string; name: string; message: string }
+
+export function collectSessions(vaults: Array<{ id: string; root: string }>, liveRuns: LiveRunRef[] = [], sentPhases?: SentPhasesOf, waitingOf?: WaitingOf, includeAllKinds = false): { runs: SessionSource[]; live: string[]; conflicts: RunFileConflict[] } {
   const runs: SessionSource[] = []
+  const conflicts: RunFileConflict[] = []
   for (const vault of vaults) {
     let found: RunRecord[] = []
-    try { found = listRuns(vault.root) } catch { /* one unreadable vault must not blank the list */ }
+    try {
+      const read = listRunsWithConflicts(vault.root)
+      found = read.runs
+      for (const file of read.conflicts) {
+        const name = relative(vault.root, file).split(sep).join('/')
+        conflicts.push({ vaultId: vault.id, name, message: runGitConflict(name) })
+      }
+    } catch { /* one unreadable vault must not blank the list */ }
     for (const run of found) {
       if (!includeAllKinds && !isSessionRun(run)) continue
       let sent: Phase[] = []
@@ -92,11 +109,26 @@ export function collectSessions(vaults: Array<{ id: string; root: string }>, liv
     const vault = ref.vaultRoot ? vaults.find((candidate) => candidate.root === ref.vaultRoot) : undefined
     return vault ? [sessionLiveKey(vault.id, ref)] : []
   })
-  return { runs, live }
+  return { runs, live, conflicts }
 }
 
 export function registerSessionsListIpc(deps: SessionsListIpcDeps): void {
   // `{ allKinds: true }`: the Runs view also lists rehearsals and recordings (its Kind filter); the status bar chip and the
   // rail badge ask with no argument and still see planned and delivered Runs only.
   deps.ipcMain.handle('sessions:list', (_event, options?: unknown) => collectSessions(deps.vaults(), deps.liveRuns(), deps.sentPhases, deps.waitingOf, (options as { allKinds?: unknown } | undefined)?.allKinds === true))
+  // Show a conflicted Run file in Finder: only one this vault's list names as conflicted now, never a path from the renderer.
+  deps.ipcMain.handle('sessions:show-conflict', (_event, payload?: unknown) => showRunConflict(deps, payload))
+}
+
+/** Reveal the Run file `payload` names ({ vaultId, name }) when it is one of that vault's conflicted Run files now. */
+export function showRunConflict(deps: Pick<SessionsListIpcDeps, 'vaults' | 'reveal'>, payload: unknown): boolean {
+  const { vaultId, name } = (payload ?? {}) as { vaultId?: unknown; name?: unknown }
+  const vault = deps.vaults().find((v) => v.id === vaultId)
+  if (!vault || typeof name !== 'string' || !deps.reveal) return false
+  let conflicts: string[] = []
+  try { conflicts = listRunsWithConflicts(vault.root).conflicts } catch { return false }
+  const file = conflicts.find((path) => path === join(vault.root, ...name.split('/')))
+  if (!file) return false
+  deps.reveal(file)
+  return true
 }

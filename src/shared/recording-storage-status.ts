@@ -103,9 +103,9 @@ export function recordingRowCanCheck(row: RecordingStorageRow): boolean {
 
 // ── An upload that did not go through ───────────────────────────────────────────────────────────
 
-export type UploadFailure = 'not-set-up' | 'keys-rejected' | 'bucket-not-found' | 'offline' | 'failed' | 'audio-missing'
+export type UploadFailure = 'not-set-up' | 'keys-rejected' | 'bucket-not-found' | 'offline' | 'failed' | 'audio-missing' | 'run-not-saved'
 
-export const UPLOAD_FAILURES: readonly UploadFailure[] = ['not-set-up', 'keys-rejected', 'bucket-not-found', 'offline', 'failed', 'audio-missing']
+export const UPLOAD_FAILURES: readonly UploadFailure[] = ['not-set-up', 'keys-rejected', 'bucket-not-found', 'offline', 'failed', 'audio-missing', 'run-not-saved']
 
 // "Keys rejected" is said only when new keys could fix it.
 const REJECTED_NAMES = new Set([
@@ -166,6 +166,8 @@ export function uploadFailureMessage(reason: unknown): string {
     case 'offline': return `Not uploaded: the storage could not be reached (offline?). ${RECORDING_IS_SAFE}`
     case 'failed': return `Not uploaded. ${RECORDING_IS_SAFE}`
     case 'audio-missing': return "This recording's audio file is missing from this computer, so there is nothing to upload."
+    // 0.45: the upload went through, but the Run file could not be read when the app went to mark it (a Git conflict from syncing).
+    case 'run-not-saved': return 'Uploaded, but the Run was not marked as uploaded: its file has a Git conflict from syncing or could not be read, and was left as it is. Resolve it in Git, then upload again.'
   }
 }
 

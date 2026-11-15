@@ -523,6 +523,7 @@ export const PALETTE_EXCLUSIONS: Readonly<Record<string, string>> = {
   'editor.list-outdent': 'the ⇧Tab key in a list: acts on the key press itself',
   'editor.protect-heading-delete': 'the Delete key on a heading: acts on the key press itself',
   'editor.object-edit': 'needs an object at the caret and the Enter key',
+  'editor.object-delete': 'the Backspace or Delete key on a selected object: acts on the key press itself',
   'editor.object-raw': 'needs an object widget under the caret',
   'editor.object-finish': 'needs an open object editor',
   'editor.object-discard': 'needs an open object editor',

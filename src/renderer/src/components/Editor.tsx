@@ -39,7 +39,12 @@ import { inlineMarkExtension } from '../extensions/inlineMark'
 import { keyCapExtension } from '../extensions/keyCap'
 import {
   canRunInlineFormatting,
+  exactTextWrite,
+  insertionCaret,
+  insertionPlace,
+  lineCommandUnavailable,
   objectBlocksExtension,
+  runLineCommand,
   setOpenObjectBlock
 } from '../extensions/objectBlocks/field'
 import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
@@ -151,7 +156,7 @@ function insertMediaResult(view: EditorView | null, res: AddVideoResult | null |
   if (res.warning) notify(res.warning, 'info', 'addmedia')
   const md = mediaMarkdown(res)
   if (!md || !view) return
-  const at = pos === 'caret' ? view.state.selection.main.head : pos
+  const at = pos === 'caret' ? insertionCaret(view.state) : insertionPlace(view.state, pos)
   // After the line, or under a heading's id and layout lines (headingEndInsert.ts).
   insertBlockAfterLine(view, at, '\n' + md + '\n', { caret: ('\n' + md).length })
 }
@@ -197,6 +202,9 @@ interface Props {
   onCursorLine?: (line: number) => void
   /** Onboarding ticket 02: the place of the caret's line (shared/place.ts), reported when it changes. */
   onPlace?: (place: Place) => void
+  /** Whether the caret's line commands (lists, heading levels) have nothing to act on: a closed object
+   *  is selected. Reported when it changes. */
+  onLineCommandsUnavailable?: (unavailable: boolean) => void
   onImageWidgetClick?: (id: string) => void
   /** Opens the app-wide generated shortcut sheet from a focused object editor. */
   onOpenHelp?: () => void
@@ -378,6 +386,7 @@ export default function Editor({
   placementRows,
   onCursorLine,
   onPlace,
+  onLineCommandsUnavailable,
   onImageWidgetClick,
   onOpenHelp,
   onScratchDrop,
@@ -482,6 +491,9 @@ export default function Editor({
   const onPlaceRef = useRef(onPlace)
   useEffect(() => { onPlaceRef.current = onPlace }, [onPlace])
   const lastPlaceRef = useRef<Place | null>(null)
+  const onLineCommandsUnavailableRef = useRef(onLineCommandsUnavailable)
+  useEffect(() => { onLineCommandsUnavailableRef.current = onLineCommandsUnavailable }, [onLineCommandsUnavailable])
+  const lastLineCommandsUnavailableRef = useRef(false)
   const onDirtyRef = useRef(onDirty)
   useEffect(() => { onDirtyRef.current = onDirty }, [onDirty])
   const placementRowsRef = useRef(placementRows)
@@ -620,7 +632,9 @@ export default function Editor({
       const change = minimalChange(current, provisional.before)
       view.dispatch({
         changes: { from: change.from, to: change.to, insert: change.insert },
-        selection: EditorSelection.cursor(Math.min(provisional.from, provisional.before.length))
+        selection: EditorSelection.cursor(Math.min(provisional.from, provisional.before.length)),
+        // The text as it was before the provisional trigger, byte for byte.
+        annotations: exactTextWrite.of(true)
       })
       return true
     }
@@ -668,7 +682,7 @@ export default function Editor({
                   blob.arrayBuffer().then(async (arrayBuffer) => {
                     const result = await window.tw.asset.pasteImage(arrayBuffer, ext, currentTalkRef.current ?? undefined)
                     if (result && viewRef.current) {
-                      const pos = viewRef.current.state.selection.main.head
+                      const pos = insertionCaret(viewRef.current.state)
                       const id = result.id  // already "img-XXXXXXX"
                       // On a heading line the picture goes under the heading's id and layout lines, not between them.
                       insertBlockAfterLine(viewRef.current, pos, '\n![](' + id + ')\n')
@@ -784,7 +798,7 @@ export default function Editor({
                   const current = viewRef.current
                   if (!current) return
                   const insert = '\n\n```svg\n' + result.svg + '\n```\n'
-                  insertBlockAfterLine(current, dropPos, insert, { caret: insert.length })
+                  insertBlockAfterLine(current, insertionPlace(current.state, dropPos), insert, { caret: insert.length })
                 }).catch((error) => {
                   console.error(error)
                   notify('Dropped SVG was rejected: the file could not be read', 'error', 'objects')
@@ -798,7 +812,7 @@ export default function Editor({
                   const result = await window.tw.asset.pasteImage(buf, ext, currentTalkRef.current ?? undefined)
                   if (result && viewRef.current) {
                     const picture = '\n![](' + result.id + ')'
-                    insertBlockAfterLine(viewRef.current, dropPos, picture + '\n', { caret: picture.length })
+                    insertBlockAfterLine(viewRef.current, insertionPlace(viewRef.current.state, dropPos), picture + '\n', { caret: picture.length })
                   } else if (!result) {
                     notify('Could not add the dropped image — it was not added to the outline.', 'error', 'addmedia')
                   }
@@ -1024,6 +1038,13 @@ export default function Editor({
               if (place !== lastPlaceRef.current) {
                 lastPlaceRef.current = place
                 onPlaceRef.current(place)
+              }
+            }
+            if ((update.selectionSet || update.docChanged) && onLineCommandsUnavailableRef.current) {
+              const unavailable = lineCommandUnavailable(update.state)
+              if (unavailable !== lastLineCommandsUnavailableRef.current) {
+                lastLineCommandsUnavailableRef.current = unavailable
+                onLineCommandsUnavailableRef.current(unavailable)
               }
             }
           }),
@@ -1257,7 +1278,7 @@ export default function Editor({
       if (!view) return
       // On a heading line a component goes under the heading's id and layout lines; whole slides go
       // after the heading's whole block, so its body stays its own (headingEndInsert.ts).
-      insertAtCaretLine(view, text)
+      insertAtCaretLine(view, text, insertionCaret(view.state))
       view.focus()
     })
   }, [registerInsert])
@@ -1299,9 +1320,10 @@ export default function Editor({
         ? buildFencedObjectSource(chartToken.replace(/^\{|\}$/g, ''), skeleton)
         : skeleton
       const openOffset = entry.object.storage === 'fence' ? block.indexOf('\n') + 1 : 0
+      // With an object selected, the new one goes after it, never into it (insertionCaret).
       const prepared = prepareObjectInsertDocument(
         view.state.doc.toString(),
-        view.state.selection.main.head,
+        insertionCaret(view.state),
         request?.replace
       )
       if (prepared.doc !== view.state.doc.toString()) {
@@ -1311,7 +1333,7 @@ export default function Editor({
           selection: { anchor: prepared.at }
         })
       }
-      const head = view.state.selection.main.head
+      const head = insertionCaret(view.state)
       // A caret inside the heading does not map past a Trigger-line insertion at heading.to.
       // Every object block goes below the heading's id and layout lines (headingEndInsert.ts), so
       // the id line stays directly under its heading.
@@ -1377,8 +1399,8 @@ export default function Editor({
         v.focus()
         return v.state.doc.lineAt(plan.questionFrom).number
       },
-      promoteHeading: () => { const v = viewRef.current; if (v) reLevel(v, -1, false) },
-      demoteHeading: () => { const v = viewRef.current; if (v) reLevel(v, 1, false) },
+      promoteHeading: () => { const v = viewRef.current; if (v) runLineCommand(v, (target) => reLevel(target, -1, false)) },
+      demoteHeading: () => { const v = viewRef.current; if (v) runLineCommand(v, (target) => reLevel(target, 1, false)) },
       bulletedList: () => { const v = viewRef.current; if (v) runActionBarEditing(v, 'bulleted-list') },
       numberedList: () => { const v = viewRef.current; if (v) runActionBarEditing(v, 'numbered-list') },
       normalizeTriggers: () => { const v = viewRef.current; if (v) normalizeTriggersCommand(v) },

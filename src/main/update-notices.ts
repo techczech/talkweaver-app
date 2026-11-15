@@ -1,22 +1,35 @@
-// TalkWeaver ports: configuration, filtered network session, IPC and bundled notes.
+// Updates (ADR-0044, superseding ADR-0041): the daily check of talkweaver.app/updates.json (release and alpha
+// channels, src/shared/update-checker.ts), the one click that updates in place (update-installer.ts), and the
+// `updates:*` IPC. TalkWeaver ports: configuration, the filtered network session, the busy and restart gates,
+// bundled notes.
 import { app, ipcMain, net, session, shell, type BrowserWindow } from 'electron'
 import { request as httpRequest } from 'node:http'
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { downloadLinkFor, isSiteLink, parseVersion, copySource, parseWhatsNew, readUpdateState, createUpdateChecker, type CopySource, type UpdateState, type WhatsNewItem, type FeedAnswer, type UpdateChecker, type UpdateSnapshot } from '@app-patterns/updates'
+import { existsSync, readFileSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
+import { downloadLinkFor, isSiteLink, parseVersion, parseWhatsNew, type CopySource, type WhatsNewItem, type FeedAnswer } from '@app-patterns/updates'
 import { createElectronFeedFetcher } from '@app-patterns/updates/electron'
 import { UPDATE_IDENTITY, FEED_URL, FEED_REQUEST, STORE_LINK, notesLinkFor } from '../shared/update-identity.ts'
+import { RELEASE_ASSET_PREFIX, newerOffer, updateFileFor } from '../shared/update-channels.ts'
+import { createChannelChecker, readChannelState, type ChannelChecker, type ChannelUpdateState, type CheckerSnapshot, type UpdateSnapshot } from '../shared/update-checker.ts'
+import type { InPlaceRefusal, RestartBlocker } from '../shared/update-install.ts'
+import { createUpdateInstaller } from './update-installer.ts'
 import { handOutLink } from './hand-out.ts'
 import { installLocalAddressFilter } from './local-address-filter.ts'
+import { testNetworkOverride } from './test-network-startup.ts'
+
+declare const __TW_UPDATE_TEST__: boolean
+
 
 export interface UpdateNoticesPorts {
   /** Every window that may show a notice: the editor windows, never a presenting window. */
   editorWindows(): BrowserWindow[]
-  /** A presenter window, an audience window, a live session or a recording is open. */
+  /** A presenter window, an audience window, a live session or a recording is open: no request and no mark. */
   isPresentingNow(): boolean
-  /** userData/config.json: the keys `updateNotices` (state) and `updatesCheckForNewVersions` (the setting). */
-  readConfig(): { updateNotices?: unknown; updatesCheckForNewVersions?: unknown; vaults?: unknown }
-  writeConfig(patch: { updateNotices?: UpdateState; updatesCheckForNewVersions?: boolean }): void
+  /** Everything a restart now would cost the person (update-install.ts restartBlockers). */
+  restartBlockers(): RestartBlocker[]
+  /** userData/config.json: `updateNotices` (state), `updatesCheckForNewVersions` and `updatesAlphaVersions` (the settings). */
+  readConfig(): { updateNotices?: unknown; updatesCheckForNewVersions?: unknown; updatesAlphaVersions?: unknown; vaults?: unknown }
+  writeConfig(patch: { updateNotices?: ChannelUpdateState; updatesCheckForNewVersions?: boolean; updatesAlphaVersions?: boolean }): void
   /** A test run (TW_E2E) logs the link instead of opening it. */
   e2e: boolean
 }
@@ -82,49 +95,121 @@ function readNotes(version: string): WhatsNewItem[] | null {
   try { return parseWhatsNew(readFileSync(join(notesDir(), `${version}.md`), 'utf8')) } catch { return null }
 }
 
-/**
- * Test-only. An unpackaged app started with TW_E2E=1 may be told which kind of copy it is
- * (TW_E2E_UPDATES_SOURCE) and to read the feed from a stand-in on this computer's own loopback address
- * (TW_E2E_UPDATES_FEED); a packaged build ignores both. The links in the stand-in's feed are still
- * checked as on the real feed, and they are never fetched.
- */
-function testOverrides(): { source: CopySource | null; feedUrl: string | null } {
-  if (app.isPackaged || process.env.TW_E2E !== '1') return { source: null, feedUrl: null }
-  const source = process.env.TW_E2E_UPDATES_SOURCE
-  let feedUrl: string | null = null
+/** `http://127.0.0.1:<port>/…` with nothing else, or null. */
+function loopbackFeed(value: string | undefined): string | null {
   try {
-    const url = new URL(process.env.TW_E2E_UPDATES_FEED ?? '')
-    if (url.protocol === 'http:' && url.hostname === '127.0.0.1') feedUrl = url.href
-  } catch { /* no stand-in */ }
-  return { source: source === 'website' || source === 'store' || source === 'preview' ? source : null, feedUrl }
+    const url = new URL(value ?? '')
+    return url.protocol === 'http:' && url.hostname === '127.0.0.1' && url.port !== '' && !url.username && !url.password ? url.href : null
+  } catch { return null }
 }
 
-export function installUpdateNotices(ports: UpdateNoticesPorts): UpdateChecker {
+interface TestOverrides { source: CopySource | null; feedUrl: string | null; harness: 'source' | 'update-test' | null }
+/**
+ * Test-only. Two harnesses may point the check at a stand-in feed on this computer's loopback address:
+ *  - an unpackaged app started with TW_E2E=1 on a harness profile (test-network-guard.ts): TW_E2E_UPDATES_FEED,
+ *    and TW_E2E_UPDATES_SOURCE to say which kind of copy it is. It downloads and checks an update but never
+ *    installs it;
+ *  - the unpublished update-test flavour (built by scripts/build-update-test.cjs with __TW_UPDATE_TEST__, which
+ *    the production security gate refuses): TW_UPDATE_TEST_FEED. It installs for real, over itself.
+ * A packaged production build ignores both. Update files must then live on the same stand-in.
+ */
+function testOverrides(): TestOverrides {
+  if (__TW_UPDATE_TEST__ && app.isPackaged) {
+    // Without a stand-in (for example when Squirrel.Mac reopens it after the update) it checks nothing at all.
+    const feedUrl = loopbackFeed(process.env.TW_UPDATE_TEST_FEED)
+    return { source: feedUrl ? 'website' : 'development', feedUrl, harness: 'update-test' }
+  }
+  if (app.isPackaged || process.env.TW_E2E !== '1') return { source: null, feedUrl: null, harness: null }
+  const source = process.env.TW_E2E_UPDATES_SOURCE
+  // Read only through the shared guard (test-network-guard.ts): a harness profile, 127.0.0.1 with a port.
+  const feedUrl = loopbackFeed(testNetworkOverride('TW_E2E_UPDATES_FEED'))
+  return { source: source === 'website' || source === 'store' || source === 'preview' ? source : null, feedUrl, harness: feedUrl ? 'source' : null }
+}
+
+/** Where this copy came from. Any packaged copy outside the Store checks, an alpha too (ADR-0044: alphas are public). */
+function copySourceOf(store: boolean): CopySource {
+  if (store) return 'store'
+  return app.isPackaged ? 'website' : 'development'
+}
+
+export function installUpdateNotices(ports: UpdateNoticesPorts): ChannelChecker {
   const running = app.getVersion()
   const store = process.platform === 'win32' && (process as NodeJS.Process & { windowsStore?: boolean }).windowsStore === true
   const test = testOverrides()
+  const source = test.source ?? copySourceOf(store)
+  const assetPrefix = test.feedUrl ? new URL('/releases/download/', test.feedUrl).href : RELEASE_ASSET_PREFIX
+  const readState = (): ChannelUpdateState => readChannelState(ports.readConfig().updateNotices, FEED_URL, assetPrefix)
+  const alphaOn = (): boolean => ports.readConfig().updatesAlphaVersions === true
+
+  /**
+   * Test-only, the unpublished update-test flavour alone (test.harness 'update-test' needs __TW_UPDATE_TEST__ and a
+   * packaged build): while the file TW_UPDATE_TEST_HOLD_FILE names exists, the restart is held as a publish in
+   * flight would hold it. The packaged proof (scripts/prove-in-place-update.mjs) uses it as its blocker (that build
+   * cannot open a presenter window). Every other build reads nothing.
+   */
+  const testHold = (): RestartBlocker[] => {
+    if (test.harness !== 'update-test') return []
+    const file = process.env.TW_UPDATE_TEST_HOLD_FILE
+    return file && isAbsolute(file) && existsSync(file) ? ['publishing'] : []
+  }
+  const blockersNow = (): RestartBlocker[] => { const b = [...ports.restartBlockers(), ...testHold()]; return b.filter((x, i) => b.indexOf(x) === i) }
+
+  let checker: ChannelChecker
+  const refusals = new Map<string, InPlaceRefusal | null>()
+  const installer = createUpdateInstaller({
+    install: test.harness !== 'source',
+    cacheDirName: test.harness === 'update-test' ? 'talkweaver-update-test-updater' : 'talkweaver-updater',
+    ...(test.harness === 'source' ? { cacheBase: join(app.getPath('userData'), 'updater-cache') } : {}),
+    configDir: join(app.getPath('userData'), 'updater'),
+    filterLocalAddresses: test.harness === null,
+    source,
+    isProtected: ports.isPresentingNow,
+    blockers: blockersNow,
+    changed: () => { try { checker?.tell() } catch { /* starting */ } },
+    log: (message) => console.log(`[updates] ${message}`),
+  })
+
+  /** The check's snapshot with the click's state, the file for this computer and whether it can be used here. */
+  const withInstall = (s: CheckerSnapshot): UpdateSnapshot => {
+    const offer = newerOffer(s.state.channels, s.alpha, running)
+    const file = updateFileFor(offer, process.platform, process.arch)
+    const key = `${offer?.version ?? ''} ${file?.url ?? ''} ${file?.bundleId ?? ''}`
+    if (!refusals.has(key)) refusals.set(key, installer.refusal(file, s.source))
+    const install = installer.state()
+    // While working on an update the mark stays (unless presenting), whatever the offer says.
+    const working = install.phase !== 'idle'
+    return { ...s, install, file, refusal: refusals.get(key) ?? null, blockers: working ? blockersNow() : [] }
+  }
   const tellWindows = (channel: string, snapshot: UpdateSnapshot): void => {
     for (const win of ports.editorWindows()) {
       try { if (!win.isDestroyed()) win.webContents.send(channel, snapshot) } catch { /* closing */ }
     }
   }
-  const checker = createUpdateChecker({
+  let lastOffer: string | null = null
+  checker = createChannelChecker({
     identity: UPDATE_IDENTITY,
     arch: process.arch,
     running,
     platform: process.platform,
-    source: test.source ?? copySource({ packaged: app.isPackaged, store, running }),
+    source,
+    assetPrefix,
     fetchFeed: () => fetchFeedOverNet(test.feedUrl ?? FEED_REQUEST.url),
-    readState: () => readUpdateState(ports.readConfig().updateNotices, FEED_URL),
+    readState,
     writeState: (state) => ports.writeConfig({ updateNotices: state }),
     enabled: () => ports.readConfig().updatesCheckForNewVersions !== false,
+    alpha: alphaOn,
     isBusy: ports.isPresentingNow,
     hasNotes: (version) => readNotes(version) !== null,
     hadConfiguration: () => { const v = ports.readConfig().vaults; return Array.isArray(v) ? v.length > 0 : typeof v === 'object' && v !== null && Object.keys(v).length > 0 },
     now: () => Date.now(),
-    changed: (snapshot) => tellWindows('updates:changed', snapshot),
-    answered: (snapshot) => tellWindows('updates:answered', snapshot),
+    changed: (snapshot) => {
+      const offer = newerOffer(snapshot.state.channels, snapshot.alpha, running)?.version ?? null
+      if (offer !== lastOffer) { lastOffer = offer; installer.reset() }
+      tellWindows('updates:changed', withInstall(snapshot))
+    },
+    answered: (snapshot) => tellWindows('updates:answered', withInstall(snapshot)),
   })
+  const snap = (): UpdateSnapshot => withInstall(checker.snapshot())
 
   /** Hand a link to the browser: only one that passes the site rule (or the Store constant). */
   const open = async (link: string, allowed: (l: string) => boolean): Promise<boolean> => {
@@ -138,23 +223,41 @@ export function installUpdateNotices(ports: UpdateNoticesPorts): UpdateChecker {
     } catch { return false }
   }
 
-  ipcMain.handle('updates:get', (): UpdateSnapshot => checker.snapshot())
-  ipcMain.handle('updates:check', (): Promise<UpdateSnapshot> => checker.checkNow())
-  ipcMain.handle('updates:skip', (_e, version: unknown): UpdateSnapshot => (typeof version === 'string' && parseVersion(version) ? checker.skip(version) : checker.snapshot()))
-  ipcMain.handle('updates:stop-skipping', (): UpdateSnapshot => checker.stopSkipping())
-  ipcMain.handle('updates:not-now', (): UpdateSnapshot => checker.notNow())
+  ipcMain.handle('updates:get', (): UpdateSnapshot => snap())
+  ipcMain.handle('updates:check', async (): Promise<UpdateSnapshot> => withInstall(await checker.checkNow()))
+  ipcMain.handle('updates:skip', (_e, version: unknown): UpdateSnapshot => withInstall(typeof version === 'string' && parseVersion(version) ? checker.skip(version) : checker.snapshot()))
+  ipcMain.handle('updates:stop-skipping', (): UpdateSnapshot => withInstall(checker.stopSkipping()))
+  ipcMain.handle('updates:not-now', (): UpdateSnapshot => withInstall(checker.notNow()))
   ipcMain.handle('updates:set-enabled', (_e, on: unknown): UpdateSnapshot => {
     ports.writeConfig({ updatesCheckForNewVersions: on === true })
-    return checker.settingChanged()
+    return withInstall(checker.settingChanged())
   })
+  ipcMain.handle('updates:set-alpha', (_e, on: unknown): UpdateSnapshot => {
+    ports.writeConfig({ updatesAlphaVersions: on === true })
+    return withInstall(checker.settingChanged())
+  })
+  // Update takes no address and no version: it is the newer offer the last validated feed gave for this computer.
+  ipcMain.handle('updates:update', async (): Promise<UpdateSnapshot> => {
+    const s = checker.snapshot()
+    const offer = newerOffer(s.state.channels, s.alpha, running)
+    const file = updateFileFor(offer, process.platform, process.arch)
+    if (!offer || !file || s.busy || installer.refusal(file, s.source) !== null) return snap()
+    void installer.start(offer, file)
+    return snap()
+  })
+  ipcMain.handle('updates:cancel', (): UpdateSnapshot => { installer.cancel(); return snap() })
+  ipcMain.handle('updates:restart', (): UpdateSnapshot => { installer.restart(); return snap() })
   // Download takes no address: the link is the one the last validated feed gave for this computer.
   ipcMain.handle('updates:download', (): Promise<boolean> => {
-    const latest = checker.snapshot().state.latest
+    const s = checker.snapshot()
+    const latest = newerOffer(s.state.channels, s.alpha, running) ?? s.state.channels?.release
     return latest ? open(downloadLinkFor(latest, process.platform, FEED_URL), (l) => isSiteLink(l, FEED_URL)) : Promise.resolve(false)
   })
   ipcMain.handle('updates:open-notes', (_e, version: unknown): Promise<boolean> => {
     if (typeof version !== 'string' || !parseVersion(version)) return Promise.resolve(false)
-    const link = notesLinkFor(checker.snapshot().state.latest, version)
+    const s = checker.snapshot()
+    const latest = newerOffer(s.state.channels, s.alpha, running) ?? s.state.channels?.release
+    const link = notesLinkFor(latest, version)
     return link ? open(link, (l) => isSiteLink(l, FEED_URL)) : Promise.resolve(false)
   })
   ipcMain.handle('updates:open-store', (): Promise<boolean> => open(STORE_LINK, (l) => l === STORE_LINK))
@@ -163,7 +266,7 @@ export function installUpdateNotices(ports: UpdateNoticesPorts): UpdateChecker {
     const from = checker.snapshot().state.whatsNew?.from ?? null
     return items ? { version: running, from, items } : null
   })
-  ipcMain.handle('updates:dismiss-whats-new', (): UpdateSnapshot => checker.dismissWhatsNew())
+  ipcMain.handle('updates:dismiss-whats-new', (): UpdateSnapshot => withInstall(checker.dismissWhatsNew()))
 
   checker.start()
   return checker

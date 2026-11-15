@@ -82,10 +82,11 @@ function inputText(view, from, to, text, applyDefault = true) {
   return handled
 }
 
+// Every binding for the key, in precedence order, until one takes it (as CodeMirror's keymap runs them).
 function runKey(view, key) {
-  const binding = view.state.facet(keymap).flat().find((candidate) => candidate.key === key)
-  assert(binding, `expected a ${key} object-block key binding`)
-  return binding.run(view)
+  const bindings = view.state.facet(keymap).flat().filter((candidate) => candidate.key === key)
+  assert(bindings.length, `expected a ${key} object-block key binding`)
+  return bindings.some((binding) => binding.run(view))
 }
 
 const table = '| a | b |\n| --- | --- |\n| c | d |\n'
@@ -340,11 +341,9 @@ assert.equal(
   true,
   'an open first object does not disable ArrowDown escape on a different closed trailing object'
 )
-assert.equal(
-  openFirstArrowDownView.transactions.at(-1)?.annotation(Transaction.userEvent),
-  'input',
-  'the closed-block ArrowDown escape is annotated as input'
-)
+// The escape goes to the gap under the object (the end of its last line) and writes nothing.
+assert.equal(openFirstArrowDownView.state.doc.toString(), twoTables.trimEnd(), 'the closed-block ArrowDown escape writes nothing')
+assert.equal(openFirstArrowDownView.state.selection.main.head, twoTables.trimEnd().length, 'the closed-block ArrowDown escape puts the caret at the gap')
 
 const openFirstArrowRightView = fakeView(EditorState.create({
   doc: twoTables.trimEnd(),
@@ -360,11 +359,9 @@ assert.equal(
   true,
   'an open first object does not disable ArrowRight escape on a different closed trailing object'
 )
-assert.equal(
-  openFirstArrowRightView.transactions.at(-1)?.annotation(Transaction.userEvent),
-  'input',
-  'the closed-block ArrowRight escape is annotated as input'
-)
+// The escape goes to the gap under the object (the end of its last line) and writes nothing.
+assert.equal(openFirstArrowRightView.state.doc.toString(), twoTables.trimEnd(), 'the closed-block ArrowRight escape writes nothing')
+assert.equal(openFirstArrowRightView.state.selection.main.head, twoTables.trimEnd().length, 'the closed-block ArrowRight escape puts the caret at the gap')
 
 const firstClosedSecondOpen = `${table}${secondTable}`
 const secondOpenFrom = firstClosedSecondOpen.indexOf(secondTable)
@@ -452,11 +449,8 @@ const arrowView = fakeView(EditorState.create({
   extensions: [objectBlocksExtension({})]
 }))
 assert.equal(runKey(arrowView, 'ArrowDown'), true, 'ArrowDown escapes a trailing closed object')
-assert.equal(
-  arrowView.transactions.at(-1)?.annotation(Transaction.userEvent),
-  'input',
-  'the ArrowDown escape write is annotated as input'
-)
+assert.equal(arrowView.state.doc.toString(), table.trimEnd(), 'the ArrowDown escape writes nothing (the gap holds the caret)')
+assert.equal(arrowView.state.selection.main.head, table.trimEnd().length, 'the ArrowDown escape puts the caret at the gap')
 
 const dom = installTestDom()
 const originalConsoleError = console.error
@@ -588,8 +582,10 @@ try {
   const ordinaryDispatch = diagnosticView.dispatch.bind(diagnosticView)
   diagnosticView.dispatch = (spec) => {
     ordinaryDispatch(spec)
+    // Another writer's exact change after the commit (the object source guard leaves exact writes alone).
     diagnosticView.state = diagnosticView.state.update({
-      changes: { from: 2, to: 3, insert: '!' }
+      changes: { from: 2, to: 3, insert: '!' },
+      annotations: objectField.exactTextWrite.of(true)
     }).state
   }
   const diagnostics = []

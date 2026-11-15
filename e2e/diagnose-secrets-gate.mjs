@@ -33,6 +33,7 @@ import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
 import { openSettingsWindow, closeSettingsWindow, shutdownApp } from './lib/settings-window.mjs'
 import { startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
+import { testProfileEnv } from './lib/test-profile.mjs'
 
 const root = process.cwd()
 const scratch = mkdtempSync(join(tmpdir(), 'tw-secrets-gate-'))
@@ -201,7 +202,7 @@ try {
 
   // Only what the app needs from this shell: no credential of the person running the test goes in.
   // TW_LIVE_LOCAL=1: the stand-in live service is on this computer's own address, which the app uses only when asked to (spec D8).
-  env = { TW_E2E: '1', TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: SECRETS['live service admin secret'], TW_E2E_CLOUDFLARE_API_BASE_URL: apiGate.baseUrl }
+  env = { TW_E2E: '1', ...testProfileEnv(userData), TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: SECRETS['live service admin secret'], TW_E2E_CLOUDFLARE_API_BASE_URL: apiGate.baseUrl }
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }

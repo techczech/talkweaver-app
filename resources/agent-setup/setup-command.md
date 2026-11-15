@@ -15,7 +15,7 @@ The command does what Settings → Cloudflare, Recording storage and Transcripti
 
 | Command | Does | Exit 0 when |
 |---|---|---|
-| `setup status [--json]` | Checks every row (reads only) and prints it | Connected, Publishing handouts Ready, Going live and sharing Ready |
+| `setup status [--json]` | Checks every row (reads only) and prints it, then what this Mac lacks of the set-up kept per Mac (Second Mac, below) | Connected, Publishing handouts Ready, Going live and sharing Ready |
 | `setup cloudflare connect` | Reads the token from standard input, saves it to the operating system's secure storage, checks it | Connected to one account |
 | `setup cloudflare account <id>` | Chooses the account when the token sees several | Connected |
 | `setup cloudflare create-site [name]` | Sets the site name (default `talkweaver-handouts`) and creates the Pages site if it is not there | Publishing handouts Ready |
@@ -84,6 +84,13 @@ Standard output is one JSON document. Under `--json`, progress lines go to stand
     "recording":     { "state": "not-set-up", "label": "Not set up", "detail": "…", "ready": false, "bucket": "", "missing": ["endpoint", "bucket", "keys"], "notice": null },
     "transcription": { "state": "not-set-up", "label": "Not set up — optional", "detail": "…", "ready": false, "pythonVersion": null, "ffmpeg": null },
     "importer":      { "state": "not-available", "label": "Not available", "detail": "Pictures of the original slides come from the separate TalkWeaver PPT Extractor app. …", "ready": false, "available": true, "url": "https://talkweaver.app/tools/ppt-extractor" }
+  },
+  "secondMac": {
+    "missing": ["share-link"],
+    "items": [
+      { "id": "token", "label": "Cloudflare token", "state": "set", "detail": "Saved on this Mac." },
+      { "id": "share-link", "label": "Share-link address", "state": "missing", "detail": "None on this Mac: share links use the workers.dev address. Set it: setup cloudflare share-domain <host>." }
+    ]
   }
 }
 ```
@@ -103,5 +110,9 @@ Every row has `state`, `label` (the words at the row's right-hand edge in Settin
 | `rows.recording.state` | `not-set-up` (see `missing`), `not-checked`, `ready`, `bucket-not-found`, `keys-rejected` |
 | `rows.transcription.state` | `not-set-up`, `python-not-set`, `python-not-found`, `script-not-set`, `script-not-found`, `ffmpeg-not-found`, `ready`, `unknown` |
 | `rows.importer.state` | `ready`, `not-available` (slide pictures come from the separate PPT Extractor app; text, notes and media still import), `unknown` |
+
+### Second Mac
+
+`setup status` (and only `setup status`) ends with what this Mac does not have of the set-up that is kept per Mac and never travels with a vault, so that a second Mac can be brought up to the first: the Cloudflare token, the publishing site, this Mac's live-session key, the share-link address, transcription, the word-timing models (Precise word timing) and the agent skill. The text lists the missing ones with what to do, then the ones that could not be told. Under `--json`, `secondMac.items` has one entry per thing, in that order, with `id` (`token`, `site`, `live-key`, `share-link`, `transcription`, `word-timing`, `agent-skill`), `label`, `state` and `detail`; `secondMac.missing` lists the ids whose state is `missing`. States: `set`, `missing`, `not-available` (this Mac cannot have it: no agent found, or Precise word timing not offered here), `unknown` (could not be told). The command cannot see the other Mac: a thing listed as missing is one to set up here if the other Mac uses it. It changes nothing and prints no secret. It does not change the exit code.
 
 `stale: true` means Cloudflare did not answer this time and the row is the last known state. Recording storage and transcription are optional: `setup status` exits 0 without them.

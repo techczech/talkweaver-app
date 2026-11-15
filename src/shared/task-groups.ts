@@ -301,6 +301,7 @@ export const TASK_GROUP_TABLE: Readonly<Record<string, readonly [TaskGroup, stri
   'editor.list-outdent': ['Write the outline', 'Lists'],
   'editor.protect-heading-delete': ['Write the outline', 'Headings and levels'],
   'editor.object-edit': ['Build a slide', 'Objects'],
+  'editor.object-delete': ['Build a slide', 'Objects'],
   'editor.object-raw': ['Build a slide', 'Objects'],
   'editor.object-finish': ['Build a slide', 'Objects'],
   'editor.object-expand': ['Build a slide', 'Objects'],

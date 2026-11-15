@@ -1003,6 +1003,14 @@ const actionsIn = (html, id) => {
     await R.act(async () => { document.querySelector('[data-run-open-studio]').click() })
     assert.deepEqual(JSON.parse(opened.at(-1)), [null, 'talk', 'same-run'], 'Open in Studio carries the kept home when ids collide')
 
+    // 0.45, second Mac: the Run page's audio badge says where the recording is, from the place main found by its files.
+    const vaultRun = all.find((s) => s.id === 'kept-run')
+    for (const [place, text] of [[{ state: 'elsewhere', computer: 'Dominik’s MacBook Pro' }, 'On Dominik’s MacBook Pro'], [{ state: 'unknown' }, 'Not on this Mac'], [{ state: 'here' }, 'On this Mac']]) {
+      vaultRun.mediaPlace = place
+      await showRuns({ talkSlug: 'talk', runId: 'kept-run', vaultId: 'app-data' })
+      const badge = document.querySelector('[data-run-media-place]')?.textContent.trim() ?? [...document.querySelectorAll('.rl-actions')].map((e) => e.textContent).join(' ')
+      keptChecks.push([`the Run page's audio badge reads "${text}" for a recording ${place.state}`, badge.includes(text) && (place.state !== 'here') === !!document.querySelector('[data-run-media-place]') && (place.state === 'here') === !!document.querySelector('[data-run-upload]')])
+    }
     // App's showStudio forwards this string as initialSessionId. Exercise the actual receiving Studio
     // with the key the Runs view emitted, including switching between two homes while Studio stays mounted.
     const requests = []
@@ -1034,6 +1042,25 @@ const actionsIn = (html, id) => {
         assert.equal(audio, expected, 'playback targets the selected home')
         assert.equal(requests.at(-1), expected, 'waveform decoding reads the selected home too')
       }
+      // 0.45, second Mac: the card's audio label says where the recording is, from the place main found by its
+      // files; never "on this Mac" for a Run whose files are on another Mac.
+      const placed = [
+        [{ ...run('rec-here'), mediaPlace: { state: 'here' } }, 'on this Mac'],
+        [{ ...run('rec-here-up'), audio: { ...run('rec-here-up').audio, uploaded: true }, mediaPlace: { state: 'here' } }, 'uploaded'],
+        [{ ...run('rec-pro'), mediaPlace: { state: 'elsewhere', computer: 'Dominik’s MacBook Pro' } }, 'on Dominik’s MacBook Pro'],
+        [{ ...run('rec-pro-up'), audio: { ...run('rec-pro-up').audio, uploaded: true }, mediaPlace: { state: 'elsewhere', computer: 'Dominik’s MacBook Pro' } }, 'on Dominik’s MacBook Pro'],
+        [{ ...run('rec-old'), mediaPlace: { state: 'unknown' } }, 'not on this Mac'],
+        [{ ...run('rec-same'), mediaPlace: { state: 'same-name', computer: 'Studio Air' } }, 'not on this Mac']
+      ]
+      window.tw.recording.listAllSessions = async () => placed.map(([s]) => ({ ...s, home: vault }))
+      await R.act(async () => view.render(R.createElement(R.Studio, { isOpen: true, onClose() {}, initialSessionId: 'rec-here' })))
+      await settle()
+      for (const [s, text] of placed) {
+        const label = document.querySelector(`.tws-scard[data-sid="${s.id}"] .tws-sc-up`)
+        keptChecks.push([`Studio's audio label for ${s.id} reads "${text}"`, label?.textContent.trim() === text])
+      }
+      const away = document.querySelector('.tws-scard[data-sid="rec-pro"] .tws-sc-up')
+      keptChecks.push(['the label of a recording on another Mac carries the full sentence as its tooltip', away?.getAttribute('title') === 'Recorded on Dominik’s MacBook Pro. The recording is on that Mac.'])
     } finally { globalThis.fetch = originalFetch }
 
   } finally {

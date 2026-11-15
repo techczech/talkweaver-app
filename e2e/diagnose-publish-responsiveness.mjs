@@ -19,6 +19,7 @@ import { createCheckLedger } from './lib/check-ledger.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { closeSettingsWindow, openSettingsWindow } from './lib/settings-window.mjs'
 import { startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
+import { testProfileEnv } from './lib/test-profile.mjs'
 
 const root = process.cwd()
 const scratch = mkdtempSync(join(tmpdir(), 'tw-publish-responsive-'))
@@ -83,7 +84,7 @@ let exitCode = 1
 try {
   await ensureFreshBuild(root)
   api = await startCloudflareApiStub({ sites: [], accounts: [ADA], accountSites: { [ADA.id]: [SITE] }, pagesDeployments: { [ADA.id]: { [SITE]: { neverDeployed: true } } }, tokens: { [TOKEN]: { accounts: [ADA.id], workers: false } } })
-  const env = { TW_E2E: '1', TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl }
+  const env = { TW_E2E: '1', ...testProfileEnv(userData), TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl }
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }

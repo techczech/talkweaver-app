@@ -26,6 +26,7 @@ import {
   SECRET_ARGUMENT_ERROR, SETUP_JSON_FORMAT, UNKNOWN_COMMAND_ERROR, NO_TOKEN_INPUT_ERROR, ONE_TOKEN_ERROR, KEYS_INPUT_ERROR,
   ENDPOINT_ERROR, BUCKET_ERROR, PATH_ERROR, ACCOUNT_ID_ERROR, SITE_NAME_ERROR, SHARE_DOMAIN_ERROR, TOKEN_PIPE_HINT,
   APP_OPEN_ERROR, APP_OPEN_STATE, appOpenRefusal, commandReady, keysFromInput, parseSetupArguments, runSetup, setupArguments, setupStatusJson, setupStatusLines, tokenFromInput,
+  secondMacItems, secondMacLines,
   validEndpointArgument, validPathArgument,
 } from '../src/main/setup-cli.ts'
 import { createSetupOperations } from '../src/main/setup-operations.ts'
@@ -355,6 +356,7 @@ try {
       transcription: { state: 'string', label: 'string', detail: 'string', ready: 'boolean', pythonVersion: 'null', ffmpeg: 'null' },
       importer: { state: 'string', label: 'string', detail: 'string', ready: 'boolean', available: 'boolean', url: 'string' },
     },
+    secondMac: { missing: 'array', items: 'array' },
   }, 'the --json document has the shape resources/agent-setup/setup-command.md documents')
   const unknownRows = setupStatusJson('status', snapshotOf({ transcription: null, importer: null }), { ready: false, error: null }).rows
   assert.equal(unknownRows.transcription.state, 'unknown')
@@ -368,6 +370,73 @@ try {
   }
   assert.ok(commandReady({ kind: 'status' }, READY_ALL) && !commandReady({ kind: 'status' }, connected), 'status is ready with the connection, publishing and going live; the rest are optional')
   ok('the lines are the window\'s words for every row; the --json document has a stable shape, documented in resources/agent-setup/')
+
+  // ── 6b. The second-Mac check (0.45): what this Mac lacks of the set-up kept per Mac ─────────────
+  const MODELS_ALL = [{ language: 'en', label: 'English', state: 'installed' }, { language: 'cs', label: 'Czech', state: 'installed' }]
+  const SKILL_SET = { agentsFound: 2, installedFor: ['Claude Code'] }
+  const FULL = snapshotOf({
+    cloudflare: cloudflare({ state: 'connected', account: ADA }, { publishing: READY_PUBLISHING, shareLink: { state: 'attached', host: 'share.example.org', permission: null, stale: false } }),
+    goingLive: LIVE_READY, transcription: TRANSCRIPTION_READY,
+  })
+  const full = { ...FULL, wordTiming: MODELS_ALL, agentSkill: SKILL_SET }
+  const fresh = { ...snapshotOf(), wordTiming: [{ language: 'en', label: 'English', state: 'absent' }, { language: 'cs', label: 'Czech', state: 'unavailable' }], agentSkill: { agentsFound: 1, installedFor: [] } }
+  const states = (snapshot) => Object.fromEntries(secondMacItems(snapshot).map((i) => [i.id, i.state]))
+  assert.deepEqual(states(full), { 'token': 'set', site: 'set', 'live-key': 'set', 'share-link': 'set', transcription: 'set', 'word-timing': 'set', 'agent-skill': 'set' })
+  assert.deepEqual(states(fresh), { 'token': 'missing', site: 'missing', 'live-key': 'unknown', 'share-link': 'unknown', transcription: 'missing', 'word-timing': 'missing', 'agent-skill': 'missing' })
+  // The other Mac set going live up; this one has the token but no key of its own, and no share-link address.
+  const second = { ...full, goingLive: { ...unknownGoingLive('b7'), state: 'set-up-elsewhere' }, cloudflare: cloudflare({ state: 'connected', account: ADA }, { publishing: READY_PUBLISHING, shareLink: { state: 'none', host: '', permission: null, stale: false } }), wordTiming: [MODELS_ALL[0], { language: 'cs', label: 'Czech', state: 'absent' }] }
+  assert.deepEqual(secondMacLines(second), [
+    'Second Mac: this Mac lacks 3 of 7 things set up per Mac',
+    '  Live-session key · This Mac has no key for the live service. Set up going live on this Mac: setup cloudflare live.',
+    '  Share-link address · None on this Mac: share links use the workers.dev address. Set it: setup cloudflare share-domain <host>.',
+    '  Word-timing models · Not on this Mac: Czech. Download in Settings › Recording › Precise word timing.',
+  ])
+  assert.deepEqual(secondMacLines(full), ['Second Mac: this Mac has everything that is set up per Mac'])
+  assert.deepEqual(secondMacLines(fresh).slice(0, 2), ['Second Mac: this Mac lacks 5 of 7 things set up per Mac', '  Cloudflare token · Not saved on this Mac. Paste it in Settings › Cloudflare, or pipe it to setup cloudflare connect.'])
+  assert.equal(secondMacLines(fresh).at(-1), '  Could not be told: Live-session key, Share-link address')
+  // A Mac that cannot have a thing does not lack it; a status that could not be read is said so.
+  const cannot = { ...full, wordTiming: [{ language: 'en', label: 'English', state: 'unavailable' }], agentSkill: { agentsFound: 0, installedFor: [] } }
+  assert.deepEqual([states(cannot)['word-timing'], states(cannot)['agent-skill']], ['not-available', 'not-available'])
+  assert.deepEqual(secondMacLines(cannot), ['Second Mac: this Mac has everything that is set up per Mac'])
+  assert.deepEqual(secondMacLines(FULL), ['Second Mac: this Mac has everything that could be checked that is set up per Mac', '  Could not be told: Word-timing models, Agent skill'])
+  assert.deepEqual([states({ ...full, cloudflare: cloudflare({ state: 'rejected' }) })['token'], states({ ...full, cloudflare: cloudflare({ state: 'choose-account', accounts: [ADA, GRACE] }) }).site], ['missing', 'missing'])
+  // Text and --json, from `setup status` only; the extra statuses are asked for only there.
+  const asked = []
+  const statusRun = async (args, snapshot) => {
+    const stub = stubOps(snapshot)
+    stub.ops.snapshot = async (options) => { asked.push(options ?? null); return snapshot }
+    const out = io(null)
+    const code = await runSetup(args, out.io, stub.ops)
+    return { code, out: out.out, text: [...out.out, ...out.err].join('\n') }
+  }
+  const text = await statusRun(['status'], second)
+  assert.ok(text.out.includes('Second Mac: this Mac lacks 3 of 7 things set up per Mac'))
+  assert.equal(text.out.at(-1), '  Word-timing models · Not on this Mac: Czech. Download in Settings › Recording › Precise word timing.')
+  const doc = JSON.parse((await statusRun(['status', '--json'], second)).out.join('\n'))
+  assert.deepEqual(doc.secondMac.missing, ['live-key', 'share-link', 'word-timing'])
+  assert.deepEqual(Object.keys(doc.secondMac.items[0]), ['id', 'label', 'state', 'detail'])
+  const other = await statusRun(['cloudflare', 'live'], second)
+  assert.ok(!other.text.includes('Second Mac'), 'other commands print the rows only')
+  assert.deepEqual(asked, [{ secondMac: true }, { secondMac: true }, null])
+  for (const outcome of [text, other]) noSecretIn(outcome.text, 'the second-Mac section')
+  // The operations read the two extra statuses only when asked, and a failing one is "could not be told".
+  const extraCalls = []
+  const portsFor = (fail) => ({
+    connection: { status: () => FULL.cloudflare, check: async () => ({ ok: true }), idle: async () => {} },
+    liveService: { row: () => LIVE_READY, look: async () => {} },
+    recording: { status: () => FULL.recording },
+    transcription: { status: async () => TRANSCRIPTION_READY },
+    importer: async () => FULL.importer,
+    wordTiming: async () => { extraCalls.push('wordTiming'); if (fail) throw new Error('unreadable'); return MODELS_ALL },
+    agentSkill: async () => { extraCalls.push('agentSkill'); return SKILL_SET },
+  })
+  const plainSnapshot = await createSetupOperations(portsFor(false)).snapshot()
+  assert.equal(plainSnapshot.wordTiming, undefined)
+  assert.deepEqual(extraCalls, [])
+  const withSecond = await createSetupOperations(portsFor(true)).snapshot({ secondMac: true })
+  assert.deepEqual([withSecond.wordTiming, withSecond.agentSkill], [null, SKILL_SET])
+  assert.deepEqual(extraCalls, ['wordTiming', 'agentSkill'])
+  ok('setup status ends with what this Mac lacks of the per-Mac set-up (token, site, live key, share-link address, transcription, word-timing models, agent skill), in text and --json; no secret printed')
 
   // ── 7. Standard input: piped, and typed with nothing shown; fails closed ─────────────────────
   class FakeInput extends EventEmitter {

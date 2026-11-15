@@ -128,13 +128,13 @@ try {
   await sheet.locator('[data-field="post-closes"]').fill(`${plusDays(7)}T17:00`)
   const preIssue = sheet.locator('[data-issue="pre"]')
   const postIssue = sheet.locator('[data-issue="post"]')
-  record('pre-work closing after the start shows the drawn message', (await preIssue.innerText()).includes('Pre-work must close before the session starts'))
-  record('post-work closing before the session shows the drawn message', (await postIssue.innerText()).includes('Post-work must close after the session ends'))
+  record('pre-work closing after the start shows the drawn message', (await preIssue.innerText()).includes('Pre-work must close before the Run starts'))
+  record('post-work closing before the session shows the drawn message', (await postIssue.innerText()).includes('Post-work must close after the Run ends'))
   record('the pre-work fix reads Close at 13:00', (await sheet.locator('[data-fix="pre"]').innerText()).trim() === 'Close at 13:00')
   record('the post-work fix names a date and 17:00', /^Close \w{3} \d{1,2} \w{3} 17:00$/.test((await sheet.locator('[data-fix="post"]').innerText()).trim()), await sheet.locator('[data-fix="post"]').innerText())
   await page.screenshot({ path: join(shots, '03-validation-errors.png') })
   await sheet.locator('[data-testid="plan-run-save"]').click()
-  record('Save is refused while a message stands', (await sheet.locator('[data-testid="plan-run-message"]').textContent()) === 'Pre-work must close before the session starts' && runsOf('prework-talk').length === 0)
+  record('Save is refused while a message stands', (await sheet.locator('[data-testid="plan-run-message"]').textContent()) === 'Pre-work must close before the Run starts' && runsOf('prework-talk').length === 0)
   await sheet.locator('[data-fix="pre"]').click()
   await sheet.locator('[data-fix="post"]').click()
   record('the pre-work fix corrects the value', await sheet.locator('[data-field="pre-closes"]').inputValue() === `${future}T13:00`)
@@ -265,18 +265,15 @@ try {
   const history3Promise = app.waitForEvent('window')
   await page.evaluate(() => window.dispatchEvent(new Event('tw-open-history')))
   const history3 = await history3Promise
-  await history3.waitForSelector('[data-planned-run]')
-  const rows = history3.locator('[data-planned-run]')
-  const count = await rows.count()
-  let opened = false
-  for (let i = 0; i < count && !opened; i += 1) {
-    await rows.nth(i).locator('summary').click()
-    await history3.locator('[data-plan-edit]').nth(i).click().catch(() => {})
-    const candidate = history3.locator('[data-testid="plan-run-sheet"]')
-    await candidate.waitFor({ timeout: 4000 }).catch(() => {})
-    if (await candidate.count() && (await candidate.locator('[data-field="event"]').inputValue()) === evil) opened = true
-    else if (await candidate.count()) { await candidate.locator('[data-testid="plan-run-cancel"]').click(); await candidate.waitFor({ state: 'detached' }) }
-  }
+  // The one Runs view (consistency batch 3): the marked Run's row, then its Edit plan.
+  await history3.waitForSelector('[data-tools-view="runs"] [data-sessions-row]')
+  const markedKey = `prework-talk/${marked.id}`
+  await history3.locator(`[data-sessions-row="${markedKey}"]`).click()
+  await history3.waitForSelector(`[data-sessions-detail="${markedKey}"]`, { timeout: 5000 }).catch(() => {})
+  await history3.locator('[data-run-action="edit-plan"]').first().click()
+  const candidate = history3.locator('[data-testid="plan-run-sheet"]')
+  await candidate.waitFor({ timeout: 4000 }).catch(() => {})
+  const opened = await candidate.count() > 0 && (await candidate.locator('[data-field="event"]').inputValue()) === evil
   const mSheet = history3.locator('[data-testid="plan-run-sheet"]')
   record('the marked Run’s sheet opens', opened)
   record('the pre-work block shows the zone mark', await mSheet.locator('[data-testid="plan-run-pre-mark"]').count() === 1)

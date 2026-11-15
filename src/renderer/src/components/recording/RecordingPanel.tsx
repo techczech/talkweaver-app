@@ -15,10 +15,13 @@ import { LayeredPlayer, type LayeredPlayerHandle, type PlayerSource } from './La
 import { useEvenVoice } from './LookAndSound'
 import { chosenTakes, missingTakeNotice, unavailableTakes, useTakes, useTakeSource } from './RecordSlideAgain'
 import { takesInUse } from '../../../../shared/recording-takes'
+import { mediaAwaySentence } from '../../../../shared/recording-place'
 import { useRecordingExport } from './useRecordingExport'
+import { EditorLook, EditsNoticeNote, KeptEditsSheet, StartNewEditsSheet, noticesOf } from './KeptEdits'
+import type { EditsNotice } from '../../../../shared/recording-edits-kept'
 import './recording-panel.css'
 
-export type PanelSlide = { title: string; section?: string; n: number }
+export type PanelSlide = { title: string; section?: string; n: number; cards?: string[] }
 /** The player's handle plus the trim commands Studio's keys reach (I, O, ⌘Z, ⇧⌘Z). */
 export type RecordingPanelHandle = LayeredPlayerHandle & { trimStart: () => void; trimEnd: () => void; undo: () => void; redo: () => void }
 
@@ -77,7 +80,7 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
     void window.tw.recordingVideo.open(runRef).then((r) => {
       if (!alive) return
       if (!r.ok) { setOpenError(r.error); return }
-      setOpened(r); setEdits(r.edits)
+      setOpened(r); setEdits(r.edits); heard(r.edits)
       if (exportOnly) return
       setPreparing(true)
       return window.tw.recordingVideo.prepare(runRef).then((p) => {
@@ -141,6 +144,18 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   // Edits go to main one at a time, each based on the revision the previous one returned, so quick
   // clicks are applied in order rather than refused as a conflict.
   const editsRef = useRef<EditsSnapshot | null>(null); editsRef.current = edits
+  // Kept edits (0.45): what main kept instead of losing, the list, and Start new edits asked.
+  const [notices, setNotices] = useState<EditsNotice[]>([])
+  const [keptCount, setKeptCount] = useState(0)
+  const [keptOpen, setKeptOpen] = useState(false)
+  const [startNewOpen, setStartNewOpen] = useState(false)
+  const heard = useCallback((s: EditsSnapshot) => {
+    const add = noticesOf(s)
+    if (add.length) setNotices((now) => [...now, ...add].slice(-3))
+    if (typeof s.keptCount === 'number') setKeptCount(s.keptCount)
+    else if (add.length) setKeptCount((n) => n + 1)
+  }, [])
+  const replaceEdits = useCallback((s: EditsSnapshot) => { editsRef.current = s; setEdits(s); setEditError(null); saveFailed.current = null; heard(s) }, [heard])
   const queue = useRef<Promise<void>>(Promise.resolve())
   const saveFailed = useRef<string | null>(null)
   const edit = useCallback((op: EditOp): Promise<void> => {
@@ -148,12 +163,13 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
       const current = editsRef.current
       if (!current) return
       setEditError(null)
-      const r = await window.tw.recordingVideo.edit(runRef, op, current.edits.revision)
-      if (r.ok) { editsRef.current = r.edits; setEdits(r.edits); saveFailed.current = null }
+      // The bytes these edits came from (0.45): main keeps any other version it finds there instead of writing over it.
+      const r = await window.tw.recordingVideo.edit(runRef, op, current.edits.revision, current.digest)
+      if (r.ok) { editsRef.current = r.edits; setEdits(r.edits); saveFailed.current = null; heard(r.edits) }
       else { setEditError(r.error); saveFailed.current = r.error }
     }).catch((e) => { saveFailed.current = String(e) })
     return queue.current
-  }, [runRef])
+  }, [runRef, heard])
   // Export waits for every queued edit and does not start after a failed save.
   const settle = useCallback(async (): Promise<{ revision: number; plan: string } | { error: string }> => {
     await queue.current
@@ -163,8 +179,8 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   }, [])
   const refresh = useCallback(() => {
     onReloadWords?.()
-    void window.tw.recordingVideo?.open(runRef).then((r) => { if (r.ok) { editsRef.current = r.edits; setEdits(r.edits) } }).catch(() => {})
-  }, [onReloadWords, runRef])
+    void window.tw.recordingVideo?.open(runRef).then((r) => { if (r.ok) { editsRef.current = r.edits; setEdits(r.edits); heard(r.edits) } }).catch(() => {})
+  }, [onReloadWords, runRef, heard])
 
   const time = useCallback((t: number, v: number) => { setRunMs(t); setVideoMs(v); onTime(t) }, [onTime])
   const playingChanged = useCallback((p: boolean) => { setPlaying(p); onPlaying(p) }, [onPlaying])
@@ -215,7 +231,9 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   const audioOnly = opened.slides.length === 0
   const pct = (t: number): string => `${((100 * t) / Math.max(1, durationMs)).toFixed(3)}%`
   const missingText = [...opened.missing.map((m) => m.file), ...unreadable]
-  const notice = missingText.length ? `${missingText.length === 1 ? 'A recorded file is' : 'Recorded files are'} missing or unreadable: ${missingText.join(', ')}. Playing what is there.` : audioOnly ? 'This Run has no picture: sound only.' : null
+  // None of the recorded files is on this Mac (0.45): say where the recording is, not which files are missing.
+  const awaySentence = opened.away ? mediaAwaySentence(opened.away) : null
+  const notice = awaySentence ? awaySentence : missingText.length ? `${missingText.length === 1 ? 'A recorded file is' : 'Recorded files are'} missing or unreadable: ${missingText.join(', ')}. Playing what is there.` : audioOnly ? 'This Run has no picture: sound only.' : null
   const startSlide = slideAt(startAt), endSlide = slideAt(Math.max(0, endAt - 1))
   const trimmed = startAt > 0 || endAt < durationMs
   const busy = exporting.state === 'working'
@@ -254,8 +272,18 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
         <div className="twrp-problem" role="alert">
           <AlertTriangle className="lt-icon" />
           <span>{problem.message} It is kept unchanged.</span>
-          <button className="twrp-btn" onClick={() => void window.tw.recordingVideo.startFresh(runRef).then((r) => { if (r.ok) setEdits(r.edits); else setEditError(r.error) })}>Start new edits</button>
+          {problem.kind === 'git-conflict' ? <button className="twrp-btn" data-edits-show-file onClick={() => { void window.tw.shell.showInFolder(problem.file) }}>Show in Finder</button> : null}
+          <button className="twrp-btn" data-start-new onClick={() => setStartNewOpen(true)}>Start new edits</button>
+          {keptCount > 0 ? <button className="twrp-btn" data-kept-edits onClick={() => setKeptOpen(true)}>Kept edits…</button> : null}
         </div>
+      ) : null}
+      {notices.length || keptOpen || (startNewOpen && problem) ? (
+        <EditorLook>
+          {notices.map((n, i) => <EditsNoticeNote key={i} notice={n} onKept={() => setKeptOpen(true)} onDismiss={() => setNotices((all) => all.filter((x) => x !== n))} />)}
+          {keptOpen ? <KeptEditsSheet runRef={runRef} onClose={() => setKeptOpen(false)} onRestored={(s) => { setKeptOpen(false); replaceEdits(s) }} /> : null}
+          {startNewOpen && problem ? <StartNewEditsSheet where="panel" gitConflict={problem.kind === 'git-conflict'} onClose={() => setStartNewOpen(false)}
+            onStart={() => { setStartNewOpen(false); void window.tw.recordingVideo.startFresh(runRef).then((r) => { if (r.ok) replaceEdits(r.edits); else setEditError(r.error) }) }} /> : null}
+        </EditorLook>
       ) : null}
 
       <div className="twrp-stage">

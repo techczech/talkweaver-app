@@ -206,13 +206,20 @@ export function hasPictureLayers(capture: CaptureLike | null | undefined): boole
 
 // ---- Chapters -------------------------------------------------------------------------------------
 
-export type ChapterSlide = { title: string; section?: string }
+/** `cards`: the ids of the slide's carousel cards that are steps of their own (projection `carousel_cards`). */
+export type ChapterSlide = { title: string; section?: string; cards?: string[] }
 export type Chapter = { startMs: number; endMs: number; title: string }
+
+/** A slide with no title, as the slide browser and the outline name it. */
+const UNTITLED = '(untitled)'
 
 /**
  * Chapters in edited time from the Run's slide `enter` events. Where the talk has sections, one chapter
- * per section (titled by the section); otherwise one per slide. A slide shown only inside a cut adds
- * nothing. The first chapter starts at 0, as players and YouTube expect.
+ * per section (titled by the section); otherwise one per slide. A carousel card is a step of its slide,
+ * never a chapter: the recorder names the card, and it is read back to the slide it is drawn on. A slide
+ * with no title is "(untitled)"; an id that is no longer in the talk adds no chapter (the one before goes
+ * on). A slide shown only inside a cut adds nothing. The first chapter starts at 0, as players and YouTube
+ * expect.
  */
 export function chaptersFor(
   enters: ReadonlyArray<{ tMs: number; slideId?: string }>,
@@ -221,19 +228,21 @@ export function chaptersFor(
 ): Chapter[] {
   const total = editedDurationMs(spans)
   if (total <= 0) return []
-  const useSections = enters.some((e) => e.slideId && slides[e.slideId]?.section)
-  const titleOf = (id?: string): string => {
-    const s = id ? slides[id] : undefined
-    return ((useSections ? s?.section || s?.title : s?.title) || 'Slide').trim()
-  }
+  const cardOf = new Map<string, ChapterSlide>()
+  for (const s of Object.values(slides)) for (const card of s?.cards ?? []) if (!Object.hasOwn(slides, card)) cardOf.set(card, s)
+  const slideOf = (id?: string): ChapterSlide | undefined => (id ? (Object.hasOwn(slides, id) ? slides[id] : cardOf.get(id)) : undefined)
+  const useSections = enters.some((e) => slideOf(e.slideId)?.section)
+  const titleOf = (s: ChapterSlide): string => (useSections && s.section?.trim()) || s.title?.trim() || UNTITLED
   const sorted = [...enters].filter((e) => Number.isFinite(e.tMs)).sort((a, b) => a.tMs - b.tMs)
   const points: Array<{ at: number; title: string }> = []
   for (const e of sorted) {
+    const slide = slideOf(e.slideId)
+    if (!slide) continue
     const span = spanFor(spans, e.tMs)
     if (!span) continue
     // A slide entered inside a cut is only shown if it is still on screen when the cut ends.
     const at = e.tMs < span.startMs ? span.editedStartMs : planRunToEdited(spans, e.tMs)
-    const title = titleOf(e.slideId)
+    const title = titleOf(slide)
     const prev = points.at(-1)
     if (prev && Math.abs(prev.at - at) < 1) { prev.title = title; continue }
     if (prev && prev.title === title) continue

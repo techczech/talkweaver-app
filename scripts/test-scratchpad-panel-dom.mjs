@@ -427,9 +427,14 @@ createRoot(document.getElementById('root')).render(<App />)`,
     ])
     await search.fill('')
   })
+  // The action at the end of each round clears the selection in a later render. Under load that render can come
+  // after the next round has started, so .check() finds a box still ticked from before, does nothing, and the
+  // box is then cleared under it. Each round first waits until the fixture is drawn with nothing ticked.
+  const fixtureDrawn = () => page.waitForFunction(() => { const ticks = [...document.querySelectorAll('.sp-panel .sp-tick')]; return ticks.length >= 5 && ticks.every((c) => !c.checked) && !!document.querySelector('[aria-label="Select Run newest"]') })
   for (const action of ['keep', 'reject', 'group']) {
     await step('a previously ticked hidden card is excluded from ' + action, async () => {
       await page.evaluate(() => window.selectionFixture())
+      await fixtureDrawn()
       await page.getByLabel('Select Outside search', { exact: true }).check()
       await page.getByLabel('Select Run newest', { exact: true }).check()
       await page.getByLabel('Search the Slide Scratchpad').fill('run')

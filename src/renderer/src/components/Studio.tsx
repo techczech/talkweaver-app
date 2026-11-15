@@ -3,6 +3,7 @@ import { AnimatedVideoStatus,AnimatedVideoChip,useVideoPackageStatuses } from '.
 import { useVideoMenuRequest } from '../lib/toolsActions'
 import { AnimatedVideoAction } from './AnimatedVideoSheet'
 import { recordingRunKey, recordingRunHome } from '../../../shared/recording-run-home'
+import { studioAudioLabel } from '../../../shared/recording-place'
 // TalkWeaver Studio — the recordings player (ADR-0035, Phase 1, with the session treatment from
 // docs/design/2026-07-05-recording/direction-3-transcript-ready-split.html). A full-window Light Table
 // surface: a grouped session sidebar, a slide-time-marker timeline over a real waveform, and the current
@@ -11,7 +12,7 @@ import { recordingRunKey, recordingRunHome } from '../../../shared/recording-run
 import { slideTitlesFromRows } from '../../../shared/talk-title-text'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  AlertTriangle, Check, ChevronDown, ChevronRight, FileText, HardDrive, Loader2, PanelLeftClose,
+  AlertTriangle, Check, ChevronDown, ChevronRight, FileText, HardDrive, Laptop, Loader2, PanelLeftClose,
   PanelLeftOpen, Pause, Play, RefreshCw, RotateCcw, Scissors, Search, Settings, SkipBack, SkipForward, Trash2,
   UploadCloud, X
 } from 'lucide-react'
@@ -36,7 +37,7 @@ import { hasPictureLayers } from '../../../shared/recording-video'
 const UNSAFE_NAME_ERRORS = new Set(['unsafe-talk-slug', 'unsafe-session-id', 'unsafe-path', 'run-path-unsafe'])
 
 type Session = RecordingSession
-type SlideInfo = { title: string; section: string; thumbUrl: string | null; n: number; tag: string }
+type SlideInfo = { title: string; section: string; thumbUrl: string | null; n: number; tag: string; cards?: string[] }
 type SlideTimeMark = RecordingSession['slideTimeIndex'][number]
 type ReplayState = { slideId: string; hiddenCount: number; highlights: Array<{ block: number; start: number; end: number }>; ink: unknown[]; inkImage: number | null }
 type SessionGroup = { key: string; title: string; sessions: Session[]; newestAt: string; longestMs: number }
@@ -436,7 +437,9 @@ export default function Studio({
             section: named[r.slide_id]?.section ?? '',
             thumbUrl: thumbs && key ? thumbs[key] ?? null : null,
             n: i + 1,
-            tag: r.layout || ''
+            tag: r.layout || '',
+            // A carousel's cards: the Run's marks name them, and they read back to this slide (chapters).
+            ...(r.carousel_cards?.length ? { cards: r.carousel_cards } : {})
           }
         })
         if (!cancelled) setSlideMap(map)
@@ -1005,9 +1008,16 @@ export default function Studio({
                             {runAudioSummary(s).label ? <span className="tws-sc-audio-short" title="The audio is shorter than the recording: the microphone input was lost.">{runAudioSummary(s).label}</span> : null}
                             {s.timerTargetMin ? <span className="tws-sc-plan">planned {s.timerTargetMin}m</span> : null}
                             {d ? <span className={`tws-delta ${d.cls}`}>{d.text}</span> : null}
-                            <span className={`tws-sc-up ${s.audio?.uploaded ? '' : 'local'}`}>
-                              {!s.audio ? 'No audio' : s.audio.uploaded ? <><Check className="lt-icon" /> uploaded</> : <><HardDrive className="lt-icon" /> on this Mac</>}
-                            </span>
+                            {(() => {
+                              if (!s.audio) return <span className="tws-sc-up local">No audio</span>
+                              // Where the recording is (0.45): main looked for its files; a Run listed without that answer reads as before.
+                              const where = studioAudioLabel(s.mediaPlace ?? { state: 'here' }, s.audio.uploaded)
+                              return (
+                                <span className={`tws-sc-up ${where.here && s.audio.uploaded ? '' : 'local'}${where.here ? '' : ' away'}`} title={where.title} data-media-place={s.mediaPlace?.state ?? 'here'}>
+                                  {where.here && s.audio.uploaded ? <Check className="lt-icon" /> : where.here ? <HardDrive className="lt-icon" /> : <Laptop className="lt-icon" />} <span className="tws-sc-up-text">{where.text}</span>
+                                </span>
+                              )
+                            })()}
                           </div>
                           <span className="tws-sc-play"><Play className="lt-icon" /></span>
                         </button>

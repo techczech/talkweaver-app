@@ -72,7 +72,9 @@
 .twrp-suggest { display: inline-flex; align-items: center; gap: 6px; padding: 2px 4px 2px 9px; border-radius: 6px; background: var(--lt-amber-soft); color: var(--lt-ink); }
 .twrp-x { display: inline-flex; padding: 2px; color: var(--lt-ink-faint) !important; }
 
-.twrp-problem { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 7px; background: var(--lt-amber-soft); color: var(--lt-ink); font-size: 12.5px; }
+/* The text takes the line; the buttons wrap under it in a narrow panel. */
+.twrp-problem > span { flex: 1 1 220px; min-width: 0; }
+.twrp-problem { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 7px; background: var(--lt-amber-soft); color: var(--lt-ink); font-size: 12.5px; }
 .twrp-error, .twrp-loading { margin: auto; display: flex; align-items: center; gap: 8px; color: var(--lt-ink-soft); font-size: 13px; }
 .twrp-error .lt-icon, .twrp-loading .lt-icon { width: 16px; height: 16px; }
 

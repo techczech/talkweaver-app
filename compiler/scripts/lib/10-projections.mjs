@@ -216,6 +216,17 @@ export function buildPerSlideProjections(model, deckSlug) {
     if (!warningsBySlide.has(slideId)) warningsBySlide.set(slideId, []);
     warningsBySlide.get(slideId).push(w);
   }
+  // A carousel's cards that are beats of their own (15-sequencer: heading-authored cards, a leading
+  // picture after the first) carry their own ids: the presenter's address and the recorder's slide
+  // changes name the card, not the slide it is drawn on. Listed on the slide's row so a Run's marks
+  // can be read back to the slide (video chapters).
+  const cardsBySlide = new Map();
+  for (const beat of (Array.isArray(model.beats) ? model.beats : [])) {
+    const parent = beat?.context?.container === "carousel" ? beat.context.sectionId : "";
+    if (!parent || !beat.slideId || beat.slideId === parent) continue;
+    if (!cardsBySlide.has(parent)) cardsBySlide.set(parent, []);
+    cardsBySlide.get(parent).push(beat.slideId);
+  }
   return slides.map((slide, index) => {
     const blocks = Array.isArray(slide.blocks) ? slide.blocks : [];
     // Slides modelled with rich blocks use blockText; html-only slides (source-project
@@ -288,6 +299,7 @@ export function buildPerSlideProjections(model, deckSlug) {
       // Where each image of this slide lands (full screen, beside text, in a row, ...) in outline
       // order — the compiler's own decision, read by the editor's image preview label.
       image_placements: imagePlacementsForSlide(slide),
+      ...(cardsBySlide.has(slideId) ? { carousel_cards: cardsBySlide.get(slideId) } : {}),
       warnings: warningsBySlide.get(slideId) || []
     };
   });

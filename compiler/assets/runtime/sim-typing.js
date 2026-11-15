@@ -17,7 +17,11 @@
 // and nothing on screen moves); finishing puts every node back as it was.
 //
 // Each function is embedded in the deck by `.toString()` (simTypingRuntimeSource), so each is
-// self-contained: no module-level constants.
+// self-contained: no module-level constants. The one name it borrows, ownedStepElement, comes
+// from runtime/step-ownership.js: imported here, and inlined in the deck before this source
+// (with runtime/emphasis-steps.js).
+
+import { ownedStepElement } from './step-ownership.js';
 
 /** 40 tokens a second at about 4 characters a token. The one place the rate is set. */
 export function simTypingCharsPerSecond() {
@@ -73,7 +77,8 @@ export function normaliseSimType(value) {
  * @returns {{ el: Element, nodes: Text[], length: number }[]}
  */
 export function simTypingUnits(slide, move) {
-  const root = slide && slide.querySelector ? slide.querySelector('.sim:not(.sim-static)') : null;
+  // The slide's own simulation (runtime/step-ownership.js): never one drawn in its contents strip.
+  const root = slide && slide.querySelector ? ownedStepElement(slide, '.sim:not(.sim-static)') : null;
   if (!root || !move) return [];
   const terminal = root.classList.contains('sim-terminal');
   const stream = root.getAttribute('data-stream') === 'on';

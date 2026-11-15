@@ -267,6 +267,11 @@ export type ImporterRow = {
   url: string | null
 }
 
+/** Precise word timing's models on this computer (Settings › Recording): one row per language. */
+export type WordTimingRow = { language: string; label: string; state: 'unavailable' | 'absent' | 'downloading' | 'installed' | 'failed' }
+/** The agent skill on this computer: the agents found, and the names of those that have it. */
+export type AgentSkillRow = { agentsFound: number; installedFor: string[] }
+
 /** Everything `setup status` reports. A null row could not be told and prints as "unknown". */
 export type SetupSnapshot = {
   cloudflare: CloudflareStatus
@@ -274,6 +279,9 @@ export type SetupSnapshot = {
   recording: RecordingStorageRow
   transcription: TranscriptionRow | null
   importer: ImporterRow | null
+  /** For the second-Mac check (0.45). Absent or null: could not be told. */
+  wordTiming?: WordTimingRow[] | null
+  agentSkill?: AgentSkillRow | null
 }
 
 export type OpResult = { ok: true } | { ok: false; error: string; usage?: boolean }
@@ -281,8 +289,8 @@ export type OpResult = { ok: true } | { ok: false; error: string; usage?: boolea
 export interface SetupOperations {
   /** Ask Cloudflare, the live service and recording storage afresh (reads only), as Check again does. */
   checkAll(): Promise<void>
-  /** The rows as they stand now. */
-  snapshot(): Promise<SetupSnapshot>
+  /** The rows as they stand now; `secondMac` also reads the word-timing models and the agent skill (setup status). */
+  snapshot(options?: { secondMac?: boolean }): Promise<SetupSnapshot>
   connect(token: string): Promise<OpResult>
   chooseAccount(id: string): Promise<OpResult>
   createSite(name: string | null, progress: (line: string) => void): Promise<OpResult>
@@ -385,6 +393,114 @@ function connectionJson(status: CloudflareStatus): Record<string, unknown> {
   }
 }
 
+// ── The second-Mac check (0.45) ───────────────────────────────────────────────────────────────────
+// What this Mac does not have of the set-up that lives per Mac and never travels with a vault: the
+// owner's other Mac may have it. Built only from the rows above and two statuses that already exist
+// (Precise word timing's models, the agent skill). Nothing here is a setting, and nothing names a secret.
+
+export type SecondMacItem = {
+  id: 'token' | 'site' | 'live-key' | 'share-link' | 'transcription' | 'word-timing' | 'agent-skill'
+  label: string
+  /** `missing`: this Mac does not have it; `not-available`: this Mac cannot have it; `unknown`: could not be told. */
+  state: 'set' | 'missing' | 'not-available' | 'unknown'
+  detail: string
+}
+
+const COULD_NOT_TELL = 'Could not be told.'
+
+export function secondMacItems(snapshot: SetupSnapshot): SecondMacItem[] {
+  const { cloudflare } = snapshot
+  const at = cloudflare.connection
+  const item = (id: SecondMacItem['id'], label: string, state: SecondMacItem['state'], detail: string): SecondMacItem => ({ id, label, state, detail })
+  const items: SecondMacItem[] = []
+
+  items.push(at.state === 'no-token'
+    ? item('token', 'Cloudflare token', 'missing', 'Not saved on this Mac. Paste it in Settings › Cloudflare, or pipe it to setup cloudflare connect.')
+    : at.state === 'rejected'
+      ? item('token', 'Cloudflare token', 'missing', 'Cloudflare refused the token saved on this Mac. Paste a new one.')
+      : at.state === 'storage-unavailable'
+        ? item('token', 'Cloudflare token', 'unknown', 'This Mac\'s secure storage could not be read.')
+        : item('token', 'Cloudflare token', 'set', 'Saved on this Mac.'))
+
+  const site = cloudflare.publishing
+  items.push(at.state === 'no-token' || at.state === 'rejected'
+    ? item('site', 'Publishing site', 'missing', 'Chosen after the token: setup cloudflare account <id>, then setup cloudflare create-site.')
+    : at.state === 'choose-account'
+      ? item('site', 'Publishing site', 'missing', 'Choose the Cloudflare account first: setup cloudflare account <id>.')
+      : at.state === 'connected' && at.account !== null && site.state === 'ready'
+        ? item('site', 'Publishing site', 'set', `Site ${site.project}.`)
+        : at.state === 'connected' && (site.state === 'no-site' || site.state === 'no-permission')
+          ? item('site', 'Publishing site', 'missing', site.state === 'no-site' ? `No site ${site.project} on this account: setup cloudflare create-site.` : publishingRowDetail(site))
+          : item('site', 'Publishing site', 'unknown', COULD_NOT_TELL))
+
+  const live = snapshot.goingLive
+  items.push(live.state === 'ready' || live.state === 'updating' || live.state === 'setting-up'
+    ? item('live-key', 'Live-session key', 'set', 'This Mac has its own key for the live service.')
+    : live.state === 'not-set-up' || live.state === 'set-up-elsewhere' || live.state === 'access-removed'
+      ? item('live-key', 'Live-session key', 'missing', 'This Mac has no key for the live service. Set up going live on this Mac: setup cloudflare live.')
+      : live.state === 'failed' || live.state === 'no-permission'
+        ? item('live-key', 'Live-session key', 'missing', goingLiveRowDetail(live))
+        : item('live-key', 'Live-session key', 'unknown', COULD_NOT_TELL))
+
+  const share = cloudflare.shareLink
+  items.push(share.state === 'attached'
+    ? item('share-link', 'Share-link address', 'set', `${share.host}.`)
+    : share.state === 'none'
+      ? item('share-link', 'Share-link address', 'missing', 'None on this Mac: share links use the workers.dev address. Set it: setup cloudflare share-domain <host>.')
+      : share.state === 'unknown'
+        ? item('share-link', 'Share-link address', 'unknown', COULD_NOT_TELL)
+        : item('share-link', 'Share-link address', 'missing', shareLinkRowDetail(share)))
+
+  const transcription = snapshot.transcription
+  items.push(!transcription
+    ? item('transcription', 'Transcription', 'unknown', COULD_NOT_TELL)
+    : transcription.state === 'ready'
+      ? item('transcription', 'Transcription', 'set', 'Set up on this Mac.')
+      : transcription.state === 'not-set-up'
+        ? item('transcription', 'Transcription', 'missing', 'Not set up on this Mac: setup transcription --python <path> --script <path>, or Settings › Transcription.')
+        : item('transcription', 'Transcription', 'missing', transcriptionRowDetail(transcription)))
+
+  const models = snapshot.wordTiming
+  const offered = (models ?? []).filter((row) => row.state !== 'unavailable')
+  const absent = offered.filter((row) => row.state !== 'installed')
+  items.push(!models
+    ? item('word-timing', 'Word-timing models', 'unknown', COULD_NOT_TELL)
+    : !offered.length
+      ? item('word-timing', 'Word-timing models', 'not-available', 'Not available on this Mac.')
+      : absent.length
+        ? item('word-timing', 'Word-timing models', 'missing', `Not on this Mac: ${absent.map((row) => row.label).join(', ')}. Download in Settings › Recording › Precise word timing.`)
+        : item('word-timing', 'Word-timing models', 'set', `${offered.map((row) => row.label).join(', ')} on this Mac.`))
+
+  const skill = snapshot.agentSkill
+  items.push(!skill
+    ? item('agent-skill', 'Agent skill', 'unknown', COULD_NOT_TELL)
+    : skill.agentsFound === 0
+      ? item('agent-skill', 'Agent skill', 'not-available', 'No agent found on this Mac.')
+      : skill.installedFor.length
+        ? item('agent-skill', 'Agent skill', 'set', `Installed for ${skill.installedFor.join(', ')}.`)
+        : item('agent-skill', 'Agent skill', 'missing', 'Not installed for any agent on this Mac: TalkWeaver agent install --agent <id>.'))
+  return items
+}
+
+function secondMacJson(snapshot: SetupSnapshot): Record<string, unknown> {
+  const items = secondMacItems(snapshot)
+  return { missing: items.filter((i) => i.state === 'missing').map((i) => i.id), items }
+}
+
+/** The section's lines: what this Mac lacks, then what could not be told. */
+export function secondMacLines(snapshot: SetupSnapshot): string[] {
+  const items = secondMacItems(snapshot)
+  const missing = items.filter((i) => i.state === 'missing')
+  const applicable = items.filter((i) => i.state !== 'not-available')
+  const unknown = items.filter((i) => i.state === 'unknown')
+  const lines = [missing.length
+    ? `Second Mac: this Mac lacks ${missing.length} of ${applicable.length} things set up per Mac`
+    : `Second Mac: this Mac has ${unknown.length ? 'everything that could be checked' : 'everything'} that is set up per Mac`]
+  for (const i of missing) lines.push(`  ${i.label} · ${i.detail}`)
+  if (unknown.length) lines.push(`  Could not be told: ${unknown.map((i) => i.label).join(', ')}`)
+  return lines
+}
+
 /** The whole status as JSON: the shape resources/agent-setup/setup-command.md documents. */
 export function setupStatusJson(command: SetupCommand['kind'], snapshot: SetupSnapshot, outcome: { ready: boolean; error: string | null }): Record<string, unknown> {
   const { cloudflare } = snapshot
@@ -402,6 +518,8 @@ export function setupStatusJson(command: SetupCommand['kind'], snapshot: SetupSn
       transcription: transcriptionJson(snapshot.transcription),
       importer: importerJson(snapshot.importer),
     },
+    // `setup status` only: what this Mac lacks of the set-up that is per Mac (0.45).
+    ...(command === 'status' ? { secondMac: secondMacJson(snapshot) } : {}),
   }
 }
 
@@ -578,7 +696,7 @@ export async function runSetup(args: readonly string[], io: SetupIo, ops: SetupO
   if (!result.ok && result.usage) return usageError(result.error)
 
   let snapshot: SetupSnapshot
-  try { snapshot = await ops.snapshot() } catch {
+  try { snapshot = await ops.snapshot(command.kind === 'status' ? { secondMac: true } : undefined) } catch {
     const error = result.ok ? 'The state could not be read.' : result.error
     if (json) io.out(JSON.stringify({ format: SETUP_JSON_FORMAT, command: command.kind, ready: false, error }))
     else io.err(error)
@@ -590,6 +708,7 @@ export async function runSetup(args: readonly string[], io: SetupIo, ops: SetupO
   else {
     if (error) io.err(error)
     for (const line of setupStatusLines(snapshot)) io.out(line)
+    if (command.kind === 'status') for (const line of secondMacLines(snapshot)) io.out(line)
   }
   return ready ? 0 : 1
 }

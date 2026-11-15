@@ -118,6 +118,7 @@ export const schema = defineSchema({
     // Accounts and keys (values in the secrets store; the window shows connected or not)
     { key: SECRET_KEYS.cloudflare, label: 'Cloudflare token', section: 'accounts', type: 'secret', default: null, help: 'Publishes handouts and runs the live service. Kept in this Mac’s secure storage.' },
     { key: 'updates.checkForNewVersions', label: 'Check for new versions', section: 'updates', group: 'New versions', type: 'toggle', default: true, help: 'Once a day. Check for updates checks at any time.' },
+    { key: 'updates.alphaVersions', label: 'Get early versions (alpha)', section: 'updates', group: 'New versions', type: 'toggle', default: false, help: 'Alphas come first and can break. To go back, switch this off: you keep this alpha until the next release, which then updates as usual. For an older version now, download it from talkweaver.app.' },
     { key: SECRET_KEYS.recording, label: 'Recording storage keys', section: 'accounts', type: 'secret', default: null, help: 'The R2 access key id and secret, typed as id:secret. Kept in this Mac’s secure storage.' }
   ])
 })
@@ -129,6 +130,7 @@ interface ScalarMap { config: string; key: string; fromConfig?(v: unknown): unkn
 
 const SCALARS: readonly ScalarMap[] = [
   { config: 'updatesCheckForNewVersions', key: 'updates.checkForNewVersions' },
+  { config: 'updatesAlphaVersions', key: 'updates.alphaVersions' },
   { config: 'placeChipVisible', key: 'general.placeChip' },
   { config: 'guideButtonVisible', key: 'general.guideButton' },
   { config: 'archiveRoot', key: 'general.imageArchive' },

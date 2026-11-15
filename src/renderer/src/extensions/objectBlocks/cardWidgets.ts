@@ -13,7 +13,7 @@ import {
   SIMULATION_DESIGN_LABELS
 } from '../../../../shared/objects/card-kinds.ts'
 import { objectBlockEditableSource, type InlineComment, type ObjectBlock } from './detect.ts'
-import { setExpandedObjectBlock, setRawObjectBlock } from './effects.ts'
+import { exactTextWrite, setExpandedObjectBlock, setRawObjectBlock } from './effects.ts'
 import { ObjectWidget } from './widgets.ts'
 import { cardFileNote, cardStatusRefs, type CardFileStatus } from './status.ts'
 import { CARD_ACTION_LABELS, cardActionHost, cardActionsFor, runCardAction } from './cardActions.ts'
@@ -215,7 +215,7 @@ export class CardWidget extends ObjectWidget {
     } else if (!objectBlockEditableSource(this.block).trim()) {
       shell.append(el('div', 'tw-obj-card-first', cardKind(this.block.kind)?.emptyPrompt ?? ''))
     }
-    shell.append(el('span', 'tw-obj-hint', '↵ edit · ⌫ remove'))
+    shell.append(el('span', 'tw-obj-hint', '↵ edit · ⌫ delete'))
     return shell
   }
 
@@ -311,7 +311,7 @@ export function removeCardLine(view: EditorView, block: ObjectBlock, lineText: s
     if (line.text.replace(/\r$/, '').trim() !== lineText) continue
     const to = n < doc.lines ? doc.line(n + 1).from : line.to
     const from = n < doc.lines ? line.from : Math.max(0, line.from - 1)
-    view.dispatch({ changes: { from, to }, userEvent: 'delete' })
+    view.dispatch({ changes: { from, to }, userEvent: 'delete', annotations: exactTextWrite.of(true) })
     return true
   }
   return false

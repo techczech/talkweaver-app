@@ -1,13 +1,19 @@
 import { isolateHistory } from '@codemirror/commands'
 import {
+  ChangeSet,
+  EditorSelection,
   EditorState,
   Facet,
+  Transaction,
   Prec,
   StateField,
   StateEffect,
   type StateEffectType,
+  type Text,
+  type TransactionSpec,
   type Extension,
-  type Range
+  type Range,
+  type SelectionRange
 } from '@codemirror/state'
 import {
   Decoration,
@@ -17,6 +23,7 @@ import {
   type DecorationSet
 } from '@codemirror/view'
 import { currentFocusRange } from '../focusScope.ts'
+import { parseTriggerLine } from '../../../../shared/trigger-line.ts'
 import { notify } from '../../lib/notify.ts'
 import {
   detectObjectBlocks,
@@ -24,8 +31,9 @@ import {
   type ObjectBlock,
   type OutlineObjects
 } from './detect.ts'
-import { setExpandedObjectBlock, setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
+import { exactTextWrite, setExpandedObjectBlock, setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
 import { widgetForObjectBlock } from './widgets.ts'
+import { deleteObjectBlock } from './remove.ts'
 import { AddNotesCloseWidget, CommentChipWidget, cardWidgetFor } from './cardWidgets.ts'
 import { objectStatusField, type CardFileStatus } from './status.ts'
 import { cardKind } from '../../../../shared/objects/card-kinds.ts'
@@ -42,7 +50,7 @@ import type {
   ShellCheatSheet
 } from '../../objects/shell.ts'
 
-export { setExpandedObjectBlock, setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
+export { exactTextWrite, setExpandedObjectBlock, setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
 
 export type ObjectBlocksOptions = {
   onInsertMenu?: (coords: { x: number; y: number }, consumeFence: () => void) => void
@@ -183,11 +191,112 @@ export function isCardBlock(block: ObjectBlock): boolean {
   return cardKind(block.kind) !== undefined
 }
 
-function blockIsSelected(state: EditorState, block: ObjectBlock): boolean {
+function blockIsSelected(state: EditorState, block: ObjectBlock, gap: ObjectBlock | null): boolean {
   const docLength = state.doc.length
+  if (gap?.from === block.from) return false
   return state.selection.ranges.some(({ head }) =>
     head >= block.from && (head < block.to || (block.to >= docLength && head <= block.to))
   )
+}
+
+// ── The line after an object ────────────────────────────────────────────────────────────────────
+// An object followed directly by a title, by another object or by the end of the document (or of the
+// Slide Focus band) has no line of its own after it to put the caret on. The editor offers one: the
+// object's last line end (`objectEnd`) is a caret stop drawn as an empty line under the object (the
+// gap). Nothing is written until the person types, pastes or presses Enter there; then the line is made,
+// with a blank line between it and the object. Opening or saving a talk never adds it.
+
+/** Where an object's last line ends (an embed's source runs on to its newline; a fence's does not). */
+export function objectEnd(state: EditorState, block: Pick<ObjectBlock, 'from' | 'to'>): number {
+  return state.doc.lineAt(Math.max(block.from, Math.min(block.to, state.doc.length) - 1)).to
+}
+
+/** This closed object has no line after it before a title, another object or the end. */
+function hasGapAfter(state: EditorState, block: ObjectBlock, blocks: readonly ObjectBlock[]): boolean {
+  return gapAfterWith(state, block, (pos) => blocks.some((other) => other.from === pos))
+}
+
+function gapAfterWith(state: EditorState, block: ObjectBlock, objectStartsAt: (pos: number) => boolean): boolean {
+  if (state.field(openBlockField, false)?.from === block.from) return false
+  if (!blockIsInsideFocus(block, state)) return false
+  const end = objectEnd(state, block)
+  if (end >= state.doc.length) return true
+  const focus = currentFocusRange(state)
+  if (focus && end + 1 > focus.to) return true
+  const next = state.doc.lineAt(end + 1)
+  return /^#{1,6}(?:\s|$)/.test(next.text) || objectStartsAt(next.from)
+}
+
+/** This object (by its start) has a gap after it. */
+function blockHasGap(state: EditorState, from: number): boolean {
+  const blocks = objectBlockIndex.read(state)
+  const block = blocks.find((candidate) => candidate.from === from)
+  return Boolean(block && hasGapAfter(state, block, blocks))
+}
+
+/** The object whose gap holds the (single, empty) caret, or null. */
+export function caretGapBlock(state: EditorState): ObjectBlock | null {
+  const sel = state.selection
+  if (sel.ranges.length !== 1 || !sel.main.empty) return null
+  const head = sel.main.head
+  // (An editor without the object field, as some tests build, has no objects and so no gap.)
+  const blocks = state.field(objectIndex, false)?.blocks ?? []
+  for (const block of blocks) {
+    if (block.from > head) break
+    if (objectEnd(state, block) === head && hasGapAfter(state, block, blocks)) return block
+  }
+  return null
+}
+
+/** Where a block put in "at the caret" anchors: with a closed object selected, the end of the object's
+ *  last line (so the block goes after the object, never into it); otherwise the caret. */
+export function insertionCaret(state: EditorState): number {
+  const head = state.selection.main.head
+  const block = state.field(objectIndex, false) ? activeBlock(state) : undefined
+  return block && !blockIsOpen(state, block) ? objectEnd(state, block) : head
+}
+
+/** A place a block goes in after (a drop point): on a closed object's lines it is the end of the object's
+ *  last line, so the block goes after the object, never into it. */
+export function insertionPlace(state: EditorState, pos: number): number {
+  const blocks = state.field(objectIndex, false)?.blocks ?? []
+  const open = state.field(openBlockField, false)
+  for (const block of blocks) {
+    if (block.from > pos) break
+    const end = objectEnd(state, block)
+    if (pos <= end && open?.from !== block.from) return end
+  }
+  return pos
+}
+
+/** The empty line drawn under an object that has no line after it; it shows the caret when it holds it. */
+export class ObjectGapWidget extends WidgetType {
+  readonly caret: boolean
+
+  constructor(caret: boolean) {
+    super()
+    this.caret = caret
+  }
+
+  eq(other: WidgetType): boolean {
+    return other instanceof ObjectGapWidget && other.caret === this.caret
+  }
+
+  toDOM(): HTMLElement {
+    const gap = document.createElement('div')
+    gap.className = `tw-obj-gap${this.caret ? ' is-caret' : ''}`
+    gap.setAttribute('aria-hidden', 'true')
+    gap.title = 'Click to write after the object'
+    return gap
+  }
+
+  get estimatedHeight(): number {
+    return 24
+  }
+
+  ignoreEvent(event: Event): boolean {
+    return event.type !== 'mousedown'
+  }
 }
 
 function blockIsInsideFocus(block: ObjectBlock, state: EditorState): boolean {
@@ -358,6 +467,8 @@ function buildObjectBlockState(state: EditorState): ObjectBlockState {
   const objects = state.field(objectIndex)
   const ranges: Array<Range<Decoration>> = []
   const atomicRanges: Array<Range<Decoration>> = []
+  const gapHolder = caretGapBlock(state)
+  const starts = new Set(blocks.map((block) => block.from))
 
   for (const block of blocks) {
     if (!blockIsInsideFocus(block, state)) continue
@@ -374,7 +485,7 @@ function buildObjectBlockState(state: EditorState): ObjectBlockState {
       )
       continue
     }
-    const selected = blockIsSelected(state, block)
+    const selected = blockIsSelected(state, block, gapHolder)
     const widget = isCardBlock(block)
       ? cardWidgetFor(block, selected, raw.has(block.from), expanded.has(block.from), statuses)
       : widgetForObjectBlock(block, selected, raw.has(block.from), options.onZoom)
@@ -382,6 +493,12 @@ function buildObjectBlockState(state: EditorState): ObjectBlockState {
     // END and never consumes its newline, which keeps CM6's tile geometry valid.
     const replacement = Decoration.replace({ widget, block: true })
     ranges.push(replacement.range(block.from, lastLineEnd))
+    if (gapAfterWith(state, block, (pos) => starts.has(pos))) {
+      // The object's end is a caret stop of its own (the gap under it), so the atomic range stops there.
+      ranges.push(Decoration.widget({ widget: new ObjectGapWidget(gapHolder?.from === block.from), block: true, side: 1 }).range(lastLineEnd))
+      atomicRanges.push(replacement.range(block.from, lastLineEnd))
+      continue
+    }
     // WriteFlex live-preview.ts:296-307: the atomic range extends over the trailing newline so a
     // single downward move steps fully past the block.
     atomicRanges.push(replacement.range(block.from, Math.min(state.doc.length, lastLineEnd + 1)))
@@ -469,8 +586,10 @@ export function canRunInlineFormatting(state: EditorState): boolean {
 function activeBlock(state: EditorState): ObjectBlock | undefined {
   const head = state.selection.main.head
   const docLength = state.doc.length
+  const gap = caretGapBlock(state)
   return objectBlocksIn(state).find((block) =>
-    blockIsInsideFocus(block, state)
+    block.from !== gap?.from
+    && blockIsInsideFocus(block, state)
     && head >= block.from
     && (head < block.to || (block.to >= docLength && head <= block.to))
   )
@@ -484,6 +603,8 @@ function blockIsOpen(state: EditorState, block: ObjectBlock): boolean {
 export function openSelectedObject(view: EditorView): boolean {
   const open = view.state.field(openBlockField, false)
   const head = view.state.selection.main.head
+  // Enter on the line under an object that has none of its own: make that line (gap rule above).
+  if (enterAtObjectGap(view)) return true
   // An Enter inside open source must remain a plain newline so table rows and outline nodes work.
   if (open && head >= open.from && head <= open.to) return false
   const block = activeBlock(view.state)
@@ -491,6 +612,33 @@ export function openSelectedObject(view: EditorView): boolean {
   view.dispatch({
     selection: { anchor: block.from },
     effects: setOpenObjectBlock.of({ from: block.from, to: block.to }),
+    scrollIntoView: true
+  })
+  return true
+}
+
+/** Backspace on a selected, closed object: delete it whole (the app's `editor.object-delete` key,
+ *  keymap/registry.ts; the object keys below do the same where that keymap is not installed). */
+export function deleteSelectedObject(view: EditorView): boolean {
+  if (view.composing || view.compositionStarted) return false
+  const sel = view.state.selection
+  if (sel.ranges.length !== 1 || !sel.main.empty) return false
+  const block = activeBlock(view.state)
+  if (!block || blockIsOpen(view.state, block)) return false
+  return deleteObjectBlock(view, block) || true
+}
+
+/** Enter at an object's gap: a blank line after the object, the caret on a new line below it. The
+ *  newline is inserted at the gap as typed text is, and the object source guard puts the blank line before it. */
+export function enterAtObjectGap(view: EditorView): boolean {
+  if (view.composing || view.compositionStarted) return false
+  const block = caretGapBlock(view.state)
+  if (!block) return false
+  const end = objectEnd(view.state, block)
+  view.dispatch({
+    changes: { from: end, insert: '\n' },
+    selection: EditorSelection.cursor(end + 1),
+    userEvent: 'input',
     scrollIntoView: true
   })
   return true
@@ -525,8 +673,427 @@ export function toggleRawObjectAtSelection(view: EditorView): boolean {
   return true
 }
 
+// ── The object source guard ──────────────────────────────────────────────────────────────────────
+// A rule on the document change itself, whatever made it (a key, a paste event or the Paste command,
+// an input method, a drop, an object or snippet insert, Find and Replace, a Scratchpad insert, any
+// command that inserts at the selection), so no way in can put text onto an object's lines:
+//
+//   1. Text that would go in at the end of a closed object's last line (its closing fence, its `:::`,
+//      `-->`, last table row, last list item or page line; the gap under the object is that place) goes
+//      on a line of its own after the object instead, with one blank line between: `\n\n` goes in
+//      front of it, or `\n` when it already starts with a line break, nothing when it already starts
+//      with a blank line. With the caret in the gap (typing, Enter, pasting there) a text that starts
+//      with one line break gets the blank line too.
+//   2. A deletion from that place that would pull the next line up onto the object's last line keeps
+//      the line break.
+//   3. Text that would go in at the very start of a closed object without a line break of its own
+//      (a paste or an insert with the object selected) goes after the object as in 1, as typing does.
+//   4. One change of a transaction that would break an object's opening or closing marker is taken
+//      out of the transaction, and every other change in it applies (a Replace All, a multi-cursor
+//      edit, a line command). Nothing else is refused: a change inside an object's body is ordinary
+//      text, and a change that deletes or replaces a whole object (from its start to the end of its
+//      last line, or beyond) is allowed. "Breaks" is exactly (breaksObjectMarker below):
+//      a. Opening marker (a fence's run of ``` or ~~~, `:::`, `<!--`, `[Embed:`, `[Simulation:` or
+//         `[Video:` at the start of the object's first line): the change deletes or replaces any of
+//         its characters, or puts text strictly inside it, or leaves anything but spaces and tabs in
+//         front of it on its line (a prefix such as `- ` or `## `, or its line joined onto the line
+//         above). Text put in at the very start of the object is not such a prefix: rule 3 moves it.
+//      b. A trigger list's token (`{table}`, `{mindmap}`, on its own line or a title): the change
+//         edits part of the token, not all of it. (Removing the token whole turns the object into a
+//         plain list, which is the author's to choose.)
+//      c. Closing marker (a fence's or a notes block's closing line, with the line break before it,
+//         or a comment's `-->`): the change deletes or replaces any of it, or puts text into it (in
+//         front of a closing fence, inside the marker). Text at its end is rule 1's.
+//      Objects with no marker (a pipe table, a bare address) have nothing to break. When in doubt the
+//      change applies: the author asked for it, and Undo is there.
+//
+//   Line commands (a list, a heading level, indenting, quoting, moving, copying or deleting a line)
+//   never reach an object's lines: runLineCommand below makes the line under the object first when the
+//   caret is in the gap, and does nothing when the object itself is selected.
+//
+// Rules 1 to 3 add one change to the same transaction, so it is one undo step with the change it
+// fixes, and Undo restores the text exactly. Left alone: Undo and Redo (they restore what was there),
+// the open object's own editor (it writes its planned source), and writes that must give an exact
+// text (exactTextWrite: a disk version, a save's stamped text, a planned whole-text rewrite).
+
+/** The last object starting at or before `pos` (the index is sorted by start). */
+function objectAtOrBefore(blocks: readonly ObjectBlock[], pos: number): ObjectBlock | undefined {
+  let lo = 0
+  let hi = blocks.length - 1
+  let found = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (blocks[mid].from <= pos) { found = mid; lo = mid + 1 } else hi = mid - 1
+  }
+  return found < 0 ? undefined : blocks[found]
+}
+
+const startsWithBreak = (text: string): number => text.startsWith('\r\n') ? 2 : text.startsWith('\n') || text.startsWith('\r') ? 1 : 0
+
+/** What goes in front of `text` put in at an object's end (rule 1 and 2 above), or '' for nothing. */
+function leadAtObjectEnd(state: EditorState, text: string, toA: number, caretInGap: boolean): string {
+  if (!text) {
+    // A deletion from the object's end: fine unless it brings text up onto the object's line.
+    if (toA >= state.doc.length) return ''
+    return startsWithBreak(state.doc.sliceString(toA, toA + 2)) ? '' : '\n'
+  }
+  const first = startsWithBreak(text)
+  if (!first) return '\n\n'
+  if (startsWithBreak(text.slice(first))) return ''
+  return caretInGap ? '\n' : ''
+}
+
+/** Where a closing marker starts on the object's last line (a fence's or a notes block's closing line,
+ *  a comment's `-->`), or null for an object that ends in content (a table row, a list item, a page). */
+function closingMarkerStart(state: EditorState, block: ObjectBlock, end: number): number | null {
+  const last = state.doc.lineAt(end)
+  if (block.kind === 'comment') {
+    const at = last.text.lastIndexOf('-->')
+    return at < 0 ? null : last.from + at
+  }
+  if (block.bodyTo === undefined && block.kind !== 'notes') return null
+  if (last.from <= block.from) return null
+  return last.from + (/^[ \t]*/.exec(last.text)?.[0].length ?? 0)
+}
+
+/** An opening marker: where it is, the line it is on, and whether text in front of it breaks it. */
+type OpeningMarker = { lineFrom: number; from: number; to: number; prefixBreaks: boolean }
+
+const OPENING_MARKER = /^[ \t]*(`{3,}|~{3,}|:::|<!--|\[(?:Embed|Simulation|Video):)/
+
+function openingMarker(state: EditorState, block: ObjectBlock): OpeningMarker | null {
+  if (block.triggerLine && block.triggerToken) {
+    if (block.triggerLine > state.doc.lines) return null
+    const line = state.doc.line(block.triggerLine)
+    const token = [...parseTriggerLine(line.text)].reverse().find((candidate) => candidate.raw === block.triggerToken)
+    return token ? { lineFrom: line.from, from: line.from + token.start, to: line.from + token.end, prefixBreaks: false } : null
+  }
+  const line = state.doc.lineAt(block.from)
+  if (line.from !== block.from) return null
+  const match = OPENING_MARKER.exec(line.text)
+  if (!match) return null
+  const from = line.from + match[0].length - match[1].length
+  return { lineFrom: line.from, from, to: from + match[1].length, prefixBreaks: true }
+}
+
+/** Rule 4: does this one change (old-document range and its new text) break `block`'s markers? */
+function breaksObjectMarker(state: EditorState, block: ObjectBlock, end: number, fromA: number, toA: number, inserted: Text): boolean {
+  if (fromA <= block.from && toA >= end) return false
+  const opening = openingMarker(state, block)
+  if (opening) {
+    if (opening.prefixBreaks) {
+      if (fromA < opening.to && toA > opening.from) return true
+    } else if (fromA < opening.to && toA > opening.from && !(fromA <= opening.from && toA >= opening.to)) return true
+    if (fromA === toA && fromA > opening.from && fromA < opening.to) return true
+    if (opening.prefixBreaks && toA <= opening.from && toA >= opening.lineFrom && !(fromA === toA && fromA === block.from)) {
+      // What stands in front of the marker on its line afterwards.
+      const lastLine = inserted.line(inserted.lines).text
+      const before = (inserted.lines > 1 ? '' : state.doc.sliceString(state.doc.lineAt(fromA).from, fromA))
+        + lastLine + state.doc.sliceString(toA, opening.from)
+      if (/\S/.test(before)) return true
+    }
+  }
+  const marker = closingMarkerStart(state, block, end)
+  if (marker === null) return false
+  // A closing line is protected whole, indentation included, together with the line break before it: a change
+  // that removes that break joins the closing marker onto the body's last line, and the object no longer closes.
+  // (A comment's `-->` sits inside its line; there only the marker itself is protected.)
+  const lineFrom = block.kind === 'comment' ? marker : state.doc.lineAt(marker).from
+  const from = lineFrom > 0 && state.doc.sliceString(lineFrom - 1, lineFrom) === '\n' ? lineFrom - 1 : lineFrom
+  return fromA === toA ? fromA > from && fromA < end : fromA < end && toA > from
+}
+
+/** The changes rule 4 took out of the last filtered transaction, for the Replace All count (rule 5). */
+let heldBack: { state: EditorState; count: number } | null = null
+
+/** Rule 4: the ranges (old document) of the changes that would break an object's marker, suppressed. */
+const objectSourceChangeGuard = EditorState.changeFilter.of((tr) => {
+  if (tr.isUserEvent('undo') || tr.isUserEvent('redo') || tr.annotation(exactTextWrite)) return true
+  const start = tr.startState
+  const blocks = start.field(objectIndex, false)?.blocks
+  if (!blocks?.length) return true
+  const open = start.field(openBlockField, false)
+  const suppressed: number[] = []
+  const suppress = (from: number, to: number) => {
+    const last = suppressed.length - 1
+    if (last > 0 && suppressed[last] >= from) suppressed[last] = Math.max(suppressed[last], to)
+    else suppressed.push(from, to)
+  }
+  // Each change is judged on its own (`individual`): CodeMirror otherwise hands touching changes over as one
+  // range, and an allowed replacement next to a protected one (a fence's info string beside its backticks)
+  // would be held back with it.
+  tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+    // The objects this change can reach: those starting at or before its end, back to the first one
+    // ending before its start (objects never overlap, so the walk stops there), and the next one when
+    // its trigger line is in reach.
+    let lo = 0
+    let hi = blocks.length - 1
+    let index = -1
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1
+      if (blocks[mid].from <= toA) { index = mid; lo = mid + 1 } else hi = mid - 1
+    }
+    const next = blocks[index + 1]
+    const reach = next?.triggerLine && next.triggerLine <= start.doc.lines && start.doc.line(next.triggerLine).from <= toA
+      ? index + 1
+      : index
+    for (let at = reach; at >= 0; at -= 1) {
+      const block = blocks[at]
+      const end = objectEnd(start, block)
+      if (end < fromA && at <= index) break
+      if (open?.from === block.from) continue
+      if (!breaksObjectMarker(start, block, end, fromA, toA, inserted)) continue
+      // A pure insertion is suppressed by a range around it (CodeMirror keeps an insertion at a range's edge).
+      if (fromA === toA) suppress(Math.max(0, fromA - 1), Math.min(start.doc.length, fromA + 1))
+      else suppress(fromA, toA)
+      break
+    }
+  }, true)
+  if (!suppressed.length) return true
+  if (tr.effects.some((effect) => effect.is(EditorView.announce))) {
+    let count = 0
+    tr.changes.iterChanges((fromA, toA) => {
+      for (let i = 0; i < suppressed.length; i += 2) {
+        if (fromA >= suppressed[i] && toA <= suppressed[i + 1] && (fromA < toA || (fromA > suppressed[i] && fromA < suppressed[i + 1]))) { count += 1; break }
+      }
+    }, true)
+    heldBack = { state: start, count }
+  }
+  return suppressed
+})
+
+/** Rule 5: a Replace All that rule 4 held some matches back from announces the number it replaced. */
+function withReplacedCount(tr: Transaction): Transaction | TransactionSpec {
+  const held = heldBack
+  if (!held || held.state !== tr.startState) return tr
+  heldBack = null
+  let changed = false
+  const effects = tr.effects.map((effect) => {
+    if (!effect.is(EditorView.announce)) return effect
+    const announced = /\d+/.exec(effect.value)
+    if (!announced) return effect
+    changed = true
+    const replaced = Math.max(0, Number(announced[0]) - held.count)
+    const kept = held.count === 1
+      ? '1 was left as it was: replacing it would break an object'
+      : `${held.count} were left as they were: replacing them would break an object`
+    return EditorView.announce.of(`${tr.startState.phrase('replaced $ matches', replaced)}. ${kept}.`)
+  })
+  if (!changed) return tr
+  const userEvent = tr.annotation(Transaction.userEvent)
+  const addToHistory = tr.annotation(Transaction.addToHistory)
+  const isolate = tr.annotation(isolateHistory)
+  return {
+    changes: tr.changes,
+    selection: tr.selection,
+    effects,
+    scrollIntoView: tr.scrollIntoView,
+    ...(userEvent !== undefined ? { userEvent } : {}),
+    annotations: [
+      ...(addToHistory !== undefined ? [Transaction.addToHistory.of(addToHistory)] : []),
+      ...(isolate !== undefined ? [isolateHistory.of(isolate)] : [])
+    ]
+  }
+}
+
+const objectSourceGuard = EditorState.transactionFilter.of((tr) => {
+  const base = withReplacedCount(tr)
+  if (!tr.docChanged || tr.isUserEvent('undo') || tr.isUserEvent('redo') || tr.annotation(exactTextWrite)) return base
+  const start = tr.startState
+  const blocks = start.field(objectIndex, false)?.blocks
+  if (!blocks?.length) return base
+  const open = start.field(openBlockField, false)
+  const gap = caretGapBlock(start)
+  const fixes: Array<{ from: number; to?: number; insert?: string }> = []
+  let caret: number | null = null
+  const newHead = tr.newSelection.main.head
+  tr.changes.iterChanges((fromA, toA, fromB, toB, inserted) => {
+    const block = objectAtOrBefore(blocks, fromA)
+    if (!block || open?.from === block.from) return
+    const end = objectEnd(start, block)
+    if (fromA === end) {
+      // The first characters say all the rule needs (a large paste is not copied out).
+      const text = inserted.sliceString(0, 4)
+      const typedHere = gap?.from === block.from && fromA === toA && newHead > fromB && newHead <= toB
+      const lead = leadAtObjectEnd(start, text, toA, typedHere)
+      if (lead) fixes.push({ from: fromB, insert: lead })
+      return
+    }
+    if (fromA === block.from && fromA === toA && inserted.length > 0 && end > fromA) {
+      const text = inserted.toString()
+      if (/[\r\n]$/.test(text)) return
+      // Move it after the object, as typing on a selected object does (typeEscape).
+      const after = tr.changes.mapPos(end, 1)
+      const lead = '\n\n'
+      fixes.push({ from: fromB, to: toB }, { from: after, insert: lead + text })
+      // After the deletion above it, the moved text starts at `after - text.length`; the caret goes after it.
+      if (newHead === toB) caret = after + lead.length
+    }
+  })
+  if (!fixes.length) return base
+  fixes.sort((a, b) => a.from - b.from)
+  return [base, {
+    changes: fixes,
+    sequential: true,
+    ...(caret !== null && tr.newSelection.ranges.length === 1 ? { selection: EditorSelection.cursor(caret) } : {}),
+    scrollIntoView: tr.scrollIntoView
+  }]
+})
+
+/** The object that typed text at the caret must go after: the one whose gap holds the caret, or the
+ *  closed object the caret selects (the browser's own caret sits beside its block, so its text would
+ *  land on the line above). */
+function typingTarget(state: EditorState): ObjectBlock | null {
+  const gap = caretGapBlock(state)
+  if (gap) return gap
+  const sel = state.selection
+  if (sel.ranges.length !== 1 || !sel.main.empty) return null
+  const block = activeBlock(state)
+  return block && !blockIsOpen(state, block) ? block : null
+}
+
+/** An input method starting to compose in an object's gap (or on a selected object): make the line first (a blank line after the
+ *  object, the caret on a new line under it), so the composition happens on a real line and never on
+ *  the object's last line. The composed text then joins this change's undo step (CodeMirror joins
+ *  composition to the step before it), so one Undo restores the text as it was. */
+export function materialiseGapLine(view: EditorView): boolean {
+  const block = typingTarget(view.state)
+  if (!block) return false
+  const end = objectEnd(view.state, block)
+  view.dispatch({
+    changes: { from: end, insert: '\n\n' },
+    selection: EditorSelection.cursor(end + 2),
+    userEvent: 'input.type',
+    annotations: isolateHistory.of('before'),
+    scrollIntoView: true
+  })
+  return true
+}
+
+/** A command that works on "the caret's line" (a list, a heading level, indenting, quoting, moving,
+ *  copying or deleting a line), run so that it never acts on an object's lines (rule 4's companion):
+ *  - with the caret at the end of a closed object's last line (the gap under it), the line under the
+ *    object is made first (a blank line, then the caret's new line, as typing there does) and the
+ *    command acts on that line; what it writes and the new line are one change, one undo step, and
+ *    when the command changes nothing, nothing is written;
+ *  - with a closed object selected, it does nothing (the object is not a line to act on);
+ *  - anywhere else it runs as it is. */
+export function runLineCommand(view: EditorView, run: (view: EditorView) => boolean): boolean {
+  const target = view.composing ? null : lineCommandTarget(view.state)
+  if (target?.at === 'gap') return runOnLineAfterObject(view, target.end, run)
+  if (target?.at === 'object') return true
+  return run(view)
+}
+
+/** Whether a line command has nothing to act on at the caret: a closed object is selected. The action
+ *  bar shows its line controls (lists, heading levels) as unavailable then. */
+export function lineCommandUnavailable(state: EditorState): boolean {
+  return lineCommandTarget(state)?.at === 'object'
+}
+
+/** With one empty caret: at the end of a closed object's last line (the gap under it, or the end of
+ *  that line when a line follows), or on a selected closed object. One lookup, no scan. */
+function lineCommandTarget(state: EditorState): { at: 'gap'; end: number } | { at: 'object' } | null {
+  const blocks = state.field(objectIndex, false)?.blocks
+  const sel = state.selection
+  if (!blocks?.length || sel.ranges.length !== 1 || !sel.main.empty) return null
+  const head = sel.main.head
+  const block = objectAtOrBefore(blocks, head)
+  if (!block || state.field(openBlockField, false)?.from === block.from || !blockIsInsideFocus(block, state)) return null
+  const end = objectEnd(state, block)
+  if (head === end) return { at: 'gap', end }
+  // As activeBlock reads a selected object.
+  return head < block.to || (block.to >= state.doc.length && head <= block.to) ? { at: 'object' } : null
+}
+
+function runOnLineAfterObject(view: EditorView, end: number, run: (view: EditorView) => boolean): boolean {
+  const made = view.state.update({ changes: { from: end, insert: '\n\n' }, selection: EditorSelection.cursor(end + 2) })
+  let current = made.state
+  const steps: Transaction[] = []
+  const take = (tr: Transaction) => { steps.push(tr); current = tr.state }
+  // The command sees the state with the new line and its dispatches are collected, not applied. The
+  // screen has no new line yet, so what it asks about the layout there is answered plainly: a caret
+  // moved by line stays where it is (deleting a line asks where the caret goes next), no coordinates.
+  const unmoved = { value: (range: SelectionRange) => range }
+  const onNewLine = Object.create(view, {
+    state: { get: () => current },
+    lineWrapping: { get: () => false },
+    moveVertically: unmoved,
+    moveByChar: unmoved,
+    moveByGroup: unmoved,
+    moveToLineBoundary: unmoved,
+    coordsAtPos: { value: () => null },
+    coordsForChar: { value: () => null },
+    dispatch: {
+      value: (...args: unknown[]) => {
+        if (args[0] instanceof Transaction) for (const tr of args as Transaction[]) take(tr)
+        else if (Array.isArray(args[0])) for (const tr of args[0] as Transaction[]) take(tr)
+        else take(current.update(...(args as TransactionSpec[])))
+      }
+    }
+  }) as EditorView
+  let handled: boolean
+  try {
+    handled = run(onNewLine)
+  } catch (error) {
+    // A command that cannot run on the new line writes nothing.
+    console.warn('A line command could not run on the line under an object:', error)
+    return true
+  }
+  // Nothing written (or the text as it was, as moving one empty line past another leaves it): nothing happens.
+  if (!steps.some((tr) => tr.docChanged) || current.doc.eq(made.state.doc)) return handled
+  let changes = made.changes
+  for (const tr of steps) changes = changes.compose(tr.changes)
+  // Each step's effects, mapped through the steps after it.
+  const effects: StateEffect<unknown>[] = []
+  let later: ChangeSet | null = null
+  for (let i = steps.length - 1; i >= 0; i -= 1) {
+    effects.unshift(...(later ? StateEffect.mapEffects(steps[i].effects, later) : steps[i].effects))
+    later = later ? steps[i].changes.compose(later) : steps[i].changes
+  }
+  const userEvent = steps.map((tr) => tr.annotation(Transaction.userEvent)).find(Boolean) ?? 'input'
+  // Each step went through the filters already (on the state it was made on), so the sum does not again.
+  view.dispatch({
+    changes,
+    selection: current.selection,
+    effects,
+    userEvent,
+    annotations: isolateHistory.of('full'),
+    scrollIntoView: true,
+    filter: false
+  })
+  return true
+}
+
 const objectBlockEvents = EditorView.domEventHandlers({
+  compositionstart(_event, view) {
+    materialiseGapLine(view)
+    return false
+  },
+  // Text typed at an object's gap or on a selected object: the browser would put it wherever its own
+  // selection sits beside the object's block (on a selected object, the line above it), so the key's
+  // text is inserted at the end of the object here (the object source guard then makes its line).
+  beforeinput(event, view) {
+    if (event.inputType !== 'insertText' || !event.data || view.composing || view.compositionStarted) return false
+    const block = typingTarget(view.state)
+    if (!block) return false
+    event.preventDefault()
+    const end = objectEnd(view.state, block)
+    view.dispatch({
+      changes: { from: end, insert: event.data },
+      selection: EditorSelection.cursor(end + event.data.length),
+      userEvent: 'input.type'
+    })
+    return true
+  },
   mousedown(event, view) {
+    const gap = (event.target as HTMLElement | null)?.closest<HTMLElement>('.tw-obj-gap')
+    if (gap) {
+      view.dispatch({ selection: EditorSelection.cursor(view.posAtDOM(gap)), userEvent: 'select.pointer' })
+      view.focus()
+      event.preventDefault()
+      return true
+    }
     const element = (event.target as HTMLElement | null)?.closest<HTMLElement>('[data-object-block]')
     if (!element) return false
     const position = view.posAtDOM(element)
@@ -550,10 +1117,24 @@ const objectBlockEvents = EditorView.domEventHandlers({
   }
 })
 
+// The gap's look lives with it, so it holds wherever the field is used: one empty line's height, the
+// text cursor, and (when it holds the caret) a caret drawn at the text's left edge in place of
+// CodeMirror's own, which has no line there to stand on.
+const gapTheme = EditorView.baseTheme({
+  '.tw-obj-gap': { position: 'relative', height: '1.6em', cursor: 'text' },
+  '&.cm-focused .tw-obj-gap.is-caret::before': {
+    content: '""', position: 'absolute', top: '.25em', bottom: '.25em', left: '6px',
+    borderLeft: '1.2px solid currentColor', animation: 'tw-obj-gap-blink 1.2s steps(1) infinite'
+  },
+  '&:has(.tw-obj-gap.is-caret) .cm-cursorLayer .cm-cursor': { display: 'none' },
+  '@keyframes tw-obj-gap-blink': { '50%': { opacity: '0' } }
+})
+
 export function objectBlocksExtension(options: ObjectBlocksOptions): Extension {
   // Typing while a CLOSED widget is selected must not corrupt the object's source. The text lands
   // in a new blank-line-separated paragraph below it (WriteFlex walk finding, 2026-07-12).
   const typeEscape = EditorView.inputHandler.of((view, from, _to, text) => {
+    if (caretGapBlock(view.state)) return false
     const block = objectBlocksIn(view.state).find((candidate) =>
       blockIsInsideFocus(candidate, view.state)
       && from >= candidate.from
@@ -561,15 +1142,13 @@ export function objectBlocksExtension(options: ObjectBlocksOptions): Extension {
     )
     if (!block) return false
     if (blockIsOpen(view.state, block)) return false
-    const insertAt = Math.min(block.to, view.state.doc.length)
-    const needsGap = view.state.doc.sliceString(
-      insertAt,
-      Math.min(insertAt + 1, view.state.doc.length)
-    ) !== '\n'
-    const lead = insertAt >= view.state.doc.length || needsGap ? '\n\n' : '\n'
+    // At the end of the object's last line; the object source guard puts it on a line of its own after
+    // a blank line. (Inserting after `to` instead joined it to the next line when `to` took in the
+    // object's line break, as a fence's does.)
+    const insertAt = objectEnd(view.state, block)
     view.dispatch({
-      changes: { from: insertAt, insert: `${lead}${text}` },
-      selection: { anchor: insertAt + lead.length + text.length },
+      changes: { from: insertAt, insert: text },
+      selection: { anchor: insertAt + text.length },
       userEvent: 'input',
       scrollIntoView: true
     })
@@ -603,36 +1182,123 @@ export function objectBlocksExtension(options: ObjectBlocksOptions): Extension {
     return true
   })
 
-  // shortcut-id: browser.move editor.protect-heading-delete
-  const interactions = Prec.high(keymap.of([
+  /** The closed object right after the line break at `pos` (the caret at the end of the line above it). */
+  const objectStartingAfter = (state: EditorState, pos: number): ObjectBlock | undefined =>
+    objectBlocksIn(state).find((block) => block.from === pos + 1 && !blockIsOpen(state, block) && blockIsInsideFocus(block, state))
+  /** The closed object whose last line ends just before `pos` (the caret at the start of the line after it). */
+  const objectEndingBefore = (state: EditorState, pos: number): ObjectBlock | undefined =>
+    objectBlocksIn(state).find((block) => pos > 0 && objectEnd(state, block) === pos - 1 && !blockIsOpen(state, block) && blockIsInsideFocus(block, state))
+  const caret = (view: EditorView, pos: number): boolean => {
+    view.dispatch({ selection: EditorSelection.cursor(pos), scrollIntoView: true, userEvent: 'select' })
+    return true
+  }
+  const emptyCaret = (state: EditorState): number | null =>
+    state.selection.ranges.length === 1 && state.selection.main.empty ? state.selection.main.head : null
+
+  // shortcut-id: editor.object-delete
+  // The selected object, the gap under it and the lines either side: the arrows reach the gap, and
+  // Backspace or Delete either select the object (the first press next to it) or delete it whole (a
+  // press on the selected object). A key never joins a line onto an object's first or last line.
+  const objectKeys = Prec.highest(keymap.of([
     {
       key: 'ArrowDown',
       run(view) {
-        const block = activeBlock(view.state)
-        if (!block || blockIsOpen(view.state, block) || block.to < view.state.doc.length) return false
-        view.dispatch({
-          changes: { from: view.state.doc.length, insert: '\n\n' },
-          selection: { anchor: view.state.doc.length + 2 },
-          userEvent: 'input',
-          scrollIntoView: true
-        })
-        return true
+        const state = view.state
+        const gap = caretGapBlock(state)
+        if (gap) {
+          const end = objectEnd(state, gap)
+          return end < state.doc.length ? caret(view, end + 1) : true
+        }
+        const block = emptyCaret(state) === null ? undefined : activeBlock(state)
+        if (!block || blockIsOpen(state, block) || !blockHasGap(state, block.from)) return false
+        return caret(view, objectEnd(state, block))
+      }
+    },
+    {
+      key: 'ArrowUp',
+      run(view) {
+        const state = view.state
+        const gap = caretGapBlock(state)
+        if (gap) return caret(view, gap.from)
+        const head = emptyCaret(state)
+        if (head === null) return false
+        const lineFrom = state.doc.lineAt(head).from
+        const above = objectEndingBefore(state, lineFrom)
+        if (!above || !blockHasGap(state, above.from)) return false
+        return caret(view, lineFrom - 1)
+      }
+    },
+    {
+      key: 'ArrowLeft',
+      run(view) {
+        const gap = caretGapBlock(view.state)
+        return gap ? caret(view, gap.from) : false
       }
     },
     {
       key: 'ArrowRight',
       run(view) {
-        const block = activeBlock(view.state)
-        if (!block || blockIsOpen(view.state, block) || block.to < view.state.doc.length) return false
-        view.dispatch({
-          changes: { from: view.state.doc.length, insert: '\n\n' },
-          selection: { anchor: view.state.doc.length + 2 },
-          userEvent: 'input',
-          scrollIntoView: true
-        })
-        return true
+        const state = view.state
+        const gap = caretGapBlock(state)
+        if (gap) {
+          const end = objectEnd(state, gap)
+          return end < state.doc.length ? caret(view, end + 1) : true
+        }
+        const block = emptyCaret(state) === null ? undefined : activeBlock(state)
+        if (!block || blockIsOpen(state, block) || !blockHasGap(state, block.from)) return false
+        return caret(view, objectEnd(state, block))
       }
     },
+    {
+      key: 'Backspace',
+      run(view) {
+        const state = view.state
+        const head = emptyCaret(state)
+        if (head === null || view.composing || view.compositionStarted) return false
+        const gap = caretGapBlock(state)
+        if (gap) return caret(view, gap.from)
+        const selected = activeBlock(state)
+        if (selected && !blockIsOpen(state, selected)) return deleteObjectBlock(view, selected) || true
+        const line = state.doc.lineAt(head)
+        if (head !== line.from) return false
+        const above = objectEndingBefore(state, line.from)
+        if (!above) return false
+        if (blockHasGap(state, above.from)) return caret(view, line.from - 1)
+        if (line.text.trim() === '') {
+          // An empty line under an object: Backspace takes the empty line, not the object's last line.
+          view.dispatch({
+            changes: { from: line.from - 1, to: line.from },
+            selection: EditorSelection.cursor(line.from - 1),
+            userEvent: 'delete.backward',
+            scrollIntoView: true
+          })
+          if (!caretGapBlock(view.state)) caret(view, above.from)
+          return true
+        }
+        return caret(view, above.from)
+      }
+    },
+    {
+      key: 'Delete',
+      run(view) {
+        const state = view.state
+        const head = emptyCaret(state)
+        if (head === null || view.composing || view.compositionStarted) return false
+        if (caretGapBlock(state)) return true
+        const selected = activeBlock(state)
+        if (selected && !blockIsOpen(state, selected)) return deleteObjectBlock(view, selected) || true
+        const line = state.doc.lineAt(head)
+        if (head !== line.to) return false
+        const below = objectStartingAfter(state, line.to)
+        return below ? caret(view, below.from) : false
+      }
+    }
+  ]))
+
+  // shortcut-id: browser.move editor.protect-heading-delete
+  // (ArrowDown and ArrowRight from an object at the end of the talk go to its gap: objectKeys above.
+  // They used to write two newlines at the end of the talk.)
+  const interactions = Prec.high(keymap.of([
     {
       key: 'ArrowUp',
       run(view) {
@@ -662,6 +1328,9 @@ export function objectBlocksExtension(options: ObjectBlocksOptions): Extension {
 
   return [
     typeEscape,
+    objectSourceChangeGuard,
+    objectSourceGuard,
+    objectKeys,
     fenceTrigger,
     insertFenceField,
     objectIndex,
@@ -672,6 +1341,7 @@ export function objectBlocksExtension(options: ObjectBlocksOptions): Extension {
     objectBlocksOptions.of(options),
     objectBlocksField,
     objectBlockEvents,
+    gapTheme,
     interactions
   ]
 }

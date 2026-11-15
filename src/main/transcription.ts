@@ -18,6 +18,10 @@ import { withoutAlignment } from './alignment-result.ts'
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'fs'
 import { validRange, validSilence, validEnds, validLocale, normaliseTranscript, transcriptForPublish } from './transcript-validation.ts'
 import { tmpdir } from 'os'
+import { isReplaceRefused, refuseUnreadableReplace } from './replace-guard.ts'
+import { transcriptNotSavedGitConflict } from '../shared/git-conflict.ts'
+
+const TRANSCRIPT_WORDS = { conflict: (file: string) => transcriptNotSavedGitConflict(basename(file)), unreadable: (file: string) => transcriptNotSavedGitConflict(basename(file)) }
 import { basename, dirname, join } from 'path'
 import { spawn, type ChildProcess } from 'child_process'
 import { randomBytes, createHash } from 'crypto'
@@ -406,10 +410,13 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
     try {
       files.writeFile(temp,JSON.stringify({...transcript,words} satisfies TranscriptJson,null,2))
       beforePublish?.()
+      // A transcript file holding Git conflict markers from a sync is never replaced (0.45): its bytes stay.
+      refuseUnreadableReplace(target.path, () => true, TRANSCRIPT_WORDS)
       files.rename(temp,target.path)
       queueMicrotask(()=>{void deps.alignAfterTranscription?.(slug,sid,storedRoot).catch(()=>{})})
       try { rmSync(`${target.path}.attempt.json`,{force:true}) } catch { /* optional status */ }
     } catch (error) {
+      if (isReplaceRefused(error)) throw error
       throw new Error(`The transcript and word timings could not be saved: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       try { if (existsSync(temp)) files.remove(temp) } catch { /* the next transcription sweeps this exact temp name */ }
@@ -627,7 +634,7 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
         }
         return stored
       } catch (e) {
-        return { ok: false, error: job.cancelled || (e instanceof Error && e.message === 'cancelled') ? 'cancelled' : String(e) }
+        return { ok: false, error: job.cancelled || (e instanceof Error && e.message === 'cancelled') ? 'cancelled' : isReplaceRefused(e) ? e.message : String(e) }
       } finally {
         signal?.removeEventListener('abort', abort)
         if (activeJob === job) {

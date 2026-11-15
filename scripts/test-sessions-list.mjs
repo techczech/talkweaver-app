@@ -14,7 +14,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { responsesBadge, runsWithResponses, selectSessionRow, sessionList, sessionLiveKey } from '../src/shared/sessions-list.ts'
-import { collectSessions } from '../src/main/sessions-list.ts'
+import { collectSessions, showRunConflict } from '../src/main/sessions-list.ts'
 
 const TZ = 'Europe/London'
 const NOW = new Date('2026-10-14T10:00:00Z')
@@ -144,6 +144,34 @@ check('collectSessions reads every vault, skips rehearsals, counts people, and m
   assert.deepEqual(out.live, ['vb|talk-b/r2'])
   const list = sessionList(out.runs, NOW, { live: new Set(out.live) })
   assert.deepEqual(list.rows.map((r) => [r.name, r.live]), [['One', false], ['Two', true]])
+})
+
+check('collectSessions names a Run file with Git conflict markers (0.45), instead of leaving it out silently', () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'tw-sessions-conflict-'))
+  const folder = join(tmp, 'a', '_PRESENTATIONS', 'talk-a')
+  mkdirSync(folder, { recursive: true })
+  const run = (extra) => JSON.stringify({ id: 'r1', talkSlug: 'talk-a', talkTitle: 'A', kind: 'delivery', status: 'planned', plannedDate: '2026-10-21', ...extra }, null, 2)
+  writeFileSync(join(folder, 'r1.json'), `<<<<<<< HEAD\n${run({ eventTitle: 'Mine' })}\n=======\n${run({ eventTitle: 'Theirs' })}\n>>>>>>> origin/main\n`)
+  writeFileSync(join(folder, 'r2.json'), JSON.stringify({ id: 'r2', talkSlug: 'talk-a', talkTitle: 'A', kind: 'delivery', status: 'planned', plannedDate: '2026-10-22' }))
+  writeFileSync(join(folder, 'broken.json'), '{ not json') // broken, but not a Git conflict: still skipped quietly
+  // A sidecar beside a Run (the edits) in conflict is not a Run file: the recording editor names it.
+  writeFileSync(join(folder, 'r2.edits.json'), '<<<<<<< HEAD\n{"version":5}\n=======\n{"version":5}\n>>>>>>> origin/main\n')
+  const out = collectSessions([{ id: 'va', root: join(tmp, 'a') }])
+  assert.deepEqual(out.runs.map((r) => r.runId), ['r2'])
+  assert.deepEqual(out.conflicts, [{
+    vaultId: 'va', name: '_PRESENTATIONS/talk-a/r1.json',
+    message: 'A Run file has a Git conflict from syncing (_PRESENTATIONS/talk-a/r1.json), so that Run is not listed. Resolve it in Git.'
+  }])
+  assert.deepEqual(collectSessions([{ id: 'vb', root: join(tmp, 'none') }]).conflicts, [])
+  // Show in Finder reveals only a file the list names as conflicted now; the renderer never passes a path.
+  const shown = []
+  const deps = { vaults: () => [{ id: 'va', root: join(tmp, 'a') }], reveal: (p) => shown.push(p) }
+  assert.equal(showRunConflict(deps, { vaultId: 'va', name: '_PRESENTATIONS/talk-a/r1.json' }), true)
+  assert.equal(showRunConflict(deps, { vaultId: 'va', name: '_PRESENTATIONS/talk-a/r2.json' }), false, 'a readable Run is not offered')
+  assert.equal(showRunConflict(deps, { vaultId: 'va', name: '../../etc/hosts' }), false)
+  assert.equal(showRunConflict(deps, { vaultId: 'other', name: '_PRESENTATIONS/talk-a/r1.json' }), false)
+  assert.deepEqual(shown, [join(folder, 'r1.json')])
+  rmSync(tmp, { recursive: true, force: true })
 })
 
 check('collectSessions carries the sent set main computes (ticket 17, D1), and a failing one never blanks the list', () => {

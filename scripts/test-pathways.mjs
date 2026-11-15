@@ -343,3 +343,37 @@ console.log('pathways: manifest, resolution, and compiled injection checks passe
     console.log('PASS overlapping pathway create/membership edits both survive; closing-window broadcasts cannot fail a persisted mutation')
   } finally { rmSync(root, {recursive:true,force:true}) }
 }
+
+// 0.45, second Mac: the manifest is written atomically (a new file renamed over the old one, so a sync
+// tool or a crash never sees half a file), and a manifest holding Git conflict markers is refused with a
+// message that names it, before the generic JSON error, and is never written over.
+{
+  const root = mkdtempSync(join(tmpdir(), 'tw-pathways-atomic-'))
+  try {
+    const manifest = join(root, '_PRESENTATIONS', 'talk', 'manifest.json')
+    mkdirSync(dirname(manifest), { recursive: true })
+    writeFileSync(manifest, '{\n  "pathways": []\n}\n')
+    const before = statSync(manifest).ino
+    pathwayModule.writePathwayManifest(manifest, '{\n  "pathways": [{"id":"a","name":"A","slideIds":[]}]\n}\n')
+    assert.notEqual(statSync(manifest).ino, before, 'the manifest is replaced by a rename, not written in place')
+    assert.equal(pathwayModule.readPathwayManifest(root, 'talk').pathways[0].name, 'A')
+    const { readdirSync } = await import('node:fs')
+    assert.deepEqual(readdirSync(dirname(manifest)), ['manifest.json'], 'no temporary file is left beside it')
+    pathwayModule.writePathwayManifest(join(root, '_PRESENTATIONS', 'new-talk', 'manifest.json'), '{}\n')
+    assert.equal(readFileSync(join(root, '_PRESENTATIONS', 'new-talk', 'manifest.json'), 'utf8'), '{}\n', 'a first manifest is written into a new folder')
+
+    const conflicted = '{\n<<<<<<< HEAD\n  "pathways": [{"id":"a","name":"Mine","slideIds":[]}]\n=======\n  "pathways": [{"id":"a","name":"Theirs","slideIds":[]}]\n>>>>>>> origin/main\n}\n'
+    writeFileSync(manifest, conflicted)
+    let caught = null
+    try { pathwayModule.readPathwayManifest(root, 'talk') } catch (error) { caught = error }
+    assert.ok(caught, 'a conflicted manifest is not read as empty')
+    assert.equal(caught.gitConflict, true)
+    assert.equal(caught.file, manifest, 'the error carries the file to reveal')
+    assert.equal(caught.message, 'The Pathways file for this talk has a Git conflict from syncing (talk/manifest.json). Resolve it in Git, then try again.')
+    assert.throws(() => pathwayModule.readPathwayManifest(root, 'talk'), /Git conflict/)
+    // The summary the talk list reads shows no pathways for it rather than failing the list.
+    assert.deepEqual(pathwayModule.createPathwaySummaryReader().read(root, 'talk'), { count: 0, names: [] })
+    assert.equal(readFileSync(manifest, 'utf8'), conflicted, 'nothing was written over it')
+    console.log('PASS the Pathways manifest is written atomically; a Git conflict in it is named, never read as empty or written over')
+  } finally { rmSync(root, { recursive: true, force: true }) }
+}

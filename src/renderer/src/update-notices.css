@@ -25,3 +25,9 @@
 .pane--whats-new .tw-update-sub { color: var(--muted); font-size: 12px; margin-bottom: 12px; }
 .pane--whats-new dt { font-weight: 700; font-size: 13px; margin-top: 12px; }
 .pane--whats-new dd { margin: 2px 0 0; color: var(--ink); font-size: 13px; line-height: 1.45; }
+/* Updating in place (ADR-0044): the download's progress in the popover, and a failed update's mark. */
+.tw-update-progress { height: 6px; border-radius: 3px; background: var(--hover); overflow: hidden; margin: 8px 0 6px; }
+.tw-update-progress > span { display: block; height: 100%; background: var(--green); transition: width 200ms linear; }
+@media (prefers-reduced-motion: reduce) { .tw-update-progress > span { transition: none; } }
+.apu-update-mark.tw-update-mark--failed { color: var(--amber); }
+.apu-update-btn[disabled] { opacity: 0.55; cursor: not-allowed; }

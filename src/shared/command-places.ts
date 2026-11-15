@@ -137,6 +137,7 @@ export const COMMAND_PLACES: Readonly<Record<string, PlaceDeclaration>> = {
   'app.inspector-steps': NOT_BY_PLACE,
   'editor.protected-line-continue': NOT_BY_PLACE,
   'editor.object-edit': NOT_BY_PLACE,
+  'editor.object-delete': NOT_BY_PLACE,
   'editor.object-raw': NOT_BY_PLACE,
   'editor.object-finish': NOT_BY_PLACE,
   'editor.object-expand': NOT_BY_PLACE,

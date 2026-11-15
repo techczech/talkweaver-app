@@ -14,6 +14,8 @@ const source='---\noutline_version: 2\ntitle: Editor follow fixture\nauto_title_
 writeFileSync(join(talkDir,'outline-follow-outline.md'),source)
 writeFileSync(join(userData,'config.json'),JSON.stringify({vaultRoot:vault,editorViewMode:mode}))
 process.on('exit',()=>rmSync(scratch,{recursive:true,force:true}))
+// A run stopped by its time limit or by hand removes its scratch folder too.
+for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{rmSync(scratch,{recursive:true,force:true});process.exit(130)})
 let app
 const taskEnv={...process.env,TW_E2E:'1',TW_REC_TEST:'1'}
 delete taskEnv.ELECTRON_RUN_AS_NODE

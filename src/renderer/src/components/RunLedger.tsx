@@ -4,7 +4,7 @@
 // reactions. Read and write paths are History's, unchanged: the same window.tw.history / window.tw.recording calls,
 // the same Run files. Nothing here writes a Run that History did not.
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, Clock, Copy, ExternalLink, FileText, HardDrive, Image as ImageIcon, Link2, ListPlus, Mic, Pencil, Play, Timer, Type, VolumeX, Zap } from 'lucide-react'
+import { Check, Clock, Copy, ExternalLink, FileText, HardDrive, Image as ImageIcon, Laptop, Link2, ListPlus, Mic, Pencil, Play, Timer, Type, VolumeX, Zap } from 'lucide-react'
 import type { HistoryLiveCheck, RecordingKind, RecordingSession, RunInstantSlide } from '../../../preload/index'
 import { recordingRunHome, recordingRunKey } from '../../../shared/recording-run-home'
 import { runAudioSummary } from '../../../shared/run-audio'
@@ -14,6 +14,7 @@ import type { SessionSource } from '../../../shared/sessions-list'
 import { RunQuestions, RunReactions, type FeedbackSlide } from './RunLedgerFeedback'
 import { RunBoardBlock, RunPollsBlock, RunShareDialog } from './RunLedgerBoard'
 import { StateBadge } from './StateBadge'
+import { studioAudioLabel } from '../../../shared/recording-place'
 import { clearUploadFailure, showUploadFailure } from '../lib/upload-failure-toast'
 import '../run-ledger.css'
 
@@ -445,7 +446,10 @@ export function RunLedger({ source, version, onOpenStudio, onOpenNotes, onChange
               <span className="rl-ctl">
                 <button type="button" className="tw-btn tw-btn--sm" data-run-open-studio disabled={!inStudio} title={studioWhy('Studio plays')} onClick={() => onOpenStudio(run)}><Play aria-hidden />Open in Studio</button>
                 <button type="button" className="tw-btn tw-btn--sm" data-run-open-notes disabled={!inStudio} title={studioWhy('Manage notes')} onClick={() => onOpenNotes(run)}><FileText aria-hidden />Manage notes</button>
-                {run.audio?.uploaded ? <StateBadge state="published" small><Check aria-hidden />Uploaded</StateBadge> : (
+                {run.mediaPlace && run.mediaPlace.state !== 'here' ? (
+                  // The recording's files are not on this Mac (0.45): say where it is, never "On this Mac".
+                  <span title={studioAudioLabel(run.mediaPlace, !!run.audio?.uploaded).title} data-run-media-place={run.mediaPlace.state}><StateBadge state="notset" small><Laptop aria-hidden />{run.mediaPlace.state === 'elsewhere' ? `On ${run.mediaPlace.computer}` : 'Not on this Mac'}</StateBadge></span>
+                ) : run.audio?.uploaded ? <StateBadge state="published" small><Check aria-hidden />Uploaded</StateBadge> : (
                   <>
                     <StateBadge state="planned" small><HardDrive aria-hidden />On this Mac</StateBadge>
                     <button type="button" className="tw-btn tw-btn--sm" data-run-upload title="Upload the local audio (U)" disabled={uploadBusy} onClick={() => void upload()}>{uploadBusy ? 'Uploading…' : 'Upload'}</button>

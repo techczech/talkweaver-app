@@ -160,7 +160,8 @@ export type EditOp =
   /** Use take `run` for the slide that starts at slide change `change`; `run: null` goes back to the first take. */
   | { kind: 'take'; change: number; run: string | null }
 
-export type EditsProblem = { kind: 'newer' | 'corrupt' | 'stale'; message: string }
+/** `git-conflict` (0.45): the file holds Git conflict markers; only the store reports it, before parsing. */
+export type EditsProblem = { kind: 'newer' | 'corrupt' | 'stale' | 'git-conflict'; message: string }
 /** What a sidecar is checked against when read. */
 export type EditsContext = {
   /** This recording's fingerprint (recordingFingerprint of the Run). */

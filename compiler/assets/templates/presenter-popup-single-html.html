@@ -15663,7 +15663,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
   }
 
   function fragments(slide = currentSlide()) {
-    return Array.from(slide.querySelectorAll("[data-fragment]"));
+    return ownedStepElements(slide, "[data-fragment]");
   }
 
   function ensureGalleryNav(gallery, cardCount, interactive) {
@@ -15753,11 +15753,11 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     else openGalleryGrid(gallery);
   }
   function activeGallery() {
-    return currentSlide()?.querySelector(".card-gallery[data-exclusive]") || null;
+    return galleryIn(currentSlide());
   }
 
   function applyExclusiveCards(slide, revealValue, interactive = false) {
-    slide.querySelectorAll(".card-gallery[data-exclusive]").forEach((gallery) => {
+    ownedStepElements(slide, ".card-gallery[data-exclusive]").forEach((gallery) => {
       const cards = Array.from(gallery.querySelectorAll(":scope > .card"));
       if (cards.length === 0) return;
       const visibleIndex = Math.max(0, Math.min(cards.length - 1, revealValue));
@@ -15779,7 +15779,9 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
   // holds a hidden placeholder in its place — resolve it back to the element so indices hold.
   function slideImages(slide = currentSlide()) {
     if (!slide) return [];
-    const images = Array.from(slide.querySelectorAll("figure.slide-figure img, figure.slide-figure video, figure.slide-figure .lightbox-video-placeholder")).map((node) => {
+    // The slide's own pictures only (runtime/step-ownership.js): the pictures in its contents strip's
+    // miniatures are other slides', and an image sequence must never walk them.
+    const images = ownedStepElements(slide, "figure.slide-figure img, figure.slide-figure video, figure.slide-figure .lightbox-video-placeholder").map((node) => {
       const video = node.tagName === "VIDEO" ? node : node.classList.contains("lightbox-video-placeholder") ? lightboxVideo?.el : null;
       if (node.tagName !== "IMG" && !video) return null;
       const figure = node.closest("figure.slide-figure");
@@ -15796,7 +15798,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     // Image-grid browsing (2026-06-12): grid cells render bare <img>s in .ig-media, so the
     // gallery never saw them — every cell now joins the lightbox set; the cell's note title
     // (or its quiet text) is the caption.
-    const gridImages = Array.from(slide.querySelectorAll(".image-grid .ig-media img")).map((img) => ({
+    const gridImages = ownedStepElements(slide, ".image-grid .ig-media img").map((img) => ({
       el: img,
       src: img.currentSrc || img.src || img.getAttribute("src") || "",
       alt: img.getAttribute("alt") || "",
@@ -15807,7 +15809,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     images.push(...gridImages);
     // QR codes are zoomables too (2026-06-10): Z cycles them with the images — no more
     // mouse-only click-to-fullscreen when presenting. The SVG becomes a data URL entry.
-    const qrs = Array.from(slide.querySelectorAll(".slide-qr .qr-code svg")).map((svg) => {
+    const qrs = ownedStepElements(slide, ".slide-qr .qr-code svg").map((svg) => {
       try {
         return {
           el: svg,
@@ -16145,11 +16147,24 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     "p.content-p"   // G6: card comments are `.content-p card-comment` — match the universal class
   ].join(",");
 
+  // A preview clone (previewSlide) is detached, and a detached element has no computed style: a unit
+  // the look hides with display:none (the 0.44 look's loop arcs) would count there and not on the
+  // projector, and every later step would name a different unit. The clone's elements are linked
+  // to the deck's own elements they were copied from, and their display is read there.
+  const previewCloneSource = new WeakMap();
+  function linkPreviewClone(source, clone) {
+    const from = source.querySelectorAll("*");
+    const to = clone.querySelectorAll("*");
+    if (from.length !== to.length) return;
+    for (let i = 0; i < to.length; i++) previewCloneSource.set(to[i], from[i]);
+  }
   function isVisibleUnit(el) {
     if (!el) return false;
     if (el.classList.contains("hidden-fragment")) return false;
     // A unit inside a hidden (non-active) gallery card must not count.
     if (el.closest(".hidden-fragment")) return false;
+    // Whether the unit is the slide's own at all (not in a miniature of its contents strip or in a
+    // card table) is decided before this, by the search that found it: ownedStepElements.
     // Structural visibility, NOT layout (offsetParent): the presenter's live deck is display:none
     // and preview clones are detached, so offsetParent is null there even for "visible" units.
     // Walk from the unit up to its .slide; a non-active gallery card sets display:none on itself,
@@ -16157,7 +16172,8 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     // still returns the descendant's OWN display, so this reads each element's own value safely.
     let node = el;
     while (node && !node.classList?.contains("slide")) {
-      if (node.nodeType === 1 && getComputedStyle(node).display === "none") return false;
+      const styled = node.isConnected ? node : (previewCloneSource.get(node) || node);
+      if (styled.nodeType === 1 && getComputedStyle(styled).display === "none") return false;
       node = node.parentElement;
     }
     return true;
@@ -16166,8 +16182,10 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
   // The exclusive gallery on a (live or cloned) slide, if any. Galleries compose with modes by
   // stepping INSIDE the active card (gallery subslides work like slides): → walks the active
   // card's units, then advances to the next card at its step 0, then advances the slide.
+  // The slide's OWN gallery (runtime/step-ownership.js): a carousel drawn as a miniature in the
+  // slide's contents strip is not one, and must not take over the slide's steps.
   function galleryIn(root) {
-    return root ? root.querySelector(".card-gallery[data-exclusive]") : null;
+    return root ? ownedStepElement(root, ".card-gallery[data-exclusive]") : null;
   }
 
   // Collect ONE card's content units in DOM order. A title card is a title — always fully
@@ -16175,8 +16193,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
   // feature-list items, quotes and figures inside the card are the steppable units.
   function cardUnits(card) {
     if (!card || card.classList.contains("card-title")) return [];
-    const raw = Array.from(card.querySelectorAll(CARD_UNIT_SELECTOR));
-    return raw.filter((el, i) => isVisibleUnit(el) && raw.indexOf(el) === i);
+    return ownedStepElements(card, CARD_UNIT_SELECTOR).filter((el) => isVisibleUnit(el));
   }
 
   // Collect a NON-gallery slide's content units in DOM order. Works on the live slide AND on a
@@ -16190,8 +16207,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
       const active = gallery.querySelector(":scope > .card.active-card") || gallery.querySelector(":scope > .card");
       return cardUnits(active);
     }
-    const raw = Array.from(root.querySelectorAll(MODE_SELECTOR));
-    return raw.filter((el, i) => isVisibleUnit(el) && raw.indexOf(el) === i);
+    return ownedStepElements(root, MODE_SELECTOR).filter((el) => isVisibleUnit(el));
   }
 
   function liveModeElements() {
@@ -16231,7 +16247,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     const card = gallery ? (gallery.querySelector(":scope > .card.active-card") || gallery.querySelector(":scope > .card")) : null;
     const scope = gallery ? card : root;
     const blocks = !gallery ? MODE_SELECTOR : (card && !card.classList.contains("card-title") ? CARD_UNIT_SELECTOR : "");
-    const els = emphasisStepElements(scope, blocks, isVisibleUnit);
+    const els = emphasisStepElements(scope, blocks, (el) => ownsStepElement(scope, el) && isVisibleUnit(el));
     const units = emphasisStepUnits(els);
     return {
       flat: true,
@@ -16262,11 +16278,11 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
   function rawStepTop(scope, selector, kind, emphasis) {
     if (!scope) return 0;
     if (!emphasis) {
-      const raw = Array.from(scope.querySelectorAll(selector));
+      const raw = selector ? ownedStepElements(scope, selector) : [];
       return kind ? maxStepFor(raw.length, collapsesFullStep(raw)) : 0;
     }
     // A backwards arrival never starts a file: where the last step is a file's, land one past it.
-    return mediaStepDone(emphasisStepUnits(emphasisStepElements(scope, selector, null)), kind);
+    return mediaStepDone(emphasisStepUnits(emphasisStepElements(scope, selector, (el) => ownsStepElement(scope, el))), kind);
   }
   // What the venue screen is sent for the mode on this slide. It takes { kind, step } and nothing
   // else, so emphasis and file steps with no mode on go out in the form emphasis-steps.js documents.
@@ -16429,7 +16445,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
   // scrolled back to), and the movement is the least that achieves it. Mode off: back to the CSS
   // bottom anchor. Print resets the box (beforeprint) and the step position returns afterwards.
   function anchorSimScroll(slide, units, step) {
-    const scroller = slide ? slide.querySelector(".sim:not(.sim-static) .sim-scroll") : null;
+    const scroller = slide ? ownedStepElement(slide, ".sim:not(.sim-static) .sim-scroll") : null;
     const thread = scroller?.firstElementChild;
     if (!scroller || !thread) return;
     const simUnits = units.filter((el) => el.matches(".sim .sim-step"));
@@ -16837,7 +16853,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
   }
   function applyMindmapRevealForSlide(slide, kind, step) {
     if (!slide) return;
-    const host = slide.querySelector(".mindmap-mm");
+    const host = ownedStepElement(slide, ".mindmap-mm");
     // A map drawn ahead of time is for paper only; it is drawn afresh when its slide is first shown.
     if (!host || !host.__mmInstance || !host.__mmFullRoot || host.__mmAhead) return;
     const total = (host.__mmFullRoot.children || []).length;
@@ -17115,7 +17131,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
   }
   function applySimScroll() {
     const slide = simShownSlide();
-    const scroller = slide?.querySelector(".sim:not(.sim-static) .sim-scroll");
+    const scroller = slide ? ownedStepElement(slide, ".sim:not(.sim-static) .sim-scroll") : null;
     if (!scroller) return;
     const step = Math.max(0, Number(state.mode?.step) || 0);
     const own = state.sim && state.sim.slideId === slide.dataset.id && state.sim.scroll != null && state.sim.scrollStep === step ? state.sim.scroll : null;
@@ -17173,7 +17189,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     return state.simType ? { ...state.simType, stepped: Boolean(state.mode?.kind) } : null;
   }
   function simTypeFor(slide, from, to) {
-    if (!slide || !slide.dataset.id || !slide.querySelector(".sim:not(.sim-static)")) return null;
+    if (!slide || !slide.dataset.id || !ownedStepElement(slide, ".sim:not(.sim-static)")) return null;
     return { slideId: slide.dataset.id, from, to, at: Date.now(), done: false };
   }
   function syncSimTyping() {
@@ -17976,7 +17992,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
   function panePageSource() {
     const slide = currentSlide();
     if (!slide) return null;
-    const gallery = slide.querySelector(".card-gallery[data-exclusive]");
+    const gallery = galleryIn(slide);
     let root = slide;
     if (gallery) {
       const cards = Array.from(gallery.querySelectorAll(":scope > .card"));
@@ -18801,7 +18817,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     const slide = currentSlide();
     if (!slide) return null;
     let root = slide;
-    const gallery = slide.querySelector(".card-gallery[data-exclusive]");
+    const gallery = galleryIn(slide);
     if (gallery) {
       const cards = Array.from(gallery.querySelectorAll(":scope > .card"));
       root = cards[Math.max(0, Math.min(cards.length - 1, state.reveal))] || slide;
@@ -18882,7 +18898,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
       // applyExclusiveCards computes it. Non-gallery slides keep searching the whole slide (there
       // the slide IS the embed). embedIndex is the sim's position among ALL the slide's embed
       // frames so audience mirroring still targets the right frame.
-      const gallery = slide.querySelector(".card-gallery[data-exclusive]");
+      const gallery = galleryIn(slide);
       let embedRoot = slide;
       if (gallery) {
         const cards = Array.from(gallery.querySelectorAll(":scope > .card"));
@@ -18972,6 +18988,9 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     if (flatStepSlide(slide)) stampEmphasisPlainWeight(slide, getComputedStyle);
     const clone = slide.cloneNode(true);
     if (!clone) return;
+    // Its steps are counted as the projector counts them (isVisibleUnit): linked before anything
+    // is taken out of the clone.
+    if (modeState && (modeState.kind || flatStepSlide(slide))) linkPreviewClone(slide, clone);
     clone.querySelectorAll(".lightbox-video-placeholder").forEach(p => { if (lightboxVideo?.el) p.replaceWith(lightboxVideo.el.cloneNode(true)); });
     clone.querySelectorAll("video").forEach(v => {
       delete v.dataset.twPlaybackWatched;
@@ -19010,7 +19029,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
       node.classList.remove("grid-view");
       node.querySelectorAll(".card.grid-current").forEach((card) => card.classList.remove("grid-current"));
     });
-    clone.querySelectorAll("[data-fragment]").forEach((node, index) => {
+    fragments(clone).forEach((node, index) => {
       node.classList.toggle("hidden-fragment", index >= revealValue);
     });
     // 999 is the normal-slide "fully revealed" sentinel. Folded carousel Next/Then panes pass

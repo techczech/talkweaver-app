@@ -35,6 +35,7 @@ import { invertedEffects, isolateHistory, redo, undo } from '@codemirror/command
 import { minimalChange } from '../lib/minimalChange'
 import { savedTextChanges } from '../lib/savedTextChanges'
 import { saveFollowsUndoOrRedo } from './saveTidyUp'
+import { exactTextWrite } from './objectBlocks/effects'
 
 /** Marks the transaction that adopts the text a save wrote: the app's change, not the user's.
  *  extensions/quoteLinkForm.ts reads it, to keep the ids a save stamped out of what it takes as typed. */
@@ -56,7 +57,7 @@ export function adoptionTransaction(state: EditorState, source: string, saved: s
   // One small change per touched line; one replacement when the difference reads otherwise. Either is
   // one undo step whose undo gives `source` back exactly.
   const changes = savedTextChanges(source, saved) ?? [minimalChange(source, saved)]
-  return { changes, effects: saveStep.of(null), annotations: [savedTextAdopted.of(true), isolateHistory.of('full')] }
+  return { changes, effects: saveStep.of(null), annotations: [savedTextAdopted.of(true), isolateHistory.of('full'), exactTextWrite.of(true)] }
 }
 
 /** Adopt the text a save wrote (`adoptionTransaction`). The caret is mapped through the change and

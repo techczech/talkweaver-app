@@ -186,20 +186,20 @@ assert.ok(
 
 const protectedHeadingLevels = ['##', '###', '####']
 
-// Rule 1: Enter at the start or middle of any slide heading never splits the heading.
+// Rule 1: Enter at the start or middle of any slide heading never splits the heading. In the middle
+// it lands on the body line; at column 0 (before the marks) it opens a new line above the heading,
+// the heading and its Trigger line untouched (the owner's request, 15 Nov 2026).
 for (const hashes of protectedHeadingLevels) {
   const heading = `${hashes} Protected heading`
-  for (const column of [0, Math.min(9, heading.length)]) {
-    const doc = `${heading}\n{id=heading-${hashes.length}}{sidebar}\n\nBody`
-    const result = pressEditorEnter(doc, heading, column)
-    assert.equal(result.handledBy, 'title-continue')
-    assert.equal(result.state.doc.toString(), doc)
-    assertCaretAtLineStart(
-      result.state,
-      3,
-      `${hashes} heading Enter at column ${column} lands on the existing body line`
-    )
-  }
+  const doc = `${heading}\n{id=heading-${hashes.length}}{sidebar}\n\nBody`
+  const middle = pressEditorEnter(doc, heading, Math.min(9, heading.length))
+  assert.equal(middle.handledBy, 'title-continue')
+  assert.equal(middle.state.doc.toString(), doc)
+  assertCaretAtLineStart(middle.state, 3, `${hashes} heading Enter in the middle lands on the existing body line`)
+  const start = pressEditorEnter(doc, heading, 0)
+  assert.equal(start.handledBy, 'title-continue')
+  assert.equal(start.state.doc.toString(), `\n${doc}`)
+  assertCaretAtLineStart(start.state, 1, `${hashes} heading Enter at column 0 puts the caret on the new line above`)
 }
 
 // A newly typed slide heading is structural before the id-stamping pass adds its Trigger line.
@@ -852,9 +852,9 @@ for (const hashes of protectedHeadingLevels) {
     for (const call of [
       /insertBlockAfterLine\(view, at, '\\n' \+ md \+ '\\n'/, // video and GIF, pasted or dropped
       /insertBlockAfterLine\(viewRef\.current, pos, /, // pasted picture
-      /insertBlockAfterLine\(current, dropPos, /, // dropped SVG
-      /insertBlockAfterLine\(viewRef\.current, dropPos, /, // dropped picture
-      /insertAtCaretLine\(view, text\)/, // component or slide at the caret
+      /insertBlockAfterLine\(current, insertionPlace\(current\.state, dropPos\), /, // dropped SVG (after an object it lands on)
+      /insertBlockAfterLine\(viewRef\.current, insertionPlace\(viewRef\.current\.state, dropPos\), /, // dropped picture
+      /insertAtCaretLine\(view, text, insertionCaret\(view\.state\)\)/, // component or slide at the caret (after a selected object)
       /blockAnchorAfterLine\(view\.state\.doc\.toString\(\), head\)/, // object from the Insert menu
       /pasteBlockAtSelection\(v, '```svg/, /pasteBlockAtSelection\(v, serialiseTable/
     ]) assert.match(source, call, `Editor.tsx calls ${call}`)

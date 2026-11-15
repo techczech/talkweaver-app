@@ -1777,9 +1777,11 @@ html, body, #root {
   flex: 0 1 auto; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 4px;
   padding: 0 6px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap;
 }
-/* A card's header actions (Open, Reveal, Copy markup, Replace file, Remove): on hover and when selected. */
+/* An object's header actions, on hover and when selected: Delete on every object; a card also has
+   Open, Reveal, Copy markup and Replace file. */
 .tw-obj-actions { display: none; flex: 0 0 auto; gap: 2px; margin-left: auto; }
-.tw-obj-card:hover .tw-obj-actions, .tw-obj-card.tw-obj-selected .tw-obj-actions { display: inline-flex; }
+.tw-obj:hover .tw-obj-actions, .tw-obj.tw-obj-selected .tw-obj-actions { display: inline-flex; }
+.tw-obj-slot + .tw-obj-actions { margin-left: 0; }
 .tw-obj-action {
   border: 0; border-radius: 3px; padding: 1px 5px; background: transparent; color: var(--faint);
   font: inherit; cursor: pointer;

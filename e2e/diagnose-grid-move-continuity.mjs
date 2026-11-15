@@ -9,6 +9,9 @@ const evidenceDir=process.env.TW_GRID_CONTINUITY_EVIDENCE_DIR ? resolve(process.
 if(evidenceDir) {assert.ok(evidenceDir.startsWith(join(repo,'research')+'/'));mkdirSync(evidenceDir,{recursive:true})}
 mkdirSync(new URL('../research/', import.meta.url), { recursive: true })
 const scratch = mkdtempSync(join(repo, 'research/.test-grid-continuity-'))
+// A run stopped by its time limit or by hand removes its scratch folder too.
+process.on('exit',()=>rmSync(scratch,{recursive:true,force:true}))
+for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{rmSync(scratch,{recursive:true,force:true});process.exit(130)})
 const vault = join(scratch,'vault'), ud=join(scratch,'userData'), deck=join(vault,'continuity')
 mkdirSync(deck,{recursive:true}); mkdirSync(ud)
 const source = '---\noutline_version: 2\ntitle: Grid continuity fixture\n---\n\n' + Array.from({length:4},(_,s)=>

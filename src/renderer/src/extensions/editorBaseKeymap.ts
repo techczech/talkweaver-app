@@ -4,10 +4,29 @@
 // view's guard (plainView/guardKeys.ts) is built from it, so a key added here is guarded without
 // being named there.
 import type { KeyBinding } from '@codemirror/view'
-import { defaultKeymap, historyKeymap, redo, redoSelection, undo, undoSelection } from '@codemirror/commands'
+import {
+  copyLineDown,
+  copyLineUp,
+  defaultKeymap,
+  deleteLine,
+  historyKeymap,
+  indentLess,
+  indentMore,
+  moveLineDown,
+  moveLineUp,
+  redo,
+  redoSelection,
+  toggleBlockComment,
+  toggleComment,
+  toggleLineComment,
+  undo,
+  undoSelection
+} from '@codemirror/commands'
+import type { Command } from '@codemirror/view'
 import { foldKeymap } from '@codemirror/language'
 import { searchKeymap } from '@codemirror/search'
 import { redoWithSave, undoWithSave } from './savedTextAdoption'
+import { runLineCommand } from './objectBlocks/field'
 
 /** Undo and redo: part of the base keymap, and the part the Plain guard leaves alone. CodeMirror's
  *  history keys, with ⌘Z and the redo keys (⇧⌘Z; Ctrl-Y elsewhere) running the undo and redo that take
@@ -20,4 +39,25 @@ export const editorHistoryKeymap: readonly KeyBinding[] = historyKeymap
     binding.run === undo ? { ...binding, run: undoWithSave } : binding.run === redo ? { ...binding, run: redoWithSave } : binding
   )
 
-export const editorBaseKeymap: readonly KeyBinding[] = [...defaultKeymap, ...editorHistoryKeymap, ...foldKeymap, ...searchKeymap]
+/** CodeMirror's commands that work on "the caret's line": under an object they act on a new line below
+ *  it, and on a selected object they do nothing (runLineCommand, objectBlocks/field.ts). */
+const LINE_COMMANDS: ReadonlySet<Command> = new Set([
+  deleteLine, moveLineUp, moveLineDown, copyLineUp, copyLineDown, indentMore, indentLess,
+  toggleComment, toggleLineComment, toggleBlockComment
+])
+/** The command a line-command binding wraps (the Plain view's guard tests that command on the new line). */
+export const lineCommandOf = new WeakMap<Command, Command>()
+const lineCommand = (run: Command | undefined): Command | undefined => {
+  if (!run || !LINE_COMMANDS.has(run)) return run
+  const wrapped: Command = (view) => runLineCommand(view, run)
+  lineCommandOf.set(wrapped, run)
+  return wrapped
+}
+
+const editorDefaultKeymap: readonly KeyBinding[] = defaultKeymap.map((binding) =>
+  LINE_COMMANDS.has(binding.run as Command) || LINE_COMMANDS.has(binding.shift as Command)
+    ? { ...binding, run: lineCommand(binding.run), shift: lineCommand(binding.shift) }
+    : binding
+)
+
+export const editorBaseKeymap: readonly KeyBinding[] = [...editorDefaultKeymap, ...editorHistoryKeymap, ...foldKeymap, ...searchKeymap]

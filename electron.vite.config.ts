@@ -33,7 +33,7 @@ const BUNDLED = ['@app-patterns/commands', '@app-patterns/settings', '@app-patte
 
 export default defineConfig({
   main: {
-    define: { __TW_SECURITY_TEST__: 'false' },
+    define: { __TW_SECURITY_TEST__: 'false', __TW_UPDATE_TEST__: 'false' },
     plugins: [externalizeDepsPlugin({ exclude: BUNDLED })],
     build: {
       rollupOptions: {

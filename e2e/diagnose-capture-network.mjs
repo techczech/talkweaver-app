@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { createHash } from 'node:crypto'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { captureAttack } from './lib/capture-network-attack.mjs'
+import { testProfileEnv } from './lib/test-profile.mjs'
 const scratch=mkdtempSync(join(tmpdir(),'tw-capture-network-'))
 const udp=createSocket('udp4');let udpHits=0,tcpHits=0
 udp.on('message',()=>udpHits++)
@@ -48,7 +49,7 @@ try {
  return {pictures,texts,policy:w?.getWebRTCIPHandlingPolicy()}
  }});
  `},outfile:entry,bundle:true,platform:'node',format:'cjs',external:['electron','sharp'],logLevel:'silent'})
- const env={...process.env,TW_E2E:'1',TW_E2E_LIVE_PAGE_ALLOW:`127.0.0.1:${port}`};delete env.ELECTRON_RUN_AS_NODE
+ const env={...process.env,TW_E2E:'1',...testProfileEnv(join(scratch,'profile')),TW_E2E_LIVE_PAGE_ALLOW:`127.0.0.1:${port}`};delete env.ELECTRON_RUN_AS_NODE
  app=await electron.launch({args:[entry,`--user-data-dir=${join(scratch,'profile')}`],env})
  const diagnostics=[];app.process().stderr.on('data',b=>{diagnostics.push(b.toString());if(diagnostics.length>30)diagnostics.shift()})
  const run=async(kind,arg)=>{

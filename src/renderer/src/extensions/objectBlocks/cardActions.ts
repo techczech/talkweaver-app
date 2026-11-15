@@ -21,6 +21,7 @@ import { captureMarkupLine, embedLinePageUrl } from '../../../../../compiler/scr
 import { notify } from '../../lib/notify.ts'
 import type { ObjectBlock } from './detect.ts'
 import { objectStatusField } from './status.ts'
+import { exactTextWrite } from './effects.ts'
 
 export type CardActionHost = {
   openPath?: (path: string) => Promise<boolean>
@@ -70,7 +71,7 @@ export const CARD_ACTION_LABELS: Readonly<Record<CardAction, { glyph: string; ti
   'place-earlier': { glyph: '⤓', title: 'Place earlier views on this slide' },
   copy: { glyph: '⧉', title: 'Copy markup' },
   replace: { glyph: '⇄', title: 'Replace file…' },
-  remove: { glyph: '×', title: 'Remove from slide (Undo restores it)' }
+  remove: { glyph: 'Delete', title: 'Delete this object (Undo restores it)' }
 }
 
 /** The web page address a card's page line embeds (as saved views key it), or null. */
@@ -132,7 +133,7 @@ function write(view: EditorView, change: { from: number; to: number; insert: str
     changes: change,
     selection: { anchor: change.from },
     userEvent,
-    annotations: isolateHistory.of('full'),
+    annotations: [isolateHistory.of('full'), exactTextWrite.of(true)],
     scrollIntoView: true
   })
 }

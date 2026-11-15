@@ -4,8 +4,10 @@ import { writeSync } from 'node:fs'
 import { forbiddenDebuggingSwitch } from './security-switches'
 
 declare const __TW_SECURITY_TEST__: boolean
+declare const __TW_UPDATE_TEST__: boolean
 if (__TW_SECURITY_TEST__) {
-  app.setName('TalkWeaver Security Test')
+  // The update-test flavour (ADR-0044) is a security-test build with its own name, so its own user-data folder.
+  app.setName(__TW_UPDATE_TEST__ ? 'TalkWeaver Update Test' : 'TalkWeaver Security Test')
   // Packaging checks this literal so production output cannot masquerade as a test build.
   console.error('UNPUBLISHED_SECURITY_TEST_FLAVOUR')
 } else if (app.isPackaged) {

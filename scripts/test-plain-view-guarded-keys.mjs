@@ -671,6 +671,13 @@ try {
             if ((await shownText()).includes('{') && !(icon && onTitle)) broke.push(`${label}: hidden text shows: ${JSON.stringify(await shownText())}`)
             const zones = await ev(() => window.zones())
             if (zones.length && !(plain === d && plainHead === at)) broke.push(`${label}: the caret is on protected text (${zones.map(([k]) => k).join(', ')}) at ${plainHead}`)
+            // At the start of a slide title's text (levels 2 to 6) Enter opens a new line above the title,
+            // the caret on it (owner, 15 Nov 2026): in Plain a click there lands after the hidden marks.
+            // (A tab after the marks with nothing hidden is not a title to the app's Enter: the ordinary Enter, as before.)
+            if (level >= 2 && where === 'the start of the text' && !(sep === '\t' && kind === 'nothing hidden')) {
+              if (!(plain === `${lead}\n${d.slice(lead.length)}` && plainHead === lead.length)) broke.push(`${label}: Plain ${JSON.stringify(plain)} at ${plainHead}, wanted a new line above the title with the caret on it`)
+              continue
+            }
             // A title with anything hidden, at every level: it is not split, and the caret is on the body.
             if (kind !== 'nothing hidden' && !(plain === d && plainHead === d.indexOf('Body'))) broke.push(`${label}: Plain ${JSON.stringify(plain)} at ${plainHead}, wanted the caret on the body and no change`)
             // Where the Markdown tab's Enter exposes nothing, Plain's Enter is the same Enter.
@@ -690,7 +697,8 @@ try {
         assert.deepEqual(broke, [])
         assert.equal(cases, 90)
         // (With a tab the Markdown tab's own title rule does not apply, so fewer of its Enters expose nothing.)
-        if (sep === ' ') assert.ok(compared >= 60, `${compared} of them are the Markdown tab's Enter`)
+        // (Fewer since 15 Nov 2026: at the start of a slide title's text Plain opens a line above, as the Markdown tab does only at column 0.)
+        if (sep === ' ') assert.ok(compared >= 45, `${compared} of them are the Markdown tab's Enter`)
         else assert.ok(compared >= 18, `${compared} of them are the Markdown tab's Enter`)
       })
     }

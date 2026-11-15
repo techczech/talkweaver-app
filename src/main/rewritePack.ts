@@ -3,6 +3,9 @@ import { randomUUID } from 'crypto'
 import { basename, dirname, join } from 'path'
 import { isDeepStrictEqual } from 'util'
 import { formatTimecode, type TalkTextModel } from './talkText.ts'
+import { hasGitConflictMarkers } from './conflict-copies.mjs'
+import { GitConflictError, notesGitConflict, notesNotSavedUnreadable } from '../shared/git-conflict.ts'
+import { jsonObject, refuseUnreadableReplace } from './replace-guard.ts'
 
 export function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'section'
@@ -240,15 +243,28 @@ function writeFileAtomic(filePath: string, contents: string, options: AtomicWrit
   }
 }
 
-function writeApprovalStore(filePath: string, contents: string, options: AtomicWriteOptions): void {
+const APPROVAL_WORDS = {
+  conflict: (file: string) => notesGitConflict(basename(file)),
+  unreadable: (file: string) => notesNotSavedUnreadable(basename(file)),
+}
+
+// A store that is there but cannot be read as one (a Git conflict from syncing, broken JSON, another shape)
+// is never replaced from what a caller holds (replace-guard.ts, 0.45): checked first, and again as the last
+// step before the rename.
+function writeApprovalStore(filePath: string, contents: string, options: AtomicWriteOptions, isStore: (value: unknown) => boolean): void {
+  const readable = (text: string): boolean => isStore(jsonObject(text))
+  refuseUnreadableReplace(filePath, readable, APPROVAL_WORDS)
   const prior = readOptionalFile(filePath)
   if (prior !== null) writeFileAtomic(`${filePath}.bak`, prior)
-  writeFileAtomic(filePath, contents, options)
+  writeFileAtomic(filePath, contents, { beforeCommit: () => { options.beforeCommit?.(); refuseUnreadableReplace(filePath, readable, APPROVAL_WORDS) } })
 }
 
 export function readNotesStore(filePath: string): NotesStore {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(filePath, 'utf8'))
+    const text = readFileSync(filePath, 'utf8')
+    // Two Macs approved parts and Git left both versions: say so, before the generic JSON error (0.45).
+    if (hasGitConflictMarkers(text)) throw new GitConflictError(notesGitConflict(basename(filePath)), filePath)
+    const parsed: unknown = JSON.parse(text)
     if (!isNotesStore(parsed)) throw new Error('approval-store-schema-invalid')
     return parsed
   } catch (cause) {
@@ -259,7 +275,7 @@ export function readNotesStore(filePath: string): NotesStore {
 
 export function writeNotesStore(filePath: string, store: NotesStore, options: AtomicWriteOptions = {}): void {
   if (!isNotesStore(store)) throw new Error('approval-store-schema-invalid')
-  writeApprovalStore(filePath, JSON.stringify(store, null, 2), options)
+  writeApprovalStore(filePath, JSON.stringify(store, null, 2), options, isNotesStore)
 }
 
 export function approvePart(store: NotesStore, part: NotesPart): NotesStore {
@@ -348,7 +364,7 @@ export function readCleanedStore(filePath: string): CleanedStore {
 
 export function writeCleanedStore(filePath: string, store: CleanedStore, options: AtomicWriteOptions = {}): void {
   if (!isCleanedStore(store)) throw new Error('approval-store-schema-invalid')
-  writeApprovalStore(filePath, JSON.stringify(store, null, 2), options)
+  writeApprovalStore(filePath, JSON.stringify(store, null, 2), options, isCleanedStore)
 }
 
 export function approveCleaned(store: CleanedStore, slide: CleanedSlide): CleanedStore {

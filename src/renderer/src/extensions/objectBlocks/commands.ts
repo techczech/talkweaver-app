@@ -7,7 +7,7 @@ import { readOutlineObjectRegions } from '../../../../shared/objects/outline-obj
 import { planNotesInsert, slideAround } from '../../../../shared/objects/notes-planner.ts'
 import { notify } from '../../lib/notify.ts'
 import { objectBlocksIn } from './field.ts'
-import { setOpenObjectBlock } from './effects.ts'
+import { exactTextWrite, setOpenObjectBlock } from './effects.ts'
 import type { ObjectBlock } from './detect.ts'
 import { cardStatusRefs, objectStatusField, objectStatusSource, setObjectStatuses, type CardFileStatus } from './status.ts'
 
@@ -67,7 +67,7 @@ export function deleteCommentAtCaret(view: EditorView): boolean {
     to = nextLine < regions.lineStarts.length - 1 ? regions.lineStarts[nextLine] : text.length
     if (to === text.length && from > 0) from -= 1
   }
-  view.dispatch({ changes: { from, to }, selection: { anchor: from }, userEvent: 'delete.comment', scrollIntoView: true })
+  view.dispatch({ changes: { from, to }, selection: { anchor: from }, userEvent: 'delete.comment', annotations: exactTextWrite.of(true), scrollIntoView: true })
   notify('Comment deleted. Undo restores it.', 'info', 'delete-comment')
   return true
 }

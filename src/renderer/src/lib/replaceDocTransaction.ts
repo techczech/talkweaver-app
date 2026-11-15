@@ -7,9 +7,13 @@
 import { isolateHistory } from '@codemirror/commands'
 import type { TransactionSpec } from '@codemirror/state'
 import { applyMinimalChange } from './minimalChange.ts'
+import { exactTextWrite } from '../extensions/objectBlocks/effects.ts'
 
 export function replaceDocTransaction(current: string, next: string, opts?: { ownUndoStep?: boolean }): TransactionSpec | null {
   const change = applyMinimalChange(current, next)
   if (!change) return null
-  return opts?.ownUndoStep ? { changes: change, annotations: isolateHistory.of('full') } : { changes: change }
+  // The text is the caller's whole planned text, so the object source guard leaves it as given.
+  return opts?.ownUndoStep
+    ? { changes: change, annotations: [isolateHistory.of('full'), exactTextWrite.of(true)] }
+    : { changes: change, annotations: exactTextWrite.of(true) }
 }

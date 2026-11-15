@@ -57,6 +57,11 @@ export const SHARED_CHANGES: Readonly<Record<string, string>> = {
   'updates:stop-skipping': 'Clears the skipped version.',
   'updates:not-now': 'Snoozes the mark until the next daily check.',
   'updates:set-enabled': 'Writes the boolean checking preference through the shared settings overlay.',
+  'updates:set-alpha': 'Writes the boolean alpha preference (Get early versions) to this Mac\'s configuration.',
+  // The one click (ADR-0044): no address and no version is accepted; main uses the offer the last validated feed gave.
+  'updates:update': 'Takes nothing; downloads the file the validated feed names for this computer, checks it, then restarts or waits.',
+  'updates:cancel': 'Takes nothing; ends the update under way (downloading, waiting or being prepared) unless the app is already quitting into it.',
+  'updates:restart': 'Takes nothing; restarts into a downloaded update only when nothing holds the restart back.',
   'updates:dismiss-whats-new': 'Marks the bundled notes as seen.',
   // The offer's own buttons (onboarding step and status-bar offer). Each takes agent ids only, never a path; the
   // service writes only into an agent that was found, only the skill's own folder, and keeps links and unmarked folders.

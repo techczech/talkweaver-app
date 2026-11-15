@@ -13,8 +13,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   AlertTriangle, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, ChevronsLeftRight, ChevronsRightLeft, Clock, Download, Ear, EyeOff, Flag, GripVertical,
-  Image as ImageIcon, ListChecks, SquareUser, CircleDot, Loader2, MessageSquareOff, Pause, Play, Presentation, Redo2, RefreshCw, RotateCcw, Scissors, Settings, SlidersHorizontal, TextCursorInput, Undo2, Video, AudioLines, Check, X
+  Image as ImageIcon, ListChecks, SquareUser, CircleDot, Loader2, MessageSquareOff, Pause, Play, Presentation, Redo2, RefreshCw, RotateCcw, Scissors, Settings, SlidersHorizontal, TextCursorInput, Undo2, Video, AudioLines, Check, X, History, Eye
 } from 'lucide-react'
+import { EditsNoticeNote, KeptEditsSheet, StartNewEditsSheet, noticesOf } from './KeptEdits'
+import { VIEWING_WORDS, keptByline, type EditsNotice, type KeptEdits } from '../../../../shared/recording-edits-kept'
 import type { RecordingSession, Transcript } from '../../../../preload/index'
 import type { RecordingOpen } from '../../../../main/recording-video-ipc'
 import type { EditsSnapshot } from '../../../../main/recording-edits-store'
@@ -37,7 +39,7 @@ import { chosenTakes, missingTakeNotice, missingTakeText, TakesPanel, unavailabl
 import './recording-panel.css'
 import './recording-editor.css'
 
-export type EditorSlide = { title: string; section?: string; thumbUrl: string | null; n: number }
+export type EditorSlide = { title: string; section?: string; thumbUrl: string | null; n: number; cards?: string[] }
 export type WritingState = { busy: boolean; note: string | null; error: string | null }
 
 const clock = (ms: number): string => {
@@ -96,7 +98,21 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   const [openError, setOpenError] = useState<string | null>(null)
   const [source, setSource] = useState<PlayerSource | null>(null)
   const [preparing, setPreparing] = useState(false)
-  const [edits, setEdits] = useState<EditsSnapshot | null>(null)
+  const [liveEdits, setEdits] = useState<EditsSnapshot | null>(null)
+  // Kept edits (0.45): one shown read only, the list, Start new edits asked, and what main kept instead of losing.
+  const [viewing, setViewing] = useState<{ kept: KeptEdits; snapshot: EditsSnapshot } | null>(null)
+  const viewingRef = useRef(false); viewingRef.current = !!viewing
+  const edits = viewing ? viewing.snapshot : liveEdits
+  const [keptOpen, setKeptOpen] = useState(false)
+  const [startNewOpen, setStartNewOpen] = useState(false)
+  const [notices, setNotices] = useState<EditsNotice[]>([])
+  const [keptCount, setKeptCount] = useState(0)
+  const heard = useCallback((s: EditsSnapshot) => {
+    const add = noticesOf(s)
+    if (add.length) setNotices((now) => [...now, ...add].slice(-3))
+    if (typeof s.keptCount === 'number') setKeptCount(s.keptCount)
+    else if (add.length) setKeptCount((n) => n + 1)
+  }, [])
   const [editError, setEditError] = useState<string | null>(null)
   const [runMs, setRunMs] = useState(0)
   const [videoMs, setVideoMs] = useState(0)
@@ -123,12 +139,12 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   // ---- Open the Run: layers and edits, then playback copies ---------------------------------------
   useEffect(() => {
     let alive = true
-    setOpened(null); setOpenError(null); setSource(null); setEdits(null); setEditError(null)
+    setOpened(null); setOpenError(null); setSource(null); setEdits(null); setEditError(null); setViewing(null); setNotices([]); setKeptCount(0)
     if (!window.tw.recordingVideo) { setOpenError('Playback is not available in this window.'); return }
     void window.tw.recordingVideo.open(runRef).then((r) => {
       if (!alive) return
       if (!r.ok) { setOpenError(r.error); return }
-      setOpened(r); setEdits(r.edits); confirmed.current = r.edits; shown.current = r.edits
+      setOpened(r); setEdits(r.edits); confirmed.current = r.edits; shown.current = r.edits; heard(r.edits)
       setPreparing(true)
       return window.tw.recordingVideo.prepare(runRef).then((p) => {
         if (!alive) return
@@ -137,6 +153,8 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
       })
     }).catch((e) => { if (alive) setOpenError(String(e)) }).finally(() => { if (alive) setPreparing(false) })
     return () => { alive = false }
+    // heard is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runRef])
 
   useEffect(() => {
@@ -159,7 +177,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   const editStarted = useRef<number | null>(null)
   const edit = useCallback((op: EditOp): boolean => {
     const cur = shown.current
-    if (!cur || cur.problem) return false
+    if (!cur || cur.problem || viewingRef.current) return false
     let next
     try { next = applyEditOp(cur.edits, op, durationMs) } catch (e) { setEditError((e as Error).message); return false }
     if (next === cur.edits) return false
@@ -173,10 +191,12 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
       if (gen !== generation.current) return
       const base = confirmed.current
       if (!base) return
-      const r = await window.tw.recordingVideo.edit(runRef, op, base.edits.revision)
+      // The bytes these edits came from: main keeps any other version it finds there instead of writing over it.
+      const r = await window.tw.recordingVideo.edit(runRef, op, base.edits.revision, base.digest)
       if (r.ok) {
         confirmed.current = r.edits
         saveFailed.current = null
+        heard(r.edits)
         if (pending.current === 1) { shown.current = r.edits; setEdits(r.edits) }
       } else {
         // Refused or failed: nothing was saved; show what is on disk and say why.
@@ -187,7 +207,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
       }
     }).catch((e) => { generation.current++; saveFailed.current = String(e); shown.current = confirmed.current; setEdits(confirmed.current) }).finally(() => { pending.current = Math.max(0, pending.current - 1) })
     return true
-  }, [runRef, durationMs])
+  }, [runRef, durationMs, heard])
   /** Wait until every edit made so far has been saved (or one failed). */
   // The digest of the saved state as this window resolves it (with the words it has now).
   const planOf = useRef<(e: EditsSnapshot) => string>(() => '')
@@ -201,8 +221,14 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   const refresh = useCallback(() => {
     onReloadWords?.()
     if (pending.current) return
-    void window.tw.recordingVideo.open(runRef).then((r) => { if (r.ok && !pending.current) { confirmed.current = r.edits; shown.current = r.edits; setEdits(r.edits) } }).catch(() => {})
-  }, [onReloadWords, runRef])
+    void window.tw.recordingVideo.open(runRef).then((r) => { if (r.ok && !pending.current) { confirmed.current = r.edits; shown.current = r.edits; setEdits(r.edits); heard(r.edits) } }).catch(() => {})
+  }, [onReloadWords, runRef, heard])
+  /** Main changed the edits on the owner's word (Start new edits, Restore): they are the edits now. */
+  const replaceEdits = useCallback((s: EditsSnapshot) => {
+    generation.current++
+    confirmed.current = s; shown.current = s; setEdits(s); setViewing(null); setEditError(null); saveFailed.current = null
+    heard(s)
+  }, [heard])
   const leave = useCallback(async (): Promise<void> => {
     const r = await settle()
     if ('error' in r && saveFailed.current) { setEditError(`An edit could not be saved: ${saveFailed.current} The editor stays open; undo or redo the edit, or reopen the recording.`); return }
@@ -295,19 +321,19 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
     setRetakeNote(error ? { text: error, warn: true } : { text: `Record slide ${n} in the presenter view, then come back here to choose the take.`, warn: false })
   }, [onRecordSlideAgain, slides, opened?.hasCamera])
   const takesOfRow = (row: EditorRow) => takesList.filter((t) => t.change === row.change)
-  const takesKeyOf = (row: EditorRow): string => { const list = takesOfRow(row); const gone = missingTakes.find((t) => t.change === row.change); if (gone) return `missing:${gone.run}:${gone.reason}|${!!problem}`; return list.length ? `${list.map((t) => t.run).join(',')}|${chosenList.find((c) => c.change === row.change)?.run ?? ''}|${!!problem}` : '' }
+  const takesKeyOf = (row: EditorRow): string => { const list = takesOfRow(row); const gone = missingTakes.find((t) => t.change === row.change); if (gone) return `missing:${gone.run}:${gone.reason}|${locked}`; return list.length ? `${list.map((t) => t.run).join(',')}|${chosenList.find((c) => c.change === row.change)?.run ?? ''}|${locked}` : '' }
   const takesNodeOf = (row: EditorRow): ReactNode => {
     if (!takesOn) return null
     const missing = missingTakes.find((t) => t.change === row.change)
     if (missing) return (
       <div className="tre-inrow warn" role="alert" data-take-missing><AlertTriangle className="lt-icon" /><span className="tre-grow">{missingTakeText(missing.reason)}</span>
-        <button className="tw-btn tw-btn--sm" disabled={!!problem} onClick={() => edit({ kind: 'take', change: row.change, run: null })}>Use the first take</button></div>
+        <button className="tw-btn tw-btn--sm" disabled={locked} onClick={() => edit({ kind: 'take', change: row.change, run: null })}>Use the first take</button></div>
     )
     const list = takesOfRow(row)
     if (!rowTakeControls(takesOn, { hasPicture: true, slideId: row.slideId, leftOut: leftOutRows.has(row.index), takes: list.length }).chooser) return null
     const chosenRun = resolved.replacedRows.get(row.index) ?? null
     const n = slides[row.slideId]?.n ?? row.index + 1
-    return <TakesPanel runRef={runRef} slideN={n} firstMs={Math.max(0, row.end - row.start)} takes={list} chosen={chosenRun} disabled={!!problem}
+    return <TakesPanel runRef={runRef} slideN={n} firstMs={Math.max(0, row.end - row.start)} takes={list} chosen={chosenRun} disabled={locked}
       firstVoice={source?.voice ? { url: source.voice, from: row.start, to: row.end } : null}
       onPlayInVideo={() => { player.current?.seekRun(row.start); player.current?.play() }}
       onChoose={(take) => edit({ kind: 'take', change: row.change, run: take })} />
@@ -401,9 +427,9 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   // wait; Escape closes the topmost of them first and focus goes back where it was.
   const exportState = useRef<{ open: boolean; close: () => void }>({ open: false, close: () => {} })
   const cutPopRef = useRef<{ playJoin: () => void } | null>(null)
-  const sheetUp = lookOpen || faceRow !== null
-  const keyState = useRef({ range, cutSelection, moveSel, playSelection, edit, pop, choose, tidyOpen, lookOpen, faceRow, sheetUp, leave, suspended })
-  keyState.current = { range, cutSelection, moveSel, playSelection, edit, pop, choose, tidyOpen, lookOpen, faceRow, sheetUp, leave, suspended }
+  const sheetUp = lookOpen || faceRow !== null || keptOpen || startNewOpen
+  const keyState = useRef({ range, cutSelection, moveSel, playSelection, edit, pop, choose, tidyOpen, lookOpen, faceRow, keptOpen, startNewOpen, viewing: !!viewing, sheetUp, leave, suspended })
+  keyState.current = { range, cutSelection, moveSel, playSelection, edit, pop, choose, tidyOpen, lookOpen, faceRow, keptOpen, startNewOpen, viewing: !!viewing, sheetUp, leave, suspended }
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const t = e.target as HTMLElement | null
@@ -419,9 +445,12 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
         else if (k.tidyOpen) setTidyOpen(false)
         else if (k.lookOpen) setLookOpen(false)
         else if (k.faceRow !== null) setFaceRow(null)
+        else if (k.keptOpen) setKeptOpen(false)
+        else if (k.startNewOpen) setStartNewOpen(false)
         else if (k.pop) setPop(null)
         else if (k.choose !== null) setChoose(null)
         else if (k.range) setSel(null)
+        else if (k.viewing) setViewing(null)
         else void k.leave()
         return
       }
@@ -621,6 +650,8 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
 
   // ---- Render -----------------------------------------------------------------------------------------
   const problem = edits?.problem ?? null
+  // Nothing changes the edits while they hold a problem or a kept copy is shown read only.
+  const locked = !!problem || !!viewing
   const audioOnly = !!opened && opened.slides.length === 0
   const exportCtl = useRecordingExport({
     runRef, title: run.talkTitle, slides, audioOnly, hasCamera: !!opened?.hasCamera, camera, editedMs,
@@ -650,13 +681,14 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
         <h2>Studio</h2>
         <span className="tre-what" title={run.talkTitle}>{run.talkTitle}{when ? ` · ${when}` : ''}</span>
         <span className="tre-sp" />
-        <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Undo" title="Undo (⌘Z)" disabled={!!problem || !edits?.edits.undo.length} onClick={() => edit({ kind: 'undo' })}><Undo2 className="lt-icon" /></button>
-        <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!!problem || !edits?.edits.redo.length} onClick={() => edit({ kind: 'redo' })}><Redo2 className="lt-icon" /></button>
+        <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Undo" title="Undo (⌘Z)" disabled={locked || !edits?.edits.undo.length} onClick={() => edit({ kind: 'undo' })}><Undo2 className="lt-icon" /></button>
+        <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={locked || !edits?.edits.redo.length} onClick={() => edit({ kind: 'redo' })}><Redo2 className="lt-icon" /></button>
+        {keptCount > 0 || problem || viewing ? <button className={`tw-btn tw-btn--quiet tw-btn--icon${viewing ? ' on' : ''}`} aria-label="Kept edits" title="Kept edits: earlier edits set aside rather than lost" data-kept-edits onClick={() => { setPop(null); setKeptOpen(true) }}><History className="lt-icon" /></button> : null}
         <span className="tre-sep" />
-        <button className="tw-btn" disabled={!hasWords || !!problem} onClick={() => { setPop(null); setTidyOpen(true) }}><ListChecks className="lt-icon" /> Tidy up…</button>
-        <button className="tw-btn" disabled={!opened || !!problem} onClick={() => { setPop(null); setLookOpen(true) }}><SlidersHorizontal className="lt-icon" /> Look and sound…</button>
+        <button className="tw-btn" disabled={!hasWords || locked} onClick={() => { setPop(null); setTidyOpen(true) }}><ListChecks className="lt-icon" /> Tidy up…</button>
+        <button className="tw-btn" disabled={!opened || locked} onClick={() => { setPop(null); setLookOpen(true) }}><SlidersHorizontal className="lt-icon" /> Look and sound…</button>
         <span className="tre-len" data-edited-ms={Math.round(editedMs)} title="Length of the video / of the recording">{cuts.length ? <><b>{clock(editedMs)}</b> of {clock(durationMs)}</> : <b>{clock(durationMs)}</b>}</span>
-        <button className="tw-btn tw-btn--primary" disabled={!opened || !!problem || exportCtl.exporting.state === 'working'} onClick={() => void exportCtl.open()}><Download className="lt-icon" /> {exportCtl.exporting.state === 'working' ? `Exporting ${Math.round(exportCtl.exporting.fraction * 100)}%` : 'Export…'}</button>
+        <button className="tw-btn tw-btn--primary" disabled={!opened || locked || exportCtl.exporting.state === 'working'} onClick={() => void exportCtl.open()}><Download className="lt-icon" /> {exportCtl.exporting.state === 'working' ? `Exporting ${Math.round(exportCtl.exporting.fraction * 100)}%` : 'Export…'}</button>
         <span className="tre-sep" />
         <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Open settings for Studio" title="Open settings for Studio" onClick={onSettings}><Settings className="lt-icon" /></button>
         <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Keyboard cheat-sheet" title="Keyboard cheat-sheet (?)" onClick={onHelp}>?</button>
@@ -665,10 +697,15 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
       <div className="tre-work">
         <div className="tre-list" ref={listRef} onPointerDown={onListPointerDown} data-choosing={choose !== null ? 'yes' : undefined}>
           {openError ? <div className="tre-note warn" role="alert"><AlertTriangle className="lt-icon" /><span className="tre-grow">{openError}</span></div> : null}
-          {problem ? (
+          {viewing ? (
+            <div className="tre-note tre-viewing" role="status" data-viewing-kept={viewing.kept.id}><Eye className="lt-icon" /><span className="tre-grow">{VIEWING_WORDS(keptByline(viewing.kept))}</span>
+              {viewing.kept.state === 'ok' ? <button className="tw-btn tw-btn--sm tw-btn--primary" data-restore-viewed onClick={() => void window.tw.recordingVideo.keptRestore(runRef, viewing.kept.id).then((r) => { if (r.ok) replaceEdits(r.edits); else setEditError(r.error) })}>Restore these edits</button> : null}
+              <button className="tw-btn tw-btn--sm" onClick={() => setViewing(null)}>Back to current edits</button></div>
+          ) : problem ? (
             <div className="tre-note warn" role="alert"><AlertTriangle className="lt-icon" /><span className="tre-grow">{problem.message} It is kept unchanged.</span>
-              <button className="tw-btn tw-btn--sm" onClick={() => void window.tw.recordingVideo.startFresh(runRef).then((r) => { if (r.ok) { confirmed.current = r.edits; shown.current = r.edits; setEdits(r.edits) } else setEditError(r.error) })}>Start new edits</button></div>
+              <button className="tw-btn tw-btn--sm" data-start-new onClick={() => setStartNewOpen(true)}>Start new edits</button></div>
           ) : null}
+          {!viewing ? notices.map((n, i) => <EditsNoticeNote key={i} notice={n} onKept={() => setKeptOpen(true)} onDismiss={() => setNotices((all) => all.filter((x) => x !== n))} />) : null}
           {retakeNote ? <div className={`tre-note${retakeNote.warn ? ' warn' : ''}`} role="status"><CircleDot className="lt-icon tre-rec-ico" /><span className="tre-grow">{retakeNote.text}</span><button className="tw-btn tw-btn--quiet tw-btn--icon tw-btn--sm" aria-label="Dismiss" onClick={() => setRetakeNote(null)}><X className="lt-icon" /></button></div> : null}
           {editError ? <div className="tre-note warn" role="alert"><AlertTriangle className="lt-icon" /><span className="tre-grow">{editError}</span><button className="tw-btn tw-btn--quiet tw-btn--icon tw-btn--sm" aria-label="Dismiss" onClick={() => { setEditError(null); saveFailed.current = null }} title="The edit was not saved; what you see is what is saved"><X className="lt-icon" /></button></div> : null}
           {state === 'writing' ? (
@@ -760,10 +797,15 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
         onPlay={(p) => playJoin(p.range, [p.range])} onApply={(ranges) => { if (edit({ kind: 'cut', ranges })) setTidyOpen(false) }} /> : null}
       {faceRow !== null && rows[faceRow] ? <FacePositionSheet row={{ index: faceRow, change: rows[faceRow].change, n: slides[rows[faceRow].slideId]?.n ?? faceRow + 1 }}
         rows={rows.filter((r) => !leftOutRows.has(r.index)).map((r) => ({ index: r.index, change: r.change, n: slides[r.slideId]?.n ?? r.index + 1 }))}
-        faces={faces} hasCamera={!!opened?.hasCamera} cameraOn={camera} disabled={!!problem}
+        faces={faces} hasCamera={!!opened?.hasCamera} cameraOn={camera} disabled={locked}
         onApply={(changes, face) => edit({ kind: 'face', changes, face })} onClose={() => setFaceRow(null)} /> : null}
-      {lookOpen ? <LookAndSoundSheet finish={finish} hasVoice={source ? !!source.voice : true} evening={even.evening} evenError={even.error} disabled={!!problem}
+      {lookOpen ? <LookAndSoundSheet finish={finish} hasVoice={source ? !!source.voice : true} evening={even.evening} evenError={even.error} disabled={locked}
         onChange={(f) => edit({ kind: 'finish', finish: f })} onClose={() => setLookOpen(false)} /> : null}
+      {keptOpen ? <KeptEditsSheet runRef={runRef} onClose={() => setKeptOpen(false)}
+        onOpen={(kept, e) => { setKeptOpen(false); setPop(null); setSel(null); setViewing({ kept, snapshot: { edits: e, problem: null } }) }}
+        onRestored={(s) => { setKeptOpen(false); replaceEdits(s) }} /> : null}
+      {startNewOpen && problem ? <StartNewEditsSheet where="editor" gitConflict={problem.kind === 'git-conflict'} onClose={() => setStartNewOpen(false)}
+        onStart={() => { setStartNewOpen(false); void window.tw.recordingVideo.startFresh(runRef).then((r) => { if (r.ok) replaceEdits(r.edits); else setEditError(r.error) }) }} /> : null}
       {exportCtl.sheet}
     </div>
   )

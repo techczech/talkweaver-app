@@ -167,5 +167,16 @@ writeFileSync(join(root, 'invalid-notes-shape.json'), '{}')
 assert.throws(() => readNotesStore(join(root, 'invalid-notes-shape.json')), /approval-store-schema-invalid/)
 writeNotesStore(notesPath, withBoth)
 assert.deepEqual(readNotesStore(notesPath), withBoth)
+// 0.45, second Mac: a notes store with Git conflict markers is named as such (and carries the file to
+// reveal), before the generic JSON error; nothing is written over it.
+const conflictedNotes = `<<<<<<< HEAD\n${JSON.stringify(withBoth, null, 2)}\n=======\n${JSON.stringify(withoutIntro, null, 2)}\n>>>>>>> origin/main\n`
+writeFileSync(join(root, 'notes', 'conflict.notes.json'), conflictedNotes)
+assert.throws(() => readNotesStore(join(root, 'notes', 'conflict.notes.json')), (error) => {
+  assert.equal(error.gitConflict, true)
+  assert.equal(error.file, join(root, 'notes', 'conflict.notes.json'))
+  assert.equal(error.message, 'The notes file for this Run has a Git conflict from syncing (conflict.notes.json). Resolve it in Git, then try again.')
+  return true
+})
+assert.equal(readFileSync(join(root, 'notes', 'conflict.notes.json'), 'utf8'), conflictedNotes)
 
 console.log('rewritepack: pack files, instructions fallback, parts listing and notes store passed')

@@ -19,12 +19,15 @@ import { fileURLToPath } from 'node:url'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openSettingsWindow, closeSettingsWindow } from './lib/settings-window.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
+import { testProfileEnv } from './lib/test-profile.mjs'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CURRENT_VERSION = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version
 const [major, minor] = CURRENT_VERSION.split('.').map(Number)
 const NEXT_VERSION = `${major}.${minor + 1}.0`
 const CURRENT_PATTERN = CURRENT_VERSION.replaceAll('.', '\\.')
+// How the app writes the running version in a sentence ("0.45.0, alpha 1" for an alpha; a release as it is).
+const LABEL_PATTERN = CURRENT_VERSION.replace(/^(\d+\.\d+\.\d+)-([a-z]+)\.(\d+)$/, '$1, $2 $3').replaceAll('.', '\\.')
 const NEXT_PATTERN = NEXT_VERSION.replace(/\./g, '\\.')
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control'
 const results = []
@@ -61,7 +64,7 @@ writeFileSync(join(td, 'update-fixture-outline.md'), ['---', 'title: Update Fixt
 async function launch(source, state) {
   const ud = mkdtempSync(join(tempRoot, 'ud-'))
   writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, ...(state ? { updateNotices: state } : {}) }, null, 2))
-  const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1', TW_E2E_UPDATES_SOURCE: source, TW_E2E_UPDATES_FEED: feedUrl } })
+  const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1', ...testProfileEnv(ud), TW_E2E_UPDATES_SOURCE: source, TW_E2E_UPDATES_FEED: feedUrl } })
   const out = []
   app.process().stdout?.on('data', (chunk) => out.push(String(chunk)))
   const page = await app.firstWindow()
@@ -98,7 +101,7 @@ try {
   await checkFromPalette(page)
   const note = await visible(page, '[data-update-note][data-update-note-tone="new"]')
   const noteText = note ? (await page.locator('[data-update-note]').innerText()).replace(/\s+/g, ' ') : ''
-  record('Check for Updates… from the palette answers "a newer TalkWeaver version is available." with Download and What\'s new', note && new RegExp("TalkWeaver " + NEXT_PATTERN + " is available\\.").test(noteText) && new RegExp("You have " + CURRENT_PATTERN + "\\.").test(noteText) && /Download from talkweaver\.app/.test(noteText) && new RegExp("What.s new in " + NEXT_PATTERN).test(noteText), noteText)
+  record('Check for Updates… from the palette answers "a newer TalkWeaver version is available." with Download and What\'s new', note && new RegExp("TalkWeaver " + NEXT_PATTERN + " is available\\.").test(noteText) && new RegExp("You have " + LABEL_PATTERN + "\\.").test(noteText) && /Download from talkweaver\.app/.test(noteText) && new RegExp("What.s new in " + NEXT_PATTERN).test(noteText), noteText)
   record('the request was one GET with the fixed User-Agent, no query string, no cookie, no version', requests.length === 1 && requests[0].url === '/updates.json' && requests[0].headers['user-agent'] === 'TalkWeaver' && !requests[0].headers.cookie && !/0\.4\d/.test(JSON.stringify(requests[0].headers)), JSON.stringify(requests[0]?.headers))
   const mark = await visible(page, '[data-update-mark]')
   record('a new version found this way also shows the status-bar mark', mark && (await page.locator('[data-update-mark]').innerText()).includes(`${NEXT_VERSION} is available`))
@@ -124,7 +127,7 @@ try {
   await settings.waitForSelector('.bsw-root[data-section="updates"]', { timeout: 6000 })
   record('Settings has one visible About and updates navigation entry', await settings.locator('button.bsw-nav[data-section="updates"]:visible').count() === 1)
   const card = await settings.locator('[data-updates-card]').innerText()
-  record('Settings › About and updates shows the version, the switch, "You skipped the newer version." and what the check sends', new RegExp("Version " + CURRENT_PATTERN).test(await settings.locator('[data-about-card]').innerText()) && /Check for new versions/.test(card) && new RegExp("You skipped " + NEXT_PATTERN + "\\.").test(card) && /sees this computer.s internet address/.test(card), card.replace(/\s+/g, ' ').slice(0, 200))
+  record('Settings › About and updates shows the version, the switch, "You skipped the newer version." and what the check sends', new RegExp("Version " + LABEL_PATTERN).test(await settings.locator('[data-about-card]').innerText()) && /Check for new versions/.test(card) && new RegExp("You skipped " + NEXT_PATTERN + "\\.").test(card) && /sees this computer.s internet address/.test(card), card.replace(/\s+/g, ' ').slice(0, 200))
   await settings.locator('[data-update-stop-skipping]').click()
   await closeSettingsWindow(app)
   record('Stop skipping brings the mark back at once', await visible(page, '[data-update-mark]'))
@@ -164,7 +167,13 @@ try {
   // ── A Microsoft Store copy ─────────────────────────────────────────────────────────────────────
   serving = true
   const before = requests.length
-  ;({ app, page, out } = await launch('store', { lastVersionRun: CURRENT_VERSION, latest: JSON.parse(FEED).latest }))
+  // The stored state even names an update file for this computer: a Store copy still never updates itself.
+  const platformKey = process.platform === 'win32' ? 'windows' : 'mac'
+  const assetName = process.platform === 'win32' ? 'TalkWeaver-windows-x64-setup.exe' : 'TalkWeaver-mac-arm64.zip'
+  const fileUrl = new URL(`/releases/download/v${NEXT_VERSION}/${assetName}`, feedUrl).href
+  const storeLatest = JSON.parse(FEED).latest
+  const storeState = { lastVersionRun: CURRENT_VERSION, latest: storeLatest, channels: { release: { ...storeLatest, update: { [platformKey]: { url: fileUrl, sha512: 'A'.repeat(86) + '==', size: 1000 } } } } }
+  ;({ app, page, out } = await launch('store', storeState))
   record('a Store copy shows no mark, even for a version it once heard of', (await page.locator('[data-update-mark]').count()) === 0)
   await checkFromPalette(page)
   const store = await visible(page, '[data-update-note][data-update-note-tone="store"]')
@@ -173,6 +182,9 @@ try {
   const storeSettings = await openSettingsWindow(app, page, 'updates')
   await storeSettings.waitForSelector('.bsw-root[data-section="updates"]', { timeout: 6000 })
   record('a Store copy\'s About says the Store installs new versions and has no New versions card', /Microsoft Store/.test(await storeSettings.locator('[data-about-card]').innerText()) && (await storeSettings.locator('[data-updates-card]').count()) === 0)
+  const storeUpdate = await page.evaluate(() => window.tw.updates.update())
+  await page.waitForTimeout(800)
+  record('a Store copy asked to update in place anyway does nothing (refused in the main process)', storeUpdate.refusal === 'store' && storeUpdate.install.phase === 'idle' && !requests.slice(before).some((r) => r.url.startsWith('/releases/')), `refusal=${storeUpdate.refusal}; phase=${storeUpdate.install.phase}`)
   record('a Store copy made no request to the feed', requests.length === before, `requests=${requests.length - before}`)
   await app.close()
 } catch (e) {

@@ -130,6 +130,8 @@ Saturdays, eight until one.
 
 > **Try it.** Use All commands (<kbd>⌘⇧P</kbd>) to choose **Delete comment at caret** or **Insert speaker notes**.
 
+> **Try it.** On a selected object, <kbd>⌫</kbd> deletes it whole; Undo brings it back.
+
 ### Add something
 {id=s12}
 

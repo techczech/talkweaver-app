@@ -368,6 +368,7 @@ await test('wiring: default and explicitly isolated windows each retain their re
     const code = text.replace(/\/\/.*$/gm, '')
     if (path.endsWith('local-address-filter.ts')) continue
     if (path.endsWith('update-notices.ts')) continue // the one allowed partition, checked below
+    if (path.endsWith('update-installer.ts')) continue // electron-updater's own partition, checked below
     if (path.endsWith('live-page-host.ts')) continue // the live page's own session, checked below
     if (['offline-page-capture.ts', 'embed-preview-artwork.ts', 'thumbnails.ts'].some(name => path.endsWith('/' + name)) && /\bfromPartition\(/.test(code)) {
       assert.match(text, /hardenLivePageSession\(isolated/, `${path}: deny permissions and filter remote requests`)
@@ -400,6 +401,18 @@ await test('wiring: default and explicitly isolated windows each retain their re
   const host = readFileSync(join(mainDir, 'live-page-host.ts'), 'utf8')
   assert.match(host, /localAddressRequestListener\(\{ resolveHost: opts\.resolveHost, log, everyRequestIsEmbedded: true \}\)/, 'the live-page session uses the same rule, every request embedded')
   assert.match(host, /partition = `tw-live-page:\$\{role\}:\$\{deps\.newId\(\)\}`/, 'in-memory partition (no persist:)')
+})
+
+await test('the in-place update download (ADR-0044): electron-updater\'s own in-memory partition, filtered unless a test harness serves the file', () => {
+  const text = readFileSync(join(mainDir, 'update-installer.ts'), 'utf8').replace(/\/\/.*$/gm, '')
+  assert.deepEqual([...text.matchAll(/fromPartition\(([^)]*)\)/g)].map((m) => m[1].trim()), ['UPDATER_PARTITION, { cache: false }'])
+  assert.match(text, /UPDATER_PARTITION = 'electron-updater'/, 'the partition electron-updater itself uses (electronHttpExecutor NET_SESSION_NAME)')
+  assert.match(text, /if \(deps\.filterLocalAddresses\) installLocalAddressFilter\(session\.fromPartition\(UPDATER_PARTITION, \{ cache: false \}\)\)/)
+  const notices = readFileSync(join(mainDir, 'update-notices.ts'), 'utf8')
+  assert.match(notices, /filterLocalAddresses: test\.harness === null,/, 'only a test harness (loopback stand-in) goes without the filter')
+  const electronHttp = readFileSync(new URL('../node_modules/electron-updater/out/electronHttpExecutor.js', import.meta.url), 'utf8')
+  assert.match(electronHttp, /NET_SESSION_NAME = "electron-updater"/)
+  assert.match(electronHttp, /fromPartition\(exports\.NET_SESSION_NAME, \{\s*cache: false,?\s*\}\)/)
 })
 
 await test('the update check\'s own session: exactly one in-memory partition, and the filter is installed on it', async () => {

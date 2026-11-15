@@ -42,7 +42,7 @@ import type { PhaseSteps } from '../shared/run-answers'
 import type { WorkFileState } from '../shared/run-checklist'
 import { isToolsView, parseToolsRunRef, type ToolsRunRef, type ToolsView } from '../shared/tools-views'
 import type { PaletteCommandHandlerId } from '../shared/command-registry'
-import type { UpdateSnapshot } from '@app-patterns/updates'
+import type { UpdateSnapshot } from '../shared/update-checker'
 import type { WhatsNewItem } from '@app-patterns/updates'
 import type { LayoutDoctorFinding } from '../shared/layout-doctor'
 import type { SharedTalkInspection, SharedTalkState } from '../shared/shared-talk'
@@ -304,6 +304,9 @@ export type ProjectionRow = {
   source_line?: number | null
   /** Where each image of the slide lands, in outline order (compiler decision; see shared/image-placement.ts). */
   image_placements?: Array<{ kind: string; index: number; count: number }>
+  /** The ids of this slide's carousel cards that are steps of their own (the presenter and the recorder name
+   *  the card); absent on a slide with none and on rows cached before the field existed. */
+  carousel_cards?: string[]
   content_hash: string
   /** Hash of the rendered slide MODEL (layout + blocks), not just text — the thumbnail cache key. */
   render_hash: string
@@ -438,12 +441,19 @@ ipcRenderer.on('tools:show', (_event, payload: ToolsShowPayload) => {
 // slide-time index keyed to Slide Ledger ids, plus timing. `slideTimeIndex` marks are enter
 // (with slideId) / pause / resume, on the pause-aware recording clock.
 export type RecordingVideoRef = { talkSlug: string; runId: string; home?: string | null }
+/** A Pathways action that failed: what to say, and (a Git conflict in the manifest, 0.45) the file to reveal. */
+export type PathwayFailure = { error: string; conflictFile?: string }
+
 export type RecordingSession = {
   capture?: import('../main/recording-layers').LayerManifest | null
   /** Read-time location only; a kept Run lives in this Mac’s app data. */
   kept?: 'app-data'
   /** Read-time vault root; null selects the kept copy. Never persisted into the Run. */
   home?: string | null
+  /** Read-time (0.45): where the recording is, decided by looking for its files on this Mac. Never persisted. */
+  mediaPlace?: import('../shared/recording-place').MediaPlace
+  /** The Mac whose app data holds the recording (written by 0.45 and later when the Run is saved). */
+  recordedOn?: import('../shared/recording-place').RecordedOn
   id: string
   talkSlug: string
   talkTitle: string
@@ -565,7 +575,7 @@ export type TagCount = { name: string; count: number }
 export type ConflictSlide = { index: number; id: string | null; title: string; text: string; match: number; differs: boolean; diff?: LedgerDiffLine[] }
 export type ConflictSide = { label: string; where: string; savedAt: string | null; text: string; slides: ConflictSlide[] }
 export type ConflictCompareLoad =
-  | { ok: true; token: string; kind: 'copy' | 'git'; title: string; copyName: string | null; service: 'onedrive' | 'dropbox' | 'gdrive' | 'git'; mine: ConflictSide; theirs: ConflictSide; headDiffers: boolean; remaining: number }
+  | { ok: true; token: string; kind: 'copy' | 'git'; title: string; copyName: string | null; service: 'onedrive' | 'dropbox' | 'gdrive' | 'icloud' | 'syncthing' | 'git'; mine: ConflictSide; theirs: ConflictSide; headDiffers: boolean; remaining: number }
   | { ok: false; error: string }
 export type ConflictCompareCheck = { stale: false } | { stale: true; which: 'mine' | 'theirs'; label: string; at: string | null }
 export type ConflictMergeResult =
@@ -795,8 +805,13 @@ const api = {
     /** The new takes of a Run's slides (Record this slide again), read again. */
     takes: (ref: RecordingVideoRef): Promise<{ ok: true; takes: import('../main/recording-video-ipc').TakeInfo[] } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:takes', ref),
     prepareEven: (ref: RecordingVideoRef): Promise<{ ok: true; voice: string | null } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:prepare-even', ref),
-    edit: (ref: RecordingVideoRef, op: import('../shared/recording-edits').EditOp, revision: number): Promise<{ ok: true; edits: import('../main/recording-edits-store').EditsSnapshot } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:edit', ref, op, revision),
+    /** `digest`: the snapshot's own (the bytes the shown edits came from), so main never writes over a version this window has not seen (0.45). */
+    edit: (ref: RecordingVideoRef, op: import('../shared/recording-edits').EditOp, revision: number, digest?: string | null): Promise<{ ok: true; edits: import('../main/recording-edits-store').EditsSnapshot } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:edit', ref, op, revision, digest),
     startFresh: (ref: RecordingVideoRef): Promise<{ ok: true; edits: import('../main/recording-edits-store').EditsSnapshot } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:start-fresh', ref),
+    /** Kept edits (0.45): the copies set aside, newest first; one opened read only; one restored as the edits. */
+    keptList: (ref: RecordingVideoRef): Promise<{ ok: true; kept: import('../shared/recording-edits-kept').KeptEdits[] } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:kept-list', ref),
+    keptOpen: (ref: RecordingVideoRef, id: string): Promise<{ ok: true; kept: import('../shared/recording-edits-kept').KeptEdits; edits: import('../shared/recording-edits').RecordingEdits } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:kept-open', ref, id),
+    keptRestore: (ref: RecordingVideoRef, id: string): Promise<{ ok: true; edits: import('../main/recording-edits-store').EditsSnapshot } | { ok: false; error: string }> => ipcRenderer.invoke('recording-video:kept-restore', ref, id),
     export: (ref: RecordingVideoRef, options: import('../main/recording-video-ipc').ExportOptions): Promise<{ ok: true; jobId: string; name: string } | { ok: false; cancelled?: boolean; stale?: boolean; wordsUnreadable?: boolean; error?: string }> => ipcRenderer.invoke('recording-video:export', ref, options),
     cancelExport: (jobId: string): Promise<boolean> => ipcRenderer.invoke('recording-video:export-cancel', jobId),
     reveal: (jobId: string): Promise<boolean> => ipcRenderer.invoke('recording-video:reveal', jobId),
@@ -1232,8 +1247,8 @@ const api = {
     answerOffer: (answer: { install: string[]; decline: string[] }): Promise<import('../shared/agent-skill/types').ActionReport> => ipcRenderer.invoke('agent-skill:answer-offer', answer),
     offerShown: (ids: string[]): Promise<void> => ipcRenderer.invoke('agent-skill:offer-shown', ids),
   },
-  // Update notices (ADR-0041, src/main/update-notices.ts). The windows send no address: Download opens the
-  // link the last validated feed gave for this computer, and the notes link is built from a version.
+  // Updates (ADR-0044, src/main/update-notices.ts). The windows send no address and no version: Update uses the
+  // file the last validated feed gave for this computer, Download its download page, and the notes link is built from a version.
   updates: {
     get: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:get'),
     /** Check for Updates…: always checks (a Store copy and a development run answer without a request). */
@@ -1243,6 +1258,15 @@ const api = {
     notNow: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:not-now'),
     /** The setting `updates.checkForNewVersions`. */
     setEnabled: (on: boolean): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:set-enabled', on),
+    /** The setting `updates.alphaVersions` (Get early versions). */
+    setAlpha: (on: boolean): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:set-alpha', on),
+    /** Update (ADR-0044): download the offered version for this computer, check it, then restart (or wait to). Takes nothing. */
+    update: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:update'),
+    /** Stop a download in progress; the partial file is deleted. */
+    cancel: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:cancel'),
+    /** Restart to finish updating: only when nothing holds it back. */
+    restart: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:restart'),
+    /** Opens the download page for this computer in the browser (where the app cannot update in place). */
     download: (): Promise<boolean> => ipcRenderer.invoke('updates:download'),
     openNotes: (version: string): Promise<boolean> => ipcRenderer.invoke('updates:open-notes', version),
     openStore: (): Promise<boolean> => ipcRenderer.invoke('updates:open-store'),
@@ -1724,7 +1748,7 @@ const api = {
     notes: (
       talkSlug: string,
       sessionId: string
-    ): Promise<{ parts: NotesPart[]; markdown: string } | null> =>
+    ): Promise<{ parts: NotesPart[]; markdown: string } | { gitConflict: string } | null> =>
       ipcRenderer.invoke('rewrite:notes', talkSlug, sessionId),
     approvePart: (
       talkSlug: string,
@@ -1869,7 +1893,9 @@ const api = {
   },
   sessions: {
     /** Every planned and delivered Run of every open vault, plus the Runs a live session is bound to (`talkSlug/runId`). */
-    list: (options?: { allKinds?: boolean }): Promise<{ runs: SessionSource[]; live: string[] }> => ipcRenderer.invoke('sessions:list', options),
+    list: (options?: { allKinds?: boolean }): Promise<{ runs: SessionSource[]; live: string[]; conflicts?: Array<{ vaultId: string; name: string; message: string }> }> => ipcRenderer.invoke('sessions:list', options),
+    /** Show in Finder a Run file the list names as holding a Git conflict (0.45), by its vault and its path inside the vault. */
+    showConflict: (conflict: { vaultId: string; name: string }): Promise<boolean> => ipcRenderer.invoke('sessions:show-conflict', conflict),
     /** How each work file attached to a Run reads: title, step count and its first blocking finding in words. */
     runFiles: (run: SessionRunRef): Promise<{ ok: true; files: { pre?: WorkFileState; post?: WorkFileState } } | { ok: false; error: string }> => ipcRenderer.invoke('sessions:run-files', run),
     /** Each attached phase's steps (from its work file, or the talk's `{prework}` section) and the Run's answers for the phase. */
@@ -1924,15 +1950,15 @@ const api = {
       ipcRenderer.on('pathways:changed', listener)
       return () => ipcRenderer.removeListener('pathways:changed', listener)
     },
-    read: (outlinePath: string, content: string): Promise<PathwaySnapshot | { error: string }> =>
+    read: (outlinePath: string, content: string): Promise<PathwaySnapshot | PathwayFailure> =>
       ipcRenderer.invoke('pathways:read', outlinePath, content),
-    create: (outlinePath: string, content: string, name: string, note?: string): Promise<PathwaySnapshot | { error: string }> =>
+    create: (outlinePath: string, content: string, name: string, note?: string): Promise<PathwaySnapshot | PathwayFailure> =>
       ipcRenderer.invoke('pathways:create', outlinePath, content, name, note),
-    rename: (outlinePath: string, content: string, id: string, name: string): Promise<PathwaySnapshot | { error: string }> =>
+    rename: (outlinePath: string, content: string, id: string, name: string): Promise<PathwaySnapshot | PathwayFailure> =>
       ipcRenderer.invoke('pathways:rename', outlinePath, content, id, name),
-    delete: (outlinePath: string, content: string, id: string): Promise<PathwaySnapshot | { error: string }> =>
+    delete: (outlinePath: string, content: string, id: string): Promise<PathwaySnapshot | PathwayFailure> =>
       ipcRenderer.invoke('pathways:delete', outlinePath, content, id),
-    setSlideIds: (outlinePath: string, content: string, id: string, slideIds: string[]): Promise<PathwaySnapshot | { error: string }> =>
+    setSlideIds: (outlinePath: string, content: string, id: string, slideIds: string[]): Promise<PathwaySnapshot | PathwayFailure> =>
       ipcRenderer.invoke('pathways:set-slide-ids', outlinePath, content, id, slideIds),
     present: (outlinePath: string, content: string, id: string, plannedRunId?: string): Promise<{ success: boolean; error?: string }> =>
       ipcRenderer.invoke('talk:present', outlinePath, content, 'presenter', undefined, id, plannedRunId)

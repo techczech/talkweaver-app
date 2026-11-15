@@ -64,113 +64,86 @@ try {
     pass('finishing choices are stored in the edits file, each change one undo step; 0.44 files read with the defaults')
   }
 
-  // ---- The first save over a 0.44 file keeps it once (review item 7) --------------------------------
+  // ---- The first save over a 0.44 file keeps it (review item 7). Since 0.45 (second Mac) every save moves the
+  // file it replaces aside to a listed copy (`<run>.edits.before-<time>-<uuid>.json`; recording-edits-store.ts,
+  // the install), so keeping a 0.44 file is part of the install, never a separate step that can fail.
   {
-    const D = 60_000, folder = join(root, 'upgrade'); mkdirSync(folder)
-    const path = join(folder, 'sess-up.edits.json')
+    const D = 60_000
     const v4 = JSON.stringify({ version: 4, revision: 2, recording: 'fp', cuts: [{ start: 0, end: 500 }], boundaries: [], leftOut: [], undo: [], redo: [], finish: { camera: true } })
-    writeFileSync(path, v4)
-    const store = createRecordingEditsStore({ locate: () => ({ path, runId: 'sess-up', durationMs: D, fingerprint: 'fp' }) })
-    const first = store.apply({}, { kind: 'finish', finish: { evenVolume: false } }, 2)
-    const kept = olderVersionPath(path, 'sess-up', 4)
-    assert.equal(kept, join(folder, 'sess-up.edits.version-4.json'))
-    assert.equal(readFileSync(kept, 'utf8'), v4, 'the version 4 file is kept beside it, byte for byte')
-    assert.equal(JSON.parse(readFileSync(path, 'utf8')).version, 5)
-    store.apply({}, { kind: 'finish', finish: { evenVolume: true } }, first.edits.revision)
-    assert.equal(readFileSync(kept, 'utf8'), v4, 'kept once: later saves never replace it')
-    assert.deepEqual(readdirSync(folder).sort(), ['sess-up.edits.json', 'sess-up.edits.version-4.json'], 'no temporary file is left behind')
-    // A crash part way through writing the copy leaves only a temporary file: the next save still keeps it whole.
-    const folder2 = join(root, 'upgrade-crash'); mkdirSync(folder2)
-    const path2 = join(folder2, 'sess-c.edits.json'); writeFileSync(path2, v4)
-    writeFileSync(join(folder2, '.sess-c.edits.version-4.0000.tmp'), v4.slice(0, 20))
-    createRecordingEditsStore({ locate: () => ({ path: path2, runId: 'sess-c', durationMs: D, fingerprint: 'fp' }) }).apply({}, { kind: 'finish', finish: { evenVolume: false } }, 2)
-    assert.equal(readFileSync(join(folder2, 'sess-c.edits.version-4.json'), 'utf8'), v4, 'the kept copy is whole')
-    // Keeping the older file is a condition of the save. A volume that refuses hard links still gets a whole copy.
-    const noLinks = (code) => () => { throw Object.assign(Error(code), { code }) }
-    const folder3 = join(root, 'upgrade-no-links'); mkdirSync(folder3)
-    const path3 = join(folder3, 'sess-n.edits.json'); writeFileSync(path3, v4)
-    createRecordingEditsStore({ locate: () => ({ path: path3, runId: 'sess-n', durationMs: D, fingerprint: 'fp' }), io: { link: noLinks('ENOTSUP') } }).apply({}, { kind: 'finish', finish: { evenVolume: false } }, 2)
-    assert.equal(readFileSync(join(folder3, 'sess-n.edits.version-4.json'), 'utf8'), v4, 'without hard links the version 4 file is still kept, byte for byte')
-    assert.equal(JSON.parse(readFileSync(path3, 'utf8')).version, 5)
-    assert.deepEqual(readdirSync(folder3).sort(), ['sess-n.edits.json', 'sess-n.edits.version-4.json'])
-    // When the copy cannot be made at all, the save is refused and the older file is untouched.
-    const folder4 = join(root, 'upgrade-refused'); mkdirSync(folder4)
-    const path4 = join(folder4, 'sess-r.edits.json'); writeFileSync(path4, v4)
-    mkdirSync(join(folder4, 'sess-r.edits.version-4.json')) // the kept name is taken by a folder
-    assert.throws(() => createRecordingEditsStore({ locate: () => ({ path: path4, runId: 'sess-r', durationMs: D, fingerprint: 'fp' }) }).apply({}, { kind: 'finish', finish: { evenVolume: false } }, 2), /could not be kept/)
-    assert.equal(readFileSync(path4, 'utf8'), v4, 'a refused save leaves the version 4 file exactly as it was')
-    assert.deepEqual(readdirSync(folder4).sort(), ['sess-r.edits.json', 'sess-r.edits.version-4.json'], 'and leaves no temporary file')
-    // A kept copy already there (another window got there first) is never replaced, with or without hard links.
-    const earlier = JSON.stringify({ version: 4, revision: 1, recording: 'fp', cuts: [], boundaries: [], leftOut: [], undo: [], redo: [], finish: { camera: true } })
-    for (const [name, io] of [['kept-first', undefined], ['kept-first-no-links', { link: noLinks('ENOTSUP') }], ['kept-first-raced', { link: noLinks('EEXIST') }]]) {
-      const folder5 = join(root, `upgrade-${name}`); mkdirSync(folder5)
-      const path5 = join(folder5, 'sess-k.edits.json'); writeFileSync(path5, v4)
-      writeFileSync(join(folder5, 'sess-k.edits.version-4.json'), earlier)
-      createRecordingEditsStore({ locate: () => ({ path: path5, runId: 'sess-k', durationMs: D, fingerprint: 'fp' }), io }).apply({}, { kind: 'finish', finish: { evenVolume: false } }, 2)
-      assert.equal(readFileSync(join(folder5, 'sess-k.edits.version-4.json'), 'utf8'), earlier, `${name}: the copy kept earlier stays`)
-      assert.deepEqual(readdirSync(folder5).sort(), ['sess-k.edits.json', 'sess-k.edits.version-4.json'], `${name}: no temporary file`)
+    const finish = (on) => ({ kind: 'finish', finish: { evenVolume: on } })
+    const make = (name, run, io) => {
+      const folder = join(root, `upgrade-${name}`); mkdirSync(folder)
+      const path = join(folder, `${run}.edits.json`); writeFileSync(path, v4)
+      return { folder, path, store: createRecordingEditsStore({ locate: () => ({ path, runId: run, durationMs: D, fingerprint: 'fp' }), lockFolder: join(root, `locks-${name}`), io }) }
     }
-    // A kept copy cut short (a crash while it was being written by something else) never stands in for a whole
-    // one: the save is refused, the version 4 file is untouched and the partial file is left for the owner.
-    for (const partial of [v4.slice(0, 20), '', JSON.stringify({ version: 3 }), JSON.stringify({ version: 4 }), JSON.stringify({ ...JSON.parse(v4), recording: 'another-recording' }), 'not an edits file']) {
-      const folder6 = join(root, `upgrade-partial-${createHash('sha1').update(partial).digest('hex').slice(0, 8)}`); mkdirSync(folder6)
-      const path6 = join(folder6, 'sess-p.edits.json'); writeFileSync(path6, v4)
-      writeFileSync(join(folder6, 'sess-p.edits.version-4.json'), partial)
-      assert.throws(() => createRecordingEditsStore({ locate: () => ({ path: path6, runId: 'sess-p', durationMs: D, fingerprint: 'fp' }) }).apply({}, { kind: 'finish', finish: { evenVolume: false } }, 2), /could not be kept.*not a complete copy/)
-      assert.equal(readFileSync(path6, 'utf8'), v4)
-      assert.equal(readFileSync(join(folder6, 'sess-p.edits.version-4.json'), 'utf8'), partial)
-      assert.deepEqual(readdirSync(folder6).sort(), ['sess-p.edits.json', 'sess-p.edits.version-4.json'])
-    }
-    // Without hard links the copy is created exclusively, so nothing under the kept name is ever replaced.
-    // A file another writer puts there at any moment before that creation stops the save and is left as it is:
-    // before the link is tried, and again after this save has looked and found the name free.
-    const enotsup = () => { throw Object.assign(Error('ENOTSUP'), { code: 'ENOTSUP' }) }
-    for (const [name, racing, when] of [['before-link', 'racing-owner-file', 'link'], ['after-check', 'racing-owner-file', 'create'], ['after-check-empty', '', 'create'], ['after-check-partial', v4.slice(0, 30), 'create']]) {
-      const folder8 = join(root, `upgrade-raced-${name}`); mkdirSync(folder8)
-      const path8 = join(folder8, 'sess-x.edits.json'); writeFileSync(path8, v4)
-      const kept8 = join(folder8, 'sess-x.edits.version-4.json')
-      const io = when === 'link' ? { link: () => { writeFileSync(kept8, racing); enotsup() } } : { link: enotsup, beforeCreate: () => writeFileSync(kept8, racing) }
-      assert.throws(() => createRecordingEditsStore({ locate: () => ({ path: path8, runId: 'sess-x', durationMs: D, fingerprint: 'fp' }), io }).apply({}, { kind: 'finish', finish: { evenVolume: false } }, 2), /could not be kept/, name)
-      assert.equal(readFileSync(kept8, 'utf8'), racing, `${name}: the other writer's file is left as it is`)
-      assert.equal(readFileSync(path8, 'utf8'), v4, `${name}: the version 4 edits are untouched`)
-      assert.deepEqual(readdirSync(folder8).sort(), ['sess-x.edits.json', 'sess-x.edits.version-4.json'], `${name}: no temporary file`)
-    }
-    // The other writer's whole copy arriving at either moment is accepted, not replaced.
-    for (const [name, io9] of [['at-link', (kept9) => ({ link: () => { writeFileSync(kept9, earlier); throw Object.assign(Error('EEXIST'), { code: 'EEXIST' }) } })], ['after-check', (kept9) => ({ link: enotsup, beforeCreate: () => writeFileSync(kept9, earlier) })]]) {
-      const folder9 = join(root, `upgrade-raced-whole-${name}`); mkdirSync(folder9)
-      const path9 = join(folder9, 'sess-y.edits.json'); writeFileSync(path9, v4)
-      const kept9 = join(folder9, 'sess-y.edits.version-4.json')
-      createRecordingEditsStore({ locate: () => ({ path: path9, runId: 'sess-y', durationMs: D, fingerprint: 'fp' }), io: io9(kept9) }).apply({}, { kind: 'finish', finish: { evenVolume: false } }, 2)
-      assert.equal(readFileSync(kept9, 'utf8'), earlier, name)
-      assert.equal(JSON.parse(readFileSync(path9, 'utf8')).version, 5, name)
-    }
-    // Once the kept file exists under its name, a failure while writing it leaves that name alone: it may hold
-    // another writer's file by then, or bytes another save has already accepted. The save is refused, the
-    // version 4 edits stay, and a file cut short stops later saves until it is moved away.
-    for (const [name, during, left] of [['disk-full', () => {}, ''], ['replaced-meanwhile', (kept) => { rmSync(kept); writeFileSync(kept, 'other-owner-file') }, 'other-owner-file']]) {
-      const folder10 = join(root, `upgrade-fails-after-create-${name}`); mkdirSync(folder10)
-      const path10 = join(folder10, 'sess-s.edits.json'); writeFileSync(path10, v4)
-      const kept10 = join(folder10, 'sess-s.edits.version-4.json')
-      const store10 = (io) => createRecordingEditsStore({ locate: () => ({ path: path10, runId: 'sess-s', durationMs: D, fingerprint: 'fp' }), io })
-      assert.throws(() => store10({ link: enotsup, write: () => { during(kept10); return 0 } }).apply({}, { kind: 'finish', finish: { evenVolume: false } }, 2), /could not be kept.*stopped accepting data/, name)
-      assert.equal(readFileSync(kept10, 'utf8'), left, `${name}: what is under the kept name is not removed`)
-      assert.equal(readFileSync(path10, 'utf8'), v4, `${name}: the version 4 edits are untouched`)
-      assert.throws(() => store10(undefined).apply({}, { kind: 'finish', finish: { evenVolume: false } }, 2), /not a complete copy/, `${name}: a later save is refused until the file is moved away`)
-      assert.equal(readFileSync(path10, 'utf8'), v4)
-    }
-    // A whole copy this save wrote and another save has since accepted survives a late failure of this save.
+    /** The files beside the edits file holding exactly the version 4 bytes. */
+    const holding = (folder, run) => readdirSync(folder).filter((f) => f !== `${run}.edits.json` && statSync(join(folder, f)).isFile() && readFileSync(join(folder, f), 'utf8') === v4)
+    assert.match(olderVersionPath('/v/sess-up.edits.json', 'sess-up', 4), /\/sess-up\.edits\.version-4-[0-9a-f-]{36}\.json$/)
     {
-      const folder11 = join(root, 'upgrade-accepted-meanwhile'); mkdirSync(folder11)
-      const path11 = join(folder11, 'sess-a.edits.json'); writeFileSync(path11, v4)
-      const kept11 = join(folder11, 'sess-a.edits.version-4.json')
-      let wrote = false
-      const io = { link: enotsup, write: (fd, bytes, offset) => { if (!wrote) { wrote = true; return writeSync(fd, bytes, offset, bytes.length - offset) } throw Object.assign(Error('EIO'), { code: 'EIO' }) } }
-      // The whole copy is written in one call; make the sidecar's own write (the next call) fail instead of the flush.
-      assert.throws(() => createRecordingEditsStore({ locate: () => ({ path: path11, runId: 'sess-a', durationMs: D, fingerprint: 'fp' }), io }).apply({}, { kind: 'finish', finish: { evenVolume: false } }, 2), /EIO/)
-      assert.equal(readFileSync(kept11, 'utf8'), v4, 'the kept copy stays after a later failure of the same save')
-      assert.equal(readFileSync(path11, 'utf8'), v4)
+      const { folder, path, store } = make('once', 'sess-up')
+      const first = store.apply({}, finish(false), 2)
+      const kept = holding(folder, 'sess-up')
+      assert.equal(kept.length, 1, 'the version 4 file is kept beside it, byte for byte'); assert.match(kept[0], /^sess-up\.edits\.before-/)
+      assert.equal(JSON.parse(readFileSync(path, 'utf8')).version, 5)
+      store.apply({}, finish(true), first.edits.revision)
+      assert.deepEqual(holding(folder, 'sess-up'), kept, 'kept once: a later save keeps its own previous version, not this one again')
+      assert.ok(readdirSync(folder).every((f) => !f.endsWith('.tmp')), 'no temporary file is left behind')
+      assert.ok(store.listKept({}).some((k) => k.file === kept[0] && k.version === 4 && k.state === 'ok'), 'it is listed, format 4, and opens')
     }
-    pass('the first save over a 0.44 edits file keeps that file once as <run>.edits.version-4.json')
+    // A temporary file an earlier build left from a crash while keeping the copy changes nothing (and is never removed).
+    {
+      const { folder, store } = make('crash-left', 'sess-c')
+      writeFileSync(join(folder, '.sess-c.edits.version-4.0000.tmp'), v4.slice(0, 20))
+      store.apply({}, finish(false), 2)
+      assert.equal(holding(folder, 'sess-c').length, 1, 'the kept copy is whole')
+      assert.equal(readFileSync(join(folder, '.sess-c.edits.version-4.0000.tmp'), 'utf8'), v4.slice(0, 20), 'the earlier build’s file is left as it is')
+    }
+    // A volume that refuses hard links: the edits file goes in by an exclusive create, and the copy is still whole.
+    const noLinks = (code) => () => { throw Object.assign(Error(code), { code }) }
+    {
+      const { folder, path, store } = make('no-links', 'sess-n', { link: noLinks('ENOTSUP') })
+      store.apply({}, finish(false), 2)
+      assert.equal(holding(folder, 'sess-n').length, 1, 'without hard links the version 4 file is still kept, byte for byte')
+      assert.equal(JSON.parse(readFileSync(path, 'utf8')).version, 5)
+      assert.ok(readdirSync(folder).every((f) => !f.endsWith('.tmp')))
+    }
+    // The same bytes kept already under an earlier build's name: that copy stays; nothing is deleted.
+    {
+      const { folder, store } = make('kept-before', 'sess-k')
+      writeFileSync(join(folder, 'sess-k.edits.version-4.json'), v4)
+      store.apply({}, finish(false), 2)
+      assert.ok(holding(folder, 'sess-k').includes('sess-k.edits.version-4.json'), 'the copy kept earlier stays')
+    }
+    // Anything under an earlier fixed name (a folder, a file cut short, another file) is left as it is.
+    for (const [name, other] of [['folder', null], ['partial', v4.slice(0, 20)], ['empty', ''], ['other-version', JSON.stringify({ ...JSON.parse(v4), revision: 1 })]]) {
+      const { folder, path, store } = make(`taken-${name}`, 'sess-p')
+      const fixed = join(folder, 'sess-p.edits.version-4.json')
+      if (other === null) mkdirSync(fixed); else writeFileSync(fixed, other)
+      store.apply({}, finish(false), 2)
+      assert.equal(holding(folder, 'sess-p').length, 1, `${name}: these bytes are kept whole under their own name`)
+      if (other !== null) assert.equal(readFileSync(fixed, 'utf8'), other, `${name}: what was under the earlier name is left as it is`)
+      assert.equal(JSON.parse(readFileSync(path, 'utf8')).version, 5)
+    }
+    // The new file cannot be written (no hard links, the disk fails during the exclusive create): the save is
+    // refused; the file cut short and the unfinished save are listed copies, and the next open puts the version 4
+    // edits back (the version that save moved aside), byte for byte, and says a save did not finish.
+    {
+      let calls = 0
+      const io = { link: noLinks('ENOTSUP'), write: (fd, bytes, offset) => { if (++calls === 2) throw Object.assign(Error('ENOSPC: no space left on device'), { code: 'ENOSPC' }); return writeSync(fd, bytes, offset, bytes.length - offset) } }
+      const { folder, path, store } = make('write-fails', 'sess-s', io)
+      assert.throws(() => store.apply({}, finish(false), 2), /ENOSPC/)
+      assert.equal(holding(folder, 'sess-s').length, 1, 'the version 4 edits are kept, byte for byte')
+      const next = createRecordingEditsStore({ locate: () => ({ path, runId: 'sess-s', durationMs: D, fingerprint: 'fp' }), lockFolder: join(root, 'locks-write-fails') })
+      const opened = next.get({})
+      assert.equal(readFileSync(path, 'utf8'), v4, 'the next open puts the version 4 edits back where they were')
+      assert.equal(opened.notice?.kind, 'interrupted'); assert.equal(opened.notice.restored, true)
+      assert.ok(readdirSync(folder).every((f) => !f.startsWith('.')), 'the unfinished save is a listed copy now')
+      // The next save, with a disk that works, goes through.
+      next.apply({}, finish(false), 2)
+      assert.equal(JSON.parse(readFileSync(path, 'utf8')).version, 5)
+      assert.ok(holding(folder, 'sess-s').length >= 1)
+    }
+    pass('a save over a 0.44 edits file keeps that file as a listed copy (format 4), byte for byte, whatever the volume does')
   }
 
   // ---- Even volume -------------------------------------------------------------------------------

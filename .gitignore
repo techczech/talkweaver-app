@@ -37,10 +37,14 @@ worker-dist.staged-*/
 
 # Scout capture runtime lock; evidence and manifest remain versioned.
 /research/.manifest.lock
+# Scratch folders the end-to-end diagnostics make under research/ (removed when they finish; a killed run leaves one).
+/research/.tmp-*/
+/research/.test-*/
 agent-skill-dist/
 
 /native/transcription
 /release-security-test/
+/release-update-test/
 
 # Private library audit decks, screenshots and measurement records.
 /.audit-local/

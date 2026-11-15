@@ -8,6 +8,7 @@ import {
   createSimTyping, simTypingRuntimeSource
 } from '../compiler/assets/runtime/sim-typing.js'
 import { annotateSimulationLayout, renderSimulation } from '../compiler/scripts/lib/simulation-layout.mjs'
+import { stepOwnershipRuntimeSource } from '../compiler/assets/runtime/step-ownership.js'
 
 let passed = 0
 const test = (name, fn) => { fn(); passed += 1; console.log(`PASS ${name}`) }
@@ -191,11 +192,33 @@ test('a surrogate pair is never split', () => {
   }
 })
 
-test('the runtime source is self-contained', () => {
-  const make = new Function(`${simTypingRuntimeSource()}; return { createSimTyping, simTypingCharsPerSecond };`)
+test('a simulation drawn in the slide\'s contents strip is another slide\'s: it never types on this one', () => {
+  const terminal = slideFor('terminal', '$ ls\na  b\n$ pwd\n/home', { reveal: 'steps' })
+  const doc = terminal.ownerDocument
+  // decorateContainer's filmstrip: a copy of another slide inside .ct-overlay, appended to this slide.
+  const host = doc.createElement('section')
+  host.className = 'slide'
+  host.dataset.id = 'host'
+  host.innerHTML = '<div class="slide-content"><ul class="feature-list"><li>One</li></ul></div>'
+    + '<div class="ct-overlay ct-strip"><div class="ct-shots"><div class="ct-shot"><div class="ct-shot-mini"></div></div></div></div>'
+  host.querySelector('.ct-shot-mini').appendChild(terminal.cloneNode(true))
+  doc.body.appendChild(host)
+  assert.deepEqual(simTypingUnits(host, { from: 0, to: 2, stepped: true }), [], 'a slide whose only simulation is a miniature types nothing')
+  // A slide with its own terminal and a miniature of another: only its own parts type.
+  const own = terminal.cloneNode(true)
+  own.dataset.id = 'own'
+  own.appendChild(host.querySelector('.ct-overlay').cloneNode(true))
+  doc.body.appendChild(own)
+  const units = simTypingUnits(own, { from: 0, to: 2, stepped: true })
+  assert.ok(units.length > 0 && units.every((u) => !u.el.closest('.ct-overlay')), 'the slide\'s own terminal types, the miniature\'s never')
+})
+
+test('the runtime source is self-contained (with the step-ownership source the deck inlines beside it)', () => {
+  const make = new Function(`${stepOwnershipRuntimeSource()}\n${simTypingRuntimeSource()}; return { createSimTyping, simTypingCharsPerSecond, simTypingUnits };`)
   const api = make()
   assert.equal(api.simTypingCharsPerSecond(), 160)
   assert.equal(typeof api.createSimTyping, 'function')
+  assert.ok(api.simTypingUnits(slideFor('terminal', '$ ls\na  b\n$ pwd\n/home', { reveal: 'steps' }), { from: 0, to: 2, stepped: true }).length > 0, 'the inlined source finds the slide\'s own terminal')
 })
 
 console.log(`sim typing: ${passed} checks passed`)

@@ -44,6 +44,7 @@ import { findSettingsWindow, openSettingsWindow, closeSettingsWindow, gotoSectio
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { REPLY_TEXT_MARK, WORKERS_SUBDOMAIN, startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
 import { S3_REPLY_TEXT_MARK, startS3Stub } from '../scripts/lib/s3-stub.mjs'
+import { testProfileEnv } from './lib/test-profile.mjs'
 
 const root = process.cwd()
 const scratch = mkdtempSync(join(tmpdir(), 'tw-cloudflare-settings-'))
@@ -130,7 +131,7 @@ try {
   })
   s3 = await startS3Stub({ buckets: ['talks'], keys: [S3_KEYS.good.id] })
   // Only what the app needs from this shell: no credential of the person running the test goes in.
-  const env = { TW_E2E: '1', TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl }
+  const env = { TW_E2E: '1', ...testProfileEnv(userData), TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl }
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }

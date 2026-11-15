@@ -1,23 +1,22 @@
 import './AboutUpdatesSettings.css'
 import { BUILD_SHA, BUILD_TIME } from '../buildInfo'
 import { useEffect, useState } from 'react'
-import {
-  SETTING_HINT, aboutLines, answerView, cardView,
-} from '@app-patterns/updates'
-import { useUpdateSnapshot, viewContext, answerOf } from '../lib/updateNotices'
+import { SETTING_HINT, aboutLines } from '@app-patterns/updates'
+import { ALPHA_HINT } from '../../../shared/update-install'
+import { useUpdateSnapshot, viewContext, answerOf, cardOf } from '../lib/updateNotices'
 import { AnswerButtons } from './UpdateNotices'
 
-// Settings › About and updates (update notices, ADR-0041; frames 03, 04 and 06): the running build's
-// version and where this copy came from, and the New versions card with the switch
-// `updates.checkForNewVersions`, the state of the last check, Check for updates, and a plain statement
-// of what the check sends. A Store copy has no New versions card. Every word is from
-// @app-patterns/updates; the style objects are SettingsPanel's own, handed in as `look`.
+// Settings › About and updates (ADR-0044, was ADR-0041; frames 03, 04 and 06): the running build's
+// version and where this copy came from, and the New versions card with the switches
+// `updates.checkForNewVersions` and `updates.alphaVersions` (Get early versions), the state of the last
+// check or of an update under way, Check for updates, and a plain statement of what the check sends. A Store
+// copy has no New versions card. The style objects are SettingsPanel's own, handed in as `look`.
 
 const STORE_ABOUT_DETAIL = 'TalkWeaver does not check for new versions itself in this copy. To see or change how the Store updates apps, open the Store’s settings.'
 
 const STORE_ABOUT_LINE = 'The Microsoft Store installs new versions of TalkWeaver.'
 
-const WHAT_THE_CHECK_SENDS = 'TalkWeaver reads one file, talkweaver.app/updates.json, and compares versions on this computer. It sends nothing about you, your talks or your version. Like any website, talkweaver.app sees this computer’s internet address.'
+const WHAT_THE_CHECK_SENDS = 'TalkWeaver reads one file, talkweaver.app/updates.json, and compares versions on this computer. It sends nothing about you, your talks or your version. Like any website, talkweaver.app sees this computer’s internet address. Only when you press Update does it download the new version from github.com.'
 
 type Look = Record<'sectionHead' | 'hint' | 'rowFolder' | 'folderLabel' | 'btn', React.CSSProperties>
 
@@ -47,11 +46,16 @@ export default function AboutUpdatesSettings({ look, record, onShowWhatsNew }: {
   // The card always follows the latest snapshot: a check's answer arrives as one, so no older local answer can outlast a newer one.
   const view = snap.waiting || (asked && snap.busy)
     ? answerOf({ ...snap, waiting: true })
-    : asked && !snap.checking ? answerView(snap.state, ctx) : cardView(snap.state, ctx)
+    : asked && !snap.checking ? answerOf(snap) : cardOf(snap)
   const flip = (): void => {
     setAsked(false)
     const was = snap.enabled
     void api.setEnabled(!was).then(() => record('updates.checkForNewVersions', 'Check for new versions', was ? 'on' : 'off', was ? 'off' : 'on'))
+  }
+  const flipAlpha = (): void => {
+    setAsked(false)
+    const was = snap.alpha
+    void api.setAlpha(!was).then(() => record('updates.alphaVersions', 'Get early versions (alpha)', was ? 'on' : 'off', was ? 'off' : 'on'))
   }
   return (
     <>
@@ -86,6 +90,13 @@ export default function AboutUpdatesSettings({ look, record, onShowWhatsNew }: {
             </div>
             <button type="button" role="switch" aria-checked={snap.enabled} aria-label="Check for new versions" className="st-switch" onClick={flip} />
           </div>
+          <div style={cardRow} data-setting="alpha-versions">
+            <div style={{ minWidth: 0 }}>
+              <div style={look.folderLabel}>Get early versions (alpha)</div>
+              <div style={sub} data-update-alpha-hint>{ALPHA_HINT}</div>
+            </div>
+            <button type="button" role="switch" aria-checked={snap.alpha} aria-label="Get early versions (alpha)" className="st-switch" data-update-alpha onClick={flipAlpha} />
+          </div>
           {view && (
             <div style={cardRow} data-update-state={view.tone}>
               <div style={{ minWidth: 0 }}>
@@ -97,7 +108,7 @@ export default function AboutUpdatesSettings({ look, record, onShowWhatsNew }: {
                 : (
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                     <AnswerButtons view={view} size="card" onView={() => setAsked(true)} />
-                    {view.action !== 'check' && view.action !== 'try-again' && (
+                    {view.action !== 'check' && view.action !== 'try-again' && snap.install.phase === 'idle' && (
                       <button type="button" className="apu-update-btn" data-update-check onClick={() => { void api.check().then(() => setAsked(true)) }}>Check for updates</button>
                     )}
                   </div>

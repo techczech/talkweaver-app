@@ -10,7 +10,7 @@ The complete verb list with arguments is generated: [commands](commands.md). Thi
 
 Publishing, live service, recording storage, transcription. Quit TalkWeaver first: every `setup` verb refuses while the app is open and changes nothing. Procedure and states: [set-up procedure](talkweaver-setup.md).
 
-- `talkweaver setup status --json`: reads every row; start here.
+- `talkweaver setup status --json`: reads every row; start here. `secondMac` lists what this Mac lacks of the set-up kept per Mac (token, site, live key, share-link address, transcription, word-timing models, agent skill).
 - `talkweaver setup cloudflare connect`: token on standard input, never an argument.
 - `talkweaver setup cloudflare account <id>`: when the token sees several accounts.
 - `talkweaver setup cloudflare create-site [name]`: the Pages site for handouts.

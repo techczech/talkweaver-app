@@ -1,9 +1,12 @@
 import './security-startup'
+// Second: the test-only network overrides are decided here, before the instance lock and any profile read.
+import { testNetworkOverride } from './test-network-startup'
 import { transcriptPath as transcriptPathForAlignment } from './recording-paths'
 import { modelPin as modelPinForAlignment } from './alignment-models'
 import { createAlignmentService } from './alignment-service'
 import { alignmentUtility } from './alignment-utility'
 import { RECORD_AGAIN_ENV, TAKES_OFF_ERROR, takesEnabled } from '../shared/recording-takes'
+import { isGitConflictError } from '../shared/git-conflict'
 import { AlignmentModels, readAlignmentManifests } from './alignment-models'
 import { cancelRecordingRefresh, prepareRecordingRefresh, registerPresenterRefresh } from './presenter-refresh'
 import { ImageEditRecipeSizeError, readImageEdit, saveImageEdit } from './image-edit'
@@ -43,6 +46,11 @@ process.stdout.on('error', () => {})
 process.stderr.on('error', () => {})
 
 const E2E = process.env.TW_E2E === '1'
+// Tests only: a live service at a workers.dev address answered by a stand-in on loopback (live-service-stand-in.ts).
+{
+  const standIn = liveServiceStandIn({ packaged: app.isPackaged, e2e: E2E, override: testNetworkOverride('TW_E2E_LIVE_SERVICE_URL') })
+  if (standIn) globalThis.fetch = fetchWithLiveStandIn(standIn, globalThis.fetch.bind(globalThis))
+}
 // Record one slide again: off in release builds; a development build started with TW_RECORD_AGAIN=1 turns it on.
 const TAKES_ENABLED = takesEnabled({ packaged: app.isPackaged, flag: process.env[RECORD_AGAIN_ENV] })
 
@@ -405,6 +413,8 @@ import {
   persistRun,
   readRun,
   readRunForTalk,
+  requireRunForTalk,
+  runFileProblem,
   runHandoutSlug,
   setRunHandoutUrl,
   stampRunWork,
@@ -437,8 +447,12 @@ import { createLiveSessionStore, type SessionRecoveryRecord } from './live-sessi
 import { secretsSlot, type SecretSlot, type SecretsStore } from './secrets-store'
 import { openSecretsStore } from './secrets-store-electron'
 import { installUpdateNotices } from './update-notices'
+import { restartBlockers } from '../shared/update-install'
+import { createRestartHolds, holdOnChannels } from './restart-holds'
 import { PRODUCT_NAME, helpMenu, macAppMenu } from './app-menu'
-import type { UpdateState } from '@app-patterns/updates'
+import type { ChannelUpdateState } from '../shared/update-checker'
+import { fetchWithLiveStandIn, liveServiceStandIn } from './live-service-stand-in'
+import { loopbackOrigin } from './test-network-guard'
 import { cloudflareApiBase, createCloudflareConnection, standInApiBase, type CloudflareConnectionService, type ConnectionReply as CloudflareReply } from './cloudflare-connection'
 import { LIVE_ACCESS_REMOVED, LIVE_NOT_SET_UP, LiveServiceError, deployLiveService, lookUpLiveService, surveyLiveService, type DeployPhase, type LiveDeployResult } from './live-service-deploy'
 import { KeyStoreUnreadable, computerNameOrNull, createComputerKeyStore, defaultComputerName, keyKind, keyToPresent, sendWithHeldKeys, type ComputerKeyStore, type KeyKind, type StoredKey } from './live-service-key'
@@ -618,10 +632,12 @@ type Config = {
   // The status-bar place chip, "Show where I am in the status bar" (onboarding ticket 02): ON
   // until switched off; read tolerantly (src/shared/place-chip-settings.ts).
   placeChipVisible?: boolean
-  // Update notices (ADR-0041): the setting `updates.checkForNewVersions` (on until switched off) and the
-  // check's state (last result, skipped version, last version run); both read in src/main/update-notices.ts.
+  // Updates (ADR-0044): the settings `updates.checkForNewVersions` (on until switched off) and
+  // `updates.alphaVersions` (off until switched on), and the check's state (last result, the channels it read,
+  // skipped version, last version run); all read in src/main/update-notices.ts. Per Mac.
   updatesCheckForNewVersions?: boolean
-  updateNotices?: UpdateState
+  updatesAlphaVersions?: boolean
+  updateNotices?: ChannelUpdateState
   // The Guide (onboarding ticket 07): "Show the Guide button in the sidebar" (ON until switched off)
   // and the Guide's progress. Both read tolerantly (src/shared/guide.ts); progress lives here,
   // beside the vault registry and outside every vault.
@@ -887,9 +903,9 @@ function handleFromSettingsWindow(channel: string, refused: () => unknown, handl
 function tokenExists(): boolean {
   return secrets().has('cloudflare-token')
 }
-/** The environment override for tests, under its three conditions (cloudflare-connection.ts). */
+/** The environment override for tests (cloudflare-connection.ts), read only through the shared guard (test-network-guard.ts). */
 function cloudflareTestContext(): { packaged: boolean; e2e: boolean; override: unknown } {
-  return { packaged: app.isPackaged, e2e: E2E, override: process.env.TW_E2E_CLOUDFLARE_API_BASE_URL }
+  return { packaged: app.isPackaged, e2e: E2E, override: testNetworkOverride('TW_E2E_CLOUDFLARE_API_BASE_URL') }
 }
 let cloudflareService: CloudflareConnectionService | null = null
 function cloudflareConnection(): CloudflareConnectionService {
@@ -1776,6 +1792,10 @@ async function announcePresenterLink(wcId: number, change: { url: string | null;
 let liveSessions: ReturnType<typeof createLiveSessionManager> | null = null
 /** The update check, once installed: told whenever a talk opens or closes. */
 let updateChecker: ReturnType<typeof installUpdateNotices> | null = null
+/** Publishes and exports in flight: a restart into a new version waits for them (ADR-0044). Counted on their IPC
+ *  channels (holdOnChannels wraps each handler as it is registered, below), so no handler changes shape. */
+const restartHolds = createRestartHolds(() => { updateChecker?.tell() })
+holdOnChannels(ipcMain, restartHolds, { 'talk:publish-handout': 'publishing', 'run:publish-handout': 'publishing', 'talk:export-handout': 'exporting' })
 let liveRecoveryStore: ReturnType<typeof createLiveSessionStore> | null = null
 
 async function probeLiveSession(record: SessionRecoveryRecord): Promise<LiveStatus | null> {
@@ -3896,12 +3916,17 @@ async function pathwaySnapshot(outlinePath: string, content: string) {
   return { slides, pathways: resolvePathways(manifest.pathways, slides), manifest }
 }
 
+/** A Pathways reply for a failure: its words, and the manifest to reveal when it holds a Git conflict. */
+function pathwayFailure(error: unknown): { error: string; conflictFile?: string } {
+  return { error: error instanceof Error ? error.message : String(error), ...(isGitConflictError(error) ? { conflictFile: error.file } : {}) }
+}
+
 ipcMain.handle('pathways:read', async (_event, outlinePath: string, content: string) => {
   try {
     const { slides, pathways } = await pathwaySnapshot(outlinePath, content)
     return { slides, pathways }
   } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) }
+    return pathwayFailure(error)
   }
 })
 
@@ -3947,7 +3972,7 @@ ipcMain.handle('pathways:create', async (_event, outlinePath: string, content: s
       slideIds: []
     }))
   } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) }
+    return pathwayFailure(error)
   }
 })
 
@@ -3955,7 +3980,7 @@ ipcMain.handle('pathways:rename', async (_event, outlinePath: string, content: s
   try {
     return await mutatePathways(outlinePath, content, (text) => renamePathwayInManifest(text, String(id), String(name)))
   } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) }
+    return pathwayFailure(error)
   }
 })
 
@@ -3963,7 +3988,7 @@ ipcMain.handle('pathways:delete', async (_event, outlinePath: string, content: s
   try {
     return await mutatePathways(outlinePath, content, (text) => deletePathwayInManifest(text, String(id)))
   } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) }
+    return pathwayFailure(error)
   }
 })
 
@@ -3973,7 +3998,7 @@ ipcMain.handle('pathways:set-slide-ids', async (_event, outlinePath: string, con
       setPathwaySlideIdsInManifest(text, String(id), Array.isArray(slideIds) ? slideIds.map(String) : [])
     )
   } catch (error) {
-    return { error: error instanceof Error ? error.message : String(error) }
+    return pathwayFailure(error)
   }
 })
 
@@ -5876,7 +5901,7 @@ function talkBySlug(slug: string): TalkInfo | null {
 // A live web page on a slide (live-page-host.ts): one host per deck window TalkWeaver opens (loaded
 // with ?livepage=1), the presenter's paired with its audience window's for following.
 const livePageHosts = new Map<number, LivePageHost>()
-const livePageAllowance = testLoopbackAllowance({ isPackaged: app.isPackaged, e2e: E2E, value: process.env.TW_E2E_LIVE_PAGE_ALLOW })
+const livePageAllowance = testLoopbackAllowance({ isPackaged: app.isPackaged, e2e: E2E, value: testNetworkOverride('TW_E2E_LIVE_PAGE_ALLOW') })
 // The capture gallery (live-page-capture.ts): a deck window's saved views go to the talk main opened
 // that window for (recorded here at attach time, never taken from the deck or the page), written by a
 // process of their own started in the talk folder (live-page-capture-worker.ts).
@@ -6492,6 +6517,8 @@ ipcMain.handle('replay:build', async (_event, talkSlug: string): Promise<{ succe
 // deps are read lazily per call, so this is safe at module scope (app not yet ready).
 registerRecordingIpc({
   takesEnabled: () => TAKES_ENABLED,
+  // The Mac a new Run's recording is on (0.45): the name this computer is listed under for the live service.
+  computerName: () => computerName(),
   configuredFfmpeg: () => expandHomePath(transcriptionSettings().ffmpeg.trim()),
   compilerDir: () => getCompilerPath(),
   userDataDir: () => app.getPath('userData'),
@@ -6633,6 +6660,7 @@ ipcMain.handle('work-files:move-prework', async (event, input) => {
 })
 registerHistoryIpc({
   userDataDir: () => app.getPath('userData'),
+  computerName: () => computerName(),
   vaultRoot: () => writableVaultRoot() ?? null, // writes: only a vault folder that is there (ticket 07)
   // A planned Run lives in its talk's vault: a request naming a vault writes there, only while it is open and there.
   runVault: (vaultId) => runVaultFor(vaultId),
@@ -6757,6 +6785,8 @@ function savedTranscriptionDeps(root: string | null) {
 const recordingVideo = registerRecordingVideoIpc({
   ipcMain,
   takesEnabled: () => TAKES_ENABLED,
+  computerName: () => computerName(),
+  appVersion: () => app.getVersion(),
   toolsWindow: () => toolsWindow,
   userDataDir: () => app.getPath('userData'),
   vaultFor: (home) => home === undefined ? writableVaultRoot() ?? null : transcriptVaultForHome(home),
@@ -8087,10 +8117,12 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
     const talk = asked?.sourceOutline ? await qualifiedRunTalk(vault,asked) : named ? talkInVault(vault, String(payload.talkSlug)) : talkBySlug(String(payload.talkSlug))
     // Feedback-boards ticket 09 (ADR-0032 amendment point 3): a planned Run publishes its handout
     // before the day too, so the link participants get for pre-work is the one the talk will use.
-    if (!asked || !talk) return { success: false, error: 'run-not-found' }
+    // A Run file that is there but cannot be read (a Git conflict from syncing) is named, never "not found".
+    if (!asked) return { success: false, error: runFileProblem(vault, requestedSlug, requestedId)?.message ?? 'run-not-found' }
+    if (!talk) return { success: false, error: 'run-not-found' }
     const reread = () => {
-      const current = readRunForTalk(vault, requestedSlug, requestedId)
-      if (!current) throw Error('run-not-found')
+      // The Run as its file holds it now; one that became unreadable meanwhile stops the publish, named.
+      const current = requireRunForTalk(vault, requestedSlug, requestedId)
       if (current.sourceOutline !== asked.sourceOutline) throw Error('run-source-conflict')
       authority?.()
       return current
@@ -8269,7 +8301,7 @@ ipcMain.handle('run:unpublish-handout', async (_event, payload: { talkSlug: stri
     const vault = picked.root
     if (!vault) return { success: false, error: 'no-vault' }
     const asked = readRun(vault, String(payload.talkSlug), String(payload.runId))
-    if (!asked) return { success: false, error: 'run-not-found' }
+    if (!asked) return { success: false, error: runFileProblem(vault, String(payload.talkSlug), String(payload.runId))?.message ?? 'run-not-found' }
     // EVERY unpublish takes its turn in the site's queue, and reads the Run when its turn begins: asked
     // for while a publish of the same Run is still going up, it finds the link (and the work phases) that
     // publish recorded, and the Run ends unpublished. What it does is run-unpublish.ts: for a Run whose
@@ -8282,7 +8314,10 @@ ipcMain.handle('run:unpublish-handout', async (_event, payload: { talkSlug: stri
     const outcome = await handoutPublishing().publish({
       entry: 'run-unpublish',
       ...runUnpublishJob({
-        run: () => readRun(vault, asked.talkSlug, asked.id) ?? asked,
+        // The Run as its file holds it at each step, never the copy read when Unpublish was asked for: a
+        // file that became unreadable meanwhile (a Git conflict from a sync) stops the job, named, and the
+        // Run writer would refuse to replace it anyway.
+        run: () => requireRunForTalk(vault, asked.talkSlug, asked.id),
         // The site is the live one, read at the job's turn: no copy of it is needed on this computer.
         siteExists: () => true,
         readRegistry: readHandoutRegistry,
@@ -10372,15 +10407,21 @@ async function runSetupCommand(args: string[]): Promise<void> {
         recordingSettings: { read: recordingSettings, apply: applyRecordingSettings },
         watchLiveRow: (listener) => { liveRowListeners.add(listener); return () => { liveRowListeners.delete(listener) } },
         applyShareAddress: () => applyShareAddress(),
+        // The second-Mac check in `setup status` (0.45): the same statuses Settings shows.
+        wordTiming: () => alignmentModels().status(),
+        agentSkill: async () => {
+          const report = await agentSkills().status()
+          return { agentsFound: report.agents.filter((row) => row.found && row.state !== 'via').length, installedFor: report.agents.filter((row) => ['installed', 'shared', 'separate', 'changed'].includes(row.state)).map((row) => row.name) }
+        },
       })
       return runSetup(args, {
         out: (line) => write(process.stdout, line),
         err: (line) => write(process.stderr, line),
         readSecret: (prompts, pipeHint) => readSecretInput(process.stdin, process.stderr, prompts, pipeHint),
       }, ops, {
-        // A test harness's S3 stand-in on loopback, accepted as the recording endpoint under the same
-        // three conditions as the Cloudflare API override: unpackaged, TW_E2E=1, and named exactly.
-        testEndpoint: !app.isPackaged && E2E ? process.env.TW_E2E_RECORDING_ENDPOINT ?? null : null,
+        // A test harness's S3 stand-in, accepted as the recording endpoint only through the shared guard
+        // (test-network-guard.ts: unpackaged, TW_E2E=1, a harness profile) and only as http://127.0.0.1:<port>.
+        testEndpoint: !app.isPackaged && E2E ? loopbackOrigin(testNetworkOverride('TW_E2E_RECORDING_ENDPOINT')) : null,
       })
     },
     (line) => write(process.stderr, line)
@@ -10414,7 +10455,7 @@ function openSettingsWindow(section?: string): boolean {
 /** Every change to the store, from anywhere, reaches the windows and services that follow a preference. */
 function preferencesChanged(keys: string[], shortcutKeys: Readonly<Record<string, string>>): void {
   const has = (...wanted: string[]): boolean => wanted.some((k) => keys.includes(k))
-  if (has('updates.checkForNewVersions')) updateChecker?.settingChanged()
+  if (has('updates.checkForNewVersions', 'updates.alphaVersions')) updateChecker?.settingChanged()
   if (has('writing.actionBar')) broadcastActionBar()
   if (has('general.placeChip')) broadcastToWindows('place-chip:changed', { visible: placeChipVisible() })
   if (has('general.guideButton')) { broadcastToWindows('guide-button:changed', { visible: guideButtonVisible() }); pushPresentChapter() }
@@ -10626,6 +10667,7 @@ app.whenReady().then(async () => {
   registerSessionsListIpc({
     ipcMain: ipcMain as unknown as Parameters<typeof registerSessionsListIpc>[0]['ipcMain'],
     vaults: () => availableVaults().map((v) => ({ id: v.id, root: v.root })),
+    reveal: (path) => { if (!E2E) shell.showItemInFolder(path) },
     liveRuns: () => liveSessions?.liveRuns() ?? [],
     // The one sent set (ticket 17, D1): the Unpublish confirmation names exactly what the job withdraws.
     sentPhases: (run, root) => sentPhases(runPrework(), run, root),
@@ -10749,6 +10791,15 @@ app.whenReady().then(async () => {
   updateChecker = installUpdateNotices({
     editorWindows: () => [...editorWindows.values()].map((entry) => entry.win).concat((sharedSettings?.host.settingsWindow() as BrowserWindow | null) ?? []),
     isPresentingNow: () => presentWindows.size > 0 || recordingOpen() || (liveSessions?.anyOpen() ?? false),
+    restartBlockers: () => restartBlockers({
+      presentWindows: presentWindows.size,
+      recording: recordingOpen(),
+      liveSession: liveSessions?.anyOpen() ?? false,
+      exporting: recordingVideo.busy() || restartHolds.active('exporting'),
+      publishing: restartHolds.active('publishing'),
+      sharing: sharedTalkService?.createsPending() ?? false,
+      unsaved: lastUnsavedText.size > 0 || [...editorWindows.keys()].some((id) => outlineDiskGuard.pendingFor(String(id)) !== null),
+    }),
     readConfig,
     writeConfig,
     e2e: E2E,

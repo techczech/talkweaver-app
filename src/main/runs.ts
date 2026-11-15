@@ -1,5 +1,8 @@
 import type { LayerManifest } from './recording-layers.ts'
 import { isTakeRun } from '../shared/recording-takes.ts'
+import { hasGitConflictMarkers } from './conflict-copies.mjs'
+import { jsonObject, refuseUnreadableReplace, ReplaceRefusedError } from './replace-guard.ts'
+import { runNotSavedGitConflict, runNotSavedUnreadable } from '../shared/git-conflict.ts'
 import type { RunAudioFields } from '../shared/run-audio.ts'
 import { AUDIENCE_FEEDBACK_LIMITS, parsePollDefinition, parsePollChoice, parseQuestionInput, parseReactionInput, type InstantSlide, type PollDefinition, type PollChoice } from '../../worker/protocol.ts'
 import { preworkWindow } from '../shared/plan-run.ts'
@@ -13,7 +16,7 @@ import { mergeRunPrework, normaliseRunPrework, zonedLocalToMs, type PreworkPick,
 import { applySeenChange, type SeenChange } from '../shared/run-answers.ts'
 import { normaliseRunExtraSlides, normaliseRunExtras, type RunExtraSlide, type RunExtras } from '../shared/run-extras.ts'
 import { closeSync, existsSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'fs'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'path'
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'path'
 import { resolvePathways, type Pathway, type PathwaySlideRow } from './pathways.ts'
 import { pathStaysInside } from './path-containment.ts'
 import { readbackSlideTimeIndex } from './run-ink-readback.ts'
@@ -828,12 +831,68 @@ function writeRunTemp(path: string, run: RunRecord): string {
 /** Main-owned transaction gate; the successor identity comes from this writer's temporary file. */
 export type RunReplacementGuard = (path: string, run: RunRecord, successor: { dev: number; ino: number }, replace: () => void) => void
 
+/** A Run file's short name for messages: `<talk>/<runId>.json`. */
+export function runFileName(path: string): string {
+  return `${basename(dirname(path))}/${basename(path)}`
+}
+
+const RUN_WORDS = {
+  conflict: (path: string) => runNotSavedGitConflict(runFileName(path)),
+  unreadable: (path: string) => runNotSavedUnreadable(runFileName(path)),
+}
+
+/** Text that reads as a Run: a JSON object with an id (this Run's, when `runId` is given). */
+function readsAsRun(text: string, runId?: unknown): boolean {
+  const value = jsonObject(text)
+  if (!value || typeof value.id !== 'string' || !value.id) return false
+  return typeof runId !== 'string' || !runId || value.id === runId
+}
+
+/**
+ * THE RULE FOR EVERY RUN REPLACEMENT (0.45, second Mac): a Run file that is on disk but cannot be read as
+ * this Run (Git conflict markers from a sync, truncated or broken JSON, the wrong shape, another Run's id)
+ * is never replaced from a record held in memory. Its bytes stay as they are and this throws a
+ * `ReplaceRefusedError` naming the file; a missing file (a first save) is allowed. Called as the last step
+ * before each rename, with nothing awaited in between.
+ */
+export function refuseRunReplace(path: string, runId?: unknown): void {
+  refuseUnreadableReplace(path, (text) => readsAsRun(text, runId), RUN_WORDS)
+}
+
 function writeRun(path: string, run: RunRecord, guard?: RunReplacementGuard): void {
   mkdirSync(dirname(path), { recursive: true })
   const temp = writeRunTemp(path, run)
+  const replace = (): void => {
+    refuseRunReplace(path, run.id)
+    renameSync(temp, path)
+  }
   try {
-    if (guard) guard(path, run, lstatSync(temp), () => renameSync(temp, path))
-    else renameSync(temp, path)
+    if (guard) guard(path, run, lstatSync(temp), replace)
+    else replace()
+  } finally {
+    if (existsSync(temp)) unlinkSync(temp)
+  }
+}
+
+/**
+ * A Run file read for a direct patch (the recording's uploaded flag, kind, context, trims, finalise): the
+ * parsed object as it is on disk, or a `ReplaceRefusedError` when the file is there but does not read as a
+ * Run. A missing file throws ENOENT.
+ */
+export function readRunFileRaw(path: string): Record<string, unknown> {
+  refuseRunReplace(path)
+  const value = jsonObject(readFileSync(path, 'utf8'))
+  if (!value) throw new ReplaceRefusedError('unreadable', RUN_WORDS.unreadable(path), path)
+  return value
+}
+
+/** Writes a patched Run object back as it was read (same JSON layout), atomically, through the same rule. */
+export function writeRunFileRaw(path: string, value: Record<string, unknown>): void {
+  const temp = `${path}.${process.pid}.${Date.now()}.tmp`
+  try {
+    writeFileSync(temp, JSON.stringify(value, null, 2), 'utf8')
+    refuseRunReplace(path, value.id)
+    renameSync(temp, path)
   } finally {
     if (existsSync(temp)) unlinkSync(temp)
   }
@@ -844,10 +903,43 @@ export function readRun(vaultRoot: string, talkSlug: string, runId: string): Run
 }
 
 /**
+ * Why a Run that is not read cannot be read: the refusal naming its file when the file is there but does
+ * not read as this Run (a Git conflict, broken JSON), or null when it is simply not there (or the names are
+ * unsafe). Callers that report "not found" use it to say the real reason.
+ */
+export function runFileProblem(vaultRoot: string, talkSlug: string, runId: string): ReplaceRefusedError | null {
+  const path = runPathForTalk(vaultRoot, talkSlug, runId)
+  if (!path) return null
+  try { refuseRunReplace(path, runId) } catch (error) { if (error instanceof ReplaceRefusedError) return error; throw error }
+  return null
+}
+
+/**
+ * The Run as its file holds it now, for a job that must not go on without it: throws the refusal naming the
+ * file when it is there but unreadable, and `run-not-found` when it is gone. Never a copy held in memory.
+ */
+export function requireRunForTalk(vaultRoot: string, talkSlug: string, runId: string): RunRecord {
+  const run = readRunForTalk(vaultRoot, talkSlug, runId)
+  if (run) return run
+  throw runFileProblem(vaultRoot, talkSlug, runId) ?? new Error('run-not-found')
+}
+
+/**
  * `strictSessionId` is only for shared-audio deletion: uncertainty must retain that session's audio.
  * New takes of a slide (`takeOf`) are left out unless `includeTakes` (always included in strict mode).
  */
 export function listRuns(vaultRoot: string, talkSlug?: string, options?: { strictSessionId: string }, includeTakes = !!options): RunRecord[] {
+  return scanRuns(vaultRoot, talkSlug, options, includeTakes, null)
+}
+
+/** Every Run of a vault (as listRuns), and the Run files that hold Git conflict markers (0.45): those are
+ *  not listed, and the Runs view names them instead of leaving them out silently. */
+export function listRunsWithConflicts(vaultRoot: string): { runs: RunRecord[]; conflicts: string[] } {
+  const conflicts: string[] = []
+  return { runs: scanRuns(vaultRoot, undefined, undefined, false, conflicts), conflicts }
+}
+
+function scanRuns(vaultRoot: string, talkSlug: string | undefined, options: { strictSessionId: string } | undefined, includeTakes: boolean, conflicts: string[] | null): RunRecord[] {
   const root = join(vaultRoot, '_PRESENTATIONS')
   if (!options && !existsSync(root)) return []
   // A named talk comes from the renderer (history:list-runs): list only its guarded folder.
@@ -879,12 +971,16 @@ export function listRuns(vaultRoot: string, talkSlug?: string, options?: { stric
         if (options && name === `${options.strictSessionId}.json`) throw new Error('run-path-unreadable')
         continue
       }
+      let text: string | null = null
       try {
-        const run = normaliseRun(JSON.parse(readFileSync(file, 'utf8')))
+        text = readFileSync(file, 'utf8')
+        const run = normaliseRun(JSON.parse(text))
         if (run.id && run.talkSlug && (includeTakes || !isTakeRun(run))) runs.push(run)
       } catch (error) {
         if (options && name === `${options.strictSessionId}.json`) throw error
         // One malformed Run must not blank History or block deletion of unrelated audio.
+        // Only a Run's own file (`<runId>.json`): a sidecar beside it (`.edits.json`, `.transcript.json`) says its own.
+        if (conflicts && text !== null && isSafeRunId(name.slice(0, -'.json'.length)) && hasGitConflictMarkers(text)) conflicts.push(file)
       }
     }
   }

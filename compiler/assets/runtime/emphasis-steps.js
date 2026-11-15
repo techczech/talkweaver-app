@@ -53,7 +53,12 @@
 //
 // `emphasisStepsRuntimeSource()` serialises all of this into the deck template (07-assembly,
 // `<!--EMPHASIS_STEPS_RUNTIME-->`) and into the handout / venue page (09-output-builders);
-// scripts/test-emphasis-steps.mjs asserts the same source.
+// scripts/test-emphasis-steps.mjs asserts the same source. It carries runtime/step-ownership.js
+// too (which elements are a slide's own), so both runtimes inline that rule once, here.
+// `scope` below is always searched for the slide's OWN elements: the runtimes pass an `isVisible`
+// test that applies ownsStepElement first.
+
+import { stepOwnershipRuntimeSource } from './step-ownership.js';
 
 /** The emphasis spans that are steps. Stamped by the compiler only on slides with the option. */
 export const EMPH_STEP_SELECTOR = '[data-emph-step]';
@@ -302,6 +307,7 @@ export function stampEmphasisPlainWeight(root, styleOf) {
 
 export function emphasisStepsRuntimeSource() {
   return [
+    stepOwnershipRuntimeSource(),
     'const EMPH_STEP_SELECTOR = ' + JSON.stringify(EMPH_STEP_SELECTOR) + ';',
     'const MEDIA_STEP_SELECTOR = ' + JSON.stringify(MEDIA_STEP_SELECTOR) + ';'
   ].concat([

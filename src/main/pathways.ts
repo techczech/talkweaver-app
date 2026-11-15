@@ -1,6 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs'
-import { dirname, join } from 'path'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'fs'
+import { basename, dirname, join } from 'path'
 import { talkRunFolderForTalk } from './runs.ts'
+import { hasGitConflictMarkers } from './conflict-copies.mjs'
+import { writeTextAtomic } from './recording-edits-store.ts'
+import { GitConflictError, pathwaysGitConflict, pathwaysNotSavedUnreadable } from '../shared/git-conflict.ts'
+import { refuseUnreadableReplace } from './replace-guard.ts'
 
 export type Pathway = {
   id: string
@@ -152,6 +156,8 @@ function pathwayManifestPathOrNull(vaultRoot: string, talkSlug: string): string 
 export function readPathwayManifest(vaultRoot: string, talkSlug: string): { path: string; text: string; pathways: Pathway[] } {
   const path = pathwayManifestPath(vaultRoot, talkSlug)
   const text = existsSync(path) ? readFileSync(path, 'utf8') : '{}\n'
+  // Two Macs changed it and Git left both versions: say so, before the generic JSON error (0.45).
+  if (hasGitConflictMarkers(text)) throw new GitConflictError(pathwaysGitConflict(`${basename(dirname(path))}/manifest.json`), path)
   const manifest = parseManifest(text)
   return { path, text, pathways: normalisePathways(manifest.pathways) }
 }
@@ -179,7 +185,10 @@ export function createPathwaySummaryReader(
       const mtimeMs = statSync(path).mtimeMs
       const cached = cache.get(path)
       if (cached?.mtimeMs === mtimeMs) return { count: cached.count, names: [...cached.names] }
-      const names = readManifest(vaultRoot, talkSlug).pathways.map((pathway) => pathway.name)
+      // A manifest that cannot be read (a Git conflict, broken JSON) shows no pathways in the list rather than
+      // failing every talk's facts; the Pathways view itself says what is wrong with it.
+      let names: string[]
+      try { names = readManifest(vaultRoot, talkSlug).pathways.map((pathway) => pathway.name) } catch { return { count: 0, names: [] } }
       const summary = { mtimeMs, count: names.length, names }
       cache.set(path, summary)
       return { count: summary.count, names: [...summary.names] }
@@ -196,10 +205,19 @@ const pathwaySummaryReader = createPathwaySummaryReader()
 export const readPathwaySummary = pathwaySummaryReader.read
 export const invalidatePathwaySummary = pathwaySummaryReader.invalidate
 
+/** Atomic (0.45): a new file in the same folder, flushed, then renamed over the manifest, so a sync tool
+ *  or a crash never sees half a file. */
 export function writePathwayManifest(path: string, text: string): void {
   mkdirSync(dirname(path), { recursive: true })
-  writeFileSync(path, text, 'utf8')
+  // A manifest that is there but cannot be read (a Git conflict from syncing, broken JSON) is never replaced
+  // from what a caller holds: its bytes stay, and this throws naming it (replace-guard.ts, 0.45).
+  const words = { conflict: (file: string) => pathwaysGitConflict(manifestName(file)), unreadable: (file: string) => pathwaysNotSavedUnreadable(manifestName(file)) }
+  const readable = (current: string): boolean => { try { parseManifest(current); return true } catch { return false } }
+  refuseUnreadableReplace(path, readable, words)
+  writeTextAtomic(path, text, () => refuseUnreadableReplace(path, readable, words))
 }
+
+const manifestName = (path: string): string => `${basename(dirname(path))}/manifest.json`
 
 type RuntimeBeat = {
   slideId?: unknown

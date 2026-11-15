@@ -144,7 +144,9 @@ const FOUR = [
   const delivered = { ...planned('ai-research', 'said', 'AI for research teams', 'Saïd workshop', -1, { expectedPeople: 18, handoutUrl: 'https://handouts.fyi/dl/said' }),
     status: 'delivered', startedAt: new Date(Date.now() - 86_400_000).toISOString(), endedAt: new Date(Date.now() - 86_400_000 + 3_600_000).toISOString(),
     prework: { entries: [], people: 16 }, postwork: { entries: [], people: 5 },
-    work: { pre: pre(-9, -1, { publishedAt: PUB }), post: { fileId: 'session-feedback', opens: 'session-end', closes: `${dayOf(13).iso}T17:00`, timeZone: ZONE, publishedAt: PUB } } }
+    // Post-work that opens when the Run ends is open once the app has pushed its opening and stamped it on
+    // the Run (`openedAt`, ticket 19, run-checklist.ts postWorkWindow): stamped here at the Run's end.
+    work: { pre: pre(-9, -1, { publishedAt: PUB }), post: { fileId: 'session-feedback', opens: 'session-end', closes: `${dayOf(13).iso}T17:00`, timeZone: ZONE, publishedAt: PUB, openedAt: new Date(Date.now() - 86_400_000 + 3_600_000).toISOString() } } }
   const app = await launch([delivered, FOUR[1], FOUR[2]])
   try {
     const tools = await openSessions(app)

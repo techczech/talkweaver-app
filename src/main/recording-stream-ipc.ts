@@ -12,6 +12,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { dirname, join } from 'path'
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { normaliseRun, writeRunFile, runReservationIsFor, writeNewRunFile, type RunMark, type RunRecord } from './runs'
+import { recordedOnFor } from '../shared/recording-place'
 import { existingRecordedSegmentPath, saveTargets, segmentIndexOfFile, sessionIdRandom, sessionIdTaken, vaultSessionPath } from './recording-paths'
 import { isSafeTalkSlug } from './runs'
 import { createRecordingStreams, type RecordingStreams } from './recording-stream'
@@ -38,6 +39,8 @@ export interface StreamIpcDeps {
   /** That vault's root while it is open and its folder is there, else undefined (recovery waits for it). */
   writableVault?: (root: string) => string | undefined
   ledger: () => Promise<StreamLedger | null>
+  /** The name this computer is listed under: a recovered Run names it as holding the recording (0.45). */
+  computerName?: () => string
   onSessionSaved?: (saved: { talkSlug: string; kind: 'delivery' | 'rehearsal' | 'recording'; runId: string; vaultRoot?: string | null }) => void
   /** The [0,1) source for new session ids; crypto-backed by default (tests pass a repeating one). */
   sessionRand?: () => number
@@ -226,6 +229,8 @@ async function recoverInterruptedRecordingsNow(): Promise<number> {
         slideTimeIndex: L && rawMarks.length ? L.buildSlideTimeIndex(rawMarks) : []
       }
       if (recoveryNote && session.audio) Object.assign(session.audio, { recoveryNote })
+      const recordedOn = session.audio || session.capture ? recordedOnFor(deps.computerName?.()) : undefined
+      if (recordedOn) Object.assign(session, { recordedOn })
       mkdirSync(dirname(targets.sessionJson), { recursive: true })
       if (vault && !vaultSessionPath(vault, manifest.talkSlug, sessionId).ok) continue
       // Created exclusively: a Run that appeared meanwhile is kept as it is, never replaced.

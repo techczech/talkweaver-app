@@ -113,7 +113,7 @@ function SettingsApp(): React.JSX.Element | null {
   if (!view) return null
   const savedMic = view.state.settings['recording.microphone']
   const micOptions = microphoneSettingOptions(inputs, typeof savedMic === 'string' ? savedMic : '')
-  const shown = (update?.source === 'store' ? schema.settings.filter((d) => d.key !== 'updates.checkForNewVersions') : schema.settings)
+  const shown = (update?.source === 'store' ? schema.settings.filter((d) => d.key !== 'updates.checkForNewVersions' && d.key !== 'updates.alphaVersions') : schema.settings)
     .map((d) => d.key === 'recording.microphone' ? { ...d, type: 'choice' as const, options: micOptions } : d.key === 'recording.wordsLocale' ? { ...d, help: `${d.help} ${speech}`, ...(languages.length ? { options: languages } : {}) } : d.key === 'recording.wordsEngine' ? { ...d, options: d.options?.filter(o => o.value !== 'parakeet' || parakeetReady) } : d)
   const pages: CustomPage[] = [
     { id: 'updates', label: 'About and updates', icon: 'info', render: () => <>

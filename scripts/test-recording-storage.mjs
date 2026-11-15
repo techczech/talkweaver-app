@@ -125,7 +125,7 @@ const edge = (row) => recordingRowEdge(row).text
     ['failed', Object.assign(http(403, 'Forbidden'), { cause: http(403, 'AuthorizationHeaderMalformed') })],
     ['failed', Object.assign(http(403, 'Forbidden'), { cause: Object.assign(http(401, 'AccessDenied'), { cause: { Code: 'AuthorizationHeaderMalformed' } }) })],
     ['failed', http(500, 'InternalError')], ['failed', new Error(`anything ${KEY_SECRET}`)], ['failed', null], ['failed', undefined], ['failed', 42],
-    ['audio-missing', 'audio-missing'], ['failed', 'no-vault'], ['failed', `Error: ${KEY_SECRET}`], ['failed', ''],
+    ['audio-missing', 'audio-missing'], ['run-not-saved', 'run-not-saved'], ['failed', 'no-vault'], ['failed', `Error: ${KEY_SECRET}`], ['failed', ''],
   ]
   const produced = new Set()
   for (const [expected, reason] of cases) {
@@ -143,18 +143,21 @@ const edge = (row) => recordingRowEdge(row).text
     'Not uploaded: the storage could not be reached (offline?). The recording is safe on this computer.',
     'Not uploaded. The recording is safe on this computer.',
     "This recording's audio file is missing from this computer, so there is nothing to upload.",
+    'Uploaded, but the Run was not marked as uploaded: its file has a Git conflict from syncing or could not be read, and was left as it is. Resolve it in Git, then upload again.',
   ])
   assert.equal(new Set(sentences).size, sentences.length)
-  // Every class but audio missing says the recording is safe; audio missing makes no such claim.
+  // Every class but audio missing says the recording is safe; audio missing makes no such claim, and a Run
+  // not marked after an upload (0.45) says the upload went through.
   for (const [index, sentence] of sentences.entries()) {
     if (UPLOAD_FAILURES[index] === 'audio-missing') assert.ok(!sentence.includes('safe on this computer'))
+    else if (UPLOAD_FAILURES[index] === 'run-not-saved') assert.ok(sentence.startsWith('Uploaded, but'))
     else assert.ok(sentence.includes('safe on this computer'), `${UPLOAD_FAILURES[index]} says the recording is safe`)
   }
   assert.equal(uploadFailureMessage('audio-missing'), "This recording's audio file is missing from this computer, so there is nothing to upload.")
   // What was thrown never becomes the sentence, whatever it was.
   for (const [, reason] of cases) assert.ok(sentences.includes(uploadFailureMessage(reason)))
   // Not set up offers the way to Settings; nothing else offers an action.
-  assert.deepEqual(UPLOAD_FAILURES.map((kind) => uploadFailureAction(kind)), [SET_UP_RECORDING_STORAGE, null, null, null, null, null])
+  assert.deepEqual(UPLOAD_FAILURES.map((kind) => uploadFailureAction(kind)), [SET_UP_RECORDING_STORAGE, null, null, null, null, null, null])
   assert.equal(SET_UP_RECORDING_STORAGE, 'Set up recording storage')
   console.log('PASS 2: upload failures sort to not set up / keys rejected / bucket not found / offline / a plain fallback / audio missing; every sentence but audio missing says the recording is safe on this computer')
 }
