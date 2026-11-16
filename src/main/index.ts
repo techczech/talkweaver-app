@@ -303,13 +303,17 @@ import { VAULTS_DIR, adoptLegacyThumbDirs, isPlainSegment, parseThumbUrl, talkTh
 import { createConfigFile, type ConfigFile } from './config-file'
 import type { ConfigOverlay } from './settings-overlay'
 import { settingsPageUrl, startSettingsHost, type TalkWeaverSettings } from './settings-host'
+import { createSetupFolderEngine, lookAtSetupFolder, type SetupFolderEngine } from './setup-folder'
+import { startSetupFolderHost, type SetupFolderHost } from './setup-folder-host'
+import { OFFER_KINDS, SETUP_FOLDER_SETTING, type SuggestionKind } from '../shared/setup-folder'
+import { commandsAdapter } from '@app-patterns/settings'
 import { createSecretSlots, recordedKeyChange } from './settings-secret-slots'
 import { createSettingsKeymap, legacyOverridesArg, overridesArg, type SettingsKeymap } from './settings-keymap'
 import { openSettings, runWithSettings } from './settings-open'
 import { RECORDING_SETTINGS_ONLY, settingsWindowOnly } from './settings-window-channels'
-import { SECRET_KEYS } from '../shared/settings-schema'
+import { SECRET_KEYS, schema as settingsSchema } from '../shared/settings-schema'
 import { KEYMAP_SETTING } from '../shared/keymap-overrides'
-import { bridleIdOfKeymapId, keymapIdOf } from '../shared/bridle-commands'
+import { bridleIdOfKeymapId, keymapIdOf, registry as commandRegistry } from '../shared/bridle-commands'
 import {
   createSlidePreviewStore,
   markSlidePreviewHtml,
@@ -10413,6 +10417,11 @@ async function runSetupCommand(args: string[]): Promise<void> {
           const report = await agentSkills().status()
           return { agentsFound: report.agents.filter((row) => row.found && row.state !== 'via').length, installedFor: report.agents.filter((row) => ['installed', 'shared', 'separate', 'changed'].includes(row.state)).map((row) => row.name) }
         },
+        setupFolder: async () => {
+          const chosen = opened.store.view().settings[SETUP_FOLDER_SETTING]
+          const look = await lookAtSetupFolder({ dir: app.getPath('userData'), chosen: typeof chosen === 'string' ? chosen : '' })
+          return { chosen: !!look.folder, joined: look.joined, macs: look.macs, lastRead: look.lastRead, skipped: look.skipped.map((k) => ({ file: k.file, words: k.words })), problem: look.problem }
+        },
       })
       return runSetup(args, {
         out: (line) => write(process.stdout, line),
@@ -10480,6 +10489,9 @@ function preferencesChanged(keys: string[], shortcutKeys: Readonly<Record<string
     lastShortcutKeys = shortcuts
     if (settingsKeymap) broadcastToWindows('keymap:changed', settingsKeymap.overrides())
   }
+  // The set-up folder (0.45): a new folder chosen starts a cycle now; any other change here, after a pause.
+  if (has(SETUP_FOLDER_SETTING)) setupFolderHost?.folderChosen()
+  else setupFolderHost?.localChanged()
 }
 
 async function startSharedSettings(): Promise<void> {
@@ -10526,6 +10538,122 @@ async function startSharedSettings(): Promise<void> {
   settingsKeymap = createSettingsKeymap(sharedSettings.store, { bridleIdOfKeymapId, keymapIdOf })
   lastShortcutKeys = JSON.stringify(sharedSettings.store.view().keys)
 }
+
+// ── The set-up folder (0.45, two Macs): src/main/setup-folder.ts, rules in src/shared/setup-folder.ts ──
+// Started after the settings store; it reads and writes through that store (the change log and Undo
+// import), the vault registry's personal settings, and, for the two addresses offered to confirm, the
+// same Save Settings › Cloudflare runs. Nothing here holds a key or sends one anywhere.
+let setupFolderEngine: SetupFolderEngine | null = null
+let setupFolderHost: SetupFolderHost | null = null
+function setupFolderVaults(): Array<{ id: string; name: string; travels: boolean }> {
+  return vaultRegistry.list().flatMap((v) => {
+    if (vaultAvailability.isUnavailable(v.id)) return []
+    const file = vaultFileCache.get(v.id) ?? vaultFiles.read(v.root)
+    return [{ id: v.id, name: vaultNameOf(v.id) || basename(v.root), travels: file?.state === 'ok' && file.file.id === v.id }]
+  })
+}
+const SETUP_HANDOUT_ADDRESS = /^https:\/\/[A-Za-z0-9.-]+(?::\d{1,5})?\/?$/
+function startSetupFolder(): void {
+  if (!sharedSettings) return
+  const store = sharedSettings.store
+  const cloudflareBefore = (): string => `${getConfig('cfAccountId', undefined) ?? ''}\n${getConfig('cfPagesProject', undefined) ?? ''}`
+  let lastCloudflare = cloudflareBefore()
+  setupFolderEngine = createSetupFolderEngine({
+    dir: app.getPath('userData'),
+    store: {
+      view: () => store.view(),
+      problem: () => store.problem(),
+      previewImport: (file) => store.previewImport(file),
+      applyImport: (preview, opts) => store.applyImport(preview, opts),
+      undoBatch: (id) => store.undoBatch(id)
+    },
+    schema: settingsSchema,
+    commands: commandsAdapter(commandRegistry),
+    commandLabel: (id) => commandRegistry.byId(id)?.label ?? id,
+    chosen: () => { const v = store.view().settings[SETUP_FOLDER_SETTING]; return typeof v === 'string' ? v : '' },
+    macName: () => computerName(),
+    appVersion: app.getVersion(),
+    vaults: {
+      list: () => setupFolderVaults(),
+      personal: (id) => vaultRegistry.personal(id),
+      setPersonal: (id, patch) => { vaultRegistry.setPersonal(id, patch) }
+    },
+    suggestions: {
+      current: () => {
+        const base = attachedShareLinkBase()
+        let share = ''
+        try { share = base ? new URL(base).hostname : '' } catch { share = '' }
+        return { handoutAddress: getConfig('publishBaseUrl', undefined) ?? '', shareLinkAddress: share }
+      },
+      canUse: (kind: SuggestionKind) => kind === 'shareLinkAddress' && cloudflareConnection().status().connection.state !== 'connected'
+        ? { ok: false as const, why: 'Connect Cloudflare on this Mac first (Settings › Cloudflare).' }
+        : { ok: true as const },
+      use: async (kind: SuggestionKind, value: string) => {
+        // The same Save as Settings › Cloudflare: the share-link address is attached by that Save and nowhere else (decision R2).
+        if (kind === 'handoutAddress' && !SETUP_HANDOUT_ADDRESS.test(value)) return { ok: false as const, error: 'That is not a web address this Mac can use.' }
+        if (kind === 'shareLinkAddress' && !isValidShareDomain(value)) return { ok: false as const, error: 'That is not a share-link address this Mac can use.' }
+        const saved = applyPublishSettings({ ...publishSettings(), ...(kind === 'handoutAddress' ? { baseUrl: value } : { shareDomain: value }) })
+        if (!saved.success) return { ok: false as const, error: saved.error }
+        try { await saved.checked } catch { /* the Cloudflare rows say what happened */ }
+        return { ok: true as const }
+      }
+    },
+    log: (line) => console.info(line)
+  })
+  setupFolderHost = startSetupFolderHost({
+    engine: setupFolderEngine,
+    changed: (status) => {
+      broadcastToWindows('setup-folder:changed', status)
+      // The account or site came from another Mac: the Cloudflare rows are asked for again.
+      const now = cloudflareBefore()
+      if (now !== lastCloudflare) { lastCloudflare = now; void cloudflareConnection().settingsChanged().catch(() => {}) }
+    },
+    log: (line) => console.warn(line)
+  })
+  vaultRegistry.onChange(() => setupFolderHost?.localChanged())
+}
+const setupFolderStatus = () => setupFolderEngine?.status() ?? null
+ipcMain.handle('setup-folder:status', () => setupFolderStatus())
+const setupFolderRefused = () => ({ ok: false, error: 'This can be changed only in the Settings window.', status: setupFolderStatus() })
+const setupFolderReply = <T>(run: (engine: SetupFolderEngine) => Promise<T>): Promise<T | { ok: false; error: string; status: null }> =>
+  setupFolderEngine ? run(setupFolderEngine) : Promise.resolve({ ok: false as const, error: 'The settings file could not be opened.', status: null })
+handleFromSettingsWindow('setup-folder:read-now', setupFolderRefused, () => setupFolderHost ? setupFolderHost.readNow() : setupFolderStatus())
+handleFromSettingsWindow('setup-folder:choose', setupFolderRefused, async (event) => {
+  if (!sharedSettings) return setupFolderStatus()
+  const win = BrowserWindow.fromWebContents(event.sender)
+  const options = { title: 'Choose the folder your Macs share', buttonLabel: 'Use this folder', properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> }
+  const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
+  const picked = result.canceled ? null : result.filePaths[0]
+  if (!picked) return setupFolderStatus()
+  const saved = await sharedSettings.store.set(SETUP_FOLDER_SETTING, picked)
+  if (!saved.ok) return { ...(setupFolderStatus() ?? {}), problem: saved.error }
+  return setupFolderHost ? setupFolderHost.readNow() : setupFolderStatus()
+})
+handleFromSettingsWindow('setup-folder:stop', setupFolderRefused, async () => {
+  if (!sharedSettings) return setupFolderStatus()
+  await sharedSettings.store.reset(SETUP_FOLDER_SETTING)
+  // A cycle still running stops before its next change; the reply comes once it has.
+  return setupFolderHost ? setupFolderHost.stop() : setupFolderStatus()
+})
+handleFromSettingsWindow('setup-folder:apply', setupFolderRefused, (_event, token: unknown) => setupFolderReply((e) => e.applyJoin(typeof token === 'string' ? token : '')))
+handleFromSettingsWindow('setup-folder:not-now', setupFolderRefused, () => setupFolderEngine?.notNow() ?? null)
+handleFromSettingsWindow('setup-folder:undo', setupFolderRefused, (_event, id: unknown) => setupFolderReply((e) => e.undo(typeof id === 'string' ? id : '')))
+handleFromSettingsWindow('setup-folder:use', setupFolderRefused, (_event, kind: unknown) => {
+  const offered = OFFER_KINDS.find((k) => k === kind)
+  return offered ? setupFolderReply((e) => e.useSuggestion(offered)) : Promise.resolve({ ok: false as const, error: 'There is nothing to use just now.', status: setupFolderStatus() })
+})
+handleFromSettingsWindow('setup-folder:remove-own', setupFolderRefused, () => setupFolderReply((e) => e.removeOwnFile()))
+handleFromSettingsWindow('setup-folder:new-file', setupFolderRefused, () => setupFolderReply((e) => e.newFileForThisMac()))
+// Show in Finder: only a file the status names (one skipped, or this Mac's own), in the folder it names. Carries no path in.
+ipcMain.handle('setup-folder:reveal', (_event, name: unknown) => {
+  const status = setupFolderStatus()
+  if (!status || typeof name !== 'string') return false
+  const skipped = status.skipped.find((k) => k.file === name)
+  const path = skipped ? skipped.path : name === status.thisMac.file && status.folder ? join(status.folder, name) : name === '' && status.folder ? status.folder : null
+  if (!path) return false
+  if (!E2E) shell.showItemInFolder(path)
+  return true
+})
 
 // Every app window may open Settings (its own window), at a section.
 ipcMain.handle('settings-window:open', (_event, section: unknown) => openSettingsWindow(typeof section === 'string' ? section : undefined))
@@ -10645,6 +10773,7 @@ app.whenReady().then(async () => {
   // Shared settings first: the preferences are moved in (or again after a downgrade) and the store
   // opened before anything reads one. A store that cannot open leaves config.json as the source.
   try { await startSharedSettings() } catch (error) { console.error('[settings] the settings store did not open', error) }
+  try { startSetupFolder() } catch (error) { console.error('[setup-folder] not started', error) }
   // Owner tokens (owner-tokens.ts). Before anything reads a registry: with the switch, write them
   // back into the registries for an older version and quit; otherwise move any that are still in a
   // registry into the secrets store. Only counts are logged.

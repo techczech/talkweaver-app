@@ -31,6 +31,7 @@ const STAGES = [
   { name: 'section-colours', script: 'section-colours.mjs', limit: 240, app: false, tools: [] },
   { name: 'edit-present-share', script: 'edit-present-share.mjs', limit: 600, app: true, tools: ['pdfinfo', 'pdftotext', 'pdftoppm'] },
   { name: 'updates', script: 'updates.mjs', limit: 300, app: true, tools: [] },
+  { name: 'setup-folder', script: 'setup-folder.mjs', limit: 300, app: true, tools: [] },
   ...['record', 'edit', 'reopen', 'export', 'sentence', 'retake', 'second-mac', 'delete'].map((phase) => ({
     name: phase, script: 'record-edit-export.mjs', limit: phase === 'export' ? 900 : 540, app: true, chain: RECORDING, env: { TW_PHASE: phase }, tools: phase === 'export' ? ['ffprobe'] : [],
   })),

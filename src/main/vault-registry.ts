@@ -15,6 +15,7 @@
 // an already-migrated config changes nothing).
 import { randomUUID } from 'node:crypto'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { cleanPersonal, type VaultPersonal } from '../shared/vault-personal.ts'
 import { buildVaultFile, fileSchemaIsOurs, sameVaultFile, type VaultFile, type VaultFileFields, type VaultFileRead, type VaultFileStore } from './vault-file.ts'
 
 /** `example` (onboarding ticket 06): the vault TalkWeaver wrote to ~/Documents/TalkWeaver/Example vault
@@ -30,8 +31,9 @@ export type VaultConfigSlice = {
   vaultPersonal?: Record<string, VaultPersonal>
 }
 
-/** "Just for me" in Edit this vault: stays on this Mac, in app config, by vault id. */
-export type VaultPersonal = { author?: string; badgeColour?: string; badgeInitial?: string }
+/** "Just for me" in Edit this vault (src/shared/vault-personal.ts, with its one cleaner). */
+export type { VaultPersonal } from '../shared/vault-personal.ts'
+export { cleanPersonal } from '../shared/vault-personal.ts'
 
 export type VaultRefusalReason =
   | 'not-absolute' | 'duplicate' | 'inside-another' | 'contains-another' | 'unknown-vault'
@@ -156,19 +158,6 @@ function renumber(vaults: Vault[]): Vault[] {
 
 const firstOpen = (vaults: Vault[]): Vault | null => vaults.find((v) => v.open) ?? null
 
-/** Personal settings as stored: author (trimmed, ≤ 120), a #rrggbb colour, one upper-case character. */
-export function cleanPersonal(raw: unknown): VaultPersonal {
-  const out: VaultPersonal = {}
-  if (!raw || typeof raw !== 'object') return out
-  const { author, badgeColour, badgeInitial } = raw as Record<string, unknown>
-  if (typeof author === 'string' && author.trim()) out.author = author.trim().slice(0, 120)
-  if (typeof badgeColour === 'string' && /^#[0-9a-fA-F]{6}$/.test(badgeColour.trim())) out.badgeColour = badgeColour.trim().toLowerCase()
-  if (typeof badgeInitial === 'string') {
-    const first = [...badgeInitial.trim()][0]
-    if (first && /[\p{L}\p{N}]/u.test(first)) out.badgeInitial = first.toUpperCase()
-  }
-  return out
-}
 
 /** Make root the first open vault; close the previous first open vault and any open vault nesting
  *  with root. Returns the new list (renumbered) and the adopted vault. */

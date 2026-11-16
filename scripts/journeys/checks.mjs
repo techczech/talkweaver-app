@@ -157,6 +157,16 @@ export const CHECKS = {
     'updates.restart-waits': 'while a presenter window is open the download finishes but nothing restarts, and Restart is refused',
     'updates.restart-after': 'presenting over, the mark reads "Restart to finish updating" and Restart restarts into the new version',
   },
+  // 0.45, two Macs: two app instances, each on its own profile, share one set-up folder (setup-folder.mjs).
+  'setup-folder': {
+    'setup-folder.first-mac': 'the first Mac chooses the folder: a TalkWeaver set-up folder is made with this Mac\'s one file, holding its shortcut and publishing site, and Settings lists this Mac',
+    'setup-folder.preview-first': 'a second app instance on its own profile chooses the same folder and is shown what applying changes (the publishing site, the shortcut) before anything changes on it or is written',
+    'setup-folder.apply-same': 'after Apply both instances show the same shortcut and publishing site; the handout address is offered to confirm, not applied',
+    'setup-folder.later-change': 'a later change on the first instance arrives on the second, listed as from the first Mac with Undo',
+    'setup-folder.skipped-named': 'a sync service\'s conflict copy in the folder is not read and is named, with Show in Finder',
+    'setup-folder.no-secret-or-path': 'nothing in the set-up folder names a folder, a key or a setting kept on each Mac',
+    'setup-folder.fits-1000': 'every state of Settings › Set-up folder fits the 1000 px window with nothing sideways out of view',
+  },
   delete: {
     'delete.removes': 'Delete this Run (after asking) removes the Run file and its recordings folder',
     'delete.none-shown': 'the Runs view shows no Run afterwards',

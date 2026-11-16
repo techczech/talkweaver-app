@@ -272,6 +272,9 @@ export type WordTimingRow = { language: string; label: string; state: 'unavailab
 /** The agent skill on this computer: the agents found, and the names of those that have it. */
 export type AgentSkillRow = { agentsFound: number; installedFor: string[] }
 
+/** The set-up folder as `setup status` reads it (0.45): read only, from another process; nothing is written. */
+export type SetupFolderRow = { chosen: boolean; joined: boolean; macs: Array<{ name: string; lastActive: number }>; lastRead: number | null; skipped: Array<{ file: string; words: string }>; problem: string | null }
+
 /** Everything `setup status` reports. A null row could not be told and prints as "unknown". */
 export type SetupSnapshot = {
   cloudflare: CloudflareStatus
@@ -282,6 +285,7 @@ export type SetupSnapshot = {
   /** For the second-Mac check (0.45). Absent or null: could not be told. */
   wordTiming?: WordTimingRow[] | null
   agentSkill?: AgentSkillRow | null
+  setupFolder?: SetupFolderRow | null
 }
 
 export type OpResult = { ok: true } | { ok: false; error: string; usage?: boolean }
@@ -399,7 +403,7 @@ function connectionJson(status: CloudflareStatus): Record<string, unknown> {
 // (Precise word timing's models, the agent skill). Nothing here is a setting, and nothing names a secret.
 
 export type SecondMacItem = {
-  id: 'token' | 'site' | 'live-key' | 'share-link' | 'transcription' | 'word-timing' | 'agent-skill'
+  id: 'setup-folder' | 'token' | 'site' | 'live-key' | 'share-link' | 'transcription' | 'word-timing' | 'agent-skill'
   label: string
   /** `missing`: this Mac does not have it; `not-available`: this Mac cannot have it; `unknown`: could not be told. */
   state: 'set' | 'missing' | 'not-available' | 'unknown'
@@ -413,6 +417,23 @@ export function secondMacItems(snapshot: SetupSnapshot): SecondMacItem[] {
   const at = cloudflare.connection
   const item = (id: SecondMacItem['id'], label: string, state: SecondMacItem['state'], detail: string): SecondMacItem => ({ id, label, state, detail })
   const items: SecondMacItem[] = []
+
+  // The set-up folder first: with it, the rest of a Mac's set-up (but the keys) comes from the other Mac.
+  const folder = snapshot.setupFolder
+  const when = (at: number | null): string => (at ? new Date(at).toISOString().replace('T', ' ').slice(0, 16) : 'never')
+  if (folder !== undefined) {
+    const macs = folder ? folder.macs.map((m) => `${m.name} (last active ${when(m.lastActive)})`).join(', ') : ''
+    const skipped = folder && folder.skipped.length ? ` Not read: ${folder.skipped.map((k) => `${k.file} (${k.words})`).join('; ')}` : ''
+    items.push(!folder
+      ? item('setup-folder', 'Set-up folder', 'unknown', COULD_NOT_TELL)
+      : !folder.chosen
+        ? item('setup-folder', 'Set-up folder', 'missing', 'None chosen: preferences, shortcuts and the Cloudflare site are set by hand on each Mac. Choose one in Settings › Set-up folder, or: TalkWeaver settings set setup.folder <folder>.')
+        : folder.problem
+          ? item('setup-folder', 'Set-up folder', 'unknown', folder.problem)
+          : !folder.joined
+            ? item('setup-folder', 'Set-up folder', 'missing', `Chosen, not applied yet: open Settings › Set-up folder to see what changes and Apply. Macs seen: ${macs || 'none'}.${skipped}`)
+            : item('setup-folder', 'Set-up folder', 'set', `Macs seen: ${macs || 'this Mac only'}. Last read ${when(folder.lastRead)}.${skipped}`))
+  }
 
   items.push(at.state === 'no-token'
     ? item('token', 'Cloudflare token', 'missing', 'Not saved on this Mac. Paste it in Settings › Cloudflare, or pipe it to setup cloudflare connect.')

@@ -19,7 +19,7 @@ import type { BackupSettings } from '../../../preload/index'
 import { GUIDE_TEXT } from '../../../shared/guide'
 import { EXAMPLE_REMOVAL_TEXT } from '../../../shared/example-vault-removal'
 
-const look = {
+export const look = {
   sectionHead: { padding: '12px 0 6px', fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--faint)', borderBottom: '1px solid var(--line)', marginBottom: 8 },
   hint: { fontSize: 11.5, color: 'var(--muted)', lineHeight: 1.5, margin: '2px 0 8px' },
   rowFolder: { display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '6px 0' },
@@ -31,7 +31,7 @@ const look = {
   kbd: { fontFamily: 'var(--font-mono)', fontSize: 11, background: 'var(--hover)', border: '1px solid var(--line)', borderRadius: 3, padding: '2px 5px', color: 'var(--ink)', display: 'inline-block', margin: '0 1px' }
 } satisfies Record<string, CSSProperties>
 
-const page: CSSProperties = { padding: '4px 20px 20px', fontFamily: 'var(--font-ui)' }
+export const page: CSSProperties = { padding: '4px 20px 20px', fontFamily: 'var(--font-ui)' }
 
 /** The two calls only the Settings window's preload has (src/preload/settings.ts). */
 interface SettingsWindowOnly {
@@ -85,7 +85,7 @@ export function GetStartedRows({ exampleRemoved, onAction }: { exampleRemoved: b
 }
 
 // ── Backups ────────────────────────────────────────────────────────────────────────────────────
-function relTime(ts: number): string {
+export function relTime(ts: number): string {
   const s = Math.max(0, Math.round((Date.now() - ts) / 1000))
   if (s < 60) return 'just now'
   const m = Math.round(s / 60)

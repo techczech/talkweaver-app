@@ -146,7 +146,24 @@ const tw = {
   },
   shell: {
     openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url)
+  },
+  // The set-up folder (0.45): Settings › Set-up folder. No channel takes a path; Choose folder… asks main for a picker.
+  setupFolder: {
+    status: (): Promise<SetupFolderStatus | null> => ipcRenderer.invoke('setup-folder:status'),
+    choose: (): Promise<SetupFolderStatus | null> => ipcRenderer.invoke('setup-folder:choose'),
+    stop: (): Promise<SetupFolderStatus | null> => ipcRenderer.invoke('setup-folder:stop'),
+    readNow: (): Promise<SetupFolderStatus | null> => ipcRenderer.invoke('setup-folder:read-now'),
+    apply: (token: string): Promise<SetupFolderReply> => ipcRenderer.invoke('setup-folder:apply', token),
+    notNow: (): Promise<SetupFolderStatus | null> => ipcRenderer.invoke('setup-folder:not-now'),
+    undo: (id: string): Promise<SetupFolderReply> => ipcRenderer.invoke('setup-folder:undo', id),
+    use: (kind: string): Promise<SetupFolderReply> => ipcRenderer.invoke('setup-folder:use', kind),
+    removeOwn: (): Promise<SetupFolderReply> => ipcRenderer.invoke('setup-folder:remove-own'),
+    newFile: (): Promise<SetupFolderStatus | null> => ipcRenderer.invoke('setup-folder:new-file'),
+    reveal: (file: string): Promise<boolean> => ipcRenderer.invoke('setup-folder:reveal', file),
+    onChange: (listener: (status: SetupFolderStatus) => void) => on('setup-folder:changed', listener)
   }
 }
+type SetupFolderStatus = import('../shared/setup-folder').SetupFolderStatus
+type SetupFolderReply = { ok: boolean; error?: string; status: SetupFolderStatus | null }
 
 contextBridge.exposeInMainWorld('tw', tw)

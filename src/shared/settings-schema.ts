@@ -21,6 +21,7 @@ import { ACTION_BAR_VISIBLE_DEFAULT } from './action-bar-settings.ts'
 import { GUIDE_BUTTON_VISIBLE_DEFAULT, GUIDE_TEXT } from './guide.ts'
 import { KEYMAP_SETTING, appKeysError } from './keymap-overrides.ts'
 import { LOCAL_ONLY, LOCAL_ONLY_KEYS, folderShapeError, siteFolderShapeError } from './settings-folders.ts'
+import { SETUP_FOLDER_SECTION, SETUP_FOLDER_SETTING } from './setup-folder.ts'
 
 export { APP_ID, APP_NAME } from './bridle-commands.ts'
 
@@ -28,6 +29,12 @@ export { APP_ID, APP_NAME } from './bridle-commands.ts'
 export const SECRET_KEYS = { cloudflare: 'accounts.cloudflare', recording: 'accounts.recording' } as const
 
 const TALK_DEFAULT_PREFIX = 'talkDefaults.'
+
+/** The Cloudflare account id and site name as stored: one line of text, no longer than Cloudflare's own limits. */
+function cloudflareNameError(v: unknown): string | null {
+  if (typeof v !== 'string') return 'Must be text'
+  return v.length <= 100 && !/[\u0000-\u001f\u007f\s]/.test(v) ? null : 'One word, no spaces, at most 100 characters'
+}
 const talkDefaultEntries = METADATA_REGISTRY.filter((e) => (e as { defaultable?: boolean }).defaultable)
 
 // The same rows as the old Settings section (Presenter identity and deck defaults): built from the
@@ -56,7 +63,7 @@ function withImportRules(defs: SettingDef[]): SettingDef[] {
   return defs.map((d) => {
     let out: SettingDef = d
     if (LOCAL_ONLY_KEYS.includes(d.key)) out = { ...out, canApply: () => LOCAL_ONLY }
-    if (d.key === 'presenting.backupFolder') out = { ...out, validate: folderShapeError }
+    if (d.key === 'presenting.backupFolder' || d.key === SETUP_FOLDER_SETTING) out = { ...out, validate: folderShapeError }
     if (d.key === 'publishing.siteFolder') out = { ...out, validate: siteFolderShapeError }
     return out
   })
@@ -71,7 +78,10 @@ export const schema = defineSchema({
     { id: 'publishing', label: 'Publishing', icon: 'globe' },
     { id: 'recording', label: 'Recording', icon: 'mic' },
     { id: 'talk-defaults', label: 'New talks', icon: 'file-plus' },
-    { id: 'importing', label: 'Importing slides', icon: 'file-input' }
+    { id: 'importing', label: 'Importing slides', icon: 'file-input' },
+    // Drawn by the app's own pages (settings-main.tsx); declared so their settings have a home, a search hit names them, and the CLI lists them.
+    { id: 'cloudflare', label: 'Cloudflare', icon: 'cloud' },
+    { id: SETUP_FOLDER_SECTION, label: 'Set-up folder', icon: 'folder-sync' }
   ],
   settings: withImportRules([
     // General
@@ -94,6 +104,11 @@ export const schema = defineSchema({
     { key: 'publishing.customDomain', label: 'Handout address', section: 'publishing', group: 'Handouts on the web', type: 'text', default: '', help: 'Your own domain for published handouts, for example https://handouts.example.com. Empty: the Cloudflare Pages address.' },
     { key: 'publishing.shortLinks', label: 'Short links', section: 'publishing', group: 'Handouts on the web', type: 'toggle', default: false, help: 'Links end in a short code instead of the talk’s name.' },
     { key: 'publishing.siteFolder', label: 'Site folder on this Mac', section: 'publishing', group: 'Advanced', type: 'path', default: '', help: 'Where the published site is assembled. Empty: inside the app’s own folder.' },
+    // The Cloudflare account and the Pages site publishing goes to (0.45: settings, so they travel to the other Mac through the set-up
+    // folder and the Changes page lists them). Chosen on Settings › Cloudflare, not shown as rows. Any text the connection itself
+    // judges (cloudflare-connection.ts validProjectName, the account's own list): a value it refuses is shown there, never dropped here.
+    { key: 'publishing.cloudflareAccount', label: 'Cloudflare account', section: 'cloudflare', group: 'Publishing', type: 'text', default: '', validate: cloudflareNameError, help: 'The Cloudflare account publishing and going live use. The token stays on each Mac.' },
+    { key: 'publishing.cloudflareSite', label: 'Publishing site', section: 'cloudflare', group: 'Publishing', type: 'text', default: '', validate: cloudflareNameError, help: 'The Cloudflare Pages site handouts are published to. Empty: the default name.' },
     { key: 'publishing.branch', label: 'Production branch', section: 'publishing', group: 'Advanced', type: 'text', default: 'main', validate: (v) => (typeof v === 'string' && /^[A-Za-z0-9._/-]{1,100}$/.test(v) ? null : 'Letters, digits, . _ / - only'), help: 'The Cloudflare Pages branch that is the live site.' },
     // Recording
     { key: 'recording.discardShorter', label: 'Discard runs shorter than', section: 'recording', group: 'Runs', type: 'number', default: 20, min: 0, max: 86400, unit: 's', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'A run this short is taken for an accidental open and not kept.' },
@@ -107,6 +122,8 @@ export const schema = defineSchema({
     { key: 'recording.transcriptionPython', label: 'Transcription Python', section: 'recording', group: 'Transcription', type: 'path', default: '', help: 'The Python of the transcription environment. Empty: the one set up by the app’s instructions.' },
     { key: 'recording.transcriptionScript', label: 'Transcription script', section: 'recording', group: 'Transcription', type: 'path', default: '', help: 'Empty: the one set up by the app’s instructions.' },
     { key: 'recording.ffmpeg', label: 'ffmpeg', section: 'recording', group: 'Transcription', type: 'path', default: '', help: 'Your own ffmpeg. Empty: the one that comes with the app.' },
+    // Set-up folder (0.45, two Macs): this Mac's choice only; it never travels (settings-folders.ts).
+    { key: SETUP_FOLDER_SETTING, label: 'Set-up folder', section: SETUP_FOLDER_SECTION, group: 'Your other Macs', type: 'path', default: '', help: 'A folder that syncs between your Macs (iCloud Drive, Dropbox, OneDrive, Syncthing, a Git repository). Preferences, shortcuts and the Cloudflare site go through it to your other Macs and come back; a TalkWeaver set-up folder is made inside it. Keys, tokens and folders never do. Empty: each Mac keeps its own set-up.' },
     // Importing
     { key: 'importing.includeHidden', label: 'Include hidden slides', section: 'importing', group: 'PowerPoint files', type: 'toggle', default: DEFAULT_IMPORTER_SETTINGS.includeHidden },
     { key: 'importing.keepNotes', label: 'Keep speaker notes', section: 'importing', group: 'PowerPoint files', type: 'toggle', default: DEFAULT_IMPORTER_SETTINGS.preserveNotes },
@@ -147,6 +164,8 @@ const SCALARS: readonly ScalarMap[] = [
   { config: 'publishUseShortIds', key: 'publishing.shortLinks' },
   { config: 'publishSiteDir', key: 'publishing.siteFolder' },
   { config: 'publishProdBranch', key: 'publishing.branch' },
+  { config: 'cfAccountId', key: 'publishing.cloudflareAccount' },
+  { config: 'cfPagesProject', key: 'publishing.cloudflareSite' },
   {
     config: 'recordingDiscardMs', key: 'recording.discardShorter',
     fromConfig: (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(v / 1000) : v),

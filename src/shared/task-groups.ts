@@ -271,6 +271,7 @@ export const TASK_GROUP_TABLE: Readonly<Record<string, readonly [TaskGroup, stri
   'help': ['Set up TalkWeaver', 'Shortcuts'],
   'app.help': ['Set up TalkWeaver', 'Shortcuts'],
   'settings': ['Set up TalkWeaver', 'Settings'],
+  'settings-setup-folder': ['Set up TalkWeaver', 'Settings'],
   'get-started-show-example': ['Set up TalkWeaver', 'Get started'],
   'get-started-open-guide': ['Set up TalkWeaver', 'Get started'],
   'get-started-show-guide-button': ['Set up TalkWeaver', 'Get started'],

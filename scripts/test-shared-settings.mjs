@@ -150,6 +150,8 @@ await test('enabling image-text search from Settings or the CLI starts main’s 
     getConfig: () => enabled,
     ocrAllVaultImages: () => { queued += 1 },
     KEYMAP_SETTING,
+    SETUP_FOLDER_SETTING: 'setup.folder',
+    setupFolderHost: null,
     lastShortcutKeys: '{}',
     settingsKeymap: null
   })
@@ -220,6 +222,30 @@ const noSecretsIn = (dir) => {
   }
 }
 
+await test('0.45 upgrade: an install migrated before the Cloudflare account and site were settings gets both moved in, not dropped', async () => {
+  const dir = tmp()
+  writeFileSync(join(dir, 'config.json'), JSON.stringify({ cfAccountId: '0123456789abcdef0123456789abcdef', cfPagesProject: 'my-talks', timerWarnAtMinutes: 7 }))
+  assert.equal((await runMigration(dir, () => openStore(dir))).kind, 'first')
+  // What a 0.44 install has on disk: the stamp knows no such settings, and the store holds neither.
+  const stampPath = join(dir, STAMP_FILE)
+  const stamp = JSON.parse(readFileSync(stampPath, 'utf8'))
+  delete stamp.hashes['publishing.cloudflareAccount']; delete stamp.hashes['publishing.cloudflareSite']
+  writeFileSync(stampPath, JSON.stringify(stamp))
+  const settingsPath = join(dir, 'settings.json')
+  const file = JSON.parse(readFileSync(settingsPath, 'utf8'))
+  delete file.settings['publishing.cloudflareAccount']; delete file.settings['publishing.cloudflareSite']
+  file.changes = file.changes.filter((c) => !String(c.key).startsWith('publishing.cloudflare'))
+  writeFileSync(settingsPath, JSON.stringify(file))
+  const again = await runMigration(dir, () => openStore(dir))
+  assert.equal(again.kind, 'again')
+  assert.deepEqual([...again.keys].sort(), ['publishing.cloudflareAccount', 'publishing.cloudflareSite'])
+  const store = openStore(dir, { kind: 'you' }); await store.ready
+  assert.deepEqual([store.view().settings['publishing.cloudflareAccount'], store.view().settings['publishing.cloudflareSite'], store.view().settings['presenting.warnAt']], ['0123456789abcdef0123456789abcdef', 'my-talks', 7])
+  // And main reads them under their old names through the overlay, as before.
+  assert.deepEqual([configWithSettings({}, store.view().settings).cfAccountId, configWithSettings({}, store.view().settings).cfPagesProject], ['0123456789abcdef0123456789abcdef', 'my-talks'])
+  await store.close()
+})
+
 await test('first launch: a new settings.json, config.json untouched, one app-update entry per changed preference, no secret anywhere', async () => {
   const dir = tmp()
   const legacyText = JSON.stringify(LEGACY)
@@ -236,7 +262,9 @@ await test('first launch: a new settings.json, config.json untouched, one app-up
   assert.equal(state.settings['recording.discardShorter'], 45)
   assert.deepEqual([...new Set(state.changes.map((c) => c.who.kind))], ['app-update'])
   const changedKeys = state.changes.map((c) => c.key).sort()
-  assert.deepEqual(changedKeys, ['general.guideButton', 'importing.includeHidden', 'presenting.backup', 'presenting.backupEvery', 'publishing.customDomain', 'recording.discardShorter', 'talkDefaults.author', 'writing.plainFont'], 'defaults make no entry')
+  // The Cloudflare account is a setting since 0.45 (it travels through the set-up folder): moved in like the rest.
+  assert.deepEqual(changedKeys, ['general.guideButton', 'importing.includeHidden', 'presenting.backup', 'presenting.backupEvery', 'publishing.cloudflareAccount', 'publishing.customDomain', 'recording.discardShorter', 'talkDefaults.author', 'writing.plainFont'], 'defaults make no entry')
+  assert.equal(state.settings['publishing.cloudflareAccount'], 'abc')
   assert.ok(!Object.keys(state.settings).some((k) => !schema.def(k)), 'only schema keys')
   await store.close()
   assert.equal(JSON.parse(readFileSync(join(dir, 'settings.json'), 'utf8')).format, 'bridle-settings')

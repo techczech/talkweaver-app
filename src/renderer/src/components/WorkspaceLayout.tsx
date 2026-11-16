@@ -3576,6 +3576,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     'delete-slide': handleDeleteSlide,
     help: () => setHelpOpen(true),
     settings: () => onOpenSettings?.(),
+    'settings.setup-folder': () => { void window.tw.settingsWindow.open('setup-folder') },
     'guide.open': () => window.dispatchEvent(new Event('tw-guide-open')),
     'check-for-updates': () => { void runCheckForUpdates() },
     'whats-new': openWhatsNewTab,

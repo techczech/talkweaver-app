@@ -405,6 +405,7 @@
     "test:recording-editor",
     "test:recording-place",
     "test:replace-guard",
+    "test:setup-folder",
     "test:recording-finish",
     "test:recording-takes",
     "test:recording-video-safety",
@@ -595,6 +596,7 @@
     "test:animated-video-sheet:dom",
     "test:recording-sheets:dom",
     "test:kept-edits:dom",
+    "test:setup-folder:dom",
     "test:recording-words:dom",
     "test:animated-video-status:dom"
   ],

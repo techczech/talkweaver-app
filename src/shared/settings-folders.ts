@@ -36,10 +36,14 @@ export const LOCAL_ONLY_KEYS: readonly string[] = [
   'recording.endpoint',
   'recording.bucket',
   'publishing.customDomain',
-  'publishing.branch',
   'publishing.siteFolder',
-  'presenting.backupFolder'
+  'presenting.backupFolder',
+  // which folder this Mac shares its set-up through (0.45): each Mac chooses its own
+  'setup.folder'
 ]
+// Not here since 0.45: 'publishing.branch'. The production branch names no place outside the Cloudflare
+// account the token on this Mac reaches (a branch of the owner's own Pages site), so importing it can
+// only choose between his own site's live address and a preview of it; it travels with the set-up.
 
 /** Folder settings that must not overlap each other or a vault; checked again on use. */
 export const SEPARATE_FOLDER_KEYS: readonly string[] = ['presenting.backupFolder', 'publishing.siteFolder']

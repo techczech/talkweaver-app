@@ -10,7 +10,7 @@ The complete verb list with arguments is generated: [commands](commands.md). Thi
 
 Publishing, live service, recording storage, transcription. Quit TalkWeaver first: every `setup` verb refuses while the app is open and changes nothing. Procedure and states: [set-up procedure](talkweaver-setup.md).
 
-- `talkweaver setup status --json`: reads every row; start here. `secondMac` lists what this Mac lacks of the set-up kept per Mac (token, site, live key, share-link address, transcription, word-timing models, agent skill).
+- `talkweaver setup status --json`: reads every row; start here. `secondMac` lists what this Mac lacks of the set-up kept per Mac (set-up folder, token, site, live key, share-link address, transcription, word-timing models, agent skill).
 - `talkweaver setup cloudflare connect`: token on standard input, never an argument.
 - `talkweaver setup cloudflare account <id>`: when the token sees several accounts.
 - `talkweaver setup cloudflare create-site [name]`: the Pages site for handouts.
@@ -30,6 +30,7 @@ The same settings file and changelog the Settings window uses. Runs beside the o
 - `talkweaver settings list [--section <id>]`: keys and values. Secrets have no value.
 - `talkweaver settings get <key>`.
 - `talkweaver settings set <key> <value>`: refuses secrets and invalid values.
+- The setting `setup.folder` (with `settings set` and `settings get`): the set-up folder this Mac shares its preferences, shortcuts and Cloudflare site through (a `TalkWeaver set-up` folder is made inside it). The first time another Mac's set-up is there, the owner reviews and applies it in Settings › Set-up folder; `setup status` says whether that is still to do. After that, a change of the Cloudflare account, site or branch made on another Mac is offered there (Use on this Mac), never applied by a read. Only text that cannot hold a path, an address or a token travels: plain text (letters, digits, spaces and . , ' ’ - – — ( ) & ! +, at most 200 characters), web addresses written in full (http or https, no user name, query or fragment) and names by their own pattern. Any other value stays on its Mac, and Settings › Set-up folder names it with why. The closing slide's call to action and the credits do not travel.
 - `talkweaver settings reset <key>`, `--section <id>` or `--all --yes`.
 - `talkweaver settings rebind <command> <shortcut>`: shortcut like `cmd+shift+l`, or `none`.
 - `talkweaver settings reset-shortcut <command>` or `--all --yes`.

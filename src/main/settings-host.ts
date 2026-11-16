@@ -26,7 +26,7 @@ import type { ConfigOverlay, OverlayFile } from './settings-overlay'
 import { openSettings } from './settings-open'
 
 /** Pages of the Settings window that are the app's own (settings-main.tsx draws them). */
-export const CUSTOM_PAGES = ['get-started', 'backups', 'cloudflare'] as const
+export const CUSTOM_PAGES = ['get-started', 'backups', 'cloudflare', 'setup-folder'] as const
 
 /** Path settings that name a file (the rest are folders). */
 const FILE_PATHS = new Set(['recording.transcriptionPython', 'recording.transcriptionScript', 'recording.ffmpeg'])

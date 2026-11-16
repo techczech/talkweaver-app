@@ -61,4 +61,4 @@ The picture for this slide has not been added yet.
 
 > **Try it.** <kbd>?</kbd> shows the keys in Pathways, Manage notes and the Importer. <kbd>⌘,</kbd> opens Settings; Cloudflare is there.
 
-> **Try it.** In <kbd>⌘⇧P</kbd>: **Get started: open the Guide**, **Get started: show the Guide button**, **Get started: show the example vault again**.
+> **Try it.** In <kbd>⌘⇧P</kbd>: **Get started: open the Guide**, **Get started: show the Guide button**, **Get started: show the example vault again**, **Set-up folder for your Macs**.

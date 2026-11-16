@@ -400,6 +400,16 @@ try {
   assert.deepEqual(secondMacLines(cannot), ['Second Mac: this Mac has everything that is set up per Mac'])
   assert.deepEqual(secondMacLines(FULL), ['Second Mac: this Mac has everything that could be checked that is set up per Mac', '  Could not be told: Word-timing models, Agent skill'])
   assert.deepEqual([states({ ...full, cloudflare: cloudflare({ state: 'rejected' }) })['token'], states({ ...full, cloudflare: cloudflare({ state: 'choose-account', accounts: [ADA, GRACE] }) }).site], ['missing', 'missing'])
+  // The set-up folder (0.45): chosen or not, applied or not, Macs seen, last read, anything not read. A failed read is unknown, never fine.
+  const folderRow = (over) => ({ chosen: true, joined: true, macs: [{ name: 'MacBook Air', lastActive: Date.UTC(2026, 10, 16, 9, 0) }, { name: 'Mac mini (this Mac)', lastActive: Date.UTC(2026, 10, 16, 9, 5) }], lastRead: Date.UTC(2026, 10, 16, 9, 6), skipped: [], problem: null, ...over })
+  const folderItem = (row) => secondMacItems({ ...full, setupFolder: row }).find((i) => i.id === 'setup-folder')
+  assert.equal(secondMacItems(full).some((i) => i.id === 'setup-folder'), false, 'not asked: not listed')
+  assert.deepEqual([folderItem(folderRow()).state, folderItem(folderRow()).detail], ['set', 'Macs seen: MacBook Air (last active 2026-11-16 09:00), Mac mini (this Mac) (last active 2026-11-16 09:05). Last read 2026-11-16 09:06.'])
+  assert.equal(folderItem(folderRow({ chosen: false })).state, 'missing')
+  assert.match(folderItem(folderRow({ joined: false })).detail, /^Chosen, not applied yet/)
+  assert.match(folderItem(folderRow({ skipped: [{ file: 'mac-x 2.json', words: 'A copy.' }] })).detail, /Not read: mac-x 2\.json \(A copy\.\)$/)
+  assert.equal(folderItem(folderRow({ problem: 'The folder cannot be found.' })).state, 'unknown')
+  assert.equal(folderItem(null).state, 'unknown')
   // Text and --json, from `setup status` only; the extra statuses are asked for only there.
   const asked = []
   const statusRun = async (args, snapshot) => {

@@ -420,6 +420,8 @@ const PALETTE_COMMANDS = [
   // menu can open the palette too. Palette-hidden: the palette must not list itself.
   command({ id: 'app.command-palette', label: 'All commands…', scope: 'app', shortcutId: 'app.command-palette', menu: null, toolbar: { menu: 'tools', order: 45, icon: 'command' }, palette: { visible: false, keywords: [] }, handlerId: 'app.command-palette' }),
   command({ id: 'help', label: 'Keyboard shortcuts', scope: 'app', shortcutId: 'app.help', menu: { path: ['Help'], order: 30 }, toolbar: { menu: 'tools', order: 50, icon: 'keyboard' }, palette: { visible: true, keywords: ['help', 'keyboard', 'shortcuts'] }, handlerId: 'help' }),
+  // The set-up folder (0.45, two Macs): Settings at its Set-up folder page. No key, no menu, no toolbar.
+  command({ id: 'settings-setup-folder', label: 'Set-up folder for your Macs', scope: 'app', menu: null, palette: { visible: true, keywords: ['set-up folder', 'setup folder', 'second mac', 'other mac', 'two macs', 'sync settings', 'sync preferences', 'icloud', 'dropbox', 'syncthing'] }, handlerId: 'settings.setup-folder' }),
   command({ id: 'settings', label: 'Settings', scope: 'app', shortcutId: 'app.settings', menu: null, toolbar: { menu: 'tools', order: 40, icon: 'settings' }, palette: { visible: true, keywords: ['settings', 'preferences', 'about', 'updates', 'version', 'check for new versions'] }, handlerId: 'settings' }),
   // Update notices (ADR-0041): both commands have no default key, are rebindable, and sit in the Help menu
   // (Check for Updates… sits in the TalkWeaver menu under About on macOS: src/main/app-menu.ts).

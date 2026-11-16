@@ -48,7 +48,11 @@ export const SETTINGS_WINDOW_ONLY: readonly string[] = [
   'recording:clear-keys',
   // The transcription paths name the programs main runs (Python, the script, ffmpeg): the same
   // authority as a key. The Settings window's Recording rows write them through the settings store.
-  'preferences:set-transcription'
+  'preferences:set-transcription',
+  // The set-up folder (0.45): which folder this Mac shares its set-up through, applying what another Mac
+  // set, undoing it, an address set on another Mac used here, and this Mac's own file removed or renewed.
+  'setup-folder:choose', 'setup-folder:stop', 'setup-folder:read-now', 'setup-folder:apply', 'setup-folder:not-now',
+  'setup-folder:undo', 'setup-folder:use', 'setup-folder:remove-own', 'setup-folder:new-file'
 ]
 
 /** Changes an editor window asks for too, with the rule each handler applies. None at present. */
@@ -93,7 +97,9 @@ export const READS: readonly string[] = [
   'transcription:agent-prompt',
   'transcription:open-setup-folder',
   'settings-window:example-removed',
-  'shell:open-external'
+  'shell:open-external',
+  // The set-up folder's status, and Show in Finder of a file that status names (no path is taken in).
+  'setup-folder:status', 'setup-folder:reveal'
 ]
 
 /** The reply a refused recording-storage change gets (the shape its callers read: `success`, `error`). */

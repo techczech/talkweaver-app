@@ -83,7 +83,7 @@ const expectedPaletteIds = [
   'view-slides', 'view-plain', 'view-markdown', 'change-heading-level', 'change-slide-layout', 'view-strip', 'view-grid', 'fold-all', 'unfold-all', 'outline-collapse-all', 'outline-expand-all',
   'move-slide-to', 'move-section-to', 'select-section', 'clear-slide-selection', 'set-aside-slides', 'move-selected-slides-to',
   'search-slides-grid', 'search-next', 'search-previous',
-  'normalize-triggers', 'undo', 'redo', 'new-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings', 'check-for-updates', 'whats-new',
+  'normalize-triggers', 'undo', 'redo', 'new-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings-setup-folder', 'settings', 'check-for-updates', 'whats-new',
   'get-started-show-example', 'get-started-open-guide', 'get-started-show-guide-button'
 ]
 assert.deepEqual(paletteCommands().map((command) => command.id), expectedPaletteIds, 'palette is generated in its existing order')

@@ -23,7 +23,7 @@ import { TOKEN_SHAPE_ERROR, type CloudflareConnectionService } from './cloudflar
 import type { LiveService } from './live-service.ts'
 import { KEYS_SHAPE_ERROR, recordingKeysAcceptable, type RecordingStorage } from './recording-storage.ts'
 import type { TranscriptionSetup } from './transcription-setup.ts'
-import type { AgentSkillRow, ImporterRow, OpResult, SetupOperations, SetupSnapshot, WordTimingRow } from './setup-cli.ts'
+import type { AgentSkillRow, ImporterRow, OpResult, SetupFolderRow, SetupOperations, SetupSnapshot, WordTimingRow } from './setup-cli.ts'
 import type { GoingLiveRow } from '../shared/live-service-status.ts'
 import { goingLiveRowDetail } from '../shared/live-service-status.ts'
 
@@ -49,6 +49,8 @@ export interface SetupOperationPorts {
   wordTiming?: () => Promise<WordTimingRow[]>
   /** The agent skill, as Settings and `TalkWeaver agent status` read it (the second-Mac check, 0.45). */
   agentSkill?: () => Promise<AgentSkillRow>
+  /** The set-up folder, read only (the second-Mac check, 0.45). */
+  setupFolder?: () => Promise<SetupFolderRow>
 }
 
 const failed = (error: string, usage = false): OpResult => ({ ok: false, error, ...(usage ? { usage: true } : {}) })
@@ -96,15 +98,16 @@ export function createSetupOperations(ports: SetupOperationPorts): SetupOperatio
       const now = connection.status()
       if (now.connection.state === 'checking' && !now.busy) await checkCloudflare()
       const second = options?.secondMac === true
-      const [transcriptionRow, importer, wordTiming, agentSkill] = await Promise.all([
+      const [transcriptionRow, importer, wordTiming, agentSkill, setupFolder] = await Promise.all([
         transcription.status().catch(() => null),
         ports.importer().catch(() => null),
         second && ports.wordTiming ? ports.wordTiming().catch(() => null) : Promise.resolve(null),
         second && ports.agentSkill ? ports.agentSkill().catch(() => null) : Promise.resolve(null),
+        second && ports.setupFolder ? ports.setupFolder().catch(() => null) : Promise.resolve(null),
       ])
       return {
         cloudflare: connection.status(), goingLive: liveService.row(), recording: recording.status(), transcription: transcriptionRow, importer,
-        ...(second ? { wordTiming, agentSkill } : {}),
+        ...(second ? { wordTiming, agentSkill, ...(ports.setupFolder ? { setupFolder } : {}) } : {}),
       }
     },
 

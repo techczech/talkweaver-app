@@ -258,6 +258,7 @@ export const COMMAND_PLACES: Readonly<Record<string, PlaceDeclaration>> = {
 
   // ── Set up TalkWeaver ──
   'settings': NOT_BY_PLACE,
+  'settings-setup-folder': NOT_BY_PLACE,
   'check-for-updates': NOT_BY_PLACE,
   'whats-new': NOT_BY_PLACE,
   // Onboarding ticket 07: the Guide opens from anywhere, so it is offered at no place in particular.

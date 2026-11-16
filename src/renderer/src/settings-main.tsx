@@ -13,6 +13,8 @@ import { MENUS, registry } from '../../shared/bridle-commands'
 import { schema } from '../../shared/settings-schema'
 import { speechLanguageName } from '../../shared/speech-locales'
 import { BackupsPage, CloudflarePage, GetStartedPage } from './components/SettingsWindowPages'
+import { SetupFolderPage } from './components/SetupFolderPage'
+import { SETUP_FOLDER_SECTION, SETUP_FOLDER_TEXT } from '../../shared/setup-folder'
 import AboutUpdatesSettings from './components/AboutUpdatesSettings'
 import './update-notices.css'
 import { useUpdateSnapshot } from './lib/updateNotices'
@@ -113,12 +115,15 @@ function SettingsApp(): React.JSX.Element | null {
   if (!view) return null
   const savedMic = view.state.settings['recording.microphone']
   const micOptions = microphoneSettingOptions(inputs, typeof savedMic === 'string' ? savedMic : '')
+  // The Cloudflare account and site are chosen on the Cloudflare page (Found from the token), not drawn as rows.
   const shown = (update?.source === 'store' ? schema.settings.filter((d) => d.key !== 'updates.checkForNewVersions' && d.key !== 'updates.alphaVersions') : schema.settings)
+    .filter((d) => d.section !== 'cloudflare')
     .map((d) => d.key === 'recording.microphone' ? { ...d, type: 'choice' as const, options: micOptions } : d.key === 'recording.wordsLocale' ? { ...d, help: `${d.help} ${speech}`, ...(languages.length ? { options: languages } : {}) } : d.key === 'recording.wordsEngine' ? { ...d, options: d.options?.filter(o => o.value !== 'parakeet' || parakeetReady) } : d)
   const pages: CustomPage[] = [
     { id: 'updates', label: 'About and updates', icon: 'info', render: () => <>
       <AboutUpdatesSettings look={{ sectionHead: { display: 'none' }, hint: {}, rowFolder: {}, folderLabel: { fontWeight: 600 }, btn: { cursor: 'pointer' } }} record={() => {}} onShowWhatsNew={() => { void (window as unknown as { tw: { settings: { editorAction(action: string): Promise<unknown> } } }).tw.settings.editorAction('whats-new') }} />
       <button type="button" onClick={() => setOpened((o) => ({ section: 'updates', sheet: { kind: 'reset-all' }, n: o.n + 1 }))}>Reset all settings…</button>
+      <p style={{ fontSize: 12, color: 'var(--muted)', margin: '6px 0 0' }} data-reset-note="setup-folder">{SETUP_FOLDER_TEXT.reset}</p>
     </> },
     { id: 'recording', label: 'Recording', icon: 'video', render: () => <div className="recording-settings-page">
       <RecordingDeviceSettings microphone={String(savedMic || '')} capture={String(view.state.settings['recording.capture'] || 'voice')} setCapture={value => { void bridge.set('recording.capture', value) }} />
@@ -128,7 +133,8 @@ function SettingsApp(): React.JSX.Element | null {
     </div> },
     { id: 'get-started', label: 'Get started', icon: 'graduation-cap', placement: 'all', render: () => <GetStartedPage /> },
     { id: 'backups', label: 'Backups', icon: 'hard-drive', render: () => <BackupsPage version={view.state.changes.length} /> },
-    { id: 'cloudflare', label: 'Cloudflare', icon: 'cloud', render: () => <CloudflarePage onSetUpRecording={() => goToSetting(RECORDING_STORAGE_FIELD.section, RECORDING_STORAGE_FIELD.key)} /> }
+    { id: 'cloudflare', label: 'Cloudflare', icon: 'cloud', render: () => <CloudflarePage onSetUpRecording={() => goToSetting(RECORDING_STORAGE_FIELD.section, RECORDING_STORAGE_FIELD.key)} /> },
+    { id: SETUP_FOLDER_SECTION, label: 'Set-up folder', icon: 'folder-sync', render: () => <SetupFolderPage /> }
   ]
   return (
     <>
