@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, readFileSync, writeFileSync, statSync, rmSync, readdirSync, mkdtempSync, copyFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, statSync, rmSync, readdirSync, mkdtempSync, copyFileSync, existsSync, symlinkSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
@@ -200,6 +200,10 @@ try {
   const cli = spawnSync(process.execPath, ['scripts/audit-talks-look.mjs', '--talks', work, '--before', '.', '--out', resolve(work, 'report'), '--no-sheets', '--max-steps-per-slide', '60', '--jobs', '1'], { encoding: 'utf8' })
   assert.equal(cli.status, 3, cli.stderr)
   assert.match(readFileSync(resolve(work, 'report/report.md'), 'utf8'), /INCOMPLETE[\s\S]*state cap/)
+  // The compiled decks are only read while they are walked: a finished round keeps none of them (a round over a real
+  // library otherwise leaves gigabytes of rendered talks behind), while its shots and records stay for the report.
+  assert.equal(existsSync(resolve(work, 'report/decks')), false, 'a finished round removes its compiled decks')
+  assert.ok(readdirSync(resolve(work, 'report/shots')).length > 0, 'the shots the report and sheets use are kept')
   const recordDir = resolve(work, 'report/records')
   const recordFile = resolve(recordDir, readdirSync(recordDir).find(name => name.endsWith('.json')))
   const legacy = JSON.parse(readFileSync(recordFile, 'utf8'))
@@ -209,6 +213,40 @@ try {
   const redo = spawnSync(process.execPath, ['scripts/audit-talks-look.mjs', '--talks', work, '--before', '.', '--out', resolve(work, 'report'), '--no-sheets', '--redo-after', '--max-steps-per-slide', '60', '--jobs', '1'], { encoding: 'utf8' })
   assert.equal(redo.status, 3, 'legacy before side is kept but cannot certify completeness')
   assert.deepEqual(JSON.parse(readFileSync(recordFile, 'utf8')).sides.before, legacy.sides.before, '--redo-after preserves the recorded before side')
+  // --keep-decks keeps both sides of every talk; the next round without it removes them again, and leaves alone
+  // anything else that sits in decks/ (--out can be any folder).
+  const keptOut = resolve(work, 'report-kept-decks')
+  const keepArgs = ['scripts/audit-talks-look.mjs', '--talks', work, '--before', '.', '--out', keptOut, '--no-sheets', '--max-steps-per-slide', '60', '--jobs', '1']
+  const kept = spawnSync(process.execPath, [...keepArgs, '--keep-decks'], { encoding: 'utf8' })
+  assert.equal(kept.status, 3, kept.stderr)
+  const keptDecks = readdirSync(resolve(keptOut, 'decks'))
+  const talkCount = readdirSync(resolve(keptOut, 'records')).length
+  assert.ok(talkCount > 0)
+  const keptDeckFiles = keptDecks.filter((name) => name !== '.audit-decks.json')
+  assert.equal(keptDeckFiles.length, talkCount * 2, '--keep-decks keeps the before and the after deck of every talk')
+  assert.ok(keptDeckFiles.every((name) => /-(before|after)\.html$/.test(name)), keptDeckFiles.join(', '))
+  assert.ok(keptDecks.includes('.audit-decks.json'), 'the decks this audit wrote are listed beside them')
+  writeFileSync(resolve(keptOut, 'decks/not-from-this-audit.txt'), 'kept')
+  const swept = spawnSync(process.execPath, keepArgs, { encoding: 'utf8' })
+  assert.equal(swept.status, 3, swept.stderr)
+  assert.deepEqual(readdirSync(resolve(keptOut, 'decks')), ['not-from-this-audit.txt'], 'a later round removes the decks an earlier one kept, and only those')
+  // A file named exactly as the audit names a deck, but not written by it, is left alone: the name is not proof.
+  // (The records are cached, so this round compiles nothing.)
+  const foreignDeck = resolve(keptOut, 'decks', keptDeckFiles[0])
+  writeFileSync(foreignDeck, 'not a deck this audit wrote')
+  const sweptAgain = spawnSync(process.execPath, keepArgs, { encoding: 'utf8' })
+  assert.equal(sweptAgain.status, 3, sweptAgain.stderr)
+  assert.equal(readFileSync(foreignDeck, 'utf8'), 'not a deck this audit wrote', 'a file with a deck\'s name that this audit did not write is kept')
+  // decks/ that is a link to another folder: nothing in that folder is removed.
+  const elsewhere = resolve(work, 'elsewhere')
+  mkdirSync(elsewhere, { recursive: true })
+  for (const name of keptDeckFiles) writeFileSync(resolve(elsewhere, name), 'someone else\'s file')
+  writeFileSync(resolve(elsewhere, '.audit-decks.json'), JSON.stringify(Object.fromEntries(keptDeckFiles.map((name) => [name, Buffer.byteLength('someone else\'s file')]))))
+  rmSync(resolve(keptOut, 'decks'), { recursive: true, force: true })
+  symlinkSync(elsewhere, resolve(keptOut, 'decks'))
+  const linked = spawnSync(process.execPath, keepArgs, { encoding: 'utf8' })
+  assert.equal(linked.status, 3, linked.stderr)
+  assert.deepEqual(readdirSync(elsewhere).sort(), [...keptDeckFiles, '.audit-decks.json'].sort(), 'nothing is removed through a linked decks folder')
   const zeroJobsOut = resolve(work, 'report-zero-jobs')
   const zeroJobs = spawnSync(process.execPath, ['scripts/audit-talks-look.mjs', '--talks', work, '--before', '.', '--out', zeroJobsOut, '--no-sheets', '--jobs', '0', '--max-presses', '0'], { encoding: 'utf8' })
   assert.equal(zeroJobs.status, 3, 'existing --jobs 0 still means one worker, with an explicit overall cap here')

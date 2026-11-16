@@ -407,15 +407,21 @@ try {
       const f = document.querySelector('.slide.active iframe'); if (!f) return null
       const r = f.getBoundingClientRect(); return { active: document.querySelector('.slide.active').dataset.id, x: r.x + r.width / 2, y: r.y + r.height / 2, w: r.width, h: r.height, iw: innerWidth, full: document.querySelector('.slide.active')?.classList.contains('embed-full-screen') }
     })
-    let px = null
+    // Share of the frame (inset 10% each side) in the widget's colour. A single centre pixel can land on the
+    // widget's own centred text (it once hit the colon of "Walkers: 8") and read white while the widget shows.
+    let share = null
     if (info) {
       const sharp = (await import('sharp')).default
       const img = sharp(readFileSync(file)); const meta = await img.metadata(); const scale = meta.width / info.iw
-      const { data } = await img.extract({ left: Math.round(info.x * scale) - 2, top: Math.round(info.y * scale) - 2, width: 4, height: 4 }).raw().toBuffer({ resolveWithObject: true })
-      px = [data[0], data[1], data[2]]
+      const w = Math.max(1, Math.round(info.w * 0.8 * scale)), h = Math.max(1, Math.round(info.h * 0.8 * scale))
+      const left = Math.max(0, Math.round((info.x - info.w * 0.4) * scale)), top = Math.max(0, Math.round((info.y - info.h * 0.4) * scale))
+      const { data, info: raw } = await img.extract({ left, top, width: Math.min(w, meta.width - left), height: Math.min(h, meta.height - top) }).raw().toBuffer({ resolveWithObject: true })
+      let match = 0, total = 0
+      for (let i = 0; i < data.length; i += raw.channels) { total++; if (Math.abs(data[i] - 30) < 25 && Math.abs(data[i + 1] - 110) < 25 && Math.abs(data[i + 2] - 160) < 25) match++ }
+      share = total ? +(match / total).toFixed(3) : 0
     }
-    const ok = !!px && info.active === 'widget' && !info.full && Math.abs(px[0] - 30) < 25 && Math.abs(px[1] - 110) < 25 && Math.abs(px[2] - 160) < 25
-    record('present.widget-visible', ok, `frame=${JSON.stringify(info)} centre pixel=${JSON.stringify(px)} (widget is rgb(30,110,160))`, rel(file))
+    const ok = share !== null && info.active === 'widget' && !info.full && share >= 0.6
+    record('present.widget-visible', ok, `frame=${JSON.stringify(info)} share of the frame in the widget colour rgb(30,110,160)=${share} (needs 0.6)`, rel(file))
   })
 
   // ── 3. Print ────────────────────────────────────────────────────────────────────────────────────

@@ -16,6 +16,12 @@
 //   node scripts/audit-talks-look.mjs --talks <folder> --before <older checkout> [--after <checkout>] --out <dir> [--jobs 3]
 //        [--max-steps-per-slide 1000] [--max-presses 4000] [--typing-timeout-ms 30000]
 //        [--match <regex on the outline path>] [--limit <n talks>] [--report-only] [--redo-after] [--no-sheets]
+//        [--keep-decks]
+//
+// A compiled deck (decks/<talk>-<side>.html: the whole talk with its pictures inlined) is removed as soon as its walk
+// ends. Nothing reads it again: the report, the sheets and --redo-after use records/ and shots/. Kept, one round over
+// a large library holds several gigabytes of rendered talks, and every further round another copy. --keep-decks keeps
+// them, to open a slide by hand.
 //
 // Contact sheets are made by default. --no-sheets skips them: it saves one more Chromium pass over every sheet (a few
 // minutes on a large library); the measurements, report and comparison are the same. A sheet whose pictures fail to
@@ -30,7 +36,7 @@
 // Limits of the comparison: clipping and overlap are compared by presence and key, so worse geometry of an element that
 // already fails (it clips further) is not quantified; and changes below the tolerances (contrast 0.1:1, type 0.5px,
 // empty band 5 points) can add up over several releases without being reported.
-import { mkdirSync, readFileSync, writeFileSync, statSync, existsSync, readdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync, statSync, lstatSync, existsSync, readdirSync, rmSync, rmdirSync } from 'node:fs'
 import { dirname, join, relative, resolve, basename } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
@@ -52,6 +58,8 @@ const LIMIT = Number(arg('limit', 0))
 const REPORT_ONLY = process.argv.includes('--report-only')
 // --redo-after: keep the recorded before side and walk the after side again (after a change on this branch)
 const REDO_AFTER = process.argv.includes('--redo-after')
+// --keep-decks: leave each compiled deck in decks/ after it is measured (default: removed, see the top of this file)
+const KEEP_DECKS = process.argv.includes('--keep-decks')
 const SKIP_DIRS = new Set(['_SLIDE-VERSIONS', 'cache', 'z-old-powerpoint-imports', 'node_modules', '.git'])
 
 /** A talk's identity in the output: the tail of its relative path, readable, plus a hash of the whole relative path,
@@ -59,6 +67,51 @@ const SKIP_DIRS = new Set(['_SLIDE-VERSIONS', 'cache', 'z-old-powerpoint-imports
 export function talkSlug(relPath) {
   const tail = relPath.replace(/-outline\.md$/, '').replace(/[^a-z0-9]+/gi, '-').replace(/^-|-$/g, '').slice(-80)
   return `${tail}-${createHash('sha1').update(relPath).digest('hex').slice(0, 8)}`
+}
+
+// Compiled decks are written to decks/ under --out, which can be any folder. The audit removes only what it wrote:
+// decks/.audit-decks.json lists each deck this audit wrote there with its size; a file not listed, or listed but no
+// longer that size, is left alone, and so is everything when decks/ is not a plain folder (a link to somewhere else).
+// Decks kept by a version of this audit from before the list existed are not listed, so they stay.
+const DECKS = join(OUT, 'decks')
+const OWNED_DECKS = join(DECKS, '.audit-decks.json')
+/** true: a plain folder; false: something else is there (a link, a file); null: nothing is there. */
+function decksFolder() {
+  try { const st = lstatSync(DECKS); return st.isDirectory() && !st.isSymbolicLink() } catch { return null }
+}
+function ownedDecks() {
+  try { const owned = JSON.parse(readFileSync(OWNED_DECKS, 'utf8')); return owned && typeof owned === 'object' && !Array.isArray(owned) ? owned : {} } catch { return {} }
+}
+/** Writes the compiled deck of one side of a talk for the walk and lists it as this audit's. */
+function writeDeck(slug, side, text) {
+  if (decksFolder() === false) throw new Error(`${DECKS} is not a plain folder: the audit writes no decks there`)
+  mkdirSync(DECKS, { recursive: true })
+  const name = `${slug}-${side}.html`
+  const file = join(DECKS, name)
+  const owned = ownedDecks()
+  if (existsSync(file) && !(name in owned)) throw new Error(`${name} is already in ${DECKS} and this audit did not write it`)
+  writeFileSync(file, text)
+  owned[name] = Buffer.byteLength(text)
+  writeFileSync(OWNED_DECKS, JSON.stringify(owned))
+  return file
+}
+/** Removes one deck this audit wrote, if it is still the file it wrote. */
+function removeDeck(name) {
+  if (decksFolder() !== true) return
+  const owned = ownedDecks()
+  if (!(name in owned)) return
+  const file = join(DECKS, name)
+  try { const st = lstatSync(file); if (st.isFile() && st.size === owned[name]) rmSync(file) } catch { /* already gone */ }
+  delete owned[name]
+  if (Object.keys(owned).length) writeFileSync(OWNED_DECKS, JSON.stringify(owned))
+  else rmSync(OWNED_DECKS, { force: true })
+}
+/** Removes every deck this audit wrote into this --out (this run's or an earlier run's), then decks/ itself when
+ *  nothing else is in it. */
+function removeDecks() {
+  if (decksFolder() !== true) return
+  for (const name of Object.keys(ownedDecks())) removeDeck(name)
+  try { rmdirSync(DECKS) } catch { /* it holds something this audit did not write */ }
 }
 
 function outlines(dir) {
@@ -247,11 +300,13 @@ async function auditTalk(outlinePath) {
     if (!root || (cached && side === 'before')) continue
     try {
       const model = await compile(root, outlinePath, basename(slug))
-      const html = join(OUT, 'decks', `${slug}-${side}.html`)
-      mkdirSync(dirname(html), { recursive: true })
-      writeFileSync(html, String(model.fullHtml))
+      const html = writeDeck(slug, side, String(model.fullHtml))
       const slides = new Map((model.slides || []).map((s) => [s.id, { combo: triggerCombination(s.sourceMarkdown), source: String(s.sourceMarkdown || '') }]))
-      result.sides[side] = await auditDeck(html, slides, join(OUT, 'shots', slug, side))
+      try {
+        result.sides[side] = await auditDeck(html, slides, join(OUT, 'shots', slug, side))
+      } finally {
+        if (!KEEP_DECKS) removeDeck(basename(html))
+      }
     } catch (error) {
       result.sides[side] = { error: String(error?.stack || error).slice(0, 600), states: [] }
     }
@@ -509,6 +564,8 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
         console.log(`[${records.length}/${paths.length}] ${rec.slug} (${Math.round((Date.now() - started) / 1000)}s)${Object.entries(rec.sides).filter(([, s]) => s.error).map(([k]) => ` ${k} failed`).join('')}`)
       }
     }))
+    // decks an earlier run left in this --out (a kept round, an interrupted walk, an older version of this audit)
+    if (!KEEP_DECKS) removeDecks()
   } else {
     for (const path of paths) {
       const talk = relative(TALKS, path)
