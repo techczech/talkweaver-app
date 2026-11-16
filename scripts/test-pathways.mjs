@@ -229,7 +229,7 @@ const compiled = (await prepareSource(
 )).fullHtml
 
 function embeddedPreviewTemplate(html) {
-  const start = html.indexOf('iframe.srcdoc = `')
+  const start = html.indexOf('const pictureDoc = (head) => `')
   const end = html.indexOf('`;', start)
   assert.notEqual(start, -1, 'compiler fixture contains the embedded presenter preview template')
   assert.notEqual(end, -1, 'embedded presenter preview template has a closing delimiter')

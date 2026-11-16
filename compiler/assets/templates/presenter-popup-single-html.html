@@ -18884,6 +18884,44 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     exitEmbedInteract();
   });
 
+  // === PREVIEW_STYLES_START
+  // The deck's stylesheet for the preview panes. Every pane picture is its own document, and an inline
+  // <style> of the whole deck stylesheet (about 700 KB) was parsed again for every picture, three per
+  // slide change. The same text is handed to them as ONE blob: stylesheet, made again only when the
+  // text changes, so the renderer parses it once and every picture reuses it. Same rules, same order
+  // (the pane's own rules follow it). The text is inlined as before where blob: URLs are not
+  // available, and when it has an @import or a url() that is not absolute (a blob: stylesheet would
+  // resolve those against itself, not against the deck).
+  const PREVIEW_STYLES_RELATIVE = /@import|url\(\s*(['"]?)(?!\s*(?:[a-z][a-z0-9+.-]*:|#|var\())[^'")]*\1\s*\)/i;
+  let previewStyles = { text: null, url: null };
+  // Set when a picture's blob: stylesheet did not load (a content policy that refuses blob:
+  // stylesheets, a revoked address): every picture from then on takes the text inline.
+  let previewStylesRefused = false;
+  // Whether a picture's document got the shared stylesheet. Chromium gives a failed <link> an
+  // empty sheet rather than none, so the rules are counted. No link (the inline path) is fine.
+  function previewStylesLoaded(doc) {
+    const link = doc?.querySelector("link[data-preview-styles]");
+    if (!link) return true;
+    try { return !!link.sheet && link.sheet.cssRules.length > 0; } catch { return false; }
+  }
+  function previewStylesHead(styles) {
+    try {
+      if (previewStylesRefused) throw new Error("blob stylesheets refused");
+      if (typeof URL.createObjectURL !== "function" || typeof Blob !== "function") throw new Error("no blob URLs");
+      if (styles !== previewStyles.text) {
+        if (PREVIEW_STYLES_RELATIVE.test(styles)) throw new Error("relative addresses");
+        const old = previewStyles.url;
+        previewStyles = { text: styles, url: URL.createObjectURL(new Blob([styles], { type: "text/css" })) };
+        // A picture still loading the old sheet keeps it: revoked only well after.
+        if (old) setTimeout(() => URL.revokeObjectURL(old), 60000);
+      }
+      return `<link rel="stylesheet" data-preview-styles href="${previewStyles.url}">`;
+    } catch {
+      return `<style>${styles}</style>`;
+    }
+  }
+  // === PREVIEW_STYLES_END
+
   function previewSlide(target, slide, revealValue = 999, modeState = null, beat = null, beatIndex = -1, staticCurrent = false) {
     // B1/B2: the presenter's CURRENT slide, when it carries an embed, renders it LIVE in the
     // current pane instead of the static thumbnail clone (which strips embed src → blank). A local
@@ -19077,6 +19115,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     // it will show. decorateContainer is the same pure(slideEl, beat)→DOM used on the live slide.
     if (beat) decorateContainer(clone, beat, beatIndex); else clearContainer(clone);
     const styles = Array.from(document.querySelectorAll("style")).map((style) => style.textContent).join("\n");
+    const stylesHead = previewStylesHead(styles);
     const iframe = document.createElement("iframe");
     iframe.title = "Slide preview";
     iframe.setAttribute("aria-hidden", "true");
@@ -19109,7 +19148,7 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
     // the projector, so every cqw/cqh inside the preview resolves against the same canvas. The slide
     // is full-height (margin:auto/grid pin a title poster's QR + byline to the bottom) but is NOT a
     // size container: that would resolve the slide's type against its padded box, 89% of the canvas.
-    iframe.srcdoc = `<!doctype html><html lang="en-GB"><head><meta charset="utf-8"><style>${styles}
+    const pictureDoc = (head) => `<!doctype html><html lang="en-GB"><head><meta charset="utf-8">${head}<style>
       html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--paper); }
       body { min-height: 100%; }
       .deck { min-height: 100%; display: block; }
@@ -19117,7 +19156,19 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
       .slide { display: grid !important; position: absolute; inset: 0; width: 100%; height: 100%; min-height: 100%; }
       .footer, .drawer, .notes-drawer, .progress, .presenter-root { display: none !important; }
     </style></head><body><main class="deck"><div class="stage">${clone.outerHTML}</div><script>${previewAutofit}<\/script></main></body></html>`;
-    iframe.addEventListener("load", () => {
+    iframe.srcdoc = pictureDoc(stylesHead);
+    const onPictureLoad = () => {
+      // The shared stylesheet did not load: this picture is drawn again with the text inline
+      // (as before 0.45.1), before it is fitted or shown, and so is every later one.
+      let loaded = true;
+      try { loaded = styles.trim() === "" || previewStylesLoaded(iframe.contentDocument); } catch { loaded = true; }
+      if (!loaded && !iframe.dataset.previewStylesInline) {
+        previewStylesRefused = true;
+        iframe.dataset.previewStylesInline = "1";
+        iframe.addEventListener("load", onPictureLoad, { once: true });
+        iframe.srcdoc = pictureDoc(`<style>${styles}</style>`);
+        return;
+      }
       if (iframe.classList.contains("preview-incoming")) {
         target.querySelectorAll(":scope > iframe.preview-outgoing").forEach((node) => node.remove());
         iframe.classList.remove("preview-incoming");
@@ -19159,7 +19210,8 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
           });
         } catch {}
       }
-    }, { once: true });
+    };
+    iframe.addEventListener("load", onPictureLoad, { once: true });
     // The picture is the pane's FIRST frame (the pointer and the highlighter read it as such).
     // A successor picture waits, hidden, behind the one on show until it has loaded.
     if (target.querySelector(":scope > iframe.preview-outgoing")) iframe.classList.add("preview-incoming");

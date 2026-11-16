@@ -448,6 +448,7 @@
     "test:mermaid-vendor-security",
     "test:presenter-outline-look",
     "test:presenter-notes-placement",
+    "test:presenter-preview-styles",
     "test:presenter-teleprompter",
     "test:presenter-controls",
     "test:presenter-status-bar",
