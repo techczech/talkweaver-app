@@ -147,6 +147,14 @@ export function newerOffer(feed: ChannelFeed | undefined, alpha: boolean, runnin
   return compareVersions(offer.version, running) > 0 ? offer : null
 }
 
+/**
+ * Update names the version the person saw (an answer or the popover can stay open while the offer changes, for
+ * example when early versions are switched on). True only when that is the version offered now.
+ */
+export function isOfferSeen(seen: unknown, offer: ChannelEntry | null): boolean {
+  return typeof seen === 'string' && offer !== null && seen === offer.version
+}
+
 /** The update file for this computer (`process.platform`, `process.arch`): Apple silicon Macs and x64 Windows only. */
 export function updateFileFor(entry: ChannelEntry | null | undefined, platform: string, arch: string): UpdateFile | null {
   if (!entry?.update) return null

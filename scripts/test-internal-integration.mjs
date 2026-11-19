@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, basename, relative } from 'node:path'
 import ts from 'typescript'
+import { closeFrozen } from '../src/renderer/src/lib/closeFreeze.ts'
 const compile = source => ts.transpileModule(source, {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText
 const main = readFileSync('src/main/index.ts','utf8')
 const start = main.indexOf('async function verifiedRunSource(')
@@ -42,7 +43,7 @@ const closeHook=hook.slice(closeStart,hook.indexOf('  return { change,',closeSta
 for(const allow of [false,true]){
  let close,acks=0,confirmed=0,release
  const pending=new Promise(resolve=>release=resolve)
- const deps={useEffect:cb=>cb(),window:{tw:{talk:{onCloseRequested:cb=>{close=cb},ackCloseRequest:async()=>{acks++},confirmClose:async()=>{confirmed++}},windows:{recoverMovedTalk:async()=>({kind:'no-receipt'})}}},wiringRef:{current:{activeOutlinePath:'A'}},leave:()=>pending}
+ const deps={useEffect:cb=>cb(),window:{tw:{talk:{onCloseRequested:cb=>{close=cb},ackCloseRequest:async()=>{acks++},confirmClose:async()=>{confirmed++}},windows:{recoverMovedTalk:async()=>({kind:'no-receipt'})}}},wiringRef:{current:{activeOutlinePath:'A',settle:async()=>{},forceSave:async()=>true}},leave:()=>pending,closeFrozen,freezeFor:()=>({freeze(){},unfreeze(){}}),unfreezeAllRef:{current:new Set()},editorRevision:{current:()=>0}}
  Function(...Object.keys(deps),compile(closeHook))(...Object.values(deps));close({quit:false})
  await new Promise(resolve=>setImmediate(resolve));assert.equal(acks,0,'stalled flush leaves main timeout active');assert.equal(confirmed,0)
  release(allow);await new Promise(resolve=>setImmediate(resolve));assert.equal(acks,1);assert.equal(confirmed,allow?1:0)

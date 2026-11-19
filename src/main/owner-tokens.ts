@@ -52,6 +52,7 @@ import { basename, dirname, join } from 'node:path'
 import { isShareId } from '../shared/share-id.ts'
 import { writeTextAtomic } from './importer/atomic.ts'
 import { SecretsError, type SecretsStore } from './secrets-store.ts'
+import { trackWrite } from './write-queues.ts'
 
 export type OwnerTokenKind = 'share' | 'results' | 'prework'
 
@@ -300,7 +301,7 @@ export function createKeyedQueue(): KeyedQueue {
   const tails = new Map<string, Promise<void>>()
   return {
     run(key, operation) {
-      const result = (tails.get(key) ?? Promise.resolve()).then(operation)
+      const result = trackWrite('keyed-queue', (tails.get(key) ?? Promise.resolve()).then(operation))
       const tail = result.then(() => {}, () => {})
       tails.set(key, tail)
       void tail.then(() => { if (tails.get(key) === tail) tails.delete(key) })

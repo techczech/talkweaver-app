@@ -44,6 +44,9 @@
     "test:update-channels",
     "test:update-install",
     "test:update-engine",
+    "test:window-kinds",
+    "test:write-queues",
+    "test:close-freeze",
     "test:guide",
     "test:guide-chapters",
     "test:guide-topics",
@@ -418,7 +421,9 @@
     "test:precise-word-timing",
     "test:alignment-lifecycle",
     "test:saved-transcription-status",
-    "test:panel-arrangement"
+    "test:panel-arrangement",
+    "test:helper-shutdown",
+    "test:quit-attempt"
   ],
   "dom": [
     "test:editor-title-enter-objects:dom",
@@ -449,6 +454,7 @@
     "test:presenter-outline-look",
     "test:presenter-notes-placement",
     "test:presenter-preview-styles",
+    "test:presenter-pane-swap-dom",
     "test:presenter-teleprompter",
     "test:presenter-controls",
     "test:presenter-status-bar",
@@ -623,6 +629,8 @@
     "test:place-chip:e2e",
     "test:update-notices:e2e",
     "test:in-place-update:e2e",
+    "test:close-freeze:e2e",
+    "test:close-after-move:e2e",
     "test:actions-here:e2e",
     "test:keyboard-sheet:e2e",
     "test:core-journey:e2e",
@@ -636,7 +644,9 @@
     "test:pathways:e2e",
     "test:capture-network:e2e",
     "test:animated-video:e2e",
-    "test:test-network-guard:e2e"
+    "test:test-network-guard:e2e",
+    "test:quit-helpers:e2e",
+    "test:quit-cancel:e2e"
   ],
   "serial": [
     "test:worker-dist",

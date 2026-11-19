@@ -105,12 +105,17 @@ try {
   assert.match(document.querySelector('[data-update-mark]').textContent, /Restarting into 0\.42\.0…/)
   assert.ok(pop().querySelector('[data-update-restarting]'))
   assert.equal(pop().querySelector('[data-update-cancel]'), null, 'no Cancel once restarting')
-  // A restart that did not happen (D4): pending until checked, then "quit and reopen".
-  await publish({ install: { phase: 'reopen', version: '0.42.0', cause: 'held', pending: true } })
+  // A restart that did not happen (D4): "may" until checked (whatever the cause), "will" only when a check found the
+  // preparation definitely still armed, then a checked "quit and reopen".
+  await publish({ install: { phase: 'reopen', version: '0.42.0', cause: 'held', pending: true, armed: false } })
+  assert.match(document.querySelector('[data-update-mark]').textContent, /0\.42\.0 may install when TalkWeaver quits/)
+  assert.match(pop().textContent, /TalkWeaver may finish updating when it next quits/)
+  assert.doesNotMatch(pop().textContent, /will finish updating/, 'an unconfirmed withdrawal never says "will"')
+  assert.equal(pop().querySelector('[data-update-reopen]').getAttribute('data-update-reopen'), 'pending')
+  await publish({ install: { phase: 'reopen', version: '0.42.0', cause: 'held', pending: true, armed: true } })
   assert.match(document.querySelector('[data-update-mark]').textContent, /0\.42\.0 installs when TalkWeaver quits/)
   assert.match(pop().textContent, /TalkWeaver will finish updating when it next quits/)
-  assert.equal(pop().querySelector('[data-update-reopen]').getAttribute('data-update-reopen'), 'pending')
-  await publish({ install: { phase: 'reopen', version: '0.42.0', cause: 'held', pending: false } })
+  await publish({ install: { phase: 'reopen', version: '0.42.0', cause: 'held', pending: false, armed: false } })
   assert.match(document.querySelector('[data-update-mark]').textContent, /Reopen TalkWeaver to update/)
   assert.match(pop().textContent, /Quit and reopen TalkWeaver to update.*Nothing is installed when it quits/)
   assert.equal(pop().querySelectorAll('[data-update-popover] button').length, 0, 'no button: nothing more happens in this run')

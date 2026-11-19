@@ -100,7 +100,9 @@ try {
             }, null, { timeout: 2500 });
         };
         const point = async (space = 'slide') => {
-            const rect = await presenter.locator(space === 'image' ? '#lightboxImg' : '#currentPreview iframe').boundingBox();
+            // A new picture of the slide waits hidden until it is ready, then replaces the one on show.
+            await presenter.waitForFunction(() => !document.querySelector('#currentPreview > iframe.preview-incoming'));
+            const rect = await presenter.locator(space === 'image' ? '#lightboxImg' : '#currentPreview iframe:not(.preview-incoming)').boundingBox();
             await presenter.mouse.move(rect.x + rect.width * .31, rect.y + rect.height * .8);
             await presenter.mouse.move(rect.x + rect.width * .3, rect.y + rect.height * .8);
             await audience.waitForFunction(() => {
@@ -259,7 +261,7 @@ try {
 
         assert.equal(await ring.isVisible(), true, 'a resting pointer survives six seconds');
         assert.equal(await presenter.locator('#presenterPointerChip').innerText(), 'Pointer on');
-        const nested = await presenter.locator('#currentPreview iframe')
+        const nested = await presenter.locator('#currentPreview iframe:not(.preview-incoming)')
             .evaluate(el => el.contentDocument.querySelector('.tw-live-overlay'));
         assert.equal(nested, null);
         await presenter.mouse.move(0, 0);
@@ -348,7 +350,7 @@ try {
         await presenter.locator('#presenterCommandSearch').fill('Pointer');
         await presenter.keyboard.press('Meta+Shift+,');
         await presenter.waitForSelector('#presenterRebind');
-        const previewHandle = await presenter.locator('#currentPreview iframe').elementHandle();
+        const previewHandle = await presenter.locator('#currentPreview iframe:not(.preview-incoming)').elementHandle();
         const previewFrame = await previewHandle.contentFrame();
         await previewFrame.evaluate(() => {
             const field = document.createElement('input');
@@ -474,7 +476,7 @@ try {
         });
         await silent.goto(`${origin}/deck?presenter=1&session=${session}`);
         await silent.keyboard.press('y');
-        const surface = await silent.locator('#currentPreview iframe').boundingBox();
+        const surface = await silent.locator('#currentPreview iframe:not(.preview-incoming)').boundingBox();
         await silent.mouse.move(surface.x + surface.width * .3, surface.y + surface.height * .8);
         await audience.locator('.tw-pointer-ring').waitFor({ state: 'visible' });
         await silent.evaluate(() => window.__intervals.forEach(id => window.clearInterval(id)));

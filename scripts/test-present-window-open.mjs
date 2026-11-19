@@ -430,7 +430,7 @@ await test('production presentation windows keep rendering in both creation path
   const failures = []
   for (const E2E of [false, true]) {
     const opts = evaluate(index.slice(childStart, childEnd) + '\ndeckWindowOpenOpts', {
-      E2E, appWindowOpenOpts: {}, pressLedger: { pressedRecently: () => false }
+      E2E, appWindowOpenOpts: {}, pressLedger: { pressedRecently: () => false }, registerWindowKind: () => {}
     })
     const child = presentWindowOpenHandler(() => presenterPage, opts)({ url: audience, frameName: 'html-audience-abc' })
     assert.equal(child.action, 'allow')
@@ -438,7 +438,7 @@ await test('production presentation windows keep rendering in both creation path
     for (const mode of ['audience', 'presenter', 'window']) {
       const direct = evaluate(index.slice(directStart, directEnd) + '\nwin', {
         E2E, winTitle: 'Synthetic presentation', bridgePreload: mode === 'audience' ? null : '/synthetic/preload.js',
-        BrowserWindow: function (options) { return options }
+        BrowserWindow: function (options) { return options }, registerWindowKind: () => {}
       })
       if (direct.webPreferences.backgroundThrottling !== false) failures.push(`direct ${mode} E2E=${E2E}`)
       assert.equal(direct.webPreferences.nodeIntegration, false)

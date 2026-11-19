@@ -66,6 +66,8 @@ export function mountShell(options: {
   const surfaces = document.createElement('div')
   surfaces.className = 'oe-surface'
   let active = options.editor
+  const initialSource = active.serialise()
+  const initialOptions = JSON.stringify(options.editor.commitOptions?.(initialSource))
   let api = options.api
   const note = document.createElement('div')
   note.className = 'oe-parse-note'
@@ -161,11 +163,13 @@ export function mountShell(options: {
     return result
   }
   const controlledShell = shell as HTMLElement & {
+    __twHasDraft?: () => boolean
     __twCommit?: (context?: ObjectEditorCommitContext) => ObjectEditorCommitResult
     __twPreflightTeardown?: () => ObjectEditorCommitResult
     __twRetargetApi?: (next: ObjectEditorApi) => void
     __twDiscard?: () => void
   }
+  controlledShell.__twHasDraft = () => !finished && (active.serialise() !== initialSource || JSON.stringify(commitOptions(active.serialise())) !== initialOptions)
   controlledShell.__twCommit = (context = 'teardown') => commit(context)
   controlledShell.__twPreflightTeardown = preflightTeardown
   controlledShell.__twRetargetApi = (next) => { api = next }

@@ -8,6 +8,7 @@ import { listResearch, type ResearchDeps } from './research-reader.ts'
 import { readTalkOutline, writeTalkOutline } from './talk-writer.ts'
 import { researchPaths, replaceResearchLinks } from '../shared/research-links.ts'
 import type { ResearchWriteInput, ResearchWriteResult, ResearchUse, ResearchItem } from '../shared/research.ts'
+import { trackWrite } from './write-queues.ts'
 
 export interface ResearchWriteDeps extends ResearchDeps {
   trash?: (file: string) => Promise<void>
@@ -328,7 +329,7 @@ export function researchDestinations(deps: ResearchDeps, complete = false): { pa
 
 let writeQueue: Promise<unknown> = Promise.resolve()
 export function writeResearch(raw: unknown, deps: ResearchWriteDeps): Promise<ResearchWriteResult> {
-  const next = writeQueue.then(() => performWrite(raw, deps))
+  const next = trackWrite('research', writeQueue.then(() => performWrite(raw, deps)))
   writeQueue = next.catch(() => {})
   return next
 }

@@ -1,3 +1,4 @@
+import type { WriteFailureBaseline } from './write-queues.ts'
 // Updates (ADR-0044, superseding ADR-0041): the daily check of talkweaver.app/updates.json (release and alpha
 // channels, src/shared/update-checker.ts), the one click that updates in place (update-installer.ts), and the
 // `updates:*` IPC. TalkWeaver ports: configuration, the filtered network session, the busy and restart gates,
@@ -9,7 +10,7 @@ import { isAbsolute, join } from 'node:path'
 import { downloadLinkFor, isSiteLink, parseVersion, parseWhatsNew, type CopySource, type WhatsNewItem, type FeedAnswer } from '@app-patterns/updates'
 import { createElectronFeedFetcher } from '@app-patterns/updates/electron'
 import { UPDATE_IDENTITY, FEED_URL, FEED_REQUEST, STORE_LINK, notesLinkFor } from '../shared/update-identity.ts'
-import { RELEASE_ASSET_PREFIX, newerOffer, updateFileFor } from '../shared/update-channels.ts'
+import { RELEASE_ASSET_PREFIX, isOfferSeen, newerOffer, updateFileFor } from '../shared/update-channels.ts'
 import { createChannelChecker, readChannelState, type ChannelChecker, type ChannelUpdateState, type CheckerSnapshot, type UpdateSnapshot } from '../shared/update-checker.ts'
 import type { InPlaceRefusal, RestartBlocker } from '../shared/update-install.ts'
 import { createUpdateInstaller } from './update-installer.ts'
@@ -27,6 +28,15 @@ export interface UpdateNoticesPorts {
   isPresentingNow(): boolean
   /** Everything a restart now would cost the person (update-install.ts restartBlockers). */
   restartBlockers(): RestartBlocker[]
+  /** The restart's commit (ADR-0044): every window closed through its own close route. True only when none is left. */
+  closeWindowsForRestart(): Promise<boolean>
+  /** How many windows are open now (the native install is called only at zero). */
+  openWindows(): number
+  /** The restart's commit began and the restart will not happen: give the person a window back. */
+  restartAbandoned(): void
+  /** Rule C (ADR-0044 §6): every main-process write queue finished, and which are busy now. */
+  drainWriteQueues(baseline: WriteFailureBaseline): Promise<boolean>
+  writeQueuesBusy(): readonly string[]
   /** userData/config.json: `updateNotices` (state), `updatesCheckForNewVersions` and `updatesAlphaVersions` (the settings). */
   readConfig(): { updateNotices?: unknown; updatesCheckForNewVersions?: unknown; updatesAlphaVersions?: unknown; vaults?: unknown }
   writeConfig(patch: { updateNotices?: ChannelUpdateState; updatesCheckForNewVersions?: boolean; updatesAlphaVersions?: boolean }): void
@@ -165,6 +175,11 @@ export function installUpdateNotices(ports: UpdateNoticesPorts): ChannelChecker 
     source,
     isProtected: ports.isPresentingNow,
     blockers: blockersNow,
+    closeWindows: ports.closeWindowsForRestart,
+    openWindows: ports.openWindows,
+    commitAbandoned: ports.restartAbandoned,
+    drainWriteQueues: ports.drainWriteQueues,
+    writeQueuesBusy: ports.writeQueuesBusy,
     changed: () => { try { checker?.tell() } catch { /* starting */ } },
     log: (message) => console.log(`[updates] ${message}`),
   })
@@ -236,10 +251,17 @@ export function installUpdateNotices(ports: UpdateNoticesPorts): ChannelChecker 
     ports.writeConfig({ updatesAlphaVersions: on === true })
     return withInstall(checker.settingChanged())
   })
-  // Update takes no address and no version: it is the newer offer the last validated feed gave for this computer.
-  ipcMain.handle('updates:update', async (): Promise<UpdateSnapshot> => {
+  // Update takes no address: it is the newer offer the last validated feed gave for this computer, and only when that
+  // is the version the person saw (the renderer names it; it is compared, never used to build anything). When the
+  // offer has changed since, nothing starts and the windows are told again, so they show the offer as it is now.
+  ipcMain.handle('updates:update', async (_e, seen: unknown): Promise<UpdateSnapshot> => {
     const s = checker.snapshot()
     const offer = newerOffer(s.state.channels, s.alpha, running)
+    if (!isOfferSeen(seen, offer)) {
+      console.log('[updates] Update refused: the version offered is not the one shown; the windows are told again')
+      checker.tell()
+      return snap()
+    }
     const file = updateFileFor(offer, process.platform, process.arch)
     if (!offer || !file || s.busy || installer.refusal(file, s.source) !== null) return snap()
     void installer.start(offer, file)

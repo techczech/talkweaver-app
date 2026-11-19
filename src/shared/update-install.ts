@@ -6,9 +6,12 @@ import type { UpdateFile } from './update-channels.ts'
 
 // ── What holds a restart back ───────────────────────────────────────────────────────────────────
 
-/** Something a restart now would cost the person. */
-export type RestartBlocker = 'presenting' | 'recording' | 'live' | 'exporting' | 'publishing' | 'sharing' | 'unsaved'
-export const RESTART_BLOCKERS: readonly RestartBlocker[] = ['presenting', 'recording', 'live', 'exporting', 'publishing', 'sharing', 'unsaved']
+/** Something a restart now would cost the person. The last four are windows the person closes first (ADR-0044 §6,
+ *  rule A: the restart closes only editor windows). */
+export type RestartBlocker = 'presenting' | 'recording' | 'live' | 'exporting' | 'publishing' | 'sharing' | 'unsaved' | 'tools' | 'settings' | 'capture' | 'window'
+export const RESTART_BLOCKERS: readonly RestartBlocker[] = ['presenting', 'recording', 'live', 'exporting', 'publishing', 'sharing', 'unsaved', 'tools', 'settings', 'capture', 'window']
+/** The blockers that are open windows: the person closes them (they are named in "Close … to restart."). */
+export const WINDOW_BLOCKERS: readonly RestartBlocker[] = ['tools', 'settings', 'capture', 'window']
 
 export interface RestartFacts {
   /** Presenter or audience windows open. */
@@ -23,21 +26,27 @@ export interface RestartFacts {
   sharing: boolean
   /** A talk whose last save failed, or whose file changed on disk with the person's choice not made yet. */
   unsaved: boolean
+  /** The blockers the open windows raise (window-kinds.ts windowBlockerOf, one per open window that is not an
+   *  editor or a hidden helper); duplicates are fine. */
+  windows?: readonly RestartBlocker[]
 }
 
 /** Every reason not to restart now, in a fixed order. */
 export function restartBlockers(facts: RestartFacts): RestartBlocker[] {
   const out: RestartBlocker[] = []
-  if (facts.presentWindows > 0) out.push('presenting')
+  const windows = new Set(facts.windows ?? [])
+  if (facts.presentWindows > 0 || windows.has('presenting')) out.push('presenting')
   if (facts.recording) out.push('recording')
   if (facts.liveSession) out.push('live')
   if (facts.exporting) out.push('exporting')
   if (facts.publishing) out.push('publishing')
   if (facts.sharing) out.push('sharing')
   if (facts.unsaved) out.push('unsaved')
+  for (const b of WINDOW_BLOCKERS) if (windows.has(b)) out.push(b)
   return out
 }
 
+/** For work: the clause after "Not now:". For a window: its name after "Close". */
 export const BLOCKER_TEXT: Record<RestartBlocker, string> = {
   presenting: 'a talk is being presented',
   recording: 'a recording is in progress',
@@ -46,14 +55,23 @@ export const BLOCKER_TEXT: Record<RestartBlocker, string> = {
   publishing: 'a handout is being published',
   sharing: 'a talk is being shared',
   unsaved: 'a talk has changes that could not be saved yet',
+  tools: 'the Tools window',
+  settings: 'Settings',
+  capture: 'Capture embed',
+  window: 'the other TalkWeaver windows',
 }
 
-/** "Not now: a recording is in progress and an export is running." */
+const listed = (parts: readonly string[]): string => parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
+
+/** "Not now: a recording is in progress and an export is running." / "Close the Tools window and Settings to restart."
+ *  Both, in that order, when both kinds hold. */
 export function blockersSentence(blockers: readonly RestartBlocker[]): string {
-  const parts = blockers.map((b) => BLOCKER_TEXT[b])
-  if (parts.length === 0) return ''
-  const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`
-  return `Not now: ${list}.`
+  const work = blockers.filter((b) => !WINDOW_BLOCKERS.includes(b)).map((b) => BLOCKER_TEXT[b])
+  const windows = blockers.filter((b) => WINDOW_BLOCKERS.includes(b)).map((b) => BLOCKER_TEXT[b])
+  const out: string[] = []
+  if (work.length > 0) out.push(`Not now: ${listed(work)}.`)
+  if (windows.length > 0) out.push(`Close ${listed(windows)} to restart.`)
+  return out.join(' ')
 }
 
 // ── When a copy cannot replace itself ───────────────────────────────────────────────────────────
@@ -126,10 +144,13 @@ export type InstallPhase =
   | { phase: 'failed'; version: string; reason: FailReason }
   /**
    * D4: the restart did not happen and macOS may have prepared the update; nothing more happens in this run.
-   * pending: true until a withdrawal has been checked (the update will, or may, install when TalkWeaver next quits);
-   * false once it was checked that nothing is armed (quit and reopen TalkWeaver, then press Update again).
+   * pending: true until a withdrawal has been checked (the update may install when TalkWeaver next quits); false
+   * once it was checked that nothing is armed (quit and reopen TalkWeaver, then press Update again).
+   * armed: true only when a check found the preparation definitely still there (Squirrel.Mac's ShipIt job and its
+   * install request both present after the withdrawal): then, and only then, the update WILL install at the next
+   * quit. Every other unconfirmed withdrawal (not yet checked, an unknown answer, one of the two gone) says "may".
    */
-  | { phase: 'reopen'; version: string; cause: ReopenCause; pending: boolean }
+  | { phase: 'reopen'; version: string; cause: ReopenCause; pending: boolean; armed: boolean }
 
 export type InstallEvent =
   | { type: 'start'; version: string; total: number }
@@ -174,7 +195,7 @@ export function installStep(state: InstallPhase, event: InstallEvent): InstallPh
     case 'held':
       return state.phase === 'restarting' ? { phase: 'waiting', version: state.version } : state
     case 'leftover':
-      return state.phase === 'restarting' ? { phase: 'reopen', version: state.version, cause: event.cause, pending: true } : state
+      return state.phase === 'restarting' ? { phase: 'reopen', version: state.version, cause: event.cause, pending: true, armed: false } : state
     case 'reset':
       return state.phase === 'failed' ? IDLE : state
   }
@@ -224,8 +245,11 @@ export function installMarkText(state: InstallPhase): string | null {
   }
 }
 
-/** What the person reads in the D4 state. Never "nothing will install" unless a withdrawal was checked (pending false). */
-export function reopenText(state: { version: string; cause: ReopenCause; pending: boolean }): { mark: string; title: string; detail: string } {
+/**
+ * What the person reads in the D4 state. Never "nothing will install" unless a withdrawal was checked (pending
+ * false); never "will install" unless a check found the preparation still there (armed); otherwise "may".
+ */
+export function reopenText(state: { version: string; cause: ReopenCause; pending: boolean; armed: boolean }): { mark: string; title: string; detail: string } {
   const why = state.cause === 'held'
     ? 'Something started that a restart would interrupt, so TalkWeaver did not restart.'
     : state.cause === 'no-answer'
@@ -236,7 +260,7 @@ export function reopenText(state: { version: string; cause: ReopenCause; pending
     title: 'Quit and reopen TalkWeaver to update',
     detail: `${why} Nothing is installed when it quits. Quit and reopen TalkWeaver, then press Update again.`,
   }
-  if (state.cause === 'held') return {
+  if (state.armed === true) return {
     mark: `${state.version} installs when TalkWeaver quits`,
     title: 'TalkWeaver will finish updating when it next quits',
     detail: `${why} macOS has ${state.version} ready and installs it when you next quit TalkWeaver.`,

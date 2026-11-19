@@ -9,6 +9,7 @@ import {
   type Attempt, type PushMode, type RevisionSnapshot, type SharedTalkRecord,
 } from './shared-talk-model.ts'
 import type { ShareCore } from './shared-talk-state.ts'
+import { trackWrite } from './write-queues.ts'
 
 export function createPush(core: ShareCore): { enqueue(key: string, mode: PushMode): Promise<void> } {
   const { deps, registry, attempts, lastError, inFlight, chains, queued, running, pendingSave, live, stoppingKey, persist, emit, log, now } = core
@@ -112,7 +113,7 @@ export function createPush(core: ShareCore): { enqueue(key: string, mode: PushMo
     queued.add(key)
     emit(key)
     const previous = chains.get(key) ?? Promise.resolve()
-    const next = previous.then(async () => {
+    const next = trackWrite('shared-talk', previous.then(async () => {
       queued.delete(key)
       if (stoppingKey(key) || !registry.shares[key]) return
       running.add(key)
@@ -129,7 +130,7 @@ export function createPush(core: ShareCore): { enqueue(key: string, mode: PushMo
         running.delete(key)
         emit(key)
       }
-    })
+    }))
     const settled = next.catch(() => {})
     chains.set(key, settled)
     void settled.then(() => { if (chains.get(key) === settled && !queued.has(key) && !running.has(key)) chains.delete(key) })

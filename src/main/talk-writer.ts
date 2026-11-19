@@ -33,6 +33,7 @@ import { access, lstat, open, readFile, stat, unlink, type FileHandle } from 'fs
 import { basename, dirname, join } from 'path'
 import { canonicalOutlinePath, outlineIdentity, type OutlineIdentity } from './outline-identity.ts'
 import { CHANGED_ON_DISK_MESSAGE, PARTIAL_WRITE_MESSAGE, REMOVED_ON_DISK_MESSAGE, type OutlineDiskChange } from '../shared/outline-disk-change.ts'
+import { trackWrite } from './write-queues.ts'
 
 export type TalkWriteOrigin =
   | 'editor' | 'migration' | 'create-talk' | 'tags' | 'frontmatter' | 'ledger-detach' | 'ledger-adopt'
@@ -126,7 +127,7 @@ const DIRECT_ORIGINS: ReadonlySet<TalkWriteOrigin> = new Set(['editor', 'migrati
 // the map: `path:<real path>` and `inode:<identity key>`.
 const locks = new Map<string, Promise<void>>()
 function chainOn<T>(chains: Map<string, Promise<void>>, key: string, work: () => Promise<T>): Promise<T> {
-  const run = (chains.get(key) ?? Promise.resolve()).then(work)
+  const run = trackWrite('talk-writer', (chains.get(key) ?? Promise.resolve()).then(work))
   const tail = run.then(() => undefined, () => undefined)
   chains.set(key, tail)
   void tail.then(() => { if (chains.get(key) === tail) chains.delete(key) })

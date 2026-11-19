@@ -384,7 +384,7 @@ await test('wiring: default and explicitly isolated windows each retain their re
       if (path.endsWith('thumbnails.ts')) {
         assert.match(text, /callback\(\{ cancel: !\/\^\(data\|blob\):\//, 'self-contained thumbnails deny all external requests before DNS')
         assert.match(text, /containCaptureSession\(isolated, \{ denyAll: true \}\)/, 'non-webRequest transports also use the deny-all proxy')
-        assert.match(text, /await containCaptureContents\(win.webContents\)/, 'the all-target gate runs before the deck')
+        assert.match(text, /await rendererWork\(containCaptureContents\(win.webContents\), signal\)/, 'the all-target gate runs before the deck')
         assert.match(text, /details\.resourceType === 'mainFrame' && details\.url\.startsWith\('file:'\)/, 'only the main deck may load a file')
       }
       continue

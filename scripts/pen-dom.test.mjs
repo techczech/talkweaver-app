@@ -98,6 +98,9 @@ try {
   const waitLive = (fn, arg) => presenter.waitForFunction(fn, arg, { timeout: 4000 });
   // A drag from (fx, fy) to (tx, ty) in fractions of the current drawing surface.
   async function drag(fx, fy, tx, ty, { steps = 8, shift = false, escape = false } = {}) {
+    // The Current pane takes no pen while it still shows the previous picture (the pane rule,
+    // previewSlide): the drag starts once the picture of where the talk is is on show.
+    await presenter.waitForFunction(() => !document.querySelector('#currentPreview > iframe.preview-incoming, #currentPreview > iframe.preview-outgoing'));
     const r = await surfaceOf(presenter, 'presenter');
     await presenter.mouse.move(r.x + r.width * fx, r.y + r.height * fy);
     if (shift) await presenter.keyboard.down('Shift');

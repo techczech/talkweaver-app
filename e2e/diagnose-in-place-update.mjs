@@ -147,7 +147,16 @@ try {
   const note = await visible(page, '[data-update-note][data-update-note-tone="new"]')
   const noteText = note ? (await page.locator('[data-update-note]').innerText()).replace(/\s+/g, ' ') : ''
   record('Check for Updates… answers that the newer version is available, with Update', note && noteText.includes(`TalkWeaver ${NEXT} is available.`) && /Update/.test(noteText) && !/Download from talkweaver\.app/.test(noteText), noteText)
-  await page.locator('[data-update-note] button[aria-label="Dismiss"]').click()
+  // An open answer can go stale: the offer changes under it (here: early versions switched on in Settings). Its
+  // Update names the version it shows, and the main process starts nothing when that is no longer the offer.
+  await page.evaluate(() => window.tw.updates.setAlpha(true))
+  if (await page.locator('[data-update-note] [data-update-update]').count()) await page.locator('[data-update-note] [data-update-update]').click()
+  await pause(1500)
+  const staleSnap = await page.evaluate(() => window.tw.updates.get())
+  const staleNote = (await page.locator('[data-update-note]').innerText().catch(() => '')).replace(/\s+/g, ' ')
+  record('Update on an open answer whose version is no longer the one offered starts nothing, and the answer then shows the offer as it is now', staleSnap.install.phase === 'idle' && assetRequests.length === 0 && !staleNote.includes(`TalkWeaver ${NEXT} is available.`), `phase ${staleSnap.install.phase}; file requests ${assetRequests.length}; note: ${staleNote.slice(0, 120)}`)
+  await page.evaluate(() => window.tw.updates.setAlpha(false))
+  if (await page.locator('[data-update-note]').count()) await page.locator('[data-update-note] button[aria-label="Dismiss"]').click()
   record('the status-bar mark appears', await waitMark(page, new RegExp(`${NEXT.replace(/\./g, '\\.')} is available`)), await markText(page))
   await openPopover(page)
   const offer = await popText(page)
@@ -155,7 +164,7 @@ try {
     // No in-place update on Windows in this release (ADR-0044 §5): the reason and the download page, never Update.
     record('Windows: the popover says in-place updates are not available yet and offers the download page, not Update',
       offer.includes('In-place updates are not available on Windows yet.') && /Download from talkweaver\.app/.test(offer) && await page.locator('[data-update-popover] [data-update-update]').count() === 0, offer.slice(0, 260))
-    const pressed = await page.evaluate(() => window.tw.updates.update())
+    const pressed = await page.evaluate((v) => window.tw.updates.update(v), NEXT)
     await pause(800)
     record('Windows: asking the main process to update anyway downloads nothing', pressed.install.phase === 'idle' && assetRequests.length === 0, `phase ${pressed.install.phase}; file requests ${assetRequests.length}`)
     throw Object.assign(new Error('windows-done'), { done: true })
@@ -184,6 +193,30 @@ try {
   await pause(800)
   record('Cancel leaves nothing in the updater\'s cache', cacheLeftovers().length === 0, cacheLeftovers().join(', '))
 
+  // ── 2b. Update pressed in the Check for Updates… note: the note follows the download ───────────────
+  await checkFromPalette(page)
+  await visible(page, '[data-update-note][data-update-note-tone="new"]')
+  holdNext()
+  const startsBefore = assetRequests.length
+  await page.locator('[data-update-note] [data-update-update]').click()
+  for (let i = 0; i < 100 && assetRequests.length === startsBefore; i++) await pause(100) // the request has landed before the cancel below
+  const noteNow = async () => (await page.locator('[data-update-note]').innerText().catch(() => '')).replace(/\s+/g, ' ')
+  // (Held half-way, the updater has reported no progress yet, so the size cannot be the proof here:
+  // the note is checked against the live state, and the next step shows it follows a change.)
+  let noteDownloading = ''
+  for (let i = 0; i < 100; i++) { noteDownloading = await noteNow(); if (/Downloading/.test(noteDownloading)) break; await pause(100) }
+  const halfWay = await page.evaluate(() => window.tw.updates.get())
+  record('the note that started the update shows the download under way, with Cancel',
+    noteDownloading.includes(`Downloading TalkWeaver ${NEXT}`) && halfWay.install.phase === 'downloading' && await page.locator('[data-update-note] [data-update-cancel]').count() === 1, noteDownloading)
+  await openPopover(page)
+  await page.locator('[data-update-popover] [data-update-cancel]').click()
+  releaseHold()
+  let noteGone = false
+  for (let i = 0; i < 50 && !noteGone; i++) { noteGone = await page.locator('[data-update-note]').count() === 0; if (!noteGone) await pause(100) }
+  record('the note follows the update: cancelled from the popover, the downloading note goes (it used to keep its first numbers)', noteGone, await noteNow())
+  await waitMark(page, /is available$/)
+  await pause(800)
+
   // ── 3. A corrupted file ──────────────────────────────────────────────────────────────────────────
   mode = 'corrupt'
   await openPopover(page)
@@ -200,8 +233,13 @@ try {
   await page.evaluate(() => window.tw.updates.check())
   await openPopover(page)
   await page.locator('[data-update-popover] [data-update-retry]').click()
+  await page.waitForFunction(async () => {
+    const { install } = await window.tw.updates.get()
+    return install.phase === 'failed' && install.reason === 'wrong-version'
+  }, null, { timeout: 20000 })
   record('a file of another version under the offered name is refused: "Update to … failed"', await waitMark(page, /failed$/, 20000), await markText(page))
   await openPopover(page)
+  await page.locator('[data-update-popover] [data-update-failed="wrong-version"]').waitFor({ state: 'visible', timeout: 20000 })
   const wrong = await popText(page)
   record('it says the download was not the version offered; nothing restarts and nothing is kept', /The download was not the version offered, so it was not installed\./.test(wrong) && !out.join('').includes('restart into') && cacheLeftovers().length === 0, wrong.slice(0, 200))
   mode = 'good'
@@ -244,12 +282,32 @@ try {
   for (const w of app.windows().filter((x) => !known.has(x) && !x.isClosed())) await w.close().catch(() => {})
   await page.bringToFront()
   record('presenting over: the mark reads "Restart to finish updating"', await waitMark(page, /^Restart to finish updating$/, 20000), await markText(page))
+  // Rule A (ADR-0044 §6): the Tools window (Notes and script, here) can hold drafts, so it is a blocker the person
+  // closes; the restart never closes it.
+  const beforeTools = new Set(app.windows())
+  await page.evaluate(() => window.tw.tools.open('talktext'))
+  let tools = null
+  for (let i = 0; i < 80 && !tools; i++) { tools = app.windows().find((w) => !beforeTools.has(w) && !w.isClosed()) ?? null; if (!tools) await pause(250) }
+  await pause(800)
+  const withTools = await page.evaluate(() => window.tw.updates.get())
+  await openPopover(page)
+  const toolsText = await popText(page)
+  record('the Tools window open: the restart waits ("Close the Tools window to restart."), Restart is disabled',
+    !!tools && withTools.install.phase === 'waiting' && withTools.blockers.includes('tools') && toolsText.includes('Close the Tools window to restart.') && !(await page.locator('[data-update-restart]').isEnabled()),
+    JSON.stringify({ phase: withTools.install.phase, blockers: withTools.blockers, text: toolsText.slice(0, 160) }))
+  const pressedWithTools = await page.evaluate(() => window.tw.updates.restart())
+  record('pressing Restart with the Tools window open does nothing, and closes nothing', pressedWithTools.install.phase === 'waiting' && !!tools && !tools.isClosed() && !out.join('').includes('restart into'))
+  await tools?.close().catch(() => {})
+  await page.bringToFront()
+  await pause(800)
+  await page.evaluate(() => window.tw.updates.check())
   await openPopover(page)
   const ready = await popText(page)
   record('the popover says it is ready and Restart can be pressed', new RegExp(`TalkWeaver ${NEXT.replace(/\./g, '\\.')} is ready`).test(ready) && await page.locator('[data-update-restart]').isEnabled(), ready)
   await page.locator('[data-update-popover] [data-update-restart]').click()
   record('Restart restarts into the new version (a run from source logs it instead of installing)', await waitMark(page, /^Restarting into/) && (await page.locator('[data-update-popover] [data-update-cancel]').count()) === 0 && await (async () => { for (let i = 0; i < 40; i++) { if (out.join('').includes(`restart into ${NEXT} (test run from source): not installed`)) return true; await pause(100) } return false })(), out.join('').split('\n').filter((l) => l.includes('[updates]')).slice(-2).join(' | '))
-  record('the file was downloaded only on clicks (five starts: cancelled, corrupt, another version, dropped, good)', assetRequests.length === 5, `file requests=${assetRequests.length}`)
+  record('the write queues were waited for before the restart (rule C: "write queues: every one drained")', out.join('').includes('[update] write queues: every one drained'), out.join('').split('\n').filter((l) => l.includes('write queues')).slice(-1).join(''))
+  record('the file was downloaded only on clicks (six starts: cancelled, cancelled from the note, corrupt, another version, dropped, good)', assetRequests.length === 6, `file requests=${assetRequests.length}`)
 
   // ── 6. The alpha switch ───────────────────────────────────────────────────────────────────────────
   const settings = await openSettingsWindow(app, page, 'updates')

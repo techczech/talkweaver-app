@@ -182,7 +182,7 @@ try {
   const storeSettings = await openSettingsWindow(app, page, 'updates')
   await storeSettings.waitForSelector('.bsw-root[data-section="updates"]', { timeout: 6000 })
   record('a Store copy\'s About says the Store installs new versions and has no New versions card', /Microsoft Store/.test(await storeSettings.locator('[data-about-card]').innerText()) && (await storeSettings.locator('[data-updates-card]').count()) === 0)
-  const storeUpdate = await page.evaluate(() => window.tw.updates.update())
+  const storeUpdate = await page.evaluate((v) => window.tw.updates.update(v), storeLatest.version)
   await page.waitForTimeout(800)
   record('a Store copy asked to update in place anyway does nothing (refused in the main process)', storeUpdate.refusal === 'store' && storeUpdate.install.phase === 'idle' && !requests.slice(before).some((r) => r.url.startsWith('/releases/')), `refusal=${storeUpdate.refusal}; phase=${storeUpdate.install.phase}`)
   record('a Store copy made no request to the feed', requests.length === before, `requests=${requests.length - before}`)

@@ -4,7 +4,7 @@ import { BrowserWindow, ipcMain, systemPreferences, shell } from 'electron'
 import { join } from 'node:path'
 import { createLayerStore, type Layer } from './recording-layers'
 import type { RecordingStreams } from './recording-stream'
-import { markHiddenRenderer } from './window-kinds'
+import { helperWindowsAllowed, markHiddenRenderer, whenHelperWindowsAllowed } from './window-kinds'
 import { createWarmSources } from './recording-warm'
 
 /** Longest wait for the audience page to settle before the slides layer's first frame. */
@@ -44,10 +44,11 @@ export function registerPresenterLayers(deps: {
   const store = createLayerStore(join(deps.userData(), 'recordings'))
   // Ported from PR 316 tutorial-audience.ts: a fixed 1080p offscreen audience, no preload or media grant.
   function createAudienceSource(): BrowserWindow {
+    if (!helperWindowsAllowed()) throw Error('Slides capture cancelled during shutdown')
     const source = new BrowserWindow({ show: false, focusable: false, skipTaskbar: true, width: 1920, height: 1080, useContentSize: true,
       webPreferences: { offscreen: { useSharedTexture: false, deviceScaleFactor: 1 }, backgroundThrottling: false, sandbox: true, contextIsolation: true, nodeIntegration: false, disableDialogs: true } })
     source.webContents.on('will-prevent-unload', event => event.preventDefault())
-    markHiddenRenderer(source)
+    markHiddenRenderer(source, 'presenter-layers-source')
     source.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     source.webContents.on('will-navigate', e => e.preventDefault())
     source.webContents.on('will-redirect', e => e.preventDefault())
@@ -70,7 +71,10 @@ export function registerPresenterLayers(deps: {
   const sources = new Map<number, BrowserWindow>()
   const sourceRuns = new WeakMap<BrowserWindow, string>()
   const stoppedSources = new WeakSet<BrowserWindow>()
+  const recovering = new Map<number, { id: string; cancel: () => void }>()
   function stopSource(owner: number, id: string) {
+    const recovery = recovering.get(owner)
+    if (recovery?.id === id) { recovery.cancel(); recovering.delete(owner) }
     const source = sources.get(owner)
     if (!source || sourceRuns.get(source) !== id) return
     stoppedSources.add(source)
@@ -84,6 +88,9 @@ export function registerPresenterLayers(deps: {
     watching.add(id)
     const release = () => {
       warmSources.close(id)
+      recovering.get(id)?.cancel(); recovering.delete(id)
+      const source = sources.get(id)
+      if (source) stoppedSources.add(source)
       sources.get(id)?.destroy(); sources.delete(id)
       store.closeOwner(id); deps.grantDevices(id, false, false)
     }
@@ -149,6 +156,7 @@ export function registerPresenterLayers(deps: {
   })
   ipcMain.handle('recording:layers-open', async (event, id: string, camera: boolean, restoring = false, at = 0) => {
     authorise(event)
+    if (!helperWindowsAllowed()) throw Error('Slides capture cancelled during shutdown')
     const owner = event.sender.id
     if (!deps.streams.tailProgress(owner, id)) throw Error('Run owner required')
     if (sources.has(owner)) throw Error('A capture is already open')
@@ -159,48 +167,73 @@ export function registerPresenterLayers(deps: {
     // The surface the countdown warmed, handed over without waiting for it to settle; otherwise a new one.
     const warmed = restoring ? null : warmSources.take(owner, url.href)
     if (restoring) warmSources.close(owner)
-    const source = warmed?.source ?? createAudienceSource()
-    sources.set(owner, source); sourceRuns.set(source, id)
-    source.webContents.on('render-process-gone', () => { if (!event.sender.isDestroyed()) event.sender.send('recording:layer-source-lost', id) })
-    const frameSource = source.webContents.id, ackChannel = `recording:frame-ready-${frameSource}-${id}`
-    let pending = false, dirty = false, lastFrameAt = 0
-    let repaint: ReturnType<typeof setTimeout> | undefined
-    const redraw = () => {
-      if (!dirty || pending || repaint || source.isDestroyed()) return
-      repaint = setTimeout(() => {
-        repaint = undefined
-        if (dirty && !pending && !source.isDestroyed()) source.webContents.invalidate()
-      }, Math.max(0, 100 - (Date.now() - lastFrameAt)))
+    const openSource = async (warm: typeof warmed): Promise<void> => {
+      const source = warm?.source ?? createAudienceSource()
+      sources.set(owner, source); sourceRuns.set(source, id)
+      source.webContents.on('render-process-gone', () => { if (!event.sender.isDestroyed()) event.sender.send('recording:layer-source-lost', id) })
+      const frameSource = source.webContents.id, ackChannel = `recording:frame-ready-${frameSource}-${id}`
+      let pending = false, dirty = false, lastFrameAt = 0
+      let repaint: ReturnType<typeof setTimeout> | undefined
+      const redraw = () => {
+        if (!dirty || pending || repaint || source.isDestroyed()) return
+        repaint = setTimeout(() => {
+          repaint = undefined
+          if (dirty && !pending && !source.isDestroyed()) source.webContents.invalidate()
+        }, Math.max(0, 100 - (Date.now() - lastFrameAt)))
+      }
+      // Every frame after the recording's origin is kept, settled or not.
+      source.webContents.on('paint', (_e, _rect, frame) => {
+        if (event.sender.isDestroyed()) return
+        if (pending || Date.now() - lastFrameAt < 100) { dirty = true; redraw(); return }
+        dirty = false
+        pending = true; lastFrameAt = Date.now()
+        event.sender.send('recording:layer-frame', frame.toBitmap(), frameSource, id, frame.getSize())
+      })
+      const ack = (ackEvent: Electron.IpcMainEvent) => { if (ackEvent.sender.id === owner && ackEvent.senderFrame === event.sender.mainFrame) { pending = false; redraw() } }
+      ipcMain.on(ackChannel, ack)
+      const cleanup = () => {
+        ipcMain.removeListener(ackChannel, ack)
+        stoppedSources.add(source)
+        if (!source.isDestroyed()) source.destroy()
+        if (sources.get(owner) === source) sources.delete(owner)
+      }
+      watch(event.sender)
+      source.once('closed', () => {
+        clearTimeout(repaint); ipcMain.removeListener(ackChannel, ack)
+        if (sources.get(owner) === source) sources.delete(owner)
+        if (stoppedSources.has(source) || event.sender.isDestroyed()) return
+        if (helperWindowsAllowed()) { event.sender.send('recording:layer-source-lost', id); return }
+        // Quit destroyed this source, but its voice/run still belongs to the presenter. If Quit is
+        // called off, replace only the picture source: keep the canvas, recorders and layer files.
+        const recovery = { id, cancel: () => {} }
+        recovering.set(owner, recovery)
+        const resume = (): void => {
+          const immediate = setImmediate(() => {
+            if (recovering.get(owner) !== recovery) return
+            if (!helperWindowsAllowed()) { recovery.cancel = whenHelperWindowsAllowed(resume); return }
+            recovering.delete(owner)
+            if (event.sender.isDestroyed() || sources.has(owner) || !deps.streams.tailProgress(owner, id)) return
+            void openSource(null).catch(() => { if (!event.sender.isDestroyed()) event.sender.send('recording:layer-source-lost', id) })
+          })
+          recovery.cancel = () => clearImmediate(immediate)
+        }
+        recovery.cancel = whenHelperWindowsAllowed(resume)
+      })
+      try {
+        if (warm) await warm.loaded
+        else await source.loadURL(url.href)
+        authorise(event)
+        if (sources.get(owner) !== source || !deps.streams.tailProgress(owner, id)) throw Error('Capture was replaced'); source.webContents.setFrameRate(30); source.webContents.startPainting(); source.webContents.invalidate()
+      }
+      catch (e) {
+        const current = sources.get(owner)
+        const stopped = stoppedSources.has(source), resuming = recovering.get(owner)?.id === id
+        cleanup()
+        if (!stopped && !resuming && (!current || current === source)) store.interrupt(owner, id)
+        throw e
+      }
     }
-    // Every frame after the recording's origin is kept, settled or not.
-    source.webContents.on('paint', (_e, _rect, frame) => {
-      if (event.sender.isDestroyed()) return
-      if (pending || Date.now() - lastFrameAt < 100) { dirty = true; redraw(); return }
-      dirty = false
-      pending = true; lastFrameAt = Date.now()
-      event.sender.send('recording:layer-frame', frame.toBitmap(), frameSource, id, frame.getSize())
-    })
-    const ack = (ackEvent: Electron.IpcMainEvent) => { if (ackEvent.sender.id === owner && ackEvent.senderFrame === event.sender.mainFrame) { pending = false; redraw() } }
-    ipcMain.on(ackChannel, ack)
-    const cleanup = () => {
-      ipcMain.removeListener(ackChannel, ack)
-      if (!source.isDestroyed()) source.destroy()
-      if (sources.get(owner) === source) sources.delete(owner)
-    }
-    watch(event.sender)
-    source.once('closed', () => { clearTimeout(repaint); ipcMain.removeListener(ackChannel, ack); if (sources.get(owner) === source) sources.delete(owner) })
-    try {
-      if (warmed) await warmed.loaded
-      else await source.loadURL(url.href)
-      authorise(event)
-      if (sources.get(owner) !== source || !deps.streams.tailProgress(owner, id)) throw Error('Capture was replaced'); source.webContents.setFrameRate(30); source.webContents.startPainting(); source.webContents.invalidate()
-    }
-    catch (e) {
-      const current = sources.get(owner)
-      cleanup()
-      if (!stoppedSources.has(source) && (!current || current === source)) store.interrupt(owner, id)
-      throw e
-    }
+    await openSource(warmed)
     return { owner: owner }
   })
   ipcMain.handle('recording:layers-handover', (event, id: string, at: number) => {

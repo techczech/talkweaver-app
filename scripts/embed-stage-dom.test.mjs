@@ -36,12 +36,12 @@ try {
     throw new Error('live page missing')
   }
   const pf = await live(presenter), af = await live(audience)
-  assert.equal((await presenter.frameLocator('#currentPreview > iframe:not(.live-sim-frame)').locator('h1,h2').first().textContent()).replace(/\s/g, ' '), 'Page and words')
-  assert.equal((await presenter.frameLocator('#currentPreview > iframe:not(.live-sim-frame)').locator('li').first().textContent()).replace(/\s/g, ' '), 'Words beside the page')
+  assert.equal((await presenter.frameLocator('#currentPreview > iframe:not(.live-sim-frame):not(.preview-incoming)').locator('h1,h2').first().textContent()).replace(/\s/g, ' '), 'Page and words')
+  assert.equal((await presenter.frameLocator('#currentPreview > iframe:not(.live-sim-frame):not(.preview-incoming)').locator('li').first().textContent()).replace(/\s/g, ' '), 'Words beside the page')
   assert.equal(await presenter.locator('#currentPreview .live-sim-frame').count(), 1)
   const ratio = p => p.evaluate(() => { const s=document.querySelector('.slide.active .slot'); return s ? [...getComputedStyle(s).gridTemplateColumns.split(' ')].map(parseFloat) : null })
   // The page works IN ITS PLACE: the one frame lies over the labelled box's place in the slide picture.
-  const PICTURE = '#currentPreview > iframe:not(.live-sim-frame)'
+  const PICTURE = '#currentPreview > iframe:not(.live-sim-frame):not(.preview-incoming)'
   const close = (a, b, what, tol = 2) => { for (const k of ['x', 'y', 'width', 'height']) assert.ok(Math.abs(a[k] - b[k]) <= tol, `${what}: ${k} ${a[k]} vs ${b[k]}`) }
   const placed = async (what) => {
     await presenter.waitForFunction((sel) => {
@@ -84,7 +84,7 @@ try {
   const point = async () => {
     await presenter.mouse.click(3, 3)
     await presenter.keyboard.press('i')
-    const preview = await presenter.locator('#currentPreview > iframe:not(.live-sim-frame)').boundingBox()
+    const preview = await presenter.locator('#currentPreview > iframe:not(.live-sim-frame):not(.preview-incoming)').boundingBox()
     await presenter.mouse.move(preview.x + preview.width * .6, preview.y + preview.height * .7)
     await audience.waitForFunction(() => {
       const ring = document.querySelector('.tw-pointer-ring circle'), stage = document.querySelector('.stage')
@@ -101,7 +101,7 @@ try {
   await presenter.evaluate(() => { window.frameLoads=0; window.savedFrame=document.querySelector('#currentPreview .live-sim-frame'); window.savedFrame.addEventListener('load', () => { window.frameLoads++ }) })
   await audience.evaluate(() => { window.frameLoads=0; window.savedFrame=document.querySelector('.slide.active figure.slide-embed iframe'); window.savedFrame.addEventListener('load', () => { window.frameLoads++ }) })
   await presenter.keyboard.press('r')
-  await presenter.frameLocator('#currentPreview > iframe:not(.live-sim-frame)').locator('.slide.mode-reveal').waitFor()
+  await presenter.frameLocator('#currentPreview > iframe:not(.live-sim-frame):not(.preview-incoming)').locator('.slide.mode-reveal').waitFor()
   await presenter.keyboard.press('r')
   await placed('after the slide picture was redrawn')
   await presenter.locator('#currentPreview .live-sim-cover').click()

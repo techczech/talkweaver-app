@@ -17,6 +17,8 @@ export interface ThumbnailQueue<T> {
   cancel(owner: string): void
   /** cancel() for every owner whose key starts with this prefix (a closed window's renders). */
   cancelPrefix(prefix: string): void
+  /** Stop every render, including requests with no owner key (app shutdown). */
+  cancelAll(): void
   /** Replace the owner's render: a waiting one settles with nothing; a running one is told through its
    *  `superseded` signal to take no further slide, but the capture it is on completes and is cached. */
   supersede(owner: string): void
@@ -110,6 +112,7 @@ export function createThumbnailQueue<T>(
   enqueue.lastForegroundAt = () => lastForeground
   enqueue.cancel = (owner: string) => cancel((key) => key === owner)
   enqueue.cancelPrefix = (prefix: string) => cancel((key) => typeof key === 'string' && key.startsWith(prefix))
+  enqueue.cancelAll = () => cancel(() => true)
   enqueue.supersede = (owner: string) => supersede(owner)
   return enqueue
 }

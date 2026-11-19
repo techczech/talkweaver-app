@@ -9,7 +9,7 @@
 import assert from 'node:assert/strict'
 import { compareVersions } from '@app-patterns/updates'
 import {
-  MAX_UPDATE_FILE_BYTES, RELEASE_ASSET_PREFIX, channelOffer, isAlphaVersion, newerOffer, parseChannelFeed, updateFileFor, validateUpdateFile,
+  MAX_UPDATE_FILE_BYTES, RELEASE_ASSET_PREFIX, channelOffer, isAlphaVersion, isOfferSeen, newerOffer, parseChannelFeed, updateFileFor, validateUpdateFile,
 } from '../src/shared/update-channels.ts'
 import { createChannelChecker, readChannelState } from '../src/shared/update-checker.ts'
 import { UPDATE_IDENTITY, FEED_URL } from '../src/shared/update-identity.ts'
@@ -228,6 +228,16 @@ await test('the release check: a version published without notarisation says so 
   // A release published the same way.
   const relProblems = channelFeedProblems({ feedText: text(feed({ alpha: null })), releaseTag: 'v0.45.0', alphaRelease: null, releaseGitHub: { assets: [NOT_NOTARISED_ASSET], body: '' } })
   assert.equal(relProblems.length, 2)
+})
+
+await test('Update names the version shown: refused when the offer is now another one (early versions switched on), or when none is named', () => {
+  const release = { version: '0.46.0' }
+  assert.equal(isOfferSeen('0.46.0', release), true)
+  assert.equal(isOfferSeen('0.46.0', { version: '0.47.0-alpha.1' }), false, 'the answer showed the release; the offer is now the alpha')
+  assert.equal(isOfferSeen(undefined, release), false, 'an Update that names no version starts nothing')
+  assert.equal(isOfferSeen('', release), false)
+  assert.equal(isOfferSeen({ toString: () => '0.46.0' }, release), false, 'only a string')
+  assert.equal(isOfferSeen('0.46.0', null), false, 'no offer now')
 })
 
 console.log(`update channels: ${passed} checks passed`)

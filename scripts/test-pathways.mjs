@@ -315,7 +315,8 @@ console.log('pathways: manifest, resolution, and compiled injection checks passe
       ...pathwayModule, basename, dirname, resolvePath: resolve,
       vaultRootFor: () => root,
       prepareTalk: async () => { compiles++; await compileGate; return {slug:'shared',rows:[{slide_id:'s1'},{slide_id:'s2'}]} },
-      BrowserWindow: {getAllWindows: () => windows}, notifyTalkMetaUpdated: () => {}
+      BrowserWindow: {getAllWindows: () => windows}, notifyTalkMetaUpdated: () => {},
+      trackWrite: (_name, work) => work, // write-queues.ts: counted for an update's restart; nothing to count here
     })
     const outline = join(root, 'shared-outline.md')
     const create = mutate(outline, '', text => createPathwayInManifest(text, {id:'planned',name:'Planned',slideIds:[]}))

@@ -53,8 +53,9 @@ const tw = {
     setEnabled: (on: boolean): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:set-enabled', on),
     /** The setting `updates.alphaVersions` (Get early versions). */
     setAlpha: (on: boolean): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:set-alpha', on),
-    /** Update (ADR-0044): download the offered version for this computer, check it, then restart (or wait to). Takes nothing. */
-    update: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:update'),
+    /** Update (ADR-0044): download the offered version for this computer, check it, then restart (or wait to). Takes
+     *  only the version the person saw: main starts nothing when the offer is now another one. */
+    update: (version: string): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:update', typeof version === 'string' ? version : ''),
     /** Stop a download in progress; the partial file is deleted. */
     cancel: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:cancel'),
     /** Restart to finish updating: only when nothing holds it back. */

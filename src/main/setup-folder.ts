@@ -51,6 +51,7 @@ import {
   type MacFile, type OfferKind, type SetupFolderBatch, type SetupFolderChangeRow, type SetupFolderMac, type SetupFolderNotice, type SetupFolderSkip, type SetupFolderStatus,
   type SetupFolderSuggestion, type SkipReason, type Stamped, type SuggestionKind, type VaultField, type Verdict, type Winner
 } from '../shared/setup-folder.ts'
+import { trackWrite } from './write-queues.ts'
 
 export const STATE_FILE = 'setup-folder-state.json'
 const STATE_FORMAT = 'talkweaver-setup-folder-state'
@@ -1033,7 +1034,7 @@ export function createSetupFolderEngine(ports: SetupFolderPorts): SetupFolderEng
   }
 
   function serial<T>(run: () => Promise<T>): Promise<T> {
-    const next = queue.then(run, run)
+    const next = trackWrite('setup-folder', queue.then(run, run))
     queue = next.catch(() => {})
     return next
   }

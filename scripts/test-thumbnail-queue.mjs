@@ -126,3 +126,21 @@ console.log('PASS reversed preparation completion never cancels latest thumbnail
   assert.deepEqual(latest,{input:'latest'})
   console.log('PASS progressive publication refuses obsolete render callbacks')
 }
+
+{
+  const starts = [], gates = [], signals = []
+  const q = createThumbnailQueue(async (value, signal) => {
+    starts.push(value); signals.push(signal)
+    await new Promise(resolve => gates.push(resolve))
+    return { [value]: value }
+  })
+  const active = q('active') // anonymous work must be cancelled too
+  const anonymous = q('anonymous'), keyed = q('keyed', 'editor'), idle = q('idle', 'prewarm', 'idle')
+  q.cancelAll()
+  assert.equal(signals[0].aborted, true)
+  assert.deepEqual(await Promise.all([anonymous, keyed, idle]), [{}, {}, {}])
+  gates.shift()()
+  assert.deepEqual(await active, {})
+  assert.deepEqual(starts, ['active'], 'cancelled pending work never starts')
+  console.log('PASS thumbnail queue: shutdown cancels running and queued work, including anonymous jobs')
+}

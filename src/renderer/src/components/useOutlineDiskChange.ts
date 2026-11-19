@@ -9,6 +9,10 @@ import {
   guardLeave, outlineDiskChanges, resolveChoice, saveAfterDiskCleared,
   type OutlineDiskChange, type OutlineDiskChoice, type OutlineDiskResolverDeps,
 } from '../lib/outlineDiskChange'
+import { closeFrozen } from '../lib/closeFreeze'
+import { dispatchCloseFreeze } from '../lib/closeFreezeEvent'
+import { editorRevision } from '../lib/editorRevision'
+import { updateRestartDraft } from '../lib/talkDrafts'
 
 export interface OutlineDiskChangeWiring {
   /** The talk open in this workspace, or null. */
@@ -21,6 +25,10 @@ export interface OutlineDiskChangeWiring {
   saveBuffer(outlinePath: string): Promise<boolean>
   /** Flushes the editor's pending typing (Editor flushSave). */
   flush(): Promise<void>
+  /** Saves until the editor holds nothing unsaved (Editor settleSave); throws when a save fails. */
+  settle(signal?: AbortSignal): Promise<void>
+  /** Writes the editor's current text even when it looks saved (Editor forceSave). */
+  forceSave(signal?: AbortSignal): Promise<boolean>
   /** The talk was discarded (removed on disk): let it go from this window. */
   onDiscardTalk(): void
 }
@@ -142,24 +150,80 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
 
   const answerSheet = useCallback((choice: OutlineDiskChoice): void => { sheetAnswerRef.current?.(choice) }, [])
 
-  // Main holds a close (or ⌘Q) while this window's talk differs from the disk: the same sheet, then
-  // the close goes ahead once the choice has completed.
-  useEffect(() => window.tw.talk.onCloseRequested?.(({ quit }) => {
+  // Every close of this window (its own, ⌘Q, an update's restart) comes here when a talk is open: the editor freezes,
+  // the leave guard runs (the sheet when the talk differs from the disk), the editor saves until nothing is left
+  // unsaved and confirms the revision it holds; anything but closing unfreezes it (lib/closeFreeze.ts, ADR-0044 §6).
+  const freezesRef = useRef(0)
+  const freezeFor = (update: boolean) => {
+    let frozen = false
+    return {
+      freeze: () => { if (frozen) return; frozen = true; freezesRef.current += 1; dispatchCloseFreeze({ frozen: true, update }) },
+      unfreeze: () => {
+        if (!frozen) return
+        frozen = false
+        freezesRef.current = Math.max(0, freezesRef.current - 1)
+        if (freezesRef.current === 0) dispatchCloseFreeze({ frozen: false, update })
+      },
+    }
+  }
+  const unfreezeAllRef = useRef<Set<() => void>>(new Set())
+  // The update's restart was called off: every frozen close of this window is released at once, with nothing lost.
+  useEffect(() => window.tw.talk.onCloseCancelled?.(() => { for (const release of [...unfreezeAllRef.current]) release() }), [])
+  useEffect(() => window.tw.talk.onCloseRequested?.(({ quit, update }) => {
+    // Freezing blurs an object editor (which can commit it): ask before doing either.
+    const draft = update === true ? updateRestartDraft(document) : null
+    if (draft) {
+      notify(draft, 'warning')
+      void window.tw.talk.confirmClose({ quit, revision: editorRevision.current(), hasDraft: true })
+      return
+    }
+    const freezing = freezeFor(update === true)
+    unfreezeAllRef.current.add(freezing.unfreeze)
+    const from = wiringRef.current.activeOutlinePath
+    const confirm = (revision: number) => {
+      const draft = update === true ? updateRestartDraft(document) : null
+      if (draft) notify(draft, 'warning')
+      return window.tw.talk.confirmClose({ quit, revision, hasDraft: draft !== null })
+    }
+    const kept = () => window.tw.talk.closeKept?.() ?? Promise.resolve(true)
+    const editorDeps = {
+      freeze: freezing.freeze,
+      unfreeze: freezing.unfreeze,
+      settle: (signal?: AbortSignal) => wiringRef.current.settle(signal),
+      forceSave: async (signal?: AbortSignal) => { await wiringRef.current.forceSave(signal) },
+      failed: () => notify('The talk could not finish saving, so this window stayed open. Your edits are still here. Try saving again before closing.', 'error', 'save-failed'),
+      revision: () => editorRevision.current(),
+      confirm,
+      kept,
+    }
     void (async () => {
-      const from = wiringRef.current.activeOutlinePath
-      if (from) {
-        const receipt = await window.tw.windows.recoverMovedTalk(from)
-        if (wiringRef.current.activeOutlinePath !== from) return
-        if (receipt.kind !== 'no-receipt') {
-          await window.tw.talk.ackCloseRequest?.()
-          const kept = await new Promise<boolean>(done => window.dispatchEvent(new CustomEvent('tw-retire-moved-editor', {detail:{from,retire:true,done}})))
-          if (kept && (!wiringRef.current.activeOutlinePath || wiringRef.current.activeOutlinePath === from)) await window.tw.talk.confirmClose({quit})
-          return
+      try {
+        if (from) {
+          const receipt = await window.tw.windows.recoverMovedTalk(from)
+          if (wiringRef.current.activeOutlinePath !== from) { await kept(); return }
+          if (receipt.kind !== 'no-receipt') {
+            await window.tw.talk.ackCloseRequest?.()
+            await closeFrozen({
+              ...editorDeps,
+              leave: async () => {
+                const keep = await new Promise<boolean>(done => window.dispatchEvent(new CustomEvent('tw-retire-moved-editor', {detail:{from,retire:true,done}})))
+                return keep && (!wiringRef.current.activeOutlinePath || wiringRef.current.activeOutlinePath === from)
+              },
+            })
+            return
+          }
         }
+        // The ordinary close keeps its timing: main's five-second fallback covers the flush in the leave guard, then is
+        // switched off, as before. An update's restart keeps the fallback on through the confirmation: a frozen editor
+        // that does not confirm in time calls the restart off.
+        await closeFrozen({ ...editorDeps, leave: async () => {
+          const mayLeave = await leave()
+          if (update !== true) await window.tw.talk.ackCloseRequest?.()
+          return mayLeave
+        } })
+      } finally {
+        unfreezeAllRef.current.delete(freezing.unfreeze)
       }
-      const mayClose = await leave()
-      await window.tw.talk.ackCloseRequest?.()
-      if (mayClose) await window.tw.talk.confirmClose({quit})
     })()
   }), [leave])
 

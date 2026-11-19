@@ -15,6 +15,7 @@
 //
 // No Electron import: scripts/test-shared-settings.mjs drives it with a fake store and file.
 import { configWithSettings, isDefault, splitConfigPatch } from '../shared/settings-schema.ts'
+import { trackWrite } from './write-queues.ts'
 
 type Bag = Record<string, unknown>
 type Result = { ok: true } | { ok: false; error: string }
@@ -48,7 +49,7 @@ const nonDefaults = (settings: Readonly<Bag>): Bag => {
 }
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b)
 
-export function createConfigOverlay(opts: { file: OverlayFile; store: OverlayStore; log?(line: string): void }): ConfigOverlay {
+export function createConfigOverlay(opts: { file: OverlayFile; store: OverlayStore; log?(line: string): void; waitBeforeWrite?(): Promise<void> }): ConfigOverlay {
   const log = opts.log ?? ((line: string) => console.warn(line))
   const store = opts.store
   let committed: Bag = nonDefaults(store.view().settings)
@@ -75,14 +76,15 @@ export function createConfigOverlay(opts: { file: OverlayFile; store: OverlaySto
       for (const [key, value] of Object.entries(settings)) {
         const mine = ++token
         pending.set(key, { value, token: mine })
-        chain = chain.then(async () => {
-          try {
-            const r = value === undefined || isDefault(key, value) ? await store.reset(key) : await store.set(key, value)
-            if (!r.ok) { notSaved.add(key); log(`[settings] ${key} was not saved: ${r.error}`) }
-          } catch {
-            notSaved.add(key)
-            log(`[settings] ${key} was not saved`)
-          }
+        chain = trackWrite('settings-overlay', chain.then(async () => {
+          await opts.waitBeforeWrite?.() // test builds only: a write held pending (update-test-hooks.ts)
+          const r = value === undefined || isDefault(key, value) ? await store.reset(key) : await store.set(key, value)
+          // The registry sees the real outcome before the overlay handles it for the UI.
+          if (!r.ok) throw new Error(r.error)
+        })).catch((error: unknown) => {
+          notSaved.add(key)
+          log(`[settings] ${key} was not saved${error instanceof Error ? `: ${error.message}` : ''}`)
+        }).then(() => {
           committed = nonDefaults(store.view().settings)
           if (pending.get(key)?.token === mine) pending.delete(key)
         })

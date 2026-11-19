@@ -23,6 +23,8 @@ export interface OpenSettingsOptions {
   /** The store changed: the schema keys whose value changed (the overlay's view), and the state. */
   onChange?(keys: string[], state: SettingsState): void
   log?(line: string): void
+  /** Test builds only: each preference write main makes waits for this first (update-test-hooks.ts). */
+  waitBeforeWrite?(): Promise<void>
 }
 
 export interface OpenedSettings {
@@ -61,7 +63,7 @@ export async function openSettings(opts: OpenSettingsOptions): Promise<OpenedSet
     }
   })
   await store.ready
-  overlay = createConfigOverlay({ file: opts.file, store, log })
+  overlay = createConfigOverlay({ file: opts.file, store, log, ...(opts.waitBeforeWrite ? { waitBeforeWrite: opts.waitBeforeWrite } : {}) })
   const opened = overlay
   return {
     migration,

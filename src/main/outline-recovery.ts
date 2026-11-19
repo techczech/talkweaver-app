@@ -17,6 +17,7 @@ import { createHash } from 'crypto'
 import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises'
 import { basename, join, sep } from 'path'
 import type { OutlineRecoveryCopy } from '../shared/outline-disk-change.ts'
+import { trackWrite } from './write-queues.ts'
 
 export interface OutlineRecovery {
   /** Keeps `text` as the recovery copy for the talk at `realPath` (replacing an older one). */
@@ -47,7 +48,7 @@ export function createOutlineRecovery(dir: string, now: () => number = Date.now)
   let index: Index | null = null
   let chain: Promise<unknown> = Promise.resolve()
   const serial = <T>(work: () => Promise<T>): Promise<T> => {
-    const run = chain.then(work)
+    const run = trackWrite('outline-recovery', chain.then(work))
     chain = run.catch(() => undefined)
     return run
   }

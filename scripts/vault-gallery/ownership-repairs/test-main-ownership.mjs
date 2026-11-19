@@ -39,9 +39,10 @@ console.log('PASS actual main claim/settlement glue: two windows, outgoing reser
 // A normal close must use the existing awaited renderer flush, even without an external-change sheet.
 const closeSource=src.slice(src.indexOf("  win.on('close', (event) => {"),src.indexOf("  win.on('closed', () => {"));
 const closeEvents=new Map(),sent=[],confirmed=new Set(),closeWindows=new Map([[7,{outlinePath:'A'}]]);
-Function('win','outlineDiskGuard','editorWindows','wcId','closeConfirmed','movedEditorReceipts','quitting','quittingTimer','closeHolds','clearTimeout','setTimeout','canonicalOutlinePath','lastUnsavedText','outlineRecovery','app',ts.transpileModule(closeSource,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(
+Function('win','outlineDiskGuard','editorWindows','wcId','closeConfirmed','movedEditorReceipts','quitting','quitCycle','closeHolds','clearTimeout','setTimeout','canonicalOutlinePath','lastUnsavedText','outlineRecovery','app','restartWindows','editorQuitAttempts','quitAttempt','setImmediate','cancelQuitAttempt',ts.transpileModule(closeSource,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(
  {on:(name,fn)=>closeEvents.set(name,fn),webContents:{send:(...args)=>sent.push(args)}},
- {pendingFor:()=>null},closeWindows,7,confirmed,new Map(),false,null,new Map(),()=>{},()=>1,p=>p,new Map(),{},{}
+ {pendingFor:()=>null},closeWindows,7,confirmed,new Map(),false,0,new Map(),()=>{},()=>1,p=>p,new Map(),{},{},
+{ordinaryClose(){},saved(){},timedOut:()=>false,waiting:()=>false},new Map(),null,setImmediate,()=>{} // an update's restart (restart-windows.ts): none under way here
 );
 let prevented=0;closeEvents.get('close')({preventDefault:()=>prevented++});
 assert.equal(prevented,1,'ordinary active editor close waits for its pending text to flush');
@@ -61,7 +62,7 @@ const {configureTalkWriter,writeTalkOutline,withTalkFileLock}=await import('../.
 const root=resolve('scripts/vault-gallery/ownership-repairs/main-write-fixture');mkdirSync(root,{recursive:true});const path=resolve(root,'outline.md');
 try {
 writeFileSync(path,'# Original');windows.set(1,{win:{id:1,isDestroyed:()=>false},outlinePath:path});epochs.set(1,epoch);
-const save=src.split("ipcMain.handle('talk:write-outline', async (_event, outlinePath: string, content: string) => {")[1].split('  const claimEpoch =')[0];
+const save=src.split("async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string) {")[1].split('  const claimEpoch =')[0];
 const saveJS=ts.transpileModule(save,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
 const authority=Function('movedEditorReceipts','retiredMovePaths','renewEstablishedGalleryClaims','establishedGalleryClaims','_event','outlinePath','galleryEpoch','editorWindows','galleryReservations','galleryClaimEpochs','outlineIdentity','otherEditorHolding',saveJS+';return authorize')(receipts,new Map(),()=>{},new Map(),{sender:{id:1,isDestroyed:()=>false}},path,epoch,windows,reservations,epochs,p=>({key:p}),holding);
 configureTalkWriter({editorBufferFor:()=>null});let release,entered;const ready=new Promise(r=>entered=r);const lock=withTalkFileLock(path,async()=>{entered();await new Promise(r=>release=r)});await ready;

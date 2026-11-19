@@ -1,3 +1,4 @@
+import type { WriteFailureBaseline } from './write-queues.ts'
 // Updating in place (ADR-0044): Electron's side of the one click. The engine and its design (one function may call
 // the native install, after re-reading the blockers; attempts with identities; electron-updater's own install path
 // closed) are in update-engine.ts; read its header first. This file supplies what the engine asks for:
@@ -41,6 +42,16 @@ export interface InstallerDeps {
   /** A protected task (presenter or audience window, live session, recording): no update starts. */
   isProtected(): boolean
   blockers(): RestartBlocker[]
+  /** The restart's commit: every window closed through its own close route. True only when every window has closed
+   *  (update-engine.ts, commit). */
+  closeWindows(): Promise<boolean>
+  /** How many windows are open now (every BrowserWindow, hidden ones too). */
+  openWindows(): number
+  /** Every main-process write queue finished (write-queues.ts drainWriteQueues). */
+  drainWriteQueues(baseline: WriteFailureBaseline): Promise<boolean>
+  writeQueuesBusy(): readonly string[]
+  /** The restart's commit began and the restart will not happen: give the person a window back. */
+  commitAbandoned(): void
   changed(): void
   log(message: string): void
 }
@@ -123,9 +134,9 @@ export function createUpdateInstaller(deps: InstallerDeps) {
    * job (ShipIt) that installs it when the app's process ends. Remove both, then CHECK that both are gone.
    */
   async function withdrawNative(): Promise<Withdrawal> {
-    if (!deps.install || process.platform !== 'darwin') return { found: false, gone: true }
+    if (!deps.install || process.platform !== 'darwin') return { found: false, gone: true, after: 'absent' }
     const bundleId = readBundleId(runningBundle())
-    if (!bundleId) { deps.log('the withdrawal could not name ShipIt (no bundle identifier): not confirmed'); return { found: true, gone: false } }
+    if (!bundleId) { deps.log('the withdrawal could not name ShipIt (no bundle identifier): not confirmed'); return { found: true, gone: false, after: 'unknown' } }
     const label = `${bundleId}.ShipIt`
     const folder = join(homedir(), 'Library', 'Caches', label)
     const request = join(folder, 'ShipItState.plist')
@@ -147,11 +158,13 @@ export function createUpdateInstaller(deps: InstallerDeps) {
       last = { job: job(), request: requestThere() }
       if (last.job === 'absent' && last.request === 'absent') {
         deps.log(found ? 'a prepared update was withdrawn and checked: no ShipIt job, no install request' : 'checked: nothing was prepared')
-        return { found, gone: true }
+        return { found, gone: true, after: 'absent' }
       }
     }
-    deps.log(`the withdrawal is NOT confirmed: ShipIt job ${last.job}, install request ${last.request}`)
-    return { found: true, gone: false }
+    // 'present' only when both are definitely there: then the update WILL install at the next quit.
+    const after: Presence = last.job === 'present' && last.request === 'present' ? 'present' : 'unknown'
+    deps.log(`the withdrawal is NOT confirmed: ShipIt job ${last.job}, install request ${last.request} (afterwards: ${after})`)
+    return { found: true, gone: false, after }
   }
 
   const engine = createUpdateEngine({
@@ -162,6 +175,17 @@ export function createUpdateInstaller(deps: InstallerDeps) {
       return refusal
     },
     blockers: deps.blockers,
+    // A run from source installs nothing, so it closes nothing either: its stand-in Squirrel.Mac only logs.
+    closeWindows: () => {
+      if (deps.install) return deps.closeWindows()
+      deps.log('every window would close now (test run from source): left open')
+      return Promise.resolve(true)
+    },
+    openWindows: () => (deps.install ? deps.openWindows() : 0),
+    // A run from source waits for the write queues too (nothing closes, so this only waits and logs).
+    drainWriteQueues: deps.drainWriteQueues,
+    writeQueuesBusy: deps.writeQueuesBusy,
+    commitAbandoned: () => { if (deps.install) deps.commitAbandoned() },
     downloader: () => (downloader ??= dependencyDownload(theUpdater(), (info) => { chosen = info })),
     verify: (file, offer) => verifyMacDownload(file, offer, app.getVersion()),
     // A run from source hands nothing over: its stand-in Squirrel.Mac only logs.

@@ -4,7 +4,7 @@ import { openSync, readFileSync, fstatSync, closeSync, realpathSync, constants }
 import { dirname, join, relative, isAbsolute, sep } from 'node:path'
 import { hardenLivePageSession, livePageWebPreferences, registerLivePageContents, type LivePageSession } from './live-page-host'
 import { parseLivePageUrl, type LoopbackAllowance } from './live-page-policy'
-import { markHiddenRenderer } from './window-kinds'
+import { helperWindowsAllowed, markHiddenRenderer } from './window-kinds'
 import { offlineAuthorityCurrent, type OfflinePageAuthority } from './offline-page'
 import { containCaptureSession, containCaptureContents, captureNetworkReady, captureResponseHeaders } from './capture-network'
 import { readOfflinePage } from './offline-page-dom.js'
@@ -44,6 +44,7 @@ function localResource(directory: string, pathname: string): Buffer {
 const mimeFor = (path: string): string => ({ html: 'text/html', htm: 'text/html', css: 'text/css', js: 'text/javascript', mjs: 'text/javascript', json: 'application/json', png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp', avif: 'image/avif', svg: 'image/svg+xml', csv: 'text/csv' }[path.split('.').pop()?.toLowerCase() ?? ''] ?? 'application/octet-stream')
 
 export async function captureOfflinePage(source: OfflineSource, allowance: LoopbackAllowance = new Set()): Promise<OfflinePageResult> {
+  if (!helperWindowsAllowed()) throw Error('Page capture cancelled during shutdown')
   const isolated = session.fromPartition(`tw-offline:${randomUUID()}`)
   hardenLivePageSession(isolated as unknown as LivePageSession, { allowance, userAgent: isolated.getUserAgent() })
   const origin = 'https://offline-page.invalid'
@@ -64,7 +65,7 @@ export async function captureOfflinePage(source: OfflineSource, allowance: Loopb
   }
   const win = new BrowserWindow({ show: false, width: 1280, height: 900, useContentSize: true,
     webPreferences: livePageWebPreferences(isolated, false) })
-  markHiddenRenderer(win)
+  markHiddenRenderer(win, 'offline-page-capture')
   const unregister = registerLivePageContents(win.webContents.id)
   // Its own guard refuses every page navigation; remote redirect hops still pass the public URL policy.
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))

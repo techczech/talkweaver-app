@@ -21,6 +21,7 @@ import { normaliseCaptureUrl } from '../../compiler/scripts/lib/live-page-captur
 import { captureMarkupLine, placeCaptureLines, slideHeadingRef } from '../../compiler/scripts/lib/live-page-capture-markup.mjs'
 import { CAPTURE_TEXT, captureRefusal, isCaptureAnswer, type CaptureAnswer, type CaptureJob } from './live-page-capture-core.ts'
 import type { LivePageCaptureRequest, LivePageCaptureResult } from './live-page-host.ts'
+import { trackWrite } from './write-queues.ts'
 
 export const LIVE_PAGE_CAPTURE_TIMEOUT_MS = 30_000
 /** The longest side a saved view is stored at (wider pictures are scaled down, never up). */
@@ -190,7 +191,7 @@ export type LivePageCaptureSaverDeps = {
 export function createLivePageCaptureSaver(deps: LivePageCaptureSaverDeps): (deckId: number, request: LivePageCaptureRequest) => Promise<LivePageCaptureResult> {
   let queue: Promise<unknown> = Promise.resolve()
   return (deckId, request) => {
-    const step = queue.then(async (): Promise<LivePageCaptureResult> => {
+    const step = trackWrite('live-page-capture', queue.then(async (): Promise<LivePageCaptureResult> => {
       const target = deps.talkOf(deckId)
       if (!target) return { ok: false, message: 'This window’s talk is not open in TalkWeaver any more, so the view was not saved.' }
       if (target.bound && (target.bound.slideId !== request.slideId || target.bound.pageUrl !== normaliseCaptureUrl(request.pageUrl))) {
@@ -211,7 +212,7 @@ export function createLivePageCaptureSaver(deps: LivePageCaptureSaverDeps): (dec
       }
       if (placed.ok) { try { deps.saved?.(target.outlinePath) } catch { /* as above */ } }
       return { ok: true, capturedAt: answer.capture.capturedAt, count: answer.count, how: answer.how, image: answer.image, mode: answer.capture.mode === 'page' ? 'page' : 'view', onSlide: placed.ok, ...(placed.ok ? {} : { note: placed.message }) }
-    })
+    }))
     queue = step.catch(() => {})
     return step.catch(() => ({ ok: false as const, message: CAPTURE_TEXT['write-failed'] }))
   }

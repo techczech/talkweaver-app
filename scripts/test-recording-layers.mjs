@@ -230,7 +230,7 @@ try {
   }
   const ipc=Object.assign(new EventEmitter(),{handle:(name,fn)=>handlers.set(name,fn)})
   globalThis.__layerIpcElectron={BrowserWindow:CaptureWindow,ipcMain:ipc,systemPreferences:{},shell:{}}
-  const layerIpc=await build({entryPoints:['src/main/presenter-layers-ipc.ts'],bundle:true,write:false,platform:'node',format:'cjs',plugins:[{name:'electron',setup(b){b.onResolve({filter:/^electron$/},()=>({path:'electron',namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},()=>({contents:'module.exports=globalThis.__layerIpcElectron'}))}}]})
+  const layerIpc=await build({stdin:{contents:"export * from './src/main/presenter-layers-ipc.ts'; export {holdHelperWindows} from './src/main/window-kinds.ts'",resolveDir:process.cwd(),sourcefile:'layer-ipc-test.ts'},bundle:true,write:false,platform:'node',format:'cjs',plugins:[{name:'electron',setup(b){b.onResolve({filter:/^electron$/},()=>({path:'electron',namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},()=>({contents:'module.exports=globalThis.__layerIpcElectron'}))}}]})
   const ipcModule={exports:{}};new Function('require','module','exports',layerIpc.outputFiles[0].text)(createRequire(import.meta.url),ipcModule,ipcModule.exports)
   const ipcStore=ipcModule.exports.registerPresenterLayers({userData:()=>join(root,'ipc-userData'),streams:{tailProgress:()=>({done:0,offset:0})},allowed:()=>true,settingsAllowed:()=>false,grantDevices(){},getSettings(){},setSettings(){}})
   const sender=Object.assign(new EventEmitter(),{id:8,mainFrame:{},getURL:()=> 'file:///fixture.html',isDestroyed:()=>false,send(){}})
@@ -251,6 +251,29 @@ try {
     ipcStore.interrupt(8,'sess-last-paint')
     assert.equal(source.isDestroyed(),true,'voice-save interruption independently closes its source even when renderer cleanup failed')
     pass('last dropped paints redraw after both backpressure and throttle')
+    for (const stop of [false, true]) {
+      const id = 'sess-quit-cancel-' + stop
+      await handlers.get('recording:layers-open')(captureEvent, id, false)
+      handlers.get('recording:layers-started')(captureEvent, id, 'slides', 0)
+      const before = CaptureWindow.last
+      const resume = ipcModule.exports.holdHelperWindows()
+      assert.equal(before.isDestroyed(), true)
+      if (stop) handlers.get('recording:layers-stop-source')(captureEvent, id)
+      resume()
+      await new Promise(setImmediate); await Promise.resolve()
+      const after = CaptureWindow.last
+      if (stop) assert.equal(after, before, 'stopped recording must not resurrect on release')
+      else {
+        assert.notEqual(after, before, 'cancelled Quit recreates the recording source')
+        assert.equal(after.isDestroyed(), false)
+        let frames = 0
+        sender.send = channel => { if (channel === 'recording:layer-frame') frames++ }
+        after.webContents.emit('paint', {}, {}, frame)
+        assert.equal(frames, 1, 'replacement still feeds the same recording')
+      }
+      handlers.get('recording:layers-finish')(captureEvent, id)
+      pass('Quit cancellation restores only a still-active recording source (stopped=' + stop + ')')
+    }
     for(const overlap of [false,true]){
       const id='sess-cancelled-load-'+overlap
       await handlers.get('recording:layers-open')(captureEvent,id,false)

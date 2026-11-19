@@ -47,8 +47,8 @@ import {
   runLineCommand,
   setOpenObjectBlock
 } from '../extensions/objectBlocks/field'
-import { EditorView, keymap, highlightActiveLine } from '@codemirror/view'
-import { EditorState, EditorSelection, Prec, Compartment } from '@codemirror/state'
+import { EditorView, keymap, highlightActiveLine, showPanel } from '@codemirror/view'
+import { EditorState, EditorSelection, Prec, Compartment, Annotation } from '@codemirror/state'
 import { history } from '@codemirror/commands'
 import { editorBaseKeymap } from '../extensions/editorBaseKeymap'
 import { search, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
@@ -73,7 +73,9 @@ import { notify } from '../lib/notify'
 import { queueOutlineWrite } from '../lib/saveQueue'
 import { lookForRecovery, noteOutlineSaveReply, outlineDiskChanges } from '../lib/outlineDiskChange'
 import { replaceDocTransaction } from '../lib/replaceDocTransaction'
-import { adoptSavedText, redoWithSave, savedTextAdoption, undoWithSave } from '../extensions/savedTextAdoption'
+import { adoptSavedText, redoWithSave, savedTextAdopted, savedTextAdoption, undoWithSave } from '../extensions/savedTextAdoption'
+import { editorRevision } from '../lib/editorRevision'
+import { CLOSE_FREEZE_EVENT, closeFreezeText, type CloseFreezeDetail } from '../lib/closeFreezeEvent'
 import { saveTidyUp, textForSave } from '../extensions/saveTidyUp'
 import { triggerCompleteExtension } from '../extensions/triggerComplete'
 import { tokenProtectExtension } from '../extensions/idProtect'
@@ -250,7 +252,9 @@ interface Props {
     // a stale on-disk copy (the progress ledger flagged this detach-vs-autosave race).
     flushSave: () => Promise<void>
     /** Await pending writes and stamped-text adoption; reject a refused save. */
-    settleSave: () => Promise<void>
+    settleSave: (signal?: AbortSignal) => Promise<void>
+    /** Write the current text even when it looks saved (a close's 'resave', ADR-0044 §6); false when not written. */
+    forceSave: (signal?: AbortSignal) => Promise<boolean>
     // Scroll the editor to reveal the current cursor (selection head) WITHOUT changing the selection,
     // and focus it. Used when a view switch re-shows the editor so it lands on the slide you're on
     // (the cursor is wherever strip/grid/outline navigation last put it) instead of snapping to the top.
@@ -370,6 +374,25 @@ const viewCompartment = new Compartment()
 // The Plain tab's font and text size. Empty in Markdown mode, so that tab stays exactly as it was.
 const plainTypeCompartment = new Compartment()
 
+/** A transaction allowed through a close's freeze (Reload's text, chosen on the close's own sheet). */
+const closeFreezeExempt = Annotation.define<boolean>()
+
+/** While closing: not editable, read-only for every command, and a line at the top saying why (ADR-0044 §6). */
+function closeFreezeExtension(update: boolean) {
+  return [
+    EditorView.editable.of(false),
+    EditorState.readOnly.of(true),
+    showPanel.of(() => {
+      const dom = document.createElement('div')
+      dom.className = 'tw-close-freeze'
+      dom.setAttribute('role', 'status')
+      dom.setAttribute('data-close-freeze', update ? 'update' : 'close')
+      dom.textContent = closeFreezeText(update)
+      return { dom, top: true }
+    }),
+  ]
+}
+
 export default function Editor({
   onResearchDrop,
   showResearchInsertion = false,
@@ -416,6 +439,10 @@ export default function Editor({
   const containerRef = useRef<HTMLDivElement>(null)
   const moveFrozenRef = useRef(false)
   const loadFrozenRef = useRef(true)
+  // Closing (ADR-0044 §6, rules B and D; lib/closeFreeze.ts): from the close request until the window closes, or the
+  // close is called off, the person's edits are refused. Only Reload's text and the adoption of a save's ids pass.
+  const closeFrozenRef = useRef(false)
+  const closeFreezeCompartment = useRef(new Compartment())
   const loadEpochRef = useRef(0)
   useEffect(() => {
     const freeze = (event:Event) => {
@@ -425,6 +452,18 @@ export default function Editor({
     }
     window.addEventListener('tw-freeze-moved-editor', freeze)
     return () => window.removeEventListener('tw-freeze-moved-editor', freeze)
+  }, [])
+  useEffect(() => {
+    const onCloseFreeze = (event: Event) => {
+      const { frozen, update } = (event as CustomEvent<CloseFreezeDetail>).detail
+      closeFrozenRef.current = frozen
+      const view = viewRef.current
+      if (!view) return
+      view.dispatch({ effects: closeFreezeCompartment.current.reconfigure(frozen ? closeFreezeExtension(update) : []) })
+      if (frozen) view.contentDOM.blur()
+    }
+    window.addEventListener(CLOSE_FREEZE_EVENT, onCloseFreeze)
+    return () => window.removeEventListener(CLOSE_FREEZE_EVENT, onCloseFreeze)
   }, [])
   const viewRef = useRef<EditorView | null>(null)
   const movedBufferRef = useRef<{to:string; diskText:string; text:string} | null>(null)
@@ -541,17 +580,19 @@ export default function Editor({
   // every editor save does. Resolves true only when the main process confirms the bytes were written.
   // `source` is the editor's text the save was made from (`text` is it tidied, textForSave); what was
   // written is adopted in its place while the editor still holds it.
-  const writeQueued = useCallback((outlinePath: string, text: string, source: string = text): Promise<boolean> => {
+  // `revision`: the editor's revision of `source` (lib/editorRevision.ts), sent with the save: what a close confirms
+  // against. `force`: write even when the same text is being written (a close's 'resave').
+  const writeQueued = useCallback((outlinePath: string, text: string, source: string = text, revision: number = editorRevision.current(), force = false): Promise<boolean> => {
     // Every immediate write supersedes the debounce, including a settle continuation after IPC.
     if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
     const baseline = cleanDocumentRef.current
-    if (baseline.pending?.text === text) return baseline.pending
+    if (!force && baseline.pending?.text === text) return baseline.pending
     // Track the entire write, including synchronous stamped-content adoption, on the same
     // acknowledged-document state that load/Reload invalidates. The queue alone ends before adoption.
     const pending = Object.assign((async () => {
       // The person discarded this talk (removed on disk): it is never saved again from this editor.
       if (outlineDiskChanges.isDiscarded(outlinePath)) return false
-      const res = await queueOutlineWrite(outlinePath, () => window.tw.talk.writeOutline(outlinePath, text))
+      const res = await queueOutlineWrite(outlinePath, () => window.tw.talk.writeOutline(outlinePath, text, { revision }))
       // Save-indicator honesty (2026-07-05): only stamp "saved" on a REAL write. If the main-process
       // backstop refused (structurally-empty over a non-empty file), the disk is unchanged — say so
       // instead of a false "saved just now". `res === false` is an IO failure (also not a save).
@@ -564,7 +605,10 @@ export default function Editor({
           adoptStampedContent(source, text, res)
           const saved = typeof res.content === 'string' ? res.content : text
           baseline.text = viewRef.current?.state.toText(saved).toString() ?? saved
-          baseline.dirty = viewRef.current?.state.doc.toString() !== baseline.text
+          // Undo may deliberately decline stamped-id adoption to preserve redo. A successful write
+          // acknowledges that unchanged source too; only an edit made during the write needs saving again.
+          const current = viewRef.current?.state.doc.toString()
+          baseline.dirty = current !== baseline.text && current !== source
           onDirtyRef.current?.(baseline.dirty)
         }
         return true
@@ -606,6 +650,7 @@ export default function Editor({
       // process also refuses an empty-over-nonempty write — belt-and-braces.
       if (content.trim() === '') return
       if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+      const revision = editorRevision.current() // the revision of `content`
       saveTimerRef.current = setTimeout(async () => {
         saveTimerRef.current = null
         const view = viewRef.current
@@ -613,7 +658,7 @@ export default function Editor({
         // Tidied, except straight after an undo or a redo (extensions/saveTidyUp.ts), here and at the
         // two saves below. The editor is not tidied first: the tidy-up comes back with the save's ids.
         const normalized = textForSave(view?.state, content)
-        await writeQueued(outlinePath, normalized, content)
+        await writeQueued(outlinePath, normalized, content, revision)
       }, 1500)
     },
     [writeQueued]
@@ -644,7 +689,8 @@ export default function Editor({
       state: EditorState.create({
         doc: '',
         extensions: [
-          EditorState.transactionFilter.of(tr => (moveFrozenRef.current || loadFrozenRef.current) && tr.docChanged ? [] : tr),
+          EditorState.transactionFilter.of(tr => (moveFrozenRef.current || loadFrozenRef.current || (closeFrozenRef.current && !tr.annotation(savedTextAdopted) && !tr.annotation(closeFreezeExempt))) && tr.docChanged ? [] : tr),
+          closeFreezeCompartment.current.of([]),
           researchMarkerCompartment.current.of(showResearchInsertion ? researchInsertionMarker : []),
           scratchDropExtension((id, place) => scratchDropRef.current?.(id, place)),
           EditorView.domEventHandlers(researchDropHandlers(file => researchDropRef.current?.(file))),
@@ -998,6 +1044,9 @@ export default function Editor({
               // active talk — never during the fresh-mount `doc:''` transient or the load's own initial
               // content dispatch (data-loss guard, 2026-07-05). scheduleAutosave also skips empty text.
               if (loadedPathRef.current && loadedPathRef.current === currentTalkRef.current) {
+                // A change of the person's raises the revision; taking a save's ids back in does not (it is the text
+                // that save wrote).
+                if (!update.transactions.some((tr) => tr.annotation(savedTextAdopted))) editorRevision.bump()
                 cleanDocumentRef.current.dirty = true
                 onDirtyRef.current?.(true)
                 scheduleAutosave(currentTalkRef.current, content)
@@ -1214,7 +1263,8 @@ export default function Editor({
     movedBufferRef.current = null
     async function load() {
       // forEditor: the text loaded here is what the external-change guard compares the file against.
-      const content = await window.tw.talk.readOutline(pathAtLoad, { forEditor: true })
+      // The loaded text is the file's at the revision now: the load itself is not a change of the person's.
+      const content = await window.tw.talk.readOutline(pathAtLoad, { forEditor: true, revision: editorRevision.current() })
       if (content === null && ownsLoad()) {
         notify('This talk could not be opened: it is not in your current vault, or its file could not be read.', 'warning', 'talk-not-read')
       }
@@ -1227,6 +1277,8 @@ export default function Editor({
         // A newer destination uses the existing explicit recovery choice instead.
         if (movedBuffer?.to === pathAtLoad && movedBuffer.diskText === content && viewRef.current.state.doc.toString() === movedBuffer.text) {
           cleanDocumentRef.current = { text: viewRef.current.state.toText(content).toString(), dirty: viewRef.current.state.doc.toString() !== viewRef.current.state.toText(content).toString() }
+          // The moved text differs from the file: it is a revision the file does not have yet.
+          if (cleanDocumentRef.current.dirty) editorRevision.bump()
           loadedPathRef.current = pathAtLoad
           loadFrozenRef.current = false
           moveFrozenRef.current = false
@@ -1428,16 +1480,18 @@ export default function Editor({
       },
       // Capture binds its slide identity only after the acknowledged bytes (including minted IDs)
       // are adopted. Reuse dirty/acknowledged tracking: a timer is not a save receipt.
-      settleSave: async () => {
+      settleSave: async (signal) => {
         const path = currentTalkRef.current
         const baseline = cleanDocumentRef.current
         for (;;) {
+          signal?.throwIfAborted()
           if (saveTimerRef.current) {
             clearTimeout(saveTimerRef.current)
             saveTimerRef.current = null
           }
           const pending = baseline.pending
           if (pending && !await pending) throw new Error('The talk was not saved')
+          signal?.throwIfAborted()
           if (baseline.pending && baseline.pending !== pending) continue
           const v = viewRef.current
           if (!v || cleanDocumentRef.current !== baseline || loadedPathRef.current !== path || currentTalkRef.current !== path)
@@ -1448,6 +1502,18 @@ export default function Editor({
             throw new Error('The talk was not saved')
           // Typing during the IPC can defer adoption. Save that newer buffer before binding an ID.
         }
+      },
+      forceSave: async (signal) => {
+        signal?.throwIfAborted()
+        if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+        const v = viewRef.current
+        const path = currentTalkRef.current
+        if (!v || loadedPathRef.current !== path) return false
+        const current = v.state.doc.toString()
+        if (current.trim() === '') return false
+        await cleanDocumentRef.current.pending?.catch(() => false)
+        signal?.throwIfAborted()
+        return await writeQueued(path, textForSave(v.state, current), current, editorRevision.current(), true)
       },
       scrollCursorIntoView: () => {
         const v = viewRef.current
@@ -1661,7 +1727,8 @@ export default function Editor({
         seamSaveRef.current = null
         const spec = replaceDocTransaction(view.state.doc.toString(), text, { ownUndoStep: true })
         adoptingDiskRef.current = true
-        try { if (spec) view.dispatch(spec) } finally { adoptingDiskRef.current = false }
+        // Reload's text passes a close's freeze: the person chose it on the close's own sheet.
+        try { if (spec) view.dispatch(spec, { annotations: closeFreezeExempt.of(true) }) } finally { adoptingDiskRef.current = false }
         cleanDocumentRef.current = { text: view.state.doc.toString(), dirty: false }
         onDirtyRef.current?.(false)
         return view.state.doc.toString()
@@ -1679,6 +1746,8 @@ export default function Editor({
         onDirtyRef.current?.(cleanDocumentRef.current.dirty)
         return view.state.doc.toString()
       }
+      // While closing, a command's edit is refused (rule B): the caller is told nothing was applied.
+      if (closeFrozenRef.current) return null
       const spec = replaceDocTransaction(view.state.doc.toString(), text, { ownUndoStep: opts?.ownUndoStep })
       if (spec) view.dispatch(spec)
       if (!opts?.save) return view.state.doc.toString()

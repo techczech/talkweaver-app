@@ -962,7 +962,8 @@ const api = {
   talk: {
     // `forEditor`: only the editor's own load (and Reload) — its text becomes the external-change
     // guard's baseline for the file (shared-talk ticket 01).
-    readOutline: (outlinePath: string, opts?: { forEditor?: boolean }): Promise<string | null> =>
+    // `revision`: the editor's revision the text is loaded at (main's record of what is on disk, editor-revisions.ts).
+    readOutline: (outlinePath: string, opts?: { forEditor?: boolean; revision?: number }): Promise<string | null> =>
       ipcRenderer.invoke('talk:read-outline', outlinePath, opts),
     // External-change guard: the file's text + version on disk now (Reload), and accepting the version
     // the person saw (Keep mine / Reload); a newer change refuses with it.
@@ -980,16 +981,26 @@ const api = {
     discardRemovedOutline: (outlinePath: string): Promise<boolean> =>
       ipcRenderer.invoke('talk:outline-discard', outlinePath),
     // Main's push: the window is closing (or ⌘Q) while its talk differs from the disk — show the sheet.
-    onCloseRequested: (cb: (request: { quit: boolean }) => void): (() => void) => {
-      const listener = (_e: unknown, request: { quit: boolean }): void => cb(request)
+    // `update`: an update's restart asked for this close (the editor says "Saving before the update…").
+    onCloseRequested: (cb: (request: { quit: boolean; update?: boolean }) => void): (() => void) => {
+      const listener = (_e: unknown, request: { quit: boolean; update?: boolean }): void => cb(request)
       ipcRenderer.on('outline:close-requested', listener)
       return () => ipcRenderer.removeListener('outline:close-requested', listener)
     },
+    // Main's push: the update's restart that asked for this close was called off: the editor unfreezes.
+    onCloseCancelled: (cb: () => void): (() => void) => {
+      const listener = (): void => cb()
+      ipcRenderer.on('outline:close-cancelled', listener)
+      return () => ipcRenderer.removeListener('outline:close-cancelled', listener)
+    },
     // The close request arrived (the sheet is up): main's 5-second fallback close is off.
     ackCloseRequest: (): Promise<boolean> => ipcRenderer.invoke('window:close-request-ack'),
-    // The sheet's choice completed: close (and quit, when ⌘Q asked).
-    confirmClose: (opts: { quit: boolean }): Promise<boolean> =>
+    // The frozen editor saved: close (and quit, when ⌘Q asked), confirming the revision it holds now. true: closing;
+    // false: the window stays open; 'resave': main has not recorded that revision as written, save again first.
+    confirmClose: (opts: { quit: boolean; revision?: number; hasDraft?: boolean }): Promise<boolean | 'resave'> =>
       ipcRenderer.invoke('window:confirm-close', opts),
+    // The sheet's choice was "Stay here": the window stays open (an update's restart that asked for the close is off).
+    closeKept: (): Promise<boolean> => ipcRenderer.invoke('window:close-kept'),
     // Main's push: the open talk's outline changed on disk (change), or no longer differs (null).
     onOutlineChangedOnDisk: (cb: (event: { outlinePath: string; change: OutlineDiskChange | null }) => void): (() => void) => {
       const listener = (_e: unknown, event: { outlinePath: string; change: OutlineDiskChange | null }): void => cb(event)
@@ -1015,11 +1026,13 @@ const api = {
     // still holding a talk after the vault root changed) — nothing was written; `error` says so.
     // `{ ok: false, refused: 'changed-on-disk', change }`: the file changed on disk since the editor read
     // it (external-change guard) — nothing was written until the person picks Reload or Keep mine.
+    // `revision`: the editor's revision of the text sent (editor-revisions.ts); a workspace write sends none.
     writeOutline: (
       outlinePath: string,
-      content: string
+      content: string,
+      opts?: { revision?: number }
     ): Promise<{ ok: true; collisions: string[]; content?: string } | { ok: false; refused: 'empty-over-nonempty' | 'ownership' } | { ok: false; refused: 'outside-vault'; error: string } | OutlineChangedOnDiskRefusal | false> =>
-      ipcRenderer.invoke('talk:write-outline', outlinePath, content),
+      ipcRenderer.invoke('talk:write-outline', outlinePath, content, opts),
     // `{ superseded: true }`: a newer live-preview compile of the same talk from this window replaced
     // this one before it started (main's single-flight gate); ignore it, the newer reply follows.
     compile: (outlinePath: string, content: string): Promise<ProjectionRow[] | null | { superseded: true }> =>
@@ -1260,8 +1273,9 @@ const api = {
     setEnabled: (on: boolean): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:set-enabled', on),
     /** The setting `updates.alphaVersions` (Get early versions). */
     setAlpha: (on: boolean): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:set-alpha', on),
-    /** Update (ADR-0044): download the offered version for this computer, check it, then restart (or wait to). Takes nothing. */
-    update: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:update'),
+    /** Update (ADR-0044): download the offered version for this computer, check it, then restart (or wait to). Takes
+     *  only the version the person saw: main starts nothing when the offer is now another one. */
+    update: (version: string): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:update', typeof version === 'string' ? version : ''),
     /** Stop a download in progress; the partial file is deleted. */
     cancel: (): Promise<UpdateSnapshot> => ipcRenderer.invoke('updates:cancel'),
     /** Restart to finish updating: only when nothing holds it back. */

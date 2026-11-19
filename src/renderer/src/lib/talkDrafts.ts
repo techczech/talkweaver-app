@@ -71,3 +71,13 @@ export function discardedNotice(labels: readonly string[]): string {
   const names = labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(', ')} and ${labels.at(-1)}`
   return `Your unsaved change${labels.length === 1 ? '' : 's'} to ${names} ${labels.length === 1 ? 'was' : 'were'} discarded because the talk changed.`
 }
+
+/** Drafts outside the outline revision: ask the person to finish these without saving or discarding. */
+export function updateRestartDraft(root: Pick<Document, 'querySelectorAll'>): string | null {
+  if (current?.parts.design) return 'Save or discard your changes in Details and design to restart.'
+  if (current?.parts.advanced) return 'Save or discard your changes in Advanced metadata to restart.'
+  for (const shell of root.querySelectorAll<HTMLElement & { __twHasDraft?: () => boolean }>('.oe')) {
+    if (shell.__twHasDraft?.()) return 'Save or discard your changes in the object editor to restart.'
+  }
+  return null
+}

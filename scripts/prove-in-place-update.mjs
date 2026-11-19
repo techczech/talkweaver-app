@@ -15,6 +15,11 @@
 //      says what will happen, and quitting then installs exactly what it said;
 //  (c) Restart pressed with nothing holding: it restarts into the new version, and the result is checked:
 //      version, code signature, the user data kept, timings.
+//  (e)–(h) the restart's close when an editor cannot confirm its save (slow, failed, Stay here, the watchdog);
+//  (i) a Tools window open: the restart waits behind it and closes nothing (ADR-0044 §6, rule A);
+//  (j) in (c), typing during the restart's slow save is refused and nothing is lost (rule B);
+//  (k) in (c), a preference write held pending in main is waited for before the native call and is in the settings
+//      file after the update (rule C).
 // The blocker is the update-test flavour's restart hold (TW_UPDATE_TEST_HOLD_FILE, counted as a publish in flight).
 //
 //   node scripts/prove-in-place-update.mjs --old <X.app> --new <Y.app> --work <empty scratch folder> --out <evidence.json>
@@ -25,7 +30,7 @@ import { _electron as electron } from 'playwright'
 import { createHash } from 'node:crypto'
 import { execFileSync, spawnSync } from 'node:child_process'
 import { createServer } from 'node:http'
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs'
+import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync, statSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { parseArgs } from 'node:util'
@@ -54,6 +59,11 @@ const LEFTOVERS = [
 for (const path of LEFTOVERS.slice(1)) if (existsSync(path)) throw new Error(`${path} exists already: an earlier proof left it; remove it first`)
 
 const evidence = { started: new Date().toISOString(), machine: {}, versions: { old: OLD_VERSION, new: NEW_VERSION }, bundleId: BUNDLE_ID, steps: [] }
+// The source the proof and (when built from this checkout) the two builds come from.
+try {
+  const git = (...a) => execFileSync('/usr/bin/git', a, { encoding: 'utf8', cwd: new URL('..', import.meta.url).pathname }).trim()
+  evidence.source = { commit: git('rev-parse', 'HEAD'), branch: git('rev-parse', '--abbrev-ref', 'HEAD'), uncommittedChanges: git('status', '--porcelain', '--untracked-files=no') !== '' }
+} catch { evidence.source = null }
 try {
   evidence.machine = {
     macOS: execFileSync('/usr/bin/sw_vers', ['-productVersion'], { encoding: 'utf8' }).trim(),
@@ -181,8 +191,10 @@ let relaunched = []
 const appLog = []
 evidence.appLog = appLog
 const HOLD_FILE = join(work, 'restart-hold')
+// TW_MIGRATE_PROMPT=0: the proof's talk is written by hand in the older outline format, and the packaged app would
+// otherwise ask in a native dialog to migrate it; the editor shows no text until that is answered.
 async function launchApp() {
-  app = await electron.launch({ executablePath: join(INSTALLED, 'Contents', 'MacOS', NAME), args: [], env: { ...process.env, TW_UPDATE_TEST_FEED: `${base}/updates.json`, TW_UPDATE_TEST_HOLD_FILE: HOLD_FILE, TW_E2E: '' } })
+  app = await electron.launch({ executablePath: join(INSTALLED, 'Contents', 'MacOS', NAME), args: [], env: { ...process.env, TW_UPDATE_TEST_FEED: `${base}/updates.json`, TW_UPDATE_TEST_HOLD_FILE: HOLD_FILE, TW_UPDATE_TEST_SAVE_DELAY_FILE: SAVE_DELAY_FILE, TW_UPDATE_TEST_SETTINGS_DELAY_FILE: SETTINGS_DELAY_FILE, TW_E2E: '', TW_MIGRATE_PROMPT: '0' } })
   app.process().stdout?.on('data', (c) => appLog.push(`${new Date().toISOString()} ${String(c)}`))
   app.process().stderr?.on('data', (c) => appLog.push(`${new Date().toISOString()} [stderr] ${String(c)}`))
   page = await app.firstWindow()
@@ -194,6 +206,59 @@ async function launchApp() {
 const logText = () => appLog.join('')
 /** The launched app's own main process (Playwright's child): alive or not. */
 const alive = (pid) => { try { process.kill(pid, 0); return true } catch { return false } }
+const OUTLINE = join(vault, 'proof-talk', 'proof-talk-outline.md')
+const outlineText = () => readFileSync(OUTLINE, 'utf8')
+/** The update-test flavour's slow save: while this file exists each editor save waits the milliseconds written in it. */
+const SAVE_DELAY_FILE = join(work, 'save-delay')
+/** The update-test flavour's held preference write: while this file exists each preference write main makes waits. */
+const SETTINGS_DELAY_FILE = join(work, 'settings-delay')
+/** Every window the app has (BrowserWindow.getAllWindows: hidden ones too). */
+const windowsNow = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map((w) => ({ visible: w.isVisible(), page: w.webContents.getURL().replace(/^.*\//, '').split(/[?#]/)[0] })))
+/** The editor's text as the window shows it now, or null when the window does not answer. */
+const editorText = () => page.locator('.cm-content').innerText({ timeout: 5000 }).catch(() => null)
+/** A recovery copy holding `mark` (main's copy of text a save could not write). */
+const recoveryHas = (mark) => {
+  const dir = join(USER_DATA, 'recovery')
+  const walk = (d) => { try { return readdirSync(d, { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(join(d, e.name)) : [join(d, e.name)]) } catch { return [] } }
+  return walk(dir).some((f) => { try { return readFileSync(f, 'utf8').includes(mark) } catch { return false } })
+}
+/**
+ * Types `mark-<tag>` at the end of the talk, then one character every 300 ms (the 1.5-second autosave never fires),
+ * until the app logs that the restart's close began: the editor's buffer is unsaved when its close flushes it. False
+ * if the restart ended or was held before any window was asked to close.
+ */
+async function typeUntilClose(from, tag, ms = 300000) {
+  // The update popover takes the focus: close it, then put the cursor at the end of the talk, and check that the
+  // typing reached the editor (otherwise nothing would be unsaved and the case would prove nothing).
+  let landed = false
+  for (let attempt = 0; attempt < 4 && !landed; attempt++) {
+    await page.keyboard.press('Escape')
+    await pause(300)
+    await page.locator('.cm-content').click()
+    await pause(200)
+    await page.keyboard.press('Meta+ArrowDown')
+    await page.keyboard.type(`\nmark-${tag}-`)
+    await pause(200)
+    landed = ((await editorText()) ?? '').includes(`mark-${tag}-`)
+  }
+  if (!landed) throw new Error(`the typing for case ${tag} did not reach the editor`)
+  const until = Date.now() + ms
+  while (Date.now() < until) {
+    const log = logText().slice(from)
+    if (/closing every window before restarting/.test(log)) return true
+    if (/ended with Squirrel\.Mac possibly armed|the restart is held|attempt \d+ ended: failed/.test(log)) return false
+    await page.keyboard.type('x')
+    await pause(300)
+  }
+  return false
+}
+/** What the app said, in a few words. */
+const said = (s) => (s.phase !== 'reopen' ? s.phase : !s.pending ? 'nothing installs; quit and reopen' : s.armed ? 'will install at the next quit' : 'may install at the next quit')
+/** Whether what installed at the quit agrees with what was said: "nothing installs" must be the old version with
+ *  nothing armed; "will" must be the new version; "may" agrees with either. */
+const agrees = (s, after) => s.phase === 'reopen' && (!s.pending ? after === OLD_VERSION && !shipItJob() && !requestThere() : s.armed ? after === NEW_VERSION : after === OLD_VERSION || after === NEW_VERSION)
+/** The next case starts from the old version. */
+const backToOld = (now) => { if (now !== OLD_VERSION) { rmSync(INSTALLED, { recursive: true, force: true }); execFileSync('/usr/bin/ditto', [opt.old, INSTALLED]) } }
 try {
   const talkOpen = await launchApp()
   evidence.talkOpens = talkOpen
@@ -334,18 +399,19 @@ try {
   await pause(30000)
   const laterD = await snap()
   const stillD = alive(mainD)
-  const sayD = laterD.install.phase === 'reopen' ? (laterD.install.pending ? 'will install at the next quit' : 'nothing installs; quit and reopen') : laterD.install.phase
+  const sayD = said(laterD.install)
   evidence.caseD = { secondsClickToNativeRequest: askedAt ? Math.round((askedAt - clickD) / 100) / 10 : null, phaseWhenHoldRaised: restartingD.install.phase, ended: endedD.install, checked: checkedD.install, later: laterD.install, says: sayD, ...armedNow() }
   step('(d) a blocker raised while macOS prepared the new version: the app does not quit; it says what will happen, and a "nothing installs" is a checked one (no ShipIt job, no install request)',
     askedAt !== null && restartingD.install.phase === 'restarting' && laterD.install.phase === 'reopen' && laterD.install.cause === 'held' && stillD && installed() === OLD_VERSION
-      && (laterD.install.pending ? !nothingArmed() || /NOT confirmed/.test(logText()) : nothingArmed() && /withdrawn and checked/.test(logText()))
+      && (laterD.install.pending ? /NOT confirmed/.test(logText()) : nothingArmed() && /withdrawn and checked/.test(logText()))
       && /the restart is held \(publishing\) after Squirrel\.Mac prepared it/.test(logText()),
     { ...evidence.caseD, mark: await mark(), stillRunning: stillD })
-  const foundD = (logText().slice(logFromD).match(/withdrawing: before, ShipIt job (yes|no), install request (yes|no)/) ?? []).slice(1)
-  step('(d) the check means something: before the withdrawal Squirrel.Mac had armed both (the ShipIt job and the install request were there); afterwards neither is',
-    foundD[0] === 'yes' && foundD[1] === 'yes' && (laterD.install.pending || nothingArmed()), { before: { shipItJob: foundD[0] ?? null, installRequest: foundD[1] ?? null }, after: armedNow() })
+  // The app's own evidence (update-installer.ts withdrawNative): each of the two is present, absent or unknown.
+  const foundD = (logText().slice(logFromD).match(/withdrawing: before, ShipIt job (present|absent|unknown), install request (present|absent|unknown)/) ?? []).slice(1)
+  step('(d) the check means something: before the withdrawal Squirrel.Mac had armed both (the ShipIt job and the install request were present); afterwards neither is, or the person was told it may or will install',
+    foundD[0] === 'present' && foundD[1] === 'present' && (laterD.install.pending || nothingArmed()), { before: { shipItJob: foundD[0] ?? null, installRequest: foundD[1] ?? null }, after: armedNow(), said: sayD })
   const restartD = await page.evaluate(() => window.tw.updates.restart())
-  const updateD = await page.evaluate(() => window.tw.updates.update())
+  const updateD = await page.evaluate((v) => window.tw.updates.update(v), NEW_VERSION)
   step('(d) in that state Restart and Update do nothing in this run', restartD.install.phase === 'reopen' && updateD.install.phase === 'reopen' && alive(mainD), { restart: restartD.install.phase, update: updateD.install.phase })
   rmSync(HOLD_FILE, { force: true })
   await app.close()
@@ -353,9 +419,163 @@ try {
   await pause(10000)
   const afterQuitD = installed()
   step(`(d) then quitting: what was installed matches what the app said (${sayD})`,
-    laterD.install.phase === 'reopen' && (laterD.install.pending ? afterQuitD === NEW_VERSION : afterQuitD === OLD_VERSION && nothingArmed()),
+    laterD.install.phase === 'reopen' && agrees(laterD.install, afterQuitD),
     { said: sayD, installedAfterQuit: afterQuitD, ...armedNow() })
-  if (afterQuitD !== OLD_VERSION) { rmSync(INSTALLED, { recursive: true, force: true }); execFileSync('/usr/bin/ditto', [opt.old, INSTALLED]) } // (c) starts from the old version
+  backToOld(afterQuitD)
+
+  // (e)–(h): the restart's close (ADR-0044 §6). A window counts as closed only with its work positively saved; a
+  // slow save, a failed save, "Stay here" and the watchdog each call the restart off, withdraw and check it, and
+  // leave the editor usable with the person's text. The editor's buffer is made unsaved at the moment of the close
+  // by typing until the app logs that the close began (the 1.5-second autosave never fires meanwhile).
+  const closeCase = async (tag, { delayMs = 0, prepare = null, onClose = null, waitMs = 180000 }) => {
+    if (delayMs) writeFileSync(SAVE_DELAY_FILE, String(delayMs)); else rmSync(SAVE_DELAY_FILE, { force: true })
+    await launchApp()
+    const pid = app.process().pid
+    await page.evaluate(() => window.tw.updates.check())
+    await prepare?.()
+    const from = logText().length
+    const clicked = Date.now()
+    await pressUpdate()
+    const closeBegan = await typeUntilClose(from, tag)
+    const closeAt = Date.now()
+    await onClose?.(from)
+    const ended = await waitFor((x) => x.install.phase !== 'restarting', waitMs, 200)
+    const checked = await waitFor((x) => x.install.phase !== 'reopen' || x.install.pending === false, 20000, 200)
+    return { pid, from, closeBegan, ended: ended.install, checked: checked.install, secondsToClose: Math.round((closeAt - clicked) / 100) / 10, secondsCloseToOff: Math.round((Date.now() - closeAt) / 100) / 10 }
+  }
+  const quitAndCompare = async (tag, state, { onSheet = null } = {}) => {
+    const pid = app.process().pid
+    const closing = app.close()
+    if (onSheet) await onSheet()
+    await closing
+    await waitGone([pid])
+    await pause(10000)
+    const after = installed()
+    step(`(${tag}) then quitting: what was installed matches what the app said (${said(state)})`, agrees(state, after), { said: said(state), installedAfterQuit: after, ...armedNow() })
+    backToOld(after)
+  }
+  const usable = async (mark) => {
+    const wins = await windowsNow()
+    const text = await editorText()
+    return { windows: wins, editorHasTheText: (text ?? '').includes(mark), editorAnswers: text !== null }
+  }
+
+  /** One case; a failure is recorded and the next case starts from the old version. */
+  const safely = async (tag, run) => {
+    try { await run() } catch (error) {
+      step(`(${tag}) the case finished`, false, { error: String(error?.stack ?? error).slice(0, 1500) })
+      try { await app.close() } catch { /* gone */ }
+      for (const pid of isRunning()) { try { process.kill(pid, 'SIGTERM') } catch { /* gone */ } }
+      await pause(10000)
+      try { chmodSync(OUTLINE, 0o644) } catch { /* not changed */ }
+      rmSync(SAVE_DELAY_FILE, { force: true })
+      backToOld(installed())
+    }
+  }
+  // (e) A slow save (longer than the five-second fallback): the window is left open with its work.
+  await safely('e', async () => {
+    const c = await closeCase('E', { delayMs: 45000 })
+    const log = logText().slice(c.from)
+    const u = await usable('mark-E')
+    step('(e) a slow save at the restart\'s close: the fallback leaves the editor open with its text, the restart is off ("held"), withdrawn and checked, and the app runs on',
+      c.closeBegan && c.ended.phase === 'reopen' && c.ended.cause === 'held' && /did not answer the restart's close in time: left open/.test(log)
+        && /withdrawing: before, ShipIt job (present|absent|unknown)/.test(log) && u.editorAnswers && u.editorHasTheText && alive(c.pid) && installed() === OLD_VERSION,
+      { ...c, ...u, say: said(c.checked) })
+    let landed = false
+    for (let i = 0; i < 240 && !landed; i++) { landed = outlineText().includes('mark-E'); if (!landed) await pause(250) }
+    const u2 = await usable('mark-E')
+    step('(e) the slow save then completed on disk, and its late confirmation did not close the window (the editor still answers with the text)',
+      landed && u2.editorAnswers && u2.editorHasTheText, { savedOnDisk: landed, ...u2 })
+    rmSync(SAVE_DELAY_FILE, { force: true })
+    await quitAndCompare('e', c.checked)
+  })
+
+  // (f) A failed save: the talk's file cannot be written at the moment of the close.
+  await safely('f', async () => {
+    const c = await closeCase('F', { prepare: async () => chmodSync(OUTLINE, 0o444) })
+    const log = logText().slice(c.from)
+    const u = await usable('mark-F')
+    const recovery = recoveryHas('mark-F')
+    step('(f) a failed save at the restart\'s close: the editor stays open with its text (and its recovery copy), the restart is off ("held"), withdrawn and checked',
+      c.closeBegan && c.ended.phase === 'reopen' && c.ended.cause === 'held' && /confirmed its close but its work is not saved: left open/.test(log)
+        && u.editorAnswers && u.editorHasTheText && !outlineText().includes('mark-F') && alive(c.pid) && installed() === OLD_VERSION,
+      { ...c, ...u, recoveryCopyHasTheText: recovery, onDisk: outlineText().includes('mark-F') })
+    chmodSync(OUTLINE, 0o644)
+    await quitAndCompare('f', c.checked)
+  })
+
+  // (g) "Stay here": the talk changes on disk while the close's save is in flight; the sheet comes up.
+  const sheet = '[data-testid="outline-disk-change-sheet"]'
+  const changeOnDisk = (tag) => writeFileSync(OUTLINE, `${outlineText()}\n- Changed elsewhere ${tag}\n`)
+  const answerSheet = async (label) => { await page.waitForSelector(sheet, { timeout: 60000 }); await page.locator(`${sheet} button`, { hasText: label }).first().click() }
+  await safely('g', async () => {
+    let sheetSeen = false
+    const c = await closeCase('G', { delayMs: 2500, onClose: async () => { changeOnDisk('G'); await page.waitForSelector(sheet, { timeout: 30000 }).then(() => { sheetSeen = true }, () => {}); if (sheetSeen) await answerSheet('Stay here') } })
+    const log = logText().slice(c.from)
+    const u = await usable('mark-G')
+    step('(g) "Stay here" on the changed-on-disk sheet during the restart\'s close: the editor stays open with its text, the restart is off ("held"), withdrawn and checked',
+      c.closeBegan && sheetSeen && c.ended.phase === 'reopen' && c.ended.cause === 'held' && /a window was kept open/.test(log) && u.editorAnswers && u.editorHasTheText && alive(c.pid) && installed() === OLD_VERSION,
+      { ...c, sheetSeen, ...u })
+    rmSync(SAVE_DELAY_FILE, { force: true })
+    await quitAndCompare('g', c.checked, { onSheet: () => answerSheet('Keep mine').catch(() => {}) })
+  })
+
+  // (h) The watchdog while the sheet waits for the person; then a late answer ("Keep mine") after the restart is off.
+  await safely('h', async () => {
+    let sheetSeen = false
+    const c = await closeCase('H', { delayMs: 2500, waitMs: 420000, onClose: async () => { changeOnDisk('H'); sheetSeen = await page.waitForSelector(sheet, { timeout: 30000 }).then(() => true, () => false) } })
+    const log = logText().slice(c.from)
+    const u = await usable('mark-H')
+    step('(h) the watchdog while the close waits on the sheet: the restart is off ("held": the windows did not close in time), withdrawn and checked; the editor is still there',
+      c.closeBegan && sheetSeen && c.ended.phase === 'reopen' && c.ended.cause === 'held' && /the windows did not close in time/.test(log) && u.editorAnswers && alive(c.pid) && installed() === OLD_VERSION,
+      { ...c, sheetSeen, ...u })
+    rmSync(SAVE_DELAY_FILE, { force: true })
+    await answerSheet('Keep mine')
+    let landed = false
+    for (let i = 0; i < 80 && !landed; i++) { landed = outlineText().includes('mark-H'); if (!landed) await pause(250) }
+    await pause(3000)
+    const u2 = await usable('mark-H')
+    step('(h) a late answer after the restart was called off ("Keep mine"): the text is saved, and the window the restart had asked to close stays open and usable',
+      landed && u2.editorAnswers && u2.editorHasTheText && u2.windows.some((w) => w.visible), { savedOnDisk: landed, ...u2 })
+    await quitAndCompare('h', c.checked)
+  })
+
+  // (i) Rule A (ADR-0044 §6, third round): a Tools window open (Notes and script, which can hold a draft). The restart
+  // never closes it: the download waits with "Close the Tools window to restart.", Restart is refused, and no window
+  // is closed; nothing is handed to Squirrel.Mac.
+  await safely('i', async () => {
+    rmSync(SAVE_DELAY_FILE, { force: true })
+    await launchApp()
+    const pid = app.process().pid
+    await page.evaluate(() => window.tw.updates.check())
+    const known = new Set(app.windows())
+    await page.evaluate(() => window.tw.tools.open('talktext'))
+    let tools = null
+    for (let i = 0; i < 80 && !tools; i++) { tools = app.windows().find((w) => !known.has(w) && !w.isClosed()) ?? null; if (!tools) await pause(250) }
+    await pause(1500)
+    await page.bringToFront()
+    const from = logText().length
+    await pressUpdate()
+    const waitingI = await waitFor((x) => x.install.phase === 'waiting' || x.install.phase === 'failed', 180000, 200)
+    const visibleBefore = (await windowsNow()).filter((w) => w.visible)
+    const pressedI = await page.evaluate(() => window.tw.updates.restart())
+    await pause(4000)
+    await openPop()
+    const textI = (await page.locator('[data-update-popover]').innerText().catch(() => '')).replace(/\s+/g, ' ')
+    const restartEnabled = await page.locator('[data-update-popover] [data-update-restart]').isEnabled().catch(() => null)
+    const visibleAfter = (await windowsNow()).filter((w) => w.visible)
+    const log = logText().slice(from)
+    step('(i) a Tools window open (Notes and script): the download waits ("Close the Tools window to restart."), Restart is disabled and pressing it does nothing; no window is closed; nothing is handed to Squirrel.Mac and nothing is armed',
+      !!tools && !tools.isClosed() && waitingI.install.phase === 'waiting' && waitingI.blockers.includes('tools') && pressedI.install.phase === 'waiting' && textI.includes('Close the Tools window to restart.')
+        && restartEnabled === false && visibleAfter.length === visibleBefore.length && !/closing every window before restarting/.test(log) && !/preparing \S+ \(Squirrel\.Mac/.test(log) && nothingArmed() && alive(pid),
+      { phase: pressedI.install.phase, blockers: waitingI.blockers, popover: textI.slice(0, 200), restartEnabled, visibleWindowsBefore: visibleBefore.length, visibleWindowsAfter: visibleAfter.length, toolsOpen: !!tools && !tools.isClosed(), ...armedNow() })
+    await app.close()
+    await waitGone([pid])
+    await pause(5000)
+    const afterI = installed()
+    step('(i) then quitting with the update waiting behind the Tools window: nothing installs, nothing is armed', afterI === OLD_VERSION && nothingArmed(), { installedAfterQuit: afterI, ...armedNow() })
+    backToOld(afterI)
+  })
 
   // (c) Restart pressed with no blocker: updated, as before.
   await launchApp()
@@ -373,12 +593,30 @@ try {
   await page.bringToFront()
   await openPop()
   await page.waitForSelector('[data-update-popover] [data-update-restart]:not([disabled])', { timeout: 20000 })
+  writeFileSync(SAVE_DELAY_FILE, '2500')
+  writeFileSync(SETTINGS_DELAY_FILE, '8000')
   const before = { pids: [app.process().pid], version: installed() }
+  const windowsBeforeC = await windowsNow()
+  const fromC = logText().length
   const clicked = Date.now()
   await page.locator('[data-update-popover] [data-update-restart]').click()
   const cancelInRestarting = await page.locator('[data-update-popover] [data-update-cancel]').count().catch(() => -1)
+  // Unsaved typing at the moment of the close: the editor must save it before its window closes.
+  const typedC = await typeUntilClose(fromC, 'C').catch(() => false)
+  // Rule B: the close's save is slow (the save delay was set before Restart); typing during it must be refused, and
+  // the editor says so. Rule C: a preference write made now (the place chip) is held pending in main for eight
+  // seconds, past the editors' close: the native call must wait for it.
+  const duringSave = { banner: null, keysTried: 0, editorText: null, preferenceAsked: false }
+  try {
+    duringSave.preferenceAsked = await page.evaluate(() => window.tw.settings.setPlaceChipVisible(false).then(() => true, () => false))
+    duringSave.banner = await page.locator('[data-close-freeze]').first().innerText({ timeout: 1500 }).catch(() => null)
+    for (const key of ' SECONDEDIT') { await page.keyboard.type(key).catch(() => {}); duringSave.keysTried += 1 }
+    await page.keyboard.press('Meta+v').catch(() => {})
+    duringSave.editorText = await editorText()
+  } catch { /* the window may already be closing */ }
   let quitAt = null
-  for (let i = 0; i < 1200; i++) { if (!before.pids.some(alive)) { quitAt = Date.now(); break } await pause(250) }
+  let onDiskWhenOldAppEnded = null
+  for (let i = 0; i < 1200; i++) { if (!before.pids.some(alive)) { quitAt = Date.now(); onDiskWhenOldAppEnded = outlineText(); break } await pause(250) }
   for (let i = 0; i < 1200 && quitAt; i++) { relaunched = isRunning().filter((p) => !before.pids.includes(p)); if (relaunched.length && installed() === NEW_VERSION) break; await pause(250) }
   const upAt = Date.now()
   await pause(4000) // the new version writes its launch into config.json
@@ -392,11 +630,40 @@ try {
     fileRequestsInAll: fileRequests.length,
     userData: { marker: readFileSync(join(USER_DATA, 'proof-marker.txt'), 'utf8') === MARKER, vaultRoot: config.vaultRoot === vault, alphaSetting: config.updatesAlphaVersions === true, lastVersionRun: config.updateNotices?.lastVersionRun ?? null },
     talk: readFileSync(join(vault, 'proof-talk', 'proof-talk-outline.md'), 'utf8').includes('A point that must survive the update'),
+    typedBeforeTheClose: typedC,
+    // Read when the old app's process had ended (before the new version started), and again after the relaunch.
+    typedTextOnDiskWhenOldAppEnded: (onDiskWhenOldAppEnded ?? '').includes('mark-C'),
+    typedTextOnDiskAfterRelaunch: outlineText().includes('mark-C'),
+    duringTheRestartsSave: {
+      ...duringSave,
+      editorText: undefined,
+      editorHeldTheTypedMark: ((duringSave.editorText ?? '').match(/mark-C-x*/) ?? [null])[0],
+      secondEditInEditor: (duringSave.editorText ?? '').includes('SECONDEDIT'),
+      secondEditOnDisk: (onDiskWhenOldAppEnded ?? '').includes('SECONDEDIT') || outlineText().includes('SECONDEDIT'),
+    },
+    preference: {
+      heldLogged: /this preference write waits 8000 ms/.test(logText().slice(fromC)),
+      drainLogged: (logText().slice(fromC).match(/\[update\] write queues: [^\n]*/) ?? [null])[0],
+      orderOk: (() => { const l = logText().slice(fromC); const d = l.indexOf('[update] write queues: every one drained'); const n = l.search(/restarting into \S+: 0 windows open/); return d >= 0 && n > d })(),
+      storedAfterUpdate: (() => { try { return /"general\.placeChip":\s*false/.test(readFileSync(join(USER_DATA, 'settings.json'), 'utf8')) } catch { return null } })(),
+    },
+    windowsBeforeRestart: windowsBeforeC,
+    nativeCall: (logText().slice(fromC).match(/restarting into \S+: (\d+) windows open \(hidden ones included\), no blocker/) ?? [])[0] ?? null,
     updaterCacheAfterRestart: existsSync(updaterCache) ? readdirSync(updaterCache) : 'removed',
   }
   step('(c) Restart with nothing holding (no Cancel while restarting): the app quit, was replaced and opened again as the new version, from the same place', relaunched.length > 0 && after.version === NEW_VERSION && cancelInRestarting === 0, { ...evidence.result.seconds, cancelButtonsWhileRestarting: cancelInRestarting })
   step('the result is validly signed: Developer ID, same team, hardened runtime', after.signature.valid && /^Developer ID Application:/.test(after.signature.authority ?? '') && after.signature.team === opt.team && after.signature.runtime, after.signature)
   step('the user data is intact (marker, vault, alpha setting, the talk) and the new version recorded its launch', Object.values(evidence.result.userData).slice(0, 3).every(Boolean) && evidence.result.talk && evidence.result.userData.lastVersionRun === NEW_VERSION, evidence.result.userData)
+  step('(c) the editor saved the text typed up to the restart\'s close before its window closed (on disk when the old app ended); the native install was called with zero windows open, hidden ones included',
+    typedC && evidence.result.typedTextOnDiskWhenOldAppEnded && new RegExp(`restarting into ${NEW_VERSION.replace(/\./g, '\\.')}: 0 windows open`).test(evidence.result.nativeCall ?? ''),
+    { typed: typedC, onDiskWhenOldAppEnded: evidence.result.typedTextOnDiskWhenOldAppEnded, onDiskAfterRelaunch: evidence.result.typedTextOnDiskAfterRelaunch, nativeCall: evidence.result.nativeCall, windowsBeforeRestart: windowsBeforeC })
+  const ds = evidence.result.duringTheRestartsSave
+  step('(j) typing during the restart\'s save: the editor said "Saving before the update…" and accepted no keystroke (typed and pasted); everything it held is on disk',
+    ds.banner === 'Saving before the update…' && ds.keysTried > 0 && ds.editorHeldTheTypedMark !== null && !ds.secondEditInEditor && !ds.secondEditOnDisk && (onDiskWhenOldAppEnded ?? '').includes(ds.editorHeldTheTypedMark),
+    ds)
+  const pref = evidence.result.preference
+  step('(k) a preference write pending at the restart (held eight seconds in main): the native call waited for the write queues, and the preference is in the settings file after the update',
+    duringSave.preferenceAsked && pref.heldLogged && pref.orderOk && pref.storedAfterUpdate === true, pref)
   step('the new version started with no update download left in its cache', evidence.result.updaterCacheAfterRestart === 'removed' || evidence.result.updaterCacheAfterRestart.length === 0, { cache: evidence.result.updaterCacheAfterRestart })
 } catch (error) {
   step('the proof finished', false, { error: String(error?.stack ?? error).slice(0, 2000) })
@@ -408,7 +675,12 @@ try {
   for (const name of ['ShipIt_stderr.log', 'ShipIt_stdout.log']) {
     try { evidence[name] = readFileSync(join(homedir(), 'Library', 'Caches', `${BUNDLE_ID}.ShipIt`, name), 'utf8').split('\n').slice(-60).join('\n') } catch { /* none */ }
   }
-  for (let i = 0; i < 120 && spawnSync('/usr/bin/pgrep', ['-x', 'ShipIt'], { encoding: 'utf8' }).status === 0; i++) await pause(500) // ShipIt finishes before its folder goes
+  // The test app's own ShipIt finishes before its folder goes (another app's ShipIt, Notion's say, is not waited for).
+  for (let i = 0; i < 120 && spawnSync('/usr/bin/pgrep', ['-f', `${BUNDLE_ID}.ShipIt`], { encoding: 'utf8' }).status === 0; i++) await pause(500)
+  // ShipIt may have relaunched the copy after the processes above were stopped: stop it again.
+  await pause(3000)
+  for (const pid of isRunning()) { try { process.kill(pid, 'SIGTERM') } catch { /* gone */ } }
+  for (let i = 0; i < 40 && isRunning().length; i++) await pause(250)
   spawnSync('/bin/launchctl', ['remove', `${BUNDLE_ID}.ShipIt`], { stdio: 'ignore' }) // Squirrel.Mac's job for the test app stays loaded after it relaunched it
   evidence.shipItJobAfterCleanup = shipItJob()
   for (const path of [work, ...LEFTOVERS]) { for (let i = 0; i < 5; i++) { try { rmSync(path, { recursive: true, force: true }); break } catch { await pause(1000) } } }

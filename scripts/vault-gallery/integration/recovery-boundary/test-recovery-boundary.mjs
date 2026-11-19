@@ -6,6 +6,7 @@ import vm from 'node:vm'
 import {transformSync} from 'esbuild'
 import {EditorState} from '@codemirror/state'
 import {createOutlineRecovery} from '../../../../src/main/outline-recovery.ts'
+import {closeFrozen} from '../../../../src/renderer/src/lib/closeFreeze.ts'
 const root='scripts/vault-gallery/integration/recovery-boundary/fixture'
 const source=pinned('src/renderer/src/components/WorkspaceLayout.tsx')
 const start=source.indexOf('  useEffect(() => {\n    const recover = (event:Event)')
@@ -21,7 +22,7 @@ function setup(onRetire=()=>{}){
  const window=new EventTarget();let frozen=false,discard=0,closed=0,cleanup
  window.addEventListener('tw-freeze-moved-editor',e=>frozen=e.detail)
  const loadFrozenRef={current:false}
- const filter=vm.runInNewContext(filterLine,{EditorState,loadFrozenRef,moveFrozenRef:{get current(){return frozen}}})
+ const filter=vm.runInNewContext(filterLine,{EditorState,loadFrozenRef,moveFrozenRef:{get current(){return frozen}},closeFrozenRef:{current:false}})
  let state=EditorState.create({doc:'latest actual text',extensions:[filter]})
  loadFrozenRef.current=true
  assert.equal(state.update({changes:{from:state.doc.length,insert:' BLOCKED WHILE LOADING'}}).state.doc.toString(),state.doc.toString(),'loading blocks normal mutations even when move freeze is false')
@@ -74,7 +75,7 @@ try {
   h.window.tw.windows.recoverMovedTalk=async()=>({kind:'revoked'})
   const hook=pinned('src/renderer/src/components/useOutlineDiskChange.ts')
   const start=hook.indexOf('  useEffect(() => window.tw.talk.onCloseRequested')
-  vm.runInNewContext(transformSync(hook.slice(start,hook.indexOf('  return { change',start)),{loader:'ts'}).code,{window:h.window,CustomEvent,useEffect:fn=>fn(),wiringRef:{current:{activeOutlinePath:'old'}},leave:async()=>{left++;return true}})
+  vm.runInNewContext(transformSync(hook.slice(start,hook.indexOf('  return { change',start)),{loader:'ts'}).code,{window:h.window,CustomEvent,useEffect:fn=>fn(),wiringRef:{current:{activeOutlinePath:'old',settle:async()=>{},forceSave:async()=>true}},leave:async()=>{left++;return true},closeFrozen,freezeFor:()=>({freeze(){},unfreeze(){}}),unfreezeAllRef:{current:new Set()},editorRevision:{current:()=>0}})
   const selection=h.request(false);await tick();closeRequest({quit:false});await tick()
   await finish(h);await finish(h);assert.equal(await selection.promise,false);await tick();assert.equal(confirmed,1);assert.equal(left,0);assert.equal((await h.store.read('destination')).text,h.text);h.cleanup()
  }
@@ -105,7 +106,7 @@ try {
   h.window.tw.windows.recoverMovedTalk=async()=>({kind:'revoked'});
   const hook=pinned('src/renderer/src/components/useOutlineDiskChange.ts');
   const start=hook.indexOf('  useEffect(() => window.tw.talk.onCloseRequested');
-  vm.runInNewContext(transformSync(hook.slice(start,hook.indexOf('  return { change',start)),{loader:'ts'}).code,{window:h.window,CustomEvent,useEffect:fn=>fn(),wiringRef,leave:async()=>{throw Error('stale leave')}});
+  vm.runInNewContext(transformSync(hook.slice(start,hook.indexOf('  return { change',start)),{loader:'ts'}).code,{window:h.window,CustomEvent,useEffect:fn=>fn(),wiringRef,leave:async()=>{throw Error('stale leave')},closeFrozen,freezeFor:()=>({freeze(){},unfreeze(){}}),unfreezeAllRef:{current:new Set()},editorRevision:{current:()=>0}});
   closeRequest({quit:false});closeRequest({quit:true});await tick();assert.equal(h.copies,1);
   await finish(h);await tick();assert.equal(confirmed,2);h.cleanup();
  }

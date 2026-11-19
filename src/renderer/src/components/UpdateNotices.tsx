@@ -4,7 +4,7 @@ import { useEffect, useReducer, useRef, useState } from 'react'
 import { noteReducer, availableMarkText, versionLabel, dateText } from '@app-patterns/updates'
 import { WhatsNewMark, UpdatesProvider } from '@app-patterns/updates-react'
 import { DOWNLOAD_FOOT, REFUSAL_TEXT, blockersSentence, installMarkText, reopenText, sizeText, updateFoot } from '../../../shared/update-install'
-import { UPDATE_ANSWER_EVENT, type AnswerEventDetail, type TwAnswerView, type UpdateSnapshot, useUpdateSnapshot, updateActions, answerOf } from '../lib/updateNotices'
+import { UPDATE_ANSWER_EVENT, type AnswerEventDetail, type TwAnswerView, type UpdateSnapshot, useUpdateSnapshot, updateActions, answerOf, installAnswer } from '../lib/updateNotices'
 
 // The status-bar mark and its popover (ADR-0044; was ADR-0041's tell-and-link mark). One mark, whose text
 // follows the click's state: "0.45.0 is available" → "Downloading 0.45.0 · 42%" → "Restart to finish
@@ -104,7 +104,7 @@ function PopoverBody({ snap, close }: { snap: UpdateSnapshot; close: () => void 
       <h3>{view.title}</h3>
       <div className="apu-update-sub" data-update-failed={s.reason}>{view.detail}</div>
       <div className="apu-update-actions">
-        <button type="button" className="apu-update-btn apu-update-btn--primary" data-update-retry onClick={() => { void api.update() }}>Try again</button>
+        <button type="button" className="apu-update-btn apu-update-btn--primary" data-update-retry onClick={() => { void api.update(s.version) }}>Try again</button>
         <button type="button" className="apu-update-btn" data-update-download onClick={() => { void api.download(); close() }}><Download size={13} aria-hidden /> Download from talkweaver.app</button>
       </div>
     </>
@@ -119,7 +119,7 @@ function PopoverBody({ snap, close }: { snap: UpdateSnapshot; close: () => void 
     {!inPlace && snap.refusal && snap.refusal !== 'no-file' && <div className="apu-update-sub" data-update-refusal={snap.refusal}>{REFUSAL_TEXT[snap.refusal]}</div>}
     <div className="apu-update-actions">
       {inPlace
-        ? <button type="button" className="apu-update-btn apu-update-btn--primary" data-update-update onClick={() => { void api.update() }}><ArrowUpCircle size={13} aria-hidden /> Update</button>
+        ? <button type="button" className="apu-update-btn apu-update-btn--primary" data-update-update onClick={() => { void api.update(latest.version) }}><ArrowUpCircle size={13} aria-hidden /> Update</button>
         : <button type="button" className="apu-update-btn apu-update-btn--primary" data-update-download onClick={() => { void api.download(); close() }}><Download size={13} aria-hidden /> Download from talkweaver.app</button>}
       <button type="button" className="apu-update-btn" data-update-not-now onClick={() => { void api.notNow(); close() }}>Not now</button>
       <button type="button" className="apu-update-btn apu-update-btn--quiet" data-update-skip onClick={() => { void api.skip(latest.version); close() }}>Skip this version</button>
@@ -132,11 +132,19 @@ function PopoverBody({ snap, close }: { snap: UpdateSnapshot; close: () => void 
 
 /** A deliberate check's answer as a note at the bottom right: it waits for a click when it offers a button, else a few seconds. */
 export function UpdateAnswerNote() {
-  const presenting = useUpdateSnapshot()?.busy === true
+  const snap = useUpdateSnapshot()
+  const presenting = snap?.busy === true
   const presentingNow = useRef(presenting)
   presentingNow.current = presenting
   const [note, dispatch] = useReducer(noteReducer<TwAnswerView>, { shown: null, held: null })
-  const view = presenting ? null : note.shown
+  // An answer about an update under way follows the snapshot, as the status-bar mark does (it used
+  // to keep the numbers of the moment Update was pressed: "0 MB of 289 MB" beside a mark at 21%).
+  // When that update is over (cancelled elsewhere), the note goes.
+  const following = note.shown?.live === true && snap !== null
+  const current = following ? installAnswer(snap) : note.shown
+  const ended = following && current === null
+  useEffect(() => { if (ended) dispatch({ kind: 'dismiss' }) }, [ended])
+  const view = presenting ? null : current
   useEffect(() => {
     const take = (event: Event): void => { const d = (event as CustomEvent<AnswerEventDetail>).detail; dispatch({ kind: 'answer', view: d?.view ?? null, busy: presentingNow.current || d?.busy === true }) }
     window.addEventListener(UPDATE_ANSWER_EVENT, take)
@@ -146,11 +154,15 @@ export function UpdateAnswerNote() {
   }, [])
   useEffect(() => { dispatch({ kind: 'busy', busy: presenting }) }, [presenting])
   const setView = (next: TwAnswerView | null): void => dispatch(next ? { kind: 'answer', view: next, busy: presentingNow.current } : { kind: 'dismiss' })
+  // A note without a button goes after six seconds. Keyed on what the note says, not on the view
+  // object: a followed answer is a new object at every render (the status bar renders each second),
+  // which would start the six seconds again for ever.
+  const timed = view !== null && view.action === null ? `${view.tone}|${view.title}|${view.detail}` : null
   useEffect(() => {
-    if (!view || view.action !== null) return
+    if (timed === null) return
     const timer = setTimeout(() => dispatch({ kind: 'dismiss' }), 6000)
     return () => clearTimeout(timer)
-  }, [view])
+  }, [timed])
   const api = window.tw?.updates
   if (!view || !api) return null
   return (
@@ -173,11 +185,11 @@ export function AnswerButtons({ view, onDone, onView, size }: { view: TwAnswerVi
   const downloadButton = <button type="button" className={cls(view.action === 'download')} data-update-download onClick={() => { void api.download(); onDone?.() }}><Download size={13} aria-hidden /> {size === 'card' ? 'Download…' : 'Download from talkweaver.app'}</button>
   return (
     <div className="apu-update-actions">
-      {view.action === 'update' && <button type="button" className={cls(true)} data-update-update onClick={() => { void api.update().then(after); }}><ArrowUpCircle size={13} aria-hidden /> Update</button>}
+      {view.action === 'update' && <button type="button" className={cls(true)} data-update-update onClick={() => { void api.update(view.version ?? '').then(after); }}><ArrowUpCircle size={13} aria-hidden /> Update</button>}
       {view.action === 'download' && downloadButton}
       {view.action === 'cancel' && <button type="button" className={cls(false)} data-update-cancel onClick={() => { void api.cancel().then(after) }}>Cancel</button>}
       {view.action === 'restart' && <button type="button" className={cls(true)} data-update-restart onClick={() => { void api.restart().then(after) }}><RotateCw size={13} aria-hidden /> Restart</button>}
-      {view.action === 'retry-update' && <button type="button" className={cls(true)} data-update-retry onClick={() => { void api.update().then(after) }}>Try again</button>}
+      {view.action === 'retry-update' && <button type="button" className={cls(true)} data-update-retry onClick={() => { void api.update(view.version ?? '').then(after) }}>Try again</button>}
       {view.downloadLink && view.action !== 'download' && downloadButton}
       {view.action === 'stop-skipping' && <button type="button" className={cls(false)} data-update-stop-skipping onClick={() => { void api.stopSkipping().then(after) }}>Stop skipping</button>}
       {view.action === 'try-again' && <button type="button" className={cls(false)} data-update-try-again onClick={() => void again()}>Try again</button>}

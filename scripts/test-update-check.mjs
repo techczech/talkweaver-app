@@ -206,7 +206,9 @@ await test('the note: a waiting note is never shown during a talk, and a deferre
   assert.equal(failed.shown, null)
   assert.equal(noteReducer(failed, { kind: 'busy', busy: false }).shown, 'try again')
   const notices = read('src/renderer/src/components/UpdateNotices.tsx')
-  assert.ok(/const view = presenting \? null : note\.shown/.test(notices) && /!snap\.busy && createPortal/.test(notices), 'note and popover are gated on presenting at render')
+  assert.ok(/const view = presenting \? null : current/.test(notices) && /const current = following \? installAnswer\(snap\) : note\.shown/.test(notices) && /!snap\.busy && createPortal/.test(notices), 'note and popover are gated on presenting at render')
+  // A note with no button is timed by what it says: a followed answer is a new object at every render.
+  assert.ok(/\}, \[timed\]\)/.test(notices) && !/\}, \[view\]\)/.test(notices), 'the six-second dismissal is not restarted by a re-render')
 })
 
 await test('every presenting transition pushes a snapshot that says so (windows close an open popover and note)', () => {
@@ -568,8 +570,11 @@ await test('the files: one place makes the request, one place downloads and inst
   assert.ok(/ipcMain\.handle\('updates:open-store', \(\)/.test(main), 'Open in Microsoft Store takes no argument')
   assert.ok(!/ipcMain\.handle\('updates:(download|open-store)', \([^)]/.test(main), 'neither handler declares a parameter')
   assert.ok(readFileSync(join(REPO, IDENTITY), 'utf8').includes('https://talkweaver.app/updates.json'), 'the feed address lives in the identity file')
-  // The click (ADR-0044): Update, Cancel and Restart take nothing from the window; only the installer runs or installs.
-  for (const ch of ['update', 'cancel', 'restart']) assert.ok(new RegExp(`ipcMain\\.handle\\('updates:${ch}', (async )?\\(\\)`).test(main), `updates:${ch} takes no argument`)
+  // The click (ADR-0044): Cancel and Restart take nothing from the window; Update takes only the version the person
+  // saw, compared with the offer (never an address, never used to build one); only the installer runs or installs.
+  for (const ch of ['cancel', 'restart']) assert.ok(new RegExp(`ipcMain\\.handle\\('updates:${ch}', (async )?\\(\\)`).test(main), `updates:${ch} takes no argument`)
+  assert.ok(/ipcMain\.handle\('updates:update', async \(_e, seen: unknown\)/.test(main), 'updates:update takes only the version shown')
+  assert.ok(/if \(!isOfferSeen\(seen, offer\)\)/.test(main) && (main.match(/\bseen\b/g) ?? []).length === 2, 'and only compares it with the offer')
   const installer = readFileSync(join(REPO, INSTALLER), 'utf8')
   const engine = readFileSync(join(REPO, ENGINE), 'utf8')
   assert.match(engine, /u\.autoDownload = false/, 'nothing downloads before the click')
@@ -583,8 +588,9 @@ await test('the files: one place makes the request, one place downloads and inst
   assert.equal((engine.match(/\.quitAndInstall\(/g) ?? []).length, 1, 'one place installs')
   const gate = engine.slice(engine.indexOf('function quitIfPermitted'), engine.indexOf('function nativeAnswer'))
   assert.match(gate, /\.quitAndInstall\(/, 'the one place is quitIfPermitted')
-  assert.match(gate, /if \(!live\(a\) \|\| !a\.ready \|\| a\.quitting \|\| state\.phase !== 'restarting'\) return false/, 'only for the live, prepared attempt, from the restarting state')
+  assert.match(gate, /if \(!live\(a\) \|\| !a\.ready \|\| !a\.closing \|\| a\.quitting \|\| state\.phase !== 'restarting'\) return false/, 'only for the live, prepared attempt whose windows were closed, from the restarting state')
   assert.ok(gate.indexOf('blockersNow()') < gate.indexOf('.quitAndInstall('), 'the blockers are read immediately before')
+  assert.ok(gate.indexOf('windowsNow()') > 0 && gate.indexOf('windowsNow()') < gate.indexOf('.quitAndInstall('), 'and the open windows: none may be open')
 })
 
 await test('a rejected notes read does not escape the Updated mark: loadNotes resolves to [] so the notes tab opens', async () => {

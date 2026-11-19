@@ -29,6 +29,7 @@ import {
   type ScratchFileKind, type ScratchGroup, type ScratchItem, type ScratchSlide, type ScratchSlideInput,
   type ScratchSnapshot, type ScratchSource, type ScratchState, type ScratchStateItem, type ScratchStatus
 } from '../shared/scratchpad.ts'
+import { trackWrite } from './write-queues.ts'
 
 export interface ScratchpadStoreOptions {
   now?: () => Date
@@ -198,7 +199,7 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
   // One operation at a time.
   let queue: Promise<unknown> = Promise.resolve()
   function serial<T>(run: () => T | Promise<T>): Promise<T> {
-    const next = queue.then(run, run)
+    const next = trackWrite('scratchpad', queue.then(run, run))
     queue = next.catch(() => undefined)
     return next
   }

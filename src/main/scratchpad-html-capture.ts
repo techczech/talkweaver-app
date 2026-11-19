@@ -4,7 +4,7 @@
 // Node, opens nothing, shows no dialogs and is destroyed after one picture or after the time-out.
 import { BrowserWindow, type WebFrameMain } from 'electron'
 import { createHash } from 'node:crypto'
-import { markHiddenRenderer } from './window-kinds'
+import { helperWindowsAllowed, markHiddenRenderer } from './window-kinds'
 import { slidePreviewUrl, type SlidePreviewStore } from '../shared/slide-preview.ts'
 import { previewFrame, samePreviewAddress, type ScratchHtmlPreview } from './scratchpad-html.ts'
 
@@ -21,6 +21,7 @@ const MAX_WORDS = 20_000
 
 export function createHtmlCapture(deps: { store: SlidePreviewStore }) {
   return async function capture(preview: ScratchHtmlPreview, timeoutMs: number): Promise<HtmlCapture | null> {
+    if (!helperWindowsAllowed()) return null
     const wrapper = `<!doctype html><meta charset="utf-8"><body style="margin:0;background:#fff;overflow:hidden"><iframe sandbox="${escapeAttr(preview.sandbox)}" credentialless src="${escapeAttr(preview.url)}" referrerpolicy="no-referrer" style="border:0;width:100vw;height:100vh"></iframe>`
     const id = `scratch-thumb-${createHash('sha256').update(wrapper).digest('hex').slice(0, 24)}`
     deps.store.set(id, wrapper)
@@ -28,7 +29,7 @@ export function createHtmlCapture(deps: { store: SlidePreviewStore }) {
       show: false, width: WIDTH, height: HEIGHT, useContentSize: true,
       webPreferences: { sandbox: true, contextIsolation: true, nodeIntegration: false, backgroundThrottling: false, disableDialogs: true }
     })
-    markHiddenRenderer(win)
+    markHiddenRenderer(win, 'scratchpad-capture')
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
     win.webContents.on('will-prevent-unload', (event) => event.preventDefault())
     win.webContents.setAudioMuted(true)

@@ -2642,11 +2642,15 @@
   .slide-content.layout-statement > p:not(.kicker),
   .stmt-list .stmt { text-wrap: pretty; }
 
-/* The presenter's Current pane on a chat or terminal simulation slide (0.38.2): the successor
-   picture waits hidden until it has loaded, so a step never flashes an empty frame (previewSlide's
-   swap); over a disclosure in the picture the pane shows a hand (the pane takes the click). */
+/* A presenter pane's successor picture waits hidden until it is drawn and fitted, so a step or a
+   slide change never flashes an empty frame (previewSlide's swap); over a disclosure in the Current
+   picture the pane shows a hand (the pane takes the click). */
 .preview > iframe.preview-incoming { visibility: hidden; }
 .preview.sim-pane-control { cursor: pointer; }
+/* The pane rule (paneRequested): a pane asked for a new picture takes no input of any kind until
+   that picture is shown: not its pictures, its running page, its chips or its links. !important
+   outranks Highlight mode's selectable Current picture and every other rule that lets input in. */
+.preview[data-pane-pending], .preview[data-pane-pending] * { pointer-events: none !important; }
 
 /* Recovery controls must remain outside a remote frame, including a refused one. */
 .preview.preview-live-sim:has(> .remote-preview-tools) > .live-sim-frame {

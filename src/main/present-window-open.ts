@@ -106,6 +106,8 @@ type Opts = {
 type DeckOpts = Opts & {
   /** A real key or mouse press reached this window's page in the last five seconds. */
   pressedRecently?: (contents: { id: number }) => boolean
+  /** A window opened from a deck window, at any depth (index.ts registers its kind: window-kinds.ts 'deck-child'). */
+  childOpened?: (child: unknown) => void
 }
 
 export type DeckHandOutRefusal = ContentHandOutRefusal
@@ -182,5 +184,8 @@ type DeckContents = Pick<WebContents, 'setWindowOpenHandler' | 'getURL' | 'id'> 
 export function guardDeckWindowTree(contents: DeckContents, opts: DeckOpts): void {
   const pressed = opts.pressedRecently
   contents.setWindowOpenHandler(presentWindowOpenHandler(() => contents.getURL(), opts, () => !!pressed && pressed(contents) === true))
-  contents.on('did-create-window', (child) => guardDeckWindowTree(child.webContents, opts))
+  contents.on('did-create-window', (child) => {
+    try { opts.childOpened?.(child) } catch { /* the window is still guarded below */ }
+    guardDeckWindowTree(child.webContents, opts)
+  })
 }

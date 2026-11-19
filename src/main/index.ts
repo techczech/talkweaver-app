@@ -184,7 +184,11 @@ import { cpus, homedir, hostname, loadavg, tmpdir, totalmem, release } from 'os'
 import { installNavigationGuard } from './navigation-guard'
 import { applyMainFrameOnly } from './ipc-main-frame-only'
 import { contentHandOutRefusal, handOutLink } from './hand-out'
-import { decideDownload, isAppWindow, isHiddenRenderer } from './window-kinds'
+import { decideDownload, helperWindowsAllowed, holdHelperWindows, isAppWindow, isHiddenRenderer, registerWindowKind, windowBlockerOf, windowClassOf, windowKindOf, type WindowKind } from './window-kinds'
+import { drainWriteQueues, registerDrainHook, trackWrite, writeQueuesBusy } from './write-queues'
+import { createEditorRevisions } from './editor-revisions'
+import { createRestartWindows } from './restart-windows'
+import { updateTestSaveDelay, updateTestSettingsDelay } from './update-test-hooks'
 import { createPressLedger, installPressLedger } from './recent-press'
 import { liveReadClipboardHandler } from './live-read-clipboard'
 import { appLocalHostOf, installLocalAddressFilter } from './local-address-filter'
@@ -212,7 +216,7 @@ import { createHash, randomBytes, randomUUID } from 'crypto'
 import { execFile, execFileSync, spawn, type ChildProcessByStdio } from 'child_process'
 import type { Readable } from 'stream'
 import { resolve as resolvePath, sep as pathSep, relative as relativePath, isAbsolute } from 'path'
-import { cancelThumbnailRender, cancelThumbnailRenders, clearThumbnailFocus, recycleRenderWindow, renderThumbnails, renderThumbnailsIdle, renderWindowProcessId, setThumbnailFocus, supersedeThumbnailRender, thumbnailForeground } from './thumbnails'
+import { cancelAllThumbnailRenders, cancelThumbnailRender, cancelThumbnailRenders, clearThumbnailFocus, recycleRenderWindow, renderThumbnails, renderThumbnailsIdle, renderWindowProcessId, setThumbnailFocus, supersedeThumbnailRender, thumbnailForeground } from './thumbnails'
 import { createThumbnailPrewarm, type PrewarmTalk } from './thumbnail-prewarm'
 import { thumbKeysIn } from './thumb-key-resolution'
 import { createVariantThumbnailHandler, createVariantThumbnailRenderer, mediaFingerprint } from './layout-variant-thumbnail'
@@ -451,7 +455,7 @@ import { createLiveSessionStore, type SessionRecoveryRecord } from './live-sessi
 import { secretsSlot, type SecretSlot, type SecretsStore } from './secrets-store'
 import { openSecretsStore } from './secrets-store-electron'
 import { installUpdateNotices } from './update-notices'
-import { restartBlockers } from '../shared/update-install'
+import { restartBlockers, type RestartBlocker } from '../shared/update-install'
 import { createRestartHolds, holdOnChannels } from './restart-holds'
 import { PRODUCT_NAME, helpMenu, macAppMenu } from './app-menu'
 import type { ChannelUpdateState } from '../shared/update-checker'
@@ -853,16 +857,26 @@ registerImporterIpc({
 // Window drags fire resize/move continuously, and each writeConfig is a synchronous
 // read+rewrite of config.json on the main process — jank for the whole drag. Coalesce to a
 // single write after the drag settles. Callers must guard against a destroyed window.
+// An update's restart writes every waiting one at once before the native call (write-queues.ts 'config-debounce').
+const debouncedConfigWrites = new Set<() => void>()
 function debouncedConfigWrite(read: () => Partial<Config>): () => void {
   let timer: NodeJS.Timeout | null = null
+  const writeNow = (): void => {
+    if (timer) clearTimeout(timer)
+    timer = null
+    debouncedConfigWrites.delete(writeNow)
+    try { writeConfig(read()) } catch { /* window gone mid-debounce */ }
+  }
   return () => {
     if (timer) clearTimeout(timer)
-    timer = setTimeout(() => {
-      timer = null
-      try { writeConfig(read()) } catch { /* window gone mid-debounce */ }
-    }, 500)
+    debouncedConfigWrites.add(writeNow)
+    timer = setTimeout(writeNow, 500)
   }
 }
+registerDrainHook('config-debounce', {
+  idle: () => debouncedConfigWrites.size === 0,
+  drain: async () => { for (const writeNow of [...debouncedConfigWrites]) writeNow(); return debouncedConfigWrites.size === 0 },
+})
 function expandHomePath(path: string): string {
   if (path === '~') return homedir()
   if (path.startsWith('~/')) return join(homedir(), path.slice(2))
@@ -1506,7 +1520,7 @@ ipcMain.handle('transcription:open-setup-folder', async () => (await shell.openP
 const appWindowOpenOpts = { openExternal: (url: string) => E2E ? console.log('[window-open] external (E2E):', url) : shell.openExternal(url) }
 // A deck window hands a link to the OS only after a real press in that window (present-window-open.ts).
 // Covered deck windows must keep drawing, including audiences opened by the runtime.
-const deckWindowOpenOpts = { ...appWindowOpenOpts, pressedRecently: (contents: { id: number }) => pressLedger.pressedRecently(contents.id), allowOptions: { overrideBrowserWindowOptions: { ...(E2E ? { show: false } : {}), webPreferences: { backgroundThrottling: false } } } }
+const deckWindowOpenOpts = { ...appWindowOpenOpts, pressedRecently: (contents: { id: number }) => pressLedger.pressedRecently(contents.id), childOpened: (child: unknown) => registerWindowKind(child as BrowserWindow, 'deck-child'), allowOptions: { overrideBrowserWindowOptions: { ...(E2E ? { show: false } : {}), webPreferences: { backgroundThrottling: false } } } }
 
 // The end-of-break chime plays only in the audience (projector) window, and a browser starts audio
 // only after a user gesture. Both ways that window comes to exist (the presenter's window.open and
@@ -1569,6 +1583,7 @@ function createWindow(): BrowserWindow {
   // there throws "Object has been destroyed" and aborts app quit (this crashed ⌘Q in 0.9.11).
   const wcId = win.webContents.id
   editorWindows.set(wcId, { win, outlinePath: null })
+  registerWindowKind(win, 'editor')
   mainWindow = win
   win.on('focus', () => {
     mainWindow = win
@@ -1584,24 +1599,31 @@ function createWindow(): BrowserWindow {
   // If the renderer does not acknowledge the request within 5 s (hung, crashed), main lets the close go
   // ahead after writing the recovery copy from the last text the editor tried to save.
   win.on('close', (event) => {
+    // A close the update's restart did not ask for releases any hold a called-off restart left (restart-windows.ts).
+    restartWindows.ordinaryClose(wcId)
     const pending = outlineDiskGuard.pendingFor(String(wcId))
     const openOutline = pending?.outlinePath ?? editorWindows.get(wcId)?.outlinePath
+    if (closeConfirmed.has(wcId)) return
+    // No talk open: nothing to save, so an update's restart may count this close as safe.
     // A plain close also has to flush typing still waiting in the renderer's autosave debounce.
-    if (closeConfirmed.has(wcId) || (!openOutline && !movedEditorReceipts.has(wcId))) return
+    if (!openOutline && !movedEditorReceipts.has(wcId)) { restartWindows.saved(wcId); return }
     event.preventDefault()
     const quit = quitting
     // Electron closes every window in one quit cycle. Each held editor must retain the
     // quit intent: consuming it here lets the last asynchronous confirmation merely
     // close its window, leaving a windowless process on macOS. Clear after the cycle,
     // without clearing a newer quit; a later ordinary close must not inherit it.
-    const quitCycle = quittingTimer
-    setImmediate(() => { if (quittingTimer === quitCycle) quitting = false })
+    const cycle = quitCycle
+    editorQuitAttempts.set(wcId, quitAttempt)
+    setImmediate(() => { if (quitCycle === cycle) quitting = false })
     clearTimeout(closeHolds.get(wcId))
     closeHolds.set(wcId, setTimeout(() => {
       closeHolds.delete(wcId)
       if (win.isDestroyed()) return
-      if (movedEditorReceipts.has(wcId)) return // only explicit buffer recovery may release a moved editor
-      if (!openOutline) return
+      // An update's restart asked for this close: no answer in time leaves the window open with its work, and the
+      // restart is off (ADR-0044 §6). Every other close keeps the fallback below.
+      if (restartWindows.timedOut(wcId)) return
+      if (movedEditorReceipts.has(wcId) || !openOutline) { cancelQuitAttempt(); return }
       const real = canonicalOutlinePath(openOutline)
       const text = lastUnsavedText.get(real)
       console.warn(`[outline-guard] the window did not answer the close request within 5 s; closing it${text !== undefined ? ' after keeping its unsaved text in a recovery copy' : ''} (${openOutline})`)
@@ -1613,7 +1635,10 @@ function createWindow(): BrowserWindow {
       if (text === undefined) { finish(); return }
       outlineRecovery.save(real, text).catch((e) => console.error('[outline-recovery] save', e)).finally(finish)
     }, 5000))
-    try { win.webContents.send('outline:close-requested', { quit }) } catch { /* destroyed: the timer closes it */ }
+    // The editor freezes (no typing, paste, drag, undo, menu or command edits), saves, and confirms with the revision it
+    // saved (editor-revisions.ts). `update`: an update's restart asked for this close ("Saving before the update…").
+    const update = restartWindows.waiting(wcId)
+    try { win.webContents.send('outline:close-requested', { quit, update }) } catch { /* destroyed: the timer closes it */ }
   })
   win.on('closed', () => {
     slidePreviewRequests.get(wcId)?.abort()
@@ -1622,6 +1647,9 @@ function createWindow(): BrowserWindow {
     clearTimeout(closeHolds.get(wcId))
     closeHolds.delete(wcId)
     closeConfirmed.delete(wcId)
+    editorQuitAttempts.delete(wcId)
+    lastSaveFailed.delete(wcId)
+    editorRevisions.forget(wcId)
     outlineDiskGuard.release(String(wcId))
     galleryReservations.delete(wcId)
     galleryClaimEpochs.delete(wcId); establishedGalleryClaims.delete(wcId)
@@ -1938,6 +1966,7 @@ function createToolsWindow(view: ToolsView, sessionId?: string, run?: ToolsRunRe
   })
 
   toolsWindow = win
+  registerWindowKind(win, 'tools')
   win.webContents.setWindowOpenHandler(appWindowOpenHandler(appWindowOpenOpts, () => pressLedger.pressedRecently(win.webContents.id)))
   registerAppWindowPermissions(win) // this window's own page may read the clipboard (recording-permissions.ts)
   loadRenderer(win, view)
@@ -2427,8 +2456,12 @@ async function buildTalkFullHtml(
 }
 
 // Export exactly the talks handed in — never a vault scan (ADR-0024). The caller has already
-// decided who is enrolled; this only compiles, writes and records.
-async function runBackupFor(talks: Array<{ slug: string; outlinePath: string }>): Promise<BackupRun> {
+// decided who is enrolled; this only compiles, writes and records. The whole run holds an update's restart as an
+// export in flight (ADR-0044: "exporting"), from its first talk to its last.
+function runBackupFor(talks: Array<{ slug: string; outlinePath: string }>): Promise<BackupRun> {
+  return restartHolds.during('exporting', runBackupExports)(talks)
+}
+async function runBackupExports(talks: Array<{ slug: string; outlinePath: string }>): Promise<BackupRun> {
   const folder = getConfig('backupFolder', undefined)
   const compilerDir = getCompilerPath()
   const empty = { at: Date.now(), ok: false, exported: 0, skipped: 0, failed: 0, skippedTalks: [] as BackupSkip[] }
@@ -3946,7 +3979,7 @@ async function mutatePathways(
   if (!root) throw new Error('Choose a Vault before managing pathways.')
   const path = resolvePath(pathwayManifestPath(root, basename(outlinePath).replace('-outline.md', '')))
   // Wait through a previous rejection without changing what that operation reports to its caller.
-  const operation = (pathwayMutationQueue.get(path) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+  const operation = trackWrite('pathways', (pathwayMutationQueue.get(path) ?? Promise.resolve()).catch(() => undefined).then(async () => {
     const before = await pathwaySnapshot(outlinePath, content)
     const text = mutation(before.manifest.text)
     writePathwayManifest(before.manifest.path, text)
@@ -3960,7 +3993,7 @@ async function mutatePathways(
       talkSlug
     ).pathways, before.slides)
     return { slides: before.slides, pathways }
-  })
+  }))
   pathwayMutationQueue.set(path, operation)
   try { return await operation }
   finally { if (pathwayMutationQueue.get(path) === operation) pathwayMutationQueue.delete(path) }
@@ -4586,7 +4619,7 @@ const thumbnailPrewarm = createThumbnailPrewarm({
   },
   presenting: () => presentWindows.size > 0 || (liveSessions?.liveRuns().length ?? 0) > 0,
   // Someone's render or compile, or the search index's own warm (it compiles in this process).
-  foregroundBusy: () => thumbnailForeground().busy || preparePass.foregroundBusy() || warming,
+  foregroundBusy: () => !helperWindowsAllowed() || thumbnailForeground().busy || preparePass.foregroundBusy() || warming,
   lastForegroundAt: () => thumbnailForeground().lastAt,
   now: () => Date.now(),
   sleep: (ms, signal) => new Promise<void>((resolve) => {
@@ -5066,7 +5099,7 @@ async function maybeOfferOutlineMigration(outlinePath: string, text: string): Pr
 
 // `forEditor`: the editor window is loading this talk (Editor.tsx) — the text it gets is the external-
 // change guard's baseline for the file (outline-disk-guard.ts). Every other reader leaves it alone.
-ipcMain.handle('talk:read-outline', async (event, outlinePath: string, opts?: { forEditor?: boolean }) => {
+ipcMain.handle('talk:read-outline', async (event, outlinePath: string, opts?: { forEditor?: boolean; revision?: unknown }) => {
   const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
   if (refusal) return null
   try {
@@ -5077,6 +5110,8 @@ ipcMain.handle('talk:read-outline', async (event, outlinePath: string, opts?: { 
       const claimed = editorWindows.get(event.sender.id)?.outlinePath
       if (claimed && outlineIdentity(claimed).key === outlineIdentity(outlinePath).key) {
         outlineDiskGuard.track(String(event.sender.id), outlinePath, loaded)
+        // The text loaded is the file's, at the editor's revision now (editor-revisions.ts).
+        editorRevisions.loaded(event.sender.id, opts.revision)
       } else {
         console.warn(`[outline-guard] an editor load of ${outlinePath} from a window that has not claimed it was not tracked`)
       }
@@ -5119,6 +5154,7 @@ ipcMain.handle('talk:outline-recovery-discard', async (event, outlinePath: unkno
 // refused, so nothing recreates it) until the window releases the talk.
 ipcMain.handle('talk:outline-discard', async (event, outlinePath: unknown) => {
   if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return false
+  editorRevisions.discarded(event.sender.id)
   try { await outlineRecovery.clear(canonicalOutlinePath(outlinePath)) } catch { /* best effort */ }
   return true
 })
@@ -5130,9 +5166,107 @@ ipcMain.handle('window:close-request-ack', (event) => {
   closeHolds.delete(event.sender.id)
   return true
 })
-ipcMain.handle('window:confirm-close', (event, opts?: { quit?: boolean }) => {
-  const entry = editorWindows.get(event.sender.id)
-  if (!entry || entry.win.isDestroyed()) return false
+// An update's restart closes every window through its own close route (ADR-0044 §6, restart-windows.ts). An editor
+// counts as safely closed only when its renderer confirms the close after its save queue has settled AND main knows
+// its work is saved: its last save succeeded, no failed save is kept for its talk, no changed-on-disk choice is
+// pending. Anything else keeps the window open and calls the restart off.
+// Rule A (ADR-0044 §6): every window's kind (window-kinds.ts). The Settings window is made by the settings host
+// (@app-patterns/settings-electron), so it is known by identity; a window of no known kind is a blocker.
+function windowKindNow(win: BrowserWindow): WindowKind | null {
+  const kind = windowKindOf(win.webContents.id)
+  if (kind) return kind
+  const settingsWindow = sharedSettings?.host.settingsWindow() as BrowserWindow | null | undefined
+  return settingsWindow && !settingsWindow.isDestroyed() && settingsWindow === win ? 'settings' : null
+}
+/** The blockers the open windows raise: Tools, Settings, Capture embed, a deck, any window of no known kind. */
+function windowRestartBlockers(): RestartBlocker[] {
+  const out: RestartBlocker[] = []
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue
+    const blocker = windowBlockerOf(windowKindNow(win))
+    if (blocker) out.push(blocker)
+  }
+  return out
+}
+// A restart and its native before-quit are the SAME attempt, with one helper hold.
+type QuitAttempt = { release: () => void }
+let quitAttempt: QuitAttempt | null = null
+const editorQuitAttempts = new Map<number, QuitAttempt | null>()
+function beginQuitAttempt(): void { quitAttempt ??= { release: holdRenderHelpers() } }
+/** The single end point for a quit/restart that leaves the app running. No clock guesses whether
+ *  saving is finished: the close routes report their outcome, including the renderer's 10 s ceiling. */
+function cancelQuitAttempt(expected = quitAttempt): void {
+  if (!expected || quitAttempt !== expected) return
+  quitAttempt = null
+  quitting = false
+  expected.release()
+  thumbnailPrewarm.nudge()
+  for (const [id, attempt] of editorQuitAttempts) {
+    if (attempt !== expected) continue
+    clearTimeout(closeHolds.get(id)); closeHolds.delete(id)
+    restartWindows.kept(id)
+    const win = editorWindows.get(id)?.win
+    try { if (win && !win.isDestroyed()) win.webContents.send('outline:close-cancelled') } catch { /* renderer already gone */ }
+  }
+}
+function holdRenderHelpers(): () => void {
+  const release = holdHelperWindows()
+  cancelAllThumbnailRenders()
+  // Pause through the same gate, without waiting for a pending compile/capture. A cancelled Quit
+  // can resume prewarm; will-quit (or the restart's stopBackground) stops it permanently.
+  thumbnailPrewarm.releaseNow()
+  return release
+}
+const restartWindows = createRestartWindows<BrowserWindow>({
+  windows: () => BrowserWindow.getAllWindows(),
+  id: (win) => win.webContents.id,
+  classOf: (win) => windowClassOf(windowKindNow(win)),
+  // The frozen editor is unfrozen with nothing lost; it may close or quit again the ordinary way.
+  release: (win) => { if (!win.isDestroyed()) win.webContents.send('outline:close-cancelled') },
+  stopBackground: async () => { void thumbnailPrewarm.stop() },
+  hasEditor: () => [...editorWindows.values()].some((entry) => !entry.win.isDestroyed()),
+  openEditor: () => { createWindow() },
+  log: (message) => console.log(`[update] ${message}`),
+})
+/** The editor window's work, as main knows it: saved (see restartWindows above). */
+function editorWorkSaved(id: number): boolean {
+  if (lastSaveFailed.has(id) || outlineDiskGuard.pendingFor(String(id)) !== null) return false
+  const outlinePath = editorWindows.get(id)?.outlinePath
+  return !outlinePath || !lastUnsavedText.has(canonicalOutlinePath(outlinePath))
+}
+// The renderer's close sheet answered "Stay here": an update's restart that asked for this close is called off.
+// Nothing else waits for it.
+ipcMain.handle('window:close-kept', (event) => {
+  clearTimeout(closeHolds.get(event.sender.id))
+  closeHolds.delete(event.sender.id)
+  restartWindows.kept(event.sender.id)
+  cancelQuitAttempt()
+  return true
+})
+// Rules B and D (ADR-0044 §6; editor-revisions.ts): the frozen editor confirms with its current revision. For an
+// update's restart main accepts only the successful save of exactly that revision with nothing still being written
+// (and, as before, no failed save kept and no changed-on-disk choice pending); for every other close, that revision
+// written or tried. Otherwise 'resave': the editor saves once more and confirms again (the five-second fallback still
+// runs meanwhile). true: the window closes; false: it stays open (the editor unfreezes).
+ipcMain.handle('window:confirm-close', (event, opts?: { quit?: boolean; revision?: unknown; hasDraft?: boolean }) => {
+  const id = event.sender.id
+  const entry = editorWindows.get(id)
+  const keep = (): false => { cancelQuitAttempt(); return false }
+  if (!entry || entry.win.isDestroyed()) return keep()
+  const attempt = editorQuitAttempts.get(id)
+  if (attempt && attempt !== quitAttempt) return false // a late save cannot revive a cancelled Quit
+  const forRestart = restartWindows.waiting(id)
+  if (forRestart && opts?.hasDraft === true) {
+    clearTimeout(closeHolds.get(id))
+    closeHolds.delete(id)
+    restartWindows.confirm(id, false)
+    return keep()
+  }
+  const verdict = editorRevisions.verdict(id, opts?.revision, forRestart ? 'restart' : 'close')
+  if (verdict === 'resave' && (!forRestart || editorWorkSaved(id))) return 'resave'
+  clearTimeout(closeHolds.get(id))
+  closeHolds.delete(id)
+  if (restartWindows.confirm(id, verdict === 'saved' && editorWorkSaved(id)) === 'keep') return keep()
   closeConfirmed.add(event.sender.id)
   if (opts?.quit === true) app.quit()
   else entry.win.close()
@@ -5155,7 +5289,21 @@ ipcMain.handle('talk:extract-section', async (_event, sourceOutlinePath: string,
 
 // Data-loss backstop (2026-07-05): isStructurallyEmptyOutline and its refusal message live in
 // talk-writer.ts, which applies the same backstop to every other origin's writes.
-ipcMain.handle('talk:write-outline', async (_event, outlinePath: string, content: string) => {
+// Each editor window's last save: failed or not (an update's restart counts an editor as saved only if it did not).
+// Each save carries the revision of the text it sent (editor-revisions.ts): what a close confirms against.
+ipcMain.handle('talk:write-outline', async (event, outlinePath: string, content: string, opts?: { revision?: unknown }) => {
+  const finished = editorRevisions.writeStarted(event.sender.id, opts?.revision)
+  try {
+    await updateTestSaveDelay() // the update-test flavour's slow save, and a test run's from source; nothing in a release
+    const result = await writeOutlineFromEditor(event, outlinePath, content)
+    const ok = !!result && typeof result === 'object' && result.ok === true
+    if (ok) lastSaveFailed.delete(event.sender.id)
+    else lastSaveFailed.add(event.sender.id)
+    finished(ok)
+    return result
+  } catch (error) { lastSaveFailed.add(event.sender.id); finished(false); throw error }
+})
+async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string) {
   renewEstablishedGalleryClaims()
   const saveEpoch = galleryEpoch
   const saveOwner = editorWindows.get(_event.sender.id)
@@ -5266,9 +5414,9 @@ ipcMain.handle('talk:write-outline', async (_event, outlinePath: string, content
   // `content` present only when stamping changed the bytes — the renderer adopts it into the
   // editor buffer (Editor.tsx) so the next save sends already-stamped text.
   return stampedContent === null
-    ? { ok: true, collisions }
-    : { ok: true, collisions, content: stampedContent }
-})
+    ? { ok: true as const, collisions }
+    : { ok: true as const, collisions, content: stampedContent }
+}
 
 // ── Metadata Registry surfaces (ADR-0036) ───────────────────────────────────
 // The registry (src/shared/metadata-registry.ts) declares every key; here live the vault-wide
@@ -5999,6 +6147,7 @@ ipcMain.handle('live-page:open-capture', async (event, raw: unknown) => {
     webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true, spellcheck: false, backgroundThrottling: false }
   })
   captureEmbed = { win, opener: opener.webContents.id }
+  registerWindowKind(win, 'capture-embed')
   // The page is the app's own and never goes anywhere else.
   win.webContents.on('will-navigate', (e) => e.preventDefault())
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
@@ -6159,6 +6308,7 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
         ...(bridgePreload ? { preload: bridgePreload, sandbox: false } : {})
       }
     })
+    registerWindowKind(win, 'deck')
     // Keep our role+talk title — the deck HTML sets its own <title>, which would otherwise replace it.
     win.on('page-title-updated', (e) => e.preventDefault())
     win.setTitle(winTitle)
@@ -6205,6 +6355,7 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
       const audioArmed = recordingAudioArmed(deckWcId)
       if (!live && !offerRunSave && !audioArmed) return
       event.preventDefault()
+      cancelQuitAttempt()
       sendRecordingCloseOffer(win, { live, offerRunSave, audioArmed })
     })
     win.on('closed', () => {
@@ -9474,15 +9625,23 @@ const closeHolds = new Map<number, ReturnType<typeof setTimeout>>()
 // The last text each guarded talk's editor failed to save (real path → text): the fallback close's
 // recovery copy. Cleared by the next successful save.
 const lastUnsavedText = new Map<string, string>()
+// Editor windows (webContents ids) whose most recent save did not succeed, for any reason. Cleared by its next
+// successful save.
+const lastSaveFailed = new Set<number>()
+/** Each editor window's saves by revision (editor-revisions.ts): what its close confirms against. */
+const editorRevisions = createEditorRevisions()
 // ⌘Q in progress. Set by before-quit; a close that holds for the person takes it (and resets it); and it
 // is cleared once the close cycle is over, so a quit cancelled anywhere else never lingers to quit the
 // app on some later close.
 let quitting = false
-let quittingTimer: ReturnType<typeof setTimeout> | null = null
-app.on('before-quit', () => {
+let quitCycle = 0
+app.on('before-quit', (event) => {
+  beginQuitAttempt()
+  const attempt = quitAttempt
+  const cycle = ++quitCycle
   quitting = true
-  if (quittingTimer) clearTimeout(quittingTimer)
-  quittingTimer = setTimeout(() => { quitting = false; quittingTimer = null }, 1500)
+  // Observe the final verdict after ALL before-quit listeners, including listeners added later.
+  setImmediate(() => { if (quitCycle === cycle && event.defaultPrevented) cancelQuitAttempt(attempt) })
 })
 const outlineDiskGuard = createOutlineDiskGuard({
   canonical: canonicalOutlinePath,
@@ -10451,6 +10610,12 @@ async function runSetupCommand(args: string[]): Promise<void> {
 // ── Shared settings (0.42): the store, the Settings window, the menu bar (settings-host.ts) ──────────
 // Started first thing at launch (app.whenReady below), before anything reads a preference.
 let sharedSettings: TalkWeaverSettings | null = null
+// The settings store's own writes (the Settings window's, an import's) are waited for before an update's native call
+// (write-queues.ts 'settings-store'); preference writes main makes are the overlay's ('settings-overlay').
+registerDrainHook('settings-store', {
+  idle: () => !sharedSettings || sharedSettings.store.pending() === 0,
+  drain: async () => !sharedSettings || await sharedSettings.store.flushWithin(10_000),
+})
 let settingsKeymap: SettingsKeymap | null = null
 let lastShortcutKeys = ''
 
@@ -10499,6 +10664,7 @@ async function startSharedSettings(): Promise<void> {
   sharedSettings = await startSettingsHost({
     dir,
     appVersion: app.getVersion(),
+    waitBeforeWrite: updateTestSettingsDelay, // the packaged proof's pending preference write; nothing in a release
     file: { read: () => configFile().read() as Record<string, unknown>, write: (patch) => configFile().write(patch as Partial<Config>) },
     window: { preload: join(__dirname, '../preload/settings.js'), url: settingsPageUrl(process.env['ELECTRON_RENDERER_URL'], __dirname) },
     slots: createSecretSlots({
@@ -10928,12 +11094,43 @@ app.whenReady().then(async () => {
       publishing: restartHolds.active('publishing'),
       sharing: sharedTalkService?.createsPending() ?? false,
       unsaved: lastUnsavedText.size > 0 || [...editorWindows.keys()].some((id) => outlineDiskGuard.pendingFor(String(id)) !== null),
+      // Rule A: Tools, Settings, Capture embed and any other window that is not an editor or a hidden helper.
+      windows: windowRestartBlockers(),
     }),
+    // The restart's commit (ADR-0044, update-engine.ts): every window closes through its own close route (an editor
+    // saves first; "Stay here" keeps it and calls the restart off). The same helper gate as Quit prevents late
+    // renders throughout the restart. The native install is still called only with no window open.
+    closeWindowsForRestart: () => {
+      beginQuitAttempt()
+      return restartWindows.closeWindows()
+    },
+    openWindows: () => restartWindows.openWindows(),
+    // The restart was called off after windows began closing: no further close, late closes settled, and an editor
+    // open again whenever none is left (restart-windows.ts).
+    restartAbandoned: () => {
+      cancelQuitAttempt()
+      restartWindows.abandoned()
+    },
+    // Rule C (ADR-0044 §6): after the windows have closed, every main-process write queue finishes before the native
+    // call (write-queues.ts); a failure or twenty seconds without finishing calls the restart off.
+    drainWriteQueues: async (baseline) => {
+      const outcome = await drainWriteQueues(20_000, baseline)
+      console.log(`[update] write queues: ${outcome.ok ? 'every one drained' : `not drained (failed: ${outcome.failed.join(', ') || 'none'}; still busy: ${outcome.timedOut.join(', ') || 'none'})`}`)
+      return outcome.ok
+    },
+    writeQueuesBusy: () => writeQueuesBusy(),
     readConfig,
     writeConfig,
     e2e: E2E,
   })
   onRecordingOpenChange(() => updateChecker?.busyChanged())
+  // Rule A: a window that is a blocker (Tools, Settings, Capture embed, a deck's) opening or closing changes what holds
+  // the restart; the notices are redrawn once its kind is registered (the next turn) and when it has gone.
+  const blockersMayHaveChanged = (): void => { try { updateChecker?.busyChanged(); updateChecker?.tell() } catch { /* starting */ } }
+  app.on('browser-window-created', (_event, win) => {
+    setImmediate(blockersMayHaveChanged)
+    win.once('closed', () => setImmediate(blockersMayHaveChanged))
+  })
   // Every permission request and check is answered by one table from app start: the microphone to a
   // presenter window's own page, clipboard and full screen to a window's own page, nothing to a
   // frame embedded in a slide (recording-permissions.ts).

@@ -2,7 +2,7 @@ import { withRemoteEmbedArtwork } from './embed-preview-artwork'
 import { containCaptureSession, containCaptureContents, captureNetworkReady } from './capture-network'
 import { app, BrowserWindow, session } from 'electron'
 import { hardenLivePageSession, livePageWebPreferences, type LivePageSession } from './live-page-host'
-import { markHiddenRenderer } from './window-kinds'
+import { helperWindowsAllowed, markHiddenRenderer } from './window-kinds'
 import type { NativeImage } from 'electron'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -86,6 +86,25 @@ function destroyRenderWin(): void {
 // A zero timeout, not setImmediate: an immediate can run before the event loop's timers and I/O get a turn.
 const nextTurn = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0))
 
+// Electron can leave load/capture/executeJavaScript pending when its window is destroyed.
+// Retire that wait on the queue's existing cancellation signal, so a cancelled Quit's next
+// render is not stuck behind a promise whose renderer no longer exists. No close/save deadline.
+async function rendererWork<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+  const window = renderWin
+  let abort = (): void => {}
+  const cancelled = new Promise<never>((_, reject) => {
+    // Live cancellation must still wait for renderer work to finish: reusing that window
+    // early lets an old carousel/navigation mutate the next request. Only a dead window
+    // can never finish its work and may release the queue immediately.
+    abort = () => { if (!window || window.isDestroyed()) reject(new Error('Thumbnail renderer was destroyed')) }
+    signal.addEventListener('abort', abort, { once: true })
+    window?.once('closed', abort)
+    abort()
+  })
+  try { return await Promise.race([work, cancelled]) }
+  finally { signal.removeEventListener('abort', abort); window?.removeListener('closed', abort) }
+}
+
 /** The deck's identity (sha256 of the marked HTML, as before) and its bytes for the temp file. The
  *  hash runs on the thread pool (WebCrypto); only the string-to-bytes copy runs here. */
 async function deckBytesAndKey(fullHtml: string): Promise<{ bytes: Buffer; key: string }> {
@@ -150,6 +169,10 @@ async function writePicture(path: string, bytes: Buffer, beforeWrite?:()=>void):
 }
 
 async function ensureDeckLoaded(deck: string | PreviewVariant, signal: AbortSignal, shouldYield?: () => boolean): Promise<BrowserWindow> {
+  const checkCancelled = (): void => {
+    if (signal.aborted || !helperWindowsAllowed() || shouldYield?.()) throw new Error('Thumbnail render cancelled')
+  }
+  checkCancelled()
   let bytes: Uint8Array | null = null
   let key: string
   if (typeof deck === 'string') {
@@ -161,6 +184,7 @@ async function ensureDeckLoaded(deck: string | PreviewVariant, signal: AbortSign
     // The same document, marked, hashed and written off this thread: same bytes, same key, its own file.
     key = deck.key
   }
+  checkCancelled() // hashing/marking above yielded: Quit may have started meanwhile
   if (renderWin && !renderWin.isDestroyed() && renderWinHtmlKey === key) return renderWin
   let win = renderWin
   if (!win || win.isDestroyed()) {
@@ -185,19 +209,24 @@ async function ensureDeckLoaded(deck: string | PreviewVariant, signal: AbortSign
     })
     // Nobody sees or presses in this window: it hands nothing to the OS, navigates nowhere but the
     // file loaded into it, and downloads nothing (window-kinds.ts, navigation-guard.ts).
-    markHiddenRenderer(win)
+    markHiddenRenderer(win, 'thumbnail')
     let releaseProxy = (): void => {}
-    try { releaseProxy = await containCaptureSession(isolated, { denyAll: true }); await containCaptureContents(win.webContents) }
-    catch (error) { releaseProxy(); win.destroy(); throw error }
+    renderWin = win
+    // Register cleanup before containment yields: shutdown can destroy this window during it.
     win.on('closed', () => {
       releaseProxy()
-      renderWin = null; renderWinHtmlKey = null
+      if (renderWin === win) { renderWin = null; renderWinHtmlKey = null }
       void Promise.allSettled([isolated.clearStorageData(), isolated.clearCache()])
     })
+    try {
+      releaseProxy = await containCaptureSession(isolated, { denyAll: true })
+      checkCancelled()
+      await rendererWork(containCaptureContents(win.webContents), signal)
+      checkCancelled()
+    } catch (error) { releaseProxy(); if (!win.isDestroyed()) win.destroy(); throw error }
     win.webContents.setWindowOpenHandler(() => ({ action: 'deny' })) // a hidden renderer opens nothing
     win.webContents.on('will-prevent-unload', (event) => event.preventDefault()) // a beforeunload handler never holds the next deck back
     win.webContents.setAudioMuted(true)
-    renderWin = win
   }
   renderWinHtmlKey = null // not valid until the load below succeeds
   // Large HTML loads far more reliably from a temp file than a data: URL. The deck is fully
@@ -206,10 +235,13 @@ async function ensureDeckLoaded(deck: string | PreviewVariant, signal: AbortSign
   const tmpHtmlPath = bytes ? join(tmpdir(), `talk-weaver-thumb-${randomBytes(8).toString('hex')}.html`) : null
   try {
     if (tmpHtmlPath && bytes) await writeFile(tmpHtmlPath, bytes)
+    checkCancelled()
     // A variant's folder and file are checked again right before the load; refused, the caller loads fullHtml.
     if (!tmpHtmlPath && !regularVariantFile(deck as PreviewVariant)) throw new Error('The preview variant is gone or refused.')
-    await win.loadFile(tmpHtmlPath ?? (deck as PreviewVariant).path)
-    if (!await captureNetworkReady(win.webContents)) throw Error('Thumbnail capture containment unavailable')
+    await rendererWork(win.loadFile(tmpHtmlPath ?? (deck as PreviewVariant).path), signal)
+    checkCancelled()
+    if (!await rendererWork(captureNetworkReady(win.webContents), signal)) throw Error('Thumbnail capture containment unavailable')
+    checkCancelled()
     renderWinHtmlKey = key
     return win
   } catch (err) {
@@ -243,6 +275,7 @@ async function ensureDeckLoaded(deck: string | PreviewVariant, signal: AbortSign
 export async function renderThumbnails(
   opts: RenderThumbnailsOptions
 ): Promise<Record<string, string>> {
+  if (!helperWindowsAllowed()) return {}
   return enqueueRender(opts, opts.requestKey, opts.background === true)
 }
 
@@ -254,6 +287,7 @@ export async function renderThumbnails(
 export async function renderThumbnailsIdle(
   opts: RenderThumbnailsOptions & { requestKey: string }
 ): Promise<{ rendered: Record<string, string>; interrupted: boolean }> {
+  if (!helperWindowsAllowed()) return { rendered: {}, interrupted: true }
   let interrupted = false
   let yielded = false
   const ask = opts.shouldYield
@@ -276,6 +310,9 @@ export function cancelThumbnailRender(requestKey: string): void {
 export function cancelThumbnailRenders(prefix: string): void {
   enqueueRender.cancelPrefix(prefix)
 }
+
+/** Shutdown cancels anonymous work too; a prefix only cancels named owners. */
+export function cancelAllThumbnailRenders(): void { enqueueRender.cancelAll() }
 
 /** A newer request is on its way under this key: a waiting render is dropped, and a running one
  *  finishes the slide it is capturing (written and cached as usual) and takes no further slide. */
@@ -327,6 +364,7 @@ async function renderThumbnailsSerialized(
   signal: AbortSignal,
   superseded: AbortSignal
 ): Promise<Record<string, string>> {
+  if (signal.aborted || !helperWindowsAllowed()) return {}
   rendering = true
   try {
     return await renderThumbnailsInWindow(opts, signal, superseded)
@@ -395,7 +433,7 @@ async function renderThumbnailsInWindow(
     } catch (error) {
       // The variant's file was pruned or refused between the check above and the load: load the deck
       // from fullHtml instead, as without a variant (no remote page on it, so it is the same document).
-      if (!preview) throw error
+      if (!preview || signal.aborted || !helperWindowsAllowed() || opts.shouldYield?.()) throw error
       console.warn('[thumbnails] the preview variant could not be loaded; loading the deck itself', error)
       win = await ensureDeckLoaded(fullHtml, signal, opts.shouldYield)
     }
@@ -412,8 +450,8 @@ async function renderThumbnailsInWindow(
       // capture under way below always completes and is cached (cancellation still stops at once).
       if (signal.aborted || superseded?.aborted || opts.shouldYield?.()) break
       try {
-        await navigateToSlide(win, item.index)
-        const { pending: stillPending } = await settle(win)
+        await rendererWork(navigateToSlide(win, item.index), signal)
+        const { pending: stillPending } = await rendererWork(settle(win), signal)
         if (signal.aborted || opts.shouldYield?.()) break
         // DETERMINISM: never persist an INCOMPLETE render. A large image (e.g. an 8MP paste) can
         // miss settle's decode window under load — capturing a blank. Caching that blank made it
@@ -432,20 +470,20 @@ async function renderThumbnailsInWindow(
         // capture has loaded images, so the "don't cache blank" guard above does NOT catch it, and it
         // got cached → the scrambled strip with no recovery. We re-toggle + verify; if the target is
         // not the sole active slide we DON'T cache (skip), so a wrong capture can never persist.
-        const onTarget = await forceActiveSlide(win, item.index)
+        const onTarget = await rendererWork(forceActiveSlide(win, item.index), signal)
         if (!onTarget) {
           console.warn(`[thumbnails] slide ${item.index} (${item.key}): could not isolate it as the active slide — NOT caching (will retry)`)
           continue
         }
-        const img: NativeImage = await win.webContents.capturePage()
+        const img: NativeImage = await rendererWork(win.webContents.capturePage(), signal)
         if (signal.aborted || opts.shouldYield?.()) break
         await writePicture(item.pngPath, await encodePng(img),opts.beforeWrite)
         result[item.key] = item.pngPath
 
         // ADR-0022: ONLY a carousel (the active slide carries .card-gallery[data-exclusive]) gets
         // per-sub-slide thumbnails — one full-frame capture per stepped full-bleed sub-slide.
-        if (await activeSlideHasCarousel(win)) {
-          const parts = await captureCarouselSubSlides(win)
+        if (await rendererWork(activeSlideHasCarousel(win), signal)) {
+          const parts = await rendererWork(captureCarouselSubSlides(win), signal)
           for (let i = 0; i < parts.length; i += 1) {
             const p = join(cacheDir, `${item.cacheKey}__${i}.png`)
             await writePicture(p, await encodePng(parts[i]),opts.beforeWrite)
@@ -467,7 +505,8 @@ async function renderThumbnailsInWindow(
   } finally {
     // Keep the window for the next pause; drop it (and the deck it pins in memory) when idle.
     if (renderWinIdleTimer) clearTimeout(renderWinIdleTimer)
-    renderWinIdleTimer = setTimeout(destroyRenderWin, RENDER_WIN_IDLE_MS)
+    if (helperWindowsAllowed() && renderWin && !renderWin.isDestroyed()) renderWinIdleTimer = setTimeout(destroyRenderWin, RENDER_WIN_IDLE_MS)
+    else destroyRenderWin()
   }
 
   await pruneOlderArtwork()

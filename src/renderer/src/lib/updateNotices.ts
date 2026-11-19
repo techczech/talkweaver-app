@@ -13,6 +13,8 @@ export interface TwAnswerView extends Omit<AnswerView, 'action'> {
   action: TwAnswerAction | null
   /** Offer "Download from talkweaver.app" beside the action (a failed or refused update). */
   downloadLink?: boolean
+  /** The answer describes an update under way: whoever shows it follows the snapshot (progress, ready, failed). */
+  live?: boolean
 }
 
 /** The facts every wording function needs, from a snapshot. */
@@ -38,6 +40,10 @@ export function useUpdateSnapshot(): UpdateSnapshot | null {
 
 /** The click's state as an answer, or null when no update is under way. */
 export function installAnswer(snap: UpdateSnapshot): TwAnswerView | null {
+  const view = installAnswerOf(snap)
+  return view ? { ...view, live: true } : null
+}
+function installAnswerOf(snap: UpdateSnapshot): TwAnswerView | null {
   const s = snap.install
   switch (s.phase) {
     case 'downloading': return {

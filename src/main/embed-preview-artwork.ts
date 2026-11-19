@@ -7,21 +7,21 @@ import { createEmbedPreviewQueue } from './embed-preview-queue'
 import { replaceRemoteEmbedFrames } from './embed-preview-policy'
 import { containCaptureSession, containCaptureContents, captureNetworkReady } from './capture-network'
 import { parseLivePageUrl, testLoopbackAllowance } from './live-page-policy'
-import { markHiddenRenderer } from './window-kinds'
+import { helperWindowsAllowed, markHiddenRenderer } from './window-kinds'
 import { testNetworkOverride } from './test-network-startup'
 
 const cache = new Map<string, { image: string | null; expires: number }>()
 const enqueueCapture = createEmbedPreviewQueue(capturePreviewPage, 8)
 
 export async function capturePreviewPage(url: string, signal: AbortSignal): Promise<string | null> {
-  if (signal.aborted) return null
+  if (signal.aborted || !helperWindowsAllowed()) return null
   const allowance = testLoopbackAllowance({ isPackaged: app.isPackaged, e2e: process.env.TW_E2E === '1', value: testNetworkOverride('TW_E2E_LIVE_PAGE_ALLOW') })
   if (!parseLivePageUrl(url, allowance)) return null
   const isolated = session.fromPartition(`tw-embed-preview:${randomUUID()}`)
   hardenLivePageSession(isolated as unknown as LivePageSession, { allowance, userAgent: isolated.getUserAgent() })
   const win = new BrowserWindow({ show: false, width: 1280, height: 720, useContentSize: true,
     webPreferences: livePageWebPreferences(isolated, false) })
-  markHiddenRenderer(win)
+  markHiddenRenderer(win, 'embed-preview-artwork')
   const unregister = registerLivePageContents(win.webContents.id)
   win.webContents.setAudioMuted(true)
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))

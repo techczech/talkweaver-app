@@ -23,6 +23,7 @@ import {
   applyFeedbackLine, emptyFeedbackIndex, failedLine, foldView, itemLine, statusLine, syncedLine,
   type FeedbackFold, type FeedbackIndex, type FeedbackStatus, type WorkerFeedbackItem,
 } from '../shared/feedback.ts'
+import { trackWrite } from './write-queues.ts'
 
 export function feedbackFilePath(outlinePath: string, shareId: string): string {
   if (!isShareId(shareId)) throw new Error(`Not a share id: ${JSON.stringify(shareId)}`)
@@ -61,7 +62,7 @@ export function createFeedbackMirror(options: { now?: () => number } = {}): Feed
   let chain: Promise<unknown> = Promise.resolve()
 
   function serial<T>(work: () => T): Promise<T> {
-    const next = chain.then(work)
+    const next = trackWrite('feedback-mirror', chain.then(work))
     chain = next.catch(() => {})
     return next
   }

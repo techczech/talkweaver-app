@@ -712,7 +712,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     setQuoteForm: (form: QuoteFormChoice, compiledLayoutAt?: (headingLine: number) => string | undefined) => void
     deleteSlide: () => void
     flushSave: () => Promise<void>
-    settleSave: () => Promise<void>
+    settleSave: (signal?: AbortSignal) => Promise<void>
+    forceSave: (signal?: AbortSignal) => Promise<boolean>
     scrollCursorIntoView: () => void
     cursorCoords: () => { x: number; y: number } | null
     placeCursorAtCoords: (x: number, y: number) => void
@@ -1582,6 +1583,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     replaceDoc: (text, opts) => editorReplaceRef.current?.(text, opts) ?? null,
     saveBuffer: async (outlinePath) => (await applyOutlineMutation(outlinePath, (current) => current, { force: true })).ok,
     flush: async () => { await editorCmdsRef.current?.flushSave() },
+    settle: async (signal) => { await editorCmdsRef.current?.settleSave(signal) },
+    forceSave: async (signal) => (await editorCmdsRef.current?.forceSave(signal)) ?? false,
     onDiscardTalk: () => onDiscardTalk?.(),
   })
   useEffect(() => { registerLeaveGuard?.(diskGuard.guardLeave) }, [registerLeaveGuard, diskGuard.guardLeave])

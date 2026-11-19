@@ -48,6 +48,8 @@ export interface SettingsHostDeps {
   /** The store changed: the schema keys whose value changed (the overlay's view), and the state. */
   changed(keys: string[], state: SettingsState): void
   log?(line: string): void
+  /** Test builds only (update-test-hooks.ts updateTestSettingsDelay). */
+  waitBeforeWrite?(): Promise<void>
 }
 
 export interface TalkWeaverSettings {
@@ -72,6 +74,7 @@ export async function startSettingsHost(deps: SettingsHostDeps): Promise<TalkWea
     appVersion: deps.appVersion,
     file: deps.file,
     log,
+    ...(deps.waitBeforeWrite ? { waitBeforeWrite: deps.waitBeforeWrite } : {}),
     onChange: (keys, state) => {
       host?.storeChanged(state)
       if (host) placeUpdateCheckInAppMenu(store, deps, host)

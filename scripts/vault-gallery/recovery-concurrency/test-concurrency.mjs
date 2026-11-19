@@ -4,6 +4,7 @@ import vm from 'node:vm'
 import {transformSync} from 'esbuild'
 import {EditorState} from '@codemirror/state'
 import {createOutlineRecovery} from '../../../src/main/outline-recovery.ts'
+import {closeFrozen} from '../../../src/renderer/src/lib/closeFreeze.ts'
 const root='scripts/vault-gallery/recovery-concurrency/fixture'
 const source=fs.readFileSync(process.env.TW_RECOVERY_SOURCE || 'src/renderer/src/components/WorkspaceLayout.tsx','utf8')
 const start=source.indexOf('  useEffect(() => {\n    const recover = (event:Event)')
@@ -67,7 +68,7 @@ try {
   h.window.tw.windows.recoverMovedTalk=async()=>({kind:'revoked'})
   const hook=fs.readFileSync('src/renderer/src/components/useOutlineDiskChange.ts','utf8')
   const start=hook.indexOf('  useEffect(() => window.tw.talk.onCloseRequested')
-  vm.runInNewContext(transformSync(hook.slice(start,hook.indexOf('  return { change',start)),{loader:'ts'}).code,{window:h.window,CustomEvent,useEffect:fn=>fn(),wiringRef:{current:{activeOutlinePath:'old'}},leave:async()=>{left++;return true}})
+  vm.runInNewContext(transformSync(hook.slice(start,hook.indexOf('  return { change',start)),{loader:'ts'}).code,{window:h.window,CustomEvent,useEffect:fn=>fn(),wiringRef:{current:{activeOutlinePath:'old',settle:async()=>{},forceSave:async()=>true}},leave:async()=>{left++;return true},closeFrozen,freezeFor:()=>({freeze(){},unfreeze(){}}),unfreezeAllRef:{current:new Set()},editorRevision:{current:()=>0}})
   const selection=h.request(false);await tick();closeRequest({quit:false});await tick()
   await finish(h);await finish(h);assert.equal(await selection.promise,false);await tick();assert.equal(confirmed,1);assert.equal(left,0);assert.equal((await h.store.read('destination')).text,h.text);h.cleanup()
  }

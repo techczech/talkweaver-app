@@ -19,21 +19,35 @@
 //  D3. Hand-over only at restart time: the click with nothing holding, or Restart later with nothing holding.
 //      restartNow() re-reads the blockers, enters "restarting" (no Cancel: the person has committed; this lasts
 //      seconds), hands the verified file to Squirrel.Mac through electron-updater's local address, reads the
-//      blockers once more and the spent flag, then asks Squirrel.Mac to prepare. On its ready event the ONLY code
-//      that calls the native quit-and-install, quitIfPermitted(), re-reads the blockers and the attempt in the same
-//      synchronous turn and quits and installs.
+//      blockers once more and the spent flag, then asks Squirrel.Mac to prepare. On its ready event commit() reads
+//      the blockers again and, only if none holds, closes every window through the app's own close route
+//      (closeWindows, restart-windows.ts: a window counts as closed only with its work positively saved; a slow or
+//      failed save, "Stay here", no answer or a crash does not). Only when every window has closed
+//      are the main-process write queues waited for (drainWriteQueues: settings, Scratchpad, Pathways and every queue
+//      in write-queues.ts; a failure or a timeout calls the restart off as D4); only then does the ONLY code that calls
+//      the native quit-and-install, quitIfPermitted(), re-read the attempt, the blockers, the number of open windows
+//      and the write queues in one synchronous turn, and quit and install. The native call is
+//      never made with a window open: Electron's native quit-and-install, called with windows open, adds a window-list
+//      observer that is never removed, closes the windows itself, and installs whenever the last one closes,
+//      however much later, with no check of ours in between (electron_api_auto_updater.cc, Electron 42).
 //  D4. The narrow leftovers. If something holds at that last moment (presenting started in the seconds after
-//      Restart), or Squirrel.Mac does not answer within the watchdog time, or the install fails after it was
-//      called, Squirrel.Mac may have armed ShipIt while the app runs on. The attempt ends, the run is marked spent
+//      Restart), or a window is kept open (Stay here, a close that fails, a window opened meanwhile), or
+//      Squirrel.Mac does not answer within the watchdog time, or the install fails after it was called,
+//      Squirrel.Mac may have armed ShipIt while the app runs on. The attempt ends, the run is marked spent
 //      (no native request again until TalkWeaver is reopened), the state becomes "reopen" with pending = true at
 //      once, and the preparation is withdrawn and the withdrawal CHECKED (withdrawNative: no ShipIt job in launchd,
 //      no install request on disk). Only a verified withdrawal turns pending to false ("Quit and reopen TalkWeaver
-//      to update"); otherwise the person reads that TalkWeaver will (or, while macOS has not answered, may) finish
-//      updating when it next quits. Nothing ever claims "nothing will install" without that check.
+//      to update"); otherwise the person reads that TalkWeaver may finish updating when it next quits, and "will"
+//      only when the check found the preparation definitely still there (armed: ShipIt job and install request
+//      both present). Nothing ever claims "nothing will install" without that check. A withdrawal
+//      that is not confirmed keeps "reopen" with pending = true whichever attempt it came from, and no new attempt
+//      starts while any withdrawal is still being checked (Squirrel.Mac refusing to prepare ends the attempt at
+//      once but shows its outcome, failed or reopen, only when the check has answered).
 //  D5. A crash or a forced kill during D3's few seconds can install the update. Accepted (ADR-0044 §3): the person
 //      has just asked to restart into that version.
 //  Also: electron-updater's own routes to the native install are closed (closeDependencyInstallPath); every
 //  attempt has an identity and anything arriving for an ended one is ignored; Windows is refused in start().
+import { snapshotWriteFailures, writeQueueFailuresSince, type WriteFailureBaseline } from './write-queues.ts'
 import { CancellationToken, Provider, type AppUpdater, type UpdateInfo } from 'electron-updater'
 import type { ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider'
 import { compareVersions } from '@app-patterns/updates'
@@ -96,6 +110,9 @@ export interface Withdrawal {
   found: boolean
   /** Checked afterwards, not assumed: no ShipIt job for this app in launchd and no install request on disk. */
   gone: boolean
+  /** What the check afterwards found: 'present' only when the ShipIt job AND the install request were both
+   *  definitely there; 'absent' only when both were definitely gone; anything else 'unknown'. */
+  after: Presence
 }
 
 export interface EnginePorts {
@@ -111,6 +128,18 @@ export interface EnginePorts {
   handOver(file: string): Promise<void>
   /** Squirrel.Mac (a stand-in in a run from source, which logs instead of installing). Asked only in D3. */
   native(): NativeUpdater
+  /** D3's commit: close every window through the app's own close route. True only when every window has closed;
+   *  false as soon as one is kept open. */
+  closeWindows(): Promise<boolean>
+  /** How many windows are open now (every BrowserWindow, hidden ones too). The native install is called only at zero. */
+  openWindows(): number
+  /** After the windows have closed: waits for every main-process write queue to finish (write-queues.ts). True only
+   *  when each finished with nothing failed, in time. */
+  drainWriteQueues(baseline: WriteFailureBaseline): Promise<boolean>
+  /** The write queues with work in flight now, read in the turn of the native call (write-queues.ts). */
+  writeQueuesBusy(): readonly string[]
+  /** The commit began (windows closing) and the restart will not happen: the app gives the person a window back. */
+  commitAbandoned?(): void
   /** Removes Squirrel.Mac's ShipIt job and its install request and staged copy, then checks that both are gone. */
   withdrawNative(): Promise<Withdrawal>
   /** Removes the downloaded file and the updater's cache, and closes electron-updater's local address. */
@@ -138,8 +167,11 @@ interface Attempt {
   answered: boolean
   /** Squirrel.Mac answered that it is prepared: ShipIt is armed. */
   ready: boolean
+  /** The commit has begun: nothing held after the ready answer and the windows are being closed. */
+  closing: boolean
   /** quitIfPermitted() called the native install: past the point of no return (unless it fails). */
   quitting: boolean
+  writeFailures?: WriteFailureBaseline
   watchdog: unknown
 }
 
@@ -160,6 +192,14 @@ export function createUpdateEngine(ports: EnginePorts) {
    * is made again until TalkWeaver is reopened (Squirrel.Mac launches ShipIt once per run of the app).
    */
   let spent = false
+  /** Withdrawals still being checked. No attempt starts while one is (a retry must not outrun its answer). */
+  let withdrawing = 0
+  /**
+   * The version a withdrawal could NOT confirm gone, or null, and whether the check found it definitely still armed.
+   * Kept apart from any attempt: whatever is current, the person reads that this version may (armed: will) install
+   * when TalkWeaver quits, until a later clean check.
+   */
+  let unconfirmed: { version: string; armed: boolean } | null = null
 
   const set = (event: InstallEvent): void => {
     const next = installStep(state, event)
@@ -200,17 +240,47 @@ export function createUpdateEngine(ports: EnginePorts) {
    * still arm after this check; pending stays true until its answer arrives and a later check is clean.
    */
   async function withdrawAndCheck(a: Attempt, stillOpen: boolean): Promise<Withdrawal> {
+    withdrawing += 1
     let w: Withdrawal
-    try { w = await ports.withdrawNative() } catch (error) { ports.log(`the withdrawal failed: ${message(error)}`); w = { found: true, gone: false } }
-    if (w.found) spent = true
+    try { w = await ports.withdrawNative() } catch (error) { ports.log(`the withdrawal failed: ${message(error)}`); w = { found: true, gone: false, after: 'unknown' } } finally { withdrawing -= 1 }
+    // Only two definite answers count as gone; anything that says gone with something possibly left is not.
+    if (w.gone && w.after !== 'absent') w = { ...w, gone: false }
+    if (w.found || !w.gone) spent = true
     ports.log(w.gone
       ? `withdrawal checked: no ShipIt job and no install request${stillOpen ? ' (Squirrel.Mac has not answered yet: it may still prepare)' : ''}`
-      : 'withdrawal NOT confirmed: a ShipIt job or an install request is still there; the update may install when TalkWeaver quits')
-    if (w.gone && !stillOpen && state.phase === 'reopen' && state.pending && state.version === a.offer.version) {
-      state = { ...state, pending: false }
-      ports.changed()
+      : `withdrawal NOT confirmed (afterwards: ${w.after}): the update ${w.after === 'present' ? 'will' : 'may'} install when TalkWeaver quits`)
+    if (!w.gone) {
+      unconfirmed = { version: a.offer.version, armed: w.after === 'present' }
+      showUnconfirmed()
+    } else if (!stillOpen && nativeOwner === null) {
+      unconfirmed = null
+      if (state.phase === 'reopen' && state.pending && state.version === a.offer.version) {
+        state = { ...state, pending: false, armed: false }
+        ports.changed()
+      }
     }
     return w
+  }
+
+  /** An unconfirmed withdrawal is shown as "may (armed: will) finish updating when it next quits", over anything
+   *  that says less. */
+  function showUnconfirmed(): void {
+    if (unconfirmed === null || live(current)) return
+    const cause: ReopenCause = state.phase === 'reopen' ? state.cause : 'install-failed'
+    const next: InstallPhase = { phase: 'reopen', version: unconfirmed.version, cause, pending: true, armed: unconfirmed.armed }
+    if (state.phase === 'reopen' && state.pending && state.version === next.version && state.armed === next.armed) return
+    state = next
+    ports.changed()
+  }
+
+  /** Ends an attempt with no change of state: what the person reads follows once its outcome is known. */
+  function endQuietly(a: Attempt, why: string): void {
+    a.ended = true
+    current = null
+    stopWatchdog(a)
+    a.quitting = false
+    ports.log(`attempt ${a.id} ended: ${why}`)
+    releaseOnce(a)
   }
 
   /**
@@ -229,6 +299,7 @@ export function createUpdateEngine(ports: EnginePorts) {
     set({ type: 'leftover', cause })
     releaseOnce(a)
     void withdrawAndCheck(a, a.asked && !a.answered)
+    if (a.closing) { try { ports.commitAbandoned?.() } catch (error) { ports.log(`after the abandoned restart: ${message(error)}`) } }
   }
 
   function armWatchdog(a: Attempt): void {
@@ -236,37 +307,99 @@ export function createUpdateEngine(ports: EnginePorts) {
     a.watchdog = timers.set(() => {
       a.watchdog = null
       if (!live(a)) return
-      if (a.asked || a.quitting) leftover(a, a.quitting ? 'install-failed' : 'no-answer', 'the restart did not happen in time')
+      if (a.asked || a.quitting) leftover(a, a.quitting ? 'install-failed' : a.closing ? 'held' : 'no-answer', a.closing ? 'the windows did not close in time' : 'the restart did not happen in time')
       else fail(a, 'other', 'the hand-over to Squirrel.Mac did not finish in time')
     }, RESTART_WATCHDOG_MS)
   }
 
+  /** How many windows are open; a count that cannot be read counts as open. */
+  const windowsNow = (): number => {
+    try { const n = ports.openWindows(); return Number.isInteger(n) && n >= 0 ? n : 1 } catch (error) { ports.log(`the open windows could not be counted (${message(error)}): held`); return 1 }
+  }
+
   /**
-   * THE ONLY CALL OF THE NATIVE INSTALL. Squirrel.Mac has prepared this attempt; in this one synchronous turn: is
-   * the attempt still the live one, still restarting, and does nothing hold a restart back? Only then quit and install.
+   * The commit, after Squirrel.Mac has prepared this attempt: in one synchronous turn check that the attempt is still
+   * the live one, still restarting, and that nothing holds a restart back; only then close every window through the
+   * app's own close route. A window kept open ends the attempt as a leftover (D4: the checked withdrawal). When
+   * every window has closed, quitIfPermitted decides.
    */
-  function quitIfPermitted(a: Attempt): boolean {
-    if (!live(a) || !a.ready || a.quitting || state.phase !== 'restarting') return false
+  async function commit(a: Attempt): Promise<void> {
+    if (!live(a) || !a.ready || a.closing || a.quitting || state.phase !== 'restarting') return
     const blockers = blockersNow()
     if (blockers.length > 0) {
       ports.log(`the restart is held (${blockers.join(', ')}) after Squirrel.Mac prepared it`)
       leftover(a, 'held', `held by ${blockers.join(', ')}`)
+      return
+    }
+    a.writeFailures = snapshotWriteFailures()
+    a.closing = true
+    ports.log(`closing every window before restarting into ${a.offer.version}`)
+    let closed: boolean
+    try { closed = await ports.closeWindows() } catch (error) {
+      if (live(a)) leftover(a, 'held', `the windows could not be closed: ${message(error)}`)
+      return
+    }
+    // The watchdog, or another leftover, may have ended the attempt while the windows closed: nothing more.
+    const id = a.id
+    if (!live(a)) { ports.log(`the windows ${closed ? 'closed' : 'were kept open'} after attempt ${id} ended: nothing installs`); return }
+    if (!closed) { leftover(a, 'held', 'a window was kept open'); return }
+    // Rule C: every main-process write queue finishes before the native call (nothing is left to 'will-quit').
+    let drained: boolean
+    try { drained = (await ports.drainWriteQueues(a.writeFailures)) === true } catch (error) {
+      if (live(a)) leftover(a, 'held', `the write queues could not be waited for: ${message(error)}`)
+      return
+    }
+    if (!live(a)) { ports.log(`the write queues ${drained ? 'drained' : 'did not drain'} after attempt ${id} ended: nothing installs`); return }
+    if (!drained) { leftover(a, 'held', 'a write did not finish'); return }
+    quitIfPermitted(a)
+  }
+
+  /**
+   * THE ONLY CALL OF THE NATIVE INSTALL. Every window has closed; in this one synchronous turn: is the attempt still
+   * the live one, still restarting, does nothing hold a restart back, and is no window open? Only then quit and install.
+   */
+  function quitIfPermitted(a: Attempt): boolean {
+    if (!live(a) || !a.ready || !a.closing || a.quitting || state.phase !== 'restarting') return false
+    const blockers = blockersNow()
+    if (blockers.length > 0) {
+      ports.log(`the restart is held (${blockers.join(', ')}) after the windows closed`)
+      leftover(a, 'held', `held by ${blockers.join(', ')}`)
+      return false
+    }
+    const open = windowsNow()
+    if (open > 0) {
+      leftover(a, 'held', `${open} window${open === 1 ? ' is' : 's are'} open again`)
+      return false
+    }
+    let busy: readonly string[]
+    try { busy = ports.writeQueuesBusy() } catch (error) { busy = [`unknown (${message(error)})`] }
+    if (!Array.isArray(busy) || busy.length > 0) {
+      leftover(a, 'held', `a write started again (${Array.isArray(busy) ? busy.join(', ') : 'unknown'})`)
+      return false
+    }
+    const failed = a.writeFailures ? writeQueueFailuresSince(a.writeFailures) : ['unknown']
+    if (failed.length > 0) {
+      leftover(a, 'held', `a write failed during the restart (${failed.join(', ')})`)
       return false
     }
     a.quitting = true
-    ports.log(`restarting into ${a.offer.version}`)
+    ports.log(`restarting into ${a.offer.version}: ${open} windows open (hidden ones included), no blocker, every write queue idle`)
     try { ports.native().quitAndInstall() } catch (error) { leftover(a, 'install-failed', `the native install refused: ${message(error)}`); return false }
     return true
   }
 
-  /** Squirrel.Mac refused to prepare (it checks the signature before it writes its request): check that, then fail. */
+  /**
+   * Squirrel.Mac refused to prepare (it checks the signature before it writes its request). The attempt ends at
+   * once, but the state stays "restarting" (no Try again) until the withdrawal has been checked: then failed with
+   * the reason, or, when it could not be confirmed, "reopen" with pending = true.
+   */
   async function refusedByNative(a: Attempt, reason: FailReason, why: string): Promise<void> {
-    fail(a, reason, why)
+    if (!live(a)) return
+    endQuietly(a, `failed (${reason}): ${why}; checking that nothing is armed`)
     const w = await withdrawAndCheck(a, false)
-    if (!w.gone && state.phase === 'failed' && state.version === a.offer.version) {
-      state = { phase: 'reopen', version: a.offer.version, cause: 'install-failed', pending: true }
-      ports.changed()
-    }
+    if (state.phase !== 'restarting' || state.version !== a.offer.version || live(current)) return
+    if (w.gone) set({ type: 'failed', reason })
+    else showUnconfirmed()
   }
 
   /** One answer from Squirrel.Mac to the one question asked (prepare), or an error after the install was called. */
@@ -276,7 +409,7 @@ export function createUpdateEngine(ports: EnginePorts) {
     if (asked) asked.answered = true
     if (kind === 'ready') spent = spent || asked !== null
     if (asked && live(asked) && !asked.quitting) {
-      if (kind === 'ready') { asked.ready = true; quitIfPermitted(asked) }
+      if (kind === 'ready') { asked.ready = true; void commit(asked) }
       else void refusedByNative(asked, kind === 'none' ? 'other' : failReasonOf(error), kind === 'none' ? 'Squirrel.Mac found no update at the local address' : `Squirrel.Mac: ${message(error)}`)
     } else if (!asked && kind === 'error' && current && live(current) && current.quitting) {
       leftover(current, 'install-failed', `the install failed: ${message(error)}`)
@@ -364,6 +497,8 @@ export function createUpdateEngine(ports: EnginePorts) {
     async start(offer: Offer): Promise<InstallPhase> {
       if (ports.platform !== 'darwin') { ports.log(`no in-place update on ${ports.platform} in this release (ADR-0044 §5): refused before any download`); return state }
       if (state.phase !== 'idle' && state.phase !== 'failed') return state
+      // A withdrawal still being checked decides whether this run may ask Squirrel.Mac again: wait for its answer.
+      if (withdrawing > 0) { ports.log('a withdrawal is still being checked: Update waits for its answer'); return state }
       const refused = ports.gate(offer)
       if (refused !== null) { ports.log(`update refused: ${refused}`); return state }
       if (spent) {
@@ -372,7 +507,7 @@ export function createUpdateEngine(ports: EnginePorts) {
         ports.changed()
         return state
       }
-      const a: Attempt = { id: ++seq, offer, token: new CancellationToken(), ended: false, settled: false, released: false, file: null, asked: false, answered: false, ready: false, quitting: false, watchdog: null }
+      const a: Attempt = { id: ++seq, offer, token: new CancellationToken(), ended: false, settled: false, released: false, file: null, asked: false, answered: false, ready: false, closing: false, quitting: false, watchdog: null }
       current = a
       set({ type: 'start', version: offer.version, total: offer.size })
       let settle!: () => void
