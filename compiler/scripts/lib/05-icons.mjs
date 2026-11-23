@@ -759,7 +759,7 @@ const LUCIDE_SCORE_WORDS = new Map(Object.entries(_lucide)
     ...(entry.tags || []).flatMap(tag => tag.toLowerCase().split(/\s+/).map(word => [word, 2]))
   ].filter(([word]) => !LUCIDE_GENERIC_WORDS.has(word))]));
 
-// Exact same name/tag and prefix scores as before; no item, deck or vocabulary result is cached.
+// Name/tag and prefix scores use the catalogue's original weights and order.
 function lucideScore(itemTokens, itemWords, lucideKey) {
   let score = 0;
   for (const [word, exactScore] of LUCIDE_SCORE_WORDS.get(lucideKey) || []) {
@@ -781,7 +781,20 @@ function tokenize(text) {
 
 // Rule-based Lucide candidates: score 5 (strong) for a rule match, as a bonus on top of
 // name/tag scoring. Returns an ordered array of {key, score} for items above threshold.
+// The Lucide catalogue and rules are fixed for the process. Repeated compiler passes and preview
+// variants can reuse the same exact item text. Bound both the entry count and the retained text.
+const LUCIDE_CANDIDATE_MEMO_LIMIT = 512;
+const LUCIDE_CANDIDATE_TEXT_LIMIT = 512;
+const lucideCandidateMemo = new Map();
+
 function lucideCandidatesForItem(text) {
+  const cacheable = typeof text === "string" && text.length <= LUCIDE_CANDIDATE_TEXT_LIMIT;
+  const cached = cacheable ? lucideCandidateMemo.get(text) : undefined;
+  if (cached !== undefined) {
+    lucideCandidateMemo.delete(text);
+    lucideCandidateMemo.set(text, cached);
+    return cached;
+  }
   const tokens = tokenize(text);
   const itemWords = [...tokens];
   // Step 1: rule-based priority candidates (scored as 5 + tag-score so they always beat tag-only)
@@ -815,6 +828,12 @@ function lucideCandidatesForItem(text) {
   const dedupSeen = new Set();
   for (const x of merged) {
     if (!dedupSeen.has(x.key)) { deduped.push(x); dedupSeen.add(x.key); }
+  }
+  if (cacheable) {
+    lucideCandidateMemo.set(text, deduped);
+    if (lucideCandidateMemo.size > LUCIDE_CANDIDATE_MEMO_LIMIT) {
+      lucideCandidateMemo.delete(lucideCandidateMemo.keys().next().value);
+    }
   }
   return deduped; // [{key: "lucide:brain", score: N}, …]
 }

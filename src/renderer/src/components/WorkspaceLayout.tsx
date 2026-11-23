@@ -15,7 +15,7 @@ import { insertResearchItem as insertResearchItemInEditor } from '../lib/researc
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { runActionBarEditorCommand } from './actionBar/command-runner'
 import { venueScreenLinkFromOutline } from '../../../shared/venue-screen-link'
-import { useState, useEffect, useRef, useMemo, useCallback, useSyncExternalStore } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import type { TalkInfo, ProjectionRow, RecordingSession } from '../../../preload/index'
 import { textFitNotesFor } from '../../../shared/text-fit-notes.ts'
@@ -23,6 +23,7 @@ import { computeSlideLines } from '../../../shared/slide-lines.ts'
 import { marginLabels, MARGIN_LAYOUT_NAMES } from '../../../shared/plain-view-margin.ts'
 import { levelMenuFor, setHeadingKind, type HeadingKind } from '../../../shared/heading-kind.ts'
 import { dismissToast, notify } from '../lib/notify'
+import type { HeadingCompletionSource } from '../extensions/triggerComplete'
 import Editor, { type HeadingTools, type ObjectInsertHandler, type PlainIconTools, type ReadEditorDoc, type SlideBlockOps } from './Editor'
 import MarginMenu, { MORE_IN_INSPECTOR_KEY } from './MarginMenu'
 import { slideSelectionControls } from '../lib/slideSelectionBus'
@@ -154,7 +155,7 @@ import ActionBar from './actionBar/ActionBar'
 import EditorTabs from './EditorTabs'
 import WorkspaceSlideView from './WorkspaceSlideView'
 import { VIEW_COMMANDS, WORKSPACE_VIEWS, type SlideTabView, type SlidesPanelView, type StartingView, type WorkspaceView } from '../../../shared/workspace-view'
-import { isEmptyAuthoringSlide, placeBlankSlide, placePictures, splitPictureRow } from '../../../shared/redesign-window-source'
+import { completeBlankSlide, isEmptyAuthoringSlide, placeBlankSlide, placePictures, splitPictureRow } from '../../../shared/redesign-window-source'
 import { notesGet, notesInsert, notesReplace } from '../../../shared/objects/object-verbs'
 import { Image, Plus, SmilePlus, Table2 } from 'lucide-react'
 import { copyBlock, pasteSlides } from '../../../shared/slide-handling/slide-block-ops'
@@ -177,7 +178,6 @@ import SlideContextMenu, { type SlideMenuAction } from './SlideContextMenu'
 import type { ConsumeInsertFence } from '../extensions/objectBlocks/field'
 import type { ObjectInsertRequest } from '../../../shared/objects/insert-objects'
 import { outlineWritesSettled, queueOutlineWrite } from '../lib/saveQueue'
-import { OUTLINE_PAUSE_MS } from '../lib/pausedScan'
 import { createOutlineMutator, type OutlineMutate, type OutlineMutationOptions, type OutlineMutationResult, type OutlineMutator } from '../lib/outlineMutation'
 import { stampHandoutUrl } from '../../../shared/handout-stamp'
 import { commandRan, ran, reportingHandlers, setCommandRanContext } from '../commands/command-ran'
@@ -211,6 +211,7 @@ const SLIDE_BAR_EDITS: Readonly<Partial<Record<string, Pick<RunnableActionBarCom
 const FORMAT_BAR_EDITS = ['format-bold', 'format-italic', 'format-link', 'bulleted-list', 'numbered-list']
 const ACTION_BAR_LINE_COMMANDS: ReadonlySet<string> = new Set(['bulleted-list', 'numbered-list', 'promote-heading', 'demote-heading'])
 const SELF_REPORTING_HANDLERS: ReadonlySet<string> = new Set(['add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section'])
+const LIVE_COMPILE_PAUSE_MS = 450
 
 // The slide menu's actions that are registry commands (the menu now opens only from the triple-backtick
 // Insert-object access; Actions here's carried rows reach the same handlers): the command each reports.
@@ -526,6 +527,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // The image drawer docked beside the panes (ticket 11). Not an overlay: the editor stays usable.
   // (R11a: the Images tab of the right sidebar; open while that tab is up and the sidebar is showing.)
   const imageDrawerOpen = sidebarTab === 'images' && paneState === 'both'
+  const [pictureProgress, setPictureProgress] = useState<{ path: string; id: string; message: string; pos?: number } | null>(null)
   const [imageDropping, setImageDropping] = useState<'picture' | 'slide' | null>(null)
   const [pictureDropLines, setPictureDropLines] = useState<{ pointer: number; heading: number | null } | null>(null)
   const [iconPickerOpen, setIconPickerOpen] = useState<boolean>(false)
@@ -955,7 +957,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     scrollCursorIntoView: () => void
     cursorCoords: () => { x: number; y: number } | null
     placeCursorAtCoords: (x: number, y: number) => void
-    lineAtCoords: (x: number, y: number) => number | null
+    pointAtCoords: (x: number, y: number) => { pos: number; line: number } | null
     cutSelection: () => void
     copySelection: () => void
     pasteClipboard: () => void
@@ -1065,6 +1067,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   useEffect(() => { inspectedSlideIdRef.current = inspectedSlideId }, [inspectedSlideId])
   const inspectorCommitInProgressRef = useRef(false)
   const cursorLineRef = useRef<number | null>(null)
+  const editedCaret = useRef<{ path: string | undefined; text: string; line: number } | null>(null)
   const [activeOutlineLine, setActiveOutlineLine] = useState<number | null>(null)
   const onActiveLineChange = leftPreviewsHost || markdownView ? setActiveOutlineLine : undefined
   const outlineLineListener = useRef(onActiveLineChange)
@@ -1072,6 +1075,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const [activeLineReporter] = useState(() => createActiveLineReporter(() => outlineLineListener.current))
   const cursorAwaitsCompileRef = useRef(false)
   // The heading line of a board slide just inserted, until the Inspector has opened on it.
+  const sectionNotice = useRef<{ path: string; token: string } | null>(null)
   const insertedBoardLineRef = useRef<number | null>(null)
   const inspectedSlideIndexRef = useRef(0)
   const inspectedSlideIndex = resolveInspectedSlide(
@@ -2104,6 +2108,11 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     })
   }
 
+  useEffect(() => {
+    sectionNotice.current = null
+    dismissToast('section-added')
+  }, [activeTalk?.outlinePath])
+
   // Unsaved Talk tab edits belong to the open talk only: another talk, a replaced talk, a renamed, moved or deleted one (its
   // path changes or goes) all clear them.
   useEffect(() => { clearDrafts(activeTalk?.outlinePath ?? null) }, [activeTalk?.outlinePath])
@@ -2430,12 +2439,12 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       event.stopImmediatePropagation()
       setImageDropping(null)
       setPictureDropLines(null)
-      const pointer = pictureDropLineAt(event)
-      if (pointer === null) {
+      const point = pictureDropPointAt(event)
+      if (point === null) {
         notify('Choose a line in the editor to drop the picture.', 'warning', 'paste-picture')
         return
       }
-      void pastePicturesRef.current(files, pointer)
+      void pastePicturesRef.current(files, point)
     }
     // The editor lives in a reverse portal, so its drag events bypass the panes' React handlers.
     // Listen in the native DOM, where the editor is inside the current Markdown pane.
@@ -2443,11 +2452,12 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       if (isWorkspaceCovered() || focusSlideRef.current != null || !activeTalkRef.current) return
       const data = event.dataTransfer
       if (!data || data.types.includes(IMAGE_DRAG_TYPE) || !hasPictureItem(data)) return
-      const pointer = pictureDropLineAt(event)
-      if (pointer === undefined) return
+      const point = pictureDropPointAt(event)
+      if (point === undefined) return
       event.preventDefault()
       data.dropEffect = 'copy'
       setImageDropping(null)
+      const pointer = point?.line ?? null
       const doc = editorReadRef.current?.()
       const node = doc && pointer !== null ? markdownCaretNode(doc, pointer) : undefined
       const heading = node ? node.line + 1 : null
@@ -2729,7 +2739,9 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // Typing waits for a pause. Opening a talk and deliberate grid/slide mutations compile on the
   // next turn, so a move does not spend 900ms showing its old order. Thumbnail work stays separate.
   useEffect(() => {
-    if (!activeTalk || !outlineContent) return
+    // The selected path can change before the editor finishes loading its outline. Compiling
+    // that path with the outgoing buffer does real work and makes the incoming compile wait.
+    if (!activeTalk || outlineOwner !== activeTalk.outlinePath || !outlineContent) return
     let cancelled = false
     let stopProgress: (() => void) | undefined
     const outlinePath = activeTalk.outlinePath
@@ -2738,7 +2750,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     // While this talk's compile is in flight an edit is recorded at once (it only replaces the remembered
     // text; nothing is sent until the reply), so the follow-up compile is always the newest text. The
     // typing pause only decides when an idle talk starts compiling.
-    const pause = gridModeRef.current || compileImmediatelyRef.current || !compileAttemptedRef.current || liveCompile.busy(activeTalk.outlinePath) ? 0 : OUTLINE_PAUSE_MS
+    const pause = gridModeRef.current || compileImmediatelyRef.current || !compileAttemptedRef.current || liveCompile.busy(activeTalk.outlinePath) ? 0 : LIVE_COMPILE_PAUSE_MS
     compileTimer.current = setTimeout(async () => {
       compileAttemptedRef.current = true
       compileImmediatelyRef.current = false
@@ -2801,7 +2813,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       stopProgress?.()
       if (compileTimer.current) clearTimeout(compileTimer.current)
     }
-  }, [outlineContent, activeTalk?.outlinePath, thumbnailRefresh])
+  }, [outlineContent, outlineOwner, activeTalk?.outlinePath, thumbnailRefresh])
 
   // Word count effect
   useEffect(() => {
@@ -3258,6 +3270,27 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       }
     }
   }
+
+  function reportEditorCursor(line: number, editedText?: string): void {
+    const path = activeTalkRef.current?.outlinePath
+    if (markdownView && editedText !== undefined && (editedText !== outlineContent || path !== outlineOwner)) {
+      // React already reads the new structure for the outline. Follow that same revision
+      // before paint, coalescing edits delivered in one commit.
+      cursorLineRef.current = line
+      editedCaret.current = { path, text: editedText, line }
+      return
+    }
+    editedCaret.current = null
+    handleCursorLine(line)
+  }
+  useLayoutEffect(() => {
+    const edit = editedCaret.current
+    if (!edit) return
+    editedCaret.current = null
+    if (markdownView && edit.path === outlineOwner && edit.path === activeTalk?.outlinePath && edit.text === outlineContent) {
+      handleCursorLine(edit.line)
+    }
+  })
 
   // The caret's slide is re-resolved once, when the compile that the caret was placed ahead of arrives.
   useEffect(() => {
@@ -3726,18 +3759,18 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     return Array.from(files ?? []).filter(file => /^image\/(?!gif$|svg\+xml$)/.test(file.type))
   }
 
-  async function pastePictures(files?: readonly File[], pointerLine?: number): Promise<void> {
+  async function pastePictures(files?: readonly File[], drop?: { pos: number; line: number }): Promise<void> {
     const talk = activeTalkRef.current
     const doc = editorReadRef.current?.()
     if (!talk || !doc || doc.path !== talk.outlinePath) return
     const index = activeSlideRef.current
     const row = compiledSlidesRef.current?.[index]
     if (!markdownView && !row) return
-    const caretNode = markdownView ? markdownCaretNode(doc, pointerLine) : undefined
+    const caretNode = markdownView ? markdownCaretNode(doc, drop?.line) : undefined
     const line = markdownView ? (caretNode ? caretNode.line + 1 : null) : lineOfSlideIndex(index)
     const source = line == null ? null : readOutlineSlides(doc.text).slides.find(slide => slide.line === line)
     if (markdownView && line != null && !source) {
-      notify('The caret’s slide could not take the picture. Choose another place and try again.', 'warning', 'paste-picture')
+      notify('The caret’s slide could not take the picture. Choose another place and try again.', 'warning', 'paste-picture', undefined, 'expanded')
       return
     }
     const isSection = markdownView ? caretNode?.section : row?.role === 'section-title' || row?.role === 'subsection-title'
@@ -3755,10 +3788,12 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       return current?.path === doc.path && current.epoch === doc.epoch
     }
     if (placePictures(doc.text, source?.line ?? null, separate, ['pending'], id) === null) {
-      notify('This slide could not take the picture. Check the source around the slide and try again.', 'warning', 'paste-picture')
+      notify('This slide could not take the picture. Check the source around the slide and try again.', 'warning', 'paste-picture', undefined, 'expanded')
       return
     }
-    notify(files && files.length > 1 ? 'Adding pictures…' : 'Adding picture…', 'info', 'paste-picture')
+    const progress = files && files.length > 1 ? 'Adding pictures…' : 'Adding picture…'
+    setPictureProgress({ path: talk.outlinePath, id, message: progress, pos: drop?.pos })
+    notify(progress, 'info', 'paste-picture')
     try {
       const pictures = files ? await Promise.all(files.map(file => file.arrayBuffer())) : undefined
       if (!stillOpen()) throw new Error('The open talk changed. No picture was pasted.')
@@ -3785,7 +3820,9 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         : 'Picture added and saved in this talk’s media folder.', 'success', 'paste-picture')
     } catch (error) {
       if (pendingSlide.current?.id === id) pendingSlide.current = null
-      notify(error instanceof Error ? error.message : 'The picture could not be added.', 'warning', 'paste-picture')
+      notify(error instanceof Error ? error.message : 'The picture could not be added.', 'warning', 'paste-picture', undefined, 'expanded')
+    } finally {
+      setPictureProgress(current => current?.id === id ? null : current)
     }
   }
   async function splitPastedPictureRow(): Promise<void> {
@@ -3862,6 +3899,21 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     else clearStructureSelection()
   }
 
+  async function completeWorkspaceSlide(heading: HeadingCompletionSource): Promise<void> {
+    const talk = activeTalkRef.current
+    const doc = editorReadRef.current?.()
+    if (!talk || !doc || doc.path !== talk.outlinePath) return
+    const end = heading.from + heading.text.length
+    if (doc.caret !== end || doc.text.slice(heading.from, end) !== heading.text) return
+    const id = crypto.randomUUID().slice(0, 8)
+    const result = await applyOutlineMutation(talk.outlinePath, text => {
+      const placed = completeBlankSlide(text, heading.from, id)
+      if (placed === null) throw new Error('A slide could not be added here. Check the source around this slide.')
+      return placed
+    }, { base: doc.text, ownUndoStep: true })
+    if (!result.ok && !result.applied) notify(result.error, 'warning', 'new-slide')
+  }
+
   async function addWorkspaceSlide(after?: number | null, forceChild = false): Promise<void> {
     const talk = activeTalkRef.current
     const doc = editorReadRef.current?.()
@@ -3899,7 +3951,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   async function addStructure(
     kind: SectionKind | 'group',
     line?: number | null,
-    heading?: { from: number; text: string }
+    heading?: HeadingCompletionSource
   ): Promise<void> {
     const talk = activeTalkRef.current
     const doc = editorReadRef.current?.()
@@ -3951,8 +4003,11 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       : `${name} added. ${edit.count === 0 ? 'Its first slide comes next.' :
         `${edit.count} slide${edit.count === 1 ? '' : 's'} that followed ${edit.count === 1 ? 'is' : 'are'} now in it.`}`
     const saved = structureUndoText(result, edit.text)
-    notify(result.ok ? message : result.error, result.ok ? 'success' : 'warning', 'structure',
-      { label: 'Undo', onAction: () => undoStructure(talk.outlinePath, saved) })
+    const token = `{id=${id}}`
+    if (!editorReadRef.current?.()?.text.includes(token)) return
+    sectionNotice.current = { path: talk.outlinePath, token }
+    notify(result.ok ? message : result.error, result.ok ? 'success' : 'warning', 'section-added',
+      { label: 'Undo', onAction: () => undoStructure(talk.outlinePath, saved, 'section-added') })
   }
 
   function handleGridStructureDrop(refs: readonly MoveRef[], target: MoveRef, side: DropSide): void {
@@ -3981,10 +4036,10 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       { label: 'Undo', onAction: () => undoStructure(talk.outlinePath, saved) })
   }
 
-  function undoStructure(path: string, written: string): void {
+  function undoStructure(path: string, written: string, noticeKey = 'structure'): void {
     const doc = editorReadRef.current?.()
     if (doc?.path === path && doc.text === written) editorCmdsRef.current?.undo()
-    else notify('The outline has changed since this edit. Use Undo to step back through your later edits first.', 'info', 'structure')
+    else notify('The outline has changed since this edit. Use Undo to step back through your later edits first.', 'info', noticeKey)
   }
 
   function clearStructureSelection(): void {
@@ -4063,9 +4118,9 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   }
 
   // Other drop surfaces keep their selection rules.
-  function pictureDropLineAt(event: DragEvent): number | null | undefined {
+  function pictureDropPointAt(event: DragEvent): { pos: number; line: number } | null | undefined {
     return isMarkdownEditorTarget(event.target)
-      ? editorCmdsRef.current?.lineAtCoords(event.clientX, event.clientY) ?? null : undefined
+      ? editorCmdsRef.current?.pointAtCoords(event.clientX, event.clientY) ?? null : undefined
   }
 
   function hasPictureItem(data: DataTransfer): boolean {
@@ -4766,6 +4821,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       textFitNotes={textFitNotes}
       slideLines={slideLines}
       markdownHeadingLabels={markdownHeadingLabels}
+      pictureProgress={pictureProgress?.path === activeTalk.outlinePath ? pictureProgress : undefined}
       pictureDropLines={pictureDropLines}
       marginLabels={marginLabelList}
       placementRows={compiledSlides}
@@ -4773,13 +4829,21 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       registerApplyLayout={(fn) => { editorApplyLayoutRef.current = fn }}
       registerApplyOption={(fn) => { editorApplyOptionRef.current = fn }}
       focusLine={focusLine}
-      onCursorLine={handleCursorLine}
-      onSectionHeading={(kind, heading) => { void addStructure(kind, undefined, heading) }}
+      onCursorLine={reportEditorCursor}
+      onNewHeading={(kind, heading) => {
+        if (kind === 'slide') void completeWorkspaceSlide(heading)
+        else void addStructure(kind, undefined, heading)
+      }}
       onSectionChild={line => {
         jumpToOutlineLine(line)
         setFocusLine({ line, takeFocus: true, editTitle: true })
       }}
       onHistoryLine={(line, outline) => {
+        const notice = sectionNotice.current
+        if (notice?.path === activeTalk.outlinePath && !outline.includes(notice.token)) {
+          sectionNotice.current = null
+          dismissToast('section-added')
+        }
         if (panelHistoryInProgress.current || focusSlideRef.current != null || markdownView) return
         const index = slideIndexAtLine(computeSlideLines(compiledSlidesRef.current, outline), line)
         if (index >= 0 && index !== activeSlideRef.current) selectSlideRef.current(index)
@@ -4866,7 +4930,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     actionBarItemsFrom(actionBarItemsStored, DEFAULT_ACTION_BAR_ITEMS),
     actionBarCommands
   )
-  const activeRow = compiledSlides?.[activeSlide]
+  const ownsOutline = outlineOwner === activeTalk.outlinePath
+  const activeRow = ownsOutline ? compiledSlides?.[activeSlide] : undefined
   const authoredNode = structure.nodes.find(node => node.line + 1 === currentSlideLine)
   const childrenOf = (node: typeof authoredNode) => node
     ? structure.nodes.filter(child => child.ancestors.includes(structure.nodes.indexOf(node))) : []
@@ -4886,14 +4951,14 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const sourceRecovery = !activeRow && failedCompilePath === activeTalk.outlinePath
   const editorColumn = scopeOnSlide ? (
     <WorkspaceSlideView
-      key={activeTalk.outlinePath} path={activeTalk.outlinePath} outline={outlineContent} row={activeRow}
+      key={activeTalk.outlinePath} path={activeTalk.outlinePath} outline={ownsOutline ? outlineContent : ''} row={activeRow}
       trying={activeSlide === inspectedSlideIndex ? activePanelTry : null}
       applied={activeSlide === inspectedSlideIndex ? activePanelApplied?.label : null}
       onUndoDesign={undoPanelEdit}
       index={activeSlide} count={compiledSlides?.length ?? 0} place={slidePlace}
       notes={speakerNote} notesOpen={notesVisibility?.row === slideNoteKey ? notesVisibility.open : !!speakerNote}
       onToggleNotes={() => runRegisteredCommand('edit-speaker-notes')} onNotesChange={editSlideNotes}
-      attachEditor={attachEditorSlot} editable={outlineOwner === activeTalk.outlinePath && (viewScope !== null || sourceRecovery)}
+      attachEditor={attachEditorSlot} editable={ownsOutline && (viewScope !== null || sourceRecovery)}
       sourceRecovery={sourceRecovery}
       section={sectionSlide && authoredNode ? { label: authoredNode.level === 2 ? 'Section' : 'Subsection',
         count: authoredChildren.filter(child => !child.section && !child.folded).length,
@@ -4939,13 +5004,14 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     always={always} subsectionReason={subsectionReason(line)}
     onAdd={kind => { if (kind === 'slide') void addWorkspaceSlide(line); else void addStructure(kind, line) }}
   />
-  function pickStructureIndex(index: number, event: React.MouseEvent): void {
+  function pickStructureIndex(index: number, event: React.MouseEvent, outlineLine?: number): void {
     if (event.shiftKey) selection.extendTo(index, activeSlide)
     else if (event.metaKey || event.ctrlKey || selectingSeveral) {
       if (selection.count === 0 && index !== activeSlide) selection.addMany([activeSlide, index])
       else selection.toggle(index)
     } else selection.reset(index)
-    handleSelectSlide(index)
+    const clickedOutline = outlineLine !== undefined && !event.shiftKey && !event.metaKey && !event.ctrlKey && !selectingSeveral
+    handleSelectSlide(index, clickedOutline ? outlineLine : undefined)
   }
 
   const toolbarButton = (id: PaletteCommandHandlerId, label: string, Glyph: typeof Plus, disabledReason?: string) => (
@@ -4973,17 +5039,17 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     : []
   const workspaceEditBar = <ActionBar lead={toolbarLead} sections={[...editingSections, ...extraSections]} />
 
-  function handleSelectSlide(i: number): void {
+  function handleSelectSlide(i: number, outlineLine?: number): void {
     setSelectedSubslide(null)
     activeSlideRef.current = i
     setActiveSlide(i)
     if (activeTalk && compiledSlides?.[i]) rememberedSlides.current.set(activeTalk.outlinePath, compiledSlides[i].slide_id)
     // Keep the Slide-outline sidebar in sync with strip/grid picks (told once per line: lib/activeOutlineLine.ts).
     activeLineReporter.report(slideLines[i] ?? null)
-    const target = markdownView ? lineOfSlideIndex(i) : slideLines[i]
+    const target = outlineLine ?? (markdownView ? lineOfSlideIndex(i) : slideLines[i])
     revealSlideLine(target)
-    // Card click: aim the editor viewport but do NOT steal focus — the strip keeps keyboard nav.
-    if (target != null) setFocusLine({ line: target, takeFocus: false, editTitle: markdownView })
+    // An outline row opens its heading for typing. Preview cards keep keyboard navigation.
+    if (target != null) setFocusLine({ line: target, takeFocus: outlineLine !== undefined, editTitle: markdownView })
     if (inspectorMode && compiledSlides?.[i]) {
       inspectedSlideIdRef.current = compiledSlides[i].slide_id
       inspectedSlideIndexRef.current = i
@@ -5058,8 +5124,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     <div className="pane pane--inspector">
       <Inspector
         talk={activeTalk}
-        compiledSlides={compiledSlides}
-        outlineContent={outlineContent}
+        compiledSlides={ownsOutline ? compiledSlides : null}
+        outlineContent={ownsOutline ? outlineContent : ''}
         triggerFindings={triggerFindings}
         activeIndex={inspectedSlideIndex}
         headingLine={slideLines[inspectedSlideIndex] ?? null}
@@ -5193,9 +5259,9 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         onGenerated={kind => handleSelectSlide(kind === 'cover' ? 0 : (compiledSlides?.length ?? 1) - 1)}
         selectedLines={selectedLines}
         onPickStructure={(line, event) => {
-          const index = slideIndexAtLine(slideLines, line)
-          if (index < 0) return
-          pickStructureIndex(index, event)
+          const index = slideLines.indexOf(line)
+          if (index < 0) { jumpToOutlineLine(line); return }
+          pickStructureIndex(index, event, line)
         }}
         renderAddLine={addLine}
         onStructureMove={handleStructureDrop}

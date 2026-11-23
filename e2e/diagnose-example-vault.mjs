@@ -88,15 +88,16 @@ try {
   const a = profile('first')
   let { app, page } = await launch(a)
   try {
-    const card = page.locator('[data-example-card]')
-    await card.waitFor({ state: 'visible', timeout: 10000 })
-    const setupText = await page.locator('.vault-setup-card').innerText()
-    record('first launch shows Choose Vault Folder and, under “or look around first”, the example card',
-      setupText.includes('Choose Vault Folder') && /or look around first/i.test(setupText) && setupText.includes('Open the example vault') && setupText.includes('~/Documents/TalkWeaver/Example vault · 5 talks'))
+    const welcome = page.locator('.tw-welcome-window')
+    const examples = welcome.getByRole('button', { name: 'Example talks', exact: true })
+    await examples.waitFor({ state: 'visible', timeout: 10000 })
+    record('first launch offers the example talks from the welcome screen',
+      await welcome.getByRole('button', { name: 'Open my talks', exact: true }).isVisible() && await examples.isVisible())
     await shot(page, '06-first-launch.png')
-    await page.locator('[data-open-example]').click()
-    await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
+    await page.getByRole('button', { name: 'Example talks', exact: true }).click()
+    await page.getByTitle('Talk menu', { exact: true }).filter({ hasText: 'The Saturday market' }).waitFor({ timeout: 15000 })
     await ensureTalksMode(page)
+    await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
     await waitForTitles(page, TITLES)
     const listed = await titlesListed(page)
     record('the five talks are listed', TITLES.every((t) => listed.includes(t)), JSON.stringify(listed))
@@ -122,7 +123,7 @@ try {
   ;({ app, page } = await launch(a))
   try {
     await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
-    record('second launch: no setup screen, the example vault is listed', await page.locator('[data-example-card]').count() === 0)
+    record('second launch: no setup screen, the example vault is listed', await page.locator('.tw-welcome-window').count() === 0)
     await page.waitForTimeout(2500)
   } finally {
     await app.close()
@@ -170,11 +171,12 @@ try {
   const foreignBefore = snapshot(join(d.home, 'Documents'))
   ;({ app, page } = await launch(d))
   try {
-    await page.locator('[data-open-example]').waitFor({ state: 'visible', timeout: 10000 })
-    await page.locator('[data-open-example]').click()
-    const msg = page.locator('[data-example-message]')
-    await msg.waitFor({ state: 'visible', timeout: 8000 })
-    record('a folder in the way: one sentence, still on the setup screen', (await msg.innerText()).includes('is already in Documents › TalkWeaver') && await page.locator('[data-example-card]').count() === 1)
+    await page.locator('.tw-welcome-window').waitFor({ state: 'visible', timeout: 10000 })
+    await page.getByRole('button', { name: 'Example talks', exact: true }).click()
+    const msg = page.locator('.tw-welcome-window').getByRole('alert')
+    const warningShown = await msg.waitFor({ state: 'visible', timeout: 8000 }).then(() => true, () => false)
+    record('a folder in the way: one sentence, still on the setup screen',
+      warningShown && (await msg.innerText()).includes('is already in Documents › TalkWeaver') && await page.locator('.tw-welcome-window').isVisible())
     await shot(page, '06-in-the-way.png')
   } finally {
     await app.close()

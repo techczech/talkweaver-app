@@ -17,6 +17,7 @@
   --on-accent: #ffffff;
   --green: #137a3a;
   --green-bg: #e7f6ec;
+  --on-success: #ffffff;
   --amber: #a04a06;
   --amber-bg: #fdf0cf;
   --warn-line: #f1d38a;
@@ -74,6 +75,7 @@
   --on-accent: #ffffff;
   --green: #5fcf8b;
   --green-bg: #11301f;
+  --on-success: var(--paper);
   --amber: #f0b45c;
   --amber-bg: #38290c;
   --warn-line: #6b4d12;

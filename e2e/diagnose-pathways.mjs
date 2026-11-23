@@ -34,7 +34,7 @@ try {
   const sameOutline = () => assert.equal(readFileSync(outline, 'utf8'), original, 'pathway edit leaves outline bytes identical')
   const oldCount = (await app.windows()).length
   // The existing generated Deck menu now navigates in the editor window.
-  await page.getByRole('button', { name:'Talk', exact:true }).click()
+  await page.getByTitle('Talk menu', { exact: true }).click()
   await page.getByRole('menuitem', { name:/Pathways/ }).click()
   await page.locator('[data-pathway-dock]').waitFor()
   assert.equal((await app.windows()).length, oldCount); pass('Deck Pathways opens the dock in the same window')

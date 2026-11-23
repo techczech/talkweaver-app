@@ -8,7 +8,7 @@ import { runInNewContext } from 'node:vm'
 import { mkdtempSync, mkdirSync, readFileSync, renameSync, writeFileSync, existsSync, readdirSync, statSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { buildMenuTemplate, validateMenuCoverage, RESERVED_ESTATE } from '@app-patterns/commands'
+import { validateMenuCoverage, RESERVED_ESTATE } from '@app-patterns/commands'
 import { commandsAdapter } from '@app-patterns/settings'
 import { SettingsStore, runSettingsCli, acquireLock } from '@app-patterns/settings/node'
 import { COMMAND_REGISTRY } from '../src/shared/command-registry.ts'
@@ -21,6 +21,7 @@ import { createConfigOverlay } from '../src/main/settings-overlay.ts'
 import { createSecretSlots, recordedKeyChange, splitRecordingKeys } from '../src/main/settings-secret-slots.ts'
 import { createSettingsKeymap, legacyOverridesArg, overridesArg } from '../src/main/settings-keymap.ts'
 import { openSettings, runWithSettings } from '../src/main/settings-open.ts'
+import { taskMenuTemplate } from '../src/main/task-menu-template.ts'
 import { READS, RECORDING_SETTINGS_ONLY, SETTINGS_WINDOW_ONLY, SHARED_CHANGES, DEVICE_WINDOW_CHANGES, settingsWindowOnly } from '../src/main/settings-window-channels.ts'
 import { runTalkWeaverSettings, settingsArguments } from '../src/main/settings-cli.ts'
 import { KEYMAP_SETTING, appKeysError, isEditorKeyString, isRegistryChord, overridesFromStore, parseAppKeys, storeWritesFor } from '../src/shared/keymap-overrides.ts'
@@ -85,12 +86,15 @@ await test('zero chord collisions, every default the shortcut registry gives a m
 await test('menu items show the effective chord, overrides included, and never register it', () => {
   const rebound = registry.bindingsOf({ 'format-bold': '⌘⌥⇧9' })
   assert.notEqual(rebound['format-bold'], registry.bindingsOf({})['format-bold'])
-  const menu = buildMenuTemplate({ appName: 'TalkWeaver', registry, menus: MENUS, bindings: rebound, ctx: undefined, run: () => {} })
+  const menu = taskMenuTemplate({ bindings: rebound, run: () => {} })
   assert.equal(menu.filter(item => item.label === 'View' || item.role === 'viewMenu').length, 1)
   assert.ok(!JSON.stringify(menu).includes('forceReload'))
-  const view = menu.find(item => item.label === 'View')
-  for (const label of ['Research', 'Find in research…']) assert.ok(view.submenu.some(item => item.label === label), label)
-  const items = menu.flatMap((m) => m.submenu ?? [])
+  const talk = menu.find(item => item.label === 'Talk')
+  const shape = talk?.submenu.find(item => item.label === 'Shape the talk')
+  const research = shape?.submenu.find(item => item.label === 'Research folder')
+  for (const id of ['research-panel', 'research-find']) assert.ok(research?.submenu.some(item => item.id === id), id)
+  const leaves = tree => tree.flatMap(item => item.submenu ? leaves(item.submenu) : [item])
+  const items = leaves(menu)
   const settings = items.find((i) => i.label === 'Settings')
   assert.equal(settings?.accelerator, 'Cmd+,')
   for (const i of items) if (i.accelerator) assert.equal(i.registerAccelerator, false, i.label)

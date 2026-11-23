@@ -8,14 +8,16 @@ import type { InspectorBindingModel, InspectorModel } from './inspectorModel'
 import { clearLineIcon, lineIconState } from '../../../shared/icon-verbs'
 import { readOutlineSlides } from '../../../shared/feedback-accept'
 import { reportTriggerMergeWarnings } from '../../../shared/trigger-line'
+import { defaultTitlePlacementForLayout } from '../../../shared/deck-frame'
 
 export type PanelEdit = { layout?: string; options?: readonly LayoutOptionChoice[]; reset?: readonly string[]; clearRow?: boolean }
-export type Design = PanelEdit & { label: string; why?: string; unavailable?: string; current?: boolean }
+export type Design = PanelEdit & { label: string; why?: string; unavailable?: string; current?: boolean; reapply?: boolean }
 
 export const option = (group: string, token: string): LayoutOptionChoice => ({ group, token })
-export type PictureSide = 'left' | 'right'
+export type PictureSide = 'left' | 'right' | 'above'
 export const isPointListLayout = (layout: string): boolean => ['list', 'list-visual', 'copy-visual'].includes(layout)
-export const TITLE_GROUPS = ['title-placement', 'title-display', 'title-look', 'title-look-tone', 'font-title', 'title-icon', 'statement-sidebar']
+export const TITLE_PLACEMENT_GROUPS = ['title-placement', 'title-display', 'statement-sidebar']
+export const TITLE_GROUPS = [...TITLE_PLACEMENT_GROUPS, 'title-look', 'title-look-tone', 'font-title', 'title-icon']
 export const TITLE_STYLES = [
   ['Plain', '', ''], ['Tab', 'titlelook=tab', ''], ['Soft tab', 'titlelook=tab', 'titlelook-tone=soft'],
   ['Kicker', 'titlelook=kicker', ''], ['Label', 'titlelook=label', ''],
@@ -62,12 +64,14 @@ export const TABLE_STYLES = [
   ['Header row', 'Column names stand out', [true, true, true]],
   ['Rows only', 'Lighter, for reading across', [false, false, false]],
   ['First column leads', 'When each row is a thing', [false, true, true]],
+  ['Row bands', 'One band per row', [true, false, true]],
   ['Plain grid', 'As pasted', [false, true, false]]
 ] as const
 
 export function tableDesigns(tokens: Readonly<Record<string, string>>): Design[] {
   return TABLE_STYLES.map(([label, why, switches]) => {
-    const options = TABLE_GROUPS.map((key, index) => option(key, switches[index] ? '' : key + '=off'))
+    const options = [...TABLE_GROUPS.map((key, index) => option(key, switches[index] ? '' : key + '=off')),
+      option('table-bands', label === 'Row bands' ? 'table-bands=on' : '')]
     return { label, why, options, current: options.every(choice => choice.token === (tokens[choice.group] ?? '')) }
   })
 }
@@ -91,15 +95,26 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
   hasLogos: boolean, pictureSide: PictureSide | null): Design[] {
   const layout = row.has_table && !model.layoutName ? 'table' : model.layoutName ?? 'list'
   const tokens = model.selectedTokens
-  const placement = (where: 'top' | 'side', target: string): LayoutOptionChoice[] =>
-    target === layout && row.title_layout === (where === 'side' ? 'left' : 'top') ? [] : titlePlace(where, target)
+  const targetTitles = new Map<string, string>()
+  const inheritedTitle = (target: string): string => {
+    const title = targetTitles.get(target) ?? defaultTitlePlacementForLayout(text, row.source_line ?? null, target)
+    targetTitles.set(target, title)
+    return title
+  }
+  const placement = (where: 'top' | 'side', target: string): LayoutOptionChoice[] => {
+    const requested = where === 'side' ? 'left' : 'top'
+    if (inheritedTitle(target) === requested) return [option('title-display', ''), option('title-placement', '')]
+    return target === layout && row.title_layout === requested ? [] : titlePlace(where, target)
+  }
   if (layout === 'table' || layout === 'table-outline') {
     const tables = tableDesigns(tokens)
     return [...tables.map(design => ({ ...design, options: [...design.options!, ...placement('top', layout)],
       current: design.current && row.title_layout === 'top' })), {
       label: 'Title at the side', why: 'More room for rows',
       current: row.title_layout === 'left',
-      options: [...tables[1].options!, ...titlePlace('side', layout), option('title-placement', 'split=30')]
+      options: [...tables[1].options!, ...(inheritedTitle(layout) === 'left'
+        ? placement('side', layout)
+        : [...titlePlace('side', layout), option('title-placement', 'split=30')])]
     }]
   }
   const own = model.board ? 'Board' : tokens['poll-type']?.startsWith('poll=') ? 'Poll' : DESIGN_PAGES[layout]
@@ -116,6 +131,12 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
   const fits = canTakeAllLayouts(text, slide)
   const suggested = suggestLayouts(text, slide)
   const hasPicture = row.image_count > 0
+  const pictureAbove: Design = {
+    label: 'Picture above', why: 'A wide picture, points in a row',
+    ...(layout === 'iconrow' ? {} : { layout: 'iconrow' }),
+    options: [...placement('top', 'iconrow'), option('media-placement', 'image=above')],
+    current: layout === 'iconrow' && pictureSide === 'above' && row.title_layout === 'top'
+  }
   const listStyle = tokens['list-style'] ?? ''
   const form = tokens['iconlist-variant'] || (row.bullet_count > 3 ? 'iconlist=list' : 'iconlist=boxes')
   const unpinnedListStyle = (style: string): string => (style === 'plainlist' ? '' : style) === model.deckListStyle ? '' : style
@@ -139,7 +160,10 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
     ] : []),
     list(hasPicture ? 'Icon bands, picture right' : 'Icon boxes', 'One box per point', 'iconlist', 'iconlist=boxes'),
     list('Icon list', 'An icon beside each point', 'iconlist', 'iconlist=list'),
-    ...(hasPicture ? [list('Picture on the left', 'Picture first, then points', 'iconlist', 'iconlist=list', 'top', 'image=left')] : []),
+    ...(hasPicture ? [
+      list('Picture on the left', 'Picture first, then points', 'iconlist', 'iconlist=list', 'top', 'image=left'),
+      ...(row.bullet_count > 0 || layout === 'iconrow' ? [pictureAbove] : [])
+    ] : []),
     list('Numbered', 'When the order matters', 'numbered'),
     ...(!hasPicture ? [{ label: 'Row of icons', why: 'Light, no boxes', layout: 'iconrow', current: layout === 'iconrow' }] : []),
     list('Title at the side', 'A coloured panel for the title', 'plainlist', '', 'side')

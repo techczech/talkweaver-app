@@ -26,7 +26,7 @@ const LEGACY = ['---', 'title: Legacy Section', '---', '# Legacy', '', '## Befor
 mkdirSync(join(vault, 'legacy-section'))
 const legacyPath = join(vault, 'legacy-section', 'legacy-section-outline.md')
 writeFileSync(legacyPath, LEGACY)
-writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, editorViewMode: 'markdown' }, null, 2))
+writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'markdown' }, null, 2))
 
 const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 let app

@@ -52,6 +52,38 @@ console.log('PASS thumbnail queue: cancellation, bounded pending edits, independ
   console.log('PASS thumbnail queue: background jobs wait behind normal lanes')
 }
 {
+  const order = [], gates = []
+  const cached = {}
+  const q = createThumbnailQueue(async (value, _signal, _superseded, yieldToVariant) => {
+    order.push(value)
+    await new Promise(resolve => gates.push(resolve))
+    if (value === 'variant') return { variant: 'picture' }
+    if (value === 'strip' && !cached.first) {
+      cached.first = 'picture'
+      if (yieldToVariant()) return { ...cached }
+    }
+    return { ...cached, rest: 'picture' }
+  })
+  for (const supersede of [false, true]) {
+    order.length = 0
+    delete cached.first
+    const strip = q('strip', 'editor')
+    const variant = q('variant', undefined, true)
+    gates.shift()()
+    await new Promise(resolve => setImmediate(resolve))
+    assert.deepEqual(order, ['strip', 'variant'], 'the strip gives the waiting variant a turn after caching the first capture')
+    const remaining = supersede ? q('new strip', 'editor') : strip
+    if (supersede) assert.deepEqual(await strip, {}, 'a newer strip request supersedes the paused one')
+    gates.shift()()
+    assert.deepEqual(await variant, { variant: 'picture' })
+    await new Promise(resolve => setImmediate(resolve))
+    gates.shift()()
+    assert.deepEqual(await remaining, { first: 'picture', rest: 'picture' }, 'the resumed strip reuses its first capture')
+    assert.deepEqual(order, ['strip', 'variant', supersede ? 'new strip' : 'strip'])
+  }
+  console.log('PASS thumbnail queue: a yielding strip resumes from cache or is replaced by its newer revision')
+}
+{
   // The prewarm's idle jobs: last in line, and interrupted by anything anyone is waiting for.
   let clock = 100
   const order = [], gates = [], signals = {}

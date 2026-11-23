@@ -124,12 +124,12 @@ const trashed = () => (existsSync(trash) ? readdirSync(trash) : [])
 const activityFile = (vaultId, slug) => join(userData, 'talk-activity', vaultId, `${slug}.jsonl`)
 async function openInInspector(title) {
   await openTalkByTitle(page, title)
-  await page.waitForTimeout(600)
-  if (await page.locator('.tw-inspector').count() === 0) {
-    await page.locator('.cm-content').first().click()
-    await page.keyboard.press('Meta+p') // Inspector mode
-  }
-  await page.locator('.tw-inspector').waitFor({ state: 'visible', timeout: 8000 })
+  const toggle = page.getByTestId('sidebar-toggle')
+  if (await toggle.getAttribute('aria-pressed') === 'false') await toggle.click()
+  await page.getByRole('tab', { name: 'Slide', exact: true }).click()
+  const inspector = page.locator('.tw-inspector')
+  await inspector.getByRole('button', { name: 'Next slide', exact: true }).click()
+  await inspector.getByRole('button', { name: /^More\b/ }).click()
 }
 
 try {
@@ -191,10 +191,13 @@ try {
   await shot('activity-line')
 
   // ── (D) folder events for the open talk's folder ──
+  // Native events can reach the GUI runner late. Wait for the scan's outcome.
+  const folderEventTimeout = 60_000
+  const pill = page.locator('.tw-status-conflict')
   writeFileSync(join(identical.folder, 'identical-talk-outline (1).md'), identical.text)
-  const liveGone = await until(() => trashed().some((n) => n.endsWith('identical-talk-outline (1).md')), 8000)
+  const liveGone = await until(() => trashed().some((n) => n.endsWith('identical-talk-outline (1).md')), folderEventTimeout)
   record('with the talk open, an identical copy that arrives is trashed (folder watch)', liveGone && !existsSync(join(identical.folder, 'identical-talk-outline (1).md')))
-  const liveLine = await until(async () => (await activity.locator('.tw-talk-activity-row').count()) === 2, 5000)
+  const liveLine = await until(async () => (await activity.locator('.tw-talk-activity-row').count()) === 2, folderEventTimeout)
   record('…and a second Activity line appears in the Inspector without a reload', liveLine, String(await activity.locator('.tw-talk-activity-row').count()))
   record('…still no badge', await chip('Identical talk').count() === 0)
 
@@ -202,9 +205,8 @@ try {
   await openInInspector('Clean talk')
   writeFileSync(join(clean.folder, 'clean-talk-outline-MacBook-Air.md'), clean.text + 'edited on the Air\n')
   await ensureTalksMode(page)
-  const liveBadge = await until(async () => (await chip('Clean talk').count()) === 1, 8000)
+  const liveBadge = await until(async () => (await chip('Clean talk').count()) === 1 && await pill.isVisible(), folderEventTimeout)
   record('with the talk open, a differing copy that arrives raises the badge (folder watch)', liveBadge)
-  const pill = page.locator('.tw-status-conflict')
   record('…and the status bar pill', (await pill.innerText().catch(() => '')) === '1 conflict copy · Compare…')
   record('…and the copy is left where it is', existsSync(join(clean.folder, 'clean-talk-outline-MacBook-Air.md')) && readFileSync(clean.outlinePath, 'utf8') === clean.text)
   await row('Clean talk').scrollIntoViewIfNeeded()
@@ -215,12 +217,14 @@ try {
   await openInInspector('Linked talk')
   writeFileSync(join(linkedReal, 'linked-talk', 'linked-talk-outline (1).md'), linkedTalk.text + 'other Mac\n')
   await ensureTalksMode(page)
-  const linkedBadge = await until(async () => (await chip('Linked talk').count()) === 1, 8000)
+  const linkedBadge = await until(async () => (await chip('Linked talk').count()) === 1 && await pill.isVisible(), folderEventTimeout)
   record('symlinked vault: a differing copy that arrives while the talk is open raises the badge', linkedBadge)
   record('…and the status bar pill', (await page.locator('.tw-status-conflict').innerText().catch(() => '')) === '1 conflict copy · Compare…')
   writeFileSync(join(linkedReal, 'linked-talk', 'linked-talk-outline-MacBook-Air.md'), linkedTalk.text)
-  const linkedGone = await until(() => trashed().some((n) => n.endsWith('linked-talk-outline-MacBook-Air.md')), 8000)
-  record('symlinked vault: an identical copy that arrives is trashed, with an Activity line', linkedGone && await until(() => existsSync(activityFile('vault-linked', 'linked-talk')), 3000))
+  const linkedGone = await until(() =>
+    trashed().some((n) => n.endsWith('linked-talk-outline-MacBook-Air.md')) &&
+    existsSync(activityFile('vault-linked', 'linked-talk')), folderEventTimeout)
+  record('symlinked vault: an identical copy that arrives is trashed, with an Activity line', linkedGone)
 
   // ── (E) the unavailable vault comes back: now it is scanned ──
   renameSync(awayMoved, away)

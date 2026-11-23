@@ -1,0 +1,30 @@
+/* Forest and Slate: the Ocean look in another main colour. Design record docs/design/2026-11-23-forest-slate-palettes/.
+
+   The compiler stamps data-palette="forest" or "slate" beside data-look on every slide of a talk with `palette: forest`
+   or `palette: slate`, and each slide's inline --sec-accent, --sec-tint and --sec-deep carry the palette's main, light
+   and deep strengths. This file sets the same three values as the fall-back for a slide with no inline stamp, and the
+   strengths the pie draws with. Everything else (the amber companion, the neutrals, the five section leads, every
+   layout rule) is Ocean's, unchanged. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-palette="forest"] {
+  --look-main: var(--sec-accent, #0F766E);
+  --look-deep: var(--sec-deep, #0A5650);
+  --look-light: var(--sec-tint, #E4F3F0);
+  --look-pie-mid: #4A9E95;
+  --look-pie-pale: #A6D6CF;
+  --look-pie-dark: #063B37;
+}
+/* The title tab on an amber field is the deep strength in Forest: the main colour is 2.66:1 against amber, the deep
+   strength 4.15:1 (white type on it 8.53:1). With [data-palette] the rule outranks the amber lead's own. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-palette="forest"][data-lead="amber"] { --look-tab-on-lead: var(--look-deep); }
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-palette="slate"] {
+  --look-main: var(--sec-accent, #334155);
+  --look-deep: var(--sec-deep, #1E293B);
+  --look-light: var(--sec-tint, #EBEFF5);
+  --look-pie-mid: #7C8BA1;
+  --look-pie-pale: #C5CDD9;
+  --look-pie-dark: #0F172A;
+}
+/* Slate is too close to near-black to mark a key word, so the key words of a light statement are set in rust, the
+   amber companion at a strength that carries type (5.38:1 on white). With [data-lead] so that it also holds in a
+   deep-blue section, whose own rule sets the key words to the deep strength. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-palette="slate"][data-lead] { --look-keyword: #AD4F08; }

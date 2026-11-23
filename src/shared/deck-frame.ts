@@ -12,9 +12,9 @@
 // =============================================================================
 import { parseSimpleYaml } from '../../compiler/scripts/lib/simple-yaml.mjs'
 import { parseOutlineTree, type OutlineTreeNode } from '../../compiler/scripts/lib/14-outline-tree.mjs'
-import { plainListForcedIcons, resolveSlideFrame } from '../../compiler/scripts/lib/11-frame.mjs'
+import { hasExplicitFrameTitle, plainListForcedIcons, resolveSlideFrame } from '../../compiler/scripts/lib/11-frame.mjs'
 import { resolveTitleLook } from '../../compiler/scripts/lib/title-look.mjs'
-import { parseHeadingAttrs, parseTriggerLine } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
+import { parseHeadingAttrs, parseTriggerLine, titlePlacementFor, titleRegimeForLayout } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
 import { deckTriggerDefaultsFromMeta, effectiveSlideAttrs } from '../../compiler/scripts/lib/slide-attrs.mjs'
 import { blankHtmlCommentsKeepingCaptureMarkers } from '../../compiler/scripts/lib/live-page-capture-markup.mjs'
 import type { OptionCommitContext } from './trigger-line.ts'
@@ -56,6 +56,23 @@ function findSlide(root: OutlineTreeNode, headingLine: number): { node: OutlineT
     return null
   }
   return walk(root, null)
+}
+
+/** The target layout's title placement before applying any placement set on the slide itself. */
+export function defaultTitlePlacementForLayout(outline: string, headingLine: number | null, layout: string): string {
+  const { meta, body } = splitFrontmatter(outline)
+  const slide = headingLine == null ? null : findSlide(parseOutlineTree(blankHtmlCommentsKeepingCaptureMarkers(body)).root, headingLine)
+  const section = slide?.section ? asMap(asMap(meta.sections)[slide.section.title]) : {}
+  const deck = asMap(meta.defaults)
+  const { attrs } = deckTriggerDefaultsFromMeta(meta)
+  const frame = resolveSlideFrame(attrs, section, deck)
+  return titlePlacementFor({
+    layout,
+    attrs,
+    frameTitle: frame.title,
+    frameTitleExplicit: hasExplicitFrameTitle(attrs, section, deck),
+    titleHidden: attrs.titleDisplay !== 'show' && (attrs.notitle === true || frame.title === 'off' || titleRegimeForLayout(layout) === 'hidden')
+  }).mode
 }
 
 /** Side of the media slot when the compiled slide places its picture beside text. */

@@ -7,6 +7,14 @@ on:
     branches: [main, 'next/**']
   workflow_dispatch:
     inputs:
+      e2e_scripts:
+        description: 'Optional space-separated e2e script names. Blank runs the full desktop tier.'
+        type: string
+        default: ''
+      nightly_dom:
+        description: 'Run just the Studio nightly DOM job for qualification.'
+        type: boolean
+        default: false
       hosted:
         description: 'Run on GitHub-hosted runners instead of the self-hosted Spark/Studio runners (emergency switch; uses paid minutes)'
         type: boolean
@@ -20,9 +28,9 @@ concurrency:
   # Per trigger as well as per ref: a push must not cancel the nightly browser run, nor the reverse.
   group: tests-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
-# Runners: every job runs on the self-hosted Mac Studio (no GitHub minutes).
-# `workflow_dispatch` with `hosted: true` sends one run back to GitHub-hosted runners
-# (`unit` then runs on ubuntu-latest). Self-hosted jobs never run for pull requests from forks.
+# Jobs default to the Mac Studio. The separate PR DOM workflow uses GitHub-hosted Ubuntu.
+# `workflow_dispatch` with `hosted: true` moves the regular manual jobs to GitHub-hosted runners.
+# Self-hosted jobs never run for pull requests from forks.
 # See _MACHINECONFIG/github-runners.md.
 jobs:
   unit:
@@ -40,7 +48,9 @@ jobs:
     #   test:html-page-import, test:live-page-capture, test:live-page-capture-window
     #   test:live-page-capture-markup
     #                     exercise macOS-only no-link filesystem operations; other platforms refuse.
-    if: github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request'
+    if: >-
+      (github.event.pull_request.head.repo.full_name == github.repository || github.event_name != 'pull_request') &&
+      !inputs.e2e_scripts && !inputs.nightly_dom
     runs-on: ${{ inputs.hosted && 'ubuntu-latest' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 20
     env:
@@ -97,7 +107,7 @@ jobs:
       (github.event_name == 'pull_request' && github.base_ref == 'main' &&
        github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
-      github.event_name == 'workflow_dispatch'
+      (github.event_name == 'workflow_dispatch' && !inputs.e2e_scripts && !inputs.nightly_dom)
     runs-on: ${{ inputs.hosted && 'macos-15' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 20
     steps:
@@ -136,18 +146,95 @@ jobs:
         run: npm run build:gallery-native:host
       - run: npm run test:unit
 
+  nightly-dom:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.nightly_dom)
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 55
+    outputs:
+      failures: ${{ steps.summary.outputs.failures }}
+    steps:
+      - name: Create job scratch
+        shell: bash
+        run: |
+          job_tmp="$(cd "$RUNNER_TEMP" && pwd -P)"
+          job_tmp="$(mktemp -d "$job_tmp/tw-job.XXXXXX")"
+          printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$job_tmp" "$job_tmp" "$job_tmp" >> "$GITHUB_ENV"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - run: npx playwright install chromium-headless-shell
+      - run: npm run build
+      - name: Run the full DOM inventory
+        shell: bash
+        run: |
+          npm run test:dom -- --jobs 4 | tee "$RUNNER_TEMP/nightly-dom.log"
+      - name: Record results and dependency skips
+        id: summary
+        if: always() && !cancelled()
+        shell: bash
+        run: |
+          log="$RUNNER_TEMP/nightly-dom.log"
+          if test -f "$log"; then
+            grep -E '^[0-9]+ passed, |^not run: |^failed: ' "$log" >> "$GITHUB_STEP_SUMMARY" || true
+            failures="$(sed -n 's/^failed: //p' "$log" | tail -1)"
+            printf 'failures=%s\n' "$failures" >> "$GITHUB_OUTPUT"
+          fi
+
+  nightly-dom-issue:
+    needs: nightly-dom
+    if: always() && github.event_name == 'schedule' && github.ref == 'refs/heads/main' && needs.nightly-dom.result == 'failure'
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update the nightly DOM issue
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          DOM_FAILURES: ${{ needs.nightly-dom.outputs.failures }}
+        run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          title='TalkWeaver nightly DOM failures'
+          existing=$(gh issue list --state all --search "\"$title\" in:title" --json number,title,state \
+            --jq 'map(select(.title == "TalkWeaver nightly DOM failures")) | first | select(. != null) | "\(.number) \(.state)"')
+          read -r issue state <<< "$existing"
+          body="$RUNNER_TEMP/nightly-dom-issue.md"
+          {
+            printf 'The nightly Studio DOM job failed on %s.\n\n' "$GITHUB_SHA"
+            if test -n "$DOM_FAILURES"; then
+              read -r -a failures <<< "$DOM_FAILURES"
+              printf -- '- %s\n' "${failures[@]}"
+            else
+              printf 'The job failed before it emitted a list of failed scripts.\n'
+            fi
+            printf '\n[Actions run](%s/%s/actions/runs/%s)\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } > "$body"
+          if test -n "$issue"; then
+            gh issue edit "$issue" --body-file "$body"
+            if test "$state" = CLOSED; then gh issue reopen "$issue"; fi
+          else
+            gh issue create --title "$title" --body-file "$body"
+          fi
+
   browser-tiers:
-    # Playwright Chromium (dom) and Electron (e2e) tiers. Not required: several
-    # checks measure font/pixel layout and are still being made portable, so
-    # these run on demand and nightly, and a failure does not fail the workflow.
-    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    # Nightly and manual Playwright and Electron coverage on macOS.
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.nightly_dom)
     runs-on: ${{ inputs.hosted && 'macos-15' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 60
     continue-on-error: true
     strategy:
       fail-fast: false
       matrix:
-        tier: [dom, e2e]
+        tier: ${{ (github.event_name == 'schedule' || inputs.e2e_scripts) && fromJSON('["e2e"]') || fromJSON('["dom","e2e"]') }}
     steps:
       - name: Create job scratch
         shell: bash
@@ -175,6 +262,29 @@ jobs:
       # cache under ~/actions-runner, so browsers are not installed per user or globally.
       - name: Install Playwright Chromium
         run: npx playwright install chromium chromium-headless-shell
+      - name: Build the OCR helper on macOS
+        if: matrix.tier == 'e2e' && runner.os == 'macOS' && (!inputs.e2e_scripts || contains(inputs.e2e_scripts, 'test:ocr:e2e'))
+        run: npm run build:ocr
       # Build once up front so parallel Electron tests do not race to rebuild out/.
       - run: npm run build
       - run: npm run test:${{ matrix.tier }}
+        if: matrix.tier != 'e2e' || !inputs.e2e_scripts
+      - name: Run selected desktop specs
+        if: matrix.tier == 'e2e' && inputs.e2e_scripts
+        env:
+          TW_E2E_SCRIPTS: ${{ inputs.e2e_scripts }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readFileSync } from 'node:fs'
+          import { spawnSync } from 'node:child_process'
+
+          const scripts = process.env.TW_E2E_SCRIPTS.trim().split(/\s+/)
+          const { e2e } = JSON.parse(readFileSync('scripts/test-tiers.json', 'utf8'))
+          if (scripts.some(name => !e2e.includes(name)) || new Set(scripts).size !== scripts.length) {
+            throw new Error('Choose unique script names from the desktop tier in scripts/test-tiers.json.')
+          }
+          const result = spawnSync(process.execPath, [
+            'scripts/run-tests.mjs', '--jobs', '2', '--tail', '160', ...scripts,
+          ], { stdio: 'inherit' })
+          process.exitCode = result.status ?? 1
+          NODE

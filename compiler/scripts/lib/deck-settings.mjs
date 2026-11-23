@@ -23,13 +23,14 @@
 
 /** Deck palettes. "" (absent) is the 0.44 ocean look; `bold` lets amber lead statement and divider
  *  slides; `classic` restores the pre-0.44 look; `green` is the pre-0.44 green cycle (classic styling). */
-export const DECK_PALETTES = ["green", "classic", "bold"];
+export const DECK_PALETTES = ["green", "classic", "bold", "forest", "slate"];
 
 /** The model palette a deck palette choice draws with (02-triggers-layout.mjs deckLookForPalette). */
 export function modelPaletteFor(choice) {
   if (choice === "green") return "green";
   if (choice === "classic") return "";
   if (choice === "bold") return "ocean-bold";
+  if (choice === "forest" || choice === "slate") return choice;
   return "ocean";
 }
 /** Bundled modern and original ADR-0005 system faces. Absence is resolved by look in CSS. */

@@ -9,7 +9,7 @@
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-example-talks.mjs
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle, talkRowByTitle } from './lib/talklist.mjs'
 import { deriveChapters } from '../src/shared/guide-chapters.ts'
 import { guideLearnFrom } from '../src/shared/guide-learn.ts'
 import { fileURLToPath } from 'url'
@@ -28,7 +28,7 @@ function record(name, pass, detail) {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`)
 }
 
-const TALKS = [['The Saturday market', 25], ['Garden notes', 14], ['Walking the old town', 30], ['Lightning round', 10], ['Harvest supper (draft)', 10]]
+const TALKS = [['The Saturday market', 26], ['Garden notes', 14], ['Walking the old town', 30], ['Lightning round', 10], ['Harvest supper (draft)', 10]]
 const PASSIVE = 'editor.protect-heading-delete'
 const write = deriveChapters().find((c) => c.task === 'Write the outline')
 
@@ -72,8 +72,7 @@ try {
   await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
 
   // ── (A) opening changes no byte ──
-  await page.locator('[data-example-card]').waitFor({ state: 'visible', timeout: 10000 })
-  await page.locator('[data-open-example]').click()
+  await page.getByRole('button', { name: 'Example talks', exact: true }).click()
   await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
   await page.waitForFunction(() => document.title.includes('The Saturday market'), null, { timeout: 15000 }).catch(() => {})
   await page.waitForSelector('.cm-content', { timeout: 8000 })
@@ -84,7 +83,7 @@ try {
   for (const [title] of TALKS) {
     await ensureTalksMode(page)
     await openTalkByTitle(page, title)
-    const shown = await waitFor(async () => (await page.locator('.workspace-title').first().innerText().catch(() => '')) === title, 15000)
+    const shown = await waitFor(async () => (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label', { timeout: 1000 }).catch(() => '')) === title, 15000)
     await page.waitForTimeout(2500) // past the 1.5 s autosave delay
     record(`${title} opens in the editor`, shown)
   }
@@ -101,8 +100,12 @@ try {
   await shot(page, '09-talks-panel.png')
 
   // ── (B) the walk through chapter 01 ──
-  await openTalkByTitle(page, 'The Saturday market')
-  await waitFor(async () => (await page.locator('.workspace-title').first().innerText().catch(() => '')) === 'The Saturday market', 15000)
+  const market = await talkRowByTitle(page, 'The Saturday market')
+  await market.click({ noWaitAfter: true })
+  await page.getByTitle('Talk menu', { exact: true })
+    .and(page.getByRole('button', { name: 'The Saturday market', exact: true })).waitFor()
+  await page.getByTestId('outline-toggle').click()
+  await page.locator('[data-view="outline"] .cm-content').waitFor()
   if (!(await page.locator('[data-guide]').isVisible().catch(() => false))) await page.locator('[data-guide-button]').click()
   await page.waitForSelector('[data-guide]', { timeout: 6000 })
   await page.locator('[data-chapter-row="Write the outline"]').click()
@@ -125,7 +128,23 @@ try {
     await page.waitForTimeout(450)
   }
 
-  // Fresh every week: Format text.
+  const outlinePath = join(exampleRoot, 'the-saturday-market', 'the-saturday-market-outline.md')
+  const saved = () => readFileSync(outlinePath, 'utf8')
+  const exerciseEdit = async (label) => {
+    const before = saved()
+    await palette(label)
+    if (!await waitFor(() => saved() !== before)) throw new Error(`${label} did not change the practice outline`)
+    return before
+  }
+
+  // Fresh every week: Format text and insert a link from a synthetic clipboard.
+  await page.evaluate(() => {
+    navigator.clipboard.readText = async () => 'https://example.invalid/practice-link'
+  })
+  await line('Bread and honey arrive').dblclick()
+  const beforeLink = await exerciseEdit('Insert link (clipboard-aware)')
+  await page.keyboard.press('Meta+z')
+  if (!await waitFor(() => saved() === beforeLink)) throw new Error('Undo did not restore the outline after inserting the link')
   await line('Bread and honey arrive').dblclick()
   await key('Meta+b')
   for (const name of ['Italic', 'Inline code', 'Highlight', 'Strikethrough', 'Underline']) { await line('Bread and honey arrive').dblclick(); await palette(name) }
@@ -140,6 +159,11 @@ try {
   await key('Meta+Shift+ArrowLeft')
   await key('Meta+Shift+ArrowRight')
   await key('Meta+z'); await key('Meta+z'); await key('Meta+z')
+  // The redesign added these practice commands to the chapter.
+  await caretOn('Organise the outline')
+  await exerciseEdit('New section')
+  await caretOn('Organise the outline')
+  await exerciseEdit('New subsection')
   // Who runs it: the line becomes a heading (undone each time), then the heading and its subtree.
   await caretOn('A rota of six'); await key('Meta+Alt+ArrowUp'); await key('Meta+z')
   await caretOn('A rota of six'); await key('Meta+Alt+ArrowDown'); await key('Meta+z')
@@ -177,7 +201,14 @@ try {
   await page.waitForFunction(() => ![...document.querySelectorAll('.grid-cell')].some((node) => node.innerText.includes('Four stalls')))
   await page.locator('.grid-view').focus()
   await key('Meta+z', 600)
-  await page.locator('.grid-cell').filter({ hasText: 'Four stalls' }).first().waitFor()
+  await page.locator('section[aria-label="Slide Scratchpad"]').getByRole('button', { name: 'Collapse', exact: true }).click()
+  const restored = page.locator('.grid-cell').filter({ hasText: 'Four stalls' }).first()
+  await restored.click()
+  await palette('Select several slides…')
+  await restored.locator('[data-grid-tick]:checked').waitFor()
+  await page.getByRole('checkbox', { name: 'Select Select and set aside', exact: true }).check()
+  await page.locator('[data-batch-count]').filter({ hasText: '2 selected' }).waitFor()
+  await exerciseEdit('Make a section from selected slides')
   await key('Meta+1', 500)
   await page.evaluate(() => window.dispatchEvent(new Event('tw-guide-open')))
   await page.locator('[data-chapter-detail="Write the outline"]').waitFor()

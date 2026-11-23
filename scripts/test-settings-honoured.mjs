@@ -270,9 +270,9 @@ const EFFECTS = {
     unknown: { value: 'loud', warning: 'title-look-tone-unknown' }
   },
   palette: {
-    effect: 'the look and accent cycle: Ocean (absent), Ocean with amber leading (bold), the pre-0.44 cycle (classic) or the green cycle',
+    effect: 'the look and accent cycle: Ocean (absent), Ocean with amber leading (bold), Forest, Slate, the pre-0.44 cycle (classic) or the green cycle',
     probe: ({ document }) => `${posterAccent(document, 'deck-title')} ${slideById(document, 'deck-title')?.getAttribute('data-companion') ?? 'classic'}`,
-    expect: { '': '#1273C4 accent', bold: '#1273C4 bold', classic: '#0f4bd8 classic', green: '#166534 classic' },
+    expect: { '': '#1273C4 accent', bold: '#1273C4 bold', forest: '#0F766E accent', slate: '#334155 accent', classic: '#0f4bd8 classic', green: '#166534 classic' },
     unknown: { value: 'purple', warning: 'palette-unknown' }
   },
   'section-colours': {

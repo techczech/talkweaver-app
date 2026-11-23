@@ -14,16 +14,21 @@ const vault = join(scratch, 'vault'), ud = join(scratch, 'userData')
 mkdirSync(join(vault, 'fixture'), { recursive: true }); mkdirSync(ud)
 writeFileSync(join(vault, 'fixture', 'fixture-outline.md'), '---\ntitle: Command discovery\nauto_title_slide: false\nauto_thanks_slide: false\n---\n\n### Opening\n{id=opening}\n\nOriginal words.\n')
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }))
+const env = { TW_E2E: '1' }
+for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY']) {
+  if (process.env[name] !== undefined) env[name] = process.env[name]
+}
 let app, passed = 0
 const shots = process.env.TW_COMMAND_GROUP_SHOTS
 if (shots) mkdirSync(shots, { recursive: true })
 try {
   await ensureFreshBuild(process.cwd())
-  app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: process.cwd(), env: { ...process.env, TW_E2E: '1' } })
+  app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: process.cwd(), env })
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
+  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1280, 800))
   await openTalkByTitle(page, 'Command discovery')
-  const editor = page.locator('.cm-content').first()
+  const editor = page.locator('[data-view="slide"] .cm-content')
   await editor.waitFor(); await editor.focus()
   async function check(name, fn) { await fn(); passed++; console.log(`PASS ${name}`) }
   await check('every Electron window stays hidden', async () => {
@@ -35,13 +40,13 @@ try {
     assert.deepEqual(await page.locator('[data-task-group]').evaluateAll(rows => rows.map(r => r.dataset.taskGroup)), TASK_GROUPS)
     assert.equal(await page.locator('[data-group-icon]').count(), 10)
     assert.equal(await page.locator('[data-command-menu]').evaluate(el => Math.round(el.getBoundingClientRect().width)), 560, 'category layout survives the app stylesheet order')
-    if (shots) await page.locator('[data-command-menu]').screenshot({ path: join(shots, 'palette-task-groups.png') })
+    if (shots) await page.screenshot({ path: join(shots, 'palette-task-groups.png') })
   })
   const input = page.locator('.command-menu-input')
   await check('Build a slide opens registry subgroups; Escape restores its category', async () => {
     await page.locator('[data-task-group="Build a slide"]').click()
     assert.ok(await page.locator('.command-menu-subgroup').count() > 0)
-    if (shots) await page.locator('[data-command-menu]').screenshot({ path: join(shots, 'palette-build-a-slide.png') })
+    if (shots) await page.screenshot({ path: join(shots, 'palette-build-a-slide.png') })
     await input.press('Escape')
     assert.equal(await page.locator('[data-active=true]').getAttribute('data-task-group'), 'Build a slide')
   })
@@ -68,6 +73,28 @@ try {
     for (const group of TASK_GROUPS) assert.equal(all.filter(item => item.label === group).length, 1, group)
     assert.deepEqual(tree.find(m => m.label === 'Edit').children.filter(item => item.role).map(item => item.role), ['undo', 'redo', 'cut', 'copy', 'paste', 'selectall'])
     assert.ok(all.some(item => item.id === 'format-bold' && item.accelerator))
+  })
+  await check('browsing See the talk runs View: Grid', async () => {
+    await page.keyboard.press('Meta+Shift+p')
+    await page.locator('[data-task-group="See the talk"]').click()
+    const command = page.locator('[data-command="view-grid"]')
+    await command.waitFor()
+    await command.hover()
+    await input.press('Enter')
+    await page.locator('[data-command-menu]').waitFor({ state: 'hidden' })
+    await page.locator('[data-view="grid"]').waitFor()
+  })
+  await check('the native menu leaf runs the same View: Grid command', async () => {
+    await page.getByTestId('slides-toggle').click()
+    await editor.waitFor()
+    await app.evaluate(({ Menu, BrowserWindow }) => {
+      const window = BrowserWindow.getAllWindows().find(win => !win.isDestroyed())
+      const item = Menu.getApplicationMenu()?.getMenuItemById('view-grid')
+      if (!item?.enabled || !window) throw new Error('View: Grid is missing or disabled in the native menu')
+      // Invoke the built Electron menu item handler without opening the macOS menu bar.
+      item.click(undefined, window, window.webContents)
+    })
+    await page.locator('[data-view="grid"]').waitFor()
   })
   await check('Settings opened by its native shortcut also stays hidden in test mode', async () => {
     await openSettingsWindow(app, page)

@@ -27,7 +27,7 @@ let checks = 0
 const captures = {}
 const browser = await chromium.launch({ headless: true })
 try {
-  for (const palette of ['ocean', 'bold', 'classic', 'green']) {
+  for (const palette of ['ocean', 'bold', 'forest', 'slate', 'classic', 'green']) {
     const text = palette === 'ocean' ? source : source.replace('title: Reading weight fixture', `title: Reading weight fixture\npalette: ${palette}`)
     const model = await prepareSource(fixture, text, 'Reading weight', statSync(fixture))
     assert(!model.warnings.some(w => w.startsWith('palette-unknown:')), 'the fixture uses a supported palette')
@@ -106,7 +106,7 @@ try {
   }
   checks++
   await quick.close()
-  console.log(captureOnly ? 'CAPTURE baseline: synthetic slides at 1920x1080; new weight rule not asserted' : `PASS reading weight: ${checks} element checks across four palettes`)
+  console.log(captureOnly ? 'CAPTURE baseline: synthetic slides at 1920x1080; new weight rule not asserted' : `PASS reading weight: ${checks} element checks across six palettes`)
 } finally {
   await browser.close()
   rmSync(work, { recursive: true, force: true })

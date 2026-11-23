@@ -169,14 +169,19 @@ function App(){const [picker,P]=React.useState(false),[panel,S]=React.useState(t
   // Large lists only check selected/visible rows, with a session cache and superseded calls cancelled.
   await page.evaluate(()=>{window.many=true;window.slowUsage=true;window.refresh()})
   await page.getByRole('option',{name:/Item 0/}).waitFor()
-  await page.waitForFunction(()=>window.inflight.size>0)
+  await page.waitForFunction(() => window.inflight.size > 0 && window.usageCalls.at(-1)?.includes('row-'))
+  const cancellationsBeforeQueryChange = await page.evaluate(() => window.cancelled)
   await page.locator('.research-panel input').fill('different')
-  await page.waitForFunction(()=>window.cancelled>0)
+  await page.waitForFunction(previous => window.cancelled > previous, cancellationsBeforeQueryChange)
   assert.ok(await page.evaluate(()=>window.maxUsage<=2), 'at most two usage calls')
   assert.ok(await page.evaluate(()=>window.usageCalls.filter(f=>f.includes('row-')).length<50), 'offscreen rows never spawn Scout')
-  await page.evaluate(()=>{window.many=false;window.slowUsage=false;window.noUses=true;window.refresh()})
+  await page.evaluate(() => { window.many = false; window.slowUsage = false; window.noUses = true })
   await page.locator('.research-panel input').fill('')
 
+  // Refresh invalidates the selected item's usage cache. Re-select it after replacing the large list.
+  await page.getByRole('option', { name: /Teachers’ weekly AI use/ }).click()
+  await page.getByRole('option', { name: /Teachers’ weekly AI use/, selected: true }).waitFor()
+  await page.evaluate(() => window.refresh())
   await page.locator('.research-uses b').filter({hasText:'Not used yet'}).waitFor()
   await page.evaluate(()=>{window.empty=true;window.refresh()})
   await page.getByText('Nothing collected for this talk yet').waitFor()

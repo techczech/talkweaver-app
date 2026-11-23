@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ChevronLeft, ChevronRight, Ellipsis, LayoutTemplate, Palette, Plus, Type } from 'lucide-react'
-import { GLOBAL_OPTION_GROUPS } from '../../../shared/layout-registry/entries'
+import { GLOBAL_OPTION_GROUPS, sectionColourChoices } from '../../../shared/layout-registry/entries'
+import { parseFrontmatterPairs } from '../../../shared/frontmatter-editor'
 import { LAYOUTS } from '../data/layouts'
 import InspectorOptionPictures from './InspectorOptionPictures'
 import type { LayoutDef, OptionGroup } from '../data/layouts'
@@ -47,7 +48,9 @@ export default function StructureInspector({ path, text, line, id, title, label,
     ? [...sectionDesigns, { token: 'carousel', label: 'Carousel', description: 'One subslide at a time' }]
     : sectionDesigns
   const colour = inheritedColour?.value ?? tokenIn(colours)
-  const colourName = colours.values.find(value => value.token === colour)?.label ?? 'Rotation'
+  const palette = parseFrontmatterPairs(text).find(pair => pair.key === 'palette')?.value
+  const colourChoices = sectionColourChoices(palette)
+  const colourName = colourChoices.find(value => value.token === colour)?.label ?? 'Rotation'
   return <div className="tw-structure-inspector">
     <div className="tw-structure-inspector-heading">
       <div><strong>{title || `New ${label.toLowerCase()}`}</strong><small>{label}</small></div>
@@ -91,7 +94,7 @@ export default function StructureInspector({ path, text, line, id, title, label,
       </> : <>
         <InspectorOptionPictures outlinePath={path} outline={text} slide={id || { headingLine: line }}
           groupKey={colours.key} groupLabel="Section colour"
-          set={{ layout: 'section', pictured: [...colours.values], rest: [] }} selectedToken={colour}
+          set={{ layout: 'section', pictured: colourChoices, rest: [] }} selectedToken={colour}
           commitToken={value => value.token} onSelect={value => commit(colourEntry, colours, value.token)} />
         <p>Rotation gives each section the next colour of the talk’s design. A colour chosen here stays with this section.</p>
       </>}

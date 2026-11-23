@@ -52,7 +52,7 @@ const IME_TEXT = '日本'
 // Each way in: what it writes, and how to make it write at the caret (the gap).
 const ENTRY_POINTS = [
   ['typing', 'Ok', async (h) => { await h.page.keyboard.type('Ok') }],
-  ['Enter (an empty line, the caret on it)', '', async (h) => { await h.press('Enter') }],
+  ['Enter (an empty line, the caret on it)', '', async (h) => { await h.page.keyboard.press('Enter') }],
   ['input method composition', IME_TEXT, async (h) => {
     await h.cdp.send('Input.imeSetComposition', { text: 'に', selectionStart: 1, selectionEnd: 1 })
     await h.page.waitForTimeout(30)
@@ -104,27 +104,36 @@ const ENTRY_POINTS = [
 // object: each acts as it does on a real empty line there (the oracle: the same command, the caret on
 // that line made by hand), in one undo step, and never on the object's lines. A command that does
 // nothing on an empty line (moving it, promoting it) does nothing at the gap either: no line is made.
+// Each case remounts the editor and starts with fresh undo history. Read the command's
+// transaction after the key press without the shared harness's inter-key delay.
 const LINE_COMMANDS = [
-  ['move up (⌘⇧↑)', (h) => h.press('Meta+Shift+ArrowUp')],
-  ['move down (⌘⇧↓)', (h) => h.press('Meta+Shift+ArrowDown')],
-  ['move line up (⌥↑)', (h) => h.press('Alt+ArrowUp')],
-  ['copy line down (⇧⌥↓)', (h) => h.press('Shift+Alt+ArrowDown')],
-  ['promote (⌘⇧←)', (h) => h.press('Meta+Shift+ArrowLeft')],
-  ['demote (⌘⇧→)', (h) => h.press('Meta+Shift+ArrowRight')],
-  ['promote with subtree (⌘⌥⇧←)', (h) => h.press('Meta+Alt+Shift+ArrowLeft')],
-  ['make heading at the same level (⌘⌥↑)', (h) => h.press('Meta+Alt+ArrowUp')],
-  ['make subheading (⌘⌥↓)', (h) => h.press('Meta+Alt+ArrowDown')],
-  ['delete line (⌘⇧K)', (h) => h.press('Meta+Shift+k')],
-  ['indent (Tab)', (h) => h.press('Tab')],
-  ['outdent (⇧Tab)', (h) => h.press('Shift+Tab')],
-  ['indent more (⌘])', (h) => h.press('Meta+BracketRight')],
-  ['comment the line (⌘/)', (h) => h.press('Meta+Slash')],
-  ['bold (⌘B)', (h) => h.press('Meta+b')],
+  ['move up (⌘⇧↑)', (h) => h.page.keyboard.press('ControlOrMeta+Shift+ArrowUp')],
+  ['move down (⌘⇧↓)', (h) => h.page.keyboard.press('ControlOrMeta+Shift+ArrowDown')],
+  ['move line up (⌥↑)', (h) => h.page.keyboard.press('Alt+ArrowUp')],
+  ['copy line down (⇧⌥↓)', (h) => h.page.keyboard.press('Shift+Alt+ArrowDown')],
+  ['promote (⌘⇧←)', (h) => h.page.keyboard.press('ControlOrMeta+Shift+ArrowLeft')],
+  ['demote (⌘⇧→)', (h) => h.page.keyboard.press('ControlOrMeta+Shift+ArrowRight')],
+  ['promote with subtree (⌘⌥⇧←)', (h) => h.page.keyboard.press('ControlOrMeta+Alt+Shift+ArrowLeft')],
+  ['make heading at the same level (⌘⌥↑)', (h) => h.page.keyboard.press('ControlOrMeta+Alt+ArrowUp')],
+  ['make subheading (⌘⌥↓)', (h) => h.page.keyboard.press('ControlOrMeta+Alt+ArrowDown')],
+  ['delete line (⌘⇧K)', (h) => h.page.keyboard.press('ControlOrMeta+Shift+k')],
+  ['indent (Tab)', (h) => h.page.keyboard.press('Tab')],
+  ['outdent (⇧Tab)', (h) => h.page.keyboard.press('Shift+Tab')],
+  ['indent more (⌘])', (h) => h.page.keyboard.press('ControlOrMeta+BracketRight')],
+  ['comment the line (⌘/)', (h) => h.page.keyboard.press('ControlOrMeta+Slash')],
+  ['bold (⌘B)', (h) => h.page.keyboard.press('ControlOrMeta+b')],
   ['bulleted list (action bar)', (h) => h.page.evaluate(() => window.entry.actionBar('bulleted-list'))],
   ['numbered list (action bar)', (h) => h.page.evaluate(() => window.entry.actionBar('numbered-list'))]
 ]
 // These write something on an empty line, so at the gap their effect must show (never "no change").
 const WRITES_ON_AN_EMPTY_LINE = /^(copy line|demote|make heading|make subheading|delete line|indent \(|indent more|comment|bold|bulleted|numbered)/
+
+const [shardArg, ...extraArgs] = process.argv.slice(2)
+const shard = shardArg && /^--shard=([1-9]\d*)\/([1-9]\d*)$/.exec(shardArg)
+if (extraArgs.length || (shardArg && (!shard || Number(shard[1]) > Number(shard[2]) || Number(shard[2]) > OBJECTS.length))) {
+  throw new Error('Use --shard=<1-based index>/<count>, with count no greater than the number of object fixtures')
+}
+const fixtures = shard ? OBJECTS.filter((_, index) => index % Number(shard[2]) === Number(shard[1]) - 1) : OBJECTS
 
 const h = await openEditorHarness()
 h.cdp = await h.page.context().newCDPSession(h.page)
@@ -133,11 +142,31 @@ let ran = 0
 const doc = () => h.page.evaluate(() => window.view().state.doc.toString())
 
 // The samples hold `|` and `[`, which the harness's mount reads as the caret, so the caret is put directly.
+function setCaretWhenReady({ text, caret, mode }) {
+  if (mode) window.mount(text, mode)
+  if (window.view()?.state.doc.toString() !== text) return false
+  window.setCaret(caret)
+  return true
+}
+
 async function mountAt(text, caret, mode) {
-  await h.page.evaluate(({ text, mode }) => window.mount(text, mode), { text, mode })
-  await h.page.waitForFunction((t) => window.view()?.state.doc.toString() === t, text)
-  await h.page.evaluate((caret) => window.setCaret(caret), caret)
-  await h.page.waitForTimeout(50)
+  if (await h.page.evaluate(setCaretWhenReady, { text, caret, mode })) return
+  const ready = await h.page.waitForFunction(setCaretWhenReady, { text, caret })
+  await ready.dispose()
+}
+
+// Record the edited buffer and its parsed objects before Undo, then record the restored buffer.
+function editAndUndo(before, { refocus = false, inspect = true } = {}) {
+  return h.page.evaluate(({ before, refocus, inspect }) => {
+    const view = window.view()
+    const after = view.state.doc.toString()
+    const objects = inspect ? window.entry.objects(after) : []
+    if (after !== before) {
+      if (refocus) view.focus()
+      window.undoOnce()
+    }
+    return { after, objects, restored: view.state.doc.toString() }
+  }, { before, refocus, inspect })
 }
 
 async function tryEntry(mode, [objectName, kind, object], [placeName, place], [entryName, marker, act, applies], selected = false) {
@@ -155,8 +184,7 @@ async function tryEntry(mode, [objectName, kind, object], [placeName, place], [e
     // At the gap (the end of the object's last line), or with the object selected (the caret at its start).
     await mountAt(text, selected ? found.find(isIt).from : end, mode)
     await act(h)
-    await h.page.waitForTimeout(20)
-    const after = await doc()
+    const { after, objects, restored } = await editAndUndo(text, { refocus: true })
     assert.equal(after.slice(0, end), text.slice(0, end), 'the object and everything before it are unchanged')
     // On a line of its own: after a blank line, or (the talk ending in a line break, so a real line is
     // already there under the object) on that line.
@@ -165,11 +193,8 @@ async function tryEntry(mode, [objectName, kind, object], [placeName, place], [e
     const line = after.slice(end + (blank ? 2 : 1)).split('\n')[0]
     assert.ok(line.startsWith(marker), `the new text starts its own line: ${JSON.stringify(line)}`)
     assert.ok(after.endsWith(text.slice(blank ? end : end + 1)), 'everything after the object is as it was')
-    const objects = await h.page.evaluate((t) => window.entry.objects(t), after)
     assert.ok(objects.some(isIt), 'the object still reads as itself')
-    await h.page.evaluate(() => { const v = window.view(); v.focus() })
-    await h.page.evaluate(() => window.undoOnce())
-    assert.equal(await doc(), text, 'one Undo restores the talk exactly')
+    assert.equal(restored, text, 'one Undo restores the talk exactly')
     // (The mind map's preview measures its SVG before the harness page lays it out; that is the preview
     // library's message, not this test's.)
     assert.deepEqual(h.errors.filter((message) => !/SVGLength': Could not resolve relative length/.test(message)), [])
@@ -179,20 +204,20 @@ async function tryEntry(mode, [objectName, kind, object], [placeName, place], [e
 }
 
 try {
-  for (const object of OBJECTS) {
+  for (const object of fixtures) {
     for (const place of PLACES) {
       for (const entry of ENTRY_POINTS) await tryEntry('plain', object, place, entry)
     }
   }
   // With the object selected (the caret at its start), text never goes into it either: it goes after it.
-  for (const object of OBJECTS) {
+  for (const object of fixtures) {
     for (const entry of ENTRY_POINTS.filter(([name]) => /^(typing|input method|paste event|Paste command|replace the selection|insert at the caret|insert an object)/.test(name))) {
       await tryEntry('plain · object selected', object, PLACES[0], entry, true)
     }
   }
   // Line commands at the gap: the command's effect on a new line under the object, the object's text
   // byte for byte as it was, one Undo back to the talk.
-  for (const [objectName, kind, object] of OBJECTS) {
+  for (const [objectName, kind, object] of fixtures) {
     for (const [placeName, place] of PLACES) {
       for (const [commandName, act] of LINE_COMMANDS) {
         ran += 1
@@ -204,23 +229,17 @@ try {
           const made = text.slice(0, end) + '\n\n' + text.slice(end)
           await mountAt(made, end + 2, 'plain')
           await act(h)
-          await h.page.waitForTimeout(20)
           const oracle = await doc()
           const expected = oracle === made ? text : oracle
           if (WRITES_ON_AN_EMPTY_LINE.test(commandName)) assert.notEqual(expected, text, 'the oracle: the command writes on an empty line')
           await mountAt(text, end, 'plain')
           await act(h)
-          await h.page.waitForTimeout(20)
-          const after = await doc()
+          const { after, objects, restored } = await editAndUndo(text)
           assert.equal(after, expected, 'the command acts on the line under the object, as on a real line there')
           assert.equal(after.slice(0, end), text.slice(0, end), 'the object and everything before it are unchanged')
-          const objectsAfter = await h.page.evaluate((t) => window.entry.objects(t), after)
           const start = text.indexOf(object)
-          assert.ok(objectsAfter.some((b) => b.kind === kind && b.from >= start && b.from < end), 'the object still reads as itself')
-          if (after !== text) {
-            await h.page.evaluate(() => window.undoOnce())
-            assert.equal(await doc(), text, 'one Undo restores the talk exactly')
-          }
+          assert.ok(objects.some((b) => b.kind === kind && b.from >= start && b.from < end), 'the object still reads as itself')
+          if (after !== text) assert.equal(restored, text, 'one Undo restores the talk exactly')
           assert.deepEqual(h.errors.filter((message) => !/SVGLength': Could not resolve relative length/.test(message)), [])
         } catch (error) {
           failures.push(`plain · line command: ${objectName} · ${placeName} · ${commandName}\n    ${String(error.message).split('\n').join('\n    ')}`)
@@ -234,12 +253,10 @@ try {
       try {
         await mountAt(text, end, 'plain')
         await h.page.evaluate(() => window.entry.actionBar('new-slide'))
-        await h.page.waitForTimeout(20)
-        const after = await doc()
+        const { after, restored } = await editAndUndo(text, { inspect: false })
         assert.equal(after.slice(0, end), text.slice(0, end), 'the object and everything before it are unchanged')
         assert.match(after.slice(end), /^\n+## \n/, 'the new title is on its own line after the object')
-        await h.page.evaluate(() => window.undoOnce())
-        assert.equal(await doc(), text, 'one Undo restores the talk exactly')
+        assert.equal(restored, text, 'one Undo restores the talk exactly')
       } catch (error) {
         failures.push(`plain · new slide: ${objectName} · ${placeName}\n    ${String(error.message).split('\n').join('\n    ')}`)
       }
@@ -247,7 +264,7 @@ try {
   }
   // With the object selected (the caret at its start), a line command has nothing to act on: the talk
   // is unchanged. (Bold is not a line command.)
-  for (const [objectName, kind, object] of OBJECTS) {
+  for (const [objectName, kind, object] of fixtures) {
     for (const [commandName, act] of LINE_COMMANDS.filter(([name]) => !/^bold/.test(name))) {
       ran += 1
       h.errors.length = 0
@@ -257,7 +274,6 @@ try {
         const found = await h.page.evaluate((t) => window.entry.objects(t), text)
         await mountAt(text, found.find((b) => b.kind === kind && b.from >= start).from, 'plain')
         await act(h)
-        await h.page.waitForTimeout(20)
         const after = await doc()
         assert.equal(after, text, 'nothing changes')
         assert.deepEqual(h.errors.filter((message) => !/SVGLength': Could not resolve relative length/.test(message)), [])
@@ -267,7 +283,7 @@ try {
     }
   }
   // The Markdown view: the ways in that go through the page's own input (the rest are the same code).
-  for (const object of OBJECTS) {
+  for (const object of fixtures) {
     for (const place of PLACES) {
       for (const entry of ENTRY_POINTS.filter(([name]) => /^(typing|input method|paste event|Paste command)/.test(name))) {
         await tryEntry('markdown', object, place, entry)
@@ -282,4 +298,4 @@ if (failures.length) {
   console.error(`test:object-gap-entry-points:dom — ${failures.length} of ${ran} cases failed:\n  ${failures.join('\n  ')}`)
   process.exit(1)
 }
-console.log(`test:object-gap-entry-points:dom — ${ran} cases passed (${OBJECTS.length} kinds × ${PLACES.length} places × the ways in, both views)`)
+console.log(`test:object-gap-entry-points:dom — ${ran} cases passed (${fixtures.length} kinds × ${PLACES.length} places × the ways in, both views)`)

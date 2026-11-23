@@ -1,6 +1,6 @@
 // Folding for the outline editor: collapse a heading's whole section, or a list item's
 // sub-items. Drives the fold gutter arrows + the fold keymap (Ctrl-Shift-[ / ]).
-import { foldedRanges, foldNodeProp, foldService, unfoldEffect } from '@codemirror/language'
+import { codeFolding, foldedRanges, foldNodeProp, foldService, unfoldEffect } from '@codemirror/language'
 import { isImageBlockLine } from '../../../../compiler/scripts/lib/image-line-rules.mjs'
 import type { MarkdownConfig } from '@lezer/markdown'
 import type { EditorState } from '@codemirror/state'
@@ -57,14 +57,15 @@ export const outlineFoldService = foldService.of(
 
 // Markdown folds every multi-line paragraph from its first line, so a run of image lines (or a
 // trigger line such as {image-grid} above them) grew a second collapse arrow beside the pictures,
-// under the slide heading's own. The heading already collapses those lines; a paragraph that
-// holds an image line gets no fold of its own. Other paragraphs keep markdown's default fold.
+// under the slide heading's own. ID-only trigger lines can also start a paragraph.
+// Keep Markdown's default fold for authored prose and let the heading collapse the rest.
 
-export const imageParagraphNoFold: MarkdownConfig = {
+export const outlineParagraphFolds: MarkdownConfig = {
   props: [
     foldNodeProp.add({
       Paragraph: (node, state) => {
         const first = state.doc.lineAt(node.from)
+        if (/^\s*(?:\{[^}]*\}\s*)+$/.test(first.text) && /\{id=[\w-]+\}/.test(first.text)) return null
         const last = state.doc.lineAt(node.to)
         for (let n = first.number; n <= last.number; n += 1) {
           if (isImageBlockLine(state.doc.line(n).text.trim())) return null
@@ -74,3 +75,19 @@ export const imageParagraphNoFold: MarkdownConfig = {
     })
   ]
 }
+
+
+// Fold counts describe source lines, including blank lines hidden by the fold.
+export const outlineFolding = codeFolding({
+  preparePlaceholder: (state, { from, to }) => Math.max(1, state.doc.lineAt(to).number - state.doc.lineAt(from).number),
+  placeholderDOM: (view, unfold, count: number) => {
+    const button = view.dom.ownerDocument.createElement('button')
+    const unit = count === 1 ? 'line' : 'lines'
+    button.type = 'button'
+    button.className = 'cm-foldPlaceholder tw-fold-placeholder'
+    button.textContent = `${count} ${unit} hidden`
+    button.setAttribute('aria-label', `Show ${count} hidden ${unit}`)
+    button.onclick = event => { unfold(event); view.focus() }
+    return button
+  }
+})

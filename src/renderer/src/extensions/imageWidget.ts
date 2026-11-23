@@ -16,6 +16,7 @@ export const imagePlacementsChanged = StateEffect.define<null>()
 const CHIP_ICONS: Record<PlacementKind, string> = {
   full: '<path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/>',
   beside: '<rect x="1.5" y="3" width="13" height="10" rx="1"/><path d="M9 3v10"/>',
+  above: '<rect x="1.5" y="3" width="13" height="10" rx="1"/><path d="M1.5 8h13"/>',
   thumbnail: '<rect x="1.5" y="3" width="13" height="10" rx="1"/><rect x="3.5" y="5" width="4" height="3" rx=".5"/>',
   row: '<rect x="1.5" y="4" width="5.5" height="8" rx="1"/><rect x="9" y="4" width="5.5" height="8" rx="1"/>',
   gallery: '<rect x="1.5" y="2.5" width="5.5" height="5" rx="1"/><rect x="9" y="2.5" width="5.5" height="5" rx="1"/><rect x="1.5" y="9" width="5.5" height="5" rx="1"/><rect x="9" y="9" width="5.5" height="5" rx="1"/>',

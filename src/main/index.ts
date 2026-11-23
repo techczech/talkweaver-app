@@ -230,7 +230,7 @@ import { resolve as resolvePath, sep as pathSep, relative as relativePath, isAbs
 import { cancelAllThumbnailRenders, cancelThumbnailRender, cancelThumbnailRenders, clearThumbnailFocus, recycleRenderWindow, renderThumbnails, renderThumbnailsIdle, renderWindowProcessId, setThumbnailFocus, supersedeThumbnailRender, thumbnailForeground } from './thumbnails'
 import { createThumbnailPrewarm, type PrewarmTalk } from './thumbnail-prewarm'
 import { thumbKeysIn } from './thumb-key-resolution'
-import { createVariantThumbnailHandler, createVariantThumbnailRenderer, mediaFingerprint } from './layout-variant-thumbnail'
+import { createVariantThumbnailHandler, createVariantThumbnailRenderer, mediaFingerprint, variantThumbnailBatchScope } from './layout-variant-thumbnail'
 import {
   assetSidecarPath,
   createFolderTarget,
@@ -474,7 +474,7 @@ import { openSecretsStore } from './secrets-store-electron'
 import { installUpdateNotices } from './update-notices'
 import { restartBlockers, type RestartBlocker } from '../shared/update-install'
 import { createRestartHolds, holdOnChannels } from './restart-holds'
-import { PRODUCT_NAME, helpMenu, macAppMenu } from './app-menu'
+import { PRODUCT_NAME, helpMenu, macAppMenu, sendEditorMenuCommand } from './app-menu'
 import type { ChannelUpdateState } from '../shared/update-checker'
 import { fetchWithLiveStandIn, liveServiceStandIn } from './live-service-stand-in'
 import { loopbackOrigin } from './test-network-guard'
@@ -4017,6 +4017,10 @@ const renderVariantThumbnail = createVariantThumbnailRenderer({
   }
 })
 ipcMain.handle('layout:variant-thumbnail', createVariantThumbnailHandler(outlineRefused, renderVariantThumbnail))
+ipcMain.on('layout:release-variant-batch', (event, batchId: unknown) => {
+  const scope = variantThumbnailBatchScope(event.sender.id, batchId)
+  if (scope) renderVariantThumbnail.releaseBatch(scope)
+})
 // Ticket 10: pictures of one compared version of a conflict (Mine or the other). Compiled like a layout
 // variant: on the 'variant' lane (uncached, background), so the live deck's model is neither
 // displaced nor made to wait, under the variant media contract. Keyed by slide id for the screen.
@@ -9062,6 +9066,7 @@ const latestThumbnailRequest = createLatestThumbnailRequestHandler(
       // closed window or a switched talk still cancels it at once (cancelEditorThumbnails).
       rendered = await renderThumbnails({
         fullHtml, deckKey: prepared.previewKey, preview: prepared.preview, slides, cacheDir, requestKey: `editor:${owner}`,
+        yieldToVariants: input.lane === '',
         onProgress: input.progress ? (pictures) => {
           if (!isCurrent()) return
           const map: Record<string, string> = {}
@@ -10761,9 +10766,7 @@ async function startSharedSettings(): Promise<void> {
     runInEditor: (commandId) => {
       const win = targetEditorFor(null)
       if (!win) return
-      // A window made just now runs it once its page has loaded.
-      if (win.webContents.isLoading()) win.webContents.once('did-finish-load', () => win.webContents.send('app:run-command', commandId))
-      else win.webContents.send('app:run-command', commandId)
+      sendEditorMenuCommand(win.webContents, commandId)
     },
     runInMain: (commandId) => {
       if (commandId === 'tools-animated-video') { showAnimatedVideoChoice(); return true }
@@ -10905,17 +10908,13 @@ ipcMain.handle('settings-window:open', (_event, section: unknown) => openSetting
 handleFromSettingsWindow('settings-window:editor-action', () => false, (_event, action: unknown) => {
   if (action === 'whats-new') {
     const win = targetEditorFor(null) ?? createWindow()
-    const send = (): void => win.webContents.send('app:run-command', 'whats-new')
-    if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
-    else send()
+    sendEditorMenuCommand(win.webContents, action)
     return true
   }
   if (action !== 'open-guide' && action !== 'restore-example' && action !== 'add-vault') return false
   const win = targetEditorFor(null) ?? createWindow()
   if (!E2E) bringToFront(win)
-  const send = (): void => win.webContents.send('settings-window:editor-action', action)
-  if (win.webContents.isLoading()) win.webContents.once('did-finish-load', send)
-  else send()
+  sendEditorMenuCommand(win.webContents, action, 'settings-window:editor-action')
   return true
 })
 ipcMain.handle('settings-window:example-removed', () => readConfig().exampleVaultRemoved === true && !vaultRegistry.list().some((v) => v.example))

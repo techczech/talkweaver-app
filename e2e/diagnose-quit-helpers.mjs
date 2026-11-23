@@ -3,12 +3,13 @@
 import assert from 'node:assert/strict'
 import { _electron as electron } from 'playwright'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve } from 'node:path'
+import { basename, dirname, join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { typeAtOutlineLineEnd } from './lib/outline-typing.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { buildNativeQuitMenu } from './lib/native-quit-menu.mjs'
+import { quitProcessTree, readQuitProcesses, sampleQuitProcesses } from '../scripts/lib/quit-process-samples.mjs'
 
 const repo = resolve(import.meta.dirname, '..')
 const evidence = join(repo, 'artefacts/quit-helpers')
@@ -91,7 +92,7 @@ try {
     const original = disk(), marker = ` QUIT_HELPERS_${scenario}_${route}_${repeat}`
     const record = { scenario, route, repeat, pass: false }
     report.cases.push(record)
-    let held, saveBegan = null
+    let held, samplingTimer, samples, saveBegan = null
     try {
       app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`, '--use-mock-keychain'], cwd: repo,
         env: { ...env, TW_UPDATE_TEST_SAVE_DELAY_FILE: delay } })
@@ -143,8 +144,33 @@ try {
       held = await text()
       let closed = false
       page.once('close', () => { closed = true })
+      const sampleOnMac = route === 'quit' && process.platform === 'darwin'
+      // Keep the original tree so helpers that get reparented during Quit are still identified.
+      const beforeQuit = sampleOnMac ? await readQuitProcesses()
+        .then(listing => quitProcessTree(listing, proc.pid, userData))
+        .catch(error => { record.processSnapshotError = error.message; return [] }) : []
       const start = Date.now()
       record.routeStarted = start
+      if (sampleOnMac) {
+        samplingTimer = setTimeout(() => {
+          if (proc.exitCode !== null || proc.signalCode !== null) return
+          const pid = proc.pid
+          const profile = userData
+          const prefix = `${basename(scratch)}-${scenario}-${route}-${repeat}`
+          samples = readQuitProcesses()
+            .then(listing => sampleQuitProcesses(quitProcessTree(listing, pid, profile, beforeQuit), evidence, prefix))
+            .then(results => {
+              record.samples = results
+              for (const { pid, file, error } of results) {
+                console.error(`Quit missed ${interactiveQuitLimitMs} ms: PID ${pid} — ${file ?? error}`)
+              }
+            })
+            .catch(error => {
+              record.sampleError = error.message
+              console.error(`Quit process samples unavailable: ${error.message}`)
+            })
+        }, interactiveQuitLimitMs)
+      }
       if (route === 'quit') {
         record.menuLabel = await app.evaluate(({ Menu, app }, { repo, userData, addon, pid }) => {
           if (app.getAppPath() !== repo || app.getPath('userData') !== userData) throw Error('Wrong test app/profile')
@@ -192,7 +218,12 @@ try {
         record.windows = await Promise.race([app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(w => ({ id: w.id, visible: w.isVisible(), url: w.webContents.getURL() }))).catch(() => null), sleep(1000).then(() => null)])
       }
       console.error(`FAIL ${scenario} ${route} ${repeat}/${repeats}: ${error.message}`)
-    } finally { await cleanup(); save() }
+    } finally {
+      clearTimeout(samplingTimer)
+      await samples
+      await cleanup()
+      save()
+    }
   }
 } finally {
   await cleanup()

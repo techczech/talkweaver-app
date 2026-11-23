@@ -47,13 +47,13 @@ async function compile(name, text, { withoutSkin = false } = {}) {
 const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`
 const OCEAN = rgb('#1273C4'), DEEP = rgb('#0D5A9E'), AMBER = rgb('#FF9F1C'), WHITE = rgb('#FFFFFF'), LIGHT = rgb('#F2F4F7'), INK = rgb('#16181D')
 // What each lead paints (design record: frames l1-1..l5-3, S13 in four leads; light-amber's rail as built, see the build record).
-const EXPECT = {
-  blue:          { field: OCEAN, dividerTitle: WHITE, number: WHITE, statement: WHITE, rule: OCEAN, rail: OCEAN, railTitle: WHITE, tab: OCEAN, tabType: WHITE },
+const expectedLeadColours = (main, deep) => ({
+  blue:          { field: main, dividerTitle: WHITE, number: WHITE, statement: WHITE, rule: main, rail: main, railTitle: WHITE, tab: main, tabType: WHITE },
   amber:         { field: AMBER, dividerTitle: INK, number: INK, statement: INK, rule: AMBER, rail: AMBER, railTitle: INK, tab: AMBER, tabType: INK },
-  light:         { field: WHITE, dividerTitle: INK, number: OCEAN, statement: OCEAN, rule: OCEAN, rail: LIGHT, railTitle: OCEAN, railEdge: OCEAN, tab: OCEAN, tabType: WHITE },
-  'deep-blue':   { field: DEEP, dividerTitle: WHITE, number: WHITE, statement: WHITE, rule: DEEP, rail: DEEP, railTitle: WHITE, tab: DEEP, tabType: WHITE },
-  'light-amber': { field: WHITE, dividerTitle: INK, number: INK, numberDisc: AMBER, statement: DEEP, rule: AMBER, rail: LIGHT, railTitle: DEEP, railEdge: AMBER, tab: AMBER, tabType: INK },
-}
+  light:         { field: WHITE, dividerTitle: INK, number: main, statement: main, rule: main, rail: LIGHT, railTitle: main, railEdge: main, tab: main, tabType: WHITE },
+  'deep-blue':   { field: deep, dividerTitle: WHITE, number: WHITE, statement: WHITE, rule: deep, rail: deep, railTitle: WHITE, tab: deep, tabType: WHITE },
+  'light-amber': { field: WHITE, dividerTitle: INK, number: INK, numberDisc: AMBER, statement: deep, rule: AMBER, rail: LIGHT, railTitle: deep, railEdge: AMBER, tab: AMBER, tabType: INK },
+})
 const ROTATION = ['blue', 'amber', 'light', 'deep-blue', 'light-amber']
 
 function probe() {
@@ -75,6 +75,8 @@ function probe() {
     firstPColor: firstP ? cs(firstP).color : null, ruleFill: firstP ? cs(firstP, '::before').backgroundColor : null,
     currentFill: current ? cs(current).backgroundColor : null,
     currentLabel: current ? cs(current.querySelector('.fl-text, .fl-label, span, p') || current).color : null,
+    keyword: firstP ? cs(firstP.querySelector('strong'))?.color : null,
+    palette: slide.dataset.palette ?? '',
     disc: poster ? cs(poster, '::after').backgroundColor : null,
   }
 }
@@ -88,8 +90,18 @@ console.log('section colours (dom)')
 const fixtureText = readFileSync(FIXTURE, 'utf8')
 
 // ---- 1. the five leads -----------------------------------------------------------------------------------
-await section('1. the five leads paint the divider, statements, rail, tab and disc as drawn', async () => {
-  const { path } = await compile('default', fixtureText)
+for (const [palette, main, deep, keyword] of [
+  ['', OCEAN, DEEP, null],
+  ['forest', rgb('#0F766E'), rgb('#0A5650'), rgb('#0F766E')],
+  ['slate', rgb('#334155'), rgb('#1E293B'), rgb('#AD4F08')],
+]) await section(`1. ${palette || 'ocean'}: the five leads paint the divider, statements, rail, tab and disc as drawn`, async () => {
+  // A statement promoted from its heading has no tab. Give the amber statement a separate title and body.
+  const text = palette
+    ? fixtureText.replace(/^title: .*$/m, line => `${line}\npalette: ${palette}`)
+      .replace(/### [^\n]+\n\{statement\}\{id=sc2-statement\}\n/, '### How agents use tools\n{statement}{id=sc2-statement}\n\nAn agent is a model using **tools** in a **loop**.\n')
+    : fixtureText
+  const { path } = await compile(palette || 'default', text)
+  const expected = expectedLeadColours(main, deep)
   const seen = new Map()
   const currents = []
   const coverage = await walkSlides(path, async (page) => {
@@ -105,10 +117,11 @@ await section('1. the five leads paint the divider, statements, rail, tab and di
   const want = (what, got, expected) => { if (got !== expected) problems.push(`${what}: ${got} (want ${expected})`) }
   const title = seen.get('deck-title')
   want('deck-title lead', title?.lead, 'blue')
-  want('deck-title disc', title?.disc, OCEAN)
+  want('deck-title disc', title?.disc, main)
+  for (const state of seen.values()) want(`${state.id} palette`, state.palette, palette)
   for (const [at, sectionId] of sectionIds.slice(0, 5).entries()) {
     const lead = ROTATION[at]
-    const e = EXPECT[lead]
+    const e = expected[lead]
     const k = at + 1
     const divider = seen.get(sectionId)
     want(`${sectionId} lead`, divider.lead, lead)
@@ -119,8 +132,10 @@ await section('1. the five leads paint the divider, statements, rail, tab and di
     const statement = seen.get(`sc${k}-statement`)
     want(`sc${k}-statement field`, statement?.background, e.field)
     want(`sc${k}-statement type`, statement?.firstPColor, e.statement)
+    if (palette && lead === 'amber') want(`sc${k}-statement tab`, statement?.tabFill, palette === 'forest' ? deep : main)
     const light = seen.get(`sc${k}-light`)
     want(`sc${k}-light rule`, light?.ruleFill, e.rule)
+    if (keyword) want(`sc${k}-light keyword`, light?.keyword, palette === 'forest' && lead === 'deep-blue' ? deep : keyword)
     want(`sc${k}-light tab`, light?.tabFill, e.tab)
     want(`sc${k}-light tab type`, light?.headColor, e.tabType)
     const rail = seen.get(`sc${k}-rail`)
@@ -147,11 +162,11 @@ await section('1. the five leads paint the divider, statements, rail, tab and di
   want('sc6-ct contents rail', ct?.ctRail, true)
   if (!ct?.backgroundImage?.startsWith('linear-gradient(to right, rgba(0, 0, 0, 0) 0px') || !ct.backgroundImage.includes(AMBER)) problems.push(`sc6-ct paint: ${ct?.backgroundImage}`)
   want('sc6-ct title', ct?.headColor, INK)
-  want('sc7-kicker title', seen.get('sc7-kicker')?.headColor, OCEAN)
+  want('sc7-kicker title', seen.get('sc7-kicker')?.headColor, main)
   // the current item of a reveal stays Ocean with a white label, whatever the section's lead (owner, S85/S86)
   for (const k of [1, 2, 3, 4, 5]) {
     const state = currents.find((s) => s.id === `sc${k}-reveal`)
-    want(`sc${k}-reveal current fill`, state?.currentFill, OCEAN)
+    want(`sc${k}-reveal current fill`, state?.currentFill, main)
     want(`sc${k}-reveal current label`, state?.currentLabel, WHITE)
   }
   assert.deepEqual(problems, [])

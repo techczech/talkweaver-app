@@ -7,6 +7,7 @@ import { _electron as electron } from 'playwright'
 import { readSlides } from '../src/shared/insert-section.ts'
 import { SAMPLE_SKETCH } from '../src/shared/sketch-sample.ts'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { electronCrashNote } from './lib/electron-crash-note.mjs'
 
 const root = resolve('.')
 const scratch = mkdtempSync(join(process.env.TW_SKETCH_E2E_ROOT ?? tmpdir(), 'tw-sketch-e2e-'))
@@ -221,6 +222,9 @@ try {
 } catch (error) {
   if (existsSync(outline)) console.error('[outline at failure]', readFileSync(outline, 'utf8').slice(0, 4000))
   if (page) console.error('[workspace at failure]', (await page.locator('.workspace').first().innerText().catch(() => '')).slice(-3600))
+  // A SIGTRAP of Electron's main process is named in one line (no retry: the flake stays visible).
+  const crash = await electronCrashNote(app.process()).catch(() => null)
+  if (crash) console.error(crash)
   throw error
 } finally {
   await app.close()

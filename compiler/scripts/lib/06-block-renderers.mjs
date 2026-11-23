@@ -829,6 +829,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     if (block.headerRow === false) classes.push("table-noheader");
     if (block.columnRules === false) classes.push("table-nocolumns");
     if (block.firstColumnAccent === false) classes.push("table-plain-first");
+    if (block.rowBands === true) classes.push("table-row-bands");
     const renderRow = (cells, tag) => `<tr>${cells.map((c, i) => `<${tag}${numClass(i)}>${renderInline(c)}</${tag}>`).join("")}</tr>`;
     // {table-header=off}: the first row IS a plain row — it lives in tbody with the others (and
     // steps with them in reveal mode) rather than as a de-styled thead.

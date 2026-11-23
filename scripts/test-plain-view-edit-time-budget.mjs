@@ -146,7 +146,7 @@ import { plainTypeExtension } from './src/renderer/src/extensions/plainView/them
 import { setMarginLabels } from './src/renderer/src/extensions/plainView/margin.ts'
 import { tokenProtectExtension } from './src/renderer/src/extensions/idProtect.ts'
 import { slideNumberGutterExtension } from './src/renderer/src/extensions/slideNumberGutter.ts'
-import { outlineFoldService, imageParagraphNoFold } from './src/renderer/src/extensions/outlineFold.ts'
+import { outlineFoldService, outlineParagraphFolds } from './src/renderer/src/extensions/outlineFold.ts'
 import { focusScopeExtension } from './src/renderer/src/extensions/focusScope.ts'
 import { inlineMarkExtension } from './src/renderer/src/extensions/inlineMark.ts'
 import { frontmatterTableExtension } from './src/renderer/src/extensions/frontmatterTable.ts'
@@ -159,7 +159,7 @@ import { appKeyState, failOnCaughtExceptions } from './scripts/lib/plain-view-te
 // The editor's extensions that scan or decorate the document, as Editor.tsx lists them, with Plain.
 window.mount = (doc, host) => window.view = new EditorView({ parent: host, state: EditorState.create({ doc, extensions: [
   slideNumberGutterExtension, history(), highlightActiveLine(),
-  markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [imageParagraphNoFold] }),
+  markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [outlineParagraphFolds] }),
   codeFolding(), foldGutter(), outlineFoldService, tokenProtectExtension(() => null), focusScopeExtension(),
   frontmatterTableExtension(), inlineMarkExtension, ...appKeyState(),
   keymap.of([...defaultKeymap, ...historyKeymap]),

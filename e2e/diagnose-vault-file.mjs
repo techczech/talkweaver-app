@@ -98,7 +98,7 @@ async function toFolderPicker(page) {
   await sheet.waitFor({ state: 'visible', timeout: 8000 })
   await sheet.locator('[data-choose-folder]').click()
 }
-const shot = (page, name) => page.screenshot({ path: join(SHOTS, `04-${name}.png`) })
+const shot = (page, name, animations = 'allow') => page.screenshot({ path: join(SHOTS, `04-${name}.png`), animations })
 
 let { app, page } = await launch()
 try {
@@ -154,15 +154,29 @@ try {
   await page.locator('aside.talk-list button[aria-label="Refresh"]').click()
   await page.waitForTimeout(800)
   const opened = await openTalkByTitle(page, 'Untitled talk').then(() => true).catch(() => false)
-  if (opened && await page.locator('.tw-inspector').count() === 0) {
-    await page.locator('.cm-content').first().click()
-    await page.keyboard.press('Meta+p') // Inspector mode
+  if (opened) {
+    const toggle = page.getByTestId('sidebar-toggle')
+    if (await toggle.getAttribute('aria-pressed') === 'false') await toggle.click()
+    await page.getByRole('tab', { name: 'Slide', exact: true }).click()
+    const inspector = page.getByRole('complementary', { name: 'Inspector' })
+    await inspector.locator('.tw-right-who small').filter({ hasText: /of [1-9]/ }).waitFor()
+    const previous = inspector.getByRole('button', { name: 'Previous slide', exact: true })
+    if (await previous.isEnabled()) await previous.click()
+    await inspector.getByRole('button', { name: 'Edit talk details', exact: true }).waitFor()
   }
   const originSection = page.locator('[data-vault-origin]')
   if (opened && await originSection.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false)) {
     await originSection.scrollIntoViewIfNeeded()
-    await shot(page, 'new-talk-where-from')
-    record('the Inspector shows “Where these come from” on the title slide', (await originSection.innerText()).includes('come from Workshops'))
+    const heading = originSection.getByRole('heading', { name: 'Where these come from' })
+    let attributionVisible = true
+    for (const colorScheme of ['light', 'dark']) {
+      await page.emulateMedia({ colorScheme })
+      await page.waitForFunction(theme => document.documentElement.dataset.theme === theme, colorScheme)
+      attributionVisible = (await heading.isVisible()) && (await originSection.innerText()).includes('come from Workshops') && attributionVisible
+      await shot(page, `new-talk-where-from-${colorScheme}`, 'disabled')
+    }
+    await page.emulateMedia({ colorScheme: null })
+    record('the Inspector shows “Where these come from” on the title slide in both Daylight appearances', attributionVisible)
   } else {
     record('the Inspector shows “Where these come from” on the title slide', false, `opened=${opened}`)
   }
@@ -203,10 +217,11 @@ try {
   await header(page, 'Personal').locator('.tl-vmore').click()
   await page.getByRole('menuitem', { name: 'Edit this vault…' }).click()
   const plainEdit = page.locator('[data-vault-sheet="edit"]')
-  await plainEdit.waitFor({ state: 'visible', timeout: 8000 })
-  await page.locator('[data-field="author"]').fill('Dominik (personal vault)')
-  await page.locator('[data-swatch="#be185d"]').click()
-  await page.locator('[data-vault-sheet-submit]').click()
+  // The edit sheet focuses Name on its first animation frame. Wait before filling Author.
+  await plainEdit.locator('[data-field="name"]:focus').waitFor({ timeout: 8000 })
+  await plainEdit.locator('[data-field="author"]').fill('Dominik (personal vault)')
+  await plainEdit.locator('[data-swatch="#be185d"]').click()
+  await plainEdit.locator('[data-vault-sheet-submit]').click()
   await plainEdit.waitFor({ state: 'detached', timeout: 8000 })
   await page.waitForTimeout(400)
   const personalView = (await page.evaluate(() => window.tw.vault.list())).find((v) => v.name === 'Personal')

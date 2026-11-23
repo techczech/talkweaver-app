@@ -10,7 +10,7 @@
 //                     and whether a newer text is still waiting for its reading
 import { useEffect, useRef, useState } from 'react'
 
-/** The workspace's pause before it compiles an edited outline (WorkspaceLayout's debounced compile). */
+/** Default pause before a background scan of an edited outline. */
 export const OUTLINE_PAUSE_MS = 900
 
 export interface PauseTimers {

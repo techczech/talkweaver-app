@@ -12908,6 +12908,10 @@ body.presenter-mode.tw-predrawing .deck { display: block !important; position: f
   --look-ground-neutral: #F2F4F7;
   --look-hairline: #D5DBE3;
   --look-line: 3px;                             /* figure lines */
+  /* the three further strengths a pie of four or more slices draws with (zz-x-ocean-40-pie.css) */
+  --look-pie-mid: #5B9BD8;
+  --look-pie-pale: #A9CBEE;
+  --look-pie-dark: #0A3F70;
 
   /* type: the deck's own faces until the typeface round decides (open decision; default today's) */
   --look-face-display: var(--sans);
@@ -14172,26 +14176,26 @@ body:has(.slide.active[data-look="ocean"][data-ground="lead"]) .section-timer-fl
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(1) .chart-swatch { background: var(--look-main) !important; }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(2) { fill: var(--look-deep); }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(2) .chart-swatch { background: var(--look-deep) !important; }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(3) { fill: #5B9BD8; }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(3) .chart-swatch { background: #5B9BD8 !important; }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(4) { fill: #A9CBEE; stroke: var(--look-main); stroke-width: 2; }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(4) .chart-swatch { background: #A9CBEE !important; border: .15cqw solid var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(3) { fill: var(--look-pie-mid); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(3) .chart-swatch { background: var(--look-pie-mid) !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(4) { fill: var(--look-pie-pale); stroke: var(--look-main); stroke-width: 2; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(4) .chart-swatch { background: var(--look-pie-pale) !important; border: .15cqw solid var(--look-main); }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(5) { fill: var(--look-light); stroke: var(--look-main); stroke-width: 2; }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(5) .chart-swatch { background: var(--look-light) !important; border: .15cqw solid var(--look-main); }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(6) { fill: #0A3F70; }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(6) .chart-swatch { background: #0A3F70 !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(6) { fill: var(--look-pie-dark); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(6) .chart-swatch { background: var(--look-pie-dark) !important; }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(7) { fill: var(--look-main); }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(7) .chart-swatch { background: var(--look-main) !important; }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(8) { fill: var(--look-deep); }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(8) .chart-swatch { background: var(--look-deep) !important; }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(9) { fill: #5B9BD8; }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(9) .chart-swatch { background: #5B9BD8 !important; }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(10) { fill: #A9CBEE; stroke: var(--look-main); stroke-width: 2; }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(10) .chart-swatch { background: #A9CBEE !important; border: .15cqw solid var(--look-main); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(9) { fill: var(--look-pie-mid); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(9) .chart-swatch { background: var(--look-pie-mid) !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(10) { fill: var(--look-pie-pale); stroke: var(--look-main); stroke-width: 2; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(10) .chart-swatch { background: var(--look-pie-pale) !important; border: .15cqw solid var(--look-main); }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(11) { fill: var(--look-light); stroke: var(--look-main); stroke-width: 2; }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(11) .chart-swatch { background: var(--look-light) !important; border: .15cqw solid var(--look-main); }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(12) { fill: #0A3F70; }
-.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(12) .chart-swatch { background: #0A3F70 !important; }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) svg > :is(path, circle):nth-child(12) { fill: var(--look-pie-dark); }
+.slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:nth-child(4)) .chart-legend > li:nth-child(12) .chart-swatch { background: var(--look-pie-dark) !important; }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:only-child) svg > :is(path, circle):nth-child(1) { fill: var(--look-main); }
 .slide[data-look="ocean"] .chart-pie:has(.chart-legend > li:only-child) .chart-legend > li:nth-child(1) .chart-swatch { background: var(--look-main) !important; }
 /* a highlighted slice: its legend label is wholly bold */
@@ -14709,6 +14713,36 @@ body:has(.slide.active[data-look="ocean-safe"][data-ground="lead"]:is([data-lead
   color: var(--look-on-rail) !important;
 }
 
+/* Forest and Slate: the Ocean look in another main colour. Design record docs/design/2026-11-23-forest-slate-palettes/.
+
+   The compiler stamps data-palette="forest" or "slate" beside data-look on every slide of a talk with `palette: forest`
+   or `palette: slate`, and each slide's inline --sec-accent, --sec-tint and --sec-deep carry the palette's main, light
+   and deep strengths. This file sets the same three values as the fall-back for a slide with no inline stamp, and the
+   strengths the pie draws with. Everything else (the amber companion, the neutrals, the five section leads, every
+   layout rule) is Ocean's, unchanged. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-palette="forest"] {
+  --look-main: var(--sec-accent, #0F766E);
+  --look-deep: var(--sec-deep, #0A5650);
+  --look-light: var(--sec-tint, #E4F3F0);
+  --look-pie-mid: #4A9E95;
+  --look-pie-pale: #A6D6CF;
+  --look-pie-dark: #063B37;
+}
+/* The title tab on an amber field is the deep strength in Forest: the main colour is 2.66:1 against amber, the deep
+   strength 4.15:1 (white type on it 8.53:1). With [data-palette] the rule outranks the amber lead's own. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-palette="forest"][data-lead="amber"] { --look-tab-on-lead: var(--look-deep); }
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-palette="slate"] {
+  --look-main: var(--sec-accent, #334155);
+  --look-deep: var(--sec-deep, #1E293B);
+  --look-light: var(--sec-tint, #EBEFF5);
+  --look-pie-mid: #7C8BA1;
+  --look-pie-pale: #C5CDD9;
+  --look-pie-dark: #0F172A;
+}
+/* Slate is too close to near-black to mark a key word, so the key words of a light statement are set in rust, the
+   amber companion at a strength that carries type (5.38:1 on white). With [data-lead] so that it also holds in a
+   deep-blue section, whose own rule sets the key words to the deep strength. */
+.slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-palette="slate"][data-lead] { --look-keyword: #AD4F08; }
 /* A visual-only body always fits its title-to-footer band, whichever semantic layout led to it.
    In particular an image-claim without claims used to keep the image's intrinsic height and
    centre it through the kicker. Titles remain outside this bounded box. */

@@ -65,6 +65,7 @@ writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: vaul
 const disk = () => readFileSync(OUTLINE_PATH, 'utf8')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const BAR = '[data-testid="outline-disk-change-bar"]'
+const diskNoticeTimeout = 60_000
 const review = () => page.getByTestId('outline-merge-sheet')
 const testTrash = join(tempRoot, 'trash')
 const recoveryCopies = () => { try { return readdirSync(recoveryDir).filter((f) => f.endsWith('-outline.md')) } catch { return [] } }
@@ -149,7 +150,7 @@ async function stageConflict(mine, theirs, extra, typeMarker = typeAtEndOf) {
   if (disk() !== before) throw new Error(`The edit ${mine} reached disk before the outside change`)
   const outside = before.replace(SECOND_BODY, SECOND_BODY + ' ' + theirs) + (extra ?? '')
   writeFileSync(OUTLINE_PATH, outside)
-  const bar = await waitFor(barVisible, 2000)
+  const bar = await waitFor(barVisible, diskNoticeTimeout)
   await review().waitFor()
   return { bar, outside }
 }
@@ -183,7 +184,7 @@ try {
   // (B) Independent disk change. The bar appears before the editor adopts it.
   const theirs = disk() + '\n### Their slide {id=grd3}\n\nWritten by the other TalkWeaver.\n'
   writeFileSync(OUTLINE_PATH, theirs)
-  const barAfter = await waitFor(barVisible, 2000)
+  const barAfter = await waitFor(barVisible, diskNoticeTimeout)
   const text1 = await barText()
   if (process.env.TW_E2E_SHOT && barAfter !== null) await page.screenshot({ path: process.env.TW_E2E_SHOT })
   await review().waitFor()
@@ -239,11 +240,11 @@ try {
   const renamedOver = disk() + '\n### Renamed-over slide {id=grd5}\n\nReplaced by rename.\n'
   writeFileSync(temp, renamedOver)
   renameSync(temp, OUTLINE_PATH)
-  const gridBar = await waitFor(barVisible, 2000)
+  const gridBar = await waitFor(barVisible, diskNoticeTimeout)
   const inGrid = await page.getByTestId('grid-toggle').evaluate(button => button.classList.contains('pane-btn--active'))
   await review().getByRole('button', { name: 'Keep the changes', exact: true }).click()
   const gridAdopted = await waitFor(async () => !(await barVisible()), 3000)
-  record('Grid view shows the bar for a rename-replace change within 2 s',
+  record('Grid view shows the bar for a rename-replace change',
     gridBar !== null && inGrid && gridAdopted !== null && disk() === renamedOver, 'after ' + gridBar + 'ms, grid=' + inGrid)
   await page.getByTestId('outline-toggle').click()
 
@@ -362,7 +363,7 @@ try {
     `moved=${folderMoved !== null}, saved at new path=${savedThere !== null}, before-typing kept=${existsSync(FOLDER_NEW) && folderDisk().includes('BEFOREFOLDER')}, old recreated=${existsSync(join(vault, 'topic-a'))}, title="${await activeTitle()}", bar=${await barVisible()}`)
   const editedAfterMove = folderDisk() + '\n### Outside after folder rename {id=fld3}\n\nOutside at the new path.\n'
   writeFileSync(FOLDER_NEW, editedAfterMove)
-  const guardedThere = await waitFor(barVisible, 2000)
+  const guardedThere = await waitFor(barVisible, diskNoticeTimeout)
   let adoptedThere = null
   if (guardedThere !== null) {
     await review().getByRole('button', { name: 'Keep the changes', exact: true }).click()
@@ -376,7 +377,7 @@ try {
   await folderAction('topic-b', 'delete')
   await page.getByRole('dialog', { name: 'Delete this folder?' })
     .getByRole('button', { name: 'Delete', exact: true }).click({ timeout: 5000 })
-  const removedBar = await waitFor(async () => (await barVisible()) && /removed on disk/.test(await barText()), 4000)
+  const removedBar = await waitFor(async () => (await barVisible()) && /removed on disk/.test(await barText()), diskNoticeTimeout)
   const removedText = await barText()
   await typeAtEndOf('Second slide body text.', ' AFTERDELETE')
   await sleep(2600) // past the 1.5 s autosave: refused

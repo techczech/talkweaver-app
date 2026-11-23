@@ -1,0 +1,48 @@
+name: PR DOM
+on:
+  pull_request:
+    paths:
+      - 'src/renderer/**'
+      - 'src/shared/**'
+      - 'scripts/**/*dom*'
+permissions:
+  contents: read
+concurrency:
+  group: pr-dom-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+jobs:
+  dom:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 24
+      - name: Select affected DOM scripts and smoke tests
+        id: select
+        run: git diff --no-renames --name-only -z HEAD^1 HEAD | node scripts/select-pr-dom.mjs
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .bun-version
+      - run: bun install --frozen-lockfile
+      - name: Install Chromium headless shell
+        run: npx playwright install --with-deps --only-shell chromium
+      - name: Install Poppler for selected PDF coverage
+        if: steps.select.outputs.poppler == 'true'
+        run: |
+          sudo apt-get install -y --no-install-recommends poppler-utils
+          command -v pdfinfo pdftotext pdftoppm
+      - name: Run selected DOM scripts
+        shell: bash
+        env:
+          DOM_SCRIPTS: ${{ steps.select.outputs.scripts }}
+        run: |
+          read -r -a scripts <<< "$DOM_SCRIPTS"
+          node scripts/run-tests.mjs --jobs 2 --tail 100 "${scripts[@]}" | tee "$RUNNER_TEMP/pr-dom.log"
+          if grep '^not run:' "$RUNNER_TEMP/pr-dom.log"; then
+            exit 1
+          fi

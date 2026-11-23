@@ -1015,7 +1015,7 @@ function MainApp() {
       onChangeFolder={() => { commandRan('change-vault'); choose() }}
       onExamples={() => {
         commandRan('get-started-show-example')
-        void openExampleVault().then(message => { if (message) notify(message, 'info') })
+        return openExampleVault()
       }}
       onOpenTalks={() => {
         commandRan('search-talks')

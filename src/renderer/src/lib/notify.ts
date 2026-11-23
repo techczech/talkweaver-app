@@ -17,6 +17,7 @@ export interface ToastDetail {
   /** De-dupe key — a repeat with the same key replaces rather than stacks (e.g. "compiler-missing"). */
   key?: string
   action?: ToastAction
+  presentation?: 'expanded'
 }
 
 export const TOAST_EVENT = 'tw-toast'
@@ -24,8 +25,10 @@ export const TOAST_EVENT = 'tw-toast'
 export const STATUS_NOTICE_SLOT_EVENT = 'tw-status-notice-slot'
 export const TOAST_DISMISS_EVENT = 'tw-toast-dismiss'
 
-export function notify(message: string, level: ToastLevel = 'info', key?: string, action?: ToastAction): void {
-  window.dispatchEvent(new CustomEvent<ToastDetail>(TOAST_EVENT, { detail: { message, level, key, action } }))
+export function notify(message: string, level: ToastLevel = 'info', key?: string, action?: ToastAction, presentation?: ToastDetail['presentation']): void {
+  const detail: ToastDetail = { message, level, key, action }
+  if (presentation) detail.presentation = presentation
+  window.dispatchEvent(new CustomEvent<ToastDetail>(TOAST_EVENT, { detail }))
 }
 
 /** Dismiss any toast carrying `key` — for persistent errors whose condition has since recovered

@@ -227,14 +227,16 @@ try {
     const shows = wants.filter((t) => valuesAfter.includes(t) && !valuesBefore.includes(t))
     record('open.talk-tab', shows.length === wants.length, `fields that appeared with the tab holding the talk's values: ${shows.join(', ') || 'none'}`, s6, { shows })
     writeFileSync(join(out, 'talk-tab.txt'), talkTab)
-    // For the guide: the Talk tab's talk-wide Section colours control.
-    const sc = main.locator('[data-talk-tab]').getByText('Section colours', { exact: true })
-    const scVisible = (await sc.count()) > 0 && await sc.isVisible().catch(() => false)
+    // For the guide: the talk-wide Section colours control on the Talk tab's Design page.
+    const talkSettings = main.locator('[data-talk-tab]')
+    await talkSettings.getByRole('button', { name: 'Design', exact: true }).click()
+    const sc = talkSettings.getByText('Section colours', { exact: true })
+    const scVisible = await sc.isVisible() && await talkSettings.locator('select#deck-section-colours').isVisible()
     if (scVisible) {
       await sc.evaluate((el) => el.scrollIntoView({ block: 'start' })); await pause(800)
       await main.screenshot({ path: join(GUIDE, 'talk-tab-section-colours.png') })
     }
-    record('open.section-colours-control', scVisible, scVisible ? 'guide picture taken' : 'no visible "Section colours" label in the Talk tab', scVisible ? rel(join(GUIDE, 'talk-tab-section-colours.png')) : '')
+    record('open.section-colours-control', scVisible, scVisible ? 'guide picture taken' : 'no visible Section colours control in Talk → Design', scVisible ? rel(join(GUIDE, 'talk-tab-section-colours.png')) : '')
     await selectSlidePanel()
   })
 

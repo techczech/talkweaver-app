@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
+import { readFileSync } from 'node:fs'
+import { stripTypeScriptTypes } from 'node:module'
+import { test as check } from 'node:test'
+import { sendEditorMenuCommand } from '../src/main/app-menu.ts'
 import { updateCheckMenuTemplate } from '../src/main/settings-update-menu.ts'
-import { registry, MENUS, appCommandIdOf } from '../src/shared/bridle-commands.ts'
+import { registry, appCommandIdOf } from '../src/shared/bridle-commands.ts'
 import { COMMAND_REGISTRY } from '../src/shared/command-registry.ts'
 import { TASK_GROUPS } from '../src/shared/task-groups.ts'
 import { toAccelerator } from '@app-patterns/commands'
 
-let passed = 0
-function check(name, fn) { fn(); passed++; console.log(`PASS ${name}`) }
 const ran = [], bindings = registry.bindingsOf({})
 const template = updateCheckMenuTemplate({ platform: 'darwin', keys: {}, run: id => ran.push(id), log() {} })
 const walk = items => items.flatMap(item => [item, ...walk(Array.isArray(item.submenu) ? item.submenu : [])])
@@ -18,7 +21,8 @@ check('commands live under their registry task and subgroup with unchanged runne
   for (const def of registry.defs) {
     const source = COMMAND_REGISTRY.find(c => c.id === appCommandIdOf(def.id))
     if (!source || def.noMenu || ['settings', 'cheat', 'check-for-updates'].includes(def.id)) continue
-    const parent = all.find(item => item.label === def.group) // menu group: Research keeps its View placement
+    assert.equal(def.group, source.taskGroup, `${def.id}: same task in palette and menu`)
+    const parent = all.find(item => item.label === source.taskGroup)
     assert.ok(parent, `${def.id}: task group`)
     const subgroup = parent.submenu.find(item => item.label === source.subgroup)
     assert.ok(subgroup, `${def.id}: subgroup`)
@@ -44,4 +48,93 @@ check('rebound effective chords reach the nested native leaf', () => {
   assert.notEqual(expected['format-bold'], registry.bindingsOf({})['format-bold'], 'override takes effect')
   for (const item of walk(rebound).filter(item => item.id && item.click)) assert.equal(item.accelerator, toAccelerator(expected[item.id] ?? '') ?? undefined, item.id)
 })
-console.log(`${passed} native task-menu checks passed; ${MENUS.length} menu placements`)
+check('a native menu command reaches the editor while a slide preview frame loads', () => {
+  const sent = []
+  let editorLoading = false
+  const contents = Object.assign(new EventEmitter(), {
+    isLoading: () => true,
+    isLoadingMainFrame: () => editorLoading,
+    send: (...args) => sent.push(args)
+  })
+  const menu = updateCheckMenuTemplate({
+    platform: 'darwin', keys: {}, log() {}, run: id => sendEditorMenuCommand(contents, id)
+  })
+  const grid = walk(menu).find(item => item.id === 'view-grid')
+
+  grid.click()
+  assert.deepEqual(sent, [['app:run-command', 'view-grid']])
+
+  editorLoading = true
+  grid.click()
+  assert.equal(sent.length, 1, 'a newly opened editor still waits for its main document')
+  editorLoading = false
+  contents.emit('did-finish-load')
+  contents.emit('did-finish-load')
+  assert.deepEqual(sent, [['app:run-command', 'view-grid'], ['app:run-command', 'view-grid']])
+})
+
+// Exercise the registered Settings callback without starting Electron.
+function settingsEditorAction(contents) {
+  const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const start = source.indexOf("handleFromSettingsWindow('settings-window:editor-action',")
+  const end = source.indexOf("\nipcMain.handle(", start)
+  assert.ok(start >= 0 && end > start, 'find the Settings editor-action registration')
+  let handler
+  new Function('handleFromSettingsWindow', 'targetEditorFor', 'E2E', 'sendEditorMenuCommand',
+    stripTypeScriptTypes(source.slice(start, end)))(
+    (_channel, _refused, callback) => { handler = callback },
+    () => ({ webContents: contents }), true, sendEditorMenuCommand
+  )
+  return action => handler({}, action)
+}
+
+check("Settings What's New reaches the editor while a slide preview frame loads", () => {
+  const sent = []
+  const contents = Object.assign(new EventEmitter(), {
+    isLoading: () => true,
+    isLoadingMainFrame: () => false,
+    send: (...args) => sent.push(args)
+  })
+  assert.equal(settingsEditorAction(contents)('whats-new'), true)
+  assert.deepEqual(sent, [['app:run-command', 'whats-new']])
+})
+
+check('Settings Get started actions reach the editor while a slide preview frame loads', () => {
+  const sent = []
+  const contents = Object.assign(new EventEmitter(), {
+    isLoading: () => true,
+    isLoadingMainFrame: () => false,
+    send: (...args) => sent.push(args)
+  })
+  const invoke = settingsEditorAction(contents)
+  const actions = ['open-guide', 'restore-example', 'add-vault']
+  for (const action of actions) assert.equal(invoke(action), true)
+  assert.deepEqual(sent, actions.map(action => ['settings-window:editor-action', action]))
+})
+
+for (const event of ['did-fail-load', 'did-fail-provisional-load']) {
+  check('a main-frame ' + event + ' drops queued commands before the next reload', () => {
+    const sent = []
+    const contents = Object.assign(new EventEmitter(), {
+      isLoadingMainFrame: () => true,
+      send: (...args) => sent.push(args)
+    })
+    const fail = isMainFrame => contents.emit(event, {}, -2, 'load failed', 'file:///editor', isMainFrame)
+    sendEditorMenuCommand(contents, 'view-grid')
+    fail(false)
+    contents.emit('did-finish-load')
+    assert.deepEqual(sent, [['app:run-command', 'view-grid']], 'a subframe failure leaves the queue intact')
+    assert.equal(contents.listenerCount(event), 0, 'success removes the failure listener')
+
+    sendEditorMenuCommand(contents, 'view-outline')
+    fail(false)
+    fail(true)
+    contents.emit('did-finish-load')
+    assert.deepEqual(sent, [['app:run-command', 'view-grid']], 'the next load cannot replay a stale command')
+    assert.equal(contents.listenerCount(event), 0, 'failure removes the failure listener')
+
+    sendEditorMenuCommand(contents, 'view-slide')
+    contents.emit('did-finish-load')
+    assert.deepEqual(sent.at(-1), ['app:run-command', 'view-slide'])
+  })
+}

@@ -29,9 +29,9 @@ export interface ThumbnailQueue<T> {
  *  finishes and is written (no work thrown away mid-capture), the rest of the old run is dropped, and
  *  the replaced caller settles with nothing. cancel() still stops a run at once. A `background`
  *  job (a layout variant: the picker's and the Inspector's pictures of the slide) starts only when no
- *  normal job is pending, so the editor strip and the Slide Browser never wait behind a QUEUED variant;
- *  at most the one render already running (renders are not interrupted) finishes first. The variant's
- *  compile before it is ordered the same way, on the preparation gate's background lane
+ *  new normal job is pending. An editor strip can give a waiting variant a turn between captures
+ *  and resume from the pictures it has cached. The paused strip stays ahead of idle work and a
+ *  newer request can still replace it. The variant's compile stays on the preparation gate's background lane
  *  (prepared-talk-cache.ts, createPreparationRoute).
  *
  *  An `idle` job (the prewarm) starts only when nothing else is waiting, and a running idle job IS
@@ -39,7 +39,7 @@ export interface ThumbnailQueue<T> {
  *  slides it finished stay written, and the newcomer starts next. Nobody waits behind the prewarm for
  *  longer than one slide. */
 export function createThumbnailQueue<T>(
-  render: (options: T, signal: AbortSignal, superseded: AbortSignal) => Promise<ThumbnailResult>,
+  render: (options: T, signal: AbortSignal, superseded: AbortSignal, yieldToVariant: () => boolean) => Promise<ThumbnailResult>,
   now: () => number = () => Date.now()
 ): ThumbnailQueue<T> {
   type Job = {
@@ -49,26 +49,38 @@ export function createThumbnailQueue<T>(
     controller: AbortController
     /** Soft stop: take no further slide (see supersede). */
     replaced: AbortController
+    paused?: boolean
     resolve: (result: ThumbnailResult) => void
     reject: (error: unknown) => void
   }
   const pending = new Map<string | symbol, Job>()
   let active: Job | null = null
   let lastForeground = 0
-  const rank: Record<ThumbnailPriority, number> = { normal: 0, background: 1, idle: 2 }
+  const ranks: Record<ThumbnailPriority, number> = { normal: 0, background: 1, idle: 3 }
+  const rank = (job: Job): number => job.paused ? 2 : ranks[job.priority]
   async function drain(): Promise<void> {
     if (active) return
     let next: Job | undefined
     for (const job of pending.values()) {
-      if (!next || rank[job.priority] < rank[next.priority]) next = job
-      if (next.priority === 'normal') break
+      if (!next || rank(job) < rank(next)) next = job
+      if (rank(next) === 0) break
     }
     if (!next) return
     pending.delete(next.key)
     active = next
+    let yielding = false
+    const yieldToVariant = (): boolean => {
+      if (active !== next || active?.priority !== 'normal') return false
+      yielding = [...pending.values()].some(job => job.priority === 'background')
+      return yielding
+    }
     try {
-      const result = await render(next.options, next.controller.signal, next.replaced.signal)
-      next.resolve(next.controller.signal.aborted || next.replaced.signal.aborted ? {} : result)
+      const result = await render(next.options, next.controller.signal, next.replaced.signal, yieldToVariant)
+      if (next.controller.signal.aborted || next.replaced.signal.aborted) next.resolve({})
+      else if (yielding) {
+        next.paused = true
+        pending.set(next.key, next)
+      } else next.resolve(result)
     } catch (error) {
       if (next.controller.signal.aborted || next.replaced.signal.aborted) next.resolve({})
       else next.reject(error)

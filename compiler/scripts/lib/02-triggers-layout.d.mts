@@ -9,3 +9,11 @@ export const PARAGRAPH_STOP_RE: RegExp
 /** A heading's own icon: the authored groups that hold an `icon=` token, and the value of the last one (null: none or empty). */
 export function headingIconGroups(raw: string): { key: string | null; groups: Array<{ start: number; end: number }> }
 export function normalizeEmbedUrl(rawSrc: unknown): string
+export function titleRegimeForLayout(layout: string): string
+export function titlePlacementFor(options: {
+  layout: string
+  attrs?: Record<string, unknown>
+  frameTitle?: string
+  frameTitleExplicit?: boolean
+  titleHidden?: boolean
+}): { mode: string; split: string }

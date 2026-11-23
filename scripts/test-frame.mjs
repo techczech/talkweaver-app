@@ -6,7 +6,7 @@ const FRAME_BUILTINS = { title: "top", section: "off", image: "left", align: "ce
 // ---- BEGIN MUST-MATCH (copy of 11-frame.mjs) ----
 function normTitle(v){ if(v==null)return null; const s=String(v).toLowerCase(); if(v===true||s==="side"||s==="sidebar")return "side"; if(s==="off"||s==="none"||s==="hide")return "off"; if(s==="top")return "top"; return null; }
 function normSection(v){ if(v==null)return null; const s=String(v).toLowerCase(); if(s==="corner"||v===true||s==="on"||s==="show")return "corner"; if(s==="off"||v===false||s==="none"||s==="hide")return "off"; return null; }
-function normImage(v){ if(v==null)return null; const s=String(v).toLowerCase(); return s==="right"?"right":s==="left"?"left":null; }
+function normImage(v){ if(v==null)return null; const s=String(v).toLowerCase(); return ["left","right","above"].includes(s)?s:null; }
 function normAlign(v){ if(v==null)return null; const s=String(v).toLowerCase(); return s==="top"?"top":(s==="center"||s==="centre"||s==="middle")?"center":null; }
 function normIcons(v){ if(v==null)return null; const s=String(v).toLowerCase(); if(s==="all")return "all"; if(s==="off"||s==="none"||v===false)return "off"; if(v===true||s==="on"||s==="top"||s==="yes")return "top"; return null; }
 const NORMALISERS={title:normTitle,section:normSection,image:normImage,align:normAlign,icons:normIcons};
@@ -28,6 +28,7 @@ assert.equal(resolveSlideFrame({ title: "off" }, { title: "top" }, { title: "sid
 assert.equal(resolveSlideFrame({ sidebar: true }, {}, {}).title, "side"); ok("sidebar alias");
 // 6. {media=right} alias → image right
 assert.equal(resolveSlideFrame({ media: "right" }, {}, {}).image, "right"); ok("media alias");
+assert.equal(resolveSlideFrame({ image: "above" }, {}, { image: "right" }).image, "above"); ok("above overrides inherited side");
 // 7. icons on/all/off/absent
 assert.equal(resolveSlideFrame({ icons: true }, {}, {}).icons, "top"); ok("icons true → top");
 assert.equal(resolveSlideFrame({ icons: "all" }, {}, {}).icons, "all"); ok("icons all");

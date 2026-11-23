@@ -43,18 +43,22 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
   }, [])
   useEffect(() => {
     if (!visible || !window.tw?.talk?.layoutVariantThumbnail) return
+    const batchId = crypto.randomUUID()
     const queue = createVariantPictureQueue<typeof candidates>(
       (key, options) => {
         const variant = options[Number(key)].outline
         return variant == null ? Promise.resolve(null)
-          : window.tw.talk.layoutVariantThumbnail(path, variant, slide, '', undefined, `panel:${group}:${key}`)
+          : window.tw.talk.layoutVariantThumbnail(path, variant, slide, '', undefined, `panel:${group}:${key}`, batchId)
       },
       (key, mark) => setMarks(current => markSettled(current, key, mark))
     )
     setMarks({})
     queue.reset(slideKey + text, candidates, slideKey)
     queue.want(candidates.flatMap((candidate, index) => candidate.outline === null ? [] : [String(index)]))
-    return () => queue.dispose()
+    return () => {
+      queue.dispose()
+      window.tw.talk.releaseLayoutVariantBatch?.(batchId)
+    }
   }, [visible, path, candidates, slideKey, group]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const stop = (): void => {
@@ -75,7 +79,7 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
       }
       return <button type="button" key={design.label} aria-pressed={!!design.current} disabled={candidate == null}
         className="tw-right-picture" onPointerEnter={tryIt} onPointerLeave={stop} onFocus={tryIt} onBlur={stop}
-        onClick={() => { stop(); if (!design.current) onKeep(design) }}>
+        onClick={() => { stop(); if (!design.current || design.reapply) onKeep(design) }}>
         {design.current && <span className="tw-right-current">{currentLabel}</span>}
         <span className="tw-right-picture-frame" aria-hidden>
           {typeof mark === 'string' ? <img src={mark} alt="" draggable={false} /> : mark === null ? <ImageOff size={16} /> : null}

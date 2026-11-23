@@ -1,0 +1,113 @@
+
+.slide .slide-table.table-row-bands {
+  border: 0;
+  border-collapse: separate;
+  border-spacing: 0 1.1cqw;
+}
+.slide .slide-table.table-row-bands thead th {
+  background: none;
+  border: 0;
+  color: var(--look-muted, var(--ink));
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.slide .slide-table.table-row-bands tbody tr > * {
+  background: color-mix(in srgb, var(--look-main, var(--accent)) 13%, transparent);
+  border: 0;
+}
+.slide .slide-table.table-row-bands tr > :first-child { width: 14%; }
+.slide .slide-table.table-row-bands tbody tr > :first-child {
+  --weight-reading: 700;
+  border-radius: 1.2cqw 0 0 1.2cqw;
+  background: var(--look-main, var(--accent));
+  color: white;
+  font-weight: 700;
+}
+.slide .slide-table.table-row-bands tbody tr > :last-child {
+  border-start-end-radius: 1.2cqw;
+  border-end-end-radius: 1.2cqw;
+}
+.slide.mode-reveal .slide-table.table-row-bands tbody tr.mode-el[data-mode-state="current"] > :not(:first-child) {
+  background: color-mix(in srgb, var(--look-main, var(--accent)) 25%, transparent);
+}
+
+.slide > .slide-content > .slot[data-slot-side="above"] {
+  flex: 1 1 0%;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 44%) minmax(0, 1fr);
+  row-gap: 2.6cqw;
+  margin-block: 0 !important;
+}
+.slot[data-slot-side="above"] > .slot-media {
+  grid-column: 1;
+  grid-row: 1;
+  grid-template-columns: none;
+  grid-auto-flow: column;
+  grid-auto-columns: minmax(0, 1fr);
+}
+.slot[data-slot-side="above"] > .slot-media figure.slide-figure {
+  overflow: hidden;
+  border-radius: 1.4cqw;
+}
+.slot[data-slot-side="above"] > .slot-media figure.slide-figure > img {
+  border-radius: inherit;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.slot[data-slot-side="above"] > .slot-media figure.slide-figure:has(> figcaption) > img {
+  height: calc(100% - 2em);
+}
+.slot[data-slot-side="above"] > .slot-copy {
+  grid-column: 1;
+  grid-row: 2;
+  align-self: stretch;
+  justify-content: safe center;
+  min-height: 0;
+}
+/* Reserve the list's natural height before filling the picture band. Keep denser vertical
+   lists readable by reclaiming row padding rather than scaling the entire slide. */
+.slide > .slide-content > .slot[data-slot-side="above"]:has(> .slot-copy > .feature-list:not(.fl-cards)) {
+  grid-template-rows: minmax(0, 44%) minmax(min-content, 1fr);
+}
+.slide .slot[data-slot-side="above"] > .slot-copy > .feature-list:not(.fl-cards):has(> li:nth-child(3)) {
+  --list-lh: 1.18;
+  --copy-size: max(var(--type-floor), min(var(--fs-body), 3cqw));
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+}
+.slide .slot[data-slot-side="above"] > .slot-copy > .feature-list:not(.fl-cards):has(> li:nth-child(3)) > li {
+  padding-block: .14em;
+}
+.slide .slot[data-slot-side="above"] > .slot-copy > .feature-list:not(.fl-cards):has(> li:nth-child(5)) {
+  --copy-size: var(--type-floor);
+}
+.slide .slot[data-slot-side="above"] .icon-row {
+  grid-template-rows: auto;
+}
+.slide .slot[data-slot-side="above"] .icon-row .ir-item {
+  display: flex;
+  flex-direction: column;
+  grid-row: auto;
+  gap: 1cqw;
+  border-inline-start: 1px solid var(--hairline);
+  padding-inline: 1.4cqw;
+}
+.slide .slot[data-slot-side="above"] .icon-row .ir-item:first-child { border-inline-start: 0; }
+.slide .slot[data-slot-side="above"] .icon-row .ir-item::before { display: none; }
+.slide .slot[data-slot-side="above"] .icon-row .ir-item > :is(.ir-icon, .ir-label) {
+  padding: 0;
+  justify-content: center;
+  text-align: center;
+}
+.slide .slot[data-slot-side="above"] .icon-row .ir-item > .ir-icon > svg {
+  width: 5cqw;
+  height: 5cqw;
+}
+.slide .slot[data-slot-side="above"] .icon-row .ir-item > .ir-label {
+  color: var(--ink);
+  font: 650 max(var(--type-floor), 2.6cqw)/1.2 var(--sans);
+  letter-spacing: normal;
+  text-transform: none;
+}

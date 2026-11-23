@@ -27,7 +27,7 @@ for (const mode of process.env.TW_TEST_EDITOR_MODE ? [process.env.TW_TEST_EDITOR
   const pageBytes = Buffer.from('<!doctype html><html><head><title>Energy domain map</title></head><body><h1>ENERGY-MAP-MARKER</h1><script>document.body.dataset.ran = "yes"</script></body></html>', 'utf8')
   const external = join(materials, 'energy-domain-map.html')
   writeFileSync(external, pageBytes)
-  writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, editorViewMode: mode }))
+  writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: mode === 'plain' ? 'outline' : mode }))
 
   const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
   delete env.ELECTRON_RUN_AS_NODE
@@ -44,7 +44,7 @@ for (const mode of process.env.TW_TEST_EDITOR_MODE ? [process.env.TW_TEST_EDITOR
     const pick = (path) => app.evaluate((_electron, value) => { globalThis.__twE2eHtmlPagePick = value; globalThis.__twE2eHtmlPagePickOptions = undefined }, path)
     const pickerOptions = () => app.evaluate(() => globalThis.__twE2eHtmlPagePickOptions ?? null)
     const insertHtmlPage = async () => {
-      await page.locator('.toolbar-btn', { hasText: 'Insert' }).first().click()
+      await page.getByRole('button', { name: 'Insert', exact: true }).click()
       await page.getByRole('menuitem', { name: /HTML page…/ }).click()
     }
 

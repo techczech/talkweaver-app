@@ -107,8 +107,8 @@ const deleteCases = [
   // A table read from a trigger list owns its `{table}`: deleting the table takes it too.
   ['Backspace on a table list takes its {table} line with it', '## One\n\nIntro\n\n{table}\n|- A: 1\n- B: 2\n\nMore\n', ['Backspace'], '## One\n\nIntro\n\n|More\n'],
   ['Backspace on a table list whose {table} shares the line with the id: only the token goes', '## One\n{table id=s1}\n\n|- A: 1\n- B: 2\n\n## Two\n', ['Backspace'], '## One\n{id=s1}\n\n|## Two\n'],
-  ['Backspace on a table list, then Undo: list and {table} back exactly', '## One\n\nIntro\n\n{table}\n|- A: 1\n- B: 2\n\nMore\n', ['Backspace', 'Meta+z'], '## One\n\nIntro\n\n{table}\n|- A: 1\n- B: 2\n\nMore\n'],
-  ['Backspace on a selected object, then Undo: back whole', `## One\n\n|${CHAT}\n\nMore\n`, ['Backspace', 'Meta+z'], `## One\n\n|${CHAT}\n\nMore\n`]
+  ['Backspace on a table list, then Undo: list and {table} back exactly', '## One\n\nIntro\n\n{table}\n|- A: 1\n- B: 2\n\nMore\n', ['Backspace', 'ControlOrMeta+z'], '## One\n\nIntro\n\n{table}\n|- A: 1\n- B: 2\n\nMore\n'],
+  ['Backspace on a selected object, then Undo: back whole', `## One\n\n|${CHAT}\n\nMore\n`, ['Backspace', 'ControlOrMeta+z'], `## One\n\n|${CHAT}\n\nMore\n`]
 ]
 
 const h = await openEditorHarness()
@@ -136,11 +136,33 @@ try {
     for (const c of gapCases) await run(mode, c)
     for (const c of deleteCases) await run(mode, c)
 
+    if (mode === 'markdown') {
+      for (let level = 1; level <= 6; level++) {
+        const marks = '#'.repeat(level)
+        await check(mode, `Enter immediately after ${marks} preserves nearby headings and stays before the next title`, async () => {
+          const before = level === 1 ? '' : '# Talk title\n\n'
+          const role = level === 2 ? '{role=section-title}' : level === 3 ? '{sub}{role=subsection-title}' : ''
+          const metadata = level === 1 ? '' : `{id=current}${role}\n`
+          const next = `${'#'.repeat(Math.min(level + 1, 6))} Next title {id=next}\n- Point\n\n## Another title {id=another}\n`
+          await h.mount(`${before}${marks}| Current title\n${metadata}\n${next}`, mode)
+          await h.press('Enter')
+          const result = await h.page.evaluate(() => {
+            const { doc, selection } = window.view().state
+            return { text: doc.toString(), caret: selection.main.head, sectionChild: window.sectionChild }
+          })
+          assert.ok(result.text.startsWith(before), 'earlier title bytes are unchanged')
+          assert.ok(result.text.endsWith(next), 'later title and ID bytes are unchanged')
+          assert.equal(result.sectionChild, null, 'Enter does not ask the workspace to open the next title')
+          assert.ok(result.caret < result.text.length - next.length, 'the caret stays before the next title')
+        })
+      }
+    }
+
     await check(mode, 'A: one Undo restores the text and the caret exactly', async () => {
       await h.mount('## One\n\nText\n\n|## Two\n\nMore\n', mode)
       await h.press('Enter')
       assert.equal(await h.page.evaluate(() => window.depth()), 1)
-      await h.press('Meta+z')
+      await h.press('ControlOrMeta+z')
       assert.equal(await h.shown(), '## One\n\nText\n\n|## Two\n\nMore\n')
     })
 
@@ -213,7 +235,7 @@ try {
         }
         await button.click()
         assert.equal(await h.page.evaluate(() => window.view().state.doc.toString()), '## One\n\nIntro\n\nMore\n')
-        await h.press('Meta+z')
+        await h.press('ControlOrMeta+z')
         assert.equal(await h.page.evaluate(() => window.view().state.doc.toString()), text)
       })
     }

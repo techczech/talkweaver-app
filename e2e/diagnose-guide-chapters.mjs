@@ -95,7 +95,7 @@ try {
     await sheet.waitFor({ state: 'visible', timeout: 8000 })
     await sheet.locator('[data-open-example]').click()
     await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
-    const startTalk = await waitFor(async () => (await page.locator('.workspace-title').first().innerText().catch(() => '')) === 'The Saturday market', 15000)
+    const startTalk = await waitFor(async () => (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label', { timeout: 1000 }).catch(() => '')) === 'The Saturday market', 15000)
     record('Open example vault opens the start talk, The Saturday market', startTalk)
     await page.waitForSelector('.cm-content', { timeout: 8000 })
     await page.waitForSelector('[data-guide]', { timeout: 6000 })
@@ -157,9 +157,9 @@ try {
     record('Open this talk opens a new window, not this one', second !== null && second !== page)
     if (second) {
       await second.waitForLoadState('domcontentloaded')
-      const title = await waitFor(async () => (await second.locator('.workspace-title').first().innerText().catch(() => '')) === 'Garden notes', 15000)
+      const title = await waitFor(async () => (await second.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label', { timeout: 1000 }).catch(() => '')) === 'Garden notes', 15000)
       record('the new window holds Garden notes', title)
-      record('the start talk stays in the first window', (await page.locator('.workspace-title').first().innerText()) === 'The Saturday market')
+      record('the start talk stays in the first window', (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label', { timeout: 1000 })) === 'The Saturday market')
     }
     await shot(page, '08-open-this-talk.png')
   } finally {

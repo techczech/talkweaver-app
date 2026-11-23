@@ -69,9 +69,9 @@ try {
   await page.waitForSelector('.workspace')
 
   // (a) the sheet and its defaults
-  await page.locator('.toolbar-btn--primary').click()
-  const item = page.getByRole('menuitem', { name: /Plan a Run…/ })
-  record('Present menu carries Plan a Run…', await item.count() === 1)
+  await page.getByRole('button', { name: 'Other ways to present', exact: true }).click()
+  const item = page.getByRole('menuitem', { name: 'Plan a session with an audience…', exact: true })
+  record('Present menu offers to plan a session with an audience', await item.count() === 1)
   await item.click()
   const sheet = page.locator('[data-testid="plan-run-sheet"]')
   await sheet.waitFor()
@@ -203,8 +203,8 @@ try {
   await page.bringToFront()
 
   // (f) None leaves the phase off the Run
-  await page.locator('.toolbar-btn--primary').click()
-  await page.getByRole('menuitem', { name: /Plan a Run…/ }).click()
+  await page.getByRole('button', { name: 'Other ways to present', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Plan a session with an audience…', exact: true }).click()
   await sheet.waitFor()
   await page.waitForFunction(() => document.querySelector('[data-field="pre-file"]')?.value === 'intake')
   await sheet.locator('[data-field="pre-file"]').selectOption('')

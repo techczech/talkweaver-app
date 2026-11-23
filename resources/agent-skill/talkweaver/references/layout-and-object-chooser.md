@@ -38,11 +38,24 @@ A talk with no `palette:` draws the Ocean look: Ocean blue for the detail slides
 - Section colours: each `##` section has a lead colour, which paints its divider, full statements, the light statement's rule, the side rail beside a title and the title tab (detail slides stay Ocean; the current item of a reveal stays Ocean). The five are `blue`, `amber` (near-black type), `deep-blue`, `light` (white divider with a large Ocean number, statements in Ocean type, light rail) and `light-amber` (white divider with the number in an amber disc, statements in Deeper Ocean type). By default the sections rotate blue, amber, light, deep-blue, light-amber, then start again. Frontmatter `section-colours: off` stops the rotation (every section blue; amber with `palette: bold`); `section-colours: blue, light` rotates through your list; one name gives every section that colour. `{section-colour=amber}` on a `##` heading sets that one section and moves no other. The rotation counts sections: adding a slide changes no colour; adding a section moves the colours of the sections after it. Slides outside a section (title, closing) take the first colour. Set it in Talk tab → Design → Section colours (one choice, or a list typed in the box under it); names may be written in any case. Ignored with `palette: classic` or `green`.
 - `font: inter`, `font: serif` (Fraunces display, Alegreya Sans text), or `font: geist`: bundled offline typefaces with Latin Extended. `typeface:` is an alias; the canonical `font:` key wins, with a warning when both keys are set to different faces. Legacy `font: trebuchet|gill-sans|verdana` still work. Omitting the font preserves the palette’s existing typeface.
 - `palette: bold` (frontmatter): the same look with amber leading the title slide (its disc turns amber with a near-black icon), the statement and section divider slides; key words on a light statement stay Ocean with an amber underline.
-- Set the palette in Talk tab → Design → Palette. Omitted `palette` uses Ocean; `palette: bold` selects Ocean, bold amber; `palette: classic` selects Classic.
+- `palette: forest` and `palette: slate`: the same look in deep green and in blue-grey slate. Amber stays the marker; section colour names are unchanged (`blue` is the palette's main colour). In Slate the key words of a light statement are rust.
+- Set the palette in Talk tab → Design → Palette. Omitted `palette` uses Ocean; `palette: bold` selects Ocean, bold amber; `palette: forest` selects Forest; `palette: slate` selects Slate; `palette: classic` selects Classic.
 - `palette: classic`: the look before 0.44 (sections cycle cobalt, emerald, vermilion). Use it when a talk needs the earlier styling. It includes the broken-layout repairs and numeric-colon stats parsing repair (`40 min: the route` now treats `40 min` as the value), so it is not exact 0.43 identity. `palette: green` is the old green cycle.
-- A section `{accent=…}` and the deck `colour:` keep working: in the Ocean look `cobalt` is Ocean; `emerald`, `vermilion` and `forest` keep their own hue with matching deeper and light strengths.
 - A statement is full Ocean by default; `{statement-bg=rule}` gives the light form (white, a short Ocean rule, the bold words in Ocean).
 - In a bar chart, write a bar's label in bold (`- **Local model E**: 22`) to highlight it.
+
+The deck’s `colour:` frontmatter key sets the accent for the opening and closing slides. Leave it out to use the palette’s automatic accent. An unsupported name raises a compiler warning.
+
+| Palette | Valid `colour:` names |
+|---|---|
+| Ocean (default) | `cobalt`, `emerald`, `vermilion`, `forest` |
+| Ocean, bold amber (`palette: bold`) | `cobalt`, `emerald`, `vermilion`, `forest` |
+| Forest (`palette: forest`) | `cobalt`, `emerald`, `vermilion`, `forest`, `ocean` |
+| Slate (`palette: slate`) | `cobalt`, `emerald`, `vermilion`, `forest`, `ocean`, `slate` |
+| Classic (`palette: classic`) | `cobalt`, `emerald`, `vermilion`, `forest` |
+| Green (classic) (`palette: green`) | `cobalt`, `emerald`, `vermilion`, `forest` |
+
+In both Ocean palettes, `cobalt` selects Ocean blue. In Forest and Slate, `cobalt` selects the palette’s main colour and `ocean` selects Ocean blue. `forest` selects the Forest palette’s main colour in a Forest talk. A section can still set its own accent using `{accent=…}`.
 
 ## 1. Choose by what the content is
 
@@ -1959,6 +1972,9 @@ These examples show the trigger line below a slide heading.
 | Numbers, large | `{id=p4k2m}{list}{numbered=styled}` |
 | Picture on the left | `{id=p4k2m}{list}{image=left}`, with an existing image line |
 | Picture on the right | `{id=p4k2m}{list}{image=right}`, with an existing image line |
+| Picture above | `{id=p4k2m}{iconrow}{image=above}`, with an existing image line and points |
+
+Picture › Above sets `{image=above}` and keeps the existing point arrangement. The slide crops the picture to a wide frame. The original image file stays intact.
 
 `{plainlist}` pins bullets even when a talk defaults to icons. Use one list treatment at
 a time. `{font-body=l}` makes the points or table text larger. Other sizes include
@@ -1979,6 +1995,7 @@ For a table with ordinary first-row cells, rules between rows only, and a plain 
 - Header row uses the defaults. Remove the three `=off` codes.
 - Rows only sets all three switches to `off`.
 - First column leads switches the header off and keeps column rules and the accent.
+- Row bands uses `{table-bands=on}` and keeps the header above the bands.
 - Plain grid switches the header and first-column accent off and keeps the rules between columns.
 - Title at the side uses Rows only plus `{sidebar}{split=30}`.
 

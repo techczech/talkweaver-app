@@ -12,7 +12,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { JSDOM } from 'jsdom'
 import { build } from 'esbuild'
 import {
-  PPT_EXTRACTOR_BUTTON, PPT_EXTRACTOR_POINTER, PPT_EXTRACTOR_URL, rendererNotice
+  PPT_EXTRACTOR_BUTTON, PPT_EXTRACTOR_POINTER, PPT_EXTRACTOR_URL, SLIDE_PICTURES_LABEL, rendererNotice
 } from '../src/shared/importer-renderer-notice.ts'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
@@ -54,7 +54,9 @@ try {
 
   async function panelText(renderer) {
     const opened = []
+    const settingsSections = []
     window.tw = {
+      settingsWindow: { open: async (section) => { settingsSections.push(section) } },
       shell: { openExternal: async (url) => { opened.push(url); return true } },
       importer: {
         listRuns: async () => [], getSettings: async () => settings, onProgress: () => () => {},
@@ -65,20 +67,22 @@ try {
     const host = document.createElement('div'); document.body.appendChild(host)
     const rootEl = createRoot(host)
     await act(async () => { rootEl.render(React.createElement(Importer, { isOpen: true, onClose() {}, onShowStudio() {}, onShowHistory() {} })) })
-    await act(async () => { await new Promise((r) => setTimeout(r, 20)) })
-    await act(async () => { host.querySelector('button[title="Importer settings"]').click() })
+    const settingsButton = host.querySelector('button[aria-label="Open settings for Importer"]')
+    assert.ok(settingsButton, 'Importer has a Settings button')
+    await act(async () => { settingsButton.click() })
+    assert.deepEqual(settingsSections, ['importing'], 'the button opens the Importing section')
+    // Slide-picture status and the extractor link are on the start panel.
     const health = host.querySelector('.twi-health')
     const pointer = host.querySelector('[data-testid="importer-extractor-pointer"]')
-    const result = { healthText: [...health.children].slice(0, 2).map((c) => c.textContent).join(' ') + [...health.children].slice(2).map((c) => c.textContent).join(''), pointer, button: pointer?.querySelector('button'), opened, host, rootEl }
-    return result
+    assert.ok(health, 'slide-picture status is visible on the start panel')
+    return { health, pointer, button: pointer?.querySelector('button'), opened, host, rootEl }
   }
 
   const absent = await panelText(neither)
   assert(absent.pointer, 'pointer shows with the tools absent')
   assert.equal(absent.pointer.querySelector('small').textContent, PPT_EXTRACTOR_POINTER)
   assert.equal(absent.button.textContent, PPT_EXTRACTOR_BUTTON)
-  assert.equal(absent.healthText, 'Slide pictures Not available')
-  assert.equal(absent.host.querySelector('.twi-health').children.length, 2, 'label and status are separate elements')
+  assert.deepEqual([...absent.health.children].map((child) => child.textContent), [`${SLIDE_PICTURES_LABEL}:`, 'Not available'])
   assert.doesNotMatch(absent.host.textContent, /LibreOffice|pdftoppm|not found|Renderer/i)
   assert.doesNotMatch(document.body.textContent, /Renderer/)
   await act(async () => { absent.button.click() })
@@ -88,7 +92,9 @@ try {
   const present = await panelText(ready)
   assert.doesNotMatch(present.host.textContent, /Renderer/)
   assert.equal(present.pointer, null, 'no pointer with the tools present')
-  assert.equal(present.healthText, 'Slide pictures ready/o/soffice/p/pdftoppm', 'status wording as before with the tools present, under the new label')
+  assert.equal(present.health.querySelector('b').textContent, `${SLIDE_PICTURES_LABEL}:`)
+  assert.equal(present.health.querySelector('span').textContent, 'ready')
+  assert.deepEqual([...present.health.querySelectorAll('details small')].map((path) => path.textContent), [ready.officePath, ready.rasterPath])
   await act(async () => present.rootEl.unmount())
 } finally {
   rmSync(dir, { recursive: true, force: true })

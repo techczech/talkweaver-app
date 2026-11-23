@@ -23,7 +23,7 @@ function normSection(v) {
 function normImage(v) {
   if (v == null) return null;
   const s = String(v).toLowerCase();
-  return s === "right" ? "right" : s === "left" ? "left" : null;
+  return ["left", "right", "above"].includes(s) ? s : null;
 }
 function normAlign(v) {
   if (v == null) return null;
@@ -57,6 +57,14 @@ function readKey(key, src) {
 // the button the compiled slide actually renders. Keep this the single home of the condition.
 export function plainListForcedIcons(frameIcons) {
   return frameIcons === "top" || frameIcons === "all";
+}
+
+// "top" is also the builtin frame title, so the renderer needs to know when it was set.
+export function hasExplicitFrameTitle(slideAttrs = {}, sectionDefaults = {}, deckDefaults = {}) {
+  const hasTitle = source => source.title != null && source.title !== "show" && source.title !== "compact";
+  return hasTitle(slideAttrs)
+    || hasTitle(sectionDefaults) || sectionDefaults.sidebar != null
+    || hasTitle(deckDefaults) || deckDefaults.sidebar != null;
 }
 
 export function resolveSlideFrame(slideAttrs = {}, sectionDefaults = {}, deckDefaults = {}) {

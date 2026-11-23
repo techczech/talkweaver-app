@@ -30,9 +30,10 @@ export interface RenderThumbnailsOptions {
   /** Replaces obsolete pending renders from the same editor. */
   requestKey?: string
   /** A layout variant's render (the picker's and the Inspector's pictures of the slide): it starts only
-   *  when no normal render is pending, so it never holds a queued normal render up; one already
-   *  running is not interrupted. Its compile is on the preparation gate's background lane likewise. */
+   *  when no fresh normal render is pending. The editor strip can yield between captures. */
   background?: boolean
+  /** The live editor strip can give a waiting layout variant a turn, then resume from cached pictures. */
+  yieldToVariants?: boolean
   /** Asked between every two slides and before a picture is written; true stops the run at once (the
    *  prewarm's own reasons: presenting, memory, a closed vault). */
   shouldYield?: () => boolean
@@ -362,12 +363,13 @@ export function renderWindowProcessId(): number | null {
 async function renderThumbnailsSerialized(
   opts: RenderThumbnailsOptions & { onInterrupted?: () => void },
   signal: AbortSignal,
-  superseded: AbortSignal
+  superseded: AbortSignal,
+  yieldToVariant: () => boolean
 ): Promise<Record<string, string>> {
   if (signal.aborted || !helperWindowsAllowed()) return {}
   rendering = true
   try {
-    return await renderThumbnailsInWindow(opts, signal, superseded)
+    return await renderThumbnailsInWindow(opts, signal, superseded, yieldToVariant)
   } finally {
     rendering = false
     if (signal.aborted || superseded.aborted) opts.onInterrupted?.()
@@ -377,7 +379,8 @@ async function renderThumbnailsSerialized(
 async function renderThumbnailsInWindow(
   opts: RenderThumbnailsOptions,
   signal: AbortSignal,
-  superseded?: AbortSignal
+  superseded: AbortSignal,
+  yieldToVariant: () => boolean
 ): Promise<Record<string, string>> {
   const { slides, cacheDir } = opts
   // A prepared variant exists only for a deck with no remote page: no artwork to fetch or name.
@@ -442,13 +445,18 @@ async function renderThumbnailsInWindow(
     // slides on screen first (re-read before every pick), then the rest in deck order.
     const requestKey = opts.requestKey
     const plan = createCapturePlan(pending, requestKey ? () => thumbnailFocus.get(requestKey) : undefined)
+    let capturedThisTurn = false
     for (let item = plan.next(); item; item = plan.next()) {
       // One slide at a time, with a turn of the event loop between them: the queue never holds the
       // main process for more than one short step (or the caller's pace, a longer pause).
       await pace()
       // Superseded: the newer request takes over from here. Checked only BETWEEN slides, so the
       // capture under way below always completes and is cached (cancellation still stops at once).
-      if (signal.aborted || superseded?.aborted || opts.shouldYield?.()) break
+      if (signal.aborted || superseded.aborted || opts.shouldYield?.()) break
+      // Keep the first needed capture responsive. On resumption the same plan will pick from the
+      // slides still missing, with the latest viewport focus. A prepared preview avoids re-fetching
+      // public-page artwork on every resumption.
+      if (capturedThisTurn && opts.yieldToVariants && preview && yieldToVariant()) break
       try {
         await rendererWork(navigateToSlide(win, item.index), signal)
         const { pending: stillPending } = await rendererWork(settle(win), signal)
@@ -479,6 +487,7 @@ async function renderThumbnailsInWindow(
         if (signal.aborted || opts.shouldYield?.()) break
         await writePicture(item.pngPath, await encodePng(img),opts.beforeWrite)
         result[item.key] = item.pngPath
+        capturedThisTurn = true
 
         // ADR-0022: ONLY a carousel (the active slide carries .card-gallery[data-exclusive]) gets
         // per-sub-slide thumbnails — one full-frame capture per stepped full-bleed sub-slide.

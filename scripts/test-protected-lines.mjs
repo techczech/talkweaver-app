@@ -754,6 +754,10 @@ for (const hashes of protectedHeadingLevels) {
       'no blank lines round the place: one is put on each side; two slides go in together')
     const deeper = J('## S', '{id=s}', 'intro', '### Child', '{id=c}', 'child body', '## T', '{id=t}')
     assert.ok(put(deeper, positionInLine(deeper, '### Child', 3), NEW).text.includes('child body\n\n### New\n{id=new01}\n\n- new point\n\n## T'), 'before the next heading of a shallower level')
+    const spaced = J('### A', '{id=a}', 'body of A', '', '## Next section', '{id=next}')
+    const fromHeading = put(spaced, positionInLine(spaced, '### A', 3), NEW)
+    const fromBody = put(spaced, positionInLine(spaced, 'body of A', 9), NEW)
+    assert.equal(fromBody.text, fromHeading.text, 'reuse the blank separator after the body when inserting slides')
     // Nothing lands before the talk's title, and the title's own block is the whole talk.
     const titled = J('# Talk', '', '## One', '{id=one}', '', '- x', '')
     // With the caret on the title (where a freshly opened talk has it) the slide goes to the START of
@@ -793,10 +797,11 @@ for (const hashes of protectedHeadingLevels) {
       }
     }
     assert.ok(put(SLIDES, positionInLine(SLIDES, '### Slide 3.0', 4), '[QR: https://example.com | Label]').text.includes('### Slide 3.0\n{id=s3-0}\n\n[QR: https://example.com | Label]\n\n\n- point 3.0'))
-    // The caret not on a heading line: every insert, slides included, is byte for byte what it was.
+    // Off the heading and away from an existing slide separator, the original insertion still applies.
     const fenced = J('### S', '{id=s}', '```sh', '# install', '{x}', '```', 'after')
+    const tightBody = SLIDES.replace('- point 3.0\n\n', '- point 3.0\n')
     for (const [name, doc, pos] of [
-      ['a body line', SLIDES, positionInLine(SLIDES, '- point 3.0', 3)],
+      ['a body line', tightBody, positionInLine(tightBody, '- point 3.0', 3)],
       ['the id line', SLIDES, positionInLine(SLIDES, '{id=s3-0}', 2)],
       ['an empty line', SLIDES, positionInLine(SLIDES, '### Slide 3.0', 0) - 1],
       ['the last line', SLIDES, SLIDES.length],

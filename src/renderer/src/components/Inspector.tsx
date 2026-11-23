@@ -343,8 +343,9 @@ export default function Inspector({
     : model.selectedTokens['poll-type']?.startsWith('poll=') ? 'Poll' : DESIGN_PAGES[layout]
   const titleSlide = row?.role === 'opening' && row.layout === 'title' && row.source_line == null && !row.source_markdown
   const hasBesidePicture = row?.image_placements?.some(placement => placement.kind === 'beside') ?? false
-  const pictureSide = useMemo(() => hasBesidePicture ? pictureSideForSlide(outlineContent, headingLine) : null,
-    [hasBesidePicture, headingLine, outlineContent])
+  const hasAbovePicture = row?.image_placements?.some(placement => placement.kind === 'above') ?? false
+  const pictureSide = useMemo(() => hasAbovePicture ? 'above' : hasBesidePicture ? pictureSideForSlide(outlineContent, headingLine) : null,
+    [hasAbovePicture, hasBesidePicture, headingLine, outlineContent])
   const pages: PanelPage[] = [
     ...(section ? [{ id: 'colour', label: 'Colour', summary: 'Section colour' }] : []),
     { id: 'title', label: 'Title', summary: section ? 'Section name, large' : row?.title_layout === 'left' ? 'At the side' : row?.title_layout === 'hidden' ? 'Not shown' : 'On top' },
@@ -353,7 +354,7 @@ export default function Inspector({
       { id: 'icons', label: 'Icons', summary: 'Marks beside the points' }
     ] : []),
     ...(!section && !!row?.image_count ? [{ id: 'picture', label: 'Picture', summary: pictureSide === 'left' ? 'On the left'
-      : pictureSide === 'right' ? 'On the right' : 'Placement and editing' }] : []),
+      : pictureSide === 'right' ? 'On the right' : pictureSide === 'above' ? 'Above the points' : 'Placement and editing' }] : []),
     { id: 'more', label: 'More', summary: section ? 'Steps, reactions, about this slide' : 'Steps, background, poll, reactions' }
   ]
   const pageInfo = pages.find(candidate => candidate.id === page)
@@ -491,6 +492,7 @@ export default function Inspector({
         ) : titleSlide ? <>
           <h3>This slide</h3><p>Made from the talk’s details: its title, subtitle and your name.</p>
           <button type="button" className="toolbar-btn" onClick={() => onTalk('details')}>Edit talk details</button><button type="button" className="toolbar-btn" onClick={() => onTalk('design')}>Talk design</button>
+          <VaultOrigin key={talk.outlinePath} outlinePath={talk.outlinePath} outlineContent={outlineContent} />
         </> : surface && <>
           {(long || !pageInfo) && <section className="tw-inspector-section" data-section="designs"
             ref={element => { if (element) sectionRefs.current.set('designs', element); else sectionRefs.current.delete('designs') }}>
@@ -501,7 +503,7 @@ export default function Inspector({
             ref={element => { if (element) sectionRefs.current.set(item.id, element); else sectionRefs.current.delete(item.id) }}
             className="tw-inspector-section tw-right-page" aria-label={item.label}>
             <PageHead label={item.label} aspect={item.id === 'own' ? item.label : item.id} back={long ? undefined : () => changePage('home')} onCopy={onCopy} />
-            {item.id === 'title' && <TitlePage surface={surface} where={row?.title_layout ?? 'top'} trigger={triggerLine}
+            {item.id === 'title' && <TitlePage surface={surface} where={row?.title_layout ?? 'top'} trigger={triggerLine} pictureAbove={hasAbovePicture}
               inheritedLook={inheritedTitleLook} inheritedTone={inheritedTitleTone} onTalk={() => onTalk('design')} section={section} icon={titleIcon}>
               {bindings.filter(binding => binding.group.key === 'font-title').map(binding => renderGroup(binding))}
             </TitlePage>}

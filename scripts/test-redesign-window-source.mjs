@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { isEmptyAuthoringSlide, newTalkSource, placeBlankSlide, placePictures, splitPictureRow } from '../src/shared/redesign-window-source.ts'
+import { completeBlankSlide, isEmptyAuthoringSlide, newTalkSource, placeBlankSlide, placePictures, splitPictureRow } from '../src/shared/redesign-window-source.ts'
 import { normalizePositions } from '../src/shared/outline-normalize.ts'
 import { parseFrontmatterPairs } from '../src/shared/frontmatter-editor.ts'
 import { carouselPaneSibling, createSection, groupSection, nodeAtSourceLine, reorderStructure, structureOf } from '../src/shared/talk-structure.ts'
@@ -24,6 +24,17 @@ assert.equal(placePictures('### First\n\n```js\nopen\n', 1, false, pictures, 'te
 const panes = '### Parent {id=parent}\n\n#### Child {id=child}\n\n- Kept\n\n### Next\n'
 assert.equal(placeBlankSlide(panes, 1, false, 'blank'), panes.replace('### Next', '### {id=blank}\n{list}\n\n### Next'))
 assert.match(placeBlankSlide('## At level two\n', 1, false, 'blank'), /\n## \{id=blank\}/)
+for (const eol of ['\n', '\r\n']) {
+  const before = ['### First {id=first}', '- Kept on First', ''].join(eol)
+  const after = ['', '- Now on the new slide', '', '### Next {id=next}', ''].join(eol)
+  const typing = before + '### ' + after
+  const completed = completeBlankSlide(typing, before.length, 'blank')
+  assert.equal(completed, before + '###  {id=blank}' + eol + '{list}' + after)
+  assert.deepEqual(readSlides(completed).slides.map(slide => slide.id), ['first', 'blank', 'next'])
+}
+assert.equal(completeBlankSlide('### ', 0, 'blank'), '###  {id=blank}\n{list}\n')
+assert.equal(completeBlankSlide('### Existing title', 0, 'blank'), null)
+assert.equal(completeBlankSlide('- ### ', 2, 'blank'), null)
 let id = 0
 const separate = splitPictureRow(placed, pictures, false, () => 'test' + ++id)
 assert.match(separate, /:::notes\nprivate\n:::\n\n### Picture \{id=test1\}\n\n!\[\]\(assets\/img-a\.webp\)/)

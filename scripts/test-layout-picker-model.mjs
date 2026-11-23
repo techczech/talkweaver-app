@@ -119,8 +119,8 @@ check(tableStep != null, 'inline { choosing table creates its registry-driven sl
 equal(tableStep?.group.key, 'media-placement',
   'table object options begin with the shared media-placement group')
 equal(tableStep?.rows.map(({ digit, value }) => [digit, value.token]), [
-  [1, ''], [2, 'image=left'], [3, 'image=right']
-], 'inline table slot step offers auto, left, and right through registry values')
+  [1, ''], [2, 'image=left'], [3, 'image=right'], [4, 'image=above']
+], 'inline table slot step offers auto, left, right and above through registry values')
 const chartEntry = LAYOUTS.find((entry) => entry.name === 'chart')
 const chartStep = inlineOptionPickerStep(chartEntry, '{chart=bar}', '')
 check(chartStep != null, 'inline { choosing chart creates its registry-driven chart-type step')

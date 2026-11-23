@@ -24,6 +24,18 @@ export function placeBlankSlide(text: string, line: number | null, child: boolea
   return placeContent(text, line, '', child, ['{list}'], newId)
 }
 
+/** Finish the typed slide heading in place, preserving the body that follows it. */
+export function completeBlankSlide(text: string, from: number, newId: string): string | null {
+  const prefix = '### '
+  if ((from !== 0 && text[from - 1] !== '\n') || !text.startsWith(prefix, from)) return null
+  const end = from + prefix.length
+  const tail = text.slice(end)
+  if (tail && !/^\r?\n/.test(tail)) return null
+  const eol = (tail ? tail.startsWith('\r\n') : text.includes('\r\n')) ? '\r\n' : '\n'
+  // Leave a space for the title before the identity chip.
+  return text.slice(0, end) + ` {id=${newId}}${eol}{list}` + (tail || eol)
+}
+
 function placeContent(text: string, line: number | null, title: string | null, child: boolean, body: readonly string[], newId: string): string | null {
   const regions = readOutlineObjectRegions(text)
   const lines = text.split('\n')

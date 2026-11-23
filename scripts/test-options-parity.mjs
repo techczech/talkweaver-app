@@ -27,6 +27,8 @@ function attributeReads() {
   }
   // Hand-curated indirect reads in 08-source-adapters (`rawAttrs` / `a` aliases).
   for (const key of ['image', 'media', 'title', 'grid-linear', 'grid-zoom', 'contents']) keys.add(key)
+  // The title parser splits visibility from placement internally. Both read the public title key.
+  if (keys.delete('titleDisplay')) keys.add('title')
   return keys
 }
 
@@ -53,7 +55,7 @@ for (const entry of LAYOUTS) {
 const CURATED_COMPILER_VALUES = [
   'equation=pills', 'equation=circle', 'equation=square', 'equation=oval',
   'flow=horizontal', 'flow=vertical', 'flow=loop', 'flow=branch',
-  'image=left', 'image=right', 'media=left', 'media=right',
+  'image=left', 'image=right', 'image=above', 'media=left', 'media=right',
   'mode=reveal', 'mode=focus', 'reveal=steps',
   'title=show', 'title=compact'
 ]

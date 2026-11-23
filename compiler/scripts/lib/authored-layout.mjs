@@ -462,14 +462,20 @@ export function foldChildLayoutNodes(rootNodes, { deckTriggerDefaults = {}, warn
       ];
     }
   };
+  const foldedCard = (child) => {
+    const childAttrs = { ...deckTriggerDefaults, ...(child.attrs || {}) };
+    const lines = nodeContentLinesAndAttrs(child, childAttrs);
+    const { title, titleDisplay, notitle } = childAttrs;
+    const noTitle = titleDisplay !== "show" && (title === "off" || (notitle === true && title !== "top" && title !== "side"));
+    return {
+      title: child.title, lines,
+      ...(titleDisplay ? { titleDisplay } : {}),
+      ...(noTitle ? { noTitle: true } : {}),
+      ...(childAttrs["media-title"] === "overlay" ? { mediaTitle: "overlay" } : {})
+    };
+  };
   const foldChildrenToCards = (node, children) => {
-    node._foldedCards = children.map((child) => {
-      const childAttrs = { ...deckTriggerDefaults, ...(child.attrs || {}) };
-      const childLines = nodeContentLinesAndAttrs(child, childAttrs);
-      return { title: child.title, lines: childLines,
-        ...(childAttrs.title === "off" || (childAttrs.notitle === true && !["show", "top", "side"].includes(childAttrs.title)) ? { noTitle: true } : {}),
-        ...(childAttrs["media-title"] === "overlay" ? { mediaTitle: "overlay" } : {}) };
-    });
+    node._foldedCards = children.map(foldedCard);
     absorbFoldedChildren(node, children);
     node.children = [];
   };
@@ -519,13 +525,7 @@ export function foldChildLayoutNodes(rootNodes, { deckTriggerDefaults = {}, warn
         continue;
       }
       if (kind === "compare") {
-        node._compareHalves = children.slice(0, 2).map((child) => {
-          const childAttrs = { ...deckTriggerDefaults, ...(child.attrs || {}) };
-          const childLines = nodeContentLinesAndAttrs(child, childAttrs);
-          return { title: child.title, lines: childLines,
-        ...(childAttrs.title === "off" || (childAttrs.notitle === true && !["show", "top", "side"].includes(childAttrs.title)) ? { noTitle: true } : {}),
-        ...(childAttrs["media-title"] === "overlay" ? { mediaTitle: "overlay" } : {}) };
-        });
+        node._compareHalves = children.slice(0, 2).map(foldedCard);
         if (children.length > 2) warnings.push(`compare-extra-groups:${node.title}`);
         // Extra groups are not drawn (warned above), but their notes are the author's and still
         // reach the presenter; the phone shows only the two drawn halves.

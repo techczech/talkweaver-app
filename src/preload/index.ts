@@ -1073,9 +1073,11 @@ const api = {
       slide: string | { headingLine: number },
       layout: string,
       options?: Array<{ group: string; token: string }>,
-      requestKey?: string
+      requestKey?: string,
+      batchId?: string
     ): Promise<VariantThumbnail> =>
-      ipcRenderer.invoke('layout:variant-thumbnail', outlinePath, outline, slide, layout, options, requestKey),
+      ipcRenderer.invoke('layout:variant-thumbnail', outlinePath, outline, slide, layout, options, requestKey, batchId),
+    releaseLayoutVariantBatch: (batchId: string): void => ipcRenderer.send('layout:release-variant-batch', batchId),
     // Embed preflight: per embed, whether it will actually display when presenting (catches
     // embedding-disabled YouTube videos, private/deleted videos, and sites that refuse framing).
     checkEmbeds: (

@@ -293,7 +293,7 @@ export const OPEN_PATTERN_TOKENS: OpenPatternToken[] = [
  */
 const STRUCTURED_BODY_LAYOUTS = [
   'barchart', 'carousel', 'chart', 'code', 'conceptmap', 'cycle', 'equation', 'flow', 'grid',
-  'iconrow', 'image-grid', 'linechart', 'mermaid', 'mindmap', 'orgchart', 'piechart', 'process',
+  'image-grid', 'linechart', 'mermaid', 'mindmap', 'orgchart', 'piechart', 'process',
   'pyramid', 'sigmoid', 'smartart', 'stats', 'steps', 'svg', 'system-map', 'table',
   'table-outline', 'timeline', 'timetable'
 ] as const
@@ -335,6 +335,28 @@ const SECTION_COLOUR_CHOICES: Array<[string, string, string, string?]> = [
   ['light', 'Light', '#F2F4F7', 'White grounds with Ocean type'],
   ['light-amber', 'Light with amber', '#FFE2BA', 'White grounds, an amber disc, Deeper Ocean type']
 ]
+
+export function sectionColourChoices(palette = ''): OptionValue[] {
+  const name = palette.toLowerCase()
+  const accents = name === 'forest'
+    ? { main: 'Green', mainHex: '#0F766E', deep: 'Deep green', deepHex: '#0A5650' }
+    : name === 'slate'
+      ? { main: 'Slate', mainHex: '#334155', deep: 'Deep slate', deepHex: '#1E293B' }
+      : null
+  return [
+    { token: '', label: 'Rotation', description: 'The colour the talk’s rotation gives this section' },
+    ...SECTION_COLOUR_CHOICES.map(([value, label, swatch, description]) => {
+      const token = `section-colour=${value}`
+      if (accents) {
+        if (value === 'blue') return { token, label: accents.main, swatch: accents.mainHex }
+        if (value === 'deep-blue') return { token, label: accents.deep, swatch: accents.deepHex }
+        if (value === 'light') description = `White grounds with ${accents.main.toLowerCase()} type`
+        if (value === 'light-amber') description = `White grounds, an amber disc, ${accents.deep.toLowerCase()} type`
+      }
+      return { token, label, swatch, ...(description ? { description } : {}) }
+    })
+  ]
+}
 
 const BOARD_SETTING_KEYS = ['poll', 'limit', 'length', 'cards', 'names', 'closes'] as const
 /**
@@ -540,7 +562,8 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     values: [
       { token: '', label: 'Auto', description: 'Use the frame or layout default' },
       { token: 'image=left', label: 'Left', description: 'Place the media slot left of the copy' },
-      { token: 'image=right', label: 'Right', description: 'Place the media slot right of the copy' }
+      { token: 'image=right', label: 'Right', description: 'Place the media slot right of the copy' },
+      { token: 'image=above', label: 'Above', description: 'Place the media slot above the copy' }
     ]
   },
   {
@@ -2043,6 +2066,15 @@ def greet():
           { token: '', label: 'Accent', description: 'The first column is set in the accent colour' },
           { token: 'table-first-column=off', label: 'Plain', description: 'The first column reads like the other columns: ink, no accent' }
         ]
+      },
+      {
+        key: 'table-bands',
+        label: 'Row bands',
+        preview: 'segmented',
+        values: [
+          { token: '', label: 'Default', description: 'Use the table’s normal row treatment' },
+          { token: 'table-bands=on', label: 'Row bands', description: 'Give each body row its own band' }
+        ]
       }
     ]
   },
@@ -3027,10 +3059,7 @@ The visible heading is suppressed.`,
       key: 'section-colour',
       label: 'Section colour',
       preview: 'segmented',
-      values: [
-        { token: '', label: 'Rotation', description: 'The colour the talk’s rotation gives this section' },
-        ...SECTION_COLOUR_CHOICES.map(([name, label, swatch, description]) => ({ token: `section-colour=${name}`, label, swatch, ...(description ? { description } : {}) }))
-      ]
+      values: sectionColourChoices()
     }]
   },
   {

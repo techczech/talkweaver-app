@@ -1,6 +1,7 @@
 import { useMemo, useState, type MouseEvent, type ReactNode } from 'react'
 import { ChevronLeft, ChevronRight, Copy, Crop, Heading, Image, LayoutGrid, Link2, List, Palette, Pin, Replace, RotateCcw, SlidersHorizontal, SmilePlus, Trash2 } from 'lucide-react'
-import { GLOBAL_OPTION_GROUPS, LAYOUTS } from '../../../shared/layout-registry/entries'
+import { GLOBAL_OPTION_GROUPS, LAYOUTS, sectionColourChoices } from '../../../shared/layout-registry/entries'
+import { parseFrontmatterPairs } from '../../../shared/frontmatter-editor'
 import { groupHasSelection, selectionForGroup } from '../../../shared/trigger-line'
 import { registryOptionGroups } from '../../../shared/layout-registry/options'
 import { readOutlineSlides } from '../../../shared/feedback-accept'
@@ -10,7 +11,8 @@ import PlainIconPicker, { type IconAnchor } from './PlainIconPicker'
 import RightPanelPictures, { type PanelTry } from './RightPanelPictures'
 import { useLiveSlidePreview } from './useLiveSlidePreview'
 import FixedDeckPreview from './FixedDeckPreview'
-import { isPointListLayout, option, tableDesigns, TITLE_GROUPS, TITLE_STYLES, titlePlace, type Design, type PanelEdit, type PictureSide } from './rightPanelDesigns'
+import { isPointListLayout, option, tableDesigns, TITLE_GROUPS, TITLE_PLACEMENT_GROUPS, TITLE_STYLES, titlePlace, type Design, type PanelEdit, type PictureSide } from './rightPanelDesigns'
+import { defaultTitlePlacementForLayout } from '../../../shared/deck-frame'
 
 export interface PanelPage { id: string; label: string; summary: string }
 const ICONS = { title: Heading, points: List, icons: SmilePlus, picture: Image, colour: Palette, own: LayoutGrid, table: LayoutGrid, more: SlidersHorizontal }
@@ -150,7 +152,7 @@ function IntroPicture({ surface }: { surface: PanelSurface }) {
   </div><p>Every slide in this section follows the section slide without a title of its own. A slide before the section keeps a plain title.</p></>
 }
 
-export function TitlePage({ surface, where, trigger, inheritedLook, inheritedTone, onTalk, children, section = false, icon }: {
+export function TitlePage({ surface, where, trigger, inheritedLook, inheritedTone, onTalk, children, section = false, icon, pictureAbove }: {
   surface: PanelSurface
   trigger: string
   where: string
@@ -160,6 +162,7 @@ export function TitlePage({ surface, where, trigger, inheritedLook, inheritedTon
   children: ReactNode
   section?: boolean
   icon?: ReactNode
+  pictureAbove: boolean
 }) {
   const look = GLOBAL_OPTION_GROUPS.find(group => group.key === 'title-look')!
   const tone = GLOBAL_OPTION_GROUPS.find(group => group.key === 'title-look-tone')!
@@ -168,19 +171,28 @@ export function TitlePage({ surface, where, trigger, inheritedLook, inheritedTon
   const heading = typeof surface.slide === 'string'
     ? readOutlineSlides(surface.text).slides.find(slide => slide.id === surface.slide)?.start
     : surface.slide.headingLine - 1
-  const changed = registryOptionGroups().some(group => TITLE_GROUPS.includes(group.key) && groupHasSelection(trigger, group)) ||
+  const explicitGroups = registryOptionGroups().filter(group => TITLE_GROUPS.includes(group.key) && groupHasSelection(trigger, group))
+  const changed = explicitGroups.length > 0 ||
     (heading != null && !!iconKeyOnLine(surface.text, heading))
   const style = TITLE_STYLES.find(([, token, strength]) => current === token && (token !== 'titlelook=tab' || strength === currentTone))
   const inherited = TITLE_STYLES.find(([, token, strength]) => token === (inheritedLook ? `titlelook=${inheritedLook}` : '') &&
     (token !== 'titlelook=tab' || (strength !== '') === (inheritedTone === 'soft')))
   if (section) return <>{children}<p>A section slide shows its name. Its colour is under Colour.</p></>
+  const defaultPlacement = defaultTitlePlacementForLayout(surface.text, heading == null ? null : heading + 1, surface.layout)
+  const inheritedPlacement = pictureAbove && defaultPlacement === 'left' ? 'top' : defaultPlacement
+  const explicitPlacement = explicitGroups.some(group => TITLE_PLACEMENT_GROUPS.includes(group.key))
   const placement = [['top', 'On top'], ['left', 'At the side'], ['hidden', 'Not shown']] as const
   return <>
     <ResetOrigin changed={changed} reset={() => surface.onKeep({ label: 'Talk title settings', reset: TITLE_GROUPS })} talk={onTalk}
-      inherited={`on top, ${inherited?.[0] ?? 'Plain'}`} />
+      inherited={where === 'left' ? 'at the side' : where === 'hidden' ? 'title hidden' : `on top, ${inherited?.[0] ?? 'Plain'}`} />
     <h4>Where</h4>
     <RightPanelPictures {...surface} group="title-placement" choices={placement.map(([value, label]) => ({
-      label, current: value === where, options: titlePlace(value === 'left' ? 'side' : value, surface.layout)
+      label,
+      current: value === where,
+      reapply: value === inheritedPlacement && explicitPlacement,
+      ...(pictureAbove && value === 'left' ? { unavailable: 'The picture needs the full width above the points' }
+        : value === inheritedPlacement ? { reset: TITLE_PLACEMENT_GROUPS }
+          : { options: titlePlace(value === 'left' ? 'side' : value, surface.layout) })
     }))} />
     {where === 'left' && <ChoiceRow label="Panel width" choice={selectionForGroup(trigger, GLOBAL_OPTION_GROUPS.find(group => group.key === 'title-placement')!) || 'sidebar'}
       options={([30, 35, 40, 50] as const).map(n => [`split=${n}`, `${n}%`])} onChoose={token => surface.onKeep({label: 'Panel width', options: [option('title-placement', token)]})} />}
@@ -249,10 +261,10 @@ export function PicturePage({ surface, side, children, actions }: {
   surface: PanelSurface; side: PictureSide | null; children: ReactNode
   actions?: { crop?: () => void; replace: () => void; remove: () => void }
 }) {
-  const choices = ([['right', 'On the right'], ['left', 'On the left']] as const).map(([value, label]) => ({
+  const choices = ([['right', 'On the right'], ['left', 'On the left'], ['above', 'Above']] as const).map(([value, label]) => ({
     label, current: value === side, options: [option('media-placement', `image=${value}`)]
   }))
-  return <><h4>Where</h4><RightPanelPictures {...surface} group="picture" choices={choices} columns={2} />{children}
+  return <><h4>Where</h4><RightPanelPictures {...surface} group="picture" choices={choices} />{children}
     {actions && <><h4>This picture</h4><div className="tw-right-choice">
       {actions.crop && <button type="button" className="toolbar-btn" onClick={actions.crop}><Crop size={14} />Crop or mark up</button>}
       <button type="button" className="toolbar-btn" onClick={actions.replace}><Replace size={14} />Replace</button>
@@ -325,9 +337,10 @@ export function IconsPage({ surface, hasLogos, tokens, children }: {
 
 export function ColourPage({ surface, trigger }: { surface: PanelSurface; trigger: string }) {
   const group = LAYOUTS.find(entry => entry.name === 'section-colour')!.options![0]
+  const palette = parseFrontmatterPairs(surface.text).find(pair => pair.key === 'palette')?.value
   const selected = selectionForGroup(trigger, group)
-  return <><h4>Section colour</h4><RightPanelPictures {...surface} group="section-colour" choices={group.values.map(value => ({
-    label: value.token ? value.label : 'Rotation', current: value.token === selected, options: [option(group.key, value.token)]
+  return <><h4>Section colour</h4><RightPanelPictures {...surface} group="section-colour" choices={sectionColourChoices(palette).map(value => ({
+    label: value.label, current: value.token === selected, options: [option(group.key, value.token)]
   }))} /><p>Rotation gives each section the next colour of the talk’s design.</p></>
 }
 

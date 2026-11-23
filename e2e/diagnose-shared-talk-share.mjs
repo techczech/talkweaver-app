@@ -106,7 +106,7 @@ try {
   await ensureFreshBuild(root)
   worker = await startLiveWorker()
   proxy = await startHoldingProxy(worker.baseUrl)
-  writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, liveWorkerBaseUrl: proxy.baseUrl }))
+  writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'outline', liveWorkerBaseUrl: proxy.baseUrl }))
   const talkJson = async (shareId) => {
     const response = await fetch(`${worker.baseUrl}/shares/${shareId}/talk.json`)
     return response.ok ? response.json() : null

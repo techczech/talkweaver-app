@@ -590,7 +590,8 @@ export const VALUE_TRIGGER_DICTIONARY = {
   ],
   "image": [
     "left",
-    "right"
+    "right",
+    "above"
   ],
   "table-header": [
     "on",
@@ -603,6 +604,9 @@ export const VALUE_TRIGGER_DICTIONARY = {
   "table-first-column": [
     "on",
     "off"
+  ],
+  "table-bands": [
+    "on"
   ],
   "chart": [
     "bar",

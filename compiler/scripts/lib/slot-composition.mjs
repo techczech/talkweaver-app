@@ -105,7 +105,7 @@ const NO_SLOT = Object.freeze({ kind: "none", side: "left", align: "center", med
  * @param {object} slide        the slide record (frame, frameImageExplicit, html)
  * @param {Array}  bodyBlocks   the blocks about to be rendered as the slide body
  * @param {string} layoutSlug   the resolved layout slug
- * @returns {{ kind: 'none'|'beside', side: 'left'|'right', align: 'center'|'top',
+ * @returns {{ kind: 'none'|'beside', side: 'left'|'right'|'above', align: 'center'|'top',
  *            media: object[], copy: object[], arrange: ''|'beside'|'stacked' }}
  *
  * `kind: 'none'` means "render the body exactly as it renders today" — copy-only and media-only
@@ -144,11 +144,12 @@ export function slotCompositionFor(slide, bodyBlocks, layoutSlug) {
 
   // Side: the media-placement option group ({image=left|right} → frame.image). frame.image
   // resolves to the builtin "left" when unset, which is the side the old mediaSplit defaulted to.
-  const side = slide.frame?.image === "right" ? "right" : "left";
+  const image = slide.frame?.image;
+  const side = image === "right" || image === "above" ? image : "left";
   // Both columns centre in the content band (ADR-0005 both-axis balance). {align=top} is the one
   // authored escape hatch and survives from the old .split.align-top.
   const align = slide.frame?.align === "top" ? "top" : "center";
-  const arrange = pairsLinesWithScreenshots(media, copy) ? (slide.shotList || DEFAULT_SHOT_LIST) : "";
+  const arrange = side !== "above" && pairsLinesWithScreenshots(media, copy) ? (slide.shotList || DEFAULT_SHOT_LIST) : "";
   return { kind: "beside", side, align, media, copy, arrange, embedSplit: embedSplitFor(slide.embedSplit) };
 }
 
@@ -187,7 +188,7 @@ export function renderSlotComposition(comp, renderBlock, ctx = {}) {
   if (comp.media.length >= MEDIA_GRID_THRESHOLD) attrs.push(`data-slot-media-grid="2col"`);
   if (comp.align === "top") attrs.push(`data-slot-align="top"`);
   // Always one of the three fixed values (embedSplitFor), never the authored text.
-  if (comp.media.some((block) => block.type === "embed")) attrs.push(`data-embed-split="${embedSplitFor(comp.embedSplit)}"`);
+  if (comp.side !== "above" && comp.media.some((block) => block.type === "embed")) attrs.push(`data-embed-split="${embedSplitFor(comp.embedSplit)}"`);
   if (comp.arrange) {
     // ADR-0033 §4: lines that each carry a screenshot. The frame follows the slide's screenshot
     // treatment (window frames by default), the same one ticket 05's row uses.

@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { args, slugify, parseGridDims, escapeHtml } from "./01-cli-utils.mjs";
-import { titleRegimeForLayout, parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, accentForDeckColour, backgroundTintForName, resolveClaimStyle, CLAIM_STYLES, DECK_ACCENT_NAMES } from "./02-triggers-layout.mjs";
+import { titleRegimeForLayout, parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, accentForDeckColour, backgroundTintForName, resolveClaimStyle, CLAIM_STYLES, DECK_ACCENT_NAMES, VALID_SPLITS, lookPaletteFor, sectionAccentMapForPalette } from "./02-triggers-layout.mjs";
 import { lexMarkdownBlocks, takeParagraphIcon } from "./03-markdown-lexer.mjs";
 import { chartObjectTokenAt, parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine } from "./03-object-token.mjs";
 import { extractTitle, updateDeckTitle } from "./04-html-extraction.mjs";
@@ -20,7 +20,7 @@ import { timelineContinuationParts } from "./timeline-layout.mjs";
 import { annotateCodeLayout } from "./code-layout.mjs";
 import { annotateSimulationLayout, simulationMode, simulationLayoutForFence } from "./simulation-layout.mjs";
 import { annotateTextLayout } from "./text-layout.mjs";
-import { resolveSlideFrame, FRAME_BUILTINS } from "./11-frame.mjs";
+import { hasExplicitFrameTitle, resolveSlideFrame, FRAME_BUILTINS } from "./11-frame.mjs";
 import { parseSimpleYaml } from "./simple-yaml.mjs";
 import { followsSectionCard, PLAIN_TITLE_LOOKS, resolveTitleLook, sectionStrip, TITLE_LOOKS, TITLE_LOOK_TONES } from "./title-look.mjs";
 import { resolveScreenshotStyle, SCREENSHOT_STYLES } from "./screenshot-row.mjs";
@@ -455,8 +455,21 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
   // `sections:` maps section titles to per-section frame overrides. Attached to every slide.
   const deckDefaults = (meta.defaults && typeof meta.defaults === "object") ? meta.defaults : {};
   const sectionDefaultsMap = (meta.sections && typeof meta.sections === "object") ? meta.sections : {};
-  const frameFor = (s) =>
-    resolveSlideFrame(s.attrs || {}, sectionDefaultsMap[s.sectionTitle] || {}, deckDefaults);
+  const titleAliasOverridesDefaults = (s) => {
+    const own = s.authoredAttrKeys || [];
+    return !own.includes("title") && (
+      (own.includes("titletop") && s.attrs.titletop === true) ||
+      (own.includes("notitle") && s.attrs.notitle === true && s.attrs.titleDisplay !== "show") ||
+      (own.includes("split") && VALID_SPLITS.has(String(s.attrs.split).trim()))
+    );
+  };
+  const frameFor = (s) => {
+    const frame = resolveSlideFrame(s.attrs || {}, sectionDefaultsMap[s.sectionTitle] || {}, deckDefaults);
+    // Bare placement codes use assembly's own placement rules. Skip inherited frame placement
+    // so it cannot mask them or change how the aliases work on a layout with no title default.
+    if (titleAliasOverridesDefaults(s)) frame.title = FRAME_BUILTINS.title;
+    return frame;
+  };
   // SD-14: true when the slide (or its section/deck defaults) explicitly sets image= so the
   // split layout activates. Without this flag, frame.image always resolves to the builtin "left",
   // which would force a split on any slide that happens to have an image + other blocks.
@@ -467,20 +480,8 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
       || (sectionDef.image != null || sectionDef.media != null)
       || (deckDefaults.image != null || deckDefaults.media != null);
   };
-  // 2026-07-08: true when title=/sidebar was explicitly authored on the slide, its section
-  // defaults, or the deck defaults. Needed because frame.title resolves to the builtin "top"
-  // when unset, so "author wrote {title=top}" is indistinguishable from "nothing set" — and an
-  // explicit top must override quote/statement/notitle hide defaults (same as title=side does).
-  const frameTitleExplicitFor = (s) => {
-    const rawAttrs = s.attrs || {};
-    const sectionDef = sectionDefaultsMap[s.sectionTitle] || {};
-    // title=show/compact are titleMode values, not frame placement — they must not count
-    // as an explicit frame title (they'd wrongly force top placement on left-rail layouts).
-    const frameTitleValue = (v) => v != null && v !== "show" && v !== "compact";
-    return frameTitleValue(rawAttrs.title)
-      || (frameTitleValue(sectionDef.title) || sectionDef.sidebar != null)
-      || (frameTitleValue(deckDefaults.title) || deckDefaults.sidebar != null);
-  };
+  const frameTitleExplicitFor = (s) => !titleAliasOverridesDefaults(s)
+    && hasExplicitFrameTitle(s.attrs, sectionDefaultsMap[s.sectionTitle] || {}, deckDefaults);
 
   // section_labels: default OFF (2026-06-24); opt in with `section_labels: on`. An explicit
   // {kicker=…} still shows.
@@ -544,7 +545,8 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
   //
   // Each still FALLS BACK exactly as before — an unreadable deck setting must never fail a build —
   // but it now says so, so "I set it and nothing happened" has an answer in the Layout Doctor.
-  const colourChoice = readDeckChoice(meta.colour ?? meta.accent, DECK_ACCENT_NAMES);
+  const deckAccentNames = lookPaletteFor(deckPalette) ? [...sectionAccentMapForPalette(deckPalette).keys()] : DECK_ACCENT_NAMES;
+  const colourChoice = readDeckChoice(meta.colour ?? meta.accent, deckAccentNames);
   if (colourChoice.state === "unknown") warnings.push(`colour-unknown:${colourChoice.raw}`);
   const titleStyleChoice = readDeckChoice(meta.title_style, TITLE_STYLES);
   if (titleStyleChoice.state === "unknown") warnings.push(`title-style-unknown:${titleStyleChoice.raw}`);
@@ -684,7 +686,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
   // then mapBlocksToLayout) so it renders FULL-BLEED via the normal renderers — NOT card-chrome.
   // The returned object is shaped for renderSlideContent in 07-assembly (title/kicker/layout/blocks
   // + the title attrs it reads). `kicker` is the parent slide's shared context (section eyebrow).
-  function buildCarouselSubSlide(title, rawSubBlocks, kicker, mediaOptions = {}) {
+  function buildCarouselSubSlide(title, rawSubBlocks, kicker, cardOptions = {}) {
     const probe = { attrs: {}, lines: [], cards: [] };
     // inferLayout reads s.lines (it re-lexes) and s.cards — give it pre-lexed blocks via a shim:
     // we lex once here and let inferLayout see the same blocks by stashing them on `lines` is not
@@ -699,9 +701,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
       blocks: mapped,
       // A sub-slide draws its own visible title by default (full slide behaviour). Quote/statement
       // layouts keep their own title defaults via renderSlideContent (quote = nav-only).
-      titleMode: "",
-      noTitle: hasMedia && mediaOptions.noTitle === true,
-      ...(hasMedia && mediaOptions.mediaTitle === "overlay" ? { mediaTitle: "overlay" } : {}),
+      titleMode: cardOptions.titleDisplay || "",
+      noTitle: hasMedia && cardOptions.noTitle === true,
+      ...(hasMedia && cardOptions.mediaTitle === "overlay" ? { mediaTitle: "overlay" } : {}),
       colsCount: "",
       split: "",
       titleTop: false,
@@ -894,12 +896,14 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
     const tableColumnsOff = String(slide.attrs["table-columns"] ?? "").trim().toLowerCase() === "off";
     // {table-first-column=off}: the first column is not set in the accent (the 0.41 default).
     const tableFirstOff = String(slide.attrs["table-first-column"] ?? "").trim().toLowerCase() === "off";
-    if (tableHeaderOff || tableColumnsOff || tableFirstOff) {
+    const tableBands = slide.attrs["table-bands"] === "on";
+    if (tableHeaderOff || tableColumnsOff || tableFirstOff || tableBands) {
       for (const b of blocks) {
         if (b && b.type === "table") {
           if (tableHeaderOff) b.headerRow = false;
           if (tableColumnsOff) b.columnRules = false;
           if (tableFirstOff) b.firstColumnAccent = false;
+          if (tableBands) b.rowBands = true;
         }
       }
     }
@@ -1156,7 +1160,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
     // ADR-0023 §2a: {title=compact} is a RETIRED treatment. The compact kicker-title form no
     // longer exists, so the token is accepted (old decks must not start erroring) and renders as
     // the layout's own regime — the hint is how the author learns it now does nothing.
-    if (slide.attrs.title === "compact") warnings.push(`retired-title-compact:${slide.id}`);
+    if (slide.attrs.titleDisplay === "compact") warnings.push(`retired-title-compact:${slide.id}`);
     // A Run's extra slide (work-files ticket 25) is never the deck's opening by position, and does not take that
     // place from the talk's first slide.
     const heuristicOpening = !parsedRole && !slide.isSection && !presetBlocks
@@ -1260,7 +1264,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
       // Authored stepping mode: {mode=reveal|focus} activates that mode on arrival. The legacy
       // {reveal=steps} attr is kept as an alias for {mode=reveal} (documented; migrate lazily).
       mode: simulationMode(layout, resolveAuthoredMode(slide.attrs)),
-      titleMode: slide.attrs.title === "show" || slide.attrs.title === "compact" ? slide.attrs.title : "",
+      titleMode: slide.attrs.titleDisplay || "",
       ...(slide.attrs["media-title"] === "overlay" ? { mediaTitle: "overlay" } : {}),
       // {notitle}: drop the on-slide heading (nav-only sr-only h1 stays). Title-less statement etc.
       noTitle: slide.attrs.notitle === true,

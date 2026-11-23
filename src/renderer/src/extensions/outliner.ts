@@ -898,7 +898,9 @@ export function enterFromHeading(view: EditorView, headings: { test(line: string
   // (Not while an input method is composing: its Enter confirms the composition.)
   if (!view.composing && !view.compositionStarted && caretAtTitleStart(view, line, sel.head) && openLineAboveTitle(view, line)) return true
   const layout = plainFactsOf(view.state.doc).compiler.slideLayouts.get(line.number - 1)
-  if (layout?.divider) {
+  // In Markdown, Enter just after the marks opens the body, including on a divider.
+  const afterMarkdownMarks = view.state.facet(markdownHeadingEnter) && sel.head === line.from + headingLevel(line.text)
+  if (layout?.divider && !afterMarkdownMarks) {
     const first = layout.keptChildren[0]
     if (first != null) {
       const navigate = view.state.facet(goToSectionChild)[0]
@@ -1085,12 +1087,13 @@ export function newQuotationParagraph(view: EditorView): boolean {
   return true
 }
 
-// Tab: indent the list item (+ its subtree). On a non-list line, insert one indent so focus
-// never escapes the editor.
+// Tab indents a list item or inserts an indent in prose. Headings keep their source whitespace.
 export function indentList(view: EditorView): boolean {
-  const line = view.state.doc.lineAt(view.state.selection.main.head)
+  const { doc, selection } = view.state
+  const at = selection.main.head
+  const line = doc.lineAt(at)
   if (listMatch(line.text)) return reLevel(view, 1, true, true)
-  const at = view.state.selection.main.head
+  if (headingLevel(line.text) && headingLevelsOfText(doc.toString())[line.number - 1]) return true
   view.dispatch({ changes: { from: at, insert: INDENT }, selection: EditorSelection.cursor(at + INDENT.length), ...typedByKey() })
   return true
 }

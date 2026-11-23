@@ -60,6 +60,7 @@
     "test:local-live-stub",
     "test:wrangler-launcher",
     "test:wrangler-ambient-trace",
+    "test:quit-process-samples",
     "test:live-service-upload",
     "test:going-live-row",
     "test:live-service-keys",
@@ -125,6 +126,7 @@
     "test:layout-precedence-parity",
     "test:trigger-validation",
     "test:trigger-order-invariance",
+    "test:opt-in-slide-designs",
     "test:sampler-report",
     "test:layout-doctor",
     "test:layout-doctor-restore-title-icon",
@@ -401,6 +403,7 @@
     "test:image-edit",
     "test:embed-preview-policy",
     "test:capture-network",
+    "test:electron-crash-note",
     "test:capture-proxy",
     "test:offline-page",
     "test:offline-page-replacement",
@@ -466,6 +469,7 @@
     "test:saved-text-adoption-dom",
     "test:save-tidy-up-after-undo-dom",
     "test:redesign-right-panel-dom",
+    "test:picture-above-fit",
     "test:save-tidy-up-undo-generated",
     "test:quote-web-form-editor",
     "test:quotation-enter",
@@ -639,6 +643,258 @@
     "test:slide-typefaces-dom",
     "test:typeface-widths"
   ],
+  "prDom": {
+    "shards": {
+      "test:object-gap-entry-points:dom": [
+        "test:object-gap-entry-points:dom:shard-1",
+        "test:object-gap-entry-points:dom:shard-2",
+        "test:object-gap-entry-points:dom:shard-3"
+      ]
+    },
+    "smoke": [
+      "test:editor-title-enter-objects:dom",
+      "test:redesign-right-panel-dom",
+      "test:scratchpad-panel:dom",
+      "test:slide-set-aside-dom",
+      "test:outline-merge:dom",
+      "test:disk-change-chip-dom",
+      "test:authoring-fixes:dom",
+      "test:offline-page:dom",
+      "test:research-panel:dom",
+      "test:icon-picker-in-markdown",
+      "test:plain-view-hidden-text-rules",
+      "test:plain-view-guarded-keys",
+      "test:outline-collapse-dom",
+      "test:grid-selection-dom",
+      "test:new-talk-dialog:dom"
+    ],
+    "poppler": [
+      "test:handout-print",
+      "test:print-lifecycle",
+      "test:section-colours-views-dom",
+      "test:chat-sim-rows:dom",
+      "test:audience-my-notes"
+    ],
+    "owners": [
+      {
+        "paths": [
+          "src/renderer/src/components/Editor.tsx",
+          "src/renderer/src/extensions/**",
+          "src/renderer/src/keymap/**",
+          "scripts/editor-dom-harness.mjs"
+        ],
+        "tests": [
+          "test:rich-editor-roundtrip:dom",
+          "test:plain-view-editor",
+          "test:plain-view-type",
+          "test:editor-fold-gutter"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/components/actionBar/**",
+          "src/shared/command-*.ts",
+          "src/shared/action-bar-settings.ts"
+        ],
+        "tests": [
+          "test:command-groups:dom",
+          "test:object-guard-ranges:dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/extensions/objectBlocks/**",
+          "src/shared/objects/**",
+          "src/renderer/src/extensions/headingEndInsert.ts"
+        ],
+        "tests": [
+          "test:object-guard-ranges:dom",
+          "test:object-gap-entry-points:dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/components/WorkspaceLayout.tsx",
+          "src/renderer/src/components/RightColumnTabs.tsx",
+          "src/shared/workspace-view.ts",
+          "src/shared/guide*.ts"
+        ],
+        "tests": [
+          "test:slide-strip-follow",
+          "test:pathways-docked-dom",
+          "test:overview-dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/**/[Ss]cratchpad*",
+          "src/renderer/src/components/scratchpad/**",
+          "src/renderer/src/**/[Ss]ketch*",
+          "src/shared/scratchpad*.ts",
+          "src/shared/sketch*.ts"
+        ],
+        "tests": [
+          "test:scratchpad-panel:dom",
+          "test:slide-set-aside-dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/**/[Oo]utline*Merge*",
+          "src/renderer/src/components/useOutlineDiskChange.ts",
+          "src/renderer/src/lib/outlineMutation.ts",
+          "src/renderer/src/lib/saveQueue.ts",
+          "src/shared/outline-merge*.ts"
+        ],
+        "tests": [
+          "test:saved-text-adoption-dom",
+          "test:save-tidy-up-after-undo-dom",
+          "test:kept-edits:dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/components/SlideStrip.tsx",
+          "src/renderer/src/components/**/[Gg]rid*",
+          "src/shared/slide-handling/**"
+        ],
+        "tests": [
+          "test:slide-drag-dom",
+          "test:slide-move-to-dom",
+          "test:grid-card-identity-dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/components/vault-gallery/**",
+          "src/renderer/src/components/talklist/**",
+          "src/shared/vault-gallery*"
+        ],
+        "tests": [
+          "test:vault-gallery:dom",
+          "test:vault-gallery:guard:dom",
+          "test:vault-gallery:states:dom",
+          "test:vault-gallery:search:dom",
+          "test:vault-gallery:handouts:dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/components/**/[Ss]etup*",
+          "src/renderer/src/components/WelcomeTalk.tsx",
+          "src/renderer/src/App.tsx"
+        ],
+        "tests": [
+          "test:setup-folder:dom",
+          "test:vault-gallery:redesign:dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/**/[Rr]esearch*",
+          "src/shared/research*"
+        ],
+        "tests": [
+          "test:research-panel:dom",
+          "test:local-page-preview:dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/**/[Ii]mage*",
+          "src/shared/assets*",
+          "src/shared/media*"
+        ],
+        "tests": [
+          "test:image-drawer",
+          "test:image-edit:dom",
+          "test:media-inside-vault-dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/**/[Ll]ive[Pp]age*",
+          "src/renderer/src/**/[Ee]mbed*",
+          "src/shared/live-page*",
+          "src/shared/embed*"
+        ],
+        "tests": [
+          "test:live-page:dom",
+          "test:live-page-gallery:dom",
+          "test:embed-sandbox-dom",
+          "test:remote-page-fallback:dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/**/[Rr]ecording*",
+          "src/shared/recording*"
+        ],
+        "tests": [
+          "test:recording-save:dom",
+          "test:recording-sheets:dom",
+          "test:recording-words:dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/**/[Hh]andout*",
+          "src/renderer/src/**/[Pp]rint*",
+          "src/shared/handout*",
+          "src/shared/print*"
+        ],
+        "tests": [
+          "test:handout-print",
+          "test:print-lifecycle",
+          "test:print-restores-state",
+          "test:handout-hostile-text-dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/**/[Ss]ection[Cc]olour*",
+          "src/shared/section-colour*"
+        ],
+        "tests": [
+          "test:section-colours-dom",
+          "test:section-colours-views-dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/**/[Aa]udience*",
+          "src/shared/audience*"
+        ],
+        "tests": [
+          "test:audience-media:dom",
+          "test:audience-my-notes",
+          "test:audience-page-keys"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/**/[Cc]hat*",
+          "src/shared/chat*"
+        ],
+        "tests": [
+          "test:chat-sim-rows:dom",
+          "test:simulation-dom"
+        ]
+      },
+      {
+        "paths": [
+          "src/renderer/src/**/[Tt]ypeface*",
+          "src/shared/*typeface*",
+          "src/shared/*layout*"
+        ],
+        "tests": [
+          "test:slide-typefaces-dom",
+          "test:typeface-widths",
+          "test:layout-doctor-render"
+        ]
+      }
+    ]
+  },
   "e2e": [
     "test:images:e2e",
     "test:media-permission:e2e",
@@ -689,7 +945,6 @@
     "test:example-vault-removal:e2e",
     "test:example-talks:e2e",
     "test:guide:e2e",
-    "test:right-sidebar-views:e2e",
     "test:consistency-batch4:e2e",
     "test:guide-chapters:e2e",
     "test:guide-topics:e2e",

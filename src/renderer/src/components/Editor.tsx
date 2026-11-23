@@ -34,7 +34,7 @@ import {
 } from '../keymap/store'
 import { EDITOR_COMMANDS } from '../keymap/registry'
 import { placeOfLine, type Place } from '../../../shared/place.ts'
-import { imageParagraphNoFold, outlineFoldService, revealFoldedLine } from '../extensions/outlineFold'
+import { outlineParagraphFolds, outlineFolding, outlineFoldService, revealFoldedLine } from '../extensions/outlineFold'
 import { frontmatterTableExtension } from '../extensions/frontmatterTable'
 import { setWorkStripsData, workStripHandlersFacet } from '../extensions/workStrips'
 import { loadWorkStripsData } from '../lib/workStripsData'
@@ -51,7 +51,7 @@ import {
   setOpenObjectBlock,
   type ConsumeInsertFence
 } from '../extensions/objectBlocks/field'
-import { Decoration, EditorView, type DecorationSet, keymap, highlightActiveLine, showPanel } from '@codemirror/view'
+import { Decoration, EditorView, type DecorationSet, keymap, highlightActiveLine, showPanel, showTooltip } from '@codemirror/view'
 import { ChangeSet, EditorState, EditorSelection, Prec, Compartment, Annotation, StateEffect, StateField, Transaction } from '@codemirror/state'
 import { history, isolateHistory } from '@codemirror/commands'
 import { editorBaseKeymap } from '../extensions/editorBaseKeymap'
@@ -68,11 +68,9 @@ import type { MarginLabel } from '../../../shared/plain-view-margin'
 import type { EditorViewMode } from '../../../shared/editor-view-mode'
 import {
   foldGutter,
-  codeFolding,
   foldAll,
   unfoldAll
 } from '@codemirror/language'
-import type { SectionKind } from '../../../shared/talk-structure'
 import type { TalkInfo } from '../../../preload/index'
 import { notify } from '../lib/notify'
 import { queueOutlineWrite } from '../lib/saveQueue'
@@ -83,7 +81,7 @@ import { adoptSavedText, isSaveStep, redoWithSave, savedTextAdopted, savedTextAd
 import { editorRevision } from '../lib/editorRevision'
 import { CLOSE_FREEZE_EVENT, closeFreezeText, type CloseFreezeDetail } from '../lib/closeFreezeEvent'
 import { saveTidyUp, textForSave } from '../extensions/saveTidyUp'
-import { triggerCompleteExtension } from '../extensions/triggerComplete'
+import { triggerCompleteExtension, type TriggerCompleteOptions } from '../extensions/triggerComplete'
 import { closeCompletion } from '@codemirror/autocomplete'
 import { tokenProtectExtension } from '../extensions/idProtect'
 import {
@@ -204,14 +202,15 @@ interface Props {
   textFitNotes?: readonly TextFitNote[]
   /** Heading line of each compiled slide (strip order): the gutter numbers those lines, nothing else. */
   markdownHeadingLabels?: ReadonlyMap<number, MarkdownHeadingLabel>
+  pictureProgress?: PictureProgress
   pictureDropLines?: { pointer: number; heading: number | null } | null
   slideLines?: ReadonlyArray<number | null>
   /** Plain view's margin: what each heading line is called (Talk, Section, Slide n) and its layout name. */
   marginLabels?: readonly MarginLabel[]
   /** Compiled slide rows: each carries the compiler's image placements for the editor's image labels. */
   placementRows?: readonly PlacementRow[] | null
-  onCursorLine?: (line: number) => void
-  onSectionHeading?: (kind: SectionKind, heading: { from: number; text: string }) => void
+  onCursorLine?: (line: number, editedText?: string) => void
+  onNewHeading?: TriggerCompleteOptions['onNewHeading']
   onSectionChild?: (line: number) => void
   onHistoryLine?: (line: number, outline: string) => void
   startWithBullet?: boolean
@@ -279,7 +278,7 @@ interface Props {
     // Move the caret to the document position under viewport (x, y) — the right-click path of
     // the slide context menu, so "the current slide" is the slide under the pointer.
     placeCursorAtCoords: (x: number, y: number) => void
-    lineAtCoords: (x: number, y: number) => number | null
+    pointAtCoords: (x: number, y: number) => { pos: number; line: number } | null
     // Clipboard for the slide context menu's Text rows. Cut/copy defer to the browser command
     // (CodeMirror's own clipboard handlers run); paste splices the clipboard text at the selection.
     cutSelection: () => void
@@ -398,6 +397,31 @@ function outlinerKeymapExtension() {
 const viewCompartment = new Compartment()
 // The Plain tab's font and text size. Empty in Markdown mode, so that tab stays exactly as it was.
 const plainTypeCompartment = new Compartment()
+type PictureProgress = { message: string; pos?: number }
+const setPictureProgress = StateEffect.define<PictureProgress | undefined>()
+const pictureProgressField = StateField.define<PictureProgress | undefined>({
+  create: () => undefined,
+  update(progress, transaction) {
+    for (const effect of transaction.effects) if (effect.is(setPictureProgress)) return effect.value
+    return progress?.pos !== undefined && transaction.docChanged
+      ? { ...progress, pos: transaction.changes.mapPos(progress.pos, 1) }
+      : progress
+  },
+  provide: field => showTooltip.compute([field, 'selection'], state => {
+    const progress = state.field(field)
+    return progress ? {
+      pos: progress.pos ?? state.selection.main.head,
+      create(view) {
+        const dom = view.dom.ownerDocument.createElement('div')
+        dom.className = 'tw-picture-progress'
+        dom.setAttribute('aria-hidden', 'true')
+        dom.textContent = progress.message
+        return { dom }
+      }
+    } : null
+  })
+})
+
 const setPictureDropMarks = StateEffect.define<DecorationSet>()
 const pictureDropMarks = StateField.define<DecorationSet>({
   create: () => Decoration.none,
@@ -441,12 +465,13 @@ export default function Editor({
   textFitNotes,
   slideLines,
   markdownHeadingLabels,
+  pictureProgress,
   pictureDropLines,
   marginLabels,
   placementRows,
   onCursorLine,
   onHistoryLine,
-  onSectionHeading,
+  onNewHeading,
   onSectionChild,
   startWithBullet = false,
   onPlace,
@@ -566,8 +591,8 @@ export default function Editor({
   // written to disk. Set null when a load starts; set to the path only AFTER its content is dispatched.
   const loadedPathRef = useRef<string | null>(null)
   const onCursorLineRef = useRef(onCursorLine)
-  const onSectionHeadingRef = useRef(onSectionHeading)
-  onSectionHeadingRef.current = onSectionHeading
+  const onNewHeadingRef = useRef(onNewHeading)
+  onNewHeadingRef.current = onNewHeading
   const onSectionChildRef = useRef(onSectionChild)
   onSectionChildRef.current = onSectionChild
   const onHistoryLineRef = useRef(onHistoryLine)
@@ -930,13 +955,14 @@ export default function Editor({
           }),
           slideNumberGutterExtension,
           pictureDropMarks,
+          pictureProgressField,
           historyCompartment.of(history({ minDepth: 200 })),
           // A web link pasted or typed into a quote slide's source line makes the slide a web page in the same undo step (spec 3.1).
           quoteLinkFormExtension(() => compiledLayoutAtRef.current),
           highlightActiveLine(),
-          markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [imageParagraphNoFold] }),
+          markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [outlineParagraphFolds] }),
           // Folding: collapse any heading section or list subtree (gutter arrows + Ctrl-Shift-[/]).
-          codeFolding(),
+          outlineFolding,
           foldGutter(),
           outlineFoldService,
           // {-triggered autocomplete for layout triggers and frame modifiers (Tier 1).
@@ -946,7 +972,7 @@ export default function Editor({
           // back up from options; when no chained step is active, the rollback binding below wins.
           triggerCompleteExtension({
             isMarkdown: () => viewModeRef.current === 'markdown',
-            onSectionHeading: (kind, heading) => onSectionHeadingRef.current?.(kind, heading),
+            onNewHeading: (kind, heading) => onNewHeadingRef.current?.(kind, heading),
             onInsertObject: (kind, request) => {
               // The object splice owns removal of a provisional chart token. Clear the rollback
               // record first so its queued guard cannot restore the superseded picker bytes.
@@ -1067,6 +1093,7 @@ export default function Editor({
           viewCompartment.of([startBodyWithBullet.of(startWithBullet), viewModeExtension(viewModeRef.current, plainViewOptions(marginMenuHandlers))]),
           plainTypeCompartment.of(viewModeRef.current === 'plain' ? plainTypeExtension(plainLookRef.current) : []),
           EditorView.updateListener.of((update) => {
+            let authoredEdit: string | undefined
             if (update.docChanged) {
               // T29b engagement trigger 2: a document change made BY THE USER — typing into an
               // already-focused editor is a keydown that edits the doc, so a keyboard-only user
@@ -1103,6 +1130,7 @@ export default function Editor({
               // the parent/autosave boundary normally.
               provisionalTriggerRef.current = null
               const fromSave = update.transactions.some(tr => tr.annotation(savedTextAdopted))
+              authoredEdit = content
               onContentChange(content, fromSave ? update.startState.doc.toString() : undefined)
               // Autosave ONLY once this talk's real content is loaded AND the doc still belongs to the
               // active talk — never during the fresh-mount `doc:''` transient or the load's own initial
@@ -1139,7 +1167,7 @@ export default function Editor({
             if ((update.selectionSet || (update.docChanged && viewModeRef.current === 'markdown')) && onCursorLineRef.current) {
               const head = update.state.selection.main.head
               const lineNumber = update.state.doc.lineAt(head).number
-              onCursorLineRef.current(lineNumber)
+              onCursorLineRef.current(lineNumber, authoredEdit)
             }
 
             // The scoped editor clamps a history transaction's selection to its current slide.
@@ -1633,10 +1661,10 @@ export default function Editor({
         const pos = v.posAtCoords({ x, y })
         if (pos != null) v.dispatch({ selection: EditorSelection.cursor(pos) })
       },
-      lineAtCoords: (x, y) => {
+      pointAtCoords: (x, y) => {
         const view = viewRef.current
         const pos = view?.posAtCoords({ x, y }, false)
-        return view && pos != null ? view.state.doc.lineAt(pos).number : null
+        return view && pos != null ? { pos, line: view.state.doc.lineAt(pos).number } : null
       },
       // Cut/copy re-focus the editor then run the browser command, so CodeMirror's own
       // clipboard handlers apply (same semantics as ⌘X/⌘C, including empty-selection rules).
@@ -1906,6 +1934,10 @@ export default function Editor({
       return { path: currentTalkRef.current, text, caret: view.state.selection.main.head, base: cleanDocumentRef.current.text, dirty: cleanDocumentRef.current.dirty, epoch: cleanDocumentRef.current, diskHash: cleanDocumentRef.current.diskHash }
     })
   }, [registerReadDoc, rollbackProvisionalTrigger])
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: setPictureProgress.of(pictureProgress) })
+  }, [pictureProgress])
 
   // Scroll to + place the cursor at focusLine (1-based) whenever it changes.
   useEffect(() => {

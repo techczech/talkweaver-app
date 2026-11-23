@@ -60,7 +60,7 @@ if (shots) await mkdir(shots, { recursive: true })
 const failures = []
 const check = (ok, label) => { if (!ok) failures.push(label) }
 
-const initScript = (ackError) => {
+const initScript = ({ ackError, snapshotSlide }) => {
   window.__sockets = []
   window.__sent = []
   window.__offline = false
@@ -89,7 +89,7 @@ const initScript = (ackError) => {
       const message = JSON.parse(raw)
       if (message.type === 'session.sync') queueMicrotask(() => this.emit({
         type: 'session.snapshot', protocol: 2, sessionId: 'session-1', syncId: message.syncId,
-        expiresAt: Date.now() + 600000, slideState: null, polls: [], receipts: [],
+        expiresAt: Date.now() + 600000, slideState: snapshotSlide, polls: [], receipts: [],
       }))
       if (message.type === 'session.ping') this.emit({ type: 'session.pong', nonce: message.nonce })
       if (message.type === 'question.submit') {
@@ -111,12 +111,12 @@ const viewportScript = () => {
   window.__keyboard = (px) => { viewport.height = window.innerHeight - px; viewport.dispatchEvent(new Event('resize')) }
 }
 
-async function open(browser, size, { path = htmlPath, hash = '#slide-a', ackError = null } = {}) {
+async function open(browser, size, { path = htmlPath, hash = '#slide-a', ackError = null, snapshotSlide = null } = {}) {
   const context = await browser.newContext({ viewport: { width: size[0], height: size[1] }, hasTouch: size[0] < 700 })
   const page = await context.newPage()
   page.errors = []
   page.on('pageerror', (error) => page.errors.push(error.message))
-  await page.addInitScript(initScript, ackError)
+  await page.addInitScript(initScript, { ackError, snapshotSlide })
   await page.addInitScript(viewportScript)
   await page.goto(pathToFileURL(path).href + hash)
   await page.waitForFunction(() => window.__sockets.length >= 1)
@@ -415,19 +415,23 @@ try {
 
   // ── A result after a reload, and a question that cannot be kept ─────────────────────────
   {
-    const { page, context } = await open(browser, [1440, 900], { ackError: 'questions_paused' })
-    await live(page, 'slide-a', 1); await settle(page)
+    // The worker provides the current slide in the reconnect snapshot, before the client
+    // flushes queued questions. A separate initial slide.state can clear the transient note.
+    const snapshotSlide = { type: 'slide.state', slideId: 'slide-a', reveal: 0, focus: null, revision: 1 }
+    const { page, context } = await open(browser, [1440, 900], { ackError: 'questions_paused', snapshotSlide })
+    await page.locator('.rx-ask').waitFor()
     await page.evaluate(() => { window.__offline = true; window.__sockets.at(-1).readyState = 3; window.__sockets.at(-1).onclose?.() })
-    await settle(page, 100)
-    await page.keyboard.press('a'); await settle(page)
+    await page.keyboard.press('a')
     await page.fill('.ask-text', 'Sent before the reload')
-    await page.keyboard.press('Control+Enter'); await settle(page)
-    await page.reload(); await page.waitForFunction(() => window.__sockets.length >= 1)
-    await live(page, 'slide-a', 1)
-    await page.waitForFunction(() => window.__sent.length >= 1, null, { timeout: 15000 })
-    await settle(page, 400)
-    check(/Your question was not sent\. Open Ask to see why\./.test((await bar(page)).note), `reload: the refusal is said in the bar (${(await bar(page)).note})`)
-    await page.keyboard.press('a'); await settle(page)
+    await page.keyboard.press('Control+Enter')
+    await page.locator('.ask-panel[data-state="offline"]').waitFor()
+    await page.reload()
+    const refusal = 'Your question was not sent. Open Ask to see why.'
+    await page.locator('.rx-note').filter({ hasText: refusal }).waitFor({ state: 'visible', timeout: 15000 })
+    const replay = await sent(page)
+    check(replay.length === 1 && replay[0].text === 'Sent before the reload', 'reload: the stored question was replayed once')
+    await page.keyboard.press('a')
+    await page.locator('.ask-panel[data-state="failed"]').waitFor()
     const p = await panelState(page)
     check(p && p.state === 'failed' && p.text === 'Sent before the reload' && /not taking questions/.test(p.banner), `reload: Ask opens with the text back and the reason (${p?.state} ${p?.text})`)
     await page.keyboard.press('Escape')

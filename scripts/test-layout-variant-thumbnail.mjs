@@ -239,6 +239,36 @@ console.log('ok: variants render, differ by layout and option, cache, and say wh
   console.log('ok: moving to another slide drops the left slide\'s queued variant jobs')
 }
 
+// Leaving an Inspector page releases its waiting variants, even if the slide did not change.
+{
+  let finishFirst
+  let compiles = 0
+  const pending = createVariantThumbnailRenderer({
+    prepareTalk: async (path, content) => {
+      if (compiles++ === 0) await new Promise(resolve => { finishFirst = resolve })
+      return realPrepare(path, content)
+    },
+    render: async ({ slides, cacheDir: dir }) => Object.fromEntries(slides.map(s => [s.key, join(dir, s.cacheKey + '.png')])),
+    cacheDirFor: () => cacheDir,
+    urlFor: (slug, name) => `twthumb://${slug}/${name}`,
+    documentId
+  })
+  const ask = (layout, batchScope) => pending({ outlinePath, outline, slideId: 'vi9k8', layout, batchScope })
+  const running = ask('cards', '1:closed')
+  const abandoned = ask('numbered', '1:closed')
+  const shared = ask('timeline', '1:closed')
+  const stillNeeded = ask('timeline', '2:open')
+  pending.releaseBatch('2:closed')
+  assert.equal(pending.stats().pending, 2, 'another window cannot release this one’s requests')
+  pending.releaseBatch('1:closed')
+  assert.equal((await abandoned).status, 'superseded', 'an unneeded queued card settles without compiling')
+  assert.equal(pending.stats().pending, 1, 'keep a shared card another window is still waiting for')
+  finishFirst()
+  for (const result of await Promise.all([running, shared, stillNeeded])) assert.equal(result.status, 'ok')
+  assert.equal(compiles, 2)
+  console.log('ok: leaving an Inspector page releases only its abandoned queued previews')
+}
+
 // 7. The cache follows the media the outline references: a replaced image is drawn again.
 {
   writeFileSync(join(talkDir, 'photo.png'), 'first')

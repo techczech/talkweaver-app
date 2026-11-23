@@ -53,3 +53,10 @@ the slide's number out of the slides (`slideNumberOfBeat(state.beat)` / `slides.
 (`presenterCount`), the audience window's counter (`slideCount`) and the slide labels of the instant-slide strip and the
 board panels, instead of the beat's position out of `beats.length` (beats outnumber slides where a grid returns or a
 carousel steps: 45 beats for 43 slides). The progress bar stays beat-based. Nothing else in the compiler changed.
+
+## Lucide candidate memo (2026-11-23)
+
+Local change authorised for the authoring speed round. `scripts/lib/05-icons.mjs` reuses
+the ordered Lucide candidates for the same item text. The process-local memo holds up
+to 512 entries and accepts text up to 512 characters. The scoring rules, ordering,
+projections and rendered output retain their existing contracts.

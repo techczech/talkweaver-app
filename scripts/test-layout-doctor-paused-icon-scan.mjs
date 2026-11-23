@@ -3,7 +3,7 @@
 //
 // That reading uses the compiler's facts (tens of milliseconds on a long talk). The panel is handed
 // every text the editor produces while it is open, so it must not read each one: the reading runs
-// from a timer once the text has been unchanged for the workspace's compile pause, and never during
+// from a timer once the text has been unchanged for the Layout Doctor's pause, and never during
 // a render (src/renderer/src/lib/pausedScan.ts, used by LayoutDoctorPanel.tsx).
 //
 // 1. The schedule, with the clock passed in: 25 texts one after another cause no reading until the
@@ -11,7 +11,7 @@
 //    the pause again; going back to the text already read owes nothing; closing drops what waits.
 // 2. The panel, by its source: the stranded-icon reading is made only through the schedule, the
 //    trigger findings are still read at once, a row's button is off while a newer text waits, and
-//    the workspace's compile uses the same pause.
+//    the workspace can compile sooner without speeding up the Layout Doctor's scan.
 //
 //   node scripts/test-layout-doctor-paused-icon-scan.mjs
 import assert from 'node:assert/strict'
@@ -56,7 +56,7 @@ function reader() {
   return { read, results, scan, onResult: (text, result) => results.push({ text, result }) }
 }
 
-assert.equal(OUTLINE_PAUSE_MS, 900, 'the pause is the workspace\'s compile pause')
+assert.equal(OUTLINE_PAUSE_MS, 900, 'the expensive Layout Doctor scan still waits the full pause')
 
 // ── 1. The schedule ─────────────────────────────────────────────────────────────────────────────
 {
@@ -126,7 +126,8 @@ const source = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'u
   assert.doesNotMatch(hook, /useMemo|useLayoutEffect/, 'never during a render')
 
   const workspace = source('src/renderer/src/components/WorkspaceLayout.tsx')
-  assert.match(workspace, /const pause = gridModeRef\.current \|\| compileImmediatelyRef\.current \|\| !compileAttemptedRef\.current \|\| liveCompile\.busy\(activeTalk\.outlinePath\) \? 0 : OUTLINE_PAUSE_MS/, 'ordinary typing uses the same pause; opening and deliberate moves compile immediately')
+  assert.match(workspace, /const LIVE_COMPILE_PAUSE_MS = 450\b/, 'the live compile has its own 450 ms typing pause')
+  assert.match(workspace, /const pause = gridModeRef\.current \|\| compileImmediatelyRef\.current \|\| !compileAttemptedRef\.current \|\| liveCompile\.busy\(activeTalk\.outlinePath\) \? 0 : LIVE_COMPILE_PAUSE_MS/, 'ordinary typing waits for the live compile pause; opening and deliberate moves compile immediately')
   assert.match(workspace, /compileTimer\.current = setTimeout\(async \(\) => \{[\s\S]*?\n {4}\}, pause\)\n/, 'the workspace applies its selected pause')
 }
 

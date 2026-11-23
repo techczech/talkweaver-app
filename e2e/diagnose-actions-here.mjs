@@ -26,7 +26,7 @@ const ud = join(tempRoot, 'userData')
 const td = join(vault, 'actions-fixture')
 mkdirSync(td, { recursive: true }); mkdirSync(ud, { recursive: true })
 writeFileSync(join(td, 'actions-fixture-outline.md'), FIX)
-writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
+writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'outline' }, null, 2))
 
 await ensureFreshBuild(REPO)
 const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
@@ -125,10 +125,10 @@ try {
   await page.keyboard.press('Escape')
   await gone()
 
-  // 7. PR 320 puts Strip behind its sidebar tab; select it before exercising its cards.
-  await page.locator('[data-rc-tab="slides"] button').click()
-  // The strip: ⌘K with a slide card focused, and right-click on a card.
-  const card = page.locator('[data-place-region="strip"] [data-slide-index]').first()
+  // Drive the preview cards in the left Slides panel.
+  await page.getByRole('tab', { name: 'Slides', exact: true }).click()
+  await page.getByRole('button', { name: 'Show slides as previews', exact: true }).click()
+  const card = page.locator('[data-slides-mode="previews"] .tw-slide-card').filter({ hasText: 'Second slide' })
   await card.waitFor({ timeout: 5000 })
   await card.click({ button: 'right' })
   let stripOpened = false

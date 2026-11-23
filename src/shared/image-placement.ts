@@ -5,7 +5,7 @@ import { computeSlideLines } from './slide-lines.ts'
 import { audienceImageLineNumbers } from '../../compiler/scripts/lib/image-line-rules.mjs'
 
 export type PlacementKind =
-  | 'full' | 'beside' | 'thumbnail' | 'row' | 'gallery' | 'image-quote' | 'statement' | 'carousel'
+  | 'full' | 'beside' | 'above' | 'thumbnail' | 'row' | 'gallery' | 'image-quote' | 'statement' | 'carousel'
 
 export interface ImagePlacement { kind: string; index: number; count: number }
 export interface PlacementRow {
@@ -19,6 +19,7 @@ export interface PlacementLabel { kind: PlacementKind; name: string }
 const NAMES: Record<PlacementKind, string> = {
   full: 'Full screen',
   beside: 'Beside text',
+  above: 'Above text',
   thumbnail: 'Thumbnail',
   row: 'In a row',
   gallery: 'In a gallery',

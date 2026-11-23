@@ -101,13 +101,11 @@ select.vs-field { appearance: none; background: var(--panel) url("data:image/svg
 .vs-body > .vs-alert { margin: 0; }
 
 /* Inspector: where a new talk's values came from (LOCKED-edit-vault frame 7) */
-.tw-vault-origin { border-top: 1px solid var(--line); padding: 10px 12px 12px; font-family: var(--font-ui); }
-.tw-vault-origin h3 { font: 700 10px var(--font-mono); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
-.tw-vault-origin-row { display: grid; grid-template-columns: 78px 1fr auto; align-items: center; gap: 8px; font-size: 12px; padding: 3px 0; }
+.tw-vault-origin { margin-block: 12px; }
+.tw-vault-origin-row { display: grid; grid-template-columns: 6em minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: .75rem; padding: 3px 0; }
 .tw-vault-origin-row > span:first-child { color: var(--muted); }
 .tw-vault-origin-row > span:nth-child(2) { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .tw-vault-origin-row svg { width: 12px; height: 12px; color: var(--muted); }
-.tw-vault-origin p { font-size: 11.5px; color: var(--muted); margin: 6px 0 0; line-height: 1.4; }
 
 /* "Where it came from" — a slide inserted from another vault (ticket 06; LOCKED-add-slide frames 5–6) */
 .tw-slide-prov { border-top: 1px solid var(--line); padding: 10px 12px 12px; font-family: var(--font-ui); }

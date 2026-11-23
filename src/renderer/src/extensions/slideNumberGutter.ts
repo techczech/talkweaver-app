@@ -2,7 +2,7 @@
 // lines. The number is the strip's (compiled index + 1): the map comes from shared/slide-lines.
 // Driven by a StateEffect so a recompile updates the gutter without a remount; between compiles
 // the heading positions ride document edits, so typing never makes the numbers jump or blink.
-import { EditorView, GutterMarker, gutter } from '@codemirror/view'
+import { Decoration, EditorView, GutterMarker, gutter } from '@codemirror/view'
 import { StateEffect, StateField, type EditorState, type Extension } from '@codemirror/state'
 import { slideNumbersByLine, titleHeadingLine } from '../../../shared/slide-lines.ts'
 
@@ -43,7 +43,11 @@ const anchorField = StateField.define<readonly Anchor[]>({
     for (const effect of tr.effects) if (effect.is(setAnchors)) return effect.value
     if (!tr.docChanged || !anchors.length) return anchors
     return anchors.map((a) => ({ ...a, pos: tr.changes.mapPos(a.pos, 1) }))
-  }
+  },
+  provide: field => EditorView.decorations.from(field, anchors => Decoration.set(
+    anchors.flatMap(({ pos, kind }) => kind ? [Decoration.line({ class: `cm-md-${kind.toLowerCase()}` }).range(pos)] : []),
+    true
+  ))
 })
 
 function digitsFor(state: EditorState): string {

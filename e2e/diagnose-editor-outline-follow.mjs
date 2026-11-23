@@ -12,7 +12,7 @@ const userData=join(scratch,'userData'),vault=join(scratch,'vault'),talkDir=join
 mkdirSync(userData,{recursive:true});mkdirSync(talkDir,{recursive:true})
 const source='---\noutline_version: 2\ntitle: Editor follow fixture\nauto_title_slide: false\nauto_thanks_slide: false\n---\n\n### First slide\n{id=first}\n\nFirst slide body.\n\n### Second slide\n{id=second}\n\nSecond slide body.\n\n### Third slide\n{id=third}\n\nThird slide body.\n'
 writeFileSync(join(talkDir,'outline-follow-outline.md'),source)
-writeFileSync(join(userData,'config.json'),JSON.stringify({vaultRoot:vault,editorViewMode:mode}))
+writeFileSync(join(userData,'config.json'),JSON.stringify({vaultRoot:vault,openInView:mode === 'plain' ? 'outline' : mode,slidesPanelView:'outline'}))
 process.on('exit',()=>rmSync(scratch,{recursive:true,force:true}))
 // A run stopped by its time limit or by hand removes its scratch folder too.
 for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{rmSync(scratch,{recursive:true,force:true});process.exit(130)})
@@ -28,7 +28,7 @@ try{
  await page.locator('[data-talk-slug="outline-follow"]').first().dblclick()
  await page.locator('.cm-content').waitFor()
  await page.locator('.cm-line').filter({hasText:'Second slide body.'}).click()
- await page.getByRole('tab',{name:'Slide outline',exact:true}).waitFor()
+ await page.locator('[data-slides-mode="outline"]').waitFor()
  const capture=async(label)=>{
   const current=await page.locator('.so-row--current').allTextContents()
   const selected=await page.locator('.so-row--sel').allTextContents()

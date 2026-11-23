@@ -73,7 +73,7 @@ if (!baseline) {
 }
 const browser = await chromium.launch({ headless: true })
 try {
-  for (const palette of baseline ? ['ocean'] : ['ocean', 'bold', 'classic', 'green']) {
+  for (const palette of baseline ? ['ocean'] : ['ocean', 'bold', 'forest', 'slate', 'classic', 'green']) {
     for (const look of baseline ? ['kicker'] : ['kicker', 'label', 'tab', 'tab-strip', 'plain']) {
       const text = source.replace('title_look: kicker', `title_look: ${look}${palette === 'ocean' ? '' : `\npalette: ${palette}`}`)
       const model = await prepareSource(fixture, text, 'Title and picture', statSync(fixture), undefined, { allowedAssetRoots: [resolve(fixture, '..'), work] })

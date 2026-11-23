@@ -25,7 +25,7 @@ const ud = join(tempRoot, 'userData')
 const td = join(vault, 'sheet-fixture')
 mkdirSync(td, { recursive: true }); mkdirSync(ud, { recursive: true })
 writeFileSync(join(td, 'sheet-fixture-outline.md'), FIX)
-writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
+writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'outline' }, null, 2))
 
 await ensureFreshBuild(REPO)
 const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })

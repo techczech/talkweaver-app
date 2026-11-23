@@ -10,8 +10,11 @@ import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { launchWorld } from './lib/consistency-world.mjs'
+import { ensureTalksMode, talkSearchInput } from './lib/talklist.mjs'
 import { editFrontmatterText } from '../src/shared/frontmatter-editor.ts'
 import { METADATA_REGISTRY } from '../src/shared/metadata-registry.ts'
+import { layoutDisplayName } from '../src/shared/layout-registry/options.ts'
+import { structureOf } from '../src/shared/talk-structure.ts'
 
 const world = await launchWorld({ width: 1280, height: 800, viewMode: 'markdown' })
 const { page, app, vault, sleep, command } = world
@@ -21,6 +24,17 @@ const check = async (name, fn) => {
 }
 const talkTab = page.locator('[data-talk-tab]')
 const TITLE = 'TalkWeaver Layout Showcase'
+const RENAMED = 'Renamed in the Talk tab'
+const showcaseFile = join(vault, 'layout-showcase', 'layout-showcase-outline.md')
+async function openShowcase() {
+  await ensureTalksMode(page)
+  await talkSearchInput(page).fill('')
+  const row = page.locator('aside.talk-list .tl-tree [data-talk-slug="layout-showcase"]')
+  await row.click({ noWaitAfter: true })
+  await row.and(page.locator('[aria-selected="true"]')).waitFor()
+  await page.getByTestId('markdown-toggle').click()
+  await page.locator('[data-view="markdown"] .cm-content').waitFor()
+}
 await world.openTalk(TITLE)
 
 // ---- R11 ----------------------------------------------------------------------------------------------------------
@@ -34,31 +48,37 @@ for (const id of ['deck-design', 'metadata']) {
     assert.equal(await page.locator('[data-rc-tab="talk"]').count(), 1)
   })
 }
-await check('the Talk tab groups its fields as Details, Design and Advanced', async () => {
-  await command('deck-design'); await sleep(800)
-  assert.ok(await page.locator('[data-talk-section="details"] #deck-title').count(), 'Title is not under Details')
-  assert.ok(await page.locator('[data-talk-section="design"]').count(), 'no Design section')
-  assert.ok(await page.locator('[data-talk-section="advanced"]').count(), 'no Advanced disclosure')
-  assert.equal(await page.locator('[data-talk-section="design"] #deck-title').count(), 0, 'Title is in two places')
-  // Advanced opens under Design, not over it (the tab's children keep their height; the tab scrolls).
-  await page.locator('[data-talk-section="advanced"] > summary').click(); await sleep(1500)
-  assert.ok(await page.locator('[data-metadata-embedded]').isVisible(), 'Advanced did not open')
+await check('the Talk tab separates Details and Design, with Advanced under Details', async () => {
+  await command('metadata')
+  const details = page.locator('[data-talk-section="details"]')
+  const design = page.locator('[data-talk-section="design"]')
+  await details.locator('#deck-title').waitFor()
+  await talkTab.getByRole('button', { name: 'Design', exact: true }).click()
+  await design.waitFor()
+  assert.equal(await talkTab.locator('#deck-title').count(), 0, 'Title is also on the Design page')
+  await talkTab.getByRole('button', { name: 'Details', exact: true }).click()
+  const disclosure = page.locator('[data-talk-section="advanced"] > summary')
+  await disclosure.click()
+  await page.locator('[data-metadata-embedded]').waitFor()
   const boxes = await page.evaluate(() => {
-    const top = (sel) => document.querySelector(sel).getBoundingClientRect()
-    return { design: top('[data-talk-design-embedded]'), advanced: top('[data-talk-section="advanced"]'), body: top('[data-metadata-embedded]') }
+    const box = selector => document.querySelector(selector).getBoundingClientRect()
+    return {
+      details: box('[data-talk-design-embedded]'),
+      advanced: box('[data-talk-section="advanced"]'),
+      body: box('[data-metadata-embedded]'),
+    }
   })
-  assert.ok(boxes.advanced.top >= boxes.design.bottom - 1, `Advanced (${boxes.advanced.top}) overlaps Design (${boxes.design.bottom})`)
-  assert.ok(boxes.design.height > 300, `Design is squeezed to ${boxes.design.height}px`)
+  assert.ok(boxes.advanced.top >= boxes.details.bottom - 1, 'Advanced overlaps Details')
   assert.ok(boxes.body.height > 60, 'Advanced has no height')
-  await page.locator('[data-talk-section="advanced"] > summary').click(); await sleep(300)
+  await disclosure.click()
 })
 await check('a title edited in the Talk tab lands in the front matter as the old dialog wrote it', async () => {
   const file = join(vault, 'layout-showcase', 'layout-showcase-outline.md')
   const before = readFileSync(file, 'utf8')
   const entry = METADATA_REGISTRY.find((m) => m.key === 'title')
-  const next = 'Renamed in the Talk tab'
+  const next = RENAMED
   const expected = editFrontmatterText(before, [{ key: 'title', aliases: entry.aliases ?? [], value: next, raw: false }])
-  await command('deck-design'); await sleep(600)
+  await command('metadata'); await sleep(600)
   await page.locator('#deck-title').fill(next)
   await page.locator('[data-deck-design-save]').click()
   await sleep(3500)
@@ -67,7 +87,7 @@ await check('a title edited in the Talk tab lands in the front matter as the old
   assert.notEqual(after, before)
 })
 await check('unsaved Talk tab edits survive the Advanced disclosure and a sidebar tab change, and never leave their talk', async () => {
-  await command('deck-design'); await sleep(700)
+  await command('metadata'); await sleep(700)
   const draftTalkFile = join(vault, 'layout-showcase', 'layout-showcase-outline.md')
   const otherTalkFile = join(vault, 'testing-live-polls', 'testing-live-polls-outline.md')
   const draftTalkBefore = readFileSync(draftTalkFile)
@@ -85,23 +105,24 @@ await check('unsaved Talk tab edits survive the Advanced disclosure and a sideba
   // another talk gets none of it, and coming back finds it gone (drafts belong to the open talk only)
   await world.sideTab(/^Talks$/).click().catch(() => {})
   await world.openTalk('Testing Live Polls'); await sleep(800)
-  await command('deck-design'); await sleep(900)
+  await command('metadata'); await sleep(900)
   assert.notEqual(await page.locator('#deck-title').inputValue(), 'Unsaved title', 'the draft leaked into another talk')
   await world.rcTab('inspector').click(); await sleep(300)
-  await world.openTalk(TITLE); await sleep(800)
-  await command('deck-design'); await sleep(900)
+  await openShowcase()
+  await command('metadata'); await sleep(900)
   assert.equal(await page.locator('#deck-title').inputValue(), saved, 'the draft came back after the talk was left')
   assert.deepEqual(readFileSync(draftTalkFile), draftTalkBefore, 'unsaved transition changed the original saved outline bytes')
   assert.deepEqual(readFileSync(otherTalkFile), otherTalkBefore, 'unsaved transition changed the other saved outline bytes')
   await world.rcTab('inspector').click(); await sleep(300)
 })
 await check('a draft is never restored over a newer saved value: that field is dropped with a notice that stays; other drafts stay', async () => {
-  await command('deck-design'); await sleep(700)
+  await openShowcase()
+  await command('metadata'); await sleep(700)
   await page.locator('#deck-title').fill('Draft title B')
   await page.locator('#deck-event').fill('Draft event')
   await world.rcTab('inspector').click(); await sleep(400)
   // the saved title changes in the editor (the Markdown view's Metadata table) while the Talk tab is away
-  const title = page.locator('.cm-frontmatter-table input[type=text]').first()
+  const title = page.locator('.cm-frontmatter-table [data-fm-key="title"] input')
   await title.fill('Title changed in the editor'); await title.press('Enter'); await sleep(900)
   await world.rcTab('talk').click(); await sleep(1200)
   assert.equal(await page.locator('#deck-title').inputValue(), 'Title changed in the editor', 'the old draft masked the newer value')
@@ -126,9 +147,14 @@ await check('a draft is never restored over a newer saved value: that field is d
   await page.locator('[data-talk-section="advanced"] > summary').click(); await sleep(300)
   await world.rcTab('inspector').click(); await sleep(300)
   // put the title back (the Talks list names the talk by it)
-  const back = page.locator('.cm-frontmatter-table input[type=text]').first()
-  await back.fill(TITLE); await back.press('Enter'); await sleep(3500)
-  await command('refresh'); await sleep(2000)
+  const back = page.locator('.cm-frontmatter-table [data-fm-key="title"] input')
+  await back.fill(TITLE)
+  await back.press('Tab')
+  await page.waitForFunction(async ([path, title]) => {
+    const text = await window.tw.talk.readOutline(path)
+    return text?.split('\n').includes(`title: ${title}`) || text?.split('\n').includes(`title: "${title}"`)
+  }, [showcaseFile, TITLE])
+  await command('refresh')
 })
 await check('the Plain view\'s Talk details line is one line and a link to the Talk tab', async () => {
   await world.rcTab('inspector').click(); await sleep(300)
@@ -150,19 +176,35 @@ await check('the Markdown view\'s Metadata table has an Edit action that opens t
 // (the unsaved Advanced field above is left unsaved on purpose; the next test saves the title only)
 // ---- R7 -----------------------------------------------------------------------------------------------------------
 // The editor's count: the status bar's "43 slides" (the compiled slides: the cover, every section title, every slide, the closing slide).
-const statusCount = async () => Number((await page.locator('body').innerText().catch(() => '')).match(/(\d+) slides/)?.[1] ?? NaN)
+const statusCount = async () => {
+  const badge = page.getByText(/^\d+ slides$/).and(page.locator('.workspace-main span'))
+  await badge.waitFor()
+  return Number((await badge.textContent()).split(' ')[0])
+}
 const outlineRows = async () => {
-  await world.sideTab(/Slide outline/).click(); await sleep(700)
-  return page.locator('.slides-organizer [data-line]').evaluateAll((els) => els.map((e) => ({
-    section: e.classList.contains('so-section'),
+  await world.sideTab(/^Slides$/).click()
+  await page.getByRole('button', { name: 'Show slides as an outline', exact: true }).click()
+  await page.locator('.slides-organizer [data-line]').first().waitFor()
+  const sectionLines = structureOf(readFileSync(showcaseFile, 'utf8')).nodes
+    .filter(node => node.section).map(node => node.line + 1)
+  // Collapsible layout containers use the same DOM row as sections but have no section number.
+  return page.locator('.slides-organizer [data-line]').evaluateAll((els, sections) => els.map((e) => ({
+    section: sections.includes(Number(e.dataset.line)),
     title: (e.querySelector('.so-slide-title, .so-section-label')?.textContent ?? '').trim(),
     no: Number((e.querySelector('.so-slide-no')?.textContent ?? '').trim()),
     sectionNo: e.querySelector('[data-so-section-no]')?.textContent ?? null,
-    layout: e.querySelector('[data-so-layout]')?.textContent ?? null
-  })))
+    layout: e.querySelector('svg.lucide-layout-template')?.getAttribute('aria-label') ?? null,
+    sectionMark: e.querySelector('svg.lucide-bookmark') !== null,
+  })), sectionLines)
 }
-const cardNumbers = (sel) => page.locator(sel).evaluateAll((els) => els.map((e, i) => ({ i, no: Number((e.innerText.split('\n').map((l) => l.trim()).find((l) => /^\d\d$/.test(l)) ?? '').trim()) })))
+const cardNumbers = (selector) => page.locator(selector).evaluateAll((elements) => elements.map(el => ({
+  index: Number(el.dataset.slideIndex),
+  number: Number((el.querySelector('.tw-structure-row-number, .tw-strip-caption span')?.textContent
+    ?? el.innerText.split('\n').map(line => line.trim()).find(line => /^\d{2,}$/.test(line))
+    ?? '').trim()),
+})))
 await check('the outline numbers every slide once, as the strip and the grid do, and sections read §n with a layout mark', async () => {
+  await openShowcase()
   const rows = await outlineRows()
   const total = await statusCount()
   assert.ok(rows.length > 10, 'no outline rows')
@@ -174,65 +216,79 @@ await check('the outline numbers every slide once, as the strip and the grid do,
   assert.ok(total - numbered.length <= 3 + rows.length - numbered.length, 'slides are missing from the outline')
   assert.equal(numbered[0].no, 1, 'the title is not slide 1')
   assert.equal(rows[0].sectionNo, null, 'the talk title is no section')
-  assert.equal(rows[0].layout, 'Title', 'the title row carries the cover\'s layout mark, as the layout picker names it (batch 5, R6)')
+  assert.equal(layoutDisplayName(rows[0].layout ?? ''), 'Title', 'the title row carries the cover layout icon')
   const sections = rows.slice(1).filter((r) => r.section)
   assert.ok(sections.length >= 3, 'no sections')
   const top = sections.filter((r) => r.sectionNo && !r.sectionNo.includes('.'))
   top.forEach((r, k) => assert.equal(r.sectionNo, `§${k + 1}`, `section ${k + 1} reads ${r.sectionNo}`))
   assert.ok(sections.every((r) => r.sectionNo), 'a section has no §n')
-  assert.ok(sections.every((r) => r.layout), 'a section has no layout mark')
+  assert.ok(sections.every(row => row.sectionMark), 'a section has no section icon')
   assert.ok(rows.filter((r) => !r.section).some((r) => r.layout), 'no slide has a layout mark')
-  assert.ok(rows.every((r) => !r.layout || !/^[a-z]+(-[a-z]+)+$/.test(r.layout)), 'a layout mark shows a layout id (section-title, stmt-list, …) instead of its name')
+  assert.ok(rows.every(row => !row.layout || layoutDisplayName(row.layout)), 'a layout icon has no layout name')
   // the strip and the grid number the same slides the same way
-  await command('view-grid'); await sleep(1200)
-  const grid = await cardNumbers('[data-slide-index]')
+  await command('view-grid')
+  await page.locator('.grid-view .grid-cell').first().waitFor()
+  const grid = await cardNumbers('.grid-view .grid-cell')
   assert.ok(grid.length > 5, 'no grid cards')
-  grid.forEach((g) => assert.equal(g.no, g.i + 1, `grid card ${g.i + 1} reads ${g.no}`))
-  await command('view-slides'); await sleep(800)
-  await world.rcTab('slides').click(); await sleep(1200)
-  const strip = await cardNumbers('.tw-slide-card')
-  assert.ok(strip.length > 5, 'no strip cards')
-  strip.forEach((g) => assert.equal(g.no, g.i + 1, `strip card ${g.i + 1} reads ${g.no}`))
-  // the same layout name on the strip's chip as on the outline's mark
-  const chips = await page.locator('.tw-slide-card').evaluateAll((els) => els.map((e) => [...e.querySelectorAll('span')].at(-1)?.textContent ?? ''))
-  chips.slice(0, 6).forEach((chip, i) => { if (rows[i].layout && chip) assert.equal(chip, rows[i].layout, `slide ${i + 1}: strip ${chip}, outline ${rows[i].layout}`) })
+  grid.forEach(card => assert.equal(card.number, card.index + 1, `grid card ${card.index + 1} reads ${card.number}`))
+  await command('view-markdown')
+  await world.sideTab(/^Slides$/).click()
+  await page.getByRole('button', { name: 'Show slides as previews', exact: true }).click()
+  const previews = page.locator('[data-slides-mode="previews"]')
+  await previews.locator('.tw-slide-card').first().waitFor()
+  const strip = await cardNumbers('[data-slides-mode="previews"] [data-slide-index]')
+  assert.equal(strip.length, total, 'the previews include every compiled slide')
+  strip.forEach(card => assert.equal(card.number, card.index + 1, `preview card ${card.index + 1} reads ${card.number}`))
+  const chips = await previews.locator('.tw-slide-card').evaluateAll(elements => elements.map(el => ({
+    no: Number(el.dataset.slideIndex) + 1,
+    name: el.querySelector('.tw-strip-layout')?.textContent,
+  })))
+  for (const { no, name } of chips.slice(0, 6)) {
+    const layout = rows.find(row => row.no === no)?.layout
+    if (layout && name) assert.equal(name, layoutDisplayName(layout), `slide ${no}: preview ${name}, outline ${layout}`)
+  }
   await world.rcTab('inspector').click(); await sleep(300)
 })
 const talkTitles = await page.evaluate(() => 0).then(async () => { await world.sideTab(/^Talks$/).click(); await sleep(500); return page.locator('aside.talk-list [data-talk-title]').evaluateAll((els) => els.map((e) => e.getAttribute('data-talk-title'))) })
 // The demo talks (the first six of the list, with the Layout Showcase among them): enough to meet grid returns and carousels.
 // (the Talks list names a talk by its front matter title, which the draft tests above changed in the editor; the same talk either way)
-const showcase = talkTitles.find((t) => /Layout Showcase|Title changed in the editor/.test(t)) ?? TITLE
+const showcase = talkTitles.find(t => t === TITLE || t === RENAMED || t === 'Title changed in the editor') ?? TITLE
 for (const title of [...new Set([showcase, ...talkTitles.slice(0, 6)])]) {
   await check(`the presenter counts the editor's slides for "${title}"`, async () => {
     await world.openTalk(title); await sleep(800)
     const total = await statusCount()
     assert.ok(total > 0, 'no count in the status bar')
+    const previousWindows = new Set(app.windows())
     await command('present-presenter')
-    const pres = await world.presenter()
-    assert.ok(pres, 'no presenter window')
-    const read = async () => {
-      const text = await pres.locator('#presenterCount').innerText().catch(() => '')
-      const m = text.match(/^(\d+) \/ (\d+)$/)
-      assert.ok(m, `the counter reads "${text}"`)
-      return [Number(m[1]), Number(m[2])]
+    const pres = await world.presenter(previousWindows)
+    assert.ok(pres, 'no new presenter window')
+    try {
+      const read = async () => {
+        const text = await pres.locator('#presenterCount').innerText().catch(() => '')
+        const m = text.match(/^(\d+) \/ (\d+)$/)
+        assert.ok(m, `the counter reads "${text}"`)
+        return [Number(m[1]), Number(m[2])]
+      }
+      const seen = [await read()]
+      for (let i = 0; i < 12; i += 1) { await pres.keyboard.press('ArrowRight'); await pres.waitForTimeout(100); seen.push(await read()) }
+      await pres.keyboard.press('End'); await pres.waitForTimeout(300); seen.push(await read())
+      assert.ok(seen.every(([, t]) => t === total), `a total other than the editor's ${total}: ${[...new Set(seen.map((s) => s[1]))]}`)
+      assert.ok(seen.every(([n]) => n >= 1 && n <= total), 'a number past the total')
+      assert.deepEqual(seen.at(-1), [total, total], 'the last slide is not N / N')
+    } finally {
+      await world.closeExtraWindows()
     }
-    const seen = [await read()]
-    for (let i = 0; i < 12; i += 1) { await pres.keyboard.press('ArrowRight'); await pres.waitForTimeout(100); seen.push(await read()) }
-    await pres.keyboard.press('End'); await pres.waitForTimeout(300); seen.push(await read())
-    assert.ok(seen.every(([, t]) => t === total), `a total other than the editor's ${total}: ${[...new Set(seen.map((s) => s[1]))]}`)
-    assert.ok(seen.every(([n]) => n >= 1 && n <= total), 'a number past the total')
-    assert.deepEqual(seen.at(-1), [total, total], 'the last slide is not N / N')
-    await world.closeExtraWindows(); await sleep(500)
     await world.sideTab(/^Talks$/).click().catch(() => {})
   })
 }
-await world.openTalk(showcase)
+await openShowcase()
 
 // ---- R16 ----------------------------------------------------------------------------------------------------------
 const editorUp = () => page.locator('.cm-content').first().isVisible().catch(() => false)
 const modes = [
   { name: 'Vault Gallery', open: () => command('vault-gallery'), root: '.vault-gallery' },
-  { name: 'Slide focus', open: async () => { await world.sideTab(/Slide outline/).click(); await sleep(600); await page.locator('button.so-slide').nth(3).click(); await sleep(1000); await command('focus-slide'); await sleep(800); if (!(await page.locator('.lt-focus').count())) { await page.locator('button.so-slide').nth(4).click(); await sleep(800); await command('focus-slide') } }, root: '.lt-focus' },
+  { name: 'Slide focus', open: async () => { await world.sideTab(/^Slides$/).click()
+    await page.getByRole('button', { name: 'Show slides as an outline', exact: true }).click(); await page.locator('button.so-slide').nth(3).click(); await sleep(1000); await command('focus-slide'); await sleep(800); if (!(await page.locator('.lt-focus').count())) { await page.locator('button.so-slide').nth(4).click(); await sleep(800); await command('focus-slide') } }, root: '.lt-focus' },
   { name: 'Pathways', open: () => command('pathways'), root: '[data-pathway-dock]' },
   { name: 'Slide Browser', open: () => command('search'), root: '.lt-browser-root' }
 ]

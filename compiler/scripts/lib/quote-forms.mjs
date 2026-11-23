@@ -1276,11 +1276,11 @@ export function annotateQuoteForm(blocks, layout, attrs, slideId, warn) {
       warn(`quote-form-picture-unused:${slideId}`)
     }
   }
-  if (String(attrs?.title ?? '').toLowerCase() === 'show') {
+  if (attrs?.titleDisplay === 'show') {
     warn(`quote-form-title-unpainted:${slideId}`)
     // The card is the whole slide: the heading must not be painted around or behind it. Drop the typed value so the
     // quote layout's hidden-title regime stays on, exactly as if {title=show} were absent.
-    delete attrs.title
+    delete attrs.titleDisplay
   }
   quote.quoteForm = {
     form: plan.form,

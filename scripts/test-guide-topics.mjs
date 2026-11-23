@@ -194,7 +194,7 @@ await test('topics 11 to 15 name on-screen labels this build has, and the Ocean 
     ['src/renderer/src/components/recording/useRecordingExport.tsx', ['Also save', 'Captions file (SRT and WebVTT)', 'Chapter list to paste into YouTube', 'Sound only (M4A)']],
     ['src/shared/settings-schema.ts', ["label: 'Words written out by'", "label: 'Language for words'", "label:'This Mac (built in)'"]],
     ['src/renderer/src/components/PreciseWordTimingSettings.tsx', ['Precise word timing']],
-    ['src/shared/metadata-registry.ts', ["label: 'Ocean'", "label: 'Ocean, bold amber'", "label: 'Classic'", "label: 'Green (classic)'", "label: 'Palette'"]],
+    ['src/shared/metadata-registry.ts', ["label: 'Ocean'", "label: 'Ocean, bold amber'", "label: 'Forest'", "label: 'Slate'", "label: 'Classic'", "label: 'Green (classic)'", "label: 'Palette'"]],
     ['src/renderer/src/components/DeckDesignPanel.tsx', ['>Design<']]
   ]
   for (const [path, wanted] of labels) for (const label of wanted) assert.ok(read(path).includes(label), `${path} has ${label}`)
@@ -205,7 +205,7 @@ await test('topics 11 to 15 name on-screen labels this build has, and the Ocean 
   assert.ok(exportSheet.includes("'with camera · '") && exportSheet.includes("'without camera · '"), 'the export summary')
   for (const [path, text] of [['RecordingPanel.tsx', panel], ['useRecordingExport.tsx', exportSheet]]) assert.ok(!/camera[^'\n]{0,40}in the corner|put it in the corner/i.test(text), `${path} does not place the camera in the corner`)
   const body = HOW_TOPICS.slice(10).map((t) => topicBody(t)).join(' ')
-  for (const label of ['Slides and voice', 'Slides, voice and camera', 'TalkWeaver Studio…', 'Edit video', 'Tidy up…', 'Export video…', 'Also save', 'Captions file (SRT and WebVTT)', 'Chapter list to paste into YouTube', 'Sound only (M4A)', 'Camera', 'Look and sound…', 'Smooth each join with a quick fade, so your face does not jump', 'Even out the volume', 'Face: corner', 'In the corner', 'Side by side', 'Face only', 'Slide only', 'Words written out by', 'This Mac (built in)', 'Precise word timing', 'Ocean, bold amber', 'Green (classic)', 'Design › Palette']) assert.ok(body.includes(label), label)
+  for (const label of ['Slides and voice', 'Slides, voice and camera', 'TalkWeaver Studio…', 'Edit video', 'Tidy up…', 'Export video…', 'Also save', 'Captions file (SRT and WebVTT)', 'Chapter list to paste into YouTube', 'Sound only (M4A)', 'Camera', 'Look and sound…', 'Smooth each join with a quick fade, so your face does not jump', 'Even out the volume', 'Face: corner', 'In the corner', 'Side by side', 'Face only', 'Slide only', 'Words written out by', 'This Mac (built in)', 'Precise word timing', 'Ocean, bold amber', 'Forest', 'Slate', 'Green (classic)', 'Design › Palette']) assert.ok(body.includes(label), label)
   // Record one slide again is off in 0.44.5: no topic names it or its take choices.
   for (const label of ['Record this slide again', 'Use this take', 'Use the first take', 'take']) assert.ok(!new RegExp(`\\b${label}\\b`).test(body), `no topic mentions ${label} while it is off`)
   // No example talk sets a palette, so each compiles in Ocean, the default.

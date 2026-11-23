@@ -1037,7 +1037,8 @@ const hostAfterAdopt = async (_ed, _path) => {} // WorkspaceLayout: no onAdopted
   assert.equal(ed.caret, withFirst.indexOf('new body') + 'new body'.length, 'the caret is at the end of the inserted slide')
   const second = await ed.mutator.insertAtCaret(path, '### Next\n{id=new02}')
   assert.equal(second.ok, true, second.error)
-  assert.equal(ed.doc, withFirst.replace('new body\n', 'new body\n\n### Next\n{id=new02}\n\n'), 'a second slide follows the first (the caret is now on a body line: after that line, as before)')
+  const withSecond = withFirst.replace('new body\n\n### B', 'new body\n\n### Next\n{id=new02}\n\n### B')
+  assert.equal(ed.doc, withSecond, 'a second slide follows the first and reuses the blank line before B')
   assert.equal(ed.undo.length - undoBefore, 2, 'one change each')
   ed.caret = ed.doc.indexOf('### B') + 5
   const component = await ed.mutator.insertAtCaret(path, '[QR: https://example.com | Label]')

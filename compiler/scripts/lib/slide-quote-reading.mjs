@@ -141,7 +141,7 @@ export function mapQuoteSlideBlocks(blocks) {
  * The quotation of a slide's mapped blocks as it is drawn. ADR-0023 section 5 rule 2: a quote with no attribution is
  * attributed to the slide's own title (`citeFromTitle`). Then the form is decided (`block.quoteForm`): a quote that
  * draws as a form is never split, and a form that refuses stays the Plain quote it is. Mutates `blocks` (and
- * `attrs.title`, see annotateQuoteForm).
+ * `attrs.titleDisplay`, see annotateQuoteForm).
  */
 export function annotateQuoteSlide(blocks, layout, attrs, title, slideId, warn) {
   applyQuoteTitleAttribution(blocks, title);

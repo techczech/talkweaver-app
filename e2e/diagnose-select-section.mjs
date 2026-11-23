@@ -53,12 +53,12 @@ writeTalk('agents-presentations', 'agents-in-practice', sourceText)
 const working = [
   '---', 'outline_version: 2', 'title: Working talk', '---', '',
   '## A new section', '{id=ans01}', '',
-  '### Test html', '{id=tht01}', '',
+  '### Test html', '{id=tht01}', '', 'Fixture insert point.', '',
   '## About me', '{id=abt01}', '',
   '### AI Trends Tracking', '{id=trd01}', '', 'Trends.', '',
 ].join('\n')
 const workingFile = writeTalk('drafts', 'working-talk', working)
-writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault }))
+writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'outline' }))
 
 const shots = process.env.TW_SHOTS
 if (shots) mkdirSync(shots, { recursive: true })
@@ -78,7 +78,8 @@ const readBuffer = () => page.evaluate(() => document.querySelector('.cm-content
 const waitBuffer = (text) => page.waitForFunction((t) => document.querySelector('.cm-content')?.cmTile?.root?.view?.state.doc.toString() === t, text, { timeout: 10000 })
 const setCaret = (offset) => page.evaluate((at) => {
   const view = document.querySelector('.cm-content')?.cmTile?.root?.view
-  view.dispatch({ selection: { anchor: at } })
+  view.dispatch({ selection: { anchor: at }, scrollIntoView: true })
+  view.focus()
   return view.state.selection.main.head
 }, offset)
 async function waitForFile(file, want, ms = 10000) {
@@ -139,7 +140,8 @@ const draggableAt = (x, y) => page.evaluate(([px, py]) => {
 try {
   await openTalkByTitle(page, 'Working talk')
   await waitBuffer(working)
-  const caret = working.indexOf('{id=tht01}') + '{id=tht01}'.length
+  const insertionPoint = 'Fixture insert point.'
+  const caret = working.indexOf(insertionPoint) + insertionPoint.length
   assert.equal(await setCaret(caret), caret)
 
   // ── 1. a query typed at once leaves one slide showing; Select section takes the whole section ──
@@ -172,6 +174,8 @@ try {
   await page.waitForFunction(() => /Inserted 4 slides/.test(document.querySelector('[role="status"]')?.textContent ?? ''))
   const withSearch = await insertedAtCaret(caret)
   assert.equal(withSearch.inserted, SECTION, '⌘↵ with a search showing one slide: the whole section, heading slide first, in talk order')
+  assert.equal(withSearch.file, working.slice(0, caret) + '\n\n' + SECTION + working.slice(caret),
+    'insert one blank line on each side of the section, keeping every original byte')
   await undoInsert()
   console.log('PASS ⌘↵ after Select section with a search active: the section goes in in its order')
 

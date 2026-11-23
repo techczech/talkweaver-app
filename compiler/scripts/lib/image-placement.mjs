@@ -9,7 +9,7 @@
 // imagePlacementsForSlide(slide) → one entry per image, in outline order (the order the image
 // lines appear under the slide's heading):
 //   { kind, index, count }
-// kind: "full" | "beside" | "thumbnail" | "row" | "gallery" | "image-quote" | "statement" | "carousel"
+// kind: "full" | "beside" | "above" | "thumbnail" | "row" | "gallery" | "image-quote" | "statement" | "carousel"
 // index/count: this image's 1-based position among the `count` images of its row / gallery / carousel
 // (1 of 1 for a lone image). A layout that puts an image somewhere this module has no name for
 // yields no entry kind ("other") rather than a guess.
@@ -63,8 +63,8 @@ export function imagePlacementsForSlide(slide) {
   const slot = slotCompositionFor(slide, blocks, layout);
   if (slot.kind === "beside") {
     const mediaCount = slot.media.filter(isImage).length;
-    const kind = slot.arrange === "beside" ? "thumbnail" : slot.arrange === "stacked" ? "row" : "beside";
-    return images.map((_, i) => ({ kind, index: i + 1, count: kind === "beside" ? mediaCount : count }));
+    const kind = slot.side === "above" ? "above" : slot.arrange === "beside" ? "thumbnail" : slot.arrange === "stacked" ? "row" : "beside";
+    return images.map((_, i) => ({ kind, index: i + 1, count: kind === "beside" || kind === "above" ? mediaCount : count }));
   }
   if (layout === "statement") return each("statement");
   if (layout === "media") return each(count === 1 ? "full" : count <= 3 ? "row" : "gallery");

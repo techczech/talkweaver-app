@@ -7,7 +7,7 @@ interface Props {
   folder: string
   onStart: (title: string, view: StartingView) => Promise<string | null>
   onChangeFolder: () => void
-  onExamples: () => void
+  onExamples: () => Promise<string | null>
   onOpenTalks: () => void
   onImport: () => void
 }
@@ -18,13 +18,16 @@ export default function WelcomeTalk({ folder, onStart, onChangeFolder, onExample
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const titleField = useRef<HTMLInputElement | null>(null)
-  async function start(view: StartingView): Promise<void> {
+  async function runAction(action: () => Promise<string | null>, fallback: string): Promise<void> {
     if (busy) return
     setBusy(true)
     setError(null)
-    try { setError(await onStart(title.trim(), view)) }
-    catch { setError('The talk could not be created. Try again.') }
+    try { setError(await action()) }
+    catch { setError(fallback) }
     finally { setBusy(false) }
+  }
+  function start(view: StartingView): Promise<void> {
+    return runAction(() => onStart(title.trim(), view), 'The talk could not be created. Try again.')
   }
   useEffect(() => window.tw.app.onRunCommand(id => {
     const startView = (Object.keys(WELCOME_COMMANDS) as StartingView[]).find(view => WELCOME_COMMANDS[view] === id)
@@ -73,7 +76,7 @@ export default function WelcomeTalk({ folder, onStart, onChangeFolder, onExample
           <button type="button" onClick={onChangeFolder} disabled={busy}>Change</button>
           <span className="tw-welcome-foot-spacer" />
           <button type="button" onClick={() => void start('markdown')} disabled={busy}><CodeXml size={14} />Write in Markdown</button>
-          <button type="button" onClick={onExamples} disabled={busy}><GraduationCap size={14} />Example talks</button>
+          <button type="button" onClick={() => void runAction(onExamples, 'The example vault could not be opened. Try again.')} disabled={busy}><GraduationCap size={14} />Example talks</button>
           <button type="button" onClick={onOpenTalks} disabled={busy}><FolderOpen size={14} />Open my talks</button>
           <button type="button" onClick={onImport} disabled={busy}><FileInput size={14} />Import PowerPoint</button>
         </div>

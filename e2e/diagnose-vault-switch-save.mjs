@@ -47,7 +47,7 @@ mkdirSync(dirname(OUTSIDE_PATH), { recursive: true })
 writeFileSync(OUTSIDE_PATH, OUTLINE.replace(TITLE, 'Loose Talk'))
 writeFileSync(OUTLINE_PATH, OUTLINE)
 mkdirSync(userDataDir, { recursive: true })
-writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: vaultA }, null, 2))
+writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: vaultA, openInView: 'outline' }, null, 2))
 
 // Every file under the two vaults and the outside folder, with its size and content hash stand-in.
 function snapshot() {

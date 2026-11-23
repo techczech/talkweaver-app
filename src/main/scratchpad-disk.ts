@@ -17,6 +17,10 @@ export interface ScratchDiskScan {
   notices: string[]
 }
 
+type ScanEntry = { name: string; key: string; file?: ScratchDiskFile } |
+  { name: string; key: null; file: ScratchDiskFile }
+type DiskScanReply = Omit<ScratchDiskScan, 'files'> & { entries: ScanEntry[] }
+
 const activeChildren = new Set<ChildProcessWithoutNullStreams>()
 let cache: string | undefined
 function cacheFolder(): string {
@@ -78,6 +82,12 @@ const IO_SCRIPT = String.raw`
 const fs = require('node:fs'); const path = require('node:path'); const crypto = require('node:crypto');
 const same = (a,b) => String(a.dev) === String(b.dev) && String(a.ino) === String(b.ino);
 const identity = (s) => ({dev:String(s.dev), ino:String(s.ino)});
+const fingerprint = (s) => [s.dev, s.ino, s.mode, s.size, s.mtimeNs, s.ctimeNs].join(':');
+const fileKey = (name) => {
+  try { return fingerprint(fs.lstatSync(name, {bigint:true})); }
+  catch (e) { if (e.code === 'ENOENT') return ''; throw e; }
+};
+const sketchText = (bytes) => new TextDecoder('utf-8', {fatal:true, ignoreBOM:true}).decode(bytes);
 const plain = (n) => typeof n === 'string' && n !== '' && !/[\\/\0]/.test(n) && !n.startsWith('.');
 const flags = fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) | (fs.constants.O_NONBLOCK || 0);
 function readPlain(name, max = 64 * 1024 * 1024) {
@@ -105,7 +115,7 @@ function run(job) {
   let info;
   try { info = fs.lstatSync('scratchpad',{bigint:true}); } catch (e) { if (e.code !== 'ENOENT') throw e; }
   if (!info && (job.action === 'sketch-read' || job.action === 'sketch-write')) throw new Error('The sketch folder is missing.');
-  if (!info && job.action === 'scan') return {folder:null, state:{text:null,error:null}, files:[], notices:[]};
+  if (!info && job.action === 'scan') return {folder:null, state:{text:null,error:null}, entries:[], notices:[]};
   if (!info) { fs.mkdirSync('scratchpad'); info = fs.lstatSync('scratchpad',{bigint:true}); }
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('The Slide Scratchpad folder is a link or is not a folder. Nothing was changed.');
   if (job.folder && !same(info,job.folder)) throw new Error('The Slide Scratchpad folder changed. Nothing was changed.');
@@ -121,7 +131,7 @@ function run(job) {
   const readSketch = name => {
     if (!plain(name) || path.extname(name).toLowerCase() !== '.md') throw new Error('Choose a Markdown sketch.');
     const {bytes} = readPlain(name, job.maxSketch);
-    const text = new TextDecoder('utf-8', {fatal:true, ignoreBOM:true}).decode(bytes);
+    const text = sketchText(bytes);
     return {name, text, revision:crypto.createHash('sha256').update(bytes).digest('hex')};
   };
   if (job.action === 'sketch-read') return readSketch(job.name);
@@ -156,13 +166,31 @@ function run(job) {
     catch (e) { return e.code === 'ENOENT' ? {text:null,error:null} : {text:null,error:e.message}; }
   };
   if (job.action === 'scan') {
-    const saved = state(); const files = []; const notices = [];
+    const saved = state(); const entries = []; const notices = [];
+    const known = job.knownFolder && same(held, job.knownFolder) ? job.known : {};
     for (const name of fs.readdirSync('.').sort()) {
-      if (!plain(name) || !job.extensions.includes(path.extname(name).toLowerCase())) continue;
+      const ext = path.extname(name).toLowerCase();
+      if (!plain(name) || !job.extensions.includes(ext)) continue;
       try {
-        if (path.extname(name).toLowerCase() === '.md') {
-          const sketch = readSketch(name);
-          files.push({name,path:null,mtime:fs.lstatSync(name).mtime.toISOString(),sidecar:null,sketchText:sketch.text.slice(0,20000),sketchLineCount:sketch.text.split(/\r?\n/).filter(line=>line.trim()).length});
+        const primary = fileKey(name);
+        if (!primary) continue;
+        const sidecarName = name+'.json';
+        let sidecarBefore = null;
+        try { sidecarBefore = ext === '.md' ? '' : fileKey(sidecarName); } catch {}
+        const key = primary+'|'+sidecarBefore;
+        const cached = Object.hasOwn(known, name) ? known[name] : null;
+        if (sidecarBefore !== null && cached?.key === key &&
+            (!cached.copy || fs.lstatSync(cached.copy, {throwIfNoEntry:false})?.isFile())) {
+          entries.push({name,key});
+          continue;
+        }
+        if (ext === '.md') {
+          const source = readPlain(name, job.maxSketch);
+          const text = sketchText(source.bytes);
+          entries.push({name,key:fingerprint(source.info)+'|',file:{
+            name,path:null,mtime:source.info.mtime.toISOString(),sidecar:null,
+            sketchText:text.slice(0,20000),sketchLineCount:text.split(/\r?\n/).filter(line=>line.trim()).length
+          }});
           continue;
         }
         const source = readPlain(name);
@@ -181,16 +209,21 @@ function run(job) {
             catch (e) { if (!['EEXIST','EPERM','EACCES'].includes(e.code) || !fs.lstatSync(copy).isFile()) throw e; }
           } finally { try { fs.unlinkSync(staging); } catch {} }
         }
-        let sidecar = null;
-        try { sidecar = readPlain(name+'.json',256*1024).bytes.toString('utf8'); } catch {}
-        files.push({name,path:copy,mtime:source.info.mtime.toISOString(),sidecar});
+        let sidecar = null; let sidecarKey = null;
+        try {
+          const read = readPlain(sidecarName,256*1024);
+          sidecar = read.bytes.toString('utf8');
+          sidecarKey = fingerprint(read.info);
+        } catch (e) { if (e.code === 'ENOENT') sidecarKey = ''; }
+        entries.push({name,key:sidecarKey === null ? null : fingerprint(source.info)+'|'+sidecarKey,
+          file:{name,path:copy,mtime:source.info.mtime.toISOString(),sidecar}});
       } catch (e) {
         if (e.message === 'is too large to read safely') notices.push('The Slide Scratchpad file '+JSON.stringify(name)+' is larger than '+(path.extname(name).toLowerCase() === '.md' ? '400 KB' : '64 MB')+', so it was not loaded. The original was left unchanged.');
         // Vanished, linked, unreadable or changing: never consume a replacement.
       }
     }
     holds();
-    return {folder:identity(held),state:saved,files,notices};
+    return {folder:identity(held),state:saved,entries,notices};
   }
   const before = state();
   if (before.error || before.text !== job.previous) throw new Error('The Slide Scratchpad saved state changed or could not be read. Nothing was changed.');
@@ -260,11 +293,30 @@ export function createScratchpadDisk(talkDir: string, spawnChild: typeof spawn =
       try { child.stdin.end(input) } catch (error) { stop(error instanceof Error ? error : new Error(String(error))) }
     })
   }
+  // Cache only material read and checked by this disk worker, scoped to the held folder.
+  // The next worker verifies each source and sidecar identity before reusing its private snapshot.
+  let scannedFolder: ScratchFileIdentity | null = null
+  let scannedFiles = new Map<string, { key: string; file: ScratchDiskFile }>()
   return {
     sketchRead: (name: string): Promise<ScratchSketch> => run({ action: 'sketch-read', name }),
     sketchCreate: (text: string): Promise<ScratchSketch> => run({ action: 'sketch-create', text }),
     sketchWrite: (name: string, revision: string, text: string): Promise<ScratchSketch> => run({ action: 'sketch-write', name, revision, text }),
-    scan: (extensions: string[]): Promise<ScratchDiskScan> => run({ action: 'scan', extensions }),
+    async scan(extensions: string[]): Promise<ScratchDiskScan> {
+      const previous = scannedFiles
+      const { entries, ...scan } = await run<DiskScanReply>({
+        action: 'scan', extensions, knownFolder: scannedFolder,
+        known: Object.fromEntries([...previous].map(([name, entry]) => [name, { key: entry.key, copy: entry.file.path }]))
+      })
+      const next = new Map<string, { key: string; file: ScratchDiskFile }>()
+      const files = entries.map(entry => {
+        const file = entry.file ?? previous.get(entry.name)!.file
+        if (entry.key !== null) next.set(entry.name, { key: entry.key, file })
+        return file
+      })
+      scannedFolder = scan.folder
+      scannedFiles = next
+      return { ...scan, files }
+    },
     write: (text: string, previous: string | null, folder: ScratchFileIdentity | null): Promise<void> => run({ action: 'write', text, previous, folder }),
     backup: (name: string, previous: string, folder: ScratchFileIdentity | null): Promise<void> => run({ action: 'backup', name, previous, folder })
   }

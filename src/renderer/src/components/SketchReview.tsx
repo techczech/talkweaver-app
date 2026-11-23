@@ -33,13 +33,18 @@ export function SketchBreakdowns({ text, pictures, choose, onBack }: {
       <button type="button" className="tw-btn tw-btn--secondary" onClick={onBack}>Back to the sketch</button>
     </div>}
     <div className="tw-sketch-options">
-      {plans.map(plan => <button key={plan.kind} data-breakdown={plan.kind} type="button" className="tw-sketch-option" onClick={() => choose({ ...plan, fates: {} })}>
-        <strong>{BREAKDOWNS[plan.kind].label}</strong>
-        <span className="tw-sketch-count"><b>{plan.slides.length}</b> {plan.slides.length === 1 ? 'slide' : 'slides'}{plan.sections.length > 0 && ` in ${plan.sections.length} ${plan.sections.length === 1 ? 'section' : 'sections'}`}</span>
-        <span className="tw-sketch-description">{BREAKDOWNS[plan.kind].description}</span>
-        <span className="tw-sketch-film" aria-hidden="true">{plan.slides.slice(0, 9).map(slide => <SketchSlidePreview key={slide.key} slide={slide} />)}</span>
-        <PlacementChip count={plan.undecided.length} />
-      </button>)}
+      {plans.map(plan => {
+        const occupied = new Set(plan.slides.map(slide => slide.section))
+        const sectionCount = plan.sections.filter(section => occupied.has(section.key)).length
+        return <button key={plan.kind} data-breakdown={plan.kind} type="button" className="tw-sketch-option" onClick={() => choose({ ...plan, fates: {} })}>
+          <strong>{BREAKDOWNS[plan.kind].label}</strong>
+          <span className="tw-sketch-count"><b>{plan.slides.length}</b> {plan.slides.length === 1 ? 'slide' : 'slides'}
+            {sectionCount > 0 && `${occupied.has(0) ? ' · ' : ' in '}${sectionCount} ${sectionCount === 1 ? 'section' : 'sections'}`}</span>
+          <span className="tw-sketch-description">{BREAKDOWNS[plan.kind].description}</span>
+          <span className="tw-sketch-film" aria-hidden="true">{plan.slides.slice(0, 9).map(slide => <SketchSlidePreview key={slide.key} slide={slide} />)}</span>
+          <PlacementChip count={plan.undecided.length} />
+        </button>
+      })}
     </div>
   </div>
 }
@@ -58,6 +63,16 @@ const FATE_LABEL: Record<LineFate, string> = {
   sketch: 'In the sketch only',
 }
 
+function SketchSourceText({ raw, undecided }: { raw: string; undecided: boolean }) {
+  const text = raw.trim()
+  if (/^\[picture:\s*[^\]]+\]$/i.test(text)) {
+    return <span className={`tw-sketch-chip tw-sketch-source-picture ${undecided ? 'is-warning' : 'is-info'}`}>
+      <Image size={12} aria-hidden="true" />{text}
+    </span>
+  }
+  return <span className={undecided ? 'is-undecided' : undefined}>{text.replace(/^(?:#{1,6}|[-*+•–]|\d+[.)])[ \t]+/, '')}</span>
+}
+
 export default function SketchReview({ review, change, otherWays, cancel, add, place, busy = false }: {
   review: Review
   change: (next: Review) => void
@@ -74,7 +89,9 @@ export default function SketchReview({ review, change, otherWays, cancel, add, p
   const cuts = new Map<number, string[]>()
   const sectionLines = new Set(review.sections.map(section => section.line))
   const titleLines = new Set(slides.flatMap(slide => slide.titleLines))
-  for (const section of review.sections) cuts.set(section.line, ['Section'])
+  const occupied = new Set([...slides.map(slide => slide.section), ...review.undecided.map(line => line.section)])
+  const sections = review.sections.filter(section => occupied.has(section.key))
+  for (const section of sections) cuts.set(section.line, ['Section'])
   let number = 0
   for (const slide of slides) {
     const first = Math.min(...slideLines(slide).filter(line => line > 0))
@@ -94,14 +111,14 @@ export default function SketchReview({ review, change, otherWays, cancel, add, p
         {review.lines.map(line => <div key={line.number}>
           {cuts.get(line.number)?.map((cut, cutIndex) => <div className={`tw-sketch-cut${cut === 'Section' ? ' is-section' : ''}`} key={cutIndex}>{cut}</div>)}
           <div className={`tw-sketch-line${sectionLines.has(line.number) ? ' is-section' : titleLines.has(line.number) ? ' is-title' : /^\s{2,}|^\t/.test(line.raw) ? ' is-detail' : ''}`}>
-            <span className={undecided.has(line.number) ? 'is-undecided' : undefined}>{line.raw.trim().replace(/^(?:#{1,6}|[-*+•–]|\d+[.)])[ \t]+/, '')}</span>
+            <SketchSourceText raw={line.raw} undecided={undecided.has(line.number)} />
           </div>
         </div>)}
       </div>
       <div className="tw-sketch-proposals">
         <div className="tw-sketch-review-head"><h2 className="tw-sketch-label">Slides it will make</h2><button className="tw-sketch-link" type="button" disabled={busy} onClick={otherWays}><ArrowLeft size={13} aria-hidden="true" />Other ways to break it up</button></div>
-        {[0, ...review.sections.map(section => section.key)].map(section => <div key={section} className="tw-sketch-proposal-section">
-          {section !== 0 && <h3 className="tw-sketch-label">{review.sections.find(part => part.key === section)?.text}</h3>}
+        {[{ key: 0, text: '' }, ...sections].map(({ key: section, text }) => <div key={section} className="tw-sketch-proposal-section">
+          {section !== 0 && <h3 className="tw-sketch-label">{text}</h3>}
           {slides.filter(slide => slide.section === section).map(slide => {
             const i = review.slides.findIndex(candidate => candidate.key === slide.key)
             const previous = review.slides[i - 1]

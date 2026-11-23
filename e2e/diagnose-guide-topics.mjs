@@ -82,7 +82,7 @@ try {
     await sheet.waitFor({ state: 'visible', timeout: 8000 })
     await sheet.locator('[data-open-example]').click()
     await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
-    record('the example vault opens with its start talk', await waitFor(async () => (await page.locator('.workspace-title').first().innerText().catch(() => '')) === 'The Saturday market', 15000))
+    record('the example vault opens with its start talk', await waitFor(async () => (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label', { timeout: 1000 }).catch(() => '')) === 'The Saturday market', 15000))
     await page.waitForSelector('[data-guide]', { timeout: 6000 })
 
     // How it works, state 08.
@@ -116,7 +116,7 @@ try {
     await page.locator('[data-topic-row="how.1"]').click()
     await page.locator('[data-topic-try-button]').click()
     await page.waitForTimeout(1200)
-    record('Try it on a topic whose talk is open here opens no second window', appWindows() === windowsBefore && (await page.locator('.workspace-title').first().innerText()) === 'The Saturday market', `${windowsBefore} -> ${appWindows()}`)
+    record('Try it on a topic whose talk is open here opens no second window', appWindows() === windowsBefore && (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label', { timeout: 1000 })) === 'The Saturday market', `${windowsBefore} -> ${appWindows()}`)
 
     // Try it: another talk opens in its own window.
     await page.locator('[data-topic-back]').click()
@@ -127,8 +127,8 @@ try {
     record('Try it on topic 5 opens a new window', second !== null && second !== page)
     if (second) {
       await second.waitForLoadState('domcontentloaded')
-      record('the new window holds Garden notes', await waitFor(async () => (await second.locator('.workspace-title').first().innerText().catch(() => '')) === 'Garden notes', 15000))
-      record('the start talk stays in the first window', (await page.locator('.workspace-title').first().innerText()) === 'The Saturday market')
+      record('the new window holds Garden notes', await waitFor(async () => (await second.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label', { timeout: 1000 }).catch(() => '')) === 'Garden notes', 15000))
+      record('the start talk stays in the first window', (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label', { timeout: 1000 })) === 'The Saturday market')
     }
     await page.bringToFront()
 

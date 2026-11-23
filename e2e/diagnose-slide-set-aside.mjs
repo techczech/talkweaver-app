@@ -26,7 +26,8 @@ try {
  const original=saved();const ref=heading=>({line:original.split('\n').indexOf(heading)+1,headingText:heading})
  const refs=['## First section','### Alpha','### Beta'].map(ref)
  const cut=cutBlocks(original,refs);assert(!('refused'in cut))
- await page.getByTestId('grid-toggle').click();await page.locator('.grid-cell[draggable="true"]').first().waitFor()
+ const openGrid=()=>page.getByTestId('grid-toggle').click()
+ await openGrid();await page.locator('.grid-cell[draggable="true"]').first().waitFor()
  for(const title of ['First section','Alpha','Beta'])await page.getByLabel(`Select ${title}`,{exact:true}).check()
  // Drives the actual workspace capture handler and rebindable command, with three cards selected.
  await page.locator('.grid-view').focus();await page.keyboard.press('Meta+Alt+s');await waitSaved(cut.text)
@@ -39,12 +40,15 @@ try {
  await page.locator('.grid-view').focus();await page.keyboard.press('Meta+z');await waitSaved(original)
  await page.getByText('In talk',{exact:true}).waitFor();assert.equal(state().items.length,1);pass('one Undo restores the byte-identical outline; the kept snapshot shows In talk')
  await page.locator('.grid-view').focus();await page.keyboard.press('Meta+Shift+z');await waitSaved(cut.text)
- // Dock so every click remains inside the hidden viewport.
+ // Dock for Insert. The dock opens in Slides because Grid fills the workspace.
  const dock=page.getByRole('button',{name:'Dock to the right',exact:true});if(await dock.count())await dock.click()
  await page.locator('.sp-card').first().click();await page.getByRole('button',{name:'Change place',exact:true}).click()
  await page.getByRole('button',{name:'At the start of the talk',exact:true}).click()
  await page.getByRole('button',{name:'Insert whole slide',exact:true}).click();await waitSaved(original)
  assert.equal(state().items[0].slide.slideId,'sect1');pass('Insert puts the section and both slides back byte-identically, retaining all ids')
+ // Float the Scratchpad so its cards are available to drag when Grid is open.
+ await page.getByRole('region',{name:'Slide Scratchpad',exact:true}).getByRole('button',{name:'Float',exact:true}).click()
+ await openGrid()
  await page.locator('.grid-view').focus();await page.keyboard.press('Meta+z');await waitSaved(cut.text)
  // Drop before the remaining root section; marker and expected insertion use the same SlidePlace.
  const targetRef={line:cut.text.split('\n').indexOf('## Last section')+1,title:'Last section',kind:'before'}

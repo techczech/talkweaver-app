@@ -91,13 +91,13 @@ try {
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End')
   const typedAt = Date.now()
   await page.keyboard.insertText(' scheduling regression')
-  await page.waitForTimeout(650)
+  await page.waitForTimeout(250)
   assert.equal(await app.evaluate(() => globalThis.__compileSchedule.length), 1,
     'typing outside the grid after a failed first compile stays debounced')
   await page.waitForFunction(() => !document.body.textContent.includes('Couldn’t compile this talk'))
   const typedCalls = await app.evaluate(() => globalThis.__compileSchedule)
   assert.equal(typedCalls.length, 2, 'the pending typed revision eventually compiles once')
-  assert.ok(typedCalls[1].at - typedAt >= 900, 'ordinary typing retains the full 900ms debounce')
+  assert.ok(typedCalls[1].at - typedAt >= 450, 'ordinary typing retains the full 450ms debounce')
   console.log('PASS failed first compile then ordinary typing: ' + (typedCalls[1].at - typedAt) + 'ms debounce')
   // Restore through the real shared history; allow its normal debounce/save before moving slides.
   await page.keyboard.press('Meta+z')

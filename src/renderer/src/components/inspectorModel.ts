@@ -192,7 +192,8 @@ export function inspectorModel(
   const preworkKind = null
   // Ticket 13: the Page width group is offered only on a slide with an embedded page and body text.
   const embedBesideText = slideHasEmbedBesideText(sourceMarkdown ?? row?.source_markdown ?? '')
-  const candidates = optionGroupsForSlide({ layoutName, headingLevel, hasChildren, preworkKind, embedBesideText })
+  const optionsLayout = row?.has_table && (layoutName == null || layoutName === 'list') ? 'table' : layoutName
+  const candidates = optionGroupsForSlide({ layoutName: optionsLayout, headingLevel, hasChildren, preworkKind, embedBesideText })
   // T32: applicability reads the DECIDED selection — for List style with no authored token that is
   // the deck's choice, so the treatment is offered exactly when the compiled list is an icon list.
   const deckDecided = (key: string): string | undefined => key === DECK_DECIDED_GROUP ? deckListStyle : undefined
@@ -216,7 +217,7 @@ export function inspectorModel(
   }))
   const groups = unresolved
     ? []
-    : candidates.filter(({ group }) => groupApplies(group, { headingLevel, hasChildren, layoutName, selectedTokens, preworkKind, embedBesideText }))
+    : candidates.filter(({ group }) => groupApplies(group, { headingLevel, hasChildren, layoutName: optionsLayout, selectedTokens, preworkKind, embedBesideText }))
   // ADR-0032 (round-3 A2–A6): a board's Poll section is its Board section — the columns, hints,
   // prompt, example and settings, read from the slide's own text.
   const isBoard = !unresolved && selectedTokens['poll-type'] === 'poll=board'

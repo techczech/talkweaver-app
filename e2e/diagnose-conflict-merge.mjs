@@ -24,6 +24,7 @@ import { tmpdir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
+const conflictBadgeTimeout = 60_000
 const SHOTS = process.env.TW_SHOTS_DIR
 if (SHOTS) mkdirSync(SHOTS, { recursive: true })
 
@@ -94,6 +95,7 @@ const E = talk('Stale talk')
 mkdirSync(userData, { recursive: true })
 writeFileSync(join(userData, 'config.json'), JSON.stringify({
   vaultRoot: vault,
+  openInView: 'outline',
   vaults: [{ id: 'vault-workshop', root: vault, open: true, order: 0 }]
 }, null, 2))
 
@@ -170,9 +172,12 @@ try {
   const aAct = activity(A.slug)
   record('…one Activity line: "Merged the conflict copy from MacBook Air"', aAct.length === 1 && aAct[0].title === 'Merged the conflict copy from MacBook Air' && aAct[0].detail.startsWith('Kept Mine; added slide 2 from MacBook Air after slide 2.'), JSON.stringify(aAct))
   await ensureTalksMode(page)
-  record('…the badge is gone', await until(async () => (await chip(A.title).count()) === 0, 8000))
-  const editorHas = await page.locator('.cm-content').first().innerText().catch(() => '')
-  record('…the open editor holds the merged text', editorHas.includes('none named process'))
+  record('…the badge is gone', await until(async () => await row(A.title).count() === 1 && await chip(A.title).count() === 0, conflictBadgeTimeout))
+  const editorAdopted = await page.waitForFunction(expected => {
+    const view = document.querySelector('.cm-content')?.cmTile?.root?.view
+    return view?.state.doc.toString() === expected
+  }, aOut, { timeout: 8000 }).then(() => true, () => false)
+  record('…the open editor holds the complete merged text', editorAdopted)
 
   // ── (B) keep Theirs, the talk closed ──
   await openCompare(B.title)
@@ -210,8 +215,8 @@ try {
   record('…no text lost', lostLines([gitMarked], cOut, cTrash).length === 0)
   record('…Activity: "Resolved the Git conflict"', activity(C.slug)[0]?.title === 'Resolved the Git conflict')
   await ensureTalksMode(page)
-  await page.waitForTimeout(2000) // folder watch + rescan
-  record('…the file on disk (not only the editor) holds the merge: the badge does not come back', !readFileSync(C.outlinePath, 'utf8').includes('<<<<<<<') && (await chip(C.title).count()) === 0)
+  const gitBadgeGone = await until(async () => await row(C.title).count() === 1 && await chip(C.title).count() === 0, conflictBadgeTimeout)
+  record('…the file on disk holds the merge and the talk has no conflict badge', gitBadgeGone && !readFileSync(C.outlinePath, 'utf8').includes('<<<<<<<'))
 
   // ── (D) Cancel writes nothing ── (the talks merged above were opened afterwards and may still be
   // saving their own open-time text: D's folder and D's slide versions are what Cancel could touch)

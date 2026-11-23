@@ -36,7 +36,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
-import { delimiter, dirname, extname, join, relative, resolve, sep } from 'node:path'
+import { basename, delimiter, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { liveWorkerDeployConfig } from '../src/main/live-worker-deploy-config.ts'
 import { blockingFileText, brokenJsonFileInOutput } from '../src/main/wrangler-failures.ts'
@@ -69,7 +69,14 @@ const ALLOWED_ELSEWHERE = [
 ]
 
 const systemRoot = windowsSystemRoot(process.env) // the same checked folder the launcher builds PATH from
-const { under, isAncestorOf } = pathRules(process.platform)
+const { under, same, isAncestorOf } = pathRules(process.platform)
+const installedModules = join(repo, 'node_modules')
+const dependencyRoot = realpathSync(installedModules)
+const sharedDependencies = !same(dependencyRoot, installedModules)
+const inSharedDependencies = (path) => sharedDependencies && under(path, dependencyRoot)
+const dependencyEntry = dirname(dependencyRoot)
+const dependencyStore = dirname(dependencyEntry)
+const remoteTestStore = sharedDependencies && basename(dependencyEntry).startsWith('deps.') && basename(dependencyStore) === 'deps'
 
 function freePort() {
   return new Promise((resolvePort, reject) => {
@@ -201,6 +208,17 @@ function check(name, file, { named = [], localPorts = [], minEvents = 50 } = {})
       const path = event.path
       if (path === file) continue
       if (under(path, repo) || under(path, tree.workDir) || named.some((dir) => under(path, dir))) continue
+      // remote-test links node_modules to its dependency store. The link supplies the same
+      // installed inputs, including native binaries; the store's other entries are ambient.
+      if (inSharedDependencies(path)) {
+        if (event.write) problems.push(`write to shared dependency store: ${event.op} ${path}`)
+        continue
+      }
+      if (sharedDependencies && isAncestorOf(path, dependencyRoot) &&
+          /^(?:promises\.)?(?:l?stat|realpath)(?:Sync)?(?:\.native)?$/.test(event.op ?? '')) continue
+      // yargs strips node_modules and treats the dotted deps.<key>-<digest> directory as a
+      // filename. Allow its directory listing, never access to other cached installations.
+      if (remoteTestStore && same(path, dependencyStore) && event.op === 'readdirSync') continue
       if (under(path, scratch)) {
         // Inside the throwaway machine but outside the run folder: only the folders leading to it.
         if (isAncestorOf(path, tree.workDir)) continue
@@ -214,7 +232,8 @@ function check(name, file, { named = [], localPorts = [], minEvents = 50 } = {})
       problems.push(`${event.kind} ${event.op ?? ''} ${path}${event.stack ? '\n' + event.stack : ''}`)
     } else if (event.kind === 'process') {
       // The app's Node, the bundled esbuild or workerd, or the system shell running wrangler's git probe.
-      const kind = classifyProcess(event, { platform: process.platform, execPath: process.execPath, appRoot: repo, systemRoot })
+      const bundledRoot = inSharedDependencies(event.file) ? dependencyRoot : repo
+      const kind = classifyProcess(event, { platform: process.platform, execPath: process.execPath, appRoot: bundledRoot, systemRoot })
       if (kind) started.add(kind)
       else problems.push(`process ${event.file} ${event.args.join(' ')}`)
     } else if (event.kind === 'connect') {
@@ -452,7 +471,7 @@ try {
       assert.deepEqual(started, [])
       assert.ok(trace.some((event) => event.kind === 'file' && under(event.path, distDir)), 'it read the shipped bundle')
       assert.ok(trace.some((event) => event.kind === 'connect' && event.to.endsWith(`:${stub.port}`)), 'and talked to the stand-in API')
-      assert.ok(!trace.some((event) => event.kind === 'file' && /(?:^|[\\/])(?:tsconfig|jsconfig|package)\.json$/.test(event.path) && !under(event.path, repo)), 'no tsconfig.json, jsconfig.json or package.json outside the app\'s own code is even looked at')
+      assert.ok(!trace.some((event) => event.kind === 'file' && /(?:^|[\\/])(?:tsconfig|jsconfig|package)\.json$/.test(event.path) && !under(event.path, repo) && !inSharedDependencies(event.path)), 'no tsconfig.json, jsconfig.json or package.json outside the app\'s own code is even looked at')
       // What was uploaded is the shipped bundle, byte for byte.
       for (const upload of stub.requests.filter((request) => request.method === 'PUT' && request.path === '/accounts/trace0account/workers/scripts/talkweaver-live-sessions')) {
         assert.equal(createHash('sha256').update(uploadedOf(upload).module.bytes).digest('hex'), manifest.files['index.js'].sha256, 'the uploaded bytes match the manifest')

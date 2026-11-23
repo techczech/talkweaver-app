@@ -156,6 +156,7 @@
   color: var(--ink);
 }
 .tw-sketch-option { display: flex; flex-direction: column; gap: 6px; text-align: start; padding: 12px; font: inherit; cursor: pointer; }
+.tw-sketch-option > .tw-sketch-chip { align-self: flex-start; max-width: 100%; }
 .tw-sketch-option > strong { font-size: 14.5px; }
 .tw-sketch-option:hover, .tw-sketch-option:focus-visible { border-color: var(--accent-text); }
 .tw-sketch-count, .tw-sketch-description { font-size: 12.5px; color: var(--text-2); }
@@ -187,6 +188,8 @@
 .tw-sketch-line.is-detail { padding-inline-start: 30px; color: var(--text-2); }
 .tw-sketch-line.is-title { font-weight: 600; }
 .tw-sketch-line.is-section { padding-inline-start: 0; font-weight: 700; }
+.tw-sketch-source-picture { max-width: 100%; }
+.tw-sketch-source-picture svg { flex: none; }
 .tw-sketch-line .is-undecided { background: var(--amber-bg); color: var(--ink); border-radius: 3px; padding: 1px 4px; font-style: italic; }
 .tw-sketch-cut {
   display: flex;

@@ -5,7 +5,10 @@
 // Usage: npm run build, then node e2e/diagnose-recording-countdown.mjs (SHOTS=<dir> for the pictures).
 import { _electron as electron } from 'playwright'
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
+import { rm } from 'node:fs/promises'
+import { once } from 'node:events'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const repo = resolve(import.meta.dirname, '..')
@@ -20,14 +23,18 @@ const cleanup = async () => {
   if (closing) {
     const proc = closing.process()
     await Promise.race([closing.close().catch(() => {}), new Promise((r) => setTimeout(r, 5000))])
-    try { proc?.kill('SIGKILL') } catch {}
+    if (proc && proc.exitCode === null && proc.signalCode === null) {
+      const exited = once(proc, 'exit')
+      proc.kill('SIGKILL')
+      await exited
+    }
   }
-  if (root) { rmSync(root, { recursive: true, force: true }); root = null }
+  if (root) { await rm(root, { recursive: true, force: true, maxRetries: 3 }); root = null }
 }
 const hardStop = setTimeout(async () => { log('FAIL: 120-second limit reached'); await cleanup(); process.exit(2) }, 120000)
 
 async function one(name, colour) {
-  root = mkdtempSync(join(repo, '.tw-countdown-e2e-')) // .tw-* is ignored by Git
+  root = mkdtempSync(join(tmpdir(), 'tw-countdown-e2e-'))
   const vault = join(root, 'vault'), talk = join(vault, 'fixture'), userData = join(root, 'userData')
   mkdirSync(talk, { recursive: true }); mkdirSync(userData, { recursive: true })
   const outline = join(talk, 'fixture-outline.md')

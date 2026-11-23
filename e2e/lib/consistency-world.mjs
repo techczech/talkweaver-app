@@ -15,7 +15,7 @@ export async function launchWorld({ width = 1280, height = 800, viewMode = 'mark
   const userData = join(scratch, 'userData'); const vault = join(scratch, 'vault')
   mkdirSync(userData, { recursive: true })
   cpSync(join(root, 'demo-vault'), vault, { recursive: true })
-  writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, editorViewMode: viewMode }))
+  writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: viewMode === 'plain' ? 'outline' : viewMode, slidesPanelView: 'outline' }))
   const env = { TW_E2E: '1', TW_REC_TEST: '1' }
   for (const n of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL']) if (process.env[n] !== undefined) env[n] = process.env[n]
   const app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: root, env, timeout: 60_000 })
@@ -45,10 +45,14 @@ export async function launchWorld({ width = 1280, height = 800, viewMode = 'mark
     rcTab: (tab) => page.locator(`[data-rc-tab="${tab}"] button`).first(),
     sideTab: (re) => page.locator('.sidebar-mode-btn').filter({ hasText: re }).first(),
     /** The presenter's window once it has appeared. */
-    async presenter() {
+    async presenter(previousWindows = new Set()) {
       for (let i = 0; i < 80; i += 1) {
-        const p = app.windows().find((w) => !w.isClosed() && /^file:.*\/vault\//.test(w.url()))
-        if (p) { await p.setViewportSize({ width, height }).catch(() => {}); await p.waitForTimeout(2500); return p }
+        const p = app.windows().find(w => !previousWindows.has(w) && !w.isClosed() && /^file:.*\/vault\//.test(w.url()))
+        if (p) {
+          await p.setViewportSize({ width, height }).catch(() => {})
+          await p.locator('#presenterCount').waitFor()
+          return p
+        }
         await page.waitForTimeout(150)
       }
       return null

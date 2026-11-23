@@ -41,7 +41,7 @@ writeFileSync(join(talkDir, 'scratchpad', 'scratchpad-state.json'), JSON.stringi
   { id: 'sp-chart', kind: 'file', file: 'chart.svg', addedAt: at, batch: { source: 'agent', at }, group: null, status: 'active' }]
 }, null, 2))
 const mode = process.env.TW_TEST_EDITOR_MODE ?? 'plain'
-writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, editorViewMode: mode }))
+writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: mode === 'plain' ? 'outline' : mode }))
 
 const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 delete env.ELECTRON_RUN_AS_NODE
@@ -68,7 +68,7 @@ try {
     await page.waitForFunction((w) => JSON.stringify([...document.querySelectorAll('.cm-plain-margin-slide .cm-plain-margin-word')].map((x) => x.textContent.trim().toLowerCase())) === JSON.stringify(w), want, { timeout: 15000 })
       .catch(async () => { throw new Error(`${what}: the margin labels read ${JSON.stringify(await marginSlides())}`) })
   }
-  // PRs 324/326 add the layout chip to each outline row; keep exact title/order and saved-file checks.
+  // The redesigned outline shows layout icons separately from the numbered titles.
   const outlineList = () => page.evaluate(() => [...document.querySelectorAll('.so-slide-no')].map((n) => n.parentElement.textContent.replace(/\s+/g, ' ').trim()))
   // The status bar settles: no in-flight ellipsis, then the count.
   const settledCount = async (n, what) => {
@@ -79,11 +79,11 @@ try {
   await page.locator('[data-talk-slug="target"]').first().dblclick()
   await page.locator('.cm-content').waitFor()
   await settledCount(3, 'after opening')
-  await page.getByRole('tab', { name: 'Slide outline', exact: true }).click()
+  await page.getByRole('tab', { name: 'Slides', exact: true }).click()
+  await page.getByRole('button', { name: 'Show slides as an outline' }).click()
   await page.locator('.so-slide-no').first().waitFor()
 
-  await page.locator('.toolbar-btn', { hasText: 'Insert' }).first().click()
-  await page.getByRole('menuitem', { name: /Slide Scratchpad/ }).click()
+  await page.getByTitle('Show the Slide Scratchpad', { exact: true }).click()
   // The panel floats (it opens beside the right sidebar, over the editor); drag it to the far right so the editor lines this walk clicks stay clear.
   {
     const head = await page.locator('.sp-head').boundingBox()
@@ -113,14 +113,21 @@ try {
   await page.waitForFunction(() => [...document.querySelectorAll('.so-slide-no')].some((n) => n.parentElement.textContent.includes('What is an agent?')))
   await settledCount(4, 'after the insert')
   await settledMargin(4, 'after the insert')
-  assert.deepEqual(await outlineList(), ['01OpeningStatement', '02What is an agent?Statement', '03MiddleStatement', '04ClosingStatement'])
+  assert.deepEqual(await outlineList(), ['01Opening', '02What is an agent?', '03Middle', '04Closing'])
   await page.locator('.sp-card', { hasText: 'What is an agent?' }).locator('.sp-inserted').waitFor()
   assert.equal(await page.locator('.sp-card', { hasText: 'What is an agent?' }).locator('.sp-inserted').innerText(), 'Inserted · ‘What is an agent?’')
   const marked = JSON.parse(readFileSync(join(talkDir, 'scratchpad', 'scratchpad-state.json'), 'utf8')).items[0]
   assert.equal(marked.insertedInto, 'What is an agent?')
 
   // One Undo with the focus in the editor: exactly that insert goes, the file is saved, counts and labels follow.
-  await page.locator('.cm-line').filter({ hasText: 'Closing body.' }).click()
+  // CodeMirror may virtualise the closing slide below the enlarged first block.
+  await page.evaluate(() => {
+    const view = document.querySelector('.cm-content')?.cmTile?.root?.view
+    const at = view.state.doc.toString().indexOf('Closing body.')
+    if (at < 0) throw new Error('Closing body is missing from the editor')
+    view.dispatch({ selection: { anchor: at }, scrollIntoView: true })
+    view.focus()
+  })
   await page.keyboard.press('ControlOrMeta+z')
   await page.waitForFunction(() => !document.querySelector('.cm-content')?.textContent.includes('What is an agent?'))
   await waitSaved((t) => !t.includes('What is an agent?'), 'the undo is saved')
@@ -128,7 +135,7 @@ try {
   await page.waitForFunction(() => ![...document.querySelectorAll('.so-slide-no')].some((n) => n.parentElement.textContent.includes('What is an agent?')))
   await settledCount(3, 'after the undo')
   await settledMargin(3, 'after the undo')
-  assert.deepEqual(await outlineList(), ['01OpeningStatement', '02MiddleStatement', '03ClosingStatement'])
+  assert.deepEqual(await outlineList(), ['01Opening', '02Middle', '03Closing'])
   await page.locator('.sp-card', { hasText: 'What is an agent?' }).locator('.sp-inserted').waitFor()
   assert.equal(await page.locator('.sp-card', { hasText: 'What is an agent?' }).locator('.sp-inserted').innerText(), 'Inserted before · not in the talk now')
 
@@ -136,7 +143,7 @@ try {
   await page.waitForFunction(() => document.querySelector('.sp-place-where')?.textContent === 'Inserts after slide 1 · ‘Opening’')
 
   // Mixed selected candidates: reverse tick order, one transaction, exact Undo/Redo.
-  await page.locator('.pane-btn[title="Grid"]').click()
+  await page.getByTestId('grid-toggle').click()
   await page.locator('.grid-view').waitFor()
   await page.getByLabel('Select Chart', { exact: true }).check()
   await page.getByLabel('Select What is an agent?', { exact: true }).check()
@@ -161,7 +168,7 @@ try {
   await waitSaved(t => t === original, 'the batch can be undone again')
   await page.waitForFunction(() => document.querySelector('.sp-place-where')?.textContent === 'Inserts after slide 1 · ‘Opening’')
 
-  await page.locator('[data-testid="slides-toggle"]').click()
+  await page.getByTestId(mode === 'plain' ? 'outline-toggle' : 'markdown-toggle').click()
 
   // An agent's SVG, visual only, at the chosen place: a new slide after Opening, copied into assets/, the card names
   // the slide by its title (a number would go stale), the agent's file untouched.

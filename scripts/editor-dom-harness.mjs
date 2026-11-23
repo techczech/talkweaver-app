@@ -31,10 +31,10 @@ const root=createRoot(document.getElementById('root'))
 window.writes=[]
 window.tw={talk:{readOutline:()=>Promise.resolve(source),writeOutline:async(p,text)=>{window.writes.push(text);return {ok:true,content:text}},outlineDiskVersion:async()=>null,acceptOutlineDiskVersion:async()=>({ok:true}),discardOutlineRecovery:async()=>true,outlineRecovery:async()=>null},vault:{onTalkMetaUpdated:()=>()=>{}},workFiles:{list:async()=>null},icons:{svg:async()=>null}}
 function Fixture(){
- return <Editor talk={{outlinePath:'/fixture.md',path:'/',slug:'fixture',title:'Fixture'}} content={source} viewMode={mode} onContentChange={()=>{}} registerEditorCommands={c=>window.cmd=c} registerInsert={f=>window.insertAtCaret=f} registerInsertObject={f=>window.insertObject=f}/>
+ return <Editor talk={{outlinePath:'/fixture.md',path:'/',slug:'fixture',title:'Fixture'}} content={source} viewMode={mode} onContentChange={()=>{}} onSectionChild={line=>window.sectionChild=line} registerEditorCommands={c=>window.cmd=c} registerInsert={f=>window.insertAtCaret=f} registerInsertObject={f=>window.insertObject=f}/>
 }
 window.view=()=>EditorView.findFromDOM(document.querySelector('.cm-editor'))
-window.mount=(text,nextMode)=>{source=text;mode=nextMode;serial++;window.writes=[];flushSync(()=>root.render(<Fixture key={serial}/>))}
+window.mount=(text,nextMode)=>{source=text;mode=nextMode;serial++;window.writes=[];window.sectionChild=null;flushSync(()=>root.render(<Fixture key={serial}/>))}
 window.setCaret=(anchor,head)=>{const v=window.view();v.focus();v.dispatch({selection:EditorSelection.single(anchor,head??anchor)})}
 window.shown=()=>{const v=window.view();const r=v.state.selection.main;const t=v.state.doc.toString();if(r.empty)return t.slice(0,r.head)+'|'+t.slice(r.head);return t.slice(0,r.from)+'['+t.slice(r.from,r.to)+']'+t.slice(r.to)}
 window.undoAll=()=>{const v=window.view();while(undoDepth(v.state)>0)undo(v)}

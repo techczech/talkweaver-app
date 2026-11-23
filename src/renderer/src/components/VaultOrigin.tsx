@@ -32,7 +32,7 @@ export default function VaultOrigin({ outlinePath, outlineContent }: { outlinePa
   ].filter(Boolean).join(' ')
   return (
     <section className="tw-vault-origin" aria-label="Where these come from" data-vault-origin>
-      <h3>Where these come from</h3>
+      <h3 className="tw-inspector-section-heading">Where these come from</h3>
       {rows.map((r) => (
         <div className="tw-vault-origin-row" key={r.key} data-origin-key={r.key} data-origin-source={r.source}>
           <span>{r.label}</span>
@@ -42,7 +42,7 @@ export default function VaultOrigin({ outlinePath, outlineContent }: { outlinePa
             : <span title="Yours, for this vault"><IcLock size={12} /></span>}
         </div>
       ))}
-      <p>{note}</p>
+      <p className="tw-inspector-group-note">{note}</p>
     </section>
   )
 }

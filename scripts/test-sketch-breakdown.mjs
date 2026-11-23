@@ -67,6 +67,13 @@ assert.equal(marked.count, 1)
 assert.match(marked.text, /Point &#123;id=used1\}/)
 assert.ok(marked.ids.every(id => id !== 'used1'))
 
+const automatic = planSketch('## Empty\n### A proposal\n- Make a plan\n## Also empty', 'main')
+assert.deepEqual(automatic.sections.map(section => section.text), ['Empty', 'A proposal', 'Also empty'])
+const automaticApply = planSketchApply(newTalk, { kind: 'start' }, { ...automatic, fates: {} })
+assert.ok(automaticApply.ok, automaticApply.error)
+assert.equal(automaticApply.count, 1)
+assert.deepEqual(readSlides(automaticApply.text).slides.map(slide => slide.title), ['A proposal', 'A proposal'])
+
 const twoSections = planSketch('## Money\n### Subscriptions\n- Keep the current rate\n## Garden\n### Seed swap\n- Bring spare seeds', 'marked')
 const withProposal = planSketchApply(start, { kind: 'after', line: 8, title: 'Keep me' }, {
   ...twoSections,

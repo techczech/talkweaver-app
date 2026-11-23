@@ -63,7 +63,7 @@ for (const [root, title, slide] of [
 }
 mkdirSync(join(wsGit, '.git'), { recursive: true })
 mkdirSync(userData, { recursive: true })
-writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: personal }, null, 2))
+writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: personal, openInView: 'outline' }, null, 2))
 
 await ensureFreshBuild(REPO)
 await using app = await electron.launch({ args: ['.', '--use-mock-keychain', '--user-data-dir=' + userData], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })

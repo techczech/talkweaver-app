@@ -10,6 +10,8 @@ import {
   closeCompletion,
   CompletionContext,
   pickedCompletion,
+  selectedCompletionIndex,
+  setSelectedCompletion,
   startCompletion,
   type Completion,
   type CompletionSection,
@@ -36,8 +38,11 @@ import { readOutlineObjectRegions } from '../../../shared/objects/outline-object
 import { nodeAtSourceLine, structureOf, subsectionOwner, type SectionKind } from '../../../shared/talk-structure'
 import type { ObjectInsertRequest } from '../../../shared/objects/insert-objects'
 
+export type HeadingCompletionKind = SectionKind | 'slide'
+export type HeadingCompletionSource = { from: number; text: string }
+
 export type TriggerCompleteOptions = {
-  onSectionHeading?: (kind: SectionKind, heading: { from: number; text: string }) => void
+  onNewHeading?: (kind: HeadingCompletionKind, heading: HeadingCompletionSource) => void
   isMarkdown?: () => boolean
   onInsertObject?: (
     kind: 'chart' | 'mermaid' | 'svg',
@@ -196,13 +201,45 @@ function backToInlineEntries(view: EditorView): boolean {
 }
 
 function inlineOptionKeys(options: TriggerCompleteOptions): Extension {
+  // CodeMirror initially highlights the first item. Track explicit navigation for this menu.
+  const navigatedHeadingMenus = new WeakSet<readonly Completion[]>()
+  const moveHeadingSelection = (step: number) => (view: EditorView): boolean => {
+    const completions = currentCompletions(view.state)
+    const selected = selectedCompletionIndex(view.state)
+    if (selected === null || completions[selected]?.type !== 'new-heading') return false
+    const next = (selected + step + completions.length) % completions.length
+    navigatedHeadingMenus.add(completions)
+    // This menu is already open. Move immediately, even inside CodeMirror's opening delay.
+    view.dispatch({ effects: setSelectedCompletion(next) })
+    return true
+  }
+  const runHeadingCompletion = (view: EditorView, tab: boolean): boolean => {
+    const completions = currentCompletions(view.state)
+    const selected = selectedCompletionIndex(view.state)
+    if (selected === null) return false
+    const completion = completions[selected]
+    if (completion?.type !== 'new-heading') return false
+    const caret = view.state.selection.main
+    const line = view.state.doc.lineAt(caret.head)
+    const bareSlideHeading = caret.empty && caret.head === line.to && line.text === '### '
+    if (!bareSlideHeading) return !tab && acceptCompletion(view)
+    if (!tab && !navigatedHeadingMenus.has(completions)) {
+      // Close the default completion before falling through to the outliner's heading Enter.
+      closeCompletion(view)
+      return false
+    }
+    if (view.state.readOnly || view.composing || view.compositionStarted || typeof completion.apply !== 'function') return false
+    // Tab and an arrow-selected Enter are explicit, even within the opening delay.
+    completion.apply(view, completion, line.from, line.to)
+    return true
+  }
+
   return Prec.highest(keymap.of([
   { key: 'Escape', run: backToInlineEntries },
-  {
-    key: 'Enter',
-    run: (view) => currentCompletions(view.state).some(completion => completion.type === 'section-heading')
-      && acceptCompletion(view)
-  },
+  { key: 'ArrowDown', run: moveHeadingSelection(1) },
+  { key: 'ArrowUp', run: moveHeadingSelection(-1) },
+  { key: 'Enter', run: view => runHeadingCompletion(view, false) },
+  { key: 'Tab', run: view => runHeadingCompletion(view, true) },
   {
     key: 'Backspace',
     run: (view) => {
@@ -379,31 +416,33 @@ export function triggerCompleteExtension(options: TriggerCompleteOptions = {}): 
     autocompletion({
       override: [(context) => {
         const line = context.state.doc.lineAt(context.pos)
-        if (options.isMarkdown?.() && options.onSectionHeading && context.pos === line.to &&
+        if (options.isMarkdown?.() && options.onNewHeading && context.pos === line.to &&
             (line.text === '## ' || line.text === '### ')) {
           const text = context.state.doc.toString()
           const regions = readOutlineObjectRegions(text)
           const i = line.number - 1
           if (regions.kinds[i] !== 'outline' || regions.unclosedComments.some(comment => comment.line <= i)) return null
-          const kind = line.text === '## ' ? 'section' : 'subsection'
-          if (kind === 'subsection') {
+          const kinds: HeadingCompletionKind[] = []
+          if (line.text === '## ') kinds.push('section')
+          else {
+            kinds.push('slide')
             const tree = structureOf(text)
             const parent = nodeAtSourceLine(tree, line.number - 1)
-            if (!parent || !subsectionOwner(tree, parent.line + 1)) return null
+            if (parent && subsectionOwner(tree, parent.line + 1)) kinds.push('subsection')
           }
           return {
             from: line.from,
             filter: false,
-            options: [{
-              label: kind === 'section' ? 'New section' : 'New subsection',
-              type: 'section-heading',
+            options: kinds.map(kind => ({
+              label: { section: 'New section', subsection: 'New subsection', slide: 'New slide' }[kind],
+              type: 'new-heading',
               apply: (view) => {
                 const current = view.state.doc.lineAt(view.state.selection.main.head)
                 if (current.from !== line.from || current.text !== line.text) return
                 closeCompletion(view)
-                options.onSectionHeading?.(kind, { from: line.from, text: line.text })
+                options.onNewHeading?.(kind, { from: line.from, text: line.text })
               }
-            }]
+            }))
           }
         }
         return triggerSource(context, options)

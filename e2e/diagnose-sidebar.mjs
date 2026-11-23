@@ -124,7 +124,7 @@ const session = {
 }
 mkdirSync(join(tempVault, '_PRESENTATIONS', 'c10-beta'), { recursive: true })
 writeFileSync(join(tempVault, '_PRESENTATIONS', 'c10-beta', `${session.id}.json`), JSON.stringify(session, null, 2), 'utf8')
-writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault }, null, 2), 'utf8')
+writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault, openInView: 'outline', slidesPanelView: 'outline' }, null, 2), 'utf8')
 writeFileSync(join(userDataDir, 'search-index.json'), JSON.stringify(searchIndex), 'utf8')
 
 await ensureFreshBuild(REPO)
@@ -166,11 +166,13 @@ try {
   record('⌘⇧O switches to the Slide outline search with focus', outlineFocused)
 
   const beforeLine = (await activeEditorText() || '').trim()
+  await page.getByLabel('Search the slide outline').fill('Method')
+  await page.locator('.so-slide:not(.so-row--dim)').filter({ hasText: 'Method' }).waitFor()
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Enter')
   const jumped = await waitFor(async () => {
     const text = ((await activeEditorText()) || '').trim()
-    return text !== beforeLine && /## Talk|### Opening/.test(text)
+    return text !== beforeLine && text === '### Method'
   }, 5000)
   record('↓ + Enter in Slide outline jumps the editor cursor', jumped, `before=${beforeLine} after=${((await activeEditorText()) || '').trim()}`)
 
@@ -221,7 +223,7 @@ try {
 
   await page.locator('.cm-content').first().click()
   const outlineTabActive = await waitFor(
-    async () => (await page.getByRole('tab', { name: 'Slide outline', exact: true }).getAttribute('aria-selected')) === 'true',
+    async () => (await page.getByRole('tab', { name: 'Slides', exact: true }).getAttribute('aria-selected')) === 'true',
     5000
   )
   const talksPanelGone = await waitFor(async () => (await page.locator('.tl-panel').count()) === 0, 3000)

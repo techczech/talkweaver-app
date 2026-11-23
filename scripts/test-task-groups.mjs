@@ -5,7 +5,7 @@
 //     matches the registries: same ids, labels, groups, sub-groups, except the listed placements;
 //   - every command is either in the editor palette or on the written exclusion list; every
 //     presenter command is in the presenter palette or on its written list;
-//   - the count per group is derived and equals the map plus the listed placements.
+//   - the count per group covers all registered commands and unkeyed presenter entries.
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -25,211 +25,20 @@ const map = JSON.parse(readFileSync(new URL('../docs/design/2026-10-09-onboardin
 const results = []
 const test = (name, fn) => { try { fn(); results.push([true, name]) } catch (error) { results.push([false, `${name}: ${error.message}`]) } }
 
-// Commands the map leaves out, or marks "Did not fit": placed by the builder from the map's
-// neighbours, reported to the owner. Id -> [task, subgroup].
-const BUILDER_PLACED = {
-  'new-sketch': ['Reuse slides', 'Slide Scratchpad'],
-  'view-panel-previews': ['See the talk', 'Views'],
-  'view-panel-outline': ['See the talk', 'Views'],
-  'view-slide-tab-pages': ['See the talk', 'Views'],
-  'view-slide-tab-list': ['See the talk', 'Views'],
-  'view-slide-panel': ['See the talk', 'Sidebar and outline search'],
-  'split-pasted-picture-row': ['Build a slide', 'Images and icons'],
-  'paste-picture': ['Build a slide', 'Images and icons'],
-  'duplicate-slide': ['Write the outline', 'Reorder slides and items'],
-  'move-current-slide-up': ['Write the outline', 'Reorder slides and items'],
-  'move-current-slide-down': ['Write the outline', 'Reorder slides and items'],
-  'edit-speaker-notes': ['Build a slide', 'Components'],
-  'welcome-slide': ['Manage talks', 'Talks panel'],
-  'welcome-outline': ['Manage talks', 'Talks panel'],
-  'welcome-markdown': ['Manage talks', 'Talks panel'],
-  'present-slide-window': ['Present', 'Open presenter and audience'],
-  'app.view-plain': ['See the talk', 'Views'],
-  'app.view-markdown': ['See the talk', 'Views'],
-  'presenter.record-flag': ['Present', 'Recording'],
-  'pathway.delete': ['Shape the talk', 'Pathways'],
-  'add-to-pathway': ['Shape the talk', 'Pathways'],
-  'present-pathway': ['Shape the talk', 'Pathways'],
-  'edit-image': ['Build a slide', 'Images and icons'],
-  'tools-animated-video': ['Share', 'Video'],
-  'vault-gallery': ['Manage talks', 'Vaults'],
-  // The recording panel's keys (slice 3a, 2026-11-11): beside Studio's sidebar key.
-  'studio.trim-start': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.trim-end': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.trim-undo': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.trim-redo': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-play': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-cut': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-previous-word': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-next-word': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-extend-previous': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-extend-next': ['Manage talks', 'Importer, Studio, Runs'],
-  // The recording cluster's Start again and Microphone (2026-11-14): each control in the cluster
-  // runs a listed command; beside Start, Pause and Stop recording.
-  'presenter-palette.record-again': ['Present', 'Recording'],
-  'presenter-palette.record-microphone': ['Present', 'Recording'],
-  // Return Live (freeze and mark on a live web page, 2026-10-28): beside Pointer and Pen in Display modes.
-  'presenter-palette.return-live': ['Present', 'Display modes'],
-  // Object cards (ADR-0042, 2026-10-28): beside the other object keys in the map's Objects.
-  'editor.object-expand': ['Build a slide', 'Objects'],
-  'editor.object-discard': ['Build a slide', 'Objects'],
-  // Backspace or Delete on a selected object deletes it whole (owner, 15 Nov 2026).
-  'editor.object-delete': ['Build a slide', 'Objects'],
-  'editor.object-row-up': ['Build a slide', 'Objects'],
-  'editor.object-row-down': ['Build a slide', 'Objects'],
-  'editor.delete-comment': ['Build a slide', 'Objects'],
-  'editor.insert-notes': ['Build a slide', 'Objects'],
-  // Insert speaker notes (ADR-0042 completion, 2026-10-28): in the Insert registry beside the other components.
-  'insert-component-notes': ['Build a slide', 'Components'],
-  // Capture embed… (2026-10-27): beside Insert HTML page… in the map's Components.
-  'capture-embed': ['Build a slide', 'Components'],
-  'save-offline-page': ['Build a slide', 'Components'],
-  // Slide Scratchpad (2026-10-27): a panel and its item actions, beside Slides from other talks.
-  'scratchpad-panel': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-dock': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-float': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-collapse': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-add-slides': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-keep': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-reject': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-move-back': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-move-to-group': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-new-group': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-remove-missing': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-insert-slide': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-insert-visual': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-compare': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-change-place': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-move-up': ['Reuse slides', 'Slide Scratchpad'],
-  'scratchpad-move-down': ['Reuse slides', 'Slide Scratchpad'],
-  'research-panel': ['Shape the talk', 'Research folder'],
-  'research-find': ['Shape the talk', 'Research folder'],
-  'research-insert': ['Shape the talk', 'Research folder'],
-  'research-make-slide': ['Shape the talk', 'Research folder'],
-  'research-open': ['Shape the talk', 'Research folder'],
-  'research-previous': ['Shape the talk', 'Research folder'],
-  'research-next': ['Shape the talk', 'Research folder'],
-  'research-scope': ['Shape the talk', 'Research folder'],
-  'research-close': ['Shape the talk', 'Research folder'],
-  'research-copy-reference': ['Shape the talk', 'Research folder'],
-  'research-reveal': ['Shape the talk', 'Research folder'],
-  'research-source': ['Shape the talk', 'Research folder'],
-  'research-used-in': ['Shape the talk', 'Research folder'],
-  'research-scope-talk': ['Shape the talk', 'Research folder'],
-  'research-scope-research': ['Shape the talk', 'Research folder'],
-  'research-scope-everything': ['Shape the talk', 'Research folder'],
-  'research-rename': ['Shape the talk', 'Research folder'],
-  'research-change-kind': ['Shape the talk', 'Research folder'],
-  'research-delete': ['Shape the talk', 'Research folder'],
-  'research-move': ['Shape the talk', 'Research folder'],
-  'research-copy': ['Shape the talk', 'Research folder'],
-  'research-insert-here': ['Shape the talk', 'Research folder'],
-  'research-retry': ['Shape the talk', 'Research folder'],
-  // Plain editing view ticket 01: the two editor tabs sit with the other views.
-  'view-plain': ['See the talk', 'Views'],
-  'view-markdown': ['See the talk', 'Views'],
-  // Plain editing view ticket 04: the margin menus' palette entries.
-  'new-section': ['Write the outline', 'Headings and levels'],
-  'new-subsection': ['Write the outline', 'Headings and levels'],
-  'make-section': ['Write the outline', 'Headings and levels'],
-  'select-several-slides': ['Write the outline', 'Headings and levels'],
-  'change-heading-level': ['Write the outline', 'Headings and levels'],
-  'change-slide-layout': ['Build a slide', 'Layouts'],
+// Exceptions to the original design snapshot. New commands declare their group in task-groups.ts.
+const KNOWN_GROUP_DIFFERENCES = {
   'undo': ['Write the outline', 'Undo and redo'],
   'redo': ['Write the outline', 'Undo and redo'],
-  'format-strikethrough': ['Write the outline', 'Format text'],
-  'format-underline': ['Write the outline', 'Format text'],
   'app.context-menu': ['Set up TalkWeaver', 'Command palette'],
-  'get-started-show-example': ['Set up TalkWeaver', 'Get started'],
-  'get-started-open-guide': ['Set up TalkWeaver', 'Get started'],
-  'get-started-show-guide-button': ['Set up TalkWeaver', 'Get started'],
-  // Update notices (ADR-0041): not in the 2026-10-09 map; placed under Set up TalkWeaver beside Settings.
-  'check-for-updates': ['Set up TalkWeaver', 'Updates'],
-  'whats-new': ['Set up TalkWeaver', 'Updates'],
-  'settings-setup-folder': ['Set up TalkWeaver', 'Settings'],
-  // Knowledge step two: the research folder beside a talk.
-  'research-capture': ['Shape the talk', 'Research folder'],
-  'research-reveal-folder': ['Shape the talk', 'Research folder'],
   'presenter.command-palette': ['Present', 'Help and commands'],
-  'presenter.help': ['Present', 'Help and commands'],
-  'presenter.rebind': ['Present', 'Help and commands'],
-  // Ticket 10: the Guide column's command in the presenter, on C.
-  'presenter.guide': ['Present', 'Help and commands'],
-  'presenter.pointer': ['Present', 'Display modes'],
-  'presenter.pen': ['Present', 'Display modes'],
-  'presenter.pen-tool': ['Present', 'Display modes'],
-  'presenter.ink-undo': ['Present', 'Display modes'],
-  'presenter.ink-clear': ['Present', 'Display modes'],
-  'presenter.ink-clear-all': ['Present', 'Display modes'],
-  'presenter.embed-fullscreen': ['Present', 'Display modes'],
-  'presenter-palette.pen-freehand': ['Present', 'Display modes'],
-  'presenter-palette.pen-arrow': ['Present', 'Display modes'],
-  'presenter-palette.pen-rectangle': ['Present', 'Display modes'],
-  // Collapse all / Expand all sections (the Slides outline and the grid): not in the map, placed with the views.
-  'outline-collapse-all': ['See the talk', 'Views'],
-  'outline-expand-all': ['See the talk', 'Views'],
-  // Move slide to… / Move section to… (slide and section context menus, the palette): not in the map, placed with reordering.
-  'move-slide-to': ['Write the outline', 'Reorder slides and items'],
-  'move-section-to': ['Write the outline', 'Reorder slides and items'],
-  'select-section': ['Write the outline', 'Reorder slides and items'],
-  'clear-slide-selection': ['Write the outline', 'Reorder slides and items'],
-  'move-selected-slides-to': ['Write the outline', 'Reorder slides and items'],
-  // Set aside in Scratchpad (slide handling 3): a command in the Slides menu and the palette, not in the map, placed with reordering.
-  'set-aside-slides': ['Write the outline', 'Reorder slides and items'],
-  // Search in the grid and the outline (slide handling 2): the grid's search box and Next / Previous result, with their keys.
-  'search-slides-grid': ['See the talk', 'Sidebar and outline search'],
-  'search-next': ['See the talk', 'Sidebar and outline search'],
-  'search-previous': ['See the talk', 'Sidebar and outline search'],
-  // Shift-Enter in a quotation: a key added after the map was drawn, placed with the list keys.
-  'editor.quote-paragraph': ['Write the outline', 'Lists'],
-  // Work files ticket 30: the Tools window's commands and the two Attach commands, placed with the Run, Share and Present neighbours.
-  'tools-view-runs': ['Manage talks', 'Runs, pages and work files'],
-  // Consistency batch 3 (R5): History and Sessions are one Runs view; the sub-group reads Runs.
-  studio: ['Manage talks', 'Importer, Studio, Runs'],
-  history: ['Manage talks', 'Importer, Studio, Runs'],
-  importer: ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.sidebar-toggle': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.trim-start': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.trim-end': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.trim-undo': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.trim-redo': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-play': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-cut': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-previous-word': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-next-word': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-extend-previous': ['Manage talks', 'Importer, Studio, Runs'],
-  'studio.editor-extend-next': ['Manage talks', 'Importer, Studio, Runs'],
-  'importer.flagged': ['Manage talks', 'Importer, Studio, Runs'],
-  'importer.search': ['Manage talks', 'Importer, Studio, Runs'],
-  'importer.apply': ['Manage talks', 'Importer, Studio, Runs'],
-  'importer.reset': ['Manage talks', 'Importer, Studio, Runs'],
-  'importer.views': ['Manage talks', 'Importer, Studio, Runs'],
-  runs: ['Manage talks', 'Importer, Studio, Runs'],
-  'plan-run': ['Shape the talk', 'Plan a Run'],
-  'tools-view-sessions': ['Manage talks', 'Runs, pages and work files'],
-  'tools-view-published': ['Manage talks', 'Runs, pages and work files'],
-  'tools-view-workfiles': ['Manage talks', 'Runs, pages and work files'],
-  'tools-open-run': ['Manage talks', 'Runs, pages and work files'],
-  'tools-plan-run': ['Shape the talk', 'Plan a Run'],
-  'tools-edit-plan': ['Shape the talk', 'Plan a Run'],
-  'tools-plan-like-this': ['Shape the talk', 'Plan a Run'],
-  'tools-new-work-file': ['Shape the talk', 'Work files'],
-  'attach-prework': ['Shape the talk', 'Work files'],
-  'attach-postwork': ['Shape the talk', 'Work files'],
-  'tools-publish': ['Share', 'Publish'],
-  'tools-unpublish': ['Share', 'Publish'],
-  'tools-copy-link': ['Share', 'Publish'],
-  'tools-copy-invitation': ['Share', 'Publish'],
-  'tools-go-live': ['Present', 'Live audience, polls and questions'],
-  // Quote forms (ADR-0038): "Quote form: Tweet" and its six siblings, the palette's way to set a quote slide's form.
-  'quote-form-auto': ['Build a slide', 'Layouts'],
-  'quote-form-plain': ['Build a slide', 'Layouts'],
-  'quote-form-tweet': ['Build a slide', 'Layouts'],
-  'quote-form-video': ['Build a slide', 'Layouts'],
-  'quote-form-book': ['Build a slide', 'Layouts'],
-  'quote-form-paper': ['Build a slide', 'Layouts'],
-  'quote-form-web': ['Build a slide', 'Layouts']
+  'presenter.help': ['Present', 'Help and commands']
 }
+const CURRENT_SUBGROUP_NAMES = {
+  'Views (slides, grid, strip)': 'Views',
+  'Importer, Studio, History': 'Importer, Studio, Runs',
+  'Plan a run': 'Plan a Run'
+}
+
 // Map records whose label differs from the registry's (value = the registry's label). Ticket 03: ⌘K is
 // Actions here, so the map's "Context menu" reads "Actions here" in the registry.
 // 'icon-picker': the palette names it "Insert icon…" since plain view ticket 13 (Command-I puts an
@@ -299,15 +108,10 @@ test('the map matches the registries: ids, labels, groups and sub-groups', () =>
     assert(registryLabels.has(record.id), `map record ${record.id} is in no registry`)
     const known = KNOWN_LABEL_DIFFERENCES[record.id]
     assert.equal(registryLabels.get(record.id), known ?? record.label, `label of ${record.id}`)
-    if (BUILDER_PLACED[record.id]) continue
-    assert.deepEqual([...TASK_GROUP_TABLE[record.id]], [record.task, record.subgroup === 'Views (slides, grid, strip)' ? 'Views' : record.subgroup], `group of ${record.id}`)
+    const placement = KNOWN_GROUP_DIFFERENCES[record.id] ??
+      [record.task, CURRENT_SUBGROUP_NAMES[record.subgroup] ?? record.subgroup]
+    assert.deepEqual(TASK_GROUP_TABLE[record.id], placement, `group of ${record.id}`)
   }
-  for (const [id, placed] of Object.entries(BUILDER_PLACED)) assert.deepEqual([...TASK_GROUP_TABLE[id]], placed, `builder placement of ${id}`)
-})
-
-test('every registry command and presenter entry without a key is in the map or a builder placement', () => {
-  const mapIds = new Set(map.records.map((record) => record.id))
-  for (const id of registryLabels.keys()) assert(mapIds.has(id) || BUILDER_PLACED[id], `${id} is neither mapped nor placed`)
 })
 
 test('every command is in the editor palette or on the written exclusion list', () => {
@@ -335,17 +139,14 @@ test('every presenter command is in the presenter palette or on its written list
   for (const id of Object.keys(KEYS_NOT_IN_PALETTE)) assert(SHORTCUT_REGISTRY.some((row) => row.id === id), `${id} is not a presenter key`)
 })
 
-test('the count per task group is derived and equals the map plus the builder\'s placements', () => {
-  const counts = taskGroupCounts()
+test('each group count includes every assigned command or unkeyed presenter entry once', () => {
   const expected = Object.fromEntries(TASK_GROUPS.map((group) => [group, 0]))
-  for (const record of map.records.filter((r) => r.class === 'command' && !BUILDER_PLACED[r.id])) expected[record.task] += 1
-  for (const [id, [task]] of Object.entries(BUILDER_PLACED)) {
-    // These two shortcut rows are carried by the existing view commands.
-    if (id === 'app.view-plain' || id === 'app.view-markdown') continue
-    expected[task] += 1
+  for (const id of registryLabels.keys()) {
+    if (Object.hasOwn(SURFACE_KEYS, id)) continue
+    assert(Object.hasOwn(TASK_GROUP_TABLE, id), `${id}: add a placement in src/shared/task-groups.ts`)
+    expected[TASK_GROUP_TABLE[id][0]] += 1
   }
-  assert.deepEqual(counts, expected)
-  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 340) // ADR-0045 adds the Sketch entry to Insert.
+  assert.deepEqual(taskGroupCounts(), expected)
 })
 
 test('a chord becomes the key event that matches it', () => {

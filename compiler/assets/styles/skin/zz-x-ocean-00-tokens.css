@@ -27,6 +27,10 @@
   --look-ground-neutral: #F2F4F7;
   --look-hairline: #D5DBE3;
   --look-line: 3px;                             /* figure lines */
+  /* the three further strengths a pie of four or more slices draws with (zz-x-ocean-40-pie.css) */
+  --look-pie-mid: #5B9BD8;
+  --look-pie-pale: #A9CBEE;
+  --look-pie-dark: #0A3F70;
 
   /* type: the deck's own faces until the typeface round decides (open decision; default today's) */
   --look-face-display: var(--sans);

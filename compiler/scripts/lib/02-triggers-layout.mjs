@@ -152,7 +152,8 @@ export function parseHeadingAttrs(rawTitle) {
         // value may contain spaces). Kept verbatim — explicit form is unchanged by the resolver.
         const key = tok.slice(0, eq);
         const value = normaliseTriggerValue(key, tok.slice(eq + 1));
-        setKey(key, value);
+        // Visibility is independent of placement, even across separate Trigger lines.
+        setKey(key === "title" && (value === "show" || value === "compact") ? "titleDisplay" : key, value);
         validateExplicitToken(key, value, "equals", warnings);
         continue;
       }
@@ -286,12 +287,23 @@ export const OCEAN_DEEP = "#0D5A9E";
 export const OCEAN_LIGHT = "#E8F1FC";
 export const OCEAN_COMPANION = "#FF9F1C";
 
+// Forest and Slate (docs/design/2026-11-23-forest-slate-palettes): the Ocean look in another main colour. The slide
+// structure, the amber companion, the neutrals and the five section leads are Ocean's; only the three strengths of the
+// main colour differ (and the pie strengths and Slate's key-word colour, in skin/zz-x-ocean-80-palettes.css).
+export const LOOK_PALETTES = {
+  forest: { name: "forest", accent: "#0F766E", tint: "#E4F3F0", deep: "#0A5650" },
+  slate: { name: "slate", accent: "#334155", tint: "#EBEFF5", deep: "#1E293B" },
+};
+const LOOK_PALETTE_LIST = Object.values(LOOK_PALETTES);
+
 /** The second strength of any main colour: 22% of the way to black (Ocean gives #0E5A99, pinned to the
  *  locked #0D5A9E). Deep enough to carry white type wherever the main colour does. */
 export function deepStrengthOf(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? "").trim());
   if (!m) return OCEAN_DEEP;
   if (m[1].toLowerCase() === OCEAN_MAIN.slice(1).toLowerCase()) return OCEAN_DEEP;
+  const pinned = LOOK_PALETTE_LIST.find((entry) => entry.accent.slice(1).toLowerCase() === m[1].toLowerCase());
+  if (pinned) return pinned.deep;
   const n = parseInt(m[1], 16);
   const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => Math.round(c * 0.78));
   return `#${ch.map((c) => c.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
@@ -302,6 +314,8 @@ export function lightStrengthOf(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex ?? "").trim());
   if (!m) return OCEAN_LIGHT;
   if (m[1].toLowerCase() === OCEAN_MAIN.slice(1).toLowerCase()) return OCEAN_LIGHT;
+  const pinned = LOOK_PALETTE_LIST.find((entry) => entry.accent.slice(1).toLowerCase() === m[1].toLowerCase());
+  if (pinned) return pinned.tint;
   const n = parseInt(m[1], 16);
   const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => Math.round(255 - (255 - c) * 0.09));
   return `#${ch.map((c) => c.toString(16).padStart(2, "0")).join("")}`.toUpperCase();
@@ -325,7 +339,12 @@ const OCEAN_NAMED = [
 
 /** Which look a model palette draws: "ocean" (the 0.44 default, also `bold`) or "classic". */
 export function deckLookForPalette(palette = "") {
-  return palette === "ocean" || palette === "ocean-bold" ? "ocean" : "classic";
+  return palette === "ocean" || palette === "ocean-bold" || palette in LOOK_PALETTES ? "ocean" : "classic";
+}
+
+/** The named palette of the ocean look a model palette draws in ("forest" | "slate"), or "" for Ocean itself. */
+export function lookPaletteFor(palette = "") {
+  return palette in LOOK_PALETTES ? palette : "";
 }
 
 /** The companion level of the ocean look: "accent" (default) or "bold" (`palette: bold`). */
@@ -335,11 +354,18 @@ export function companionLevelForPalette(palette = "") {
 
 // Map a deck-level palette name to its section-accent cycle. Unknown / unset → default.
 export function sectionAccentsForPalette(palette) {
+  if (palette in LOOK_PALETTES) return [LOOK_PALETTES[palette]];
   if (deckLookForPalette(palette) === "ocean") return SECTION_ACCENTS_OCEAN;
   return palette === "green" ? SECTION_ACCENTS_GREEN : SECTION_ACCENTS;
 }
 
 export function sectionAccentMapForPalette(palette = "") {
+  if (palette in LOOK_PALETTES) {
+    // The palette's own name and "cobalt" (the name Deck settings writes) are its main colour; "ocean" stays Ocean
+    // blue and the other names keep their hue.
+    const own = LOOK_PALETTES[palette];
+    return new Map([...OCEAN_NAMED.map((pair) => [pair.name, pair]), [own.name, own], ["cobalt", { ...own, name: "cobalt" }]]);
+  }
   if (deckLookForPalette(palette) === "ocean") return new Map(OCEAN_NAMED.map((pair) => [pair.name, pair]));
   return new Map(sectionAccentsForPalette(palette).map((pair) => [pair.name, pair]));
 }
@@ -392,7 +418,7 @@ export function extraHuesForAccent(skin, palette = "") {
   // The ocean look colours by count in ONE hue family (Dominik, round 4/5 verdicts: never three unrelated
   // hues): the second element takes the deep strength, the third the main colour again.
   if (deckLookForPalette(palette) === "ocean") {
-    const main = skin?.accent || OCEAN_MAIN;
+    const main = skin?.accent || sectionAccentsForPalette(palette)[0].accent;
     const deep = skin?.deep || deepStrengthOf(main);
     const tint = skin?.tint || lightStrengthOf(main);
     return [{ name: `${skin?.name || "ocean"}-deep`, accent: deep, tint }, { name: skin?.name || "ocean", accent: main, tint }];

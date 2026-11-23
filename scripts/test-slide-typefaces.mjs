@@ -4,9 +4,10 @@ import {prepareSource} from '../compiler/scripts/lib/08-source-adapters.mjs'
 import {extractSlides,extractStyles} from '../compiler/scripts/lib/04-html-extraction.mjs'
 const file=new URL('./fixtures/ocean-look/ten-kinds-outline.md',import.meta.url)
 const source=readFileSync(file,'utf8')
-for(const palette of ['', 'classic','bold','green']) for(const face of ['', 'inter','serif','geist','trebuchet','gill-sans','verdana']) {
+for(const palette of ['', 'classic', 'bold', 'forest', 'slate', 'green']) for(const face of ['', 'inter','serif','geist','trebuchet','gill-sans','verdana']) {
  const text=source.replace('---\n',`---\npalette: ${palette}\n${face ? `typeface: ${face}\n`:''}`)
  const model=await prepareSource(file.pathname,text,'typefaces',statSync(file))
+ if (palette) assert.ok(!model.warnings.some(w => w.startsWith('palette-unknown:')), palette)
  assert.equal(model.deckFont||'',face)
  for(const slide of extractSlides(String(model.fullHtml))) {
   assert.equal(slide.html.match(/data-deck-font="([^"]+)"/)?.[1] || '', face, 'omitted typeface keeps the existing slide style')
@@ -15,7 +16,7 @@ for(const palette of ['', 'classic','bold','green']) for(const face of ['', 'int
  assert.equal(styles.includes('data:font/woff2;base64,'), ['inter','serif','geist'].includes(face))
  assert.ok(!styles.includes('../../fonts/'))
 }
-console.log('28 palette/typeface combinations preserve face through extraction; fonts embedded')
+console.log('42 palette/typeface combinations preserve face through extraction; fonts embedded')
 
 for (const [metadata, expected, warnings] of [
  ['font: verdana\ntypeface: geist', 'verdana', []],

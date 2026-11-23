@@ -170,7 +170,7 @@ export const HOW_TOPICS: readonly HowTopic[] = [
     id: 'how.15', title: 'Slides use the Ocean look.', picture: 'ocean',
     sentences: [
       'Every talk you compile uses the Ocean look, including talks made before, and your outline stays as it is.',
-      'In the Talk tab, Design › Palette has four choices: Ocean; Ocean, bold amber; Classic, the earlier look; and Green (classic).',
+      'In the Talk tab, Design › Palette has six choices: Ocean; Ocean, bold amber; Forest; Slate; Classic, the earlier look; and Green (classic).',
       'A slide that does not fit the Ocean arrangement falls back to the earlier arrangement in the new colours, and a slide that still does not fit is flagged.'
     ],
     tryIt: talk('The Saturday market', 'Open The Saturday market.', 'Opens the example talk in the Ocean look. Its Talk tab holds Design › Palette.')

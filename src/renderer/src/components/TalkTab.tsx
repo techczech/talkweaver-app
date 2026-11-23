@@ -40,7 +40,7 @@ export default function TalkTab({ talk, outlineContent, onSaveDesign, flushBefor
   const palette = parseFrontmatterPairs(outlineContent).find(pair => pair.key === 'palette')?.value ?? ''
   const look = inheritedTitleLookForSlide(outlineContent, sample?.line ?? null)
   const tone = inheritedTitleToneForSlide(outlineContent, sample?.line ?? null)
-  const themes = [['Ocean', ''], ['Ocean, bold amber', 'bold'], ['Classic', 'classic'], ['Green (classic)', 'green']] as const
+  const themes = [['Ocean', ''], ['Ocean, bold amber', 'bold'], ['Forest', 'forest'], ['Slate', 'slate'], ['Classic', 'classic'], ['Green (classic)', 'green']] as const
   const themeEdits = (design: Design): FrontmatterEdit[] => [{ key: 'palette', value: themes.find(([label]) => label === design.label)?.[1] || null }]
   const titleEdits = (design: Design): FrontmatterEdit[] => {
     const style = TITLE_STYLES.find(([label]) => label === design.label)

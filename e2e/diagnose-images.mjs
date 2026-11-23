@@ -34,7 +34,7 @@ mkdirSync(join(talkDir, 'assets'), { recursive: true })
 mkdirSync(userDataDir, { recursive: true })
 const outlinePath = join(talkDir, 'img-fixture-outline.md')
 writeFileSync(outlinePath, '---\ntitle: Img Fixture\n---\n\n## S\n\n### Slide\n\nplaceholder\n')
-writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault }, null, 2))
+writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault, openInView: 'outline' }, null, 2))
 
 await ensureFreshBuild(REPO)
 await using app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
@@ -76,8 +76,10 @@ try {
 
   // Open the talk (toggle selection forces a fresh load from disk).
   await openTalkByTitle(page, 'Img Fixture')
-  await page.waitForSelector('.cm-content', { timeout: 8000 })
-  await page.waitForTimeout(2500)
+  await page.waitForFunction(() => {
+    const images = [...document.querySelectorAll('.cm-content .cm-image-widget img')]
+    return images.length >= 4 && images.every(image => image.complete)
+  }, null, { timeout: 8000 })
 
   const info = await page.evaluate(() => {
     const widgets = Array.from(document.querySelectorAll('.cm-content .cm-image-widget'))

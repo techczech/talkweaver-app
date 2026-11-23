@@ -37,7 +37,7 @@ import type { EditorView } from '@codemirror/view'
 import { isolateHistory } from '@codemirror/commands'
 import { isBareUrl, PARAGRAPH_STOP_RE } from '../../../../compiler/scripts/lib/02-triggers-layout.mjs'
 import { LAYOUTS } from '../../../shared/layout-registry/entries'
-import { headingLevels } from '../../../shared/heading-lines'
+import { headingLevels, headingLevelsOfText } from '../../../shared/heading-lines'
 import { logicalTriggerBlockAfterHeading } from '../../../shared/trigger-line'
 import { caretSlidePlace } from '../../../shared/slide-handling/place'
 import { isSlideClip, isTitleClip, pasteSlides } from './slideBlockOps'
@@ -218,7 +218,6 @@ export interface CaretLineInsertion {
  * (slideBlockOps.ts startOfTalkPlace); the end of the talk only when it has no slide yet.
  */
 function slidesAfterCaretHeading(text: string, pos: number, block: string): CaretLineInsertion | null {
-  if (!isSlideClip(block) || isTitleClip(block)) return null
   const place = caretSlidePlace(text, pos)
   if (!place) return null
   // pasteSlides re-ids a collision through the minter. Each minted id is a marker, put back to the
@@ -236,6 +235,14 @@ function slidesAfterCaretHeading(text: string, pos: number, block: string): Care
   return { from: paste.from, insert, cursor: paste.from + insert.length - (/\n*$/.exec(insert)?.[0].length ?? 0) }
 }
 
+function hasBlankLineBeforeHeading(text: string, from: number): boolean {
+  const separator = /^\n(?:[ \t]*\n)+/.exec(text.slice(from))
+  if (!separator) return false
+  const lines = text.split('\n')
+  const { index } = lineAt(lines, from + separator[0].length)
+  return headingLevelsOfText(text, lines)[index] > 0
+}
+
 /**
  * How `source` (a component, a picture line, or one or more whole slides) goes in "at the caret" at
  * `pos`. Whole slides with the caret on a heading line: after that heading's whole block
@@ -244,10 +251,12 @@ function slidesAfterCaretHeading(text: string, pos: number, block: string): Care
  */
 export function caretLineInsertion(text: string, pos: number, source: string): CaretLineInsertion {
   const block = source.replace(/^\n+/, '').replace(/\n+$/, '')
-  const slides = slidesAfterCaretHeading(text, pos, block)
+  const wholeSlides = isSlideClip(block) && !isTitleClip(block)
+  const slides = wholeSlides ? slidesAfterCaretHeading(text, pos, block) : null
   if (slides) return slides
-  const insert = '\n\n' + block + '\n'
   const from = blockAnchorAfterLine(text, pos)
+  const hasSeparator = wholeSlides && hasBlankLineBeforeHeading(text, from)
+  const insert = '\n\n' + block + (hasSeparator ? '' : '\n')
   return { from, insert, cursor: from + insert.length }
 }
 

@@ -13,6 +13,30 @@ html, body, #root {
   font-family: var(--font-ui);
 }
 
+.cm-editor .cm-foldPlaceholder.tw-fold-placeholder {
+  margin-inline-start: 0.6ch;
+  padding: 0 0.55em;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+  font: 500 0.75rem var(--font-ui);
+  cursor: pointer;
+}
+.cm-editor .cm-foldPlaceholder.tw-fold-placeholder:hover { color: var(--accent-text); border-color: var(--accent-text); }
+.cm-editor .cm-foldPlaceholder.tw-fold-placeholder:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+
+.cm-tooltip.tw-picture-progress {
+  padding: 5px 9px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  box-shadow: var(--popover-shadow);
+  font: 500 0.75rem var(--font-ui);
+  pointer-events: none;
+}
+
 .cm-trigger-echo { animation: tw-trigger-echo 1.2s ease-out; }
 @keyframes tw-trigger-echo {
   0%, 32% {
@@ -1029,14 +1053,33 @@ html, body, #root {
 .layout-picker-type-label { font-size: 11px; color: var(--muted); }
 .layout-picker-type-hint { margin-left: auto; font: 9px var(--font-mono); color: var(--faint); }
 
+/* CodeMirror ships a light tooltip palette unless the completion surface is themed here. */
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+}
+.cm-editor .cm-tooltip.cm-tooltip-autocomplete > ul > completion-section {
+  border-bottom-color: var(--line);
+  color: var(--muted);
+  opacity: 1;
+}
+.cm-editor .cm-tooltip-autocomplete > ul > [role="option"] {
+  background: var(--panel);
+  color: var(--ink);
+}
+.cm-editor .cm-tooltip-autocomplete > ul > [role="option"][aria-selected="true"] {
+  background: var(--accent-soft);
+  color: var(--ink);
+  box-shadow: inset 1px 0 var(--focus);
+}
+
 /* ADR-0011 scene C: CodeMirror's second completion step stays a compact keyboard text list. */
 .cm-tooltip-autocomplete.tw-inline-option-palette {
   min-width: 440px;
   overflow: hidden;
-  border: 1px solid var(--line);
   border-radius: 8px;
-  box-shadow: 0 14px 40px #17202a29;
-  background: var(--panel);
+  box-shadow: var(--popover-shadow);
   font-family: var(--font-ui);
 }
 .cm-tooltip-autocomplete.tw-inline-option-palette > ul { max-height: 280px; padding: 0; }

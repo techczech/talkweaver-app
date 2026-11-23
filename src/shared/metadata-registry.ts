@@ -546,6 +546,8 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
       options: [
         { value: '', label: 'Ocean', explanation: 'The 0.44 look: Ocean blue with Deeper Ocean, white grounds and amber marking only the current item, the key words and highlighted bars.' },
         { value: 'bold', label: 'Ocean, bold amber', explanation: 'The Ocean look with amber leading the title slide (an amber disc), the statement and section divider slides; detail slides stay blue.' },
+        { value: 'forest', label: 'Forest', explanation: 'The Ocean look in deep green, with its deeper and lighter greens, white grounds and the same amber marker.' },
+        { value: 'slate', label: 'Slate', explanation: 'The Ocean look in blue-grey slate: near-monochrome slides with the amber marker and key words in rust.' },
         { value: 'classic', label: 'Classic', explanation: 'The look before 0.44: sections cycle cobalt, emerald and vermilion, with the earlier slide styling.' },
         { value: 'green', label: 'Green (classic)', explanation: 'The earlier green accent cycle, with the earlier slide styling.' }
       ]
@@ -553,7 +555,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Palette',
     group: 'Appearance',
     explanation:
-      'The deck’s look and colours. Absent: the Ocean look. `bold` lets amber lead the title, statement and divider slides; `classic` restores the look before 0.44; `green` is the earlier green cycle. Any other value keeps the Ocean look and raises a compiler warning naming the value.',
+      'The deck’s look and colours. Absent: the Ocean look. `bold` lets amber lead the title, statement and divider slides; `forest` and `slate` are the Ocean look in deep green and in blue-grey slate; `classic` restores the look before 0.44; `green` is the earlier green cycle. Any other value keeps the Ocean look and raises a compiler warning naming the value.',
     defaultable: true,
     ownership: 'user'
   },
@@ -567,18 +569,18 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
       options: [
         { value: '', label: 'Rotate', explanation: 'Key absent — the sections take blue, amber, light, deep blue and light with amber in turn, then start again. With palette: bold every section is amber.' },
         { value: 'off', label: 'Off', explanation: 'No rotation: every section takes the look’s own lead colour (blue; amber with palette: bold).' },
-        { value: 'blue', label: 'Blue', explanation: 'Every section blue: Ocean dividers, full statements, side rails and title tabs, with white type.' },
-        { value: 'amber', label: 'Amber', explanation: 'Every section amber, with near-black type; the detail slides stay blue.' },
-        { value: 'deep-blue', label: 'Deep blue', explanation: 'Every section Deeper Ocean, with white type.' },
-        { value: 'light', label: 'Light', explanation: 'Every section light: white dividers with a large Ocean number, statements in Ocean type, light side rails.' },
-        { value: 'light-amber', label: 'Light with amber', explanation: 'Every section light, with the divider’s number in a large amber disc and statements in Deeper Ocean type.' }
+        { value: 'blue', label: 'Blue', explanation: 'Every section uses the palette’s main colour for dividers, full statements, side rails and title tabs, with white type.' },
+        { value: 'amber', label: 'Amber', explanation: 'Every section amber, with near-black type. Detail slides keep the palette’s main colour.' },
+        { value: 'deep-blue', label: 'Deep blue', explanation: 'Every section uses the palette’s deep strength, with white type.' },
+        { value: 'light', label: 'Light', explanation: 'Every section light, with white dividers, a large number and statements in the palette’s main colour, and light side rails.' },
+        { value: 'light-amber', label: 'Light with amber', explanation: 'Every section light, with the divider’s number in a large amber disc and statements in the palette’s deep strength.' }
       ]
     },
     listOf: ['blue', 'amber', 'deep-blue', 'light', 'light-amber'],
     label: 'Section colours',
     group: 'Appearance',
     explanation:
-      'The lead colour of each section in the Ocean look: its divider, full statements, side rail and title tab. Absent: the sections rotate through blue, amber, light, deep blue and light with amber. Write a list to rotate through your own colours (section-colours: blue, light) or one colour for every section; off stops the rotation. A {section-colour=…} on a section’s ## heading sets that section alone. The rotation counts sections, so adding a slide changes no colour, and adding a section moves the colours of the sections after it. Slides outside a section (title, closing) take the first colour. Ignored with palette: classic or green. An unknown colour name raises a compiler warning.',
+      'The lead colour of each section in the Ocean look: its divider, full statements, side rail and title tab. Absent: the sections rotate through blue, amber, light, deep blue and light with amber. In Forest and Slate, blue is the palette’s main colour and deep blue its deep strength. Write a list to rotate through your own colours (section-colours: blue, light) or one colour for every section; off stops the rotation. A {section-colour=…} on a section’s ## heading sets that section alone. The rotation counts sections, so adding a slide changes no colour, and adding a section moves the colours of the sections after it. Slides outside a section (title, closing) take the first colour. Ignored with palette: classic or green. An unknown colour name raises a compiler warning.',
     defaultable: true,
     ownership: 'user'
   },
@@ -926,14 +928,14 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
   {
     key: 'section-colour', location: 'trigger', type: 'text',
     vocabulary: { kind: 'closed', options: [
-      { value: 'blue', label: 'Blue', explanation: 'Written {section-colour=blue} on a ## section: Ocean divider, full statements, side rail and title tab, white type.' },
-      { value: 'amber', label: 'Amber', explanation: 'The section in amber, with near-black type; its detail slides stay blue.' },
-      { value: 'deep-blue', label: 'Deep blue', explanation: 'The section in Deeper Ocean, with white type.' },
-      { value: 'light', label: 'Light', explanation: 'The section light: a white divider with a large Ocean number, statements in Ocean type, a light side rail.' },
-      { value: 'light-amber', label: 'Light with amber', explanation: 'The section light, with the divider’s number in a large amber disc and statements in Deeper Ocean type.' }
+      { value: 'blue', label: 'Blue', explanation: 'Written {section-colour=blue} on a ## section. The divider, full statements, side rail and title tab use the palette’s main colour, with white type.' },
+      { value: 'amber', label: 'Amber', explanation: 'The section in amber, with near-black type. Its detail slides keep the palette’s main colour.' },
+      { value: 'deep-blue', label: 'Deep blue', explanation: 'The section uses the palette’s deep strength, with white type.' },
+      { value: 'light', label: 'Light', explanation: 'The section light, with a white divider, a large number and statements in the palette’s main colour, and a light side rail.' },
+      { value: 'light-amber', label: 'Light with amber', explanation: 'The section light, with the divider’s number in a large amber disc and statements in the palette’s deep strength.' }
     ] },
     label: 'Section colour',
-    explanation: 'On a ## heading: this section’s lead colour in the Ocean look, over the talk’s section-colours rotation. The other sections keep the colours the rotation gives them. Ignored with palette: classic or green.',
+    explanation: 'On a ## heading: this section’s lead colour in the Ocean look, over the talk’s section-colours rotation. In Forest and Slate, blue is the palette’s main colour and deep blue its deep strength. The other sections keep the colours the rotation gives them. Ignored with palette: classic or green.',
     ownership: 'user'
   },
   {

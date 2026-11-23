@@ -52,7 +52,7 @@ try {
   })
   await page.getByText('Grid continuity fixture',{exact:true}).first().dblclick()
   await page.locator('.cm-content').waitFor()
-  await page.locator('.pane-btn[title="Grid"]').click()
+  await page.getByTestId('grid-toggle').click()
   await page.waitForFunction(()=>document.querySelectorAll('.grid-cell img').length===166)
   const titleOf=n=>typeof n==='number'?`Slide ${n}`:n
   const card=n=>page.locator('.grid-cell').filter({has:page.locator('span',{hasText:new RegExp(`^${titleOf(n)}$`)})}).first()
@@ -197,13 +197,16 @@ try {
   assert.deepEqual(first.lostTitles,['Slide 159'])
   assert.equal(first.frames.filter(f=>f.blank>0).length,0)
   await restore(['Slide 159'])
+  await page.keyboard.press('Meta+Alt+f')
   await page.locator('[data-grid-search]').fill('Slide 6')
   await page.locator('[data-section-header]').filter({hasText:'Section 0'}).click()
   const searched=await probe(65,72,1200)
   assert.equal(searched.retained,searched.total,'search and a collapsed neighbouring section preserve unaffected cards')
   assert.equal(searched.frames.filter(f=>f.blank>0).length,0)
   await restore()
+  if (!await page.locator('[data-grid-search]').isVisible()) await page.keyboard.press('Meta+Alt+f')
   await page.locator('[data-grid-search]').fill('')
+  await page.keyboard.press('Escape')
   await page.locator('[data-section-header]').filter({hasText:'Section 0'}).click()
   // A drag captures refs, then a keyboard move changes those source lines before drop.
   await card(65).click();await page.locator('.grid-view').focus()
@@ -212,7 +215,8 @@ try {
   await page.waitForFunction(()=>{const t=[...document.querySelectorAll('.grid-cell img')].map(i=>i.alt);return t.indexOf('Slide 65')===t.indexOf('Slide 66')+1})
   const afterStep=await waitForDisk(text=>{const a=text.indexOf('### Slide 66'),b=text.indexOf('### Slide 65');return a>=0&&b>=0&&a<b})
   await card(72).evaluate(d=>{for(const type of ['dragover','drop'])d.dispatchEvent(new DragEvent(type,{bubbles:true,cancelable:true,dataTransfer:window.staleTransfer}));window.staleSource.dispatchEvent(new DragEvent('dragend',{bubbles:true,dataTransfer:window.staleTransfer}))})
-  await page.getByText('The talk changed while you were moving the slide, and it is no longer where it was. Nothing was moved; try again.',{exact:true}).waitFor()
+  // The structure handler discards an out-of-date drag and clears its marker.
+  await page.locator('.grid-cell[data-drop-target="true"]').waitFor({ state: 'detached' })
   assert.equal(await page.evaluate(path=>window.tw.talk.readOutline(path),path),afterStep,'a stale drop cannot mutate the current source')
   await restore()
   if(evidenceDir)writeFileSync(join(evidenceDir,'checks-grid-continuity-undo-evidence.json'),JSON.stringify(undoEvidence,null,2))
@@ -235,12 +239,12 @@ try {
   const key=new URL(url).pathname.split('/').at(-1)+'.png',matches=files.filter(f=>f.endsWith('/'+key))
   return {url,matches:matches.map(f=>({file:f,bytes:statSync(join(ud,f)).size,magic:readFileSync(join(ud,f)).subarray(0,8).toString('hex')}))}
  })
- const control=await page.locator('.grid-cell img').first().getAttribute('src')
+ const control=await page.evaluate(()=>document.querySelector('.grid-cell img')?.getAttribute('src')??null)
  const loadProbe=await page.evaluate(async urls=>{
    const results=[]
    for(const url of urls){const image=document.createElement('img');image.src=url;let decode;try{await image.decode();decode='ok'}catch(error){decode=error.message}results.push({url,decode,width:image.naturalWidth,complete:image.complete})}
    return results
- },[control,...missing.slice(0,3).map(m=>m.props?.candidate).filter(Boolean)])
+ },[control,...missing.slice(0,3).map(m=>m.props?.candidate)].filter(Boolean))
  if(evidenceDir)writeFileSync(join(evidenceDir,'checks-grid-continuity-missing-images.json'),JSON.stringify({missing,diskProbe,loadProbe,outcomes:await app.evaluate(()=>globalThis.__thumbOutcomes)},null,2))
  }
  throw error

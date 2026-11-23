@@ -529,7 +529,10 @@ function commitGroupToken(line: string, group: OptionGroup, token: string, conte
 
   let result = applySpanEdits(line, edits)
   if (token && !placeAfter) {
-    result += `${result ? ' ' : ''}{${token}}`
+    // Keep picture placement adjacent to the other groups on a trigger-only line.
+    const compactPicturePlacement = group.key === 'media-placement' && TRIGGER_LINE_RE.test(result)
+    const separator = result && !compactPicturePlacement ? ' ' : ''
+    result += `${separator}{${token}}`
   }
   return context.resetToInherited ? result : sweepOrphanOptionTokens(result, group, context)
 }

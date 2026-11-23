@@ -23,12 +23,15 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 import { tmpdir } from 'node:os'
 import { SECTION_LEADS, SECTION_LEAD_ROTATION, readSectionColours, resolveSectionLeads, sectionLeadName } from '../compiler/scripts/lib/section-leads.mjs'
+import { accentForSectionName } from '../compiler/scripts/lib/02-triggers-layout.mjs'
+import { PALETTES, pairs } from '../docs/design/2026-11-23-forest-slate-palettes/contrast.mjs'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel, renderSlideSections } from '../compiler/scripts/lib/07-assembly.mjs'
 import { unresolvedTriggerFindings } from '../src/shared/layout-doctor.ts'
 import { METADATA_REGISTRY, metadataListError } from '../src/shared/metadata-registry.ts'
 import { frontmatterFieldViewModel } from '../src/shared/metadata-surfaces.ts'
 import { acceptedValue, schema } from '../src/shared/settings-schema.ts'
+import { sectionColourChoices } from '../src/shared/layout-registry/entries.ts'
 import { checkValue } from '@app-patterns/settings'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -236,6 +239,76 @@ ok('palette: bold leads every section in amber', () => {
   for (const id of ['deck-title', 'one-first', 'two-first', 'three-first', 'four-first']) assert.equal(bold.bySlide[id], 'amber', id)
 })
 
+for (const [palette, main, tint, deep] of [
+  ['forest', '#0F766E', '#E4F3F0', '#0A5650'],
+  ['slate', '#334155', '#EBEFF5', '#1E293B'],
+]) {
+  const meta = [`palette: ${palette}`, 'colour: cobalt']
+  const result = await compile(outline({ meta, sections: ['One', 'Two', 'Three', 'Four', 'Five'] }))
+  const off = await compile(outline({ meta: [...meta, 'section-colours: off'] }))
+  const list = await compile(outline({ meta: [...meta, 'section-colours: amber, light'], triggers: { Two: '{section-colour=deep-blue}' } }))
+  ok(`palette: ${palette} uses its own accent and the same lead names and rotation`, () => {
+    assert.deepEqual(result.model.warnings.filter(w => /^(palette|colour)-unknown:/.test(w)), [])
+    const slides = renderSlideSections(result.model)
+    assert.ok(slides.length > 0)
+    for (const slide of slides) {
+      assert.ok(slide.includes(`data-look="ocean" data-palette="${palette}" data-companion="accent"`))
+      assert.ok(slide.includes(`--sec-accent: ${main}`))
+      assert.ok(slide.includes(`--sec-tint: ${tint}`))
+      assert.ok(slide.includes(`--sec-deep: ${deep}`))
+    }
+    assert.deepEqual(['one', 'two', 'three', 'four', 'five'].map(name => result.bySlide[`${name}-first`]), SECTION_LEAD_ROTATION)
+    assert.ok(Object.values(off.bySlide).every(lead => lead === 'blue'))
+    assert.deepEqual(['one', 'two', 'three', 'four'].map(name => list.bySlide[`${name}-first`]), ['amber', 'deep-blue', 'amber', 'light'])
+    assert.deepEqual(accentForSectionName(palette, palette), { name: palette, accent: main, tint, deep })
+    for (const name of ['ocean', 'emerald', 'vermilion', ...(palette === 'slate' ? ['forest'] : [])]) {
+      assert.deepEqual(accentForSectionName(name, palette), accentForSectionName(name, 'ocean'), name)
+    }
+  })
+}
+ok('slate is an accent name inside the Slate palette', () => {
+  for (const palette of ['ocean', 'ocean-bold', 'forest', '', 'green']) assert.equal(accentForSectionName('slate', palette), null)
+})
+const classicNamedAccents = { cobalt: '#0f4bd8', emerald: '#0a7a5c', vermilion: '#c2410c', forest: '#166534' }
+const oceanNamedAccents = { ...classicNamedAccents, cobalt: '#1273C4' }
+for (const [palette, accepted] of [
+  ['', oceanNamedAccents],
+  ['bold', oceanNamedAccents],
+  ['classic', classicNamedAccents],
+  ['green', { ...classicNamedAccents, emerald: '#15803d' }],
+  ['forest', { ...oceanNamedAccents, cobalt: '#0F766E', forest: '#0F766E', ocean: '#1273C4' }],
+  ['slate', { ...oceanNamedAccents, cobalt: '#334155', ocean: '#1273C4', slate: '#334155' }],
+]) {
+  const meta = palette ? [`palette: ${palette}`] : []
+  for (const colour of ['cobalt', 'emerald', 'vermilion', 'forest', 'ocean', 'slate', 'puce']) {
+    const result = await compile(outline({ meta: [...meta, `colour: ${colour}`], sections: ['One'] }))
+    const accent = accepted[colour]
+    ok(`palette: ${palette || 'ocean'} ${accent ? 'accepts' : 'warns on'} colour: ${colour}`, () => {
+      const warnings = result.model.warnings.filter(warning => warning.startsWith('colour-unknown:'))
+      assert.deepEqual(warnings, accent ? [] : [`colour-unknown:${colour}`])
+      if (!accent) return
+      const slides = renderSlideSections(result.model)
+      for (const id of ['deck-title', 'deck-thanks']) {
+        const poster = slides.find(markup => markup.includes(`data-id="${id}"`))
+        assert.ok(poster?.includes(`--sec-accent: ${accent}`), id)
+      }
+    })
+  }
+}
+ok('section colour labels and swatches follow the palette while authored tokens stay the same', () => {
+  const ocean = sectionColourChoices()
+  for (const [palette, label, main, deep] of [
+    ['forest', 'green', '#0F766E', '#0A5650'],
+    ['slate', 'slate', '#334155', '#1E293B'],
+  ]) {
+    const values = sectionColourChoices(palette)
+    assert.deepEqual(values.map(value => value.token), ocean.map(value => value.token))
+    assert.deepEqual(values.map(value => value.swatch), [undefined, main, '#FF9F1C', deep, '#F2F4F7', '#FFE2BA'])
+    assert.equal(values[4].description, `White grounds with ${label} type`)
+    assert.equal(values[5].description, `White grounds, an amber disc, deep ${label} type`)
+  }
+})
+
 // ---- 4. classic retains its reference, including recorded intentional shared-style updates -------------------------------------------------------------------------
 {
   const reference = JSON.parse(readFileSync(CLASSIC_REFERENCE, 'utf8'))
@@ -295,5 +368,17 @@ ok('contrast: every type pair on a lead passes; the failing pairs are exactly th
   assert.equal(Math.round(ratio(INK, AMBER) * 100) / 100, 8.65)
   assert.equal(Math.round(ratio(WHITE, DEEP) * 100) / 100, 7.06)
 })
+
+for (const palette of ['Forest', 'Slate']) {
+  ok(`${palette} contrast: every type pair passes, with the two documented amber shape failures`, () => {
+    const { text, large, shapes } = pairs(PALETTES[palette])
+    for (const [name, , fg, bg] of text) assert.ok(ratio(fg, bg) >= 4.5, name)
+    for (const [name, , fg, bg] of large) assert.ok(ratio(fg, bg) >= 3, name)
+    // These adjacent fills carry their own labels and are separated or marked.
+    const adjacentFills = ['Deep strength beside the main colour', 'Amber marker beside the main colour']
+    const below = shapes.filter(([name, , fg, bg]) => !adjacentFills.includes(name) && ratio(fg, bg) < 3)
+    assert.deepEqual(below.map(([name]) => name), ['Amber as a shape on white', 'Amber as a shape on the light neutral'])
+  })
+}
 
 console.log(`section colours: ${passed} passed`)

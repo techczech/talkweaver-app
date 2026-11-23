@@ -6,7 +6,7 @@ import { boardPanelModelSource } from "../../assets/runtime/board-panel-model.js
 import { boardPanelRuntimeSource } from "../../assets/runtime/board-panel.js";
 import { videoPlaybackRuntimeSource } from "../../assets/runtime/video-playback.js";
 import { scriptDir, slugify, escapeHtml, makeQrSvg, timerRuntimeSource, overviewRuntimeSource, slideFitRuntimeSource, stageFitRuntimeSource, pollDisplayRuntimeSource, pollExtendedSource, markmapVendorSource, mermaidVendorSource } from "./01-cli-utils.mjs";
-import { accentForSectionIndex, accentForSectionName, accentForDeckColour, extraHuesForAccent, deckLookForPalette, companionLevelForPalette, deepStrengthOf, titlePlacementFor, titleRegimeForLayout, renderInline, withRenderedClaims, quoteCiteEqualsTitle } from "./02-triggers-layout.mjs";
+import { accentForSectionIndex, accentForSectionName, accentForDeckColour, extraHuesForAccent, deckLookForPalette, lookPaletteFor, companionLevelForPalette, deepStrengthOf, titlePlacementFor, titleRegimeForLayout, renderInline, withRenderedClaims, quoteCiteEqualsTitle } from "./02-triggers-layout.mjs";
 import { findSlideSections, updateDeckTitle, withoutScripts } from "./04-html-extraction.mjs";
 import { createIconVocabulary, buildDeckIconMap, applySlideMonochrome } from "./05-icons.mjs";
 import { withScreenshotStyle, sizeScreenshotRows, screenshotBand, isLoneScreenshot } from "./screenshot-row.mjs";
@@ -344,6 +344,11 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
       : statementLook?.sidebar === "off"
         ? { mode: hideTitleByLayout ? "hidden" : "top", split: "" }
         : placedTitle;
+    // Picture Above needs the full content width. Preserve the authored rail for when the picture
+    // moves back beside the text.
+    if (slotComposition.side === "above" && titlePlacement.mode === "left") {
+      titlePlacement = { mode: "top", split: "" };
+    }
     // ADR-0033 §4: a slide whose only body is ONE screenshot (a corner QR aside) beside a left rail
     // takes the base rail (26cqw, no data-split) instead of the stamped 35%, so the picture gets the
     // width. An authored {split=…} still wins: it is the only thing that leaves `slide.split` set.
@@ -669,7 +674,8 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
   // wherever it is drawn on its own: thumbnails, the handout, exports.
   const oceanLook = deckLookForPalette(palette) === "ocean";
   const faceAttrs = deckFont ? ` data-deck-font="${escapeHtml(deckFont)}"` : "";
-  const deckLookAttrs = oceanLook ? ` data-look="ocean" data-companion="${companionLevelForPalette(palette)}"` : "";
+  const lookPalette = lookPaletteFor(palette);
+  const deckLookAttrs = oceanLook ? ` data-look="ocean"${lookPalette ? ` data-palette="${lookPalette}"` : ""} data-companion="${companionLevelForPalette(palette)}"` : "";
   // A section divider in the Ocean look shows its section's number, large (handoff 0.44: "large section number").
   const sectionNumbers = new Map(sectionOrder.filter(Boolean).map((key, at) => [key, at + 1]));
   const sectionsHtml = slides.map((slide, index) => {
@@ -913,6 +919,11 @@ export async function buildDeckHtmlFromModel(model) {
   const allSlides = slideMarkup.join("\n\n");
   const templateHtml = selectBundledTypefaces(template, face, true);
   let html = updateDeckTitle(replaceSlideSections(templateHtml, allSlides), model.title);
+  // Keep the full export byte-identical for decks that use neither opt-in design.
+  if (slideMarkup.some(markup => /class="slide-table[^"]*\btable-row-bands\b|class="slot" data-slot-side="above"/.test(markup))) {
+    const designCss = await readFile(resolve(scriptDir, "..", "assets/opt-in-slide-designs.css"), "utf8");
+    html = html.replace("</style>", () => `${designCss}</style>`);
+  }
   // Inline the pure presenter timer core (fmtClock / bigTimerState) verbatim — single source of truth.
   html = html.replace("<!--TIMER_RUNTIME-->", timerRuntimeSource);
   html = html.replace("<!--INSTANT_RUNTIME-->", () => instantSlideRuntimeSource());

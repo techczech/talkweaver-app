@@ -2,7 +2,7 @@
 // with Check for Updates… under About (the standard place), and the Help menu. Both are built from the
 // registry's Help items (command-registry.ts: menu path `Help`), so the words and chords are the
 // registry's. No Electron import: a plain list of menu items in, a plain list out.
-import type { MenuItemConstructorOptions } from 'electron'
+import type { Event as ElectronEvent, MenuItemConstructorOptions, WebContents } from 'electron'
 
 export const CHECK_FOR_UPDATES_LABEL = 'Check for Updates…'
 const isCheck = (item: MenuItemConstructorOptions): boolean => item.label === CHECK_FOR_UPDATES_LABEL
@@ -49,4 +49,33 @@ export function macAppMenu(name: string, helpItems: MenuItemConstructorOptions[]
 /** Help: What's new, the cheat sheet, and (not on macOS, where it is in the TalkWeaver menu) Check for Updates…. */
 export function helpMenu(helpItems: MenuItemConstructorOptions[], platform: string): MenuItemConstructorOptions {
   return { role: 'help', submenu: platform === 'darwin' ? helpItems.filter((item) => !isCheck(item)) : helpItems }
+}
+
+/** Queue commands for a newly opened editor. Slide preview frames can load in an already usable editor. */
+export function sendEditorMenuCommand(
+  contents: Pick<WebContents, 'isLoadingMainFrame' | 'on' | 'once' | 'removeListener' | 'send'>,
+  id: string,
+  channel: 'app:run-command' | 'settings-window:editor-action' = 'app:run-command'
+): void {
+  if (!contents.isLoadingMainFrame()) {
+    contents.send(channel, id)
+    return
+  }
+
+  const cleanup = (): void => {
+    contents.removeListener('did-finish-load', finish)
+    contents.removeListener('did-fail-load', fail)
+    contents.removeListener('did-fail-provisional-load', fail)
+  }
+  const finish = (): void => {
+    cleanup()
+    contents.send(channel, id)
+  }
+  const fail = (_event: ElectronEvent, _code: number, _description: string, _url: string, isMainFrame: boolean): void => {
+    if (isMainFrame) cleanup()
+  }
+
+  contents.once('did-finish-load', finish)
+  contents.on('did-fail-load', fail)
+  contents.on('did-fail-provisional-load', fail)
 }

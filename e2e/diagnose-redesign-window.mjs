@@ -251,9 +251,13 @@ try {
   await closingLabel.waitFor()
   await page.locator('[data-slides-mode="previews"] .tw-slide-card:not([data-generated-closing]) .tw-strip-caption').first().waitFor({ state: 'hidden' })
   const lockedButtons = ['format-bold', 'format-italic', 'format-link', 'bulleted-list', 'numbered-list']
+  const actions = page.getByRole('toolbar', { name: 'Action bar' })
+  const moreActions = actions.getByRole('button', { name: 'More actions', exact: true })
+  if (await moreActions.isVisible()) await moreActions.click()
   for (const id of lockedButtons) {
-    await page.locator(`.workspace-edit-controls > button[data-command="${id}"]`).waitFor()
+    await actions.locator(`button[data-command="${id}"]`).waitFor()
   }
+  if (await moreActions.getAttribute('aria-expanded', { timeout: 1000 }).catch(() => null) === 'true') await moreActions.click()
   const savedStatus = page.locator('[data-status-saved]')
   await savedStatus.filter({ hasText: /^Saved / }).waitFor()
   assert.equal(await savedStatus.evaluate(el => {
@@ -287,12 +291,23 @@ try {
     existsSync(outlineStarted) && /^### Look after the beds[^\n]*\n(?:\{[^\n]+\}\n)*\s*- Check the watering/m.test(readFileSync(outlineStarted, 'utf8')))
 
   // Edit one slide, select another, then Undo and Redo from the scoped Slide view.
+  const firstEditable = outlinePage.locator('[data-slides-mode="previews"] .tw-slide-card[data-slide-index="1"]', { hasText: 'Look after the beds' })
+  await firstEditable.click()
+  await firstEditable.and(outlinePage.locator('[data-active="true"]')).waitFor()
   await outlinePage.locator('.workspace-edit-controls > button[data-command="new-slide"]').click()
-  const firstEditable = outlinePage.locator('[data-slides-mode="previews"] .tw-slide-card[data-slide-index="1"]')
   const secondEditable = outlinePage.locator('[data-slides-mode="previews"] .tw-slide-card[data-slide-index="2"]:not([data-generated-closing])')
-  await secondEditable.waitFor()
-  await outlinePage.waitForFunction(() => document.activeElement?.matches('.cm-content') &&
-    document.querySelector('.tw-slide-card[data-slide-index="2"]')?.getAttribute('data-active') === 'true')
+  try {
+    await secondEditable.and(outlinePage.locator('[data-active="true"]')).waitFor()
+    await outlinePage.waitForFunction(() => document.activeElement?.matches('[data-view="outline"] .cm-content'))
+  } catch (error) {
+    console.error('Synthetic outline after New slide:', readFileSync(outlineStarted, 'utf8'))
+    console.error('Focus after New slide:', await outlinePage.evaluate(() => ({
+      field: document.activeElement?.className,
+      caret: document.getSelection()?.focusNode?.textContent,
+      selected: document.querySelector('.tw-slide-card[data-active="true"]')?.textContent
+    })))
+    throw error
+  }
   await outlinePage.keyboard.type('Review the hinges')
   await until('the second slide title did not save', () => readFileSync(outlineStarted, 'utf8').includes('### Review the hinges'))
   await firstEditable.click()
@@ -339,7 +354,12 @@ try {
   await outlinePage.waitForFunction(() => document.activeElement?.matches('[data-view="slide"] .cm-content'))
   await outlinePage.keyboard.type('Temporary last slide')
   await until('temporary slide title did not save', () => readFileSync(outlineStarted, 'utf8').includes('### Temporary last slide'))
-  await editControls.locator('button[data-command="delete-slide"]').click()
+  const outlineActions = outlinePage.getByRole('toolbar', { name: 'Action bar' })
+  const deleteSlide = outlineActions.locator('button[data-command="delete-slide"]')
+  if (!await deleteSlide.isVisible()) {
+    await outlineActions.getByRole('button', { name: 'More actions', exact: true }).click()
+  }
+  await deleteSlide.click()
   await until('Delete did not remove the temporary slide', () => !readFileSync(outlineStarted, 'utf8').includes('### Temporary last slide'))
   await outlineClosing.and(outlinePage.locator('[data-slide-index="3"]')).waitFor()
   await appendFromClosing()

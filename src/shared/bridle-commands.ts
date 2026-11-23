@@ -186,7 +186,6 @@ export function bridleDefs(commands: readonly CommandDefinition[] = COMMAND_REGI
       key,
       icon: 'command',
       ...(c.scope === 'research' ? { scope: 'research' } : {}),
-      ...(['research-panel', 'research-find'].includes(c.id) ? { group: 'See the talk' as CommandGroup } : {}),
       ...(reason ? { noMenu: true as const, noMenuReason: reason } : {}),
       ...(FIXED_IDS.has(c.id) || !rebindable ? { fixed: true as const } : {}),
       ...(FIXED_IDS.has(c.id) ? { typing: true as const } : {})

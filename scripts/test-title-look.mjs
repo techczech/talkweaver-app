@@ -202,6 +202,33 @@ async function compileRaw(frontmatter, outline) {
   return { model, doc, slide: (id) => doc.querySelector(`section.slide[data-id="${id}"]`) }
 }
 {
+  const cases = [
+    ['Shown on a trigger line', '', '{media}{notitle}{title=show}', 'show', false],
+    ['Shown on the heading', ' {media}{title=show}{notitle}', '', 'show', false],
+    ['Shown with title off', '', '{media}{title=show}{title=off}', 'show', false],
+    ['Hidden by notitle', '', '{media}{notitle}', '', true],
+    ['Hidden by title off', '', '{media}{title=off}', '', true],
+    ['Hidden with compact', '', '{media}{notitle}{title=compact}', 'compact', true],
+    ['Shown with explicit top', '', '{media}{notitle}{title=top}', '', false]
+  ]
+  const carousel = '## Part\n\n### Examples {carousel}{id=media-cards}\n\n'
+    + cases.map(([title, headingTokens, triggerLine]) =>
+      `#### ${title}${headingTokens}\n${triggerLine}\n\n![](picture.svg)\n`
+    ).join('\n')
+    + '\n#### Quote heading {title=show}\n\n> A quotation.\n'
+  const { model, slide } = await compileRaw([], carousel)
+  const children = model.slides.find((entry) => entry.id === 'media-cards').carousel
+  const rendered = [...slide('media-cards').querySelectorAll('.carousel-subslide')]
+  for (const [index, [title, , , titleMode, hidden]] of cases.entries()) {
+    assert.equal(children[index].titleMode, titleMode, title)
+    assert.equal(children[index].noTitle, hidden, title)
+    assert.equal(painted(rendered[index]), !hidden, title)
+    assert.equal(quiet(rendered[index]), hidden, title)
+  }
+  assert.equal(children.at(-1).layout, 'quote')
+  assert(painted(rendered.at(-1)), 'an explicit show also restores the quote child heading')
+}
+{
   // A carousel's top title follows the resolved look and intro-then-none like any top-title slide.
   const CAROUSEL = '## Pre\n\n### Opening\n\n- a\n\n## Cards\n\n### Stepped {carousel} {titletop} {id=c-car}\n\n#### One\n\n- a\n\n#### Two\n\n- b\n'
   const tabbed = await compileRaw([], CAROUSEL)

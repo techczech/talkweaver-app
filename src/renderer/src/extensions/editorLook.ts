@@ -18,6 +18,9 @@ export const twTheme = EditorView.theme({
     caretColor: 'var(--accent-text)'
   },
   '.cm-line': { lineHeight: '1.7', color: 'var(--ink)' },
+  '.cm-line.cm-md-section': { fontSize: '1.23em', color: 'var(--accent-text)' },
+  '.cm-line.cm-md-subsection': { fontSize: '1.15em', fontWeight: '600', color: 'var(--ink)' },
+  '.cm-line.cm-md-slide, .cm-line.cm-md-subslide': { fontSize: '1em', color: 'var(--ink)' },
   '.cm-content.cm-lineWrapping': { minWidth: '0' },
   '.cm-gutters': {
     backgroundColor: 'var(--surface-2)',

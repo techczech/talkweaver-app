@@ -12,6 +12,8 @@
 //     A request for another slide of the same talk means the author left the slide: every queued job
 //     for the slide she left (any surface) is dropped, so her new slide's first picture waits behind at
 //     most the one job already running, never behind the old slide's queue.
+//     A panel that closes releases its batch of waiting requests. A request shared with another
+//     batch is still needed, and a render that already started finishes normally.
 //     Over a cap (per surface and slide, or overall) the NEWEST request is refused, never a job already
 //     waiting its turn, so the next job to run is never thrown away. Refused and dropped callers get
 //     `superseded`; the renderer's shared policy (variant-picture-queue.ts) asks again only while the
@@ -43,6 +45,8 @@ export interface VariantThumbnailRequest {
   options?: readonly LayoutOptionChoice[]
   /** The asking surface (`picker`, `inspector:<group>`): the scope a newer request supersedes in. */
   requestKey?: string
+  /** Main's window id and the panel's batch id. A request without a batch stays wanted until answered. */
+  batchScope?: string
 }
 
 export type { VariantThumbnail }
@@ -81,6 +85,7 @@ const DEFAULT_LIMITS = { maxPending: 12, maxPendingPerKey: 6, maxMemoryEntries: 
 export type VariantThumbnailRenderer = ((request: VariantThumbnailRequest) => Promise<VariantThumbnail>) & {
   /** Jobs queued and running (for tests and the log). */
   stats(): { pending: number; running: number; memory: number }
+  releaseBatch(scope: string): void
 }
 
 export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limits: VariantQueueLimits = {}): VariantThumbnailRenderer {
@@ -96,6 +101,7 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
     source: string
     request: VariantThumbnailRequest
     modified: string
+    batches: Set<string | undefined>
     promise: Promise<VariantThumbnail>
     settle: (result: VariantThumbnail) => void
   }
@@ -150,7 +156,10 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
     }
     // The same try asked twice at once (a row and its neighbour) shares one job.
     const same = byHash.get(hash)
-    if (same) return same.promise
+    if (same) {
+      same.batches.add(request.batchScope)
+      return same.promise
+    }
 
     const scope = `${request.requestKey ?? ''}\0${request.outlinePath}\0${slideId}`
     // A newer request from the same surface for the same slide: jobs queued from older text are stale.
@@ -165,7 +174,7 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
     }
     let settle!: (result: VariantThumbnail) => void
     const promise = new Promise<VariantThumbnail>((resolveJob) => { settle = resolveJob })
-    const job: Job = { hash, scope, source: request.outline, request, modified, promise, settle }
+    const job: Job = { hash, scope, source: request.outline, request, modified, batches: new Set([request.batchScope]), promise, settle }
     queued.push(job)
     byHash.set(hash, job)
     pump()
@@ -198,13 +207,24 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
   }
 
   return Object.assign(ask, {
-    stats: () => ({ pending: queued.length, running: running ? 1 : 0, memory: served.size })
+    stats: () => ({ pending: queued.length, running: running ? 1 : 0, memory: served.size }),
+    releaseBatch(scope: string): void {
+      for (const job of [...queued]) {
+        if (job.batches.delete(scope) && job.batches.size === 0) drop(job)
+      }
+    }
   })
 }
 
 // ── The IPC handler ────────────────────────────────────────────────────────────────────────────
 
 const REQUEST_KEY_RE = /^[A-Za-z0-9:_-]{1,64}$/
+const BATCH_ID_RE = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/
+
+export function variantThumbnailBatchScope(senderId: number | undefined, batchId: unknown): string | undefined {
+  return senderId !== undefined && typeof batchId === 'string' && BATCH_ID_RE.test(batchId)
+    ? `${senderId}:${batchId}` : undefined
+}
 
 /**
  * `layout:variant-thumbnail`'s handler, built from its gate and its renderer so it runs under test
@@ -218,13 +238,14 @@ export function createVariantThumbnailHandler(
   log: (error: unknown) => void = (error) => console.error('[layout:variant-thumbnail]', error)
 ) {
   return async (
-    _event: unknown,
+    event: { sender?: { id: number } },
     outlinePath: unknown,
     outline: unknown,
     slide: unknown,
     layout: unknown,
     options?: unknown,
-    requestKey?: unknown
+    requestKey?: unknown,
+    batchId?: unknown
   ): Promise<VariantThumbnail> => {
     // A slide is named by its `{id=…}` (a string) or, while it has none, by its heading line (`{ headingLine }`).
     const line = slide && typeof slide === 'object' && Number.isInteger((slide as { headingLine?: unknown }).headingLine) && (slide as { headingLine: number }).headingLine > 0
@@ -244,7 +265,8 @@ export function createVariantThumbnailHandler(
         ...(line != null ? { headingLine: line } : {}),
         layout,
         options: options as readonly LayoutOptionChoice[] | undefined,
-        requestKey: typeof requestKey === 'string' && REQUEST_KEY_RE.test(requestKey) ? requestKey : undefined
+        requestKey: typeof requestKey === 'string' && REQUEST_KEY_RE.test(requestKey) ? requestKey : undefined,
+        batchScope: variantThumbnailBatchScope(event?.sender?.id, batchId)
       })
     } catch (error) {
       log(error)

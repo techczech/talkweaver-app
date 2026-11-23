@@ -8,6 +8,11 @@ export interface FrameDescriptor {
 }
 export const FRAME_BUILTINS: FrameDescriptor
 export function plainListForcedIcons(frameIcons: string): boolean
+export function hasExplicitFrameTitle(
+  slideAttrs?: Record<string, unknown>,
+  sectionDefaults?: Record<string, unknown>,
+  deckDefaults?: Record<string, unknown>
+): boolean
 export function resolveSlideFrame(
   slideAttrs?: Record<string, unknown>,
   sectionDefaults?: Record<string, unknown>,
