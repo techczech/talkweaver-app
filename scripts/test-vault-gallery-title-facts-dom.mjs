@@ -4,8 +4,10 @@ import { chromium } from 'playwright'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 const root=resolve(import.meta.dirname,'..')
-mkdirSync(join(root,'evidence/vault-gallery/redesign-implementation/title-facts'),{recursive:true})
-const dir=mkdtempSync(join(root,'evidence/vault-gallery/redesign-implementation/title-facts/.dom-'))
+const recordEvidence=process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE==='1'
+const evidence=join(root,recordEvidence?'evidence/vault-gallery/redesign-implementation':'artefacts/test-vault-gallery-title-facts-dom')
+mkdirSync(evidence,{recursive:true})
+const dir=mkdtempSync(join(evidence,'.dom-'))
 let browser
 try {
  await build({stdin:{resolveDir:root,loader:'tsx',contents:`
@@ -25,7 +27,7 @@ try {
  // overview strip: real title slide where the facts have one, honest placeholder where they do not
  await page.getByRole('img',{name:'Title slide of First twin',exact:true}).waitFor()
  await page.getByRole('option',{name:'Missing preview',exact:true}).getByText('Title preview unavailable').waitFor()
- await page.screenshot({path:join(root,'evidence/vault-gallery/redesign-implementation/title-facts-overview.png')})
+ await page.screenshot({path:join(evidence,'title-facts-overview.png')})
  await page.setViewportSize({width:390,height:844})
  await page.waitForFunction(()=>{const g=document.querySelector('.vault-gallery');return g.clientWidth===390&&g.scrollWidth<=390})
  await page.getByRole('button',{name:'Show all talks'}).click()

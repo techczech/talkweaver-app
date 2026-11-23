@@ -8,6 +8,7 @@ import { lstat, readdir, open, copyFile, mkdir } from 'node:fs/promises'
 import { execFile } from 'node:child_process'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { stageTextAtomic, writeTextAtomic, type StagedWrite } from './atomic-file.ts'
 
 export type PreservationReason = 'PUBLISH_COVERAGE_MISSING' | 'PUBLISH_UNRELATED_REMOVAL' | 'PUBLISH_IDENTITY_CHANGED' | 'PUBLISH_CANDIDATE_CHANGED' | 'PUBLISH_REVISION_CHANGED' | 'PUBLISH_INVENTORY_UNAVAILABLE' | 'PUBLISH_BUSY' | 'PUBLISH_OUTCOME_UNKNOWN'
 const messages: Record<PreservationReason, string> = {
@@ -176,10 +177,23 @@ async function childGone(holder: Holder): Promise<boolean> {
 }
 export const OWNERLESS_LOCK_GRACE_MS = 5000
 function durable(path: string, value: unknown, exclusive = false): void {
-  const temp = exclusive ? path : path + '.tmp-' + randomUUID()
-  const fd = openSync(temp, 'wx', 0o600)
+  if (!exclusive) {
+    writeTextAtomic(path, JSON.stringify(value), { mode: 0o600, createParent: false })
+    return
+  }
+  // An exclusive owner or journal reservation must fail if the path has already been claimed.
+  const fd = openSync(path, 'wx', 0o600)
   try { writeFileSync(fd, JSON.stringify(value)); fsyncSync(fd) } finally { closeSync(fd) }
-  if (!exclusive) renameSync(temp, path)
+}
+
+function durablePair(first: readonly [string, unknown], second: readonly [string, unknown]): void {
+  const writes: StagedWrite[] = []
+  try {
+    for (const [path, value] of [first, second]) {
+      writes.push(stageTextAtomic(path, JSON.stringify(value), { mode: 0o600, createParent: false }))
+    }
+    for (const write of writes) write.commit()
+  } finally { for (const write of writes) write.discard() }
 }
 /**
  * `sendsRecorded`: this journal records the moment its deployment request is sent (`postedAt`, written before the request): its
@@ -258,6 +272,7 @@ export async function beginPublication(options: PreservationOptions): Promise<Pr
       durable(join(claim, 'owner.json'), { ...holder, token }, true)
       try {
         if (existsSync(lock)) throw new Error('lock exists')
+        // Not a whole-file replacement: install the claimed lock directory.
         renameSync(claim, lock)
       } catch {
         // Serialize reclaimers and move the old directory atomically; never unlink a replacement.
@@ -273,6 +288,7 @@ export async function beginPublication(options: PreservationOptions): Promise<Pr
           const current = lstatSync(lock)
           if (current.ino !== identity.ino || current.dev !== identity.dev) refuse('PUBLISH_BUSY')
           if (old === null ? existsSync(join(lock, 'owner.json')) : readFileSync(join(lock, 'owner.json'), 'utf8') !== old) refuse('PUBLISH_BUSY')
+          // Not whole-file replacements: retire the dead owner's lock directory and install our claim.
           renameSync(lock, retired); moved = true
           renameSync(claim, lock)
         } finally {
@@ -337,9 +353,11 @@ export async function beginPublication(options: PreservationOptions): Promise<Pr
         let result
         try { result = await launch({ candidateDigest: plan.candidateDigest, started: async () => {}, posting: () => { entry.postedAt = Date.now(); durable(journal, entry) }, deployed: (id) => { entry.deploymentId = id; durable(journal, entry) } }) }
         catch { entry.launch = 'settled'; durable(journal, entry); return refuse('PUBLISH_OUTCOME_UNKNOWN') }
-        entry.launch = 'settled'; durable(journal, entry)
+        entry.launch = 'settled'
+        if (result.outcome === 'accepted') {
+          durablePair([journal, entry], [record, { site: options.site, revision: first.revision, candidateDigest: plan.candidateDigest, controls: plan.controls, published: true }])
+        } else durable(journal, entry)
         if (result.outcome === 'unknown') refuse('PUBLISH_OUTCOME_UNKNOWN')
-        if (result.outcome === 'accepted') durable(record, { site: options.site, revision: first.revision, candidateDigest: plan.candidateDigest, controls: plan.controls, published: true })
         rmSync(journal)
         return result.value
       },
@@ -375,8 +393,10 @@ export async function beginPublication(options: PreservationOptions): Promise<Pr
           if (last.revision !== first.revision || publicationBinding([...last.paths].sort()) !== publicationBinding([...first.paths].sort())) refuse('PUBLISH_REVISION_CHANGED')
           if ((await publicationTree(scratch)).digest !== candidate.digest || (await publicationTree(dir, overlays)).digest !== candidate.digest) refuse('PUBLISH_CANDIDATE_CHANGED')
           await mkdir(join(scratch, '.wrangler', 'deploy'), { recursive: true })
-          durable(join(scratch, '.wrangler', 'publication.json'), { pages_build_output_dir: '..' })
-          durable(join(scratch, '.wrangler', 'deploy', 'config.json'), { configPath: '../publication.json' })
+          durablePair(
+            [join(scratch, '.wrangler', 'publication.json'), { pages_build_output_dir: '..' }],
+            [join(scratch, '.wrangler', 'deploy', 'config.json'), { configPath: '../publication.json' }],
+          )
           // No awaited preparation follows the last source/site binding check.
           if (await options.binding() !== options.approvedBinding) refuse('PUBLISH_IDENTITY_CHANGED')
           const entry: Journal = { version: 2, site: options.site, revision: first.revision, candidateDigest: candidate.digest,
@@ -389,9 +409,14 @@ export async function beginPublication(options: PreservationOptions): Promise<Pr
               if (began !== undefined) { entry.child = { pid, started: began ?? 'exited-before-identity-read', group }; entry.launch = 'running'; durable(journal, entry) }
             } })
           } catch { return refuse('PUBLISH_OUTCOME_UNKNOWN') }
-          if (entry.child && await childGone(entry.child)) { entry.launch = 'settled'; durable(journal, entry) }
+          const settled = entry.child && await childGone(entry.child)
+          if (settled) entry.launch = 'settled'
+          if (result.outcome === 'accepted') {
+            const controls = { site: options.site, revision: first.revision, candidateDigest: candidate.digest, controls: candidate.controls, published: true }
+            if (settled) durablePair([journal, entry], [record, controls])
+            else durable(record, controls)
+          } else if (settled) durable(journal, entry)
           if (result.outcome === 'unknown') refuse('PUBLISH_OUTCOME_UNKNOWN')
-          if (result.outcome === 'accepted') durable(record, { site: options.site, revision: first.revision, candidateDigest: candidate.digest, controls: candidate.controls, published: true })
           rmSync(journal)
           return result.value
         } finally { rmSync(scratch, { recursive: true, force: true }) }

@@ -1,4 +1,5 @@
 import { transformInlineMarks } from '../../compiler/scripts/lib/00-inline-protection.mjs'
+import { escapeHtml } from '../shared/html-escape.ts'
 
 /**
  * An image on a slide, given to the rewrite agent as content — never a rendered picture. `alt` is the
@@ -305,14 +306,6 @@ function plainMarkdown(markdown: string): string {
     .replace(/`([^`]+)`/g, '$1')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
 }
 
 function inlineHtml(value: string): string {

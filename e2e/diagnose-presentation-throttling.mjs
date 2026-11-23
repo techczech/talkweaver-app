@@ -17,9 +17,9 @@ const start = source.indexOf('const deckWindowOpenOpts = ')
 const child = evaluate(source.slice(start, source.indexOf('\n\n', start)) + '\ndeckWindowOpenOpts', {
   E2E: false, appWindowOpenOpts: {}, pressLedger: { pressedRecently: () => false }
 }).allowOptions.overrideBrowserWindowOptions
-const directStart = source.indexOf('const win = new BrowserWindow({', source.indexOf('const bridgePreload ='))
+const directStart = source.indexOf('const win = new BrowserWindow({', source.indexOf('const deckPrefs = presentWindowPreferences('))
 const direct = evaluate(source.slice(directStart, source.indexOf('    // Keep our role+talk title', directStart)) + '\nwin', {
-  E2E: false, winTitle: 'Synthetic audience', bridgePreload: null, BrowserWindow: function (opts) { return opts }
+  E2E: false, winTitle: 'Synthetic audience', deckPrefs: { sandbox: true }, registerWindowKind: () => {}, BrowserWindow: function (opts) { return opts }
 })
 assert.equal(direct.webPreferences.backgroundThrottling, false)
 assert.equal(child.webPreferences.backgroundThrottling, false)

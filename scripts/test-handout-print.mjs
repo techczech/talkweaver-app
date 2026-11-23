@@ -25,9 +25,15 @@ import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
 import { extractSlides, extractStyles } from '../compiler/scripts/lib/04-html-extraction.mjs'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
 import { buildCarouselHandout, CAROUSEL_WORDS, CAROUSEL_ITEM_COUNT, CAROUSEL_SLIDE_COUNT } from './lib/handout-carousel-fixture.mjs'
+import { missingPopplerTools, reportMissingPoppler } from './lib/test-poppler.mjs'
 
-const dir = mkdtempSync(join(tmpdir(), 'tw-handout-print-'))
 const shotsDir = process.env.HANDOUT_PRINT_SHOTS_DIR ? resolve(process.env.HANDOUT_PRINT_SHOTS_DIR) : ''
+const missing = missingPopplerTools('pdfinfo', 'pdftotext', ...(shotsDir ? ['pdftoppm'] : []))
+if (missing.length) {
+  reportMissingPoppler('Handout PDF checks', missing)
+  process.exit(0)
+}
+const dir = mkdtempSync(join(tmpdir(), 'tw-handout-print-'))
 if (shotsDir) mkdirSync(shotsDir, { recursive: true })
 
 const outline = [

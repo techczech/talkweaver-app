@@ -1,3 +1,4 @@
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
 
@@ -11,7 +12,7 @@ const studio = readFileSync(new URL('../src/renderer/src/components/Studio.tsx',
 const studioCss = readFileSync(new URL('../src/renderer/src/studio.css', import.meta.url), 'utf8')
 const shortcuts = readFileSync(new URL('../src/shared/shortcut-registry.ts', import.meta.url), 'utf8')
 const preload = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8')
-const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+const main = readMainSource()
 const talkTextIpc = readFileSync(new URL('../src/main/talkTextIpc.ts', import.meta.url), 'utf8')
 
 assert.match(component, /window\.tw\.recording\.listAllSessions\(\)/)

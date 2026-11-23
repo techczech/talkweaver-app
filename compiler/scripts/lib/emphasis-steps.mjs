@@ -7,7 +7,7 @@
 //
 // markEmphasisSteps() rewrites one slide's rendered content:
 //   <strong> | <u> | <s> | <mark class="ink-marker">   →  the same tag + data-emph-step="<kind>"
-//   each word inside a marked <strong>                 →  <span class="es-w" data-w="word">word</span>
+//   each word inside a marked <strong> or <u>                 →  <span class="es-w" data-w="word">word</span>
 // The word spans are what lets bold keep its width before it is on: the bold word is laid out and
 // styles/emphasis-steps.css draws `data-w` over it at the weight of the surrounding text. Text
 // content is unchanged (no character is added or moved).
@@ -56,8 +56,8 @@ export function markEmphasisSteps(html) {
   let last = 0;
   let count = 0;
   let opaque = null;        // { name, depth } while inside an unmarked region
-  let boldDepth = 0;        // open marked <strong>s
-  const strongs = [];       // one entry per open <strong>: was it marked?
+  let boldDepth = 0;        // open marked weight-emphasis spans (strong or u)
+  const strongs = [];       // one entry per open strong/u: was it marked?
   for (const match of source.matchAll(TAG)) {
     const text = source.slice(last, match.index);
     last = match.index + match[0].length;
@@ -83,10 +83,10 @@ export function markEmphasisSteps(html) {
     if (kind) {
       count += 1;
       out += `${tag.slice(0, -1)} data-emph-step="${kind}">`;
-      if (name === "strong") { strongs.push(true); boldDepth += 1; }
+      if (name === "strong" || name === "u") { strongs.push(true); boldDepth += 1; }
       continue;
     }
-    if (name === "strong") {
+    if (name === "strong" || name === "u") {
       if (!closing) strongs.push(false);
       else if (strongs.pop()) boldDepth -= 1;
     }

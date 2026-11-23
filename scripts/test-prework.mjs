@@ -9,7 +9,8 @@
 // The section is no longer written in the Inspector (work-files ticket 29): these cover the reader
 // that old Runs and "Move to a work file" still need, and that a leftover section never reaches output.
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
+import { statSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -186,7 +187,7 @@ for (const [shape, expected] of [
 }
 
 // ── 2. The compiler ────────────────────────────────────────────────────────────────────────
-const scratch = mkdtempSync(join(tmpdir(), 'tw-prework-'))
+const scratch = testScratchDir(join(tmpdir(), 'tw-prework-'))
 const outlinePath = join(scratch, 'prework-fixture-outline.md')
 writeFileSync(outlinePath, talk, 'utf8')
 const model = await prepareSource(outlinePath, talk, 'prework-fixture', statSync(outlinePath))

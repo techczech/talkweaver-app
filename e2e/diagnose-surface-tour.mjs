@@ -18,12 +18,13 @@
 //        --out=<dir>         another output folder
 //        --size=WxH          content size of every window (default 1440x900; the page viewport is verified against it)
 //        --geometry          small-window geometry check (R17) after each surface opens; output goes to
-//                            docs/design/2026-11-05-consistency-review/geometry/<W>x<H>/ (see geometry/README.md)
+//                            geometry/<W>x<H>/ under the chosen output root
 //        --sidebar=<px>      with --geometry: start with the sidebar dragged to this width (stored preference 'tw-sidebar'; the app default is 240).
 //                            The owner's MacBook Air window had it at about 325; output goes to geometry/<W>x<H>-sidebar<px>/
 //        --base-only         with --geometry: only the base states (no talk, Plain, Markdown, Guide, Research, Image drawer,
 //                            Scratchpad, Tools views, Settings, Presenter), not all surfaces
-// Output (default): docs/design/2026-11-05-consistency-review/tour/{shots/,tour-report.json,tour-summary.md,contact-sheet.html}
+//        --record-evidence  write the default outputs beside the design review
+// Output (default): artefacts/diagnose-surface-tour/tour/{shots/,tour-report.json,tour-summary.md,contact-sheet.html}
 import { _electron as electron } from 'playwright'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
@@ -46,7 +47,8 @@ if (!sizeMatch) { console.error(`--size must look like 1000x631, got "${sizeArg}
 const WIDTH = Number(sizeMatch[1])
 const HEIGHT = Number(sizeMatch[2])
 const geomMode = flag('geometry') || flag('base-only')
-const OUT = resolve(opt('out') ?? (geomMode ? join(REVIEW, 'geometry', opt('sidebar') ? `${sizeArg}-sidebar${opt('sidebar')}` : sizeArg) : sizeArg === '1440x900' ? join(REVIEW, 'tour') : join(REVIEW, `tour-${sizeArg}`)))
+const outputRoot = (process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE === '1') ? REVIEW : join(root, 'artefacts/diagnose-surface-tour')
+const OUT = resolve(opt('out') ?? (geomMode ? join(outputRoot, 'geometry', opt('sidebar') ? `${sizeArg}-sidebar${opt('sidebar')}` : sizeArg) : sizeArg === '1440x900' ? join(outputRoot, 'tour') : join(outputRoot, `tour-${sizeArg}`)))
 const SHOTS = join(OUT, 'shots')
 const REPORT = join(OUT, 'tour-report.json')
 const surfaces = JSON.parse(readFileSync(join(REVIEW, 'surfaces.json'), 'utf8'))

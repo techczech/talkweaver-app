@@ -3,6 +3,7 @@
 // rows the deck reads in a body (compiledRowCount). simulation-layout.mjs draws from these.
 import { parseTrace } from "./02-triggers-layout.mjs";
 import { LABEL_RE, PROMPT_ONLY_RE, COMMAND_RE } from "./simulation-segments.mjs";
+import { readTurnHeader } from "./simulation-turn-envelope.mjs";
 
 const indentOf = (line) => line.match(/^[ \t]*/)[0].length;
 
@@ -62,8 +63,8 @@ export function parseShellSession(text) {
  * command), trace turns as parseTrace opens them. The editor's row model is checked against this, so a
  * row the deck would split or merge is never written. `kind`: "turns" | "shell" | "trace".
  */
-export function compiledRowCount(kind, text) {
-  if (kind === "turns") return turnSource(text).filter((line) => LABEL_RE.test(line)).length;
+export function compiledRowCount(kind, text, { version = 1 } = {}) {
+  if (kind === "turns") return turnSource(text).filter((line) => LABEL_RE.test(line) || (version === 2 && readTurnHeader(line))).length;
   if (kind === "shell") {
     const session = parseShellSession(text);
     const lines = String(text ?? "").replace(/\r\n?/g, "\n").split("\n");

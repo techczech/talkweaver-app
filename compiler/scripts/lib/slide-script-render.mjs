@@ -234,7 +234,7 @@ export function renderScriptBlocks(blocks) {
     } else if (block.type === 'diagram') {
       out.push({ type: 'diagram' })
     } else if (block.type === 'code') {
-      out.push({ type: 'code', text: String(block.text ?? '') })
+      out.push({ type: 'code', text: String(block.text ?? ''), ...(block.simulationTranscript ? { simulationTranscript: true } : {}) })
     } else if (block.type === 'p' && block.plain === true) {
       // A paragraph of a Run's extra slide (work-files ticket 25): plain text as typed, escaped.
       const text = String(block.text ?? '')

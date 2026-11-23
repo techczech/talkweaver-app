@@ -1,0 +1,126 @@
+/* Width compensation (0.44.5): each face's lines run within about 1% of Trebuchet MS, the face the Ocean look was
+   fitted against in 0.44.0 (scripts/measure-typeface-widths.mjs; sampler and neutral fixtures, character-weighted).
+   The compensation is a size-adjust descriptor on each face, not tracking: it scales the drawn glyphs whatever
+   letter-spacing a layout sets, at every size, and leaves computed font sizes (and so the type floor) unchanged.
+   Tracking declared on the slide would be inherited as a fixed length (too little on large text) and replaced by any
+   layout's own letter-spacing. Inter 95.8% and Geist 98.5% bring both x-height and line width to Trebuchet's
+   (0.523 em); Alegreya Sans (x-height 0.458 em) is drawn at 114% plus light tracking; Fraunces and the Inter and Geist
+   headings take a small display tracking. Symbols outside the bundled subsets (arrows, ✓, ≤) fall back through
+   0.44.0's own stack (Trebuchet MS, then the system UI face), so they draw as in 0.44.0.
+   Vertical metrics: every bundled face gets Trebuchet's ascent and descent (0.939/0.222 em, no line gap) through
+   ascent-/descent-/line-gap-override, divided by the face's size-adjust (Chromium scales overrides by it), so inline
+   boxes (boxed key words, line-height: normal) are as tall as in 0.44.0. */
+/* Upstream Fontsource 5.3.0 subsets with their own unicode-range values. Overlapping code points (Œ œ, combining
+   marks) resolve to the Latin file first because it is declared last, as in the upstream CSS. */
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 300; font-display: swap; ascent-override: 98%; descent-override: 23.2%; line-gap-override: 0%; size-adjust: 95.8%; src: url('../../fonts/inter-latin-ext-300-normal.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 300; font-display: swap; ascent-override: 98%; descent-override: 23.2%; line-gap-override: 0%; size-adjust: 95.8%; src: url('../../fonts/inter-latin-300-normal.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 400; font-display: swap; ascent-override: 98%; descent-override: 23.2%; line-gap-override: 0%; size-adjust: 95.8%; src: url('../../fonts/inter-latin-ext-400-normal.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 400; font-display: swap; ascent-override: 98%; descent-override: 23.2%; line-gap-override: 0%; size-adjust: 95.8%; src: url('../../fonts/inter-latin-400-normal.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 600; font-display: swap; ascent-override: 98%; descent-override: 23.2%; line-gap-override: 0%; size-adjust: 95.8%; src: url('../../fonts/inter-latin-ext-600-normal.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 600; font-display: swap; ascent-override: 98%; descent-override: 23.2%; line-gap-override: 0%; size-adjust: 95.8%; src: url('../../fonts/inter-latin-600-normal.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 700; font-display: swap; ascent-override: 98%; descent-override: 23.2%; line-gap-override: 0%; size-adjust: 95.8%; src: url('../../fonts/inter-latin-ext-700-normal.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Inter'; font-style: normal; font-weight: 700; font-display: swap; ascent-override: 98%; descent-override: 23.2%; line-gap-override: 0%; size-adjust: 95.8%; src: url('../../fonts/inter-latin-700-normal.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 100 900; font-display: swap; ascent-override: 95.3%; descent-override: 22.5%; line-gap-override: 0%; size-adjust: 98.5%; src: url('../../fonts/geist-latin-ext-wght-normal.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Geist'; font-style: normal; font-weight: 100 900; font-display: swap; ascent-override: 95.3%; descent-override: 22.5%; line-gap-override: 0%; size-adjust: 98.5%; src: url('../../fonts/geist-latin-wght-normal.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Fraunces'; font-style: normal; font-weight: 600; font-display: swap; ascent-override: 93.9%; descent-override: 22.2%; line-gap-override: 0%; src: url('../../fonts/fraunces-latin-ext-600-normal.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Fraunces'; font-style: normal; font-weight: 600; font-display: swap; ascent-override: 93.9%; descent-override: 22.2%; line-gap-override: 0%; src: url('../../fonts/fraunces-latin-600-normal.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Alegreya Sans'; font-style: normal; font-weight: 400; font-display: swap; ascent-override: 82.4%; descent-override: 19.5%; line-gap-override: 0%; size-adjust: 114%; src: url('../../fonts/alegreya-sans-latin-ext-400-normal.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Alegreya Sans'; font-style: normal; font-weight: 400; font-display: swap; ascent-override: 82.4%; descent-override: 19.5%; line-gap-override: 0%; size-adjust: 114%; src: url('../../fonts/alegreya-sans-latin-400-normal.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+@font-face { font-family: 'Alegreya Sans'; font-style: normal; font-weight: 700; font-display: swap; ascent-override: 82.4%; descent-override: 19.5%; line-gap-override: 0%; size-adjust: 114%; src: url('../../fonts/alegreya-sans-latin-ext-700-normal.woff2') format('woff2'); unicode-range: U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C0,U+2113,U+2C60-2C7F,U+A720-A7FF; }
+@font-face { font-family: 'Alegreya Sans'; font-style: normal; font-weight: 700; font-display: swap; ascent-override: 82.4%; descent-override: 19.5%; line-gap-override: 0%; size-adjust: 114%; src: url('../../fonts/alegreya-sans-latin-700-normal.woff2') format('woff2'); unicode-range: U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD; }
+.slide[data-deck-font="inter"] {
+ --sans: 'Inter', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', sans-serif; --serif: 'Inter', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', serif;
+ --look-face-display: 'Inter', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', sans-serif;
+ --look-face-text: 'Inter', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', sans-serif;
+ --look-weight-display: 600; --look-weight-text: 400; --look-weight-strong: 600;
+ --look-tracking-display: -.005em; --look-tracking-text: 0em; --look-tracking-interface: 0em; --look-tracking-recent: -.02em; --look-tracking-table: 0em;
+ font-family: var(--look-face-text);
+}
+.slide[data-deck-font="geist"] {
+ --sans: 'Geist', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', sans-serif; --serif: 'Geist', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', serif;
+ --look-face-display: 'Geist', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', sans-serif;
+ --look-face-text: 'Geist', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', sans-serif;
+ --look-weight-display: 600; --look-weight-text: 400; --look-weight-strong: 600;
+ --look-tracking-display: -.012em; --look-tracking-text: 0em; --look-leading-cover: 1.25; --look-tracking-table: 0em; --look-tracking-recent: -.03em;
+ font-family: var(--look-face-text);
+}
+.slide[data-deck-font="serif"] {
+ --sans: 'Alegreya Sans', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', sans-serif; --serif: 'Fraunces', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', serif;
+ --look-face-display: 'Fraunces', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', serif;
+ --look-face-text: 'Alegreya Sans', 'Trebuchet MS', system-ui, -apple-system, 'Segoe UI', sans-serif;
+ --look-weight-display: 600; --look-weight-text: 400; --look-weight-strong: 700;
+ --look-tracking-display: -.022em; --look-tracking-text: .012em; --look-tracking-statement: 0em;
+ font-family: var(--look-face-text);
+}
+/* Explicit faces apply to classic too; code keeps its existing mono stack. */
+.slide:is([data-deck-font="inter"], [data-deck-font="serif"], [data-deck-font="geist"]) {
+  font-weight: var(--look-weight-text);
+  letter-spacing: var(--look-tracking-text);
+}
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) :is(h1,h2,h3,.slide-title) {
+  font-family: var(--look-face-display);
+  font-weight: var(--look-weight-display);
+  letter-spacing: var(--look-tracking-display);
+}
+/* The face's emphasis weight, at the lowest specificity: a layout's own rule (the quote's boxed, unbolded key words)
+   always wins. */
+:where(.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"])) strong {
+  font-weight: var(--look-weight-strong);
+}
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) :is(h1,h2,h3) strong {
+  font-weight: inherit;
+}
+/* The legacy title tab reads its own variables; keep its geometry, give it the selected display face. The kicker and
+   tab-strip looks are typewriter (mono) by design and keep it. */
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"])[data-title-look]:not([data-title-look="kicker"]):not([data-title-look="tab-strip"]) {
+  --titlelook-font: var(--look-face-display);
+  --titlelook-weight: var(--look-weight-display);
+  --titlelook-spacing: var(--look-tracking-display);
+}
+
+/* Long image quotations can already reach the 31px floor in classic. Tighten tracking, retain size. Inter and Geist,
+   drawn at Trebuchet's width by size-adjust, take 0.44.0's -.01em. */
+.slide[data-deck-font="serif"] { --look-tracking-quote: -.015em; }
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) .image-quote blockquote {
+  letter-spacing: var(--look-tracking-quote, -.01em);
+}
+
+.slide[data-deck-font="inter"] .sim { letter-spacing: var(--look-tracking-interface, 0em); }
+.slide[data-deck-font="inter"] .sim :is(pre, code) { letter-spacing: normal; }
+/* The large interface drawing keeps its type size; its narrow recent-chat rail needs tighter labels. */
+.slide:is([data-deck-font="inter"],[data-deck-font="geist"]) .sim-large .sim-recent {
+  letter-spacing: var(--look-tracking-recent);
+}
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) .slide-table :is(th, td) {
+  letter-spacing: var(--look-tracking-table, var(--look-tracking-text));
+}
+.slide[data-deck-font="geist"] .qf-cover-title { line-height: var(--look-leading-cover); }
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) :is(.markmap-node, .markmap-foreign > div) {
+  font-family: var(--look-face-text) !important; font-weight: var(--look-weight-text) !important;
+}
+
+/* Heading declarations in legacy layout skins must not supersede the chosen display weight. Headings that are mono by
+   design (kicker and tab-strip titles, column labels) keep their own face, weight and spacing. */
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) :is(h1,h2,h3):not(.columns-grid *):not(:is([data-title-look="kicker"],[data-title-look="tab-strip"]) > .slide-content > .slide-head > h1) { font-family: var(--look-face-display) !important; font-weight: var(--look-weight-display) !important; letter-spacing: var(--look-tracking-display) !important; }
+/* Only the small .9em default list numeral needs a floor. Preserve larger/plain/card numerals. */
+.slide[data-look="ocean"]:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) :is(.slide-content, .slot-copy) > .feature-list.fl-iconlist-list.fl-numbered:not(.fl-numbered-plain):not(.fl-numbered-styled):not(.fl-annotated) > li > .fl-num {
+  font-size: max(1.9375cqw, calc(.9 * var(--copy-size, 1em))) !important;
+}
+
+/* The paper page is fixed-height and fitted by a compile-time estimate. Wider bundled faces wrap its heading and
+   words onto more lines, so the decorative filler rows give up their spacing (never the bars) before the
+   page foot is pushed off the page. With room to spare it draws exactly as before. */
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) .qf-page-filler { gap: 0; min-height: 0; }
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) .qf-page-filler span { flex: 0 1 1.875cqw; height: auto; min-height: .8333cqw; background: none; border-radius: 0; }
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) .qf-page-filler span:last-child { flex-basis: .8333cqw; }
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) .qf-page-filler span::before { content: ""; display: block; height: .8333cqw; border-radius: .4167cqw; background: #dedfe0; }
+
+/* In the one-row square, pill and oval equations a term never shrinks below its longest word (the default
+   tall-shape equation distributes its width itself and is left alone). Narrower faces otherwise keep the row and squeeze the
+   result square until its white words spill unseen onto the white ground; at full width the row overflows the
+   stage, which the fit check sees, and the slide falls back to the stacked safe drawing. */
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) .equation-row:is(.equation-square, .equation-pills, .equation-oval) > .eq-unit > .eq-term,
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) .equation-row:is(.equation-square, .equation-pills, .equation-oval) > .eq-term { min-width: min-content !important; }
+
+/* A terminal simulation is set in the mono stack: it keeps 0.44.0's spacing and takes none of the face's tracking. */
+.slide:is([data-deck-font="inter"],[data-deck-font="serif"],[data-deck-font="geist"]) .sim.sim-terminal { letter-spacing: normal; }

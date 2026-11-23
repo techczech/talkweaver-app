@@ -148,12 +148,13 @@ const marginTheme = EditorView.theme({
   },
   '.cm-plain-margin-word': {
     fontSize: '11.5px', lineHeight: '13px', fontWeight: '600', letterSpacing: '0.07em',
-    textTransform: 'uppercase', color: '#8a9099', whiteSpace: 'nowrap'
+    textTransform: 'uppercase', color: 'var(--faint)', whiteSpace: 'nowrap'
   },
   // "Section 1", "Section 2.1", "Section 2.1.1": smaller as the number grows, so the word fits the column.
   '.cm-plain-margin-word.cm-plain-margin-word-1': { fontSize: '10.5px', letterSpacing: '0.02em' },
   '.cm-plain-margin-word.cm-plain-margin-word-2': { fontSize: '9.5px', letterSpacing: '0.01em' },
   '.cm-plain-margin-word.cm-plain-margin-word-3': { fontSize: '8.5px', letterSpacing: '0' },
+  '.cm-activeLineGutter .cm-plain-margin-word, .cm-activeLineGutter .cm-plain-margin-detail': { color: 'var(--muted)' },
   '.cm-plain-margin-word, .cm-plain-margin-layout': {
     appearance: 'none', border: '0', background: 'transparent', margin: '0', cursor: 'pointer',
     fontFamily: 'inherit', borderRadius: '5px', padding: '0 5px', marginRight: '-5px'
@@ -162,17 +163,17 @@ const marginTheme = EditorView.theme({
   // stays on its last line. A single word longer than the column is set smaller.
   '.cm-plain-margin-layout': {
     display: 'block', maxWidth: '100%', fontSize: '12.5px', lineHeight: '15px', textAlign: 'right',
-    color: '#1a5fb4', whiteSpace: 'normal', overflowWrap: 'normal'
+    color: 'var(--accent-text)', whiteSpace: 'normal', overflowWrap: 'normal'
   },
   '.cm-plain-margin-layout.cm-plain-margin-tight': { fontSize: '11px' },
   '.cm-plain-margin-chevron': { fontSize: '11px', lineHeight: '1', position: 'relative', top: '-2px', marginLeft: '2px' },
-  '.cm-plain-margin-detail': { fontSize: '10.5px', lineHeight: '13px', color: '#a3a9b2', whiteSpace: 'nowrap' },
+  '.cm-plain-margin-detail': { fontSize: '10.5px', lineHeight: '13px', color: 'var(--faint)', whiteSpace: 'nowrap' },
   '.cm-plain-margin-word:hover, .cm-plain-margin-layout:hover, .cm-plain-margin-word[aria-expanded="true"], .cm-plain-margin-layout[aria-expanded="true"]': {
-    background: '#e6e9ee'
+    background: 'var(--accent-soft)'
   },
-  '.cm-plain-margin-word:focus-visible, .cm-plain-margin-layout:focus-visible': { outline: '2px solid #1a5fb4', outlineOffset: '1px' },
-  // The heading that holds the caret: dark blue and bold; the others stay grey.
-  '.cm-plain-margin-active .cm-plain-margin-word': { color: '#0b3a73', fontWeight: '800' },
+  '.cm-plain-margin-word:focus-visible, .cm-plain-margin-layout:focus-visible': { outline: '2px solid var(--focus)', outlineOffset: '1px' },
+  // The heading that holds the caret: blue and bold.
+  '.cm-plain-margin-active .cm-plain-margin-word': { color: 'var(--accent-text)', fontWeight: '800' },
   // The slide-number gutter stays in the editor; Plain does not show it.
   '.cm-gutter.cm-lineNumbers': { display: 'none !important' }
 })

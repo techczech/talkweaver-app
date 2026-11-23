@@ -2,7 +2,7 @@
 // stylesheet instead of the whole stylesheet inlined into every picture (0.45.1 speed round: about
 // 700 KB of CSS was parsed again three times per slide change). Checked in headless Chromium on a
 // compiled deck:
-//  0. the pure block (PREVIEW_STYLES): one URL per stylesheet text; inline where blob: would not do;
+//  0. the pure block (PREVIEW_STYLES in compiler/assets/runtime/presenter-panes.js): one URL per stylesheet text; inline where blob: would not do;
 //  1. every picture links the same blob: stylesheet, and stepping through the deck keeps that one URL;
 //  2. a picture's document is small (no inlined copy of the deck stylesheet);
 //  3. the pictures are styled exactly as with the stylesheet inlined: the same computed style and box
@@ -11,12 +11,13 @@
 // Usage: node scripts/test-presenter-preview-styles.mjs
 import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { readFileSync, statSync } from 'node:fs'
+import { statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+import { presenterPanesRuntimeSource } from '../compiler/assets/runtime/presenter-panes.js'
 
 const source = `---
 title: Preview styles
@@ -64,12 +65,10 @@ The end.
 
 // ── 1. The pure block: one URL per stylesheet text, inline where a blob: sheet would not do ─────────
 {
-  const template = readFileSync(new URL('../compiler/assets/templates/presenter-popup-single-html.html', import.meta.url), 'utf8')
-  const START = '// === PREVIEW_STYLES_START', END = '// === PREVIEW_STYLES_END'
-  assert(template.includes(START) && template.includes(END), 'the template carries the PREVIEW_STYLES block')
-  const block = template.slice(template.indexOf(START), template.indexOf(END))
+  // The module's own source, as the deck inlines it, with URL, Blob and the clock replaced.
   const made = [], revoked = []
-  const run = (URLImpl, BlobImpl) => new Function('URL', 'Blob', 'setTimeout', `${block}\nreturn previewStylesHead`)(URLImpl, BlobImpl, (f) => f())
+  const noDocument = { addEventListener() {} }
+  const run = (URLImpl, BlobImpl) => new Function('URL', 'Blob', 'setTimeout', 'document', `${presenterPanesRuntimeSource()}\nreturn createPresenterPanes({}).previewStylesHead`)(URLImpl, BlobImpl, (f) => f(), noDocument)
   const fakeURL = { createObjectURL: (b) => { made.push(b); return `blob:fake/${made.length}` }, revokeObjectURL: (u) => revoked.push(u) }
   const head = run(fakeURL, class { constructor(parts, o) { this.text = parts.join(''); this.type = o.type } })
   const css = '.slide { color: red } @font-face { src: url("data:font/woff2;base64,AAA") } .a { background: url(https://example.org/x.png) } .b { mask: url(#m) } .c { background-image: url( var(--x) ) }'

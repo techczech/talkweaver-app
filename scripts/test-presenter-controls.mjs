@@ -215,6 +215,23 @@ export const clipboard = { writeText() {} }
       await page.mouse.move(700, 450)
     }
   }
+  const resumeSnapshot = await page.evaluate(() => {
+    const key = `html-presentations:${document.body.dataset.deckId || location.pathname}:resume`
+    const value = JSON.stringify({ index: 2, updatedAt: Date.now() })
+    localStorage.setItem(key, value)
+    return { key, value }
+  })
+  const retake = await context.newPage()
+  await retake.goto(`${pathToFileURL(htmlPath).href}?presenter=1&retake=1#two`, { waitUntil: 'load' })
+  assert.equal(await retake.locator('#twResume').isVisible(), false, 'a retake has no resume prompt over Record')
+  assert.match(await retake.locator('#slideCount').innerText(), /^2 \//, 'the retake starts at its requested slide')
+  assert.equal(await retake.evaluate((key) => localStorage.getItem(key), resumeSnapshot.key), resumeSnapshot.value, 'the retake leaves the previous presentation snapshot intact')
+  await retake.close()
+  const normal = await context.newPage()
+  await normal.goto(`${pathToFileURL(htmlPath).href}?presenter=1#one`, { waitUntil: 'load' })
+  assert.ok(await normal.locator('#twResume').isVisible(), 'normal presenting still offers to resume the previous presentation')
+  assert.equal(await normal.locator('#twResumeSlide').innerText(), '3')
+  await normal.close()
   assert.deepEqual(errors, [], 'no page errors')
   console.log(`presenter controls: ${controls.length} buttons named; ${controls.filter((c) => c.tipControl).length} chrome controls name their action; ${hovered.length} hovered with "Name  Shortcut" from the registry; ${tableSeen} table controls on the page, lucide icons at one size and stroke`)
 } finally {

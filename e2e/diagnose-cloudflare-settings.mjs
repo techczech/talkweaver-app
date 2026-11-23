@@ -43,6 +43,7 @@ import { createCheckLedger } from './lib/check-ledger.mjs'
 import { findSettingsWindow, openSettingsWindow, closeSettingsWindow, gotoSection, shutdownApp } from './lib/settings-window.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { REPLY_TEXT_MARK, WORKERS_SUBDOMAIN, startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
+import { configWithSettings } from '../src/shared/settings-schema.ts'
 import { S3_REPLY_TEXT_MARK, startS3Stub } from '../scripts/lib/s3-stub.mjs'
 import { testProfileEnv } from './lib/test-profile.mjs'
 
@@ -124,6 +125,7 @@ try {
   await ensureFreshBuild(root)
   api = await startCloudflareApiStub({
     sites: [],
+    pagesDeployments: {},
     accounts: [ADA, GRACE],
     zones: [{ id: 'zone-ada-0001', name: 'handouts.example', account: ADA.id }],
     workerDomains: { [ADA.id]: ['drafts.handouts.example'] },
@@ -193,7 +195,12 @@ try {
     await part('connection').scrollIntoViewIfNeeded()
     await settings.screenshot({ path: join(shots, `${name}.png`) }).catch(() => {})
   }
-  const config = () => JSON.parse(readFileSync(join(userData, 'config.json'), 'utf8'))
+  const config = () => {
+    const legacy = JSON.parse(readFileSync(join(userData, 'config.json'), 'utf8'))
+    const settingsFile = join(userData, 'settings.json')
+    const stored = existsSync(settingsFile) ? JSON.parse(readFileSync(settingsFile, 'utf8')).settings : {}
+    return configWithSettings(legacy, stored)
+  }
   const pasteToken = async (token) => {
     await part('token').locator('input').fill(token)
     await part('token').getByRole('button', { name: 'Save token' }).click()
@@ -421,7 +428,10 @@ try {
   await shot('21-going-live-setting-up')
   api.model.delay = null
   releaseUpload()
-  await liveIs('ready')
+  await liveIs('ready').catch(async error => {
+    console.log(`Going live after the held upload: ${await liveText()}`)
+    throw error
+  })
   const readyLive = await liveText()
   await settings.getByRole('button', { name: 'Details' }).click()
   const liveDetails = (await part('live-service-details').innerText()).trim()

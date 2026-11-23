@@ -1,4 +1,5 @@
 // Execute the actual main-process cancellation and confirm-close routes without Electron.
+import { functionBody, readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
@@ -6,11 +7,12 @@ import { stripTypeScriptTypes } from 'node:module'
 import { mock } from 'node:test'
 import { closeFrozen } from '../src/renderer/src/lib/closeFreeze.ts'
 import { createThumbnailQueue } from '../src/main/thumbnail-queue.ts'
+import { createQuitSequence } from '../src/main/quit-sequence.ts'
 
-const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+const source = readMainSource()
 const attemptCode = source.slice(source.indexOf('let quitAttempt:'), source.indexOf('function holdRenderHelpers()'))
 const confirmCode = source.slice(source.indexOf("ipcMain.handle('window:confirm-close'"), source.indexOf('// Insert section (talk search 07'))
-const quitCode = source.slice(source.indexOf('let quitCycle ='), source.indexOf('const outlineDiskGuard = createOutlineDiskGuard'))
+const quitCode = ['recordQuitAttempt', 'captureQuitVeto'].map(name => functionBody(source, name)).join('\n')
 let passed = 0
 async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name) }
 function harness() {
@@ -22,9 +24,14 @@ function harness() {
     closeHolds, clearTimeout, thumbnailPrewarm: { nudge() {} }, editorWindows,
     restartWindows: { kept() {}, waiting: () => false, confirm: () => 'keep' },
     editorRevisions: { verdict: () => 'saved' }, editorWorkSaved: () => true, closeConfirmed: new Set(),
-    ipcMain: { handle: (_channel, fn) => { confirm = fn } }, app, setImmediate,
+    ipcMain: { handle: (_channel, fn) => { confirm = fn } }, app, createQuitSequence,
   }
-  const api = new Function(...Object.keys(deps), stripTypeScriptTypes('let quitting = false;\n' + attemptCode + confirmCode + quitCode) +
+  const boot = `
+    let quitting = false, quitCycle = 0
+    const quitSequence = createQuitSequence(app, (_name, error) => { throw error }, captureQuitVeto)
+    quitSequence.add({ name: 'Record quit attempt', stage: 'before-quit', timeoutMs: 0, run: recordQuitAttempt })
+  `
+  const api = new Function(...Object.keys(deps), stripTypeScriptTypes(boot + attemptCode + confirmCode + quitCode) +
     '; return { beginQuitAttempt, cancelQuitAttempt, editorQuitAttempts, active: () => quitAttempt }')(...Object.values(deps))
   return { ...api, app, sent, editorWindows, held: () => held, releases: () => releases,
     confirm: (id = 1) => confirm({ sender: { id } }, { quit: true, revision: 1 }) }

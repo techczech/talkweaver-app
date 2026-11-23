@@ -1,3 +1,6 @@
+import { readMainSource } from './lib/read-source.mjs'
+import { hasGitConflictMarkers } from '../src/main/conflict-copies.mjs'
+import { publicationMediaReview, publicationBuildWarnings } from '../src/shared/publication-files.ts'
 import { preservationMessage } from '../src/main/publication-preservation.ts'
 // Publishing a planned Run (feedback-boards ticket 09; work-files ticket 16 "Publish for this run"), and the
 // evergreen handout, through the REAL ipcMain handlers lifted out of src/main/index.ts with the
@@ -33,6 +36,7 @@ import { preservationMessage } from '../src/main/publication-preservation.ts'
 //      never sees them; the talk's own handout pages and its outline file stay byte-identical.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-prework-publish.mjs
 import assert from 'node:assert/strict'
+import { writeGeneratedFile } from '../src/main/generated-file-write.ts'
 import { withPrewarmYield } from '../src/main/preparation-gate.ts'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -57,7 +61,7 @@ const testOwnerTokens = memoryOwnerTokens()
 import { withoutPreworkSlides } from '../src/shared/run-prework.ts'
 import { handoutHomeDetails, handoutHomePostwork, handoutHomePrework } from '../src/shared/handout-home.ts'
 // The pages are built and written as the main process's worker thread does it, here in this process.
-import { buildHandoutPages, runForHandoutOf } from '../src/main/handout-pages.ts'
+import { runCompileOption, buildHandoutPages, runForHandoutOf } from '../src/main/handout-pages.ts'
 import { readPathwayManifest } from '../src/main/pathways.ts'
 import { liveAddressForPages, publishedFolders, removeSiteFolder, writableSiteFolder } from '../src/main/handout-publishing.ts'
 import { runChecklist } from '../src/shared/run-checklist.ts'
@@ -70,8 +74,8 @@ import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { assetRootsForTalk } from '../src/main/asset-roots.ts'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
-const sourceText = readFileSync(join(REPO, 'src/main/index.ts'), 'utf8')
-const sourceFile = ts.createSourceFile('src/main/index.ts', sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+const sourceText = readMainSource()
+const sourceFile = ts.createSourceFile('main-source.ts', sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
 
 function loadHandler(channel, dependencies) {
   let callback = null
@@ -160,7 +164,15 @@ const common = {
   currentVaultRoot: () => vault, writableVaultRoot: () => vault, vaultRootFor: () => vault,
   // The real root choice (ADR-0036), with the test's vault as the one registered vault.
   assetRootsFor: (path) => assetRootsForTalk({ resolve: () => ({ vault: { root: vault } }) }, path),
+  hasGitConflictMarkers, publicationMediaReview, publicationBuildWarnings,
   unresolvedOutboundFailure: () => null,
+  writeGeneratedFile,
+  prepareTalk: async (path, content, defaults, options) => ({
+    slug,
+    model: await prepareSource(path, content, slug, statSync(path), defaults, {
+      ...options, allowedAssetRoots: [vault]
+    })
+  }),
   flushTalkForPublish, readFileSync, existsSync, mkdirSync, readdirSync, writeFileSync, rmSync, join, basename, dirname, statSync, pathToFileURL,
   getCompilerPath: () => join(REPO, 'compiler/scripts'),
   resolveBase, publishUrl, checkPreconditions, stampHandoutUrl, writeTalkOutline,
@@ -193,10 +205,12 @@ const runHandlerDeps = {
   runSiteFolder, runPublishFolder, listRuns, RUN_FOLDER_UNCLEAR, runUnpublishJob, buildNotAvailablePage, legacyRunUnproven, RUN_FOLDER_UNPROVEN,
   // Publish handout for this Run: the Run's compiled deck, then its pages built as the worker thread
   // builds them (here in this process, with the real buildHandoutPages); what the handout carries is recorded.
+  runCompileOption,
   runForHandout: (_talk, run) => ({ eventTitle: run.eventTitle, talkTitle: run.talkTitle, plannedDate: run.plannedDate, startedAt: run.startedAt }),
   resolvePooledRefs: (text) => text,
   runHandoutDistPath: () => join(root, 'run.html'),
   buildHandoutPagesOffThread: (job) => {
+    if (job.kind === 'preflight') return buildHandoutPages(job, html => html)
     if (job.kind === 'run') built.push({ homePrework: job.homePrework, homePostwork: job.homePostwork })
     return buildHandoutPages(job, (html) => html)
   },

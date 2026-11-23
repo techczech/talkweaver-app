@@ -20,6 +20,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'pat
 import { resolvePathways, type Pathway, type PathwaySlideRow } from './pathways.ts'
 import { pathStaysInside } from './path-containment.ts'
 import { readbackSlideTimeIndex } from './run-ink-readback.ts'
+import { escapeHtml } from '../shared/html-escape.ts'
 
 export type { RunBoard, RunPrework, RunQuestion, RunReaction, SlideReactionCounts }
 export { reactionCountsBySlide, preworkWindow }
@@ -1328,10 +1329,6 @@ export function runHandoutSlug(talkSlug: string, eventTitle: string, plannedDate
   let n = 2
   while (used.has(`${base}-${n}`)) n += 1
   return `${base}-${n}`
-}
-
-function escapeHtml(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 function displayRunDate(value: string): string {

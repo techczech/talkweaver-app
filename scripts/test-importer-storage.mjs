@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applySlidePatch, createRunStorage, loadRun, resetSlideDecision } from '../src/main/importer/storage.ts'
@@ -16,7 +17,7 @@ assert.equal(importLayoutTrigger('section'), '{role=section-title}')
 assert.equal(importLayoutTrigger('contrast-cards'), '{contrast=cards}')
 assert.equal(importLayoutTrigger('timeline=compact'), '{timeline=compact}')
 
-const root = mkdtempSync(join(tmpdir(), 'talkweaver-importer-storage-'))
+const root = testScratchDir(join(tmpdir(), 'talkweaver-importer-storage-'))
 const talkDir = join(root, 'research-talk')
 const runDir = join(talkDir, 'import-runs', 'run-123')
 const outlinePath = join(talkDir, 'research-talk-outline.md')

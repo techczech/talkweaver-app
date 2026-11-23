@@ -173,6 +173,7 @@ try {
   const errors = []
   page.on('pageerror', (e) => errors.push(String(e)))
   await page.setContent('<!doctype html><html><body style="margin:0"><div id="stage" style="padding:20px 0 0 20px"></div></body></html>')
+  await page.addStyleTag({ path: join(root, 'src/renderer/src/app-theme.css') })
   await page.addStyleTag({ content: readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8') })
   await page.addScriptTag({ content: readFileSync(outfile, 'utf8') })
 

@@ -5,7 +5,8 @@
 // a line of the wrapped text (at least four). Checked through the compiler's own tree parse, the
 // compile, and the outline migrator's fence reader.
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
+import { statSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { injectPerSlideNotes, notesWrapperFence, prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
@@ -71,7 +72,7 @@ await check('the content of each slide is unchanged (notes stay notes)', () => {
 
 console.log('Compile and migrator:')
 await check('the compiled deck has every slide and no wrapper text shows', async () => {
-  const dir = mkdtempSync(join(tmpdir(), 'tw-notes-fence-'))
+  const dir = testScratchDir(join(tmpdir(), 'tw-notes-fence-'))
   const path = join(dir, 'fence-guard-outline.md')
   writeFileSync(path, injected, 'utf8')
   const model = await prepareSource(path, injected, 'fence-guard', statSync(path))

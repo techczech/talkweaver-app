@@ -221,8 +221,17 @@ try {
     assert.deepEqual(await paneCover(presenter), { shown: true, takesThePress: true, engaged: false, tabStop: -1 }, 'Pointer off restores Click to interact')
     await usePane(presenter)
     assert.equal(fx.ran('sim'), 2, 'one run in each window')
-    // The two copies are different sizes: positions travel as fractions.
-    assert.notDeepEqual(await pane.frame.evaluate(() => [innerWidth, innerHeight]), await copy.frame.evaluate(() => [innerWidth, innerHeight]))
+    const viewport = (frame) => frame.evaluate(() => [innerWidth, innerHeight])
+    const paneSize = await viewport(pane.frame)
+    const audienceSize = await viewport(copy.frame)
+    assert.deepEqual(paneSize, audienceSize, 'both copies start at the same slide viewport')
+    // Give one copy a shorter viewport to exercise scroll mirroring between different sizes.
+    const audienceFrame = await copy.frame.frameElement()
+    await audienceFrame.evaluate(frame => {
+      frame.style.setProperty('height', `${Math.floor(frame.clientHeight * 0.8)}px`, 'important')
+      frame.style.setProperty('min-height', '0', 'important')
+    })
+    await copy.frame.waitForFunction(height => innerHeight < height, audienceSize[1])
 
     await pane.frame.click('#inc')
     await pane.frame.click('#inc')

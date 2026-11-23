@@ -2,7 +2,7 @@
 // (even volume, smooth joins), where your face appears per slide, and Record this slide again. Built like
 // diagnose-recording-editor.mjs: hidden Electron, fake devices (--use-fake-device-for-media-stream,
 // TW_REC_TEST), a throwaway profile and vault with a generated talk; never the owner's. Needs `npm run build`.
-// Screenshots go to docs/design/2026-11-10-record-and-edit-video/built/0.44.5/shots/.
+// TW_SHOTS_DIR overrides the evidence folder.
 //   node e2e/diagnose-recording-follow-ups.mjs
 import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
@@ -15,7 +15,9 @@ import { editorWords, slideRows } from '../src/shared/recording-editor.ts'
 import { makeEditorFixture } from '../scripts/fixtures/recording-editor-fixture.mjs'
 
 const LONG = false
-const repo = resolve(import.meta.dirname, '..'), built = join(repo, 'docs/design/2026-11-10-record-and-edit-video/built/0.44.5'), shots = join(built, 'shots')
+const repo = resolve(import.meta.dirname, '..')
+const recordEvidence = process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE === '1'
+const built = process.env.TW_SHOTS_DIR || join(repo, recordEvidence ? 'docs/design/2026-11-10-record-and-edit-video/built/0.44.5' : 'artefacts/diagnose-recording-follow-ups'), shots = join(built, 'shots')
 const root = mkdtempSync(join(repo, '.follow-ups-e2e-')), vault = join(root, 'vault'), userData = join(root, 'userData'), talk = join(vault, 'fixture'), out = join(root, 'exports')
 for (const dir of [talk, userData, shots, out]) mkdirSync(dir, { recursive: true })
 const TITLES = ['A single strong claim', 'A plain list, with icons', 'A process, left to right', 'Statement beside a list', 'Big numbers', 'Steps that build', 'Before and after', 'A quote']

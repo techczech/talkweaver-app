@@ -512,6 +512,9 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "compact",
     "show"
   ],
+  "media-title": [
+    "overlay"
+  ],
   "contrast": [
     "cards",
     "ledger",
@@ -551,6 +554,9 @@ export const VALUE_TRIGGER_DICTIONARY = {
     "vertical",
     "loop",
     "branch"
+  ],
+  "sim-version": [
+    "2"
   ],
   "sidebar": [
     "on",

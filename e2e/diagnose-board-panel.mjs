@@ -9,7 +9,7 @@
 // (a separate BrowserWindow, placed by the main process, named by the board); a drag there goes
 // through the presenter's live bridge to the worker; Put back closes it and the panel returns;
 // closing the board window does the same; closing the presenter window closes the board window.
-// Screenshots: TW_SHOTS (default <OS temp>/tw-b05-shots).
+// Screenshots: TW_SHOTS (defaults to the disposable fixture).
 // Run: npm run build && node e2e/diagnose-board-panel.mjs
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
@@ -20,8 +20,8 @@ import { pathToFileURL } from 'node:url'
 import { startLiveWorker } from '../scripts/lib/live-worker-harness.mjs'
 
 const repo = process.cwd()
-const shots = process.env.TW_SHOTS || join(tmpdir(), 'tw-b05-shots')
 const tempRoot = mkdtempSync(join(tmpdir(), 'talkweaver-board-panel-'))
+const shots = process.env.TW_SHOTS || join(tempRoot, 'shots')
 const vault = join(tempRoot, 'vault')
 const userData = join(tempRoot, 'userData')
 const talkSlug = 'board-panel-probe'
@@ -60,7 +60,8 @@ const app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], 
   env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1', TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: worker.adminSecret } })
 const phones = []
 try {
-  await app.evaluate(({ app: electronApp, BrowserWindow }) => {
+  await app.evaluate(({ app: electronApp, BrowserWindow, shell }) => {
+    shell.openExternal = async () => {}
     const hide = (win) => { win.setPosition(-20000, -20000); win.hide() }
     BrowserWindow.getAllWindows().forEach(hide)
     electronApp.on('browser-window-created', (_event, win) => hide(win))
@@ -146,7 +147,7 @@ try {
   record('Edit the group\'s wording reaches the worker and every phone (D13)', worded?.boardState?.groups?.[0]?.label === 'Hands-on time')
   // Only the blank page the presenter opens for its board may take the board window's name.
   const countBefore = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)
-  const refused = await presenter.evaluate(() => window.open('https://example.com/', 'tw-board-window') === null)
+  const refused = await presenter.evaluate(url => window.open(url, 'tw-board-window') === null, worker.baseUrl + '/unexpected-board-popup')
   await sleep(500)
   record('a page other than the blank board page is refused under the board window\'s name', refused && await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length) === countBefore)
 

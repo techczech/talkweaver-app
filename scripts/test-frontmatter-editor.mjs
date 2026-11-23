@@ -72,3 +72,11 @@ assert.equal(locateFrontmatter('---\ntitle: never closed\n'), null)
 assert.equal(editFrontmatterText('---\ntitle: T\n----\nx: 1\n---\nbody\n', [{ key: 'y', value: '2' }]), '---\ntitle: T\n----\nx: 1\ny: 2\n---\nbody\n')
 
 console.log('frontmatter editor: scalar, structured, alias, EOL, unknown-byte preservation and irregular delimiters pass')
+
+for (const spelling of ['font: inter\ntypeface: geist','typeface: geist\nfont: inter']) {
+ const out=editFrontmatterText(`---\n${spelling}\n---\nBody`,[{key:'font',aliases:['typeface'],value:'serif'}]);
+ assert.equal(out,'---\nfont: serif\n---\nBody');
+ assert.equal(editFrontmatterText(out,[{key:'typeface',value:'geist'}]),'---\nfont: geist\n---\nBody');
+}
+
+assert.equal(editFrontmatterText('Body',[{key:'font',value:'inter'},{key:'typeface',value:'geist'}]),'---\nfont: inter\n---\n\nBody');

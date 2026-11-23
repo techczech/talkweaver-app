@@ -1,4 +1,4 @@
-import { openSettingsWindow, closeSettingsWindow } from './lib/settings-window.mjs'
+import { closeSettingsWindow, findSettingsWindow, gotoSection } from './lib/settings-window.mjs'
 // Work-files-and-sessions ticket 31: the core pre-work journey, end to end in the real app
 // (journeys.md § Locked, journey 1 "Right when"). Hidden-window Electron on a throwaway
 // vault and user-data folder, the fake Cloudflare API on this computer's loopback address (the app is
@@ -81,8 +81,7 @@ mkdirSync(join(vault, '_PRESENTATIONS', slug), { recursive: true })
 mkdirSync(join(vault, 'Work files'), { recursive: true })
 writeFileSync(join(vault, 'Work files', 'research-teams-intake.md'), PRE_WORK)
 writeFileSync(join(vault, 'Work files', 'paper-and-chat.svg'), TASK_PICTURE)
-// The strips sit under the Metadata table, which is the Markdown view (the Plain view has its own Talk details panel).
-writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, editorViewMode: 'markdown' }))
+writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault }))
 const OUTLINE = ['---', 'title: Core journey', 'outline_version: 2', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
   '### Opening', '{id=opening}', '', '- Kestrelwing opening point', '', '### Close', '{id=close}', '', '- Kestrelwing closing point', ''].join('\n')
 writeFileSync(outlinePath, OUTLINE)
@@ -183,20 +182,34 @@ try {
   const shot = async (name, target = page) => { if (shots) await target.screenshot({ path: join(shots, `${name}.png`) }).catch(() => {}) }
 
   // ---- Connect Cloudflare and set up going live through Settings, as a person does.
-  const settingsPage = await openSettingsWindow(app, page, 'cloudflare')
+  await page.getByRole('button', { name: 'Tools', exact: true }).click()
+  await page.getByRole('menuitem', { name: /^Settings\b/ }).click()
+  const settingsPage = await until(() => findSettingsWindow(app), Boolean, 15_000, 'the Settings window')
+  await settingsPage.waitForLoadState('domcontentloaded')
+  await gotoSection(settingsPage, 'cloudflare')
   const settings = settingsPage.locator('.bsw-root')
   const part = (name) => settings.locator(`[data-cloudflare="${name}"]`)
   const settled = () => settingsPage.waitForFunction(() => document.querySelector('[data-cloudflare="connection"]')?.getAttribute('data-busy') === 'no', null, { timeout: 40_000 })
-  await page.waitForTimeout(1500)
   await part('connection').waitFor({ state: 'visible' })
   await part('connection').scrollIntoViewIfNeeded()
   await part('token').locator('input').fill(TOKEN)
   await part('token').getByRole('button', { name: 'Save token' }).click()
   await settingsPage.waitForFunction(() => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === 'Connected · Ada Lovelace', null, { timeout: 40_000 })
   await settled()
-  const liveIs = (state, timeout = 90_000) => settingsPage.waitForFunction((wanted) => document.querySelector('[data-cloudflare="live-service"]')?.getAttribute('data-state') === wanted, state, { timeout })
+  const liveRow = part('live-service')
+  const liveStatusText = () => liveRow.innerText({ timeout: 1000 }).then(text => text.replace(/\s+/g, ' '), () => 'the row is missing')
+  const liveIs = async (state, timeout = 90_000) => {
+    const readyOrFailed = liveRow.and(settingsPage.locator(`[data-state="${state}"], [data-state="failed"], [data-state="no-permission"]`))
+    try {
+      await readyOrFailed.waitFor({ state: 'attached', timeout })
+      if (await liveRow.getAttribute('data-state', { timeout: 1000 }) === state) return
+    } catch (error) {
+      throw new Error(`Going live did not reach ${state}: ${await liveStatusText()}`, { cause: error })
+    }
+    throw new Error(`Going live did not reach ${state}: ${await liveStatusText()}`)
+  }
   await liveIs('not-set-up', 120_000)
-  await part('live-service-label').click()
+  await liveRow.getByRole('button', { name: 'Set up going live', exact: true }).click()
   await liveIs('ready')
   await shot('0-live-service-ready', settings)
   const liveReady = readFileSync(join(userData, 'config.json'), 'utf8').includes(LIVE_HOST)
@@ -204,7 +217,9 @@ try {
 
   // ---- 1. Attach a work file in metadata.
   await openTalkByTitle(page, 'Core journey')
-  const strip = page.locator('[data-work-strip="pre"]')
+  // The work-file strips are part of the Markdown metadata table.
+  await page.getByTestId('markdown-toggle').click()
+  const strip = page.locator('[data-view="markdown"] [data-work-strip="pre"]')
   await strip.waitFor({ timeout: 10_000 })
   await strip.locator('[data-strip-action="attach"]').click()
   await page.waitForSelector('[data-strip-menu="attach-pre"]', { timeout: 5000 })

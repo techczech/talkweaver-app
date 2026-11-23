@@ -14,7 +14,7 @@
 .plan-run .pr-label { font: 700 10px var(--font-mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .plan-run .pr-label em { font-style: normal; font-weight: 500; }
 .plan-run input, .plan-run select { height: 34px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); padding: 0 10px; font: 12px var(--font-ui); color: var(--ink); min-width: 0; width: 100%; }
-.plan-run input:focus, .plan-run select:focus { outline: 2px solid var(--oxford); outline-offset: -1px; }
+.plan-run input:focus, .plan-run select:focus { outline: 2px solid var(--focus); outline-offset: -1px; }
 .plan-run .pr-hint { font-size: 11.5px; color: var(--muted); }
 .plan-run .pr-note { font-size: 11.5px; color: var(--muted); line-height: 1.45; }
 .plan-run .pr-foot { display: flex; align-items: center; gap: 8px; padding: 12px 22px; border-top: 1px solid var(--line); }

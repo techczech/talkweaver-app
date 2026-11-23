@@ -35,6 +35,10 @@ const WINDOW_SCOPES: Readonly<Record<string, string>> = {
  * the local id the renderer's keymap uses. scripts/test-shared-settings.mjs checks it against that file.
  */
 export const REBINDABLE: Readonly<Record<string, string>> = {
+  'app.view-slides': 'view-slides',
+  'app.view-grid': 'view-grid',
+  'app.view-plain': 'view-plain',
+  'app.view-markdown': 'view-markdown',
   'app.check-for-updates': 'check-for-updates',
   'app.whats-new': 'whats-new',
   'app.research-panel': 'research-panel',
@@ -72,6 +76,8 @@ export const REBINDABLE: Readonly<Record<string, string>> = {
   'app.sidebar-outline': 'sidebar.outline',
   'app.sidebar-toggle': 'sidebar.toggle',
   'editor.new-slide': 'new-slide',
+  'editor.new-section': 'new-section',
+  'editor.new-subsection': 'new-subsection',
   'editor.bulleted-list': 'bulleted-list',
   'editor.numbered-list': 'numbered-list',
   'editor.move-up': 'move-up',

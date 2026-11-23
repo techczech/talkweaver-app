@@ -16,7 +16,7 @@ mkdirSync(out, { recursive: true })
 let browser
 try {
   await build({ stdin: { resolveDir: root, loader: 'tsx', contents: `
-    import React,{useState} from 'react';import {createRoot} from 'react-dom/client';import Gallery from '${src}/renderer/src/components/vault-gallery/VaultGallery';
+    import React,{useState} from 'react';import {createRoot} from 'react-dom/client';import './src/renderer/src/app-theme.css';import Gallery from '${src}/renderer/src/components/vault-gallery/VaultGallery';
     ${fixtureSource}
     function Harness(){const[open,setOpen]=useState(true);return <><textarea aria-label="Editor" defaultValue="Unsaved text"/>{open&&<Gallery revision={1} onClose={()=>setOpen(false)} onOpen={async t=>{window.calls.open.push(t.outlinePath);return !window.refuseOpen}} management={window.managementFixture()}/>}</>}
     createRoot(document.getElementById('root')).render(<Harness/>)` }, bundle: true, outfile: join(dir, 'bundle.js'), platform: 'browser', jsx: 'automatic', loader: { '.css': 'css' } })

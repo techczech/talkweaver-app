@@ -136,6 +136,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 900 } })
   page.on('pageerror', (e) => errors.push(String(e)))
   await page.setContent('<div id="host" style="width:900px;height:800px"></div>')
+  await page.addStyleTag({ path: join(root, 'src/renderer/src/app-theme.css') })
   await page.addScriptTag({ path: outfile })
   const ev = (fn, arg) => page.evaluate(fn, arg)
   const open = async (d = doc, mode = 'plain', protect = true) => { await ev(([d, m, p]) => { window.mount(d, m, p); window.labels() }, [d, mode, protect]) }
@@ -156,8 +157,8 @@ try {
   assert.equal(m[4].layout, 'Statement')
   const css = await ev(() => { const w = document.querySelector('.cm-plain-margin .cm-plain-margin-word'); const g = document.querySelector('.cm-plain-margin'); const l = document.querySelector('.cm-plain-margin-layout'); return { color: getComputedStyle(w).color, upper: getComputedStyle(w).textTransform, layoutColor: getComputedStyle(l).color, width: g.getBoundingClientRect().width, numberGutter: getComputedStyle(document.querySelector('.cm-gutter.cm-lineNumbers')).display, first: document.querySelector('.cm-gutters > .cm-gutter').className } })
   assert.equal(css.upper, 'uppercase')
-  assert.equal(css.color, 'rgb(138, 144, 153)', 'label is grey')
-  assert.equal(css.layoutColor, 'rgb(26, 95, 180)', 'layout name is the accent blue')
+  assert.equal(css.color, 'rgb(95, 107, 122)', 'label is grey')
+  assert.equal(css.layoutColor, 'rgb(29, 78, 216)', 'layout name is the accent blue')
   assert.ok(css.width >= 70 && css.width <= 78, 'margin width ' + css.width)
   assert.equal(css.numberGutter, 'none', 'the slide-number gutter is not shown in Plain')
   assert.match(css.first, /cm-plain-margin/, 'the margin is the first gutter')

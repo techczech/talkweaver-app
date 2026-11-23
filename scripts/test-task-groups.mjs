@@ -28,6 +28,21 @@ const test = (name, fn) => { try { fn(); results.push([true, name]) } catch (err
 // Commands the map leaves out, or marks "Did not fit": placed by the builder from the map's
 // neighbours, reported to the owner. Id -> [task, subgroup].
 const BUILDER_PLACED = {
+  'view-panel-previews': ['See the talk', 'Views'],
+  'view-panel-outline': ['See the talk', 'Views'],
+  'view-slide-panel': ['See the talk', 'Sidebar and outline search'],
+  'split-pasted-picture-row': ['Build a slide', 'Images and icons'],
+  'paste-picture': ['Build a slide', 'Images and icons'],
+  'duplicate-slide': ['Write the outline', 'Reorder slides and items'],
+  'move-current-slide-up': ['Write the outline', 'Reorder slides and items'],
+  'move-current-slide-down': ['Write the outline', 'Reorder slides and items'],
+  'edit-speaker-notes': ['Build a slide', 'Components'],
+  'welcome-slide': ['Manage talks', 'Talks panel'],
+  'welcome-outline': ['Manage talks', 'Talks panel'],
+  'welcome-markdown': ['Manage talks', 'Talks panel'],
+  'present-slide-window': ['Present', 'Open presenter and audience'],
+  'app.view-plain': ['See the talk', 'Views'],
+  'app.view-markdown': ['See the talk', 'Views'],
   'presenter.record-flag': ['Present', 'Recording'],
   'pathway.delete': ['Shape the talk', 'Pathways'],
   'add-to-pathway': ['Shape the talk', 'Pathways'],
@@ -108,9 +123,13 @@ const BUILDER_PLACED = {
   'research-insert-here': ['Shape the talk', 'Research folder'],
   'research-retry': ['Shape the talk', 'Research folder'],
   // Plain editing view ticket 01: the two editor tabs sit with the other views.
-  'view-plain': ['See the talk', 'Views (slides, grid, strip)'],
-  'view-markdown': ['See the talk', 'Views (slides, grid, strip)'],
+  'view-plain': ['See the talk', 'Views'],
+  'view-markdown': ['See the talk', 'Views'],
   // Plain editing view ticket 04: the margin menus' palette entries.
+  'new-section': ['Write the outline', 'Headings and levels'],
+  'new-subsection': ['Write the outline', 'Headings and levels'],
+  'make-section': ['Write the outline', 'Headings and levels'],
+  'select-several-slides': ['Write the outline', 'Headings and levels'],
   'change-heading-level': ['Write the outline', 'Headings and levels'],
   'change-slide-layout': ['Build a slide', 'Layouts'],
   'undo': ['Write the outline', 'Undo and redo'],
@@ -144,8 +163,8 @@ const BUILDER_PLACED = {
   'presenter-palette.pen-arrow': ['Present', 'Display modes'],
   'presenter-palette.pen-rectangle': ['Present', 'Display modes'],
   // Collapse all / Expand all sections (the Slides outline and the grid): not in the map, placed with the views.
-  'outline-collapse-all': ['See the talk', 'Views (slides, grid, strip)'],
-  'outline-expand-all': ['See the talk', 'Views (slides, grid, strip)'],
+  'outline-collapse-all': ['See the talk', 'Views'],
+  'outline-expand-all': ['See the talk', 'Views'],
   // Move slide to… / Move section to… (slide and section context menus, the palette): not in the map, placed with reordering.
   'move-slide-to': ['Write the outline', 'Reorder slides and items'],
   'move-section-to': ['Write the outline', 'Reorder slides and items'],
@@ -213,7 +232,14 @@ const BUILDER_PLACED = {
 // 'icon-picker': the palette names it "Insert icon…" since plain view ticket 13 (Command-I puts an
 // icon on the caret's line); the Insert menu still shows the map's "Icon…" (its toolbar menuLabel).
 // plan-run: R4, one word for the object (a Run). history: the old name of the Runs command, kept as an alias (R5).
-const KNOWN_LABEL_DIFFERENCES = { 'app.context-menu': 'Actions here', 'icon-picker': 'Insert icon…', 'plan-run': 'Plan a Run…', history: 'TalkWeaver Runs… (History)' }
+const KNOWN_LABEL_DIFFERENCES = {
+  'promote-heading': 'One level up',
+  'demote-heading': 'One level down',
+  'editor.promote': 'One level up',
+  'editor.demote': 'One level down',
+  'view-slides': 'View: Slide',
+  'view-plain': 'View: Outline',
+  'view-markdown': 'View: Markdown', 'app.context-menu': 'Actions here', 'icon-picker': 'Insert icon…', 'plan-run': 'Plan a Run…', history: 'TalkWeaver Runs… (History)' }
 
 const presenterNoKey = presenterPaletteEntries().filter((entry) => !entry.shortcut)
 const registryLabels = new Map([
@@ -271,7 +297,7 @@ test('the map matches the registries: ids, labels, groups and sub-groups', () =>
     const known = KNOWN_LABEL_DIFFERENCES[record.id]
     assert.equal(registryLabels.get(record.id), known ?? record.label, `label of ${record.id}`)
     if (BUILDER_PLACED[record.id]) continue
-    assert.deepEqual([...TASK_GROUP_TABLE[record.id]], [record.task, record.subgroup], `group of ${record.id}`)
+    assert.deepEqual([...TASK_GROUP_TABLE[record.id]], [record.task, record.subgroup === 'Views (slides, grid, strip)' ? 'Views' : record.subgroup], `group of ${record.id}`)
   }
   for (const [id, placed] of Object.entries(BUILDER_PLACED)) assert.deepEqual([...TASK_GROUP_TABLE[id]], placed, `builder placement of ${id}`)
 })
@@ -310,9 +336,13 @@ test('the count per task group is derived and equals the map plus the builder\'s
   const counts = taskGroupCounts()
   const expected = Object.fromEntries(TASK_GROUPS.map((group) => [group, 0]))
   for (const record of map.records.filter((r) => r.class === 'command' && !BUILDER_PLACED[r.id])) expected[record.task] += 1
-  for (const [, [task]] of Object.entries(BUILDER_PLACED)) expected[task] += 1
+  for (const [id, [task]] of Object.entries(BUILDER_PLACED)) {
+    // These two shortcut rows are carried by the existing view commands.
+    if (id === 'app.view-plain' || id === 'app.view-markdown') continue
+    expected[task] += 1
+  }
   assert.deepEqual(counts, expected)
-  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 320) // The set-up folder's palette row (Set-up folder for your Macs) adds one. Delete selected object (Backspace or Delete) adds one. The recording cluster's Start again and Microphone add two. The recording editor adds six Studio keys (play, cut, previous and next word, extend back and on). The recording panel adds four Studio keys (trim start, trim end, undo and redo a trim). Consistency batch 3 adds `runs` and `tools-view-runs` (History and Sessions stay as aliases). // House rule R18 folds View: Editor only and View: Editor + slides into View: Slides (one fewer). // Set aside in Scratchpad adds one (slide handling 3); Search slides in the grid, Next search result and Previous search result add three (slide handling 2); Select section, Clear slide selection and Move selected slides to… add three (slide handling 1b); Return Live (freeze and mark) adds one; Insert › Speaker notes adds one; the object cards add six (expand, Discard, row up/down, delete comment, insert speaker notes); Capture embed… adds one; Insert HTML page… adds one; six research tidy/cross-talk commands added; ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one; the Tools window and Attach commands add fifteen; the research folder adds two (Capture to research…, Reveal research folder) Slide Scratchpad adds fifteen (ticket 2: insert slide, insert visual, compare, change place); Capture embed… adds one; Insert HTML page… adds one; six research tidy/cross-talk commands added; ticket 12 adds get-started-show-example; plain view adds view-plain, view-markdown and the two margin-menu commands; quote forms add seven; collapse all and expand all add two; Move slide to… and Move section to… add two (merged: base 225 + plain view 4 + Move-to 2); Shift-Enter in a quotation adds one; the Tools window and Attach commands add fifteen; the research folder adds two (Capture to research…, Reveal research folder)
+  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 337) // ADR-0045 adds 17 actions.
 })
 
 test('a chord becomes the key event that matches it', () => {
@@ -354,22 +384,22 @@ try {
   })
   const ui = await import(`${pathToFileURL(outfile).href}?t=${Date.now()}`)
 
-  test('a palette row shows its task group beside its key', () => {
+  test('empty palette shows distinct task categories with icons instead of command rows', () => {
     const html = ui.renderMenu([{ id: 'undo', title: 'Undo', hint: '⌘Z', group: 'Write the outline', run() {} }, { id: 'x', title: 'No group', run() {} }])
     const doc = new JSDOM(html).window.document
     const rows = [...doc.querySelectorAll('.command-menu-item')]
-    assert.equal(rows.length, 2)
-    assert.equal(rows[0].querySelector('.command-menu-group')?.textContent, 'Write the outline')
-    assert.equal(rows[0].querySelector('.command-menu-hint')?.textContent, '⌘Z')
-    assert.equal(rows[1].querySelector('.command-menu-group'), null)
+    assert.equal(rows.length, TASK_GROUPS.length)
+    assert.equal(doc.querySelectorAll('[data-task-group]').length, TASK_GROUPS.length)
+    assert.equal(doc.querySelectorAll('[data-group-icon]').length, TASK_GROUPS.length)
+    assert.equal(doc.querySelectorAll('[data-command]').length, 0)
   })
 
-  test('the palette as WorkspaceLayout builds it lists every listed command with its task group', () => {
+  test('the palette categories count every listed command in the registry', () => {
     const commands = listedPaletteCommands().map((command) => ({ id: command.id, title: command.label, group: command.taskGroup ?? undefined, run() {} }))
     const doc = new JSDOM(ui.renderMenu(commands)).window.document
-    const rows = [...doc.querySelectorAll('.command-menu-item')]
-    assert.equal(rows.length, commands.length)
-    for (const row of rows) assert(TASK_GROUPS.includes(row.querySelector('.command-menu-group')?.textContent), `${row.textContent} shows a task group`)
+    const rows = [...doc.querySelectorAll('[data-task-group]')]
+    assert.deepEqual(rows.map(row => row.dataset.taskGroup), TASK_GROUPS)
+    assert.equal(rows.reduce((sum, row) => sum + Number(row.dataset.count), 0), commands.length)
   })
 
   test('the shortcut sheet and Settings → shortcuts head their sections by task group, not by the old group names', () => {

@@ -35,7 +35,7 @@
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-main > * { position: relative; z-index: 1; }
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) > .tp-main > .tp-mid { position: static; }
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-title {
-  position: static; font: 700 max(48px, 6cqw)/1.06 var(--look-face-display); letter-spacing: -.03em; color: var(--look-ink); max-width: 11em;
+  position: static; font: var(--look-weight-display, 700) max(48px, 6cqw)/1.06 var(--look-face-display); letter-spacing: -.03em; color: var(--look-ink); max-width: 11em;
 }
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-sub {
   font-size: max(var(--type-floor, 31px), 2.4cqw); color: var(--look-muted); max-width: 22em;
@@ -55,15 +55,19 @@
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-who { max-width: none; }
 .slide[data-look="ocean"] > .slide-content.layout-title > .tp.tp-poster:not(.tp-closing) .tp-whenweb { text-align: left; }
 
-/* A QR code's address, in the look and its safe drawing, on the title and closing slides and in a slide's corner (the
-   rail too): always shown whole, never cut. It breaks only after a slash (each part between slashes is one .qr-part
-   that does not wrap); a part that alone is wider than the caption opens its marked break places (slide-fit.js
-   fitQrCaptions sets data-qr-long), and breaks anywhere only where none of those fits. It takes the lines it needs. */
-.slide:is([data-look="ocean"], [data-look="ocean-safe"]) .qr-caption {
+/* QR captions show only their complete domain in every look. Long domains may wrap at
+   dots and hyphens; the Ocean fitter opens those break opportunities when needed. */
+.slide .qr-caption {
   white-space: normal !important; overflow: visible !important; text-overflow: clip !important;
   overflow-wrap: normal !important; word-break: normal !important; hyphens: manual;
 }
-.slide:is([data-look="ocean"], [data-look="ocean-safe"]) .qr-caption .qr-part { white-space: nowrap; }
+.slide .qr-caption .qr-part { white-space: nowrap; }
 /* a <wbr> breaks a line even inside nowrap: a part's own break places are taken out of layout until it is too long */
-.slide:is([data-look="ocean"], [data-look="ocean-safe"]) .qr-caption .qr-part:not([data-qr-long]) > wbr { display: none; }
-.slide:is([data-look="ocean"], [data-look="ocean-safe"]) .qr-caption .qr-part[data-qr-long] { white-space: normal; overflow-wrap: anywhere; }
+.slide .qr-caption .qr-part:not([data-qr-long]) > wbr { display: none; }
+.slide .qr-caption .qr-part[data-qr-long] { white-space: normal; overflow-wrap: anywhere; }
+
+.slide:not([data-look]) .qr-caption .qr-part { white-space: normal; overflow-wrap: anywhere; }
+.slide .tp-web, .slide .slide-source, .slide .link-url { white-space: normal; overflow-wrap: anywhere; }
+.slide .qr-too-long a { font-weight: 400; }
+
+.slide .slide-content .link-url { opacity: 1; color: inherit; font-weight: 400; }

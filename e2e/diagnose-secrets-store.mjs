@@ -1,3 +1,4 @@
+// Manual only: requires access to the operating-system credential store and may prompt.
 // The secrets module against the real operating-system encryption (Electron safeStorage: Keychain on
 // macOS, DPAPI on Windows), in a throwaway user-data folder, with made-up values. Starts Electron on
 // e2e/secrets-host (no window), waits for it, and reports its PASS lines. What it proves is listed in

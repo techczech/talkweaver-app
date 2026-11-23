@@ -21,6 +21,7 @@ const allowed = new Map([
   ['compiler/scripts/lib/09-output-builders.mjs', [
     { text: 'location.pathname', reason: 'Browser document and location routes in generated client code.' }
   ]],
+  // These allowances identify exact existing lines in the entry point; the scan walks all of src/main.
   ['src/main/index.ts', [
     { text: 'const key = decodeURIComponent(url.pathname.replace', reason: 'Thumbnail custom protocol resource key.' },
     { text: 'const rel = decodeURIComponent(url.pathname.replace', reason: 'Presentation custom protocol relative resource path.' },

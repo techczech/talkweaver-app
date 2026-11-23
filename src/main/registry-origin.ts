@@ -16,9 +16,9 @@
 // record, and a later read finds it damaged, which then refuses only what needs it.
 //
 // No Electron import: the tests drive these functions on files of their own.
-import { closeSync, fsyncSync, ftruncateSync, openSync, readFileSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { closeSync, fsyncSync, ftruncateSync, openSync, readFileSync, writeSync } from 'node:fs'
 import { dirname } from 'node:path'
+import { writeTextAtomic } from './atomic-file.ts'
 
 export class RegistryOriginUnavailable extends Error {
   readonly kind: 'unreadable' | 'unwritable'
@@ -40,16 +40,9 @@ export function readRegistryStrict(path: string): Record<string, string> | null 
   }
 }
 
-/** The registry written whole (to a temporary file, then renamed over the old one). */
+/** The replaceable registry. Its write-once origin record below uses an exclusive reservation. */
 export function writeRegistry(path: string, registry: Record<string, string>): void {
-  const temp = `${path}.${randomUUID()}.tmp`
-  try {
-    writeFileSync(temp, JSON.stringify(registry, null, 2), 'utf8')
-    renameSync(temp, path)
-  } catch (error) {
-    rmSync(temp, { force: true })
-    throw error
-  }
+  writeTextAtomic(path, JSON.stringify(registry, null, 2), { createParent: false })
 }
 
 /** How the record is flushed: the file system's own fsync unless a test stands in for it. */

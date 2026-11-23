@@ -21,7 +21,7 @@ import ts from 'typescript'
 import { liveWorkerDeployConfig } from '../src/main/live-worker-deploy-config.ts'
 import { BLOCKING_FILE_MESSAGE, blockingFileText, brokenJsonFileInOutput, visiblePath } from '../src/main/wrangler-failures.ts'
 import { pagesBundlingHazard, resolveSiteDir } from '../src/main/publishing-logic.ts'
-import { functionBody, normaliseNewlines, readSource } from './lib/read-source.mjs'
+import { readMainSource, functionBody, normaliseNewlines, readSource } from './lib/read-source.mjs'
 import { classifyProcess, isLocalConnect, isSystemPath, pathRules } from './lib/wrangler-trace-rules.mjs'
 import {
   WRANGLER_KEPT_OUTPUT_CHARS, WRANGLER_MAX_OUTPUT_BYTES, WRANGLER_MISSING_MESSAGE, WRANGLER_OUTPUT_LIMIT_MESSAGE,
@@ -247,7 +247,17 @@ for (const set of [{ ELECTRON_RUN_AS_NODE: '0' }, { NODE_OPTIONS: '--require /ev
   const traced = resolveWranglerLaunch(mac, ['deploy'], {}, { preload: '/repo/scripts/lib/wrangler-trace-preload.cjs', file: '/tmp/trace.ndjson' }).launch
   assert.deepEqual(traced.args.slice(0, 3), ['--no-warnings', '--require', '/repo/scripts/lib/wrangler-trace-preload.cjs'])
   assert.equal(traced.env[TRACE_FILE_VARIABLE], '/tmp/trace.ndjson')
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource((code, file) => {
+    if (file !== 'src/main/wrangler-launcher.ts') return code
+    // The test-only launch port declares and forwards the trace. Detect any new app request for it.
+    const resolveLaunch = functionBody(code, 'resolveWranglerLaunch')
+    const prepareRun = functionBody(code, 'prepareWranglerRun')
+    return code
+      .replace('export type WranglerTrace = { preload: string; file: string }', '')
+      .replace("export const TRACE_FILE_VARIABLE = 'TALKWEAVER_WRANGLER_TRACE_FILE'", '')
+      .replace(resolveLaunch, resolveLaunch.replace('trace?: WranglerTrace,', '').replace('if (trace) env[TRACE_FILE_VARIABLE] = trace.file', ''))
+      .replace(prepareRun, prepareRun.replace('trace?: WranglerTrace,', ''))
+  })
   assert.ok(!/wrangler-trace|WranglerTrace|TRACE_FILE_VARIABLE|preload:\s/.test(main.split('\n').filter((line) => /[Ww]rangler/.test(line)).join('\n')), 'the main process never asks for the trace')
 }
 
@@ -261,7 +271,7 @@ for (const set of [{ ELECTRON_RUN_AS_NODE: '0' }, { NODE_OPTIONS: '--require /ev
   assert.equal(resolveSiteDir(ud, '/Volumes/Talks/site', 'darwin'), '/Volumes/Talks/site', 'an absolute override is used as it is')
   assert.equal(resolveSiteDir('C:\\Users\\Ada\\AppData\\Roaming\\TalkWeaver', 'site', 'win32'), 'C:\\Users\\Ada\\AppData\\Roaming\\TalkWeaver\\site')
   assert.equal(resolveSiteDir('C:\\Users\\Ada\\AppData\\Roaming\\TalkWeaver', 'D:\\Talks\\site', 'win32'), 'D:\\Talks\\site')
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   assert.ok(/function publishSiteDir\(\): string \{\s*return resolveSiteDir\(/.test(main), 'the main process takes the site folder from resolveSiteDir, everywhere')
   assert.ok(!/getConfig\('publishSiteDir'[^)]*\)\s*\?\?/.test(main), 'and never reads the raw override beside it')
 }
@@ -278,7 +288,7 @@ for (const set of [{ ELECTRON_RUN_AS_NODE: '0' }, { NODE_OPTIONS: '--require /ev
   }
   assert.ok(pagesBundlingHazard('C:\\ud\\site', 'C:\\ud\\wrangler-runs', (path) => path === 'C:\\ud\\site\\_worker.js', 'win32')?.includes('C:\\ud\\site\\_worker.js'))
   // One place sends the site's changes (per-talk publishing: handout-publishing.ts, with Cloudflare's API), and it checks first.
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   assert.equal(main.split('pagesBundlingBlock(siteDir)').length - 1, 1, 'the main process hands the check to the one place that publishes')
   assert.ok(!main.includes("'pages', 'deploy'"), 'and runs no `pages deploy` of its own')
   const publishing = readSource(join(repo, 'src/main/handout-publishing.ts'))
@@ -331,7 +341,7 @@ for (const set of [{ ELECTRON_RUN_AS_NODE: '0' }, { NODE_OPTIONS: '--require /ev
   }
   assert.throws(() => functionBody('function open() {\n  never closed', 'open'), /no closing brace/)
   // The real file, read as a Windows checkout would hold it.
-  const real = readSource(join(repo, 'src/main/index.ts'))
+  const real = readMainSource()
   assert.ok(!real.includes('\r'))
   assert.equal(functionBody(real.replaceAll('\n', '\r\n'), 'deployLiveWorker'), functionBody(real, 'deployLiveWorker'))
   assert.ok(functionBody(real, 'deployLiveWorker').length < 5000, 'one function, not the rest of the file')
@@ -397,7 +407,7 @@ for (const set of [{ ELECTRON_RUN_AS_NODE: '0' }, { NODE_OPTIONS: '--require /ev
   // Used where the Worker is still compiled at run time (local dev: tests and the unpackaged app), on
   // wrangler's own output. The live service's set-up compiles nothing (ticket 11), so it has nothing
   // to sort this way; and the main process has no code left that goes looking in parent folders.
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   const body = (name) => functionBody(main, name)
   assert.equal(body('deployLiveWorker').split('liveWorkerFailureText(').length - 1, 0, 'the set-up runs no tool whose output could name a file')
   assert.equal(body('startLocalLiveWorker').split('liveWorkerFailureText(').length - 1, 2, 'and a local dev server that does not start or stops')
@@ -813,7 +823,7 @@ child.stdout.once('data', (chunk) => {
     for (const file of mainFiles) {
       assert.ok(!/(?:spawn|spawnSync|exec|execSync|execFile|execFileSync)\(\s*['"`]taskkill/.test(readSource(file)), `${relative(repo, file)} starts no taskkill by bare name`)
     }
-    assert.ok(/endAllWranglerRuns\(\)\n\}\)/.test(readSource(join(repo, 'src/main/index.ts'))), 'the app ends the runs under way when it quits')
+    assert.ok(/quitSequence\.add\(\{[^}]*stage: 'will-quit'[^}]*run: \(\) => \{ endAllWranglerRuns\(\)/.test(readMainSource()), 'the app ends the runs under way when it quits')
   }
   // The default start is that same function, with the launch as it was resolved.
   const launcher = readSource(join(repo, 'src/main/wrangler-launcher.ts'))
@@ -831,7 +841,7 @@ child.stdout.once('data', (chunk) => {
   assert.deepEqual(plain.migrations, JSON.parse(JSON.stringify(plain.migrations)))
   const shared = liveWorkerDeployConfig('{ // comment\n "main": "index.ts", /* block */ "name": "w" }', 'C:\\Program Files\\TalkWeaver\\resources\\worker', 'drafts.example.org', 'win32')
   assert.deepEqual(shared, { main: 'C:\\Program Files\\TalkWeaver\\resources\\worker\\index.ts', name: 'w', workers_dev: true, routes: [{ pattern: 'drafts.example.org', custom_domain: true }] })
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   assert.ok(!/path:\s*baseConfig\b/.test(main), 'the main process never hands wrangler the config inside the app folder for a deploy')
 }
 
@@ -1079,7 +1089,7 @@ function directWranglerCallsIn(fileName, text) {
     }
   }
   assert.deepEqual(found, [], 'no literal bare-wrangler call, retired helper or install-wrangler message anywhere')
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   for (const command of ["'dev', '--config'"]) {
     assert.ok(main.includes(command), `the ${command} call site is still in the main process (update this list if it moved)`)
   }

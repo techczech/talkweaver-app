@@ -60,11 +60,11 @@ if (shots) await mkdir(shots, { recursive: true })
 const failures = []
 const check = (ok, label) => { if (!ok) failures.push(label) }
 
-const initScript = () => {
+const initScript = (ackError) => {
   window.__sockets = []
   window.__sent = []
   window.__offline = false
-  window.__ackError = null
+  window.__ackError = ackError
   window.__capabilities = { protocol: 2, build: '14-reactions-questions' }
   window.fetch = async (url) => {
     const path = String(url)
@@ -94,8 +94,9 @@ const initScript = () => {
       if (message.type === 'session.ping') this.emit({ type: 'session.pong', nonce: message.nonce })
       if (message.type === 'question.submit') {
         window.__sent.push(message)
+        const error = window.__ackError
         setTimeout(() => this.emit({ type: 'question.ack', submissionId: message.submissionId,
-          status: window.__ackError ? 'rejected' : 'confirmed', ...(window.__ackError ? { error: window.__ackError } : {}) }), 20)
+          status: error ? 'rejected' : 'confirmed', ...(error ? { error } : {}) }), 20)
       }
     }
     close() { this.readyState = 3 }
@@ -110,12 +111,12 @@ const viewportScript = () => {
   window.__keyboard = (px) => { viewport.height = window.innerHeight - px; viewport.dispatchEvent(new Event('resize')) }
 }
 
-async function open(browser, size, path = htmlPath, hash = '#slide-a') {
+async function open(browser, size, { path = htmlPath, hash = '#slide-a', ackError = null } = {}) {
   const context = await browser.newContext({ viewport: { width: size[0], height: size[1] }, hasTouch: size[0] < 700 })
   const page = await context.newPage()
   page.errors = []
   page.on('pageerror', (error) => page.errors.push(error.message))
-  await page.addInitScript(initScript)
+  await page.addInitScript(initScript, ackError)
   await page.addInitScript(viewportScript)
   await page.goto(pathToFileURL(path).href + hash)
   await page.waitForFunction(() => window.__sockets.length >= 1)
@@ -414,17 +415,14 @@ try {
 
   // ── A result after a reload, and a question that cannot be kept ─────────────────────────
   {
-    const { page, context } = await open(browser, [1440, 900])
+    const { page, context } = await open(browser, [1440, 900], { ackError: 'questions_paused' })
     await live(page, 'slide-a', 1); await settle(page)
     await page.evaluate(() => { window.__offline = true; window.__sockets.at(-1).readyState = 3; window.__sockets.at(-1).onclose?.() })
     await settle(page, 100)
     await page.keyboard.press('a'); await settle(page)
     await page.fill('.ask-text', 'Sent before the reload')
     await page.keyboard.press('Control+Enter'); await settle(page)
-    await page.evaluate(() => { window.__ackError = 'questions_paused' })
-    await page.evaluate(() => { sessionStorage.__keep = '1' })
     await page.reload(); await page.waitForFunction(() => window.__sockets.length >= 1)
-    await page.evaluate(() => { window.__ackError = 'questions_paused' })
     await live(page, 'slide-a', 1)
     await page.waitForFunction(() => window.__sent.length >= 1, null, { timeout: 15000 })
     await settle(page, 400)
@@ -465,7 +463,7 @@ try {
   {
     const venueHtml = build({ venue: true, venueQr: '<svg></svg>', venueUrl: 'https://example.test/x' })
     check(!venueHtml.includes('.ask-panel{') && !venueHtml.includes('Ask the speaker a question (live)'), 'venue: no Ask styles and no A row')
-    const { page, context } = await open(browser, [1440, 900], venuePath, '')
+    const { page, context } = await open(browser, [1440, 900], { path: venuePath, hash: '' })
     await live(page, 'slide-a', 1); await settle(page, 300)
     await page.keyboard.press('a'); await settle(page)
     check(await closed(page), 'venue: A opens nothing')

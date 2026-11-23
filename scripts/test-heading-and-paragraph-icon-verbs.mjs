@@ -8,6 +8,7 @@
 // `paraText` are the verbs for a case that must succeed: they assert `ok` and give the text.
 // `refused` gives the reason and asserts that the outline came back byte-identical.
 // setParagraphIcon takes a 1-based line number only.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -363,7 +364,7 @@ const rawTokens = (text) => (visible(text).match(/\{\s*icon\s*=/g) || []).length
 }
 {
   // The handlers hand the verb's result to the renderer as it is, refusal included, and take a line.
-  const main = readFileSync(fileURLToPath(new URL('../src/main/index.ts', import.meta.url)), 'utf8')
+  const main = readMainSource()
   ok(/'outline:set-heading-icon'[\s\S]{0,1100}?return setHeadingIcon\(content, \{ heading: slideHeading, occurrence: slideOccurrence \|\| 1 \}, iconKey\)/.test(main), 'the heading handler returns the verb result')
   ok(/'outline:set-paragraph-icon'[\s\S]{0,400}?line: number[\s\S]{0,400}?return setParagraphIcon\(content, line, iconKey\)/.test(main), 'the paragraph handler takes a line and returns the verb result')
 }

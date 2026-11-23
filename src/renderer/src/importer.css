@@ -20,7 +20,7 @@
 }
 .twi-start{flex:1;min-height:0;display:grid;grid-template-columns:minmax(520px,1fr) 340px;gap:24px;padding:40px;overflow:auto}
 .twi-source-card{background:var(--panel);border:1px solid var(--line);padding:48px;align-self:start;max-width:780px}
-.primary{border-color:var(--oxford)!important;background:var(--oxford)!important;color:var(--panel)!important}
+.primary{border-color:var(--oxford)!important;background:var(--oxford)!important;color:var(--on-accent)!important}
 .twi-import-form{margin-top:30px;border-top:1px solid var(--hairline);padding-top:22px}
 .twi-file{display:flex;align-items:center;gap:12px;background:var(--hover);padding:12px}
 .twi-file div{display:grid;flex:1}
@@ -60,7 +60,7 @@
 .twi kbd{font:10px ui-monospace,monospace;color:var(--muted);border:1px solid var(--line);background:var(--hover);padding:1px 4px;border-radius:3px}
 .twi-filters{display:flex;gap:4px;padding:0 12px 10px;flex-wrap:wrap}
 .twi-filters button{border:1px solid var(--line);background:transparent;padding:3px 7px;font-size:10px;text-transform:capitalize}
-.twi-filters button.active{background:var(--oxford);border-color:var(--oxford);color:var(--panel)}
+.twi-filters button.active{background:var(--oxford);border-color:var(--oxford);color:var(--on-accent)}
 .twi-slide-list{overflow:auto}
 .twi-slide-list>button{width:100%;display:grid;grid-template-columns:24px 1fr 18px;gap:8px;align-items:center;text-align:left;border:0;border-top:1px solid var(--hairline);background:transparent;padding:10px 12px;cursor:pointer}
 .twi-slide-list>button.selected{background:var(--tw-delivered-bg);box-shadow:inset 3px 0 var(--oxford)}
@@ -131,7 +131,7 @@
 .twi-panel{padding:20px 24px 24px;max-width:780px}
 .twi-panel-head{display:flex;align-items:center;gap:10px;margin:0 0 6px}
 .twi-panel-head h2{margin:0;font:600 15px/1.2 var(--font-ui);color:var(--ink)}
-.twi-panel-head svg{width:18px;height:18px;color:var(--oxford);stroke-width:1.8}
+.twi-panel-head svg{width:18px;height:18px;color:var(--accent-text);stroke-width:1.8}
 .twi-panel-note{margin:0 0 14px;color:var(--muted);font-size:13px;max-width:600px}
 .twi-source-actions{margin-top:18px}
 .twi-go{margin-top:20px;align-self:flex-start}

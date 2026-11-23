@@ -59,7 +59,7 @@
 .lp-empty-title { display: flex; align-items: center; gap: 7px; margin: 0 0 4px; font-size: 13px; font-weight: 700; }
 .lp-empty-title svg { width: 14px; height: 14px; color: var(--muted); }
 .lp-empty-help { margin: 0 0 12px; font-size: 12px; color: var(--muted); }
-.lp-empty button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--oxford); font: 600 12px var(--font-ui); cursor: pointer; }
+.lp-empty button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--accent-text); font: 600 12px var(--font-ui); cursor: pointer; }
 .lp-empty button svg { width: 13px; height: 13px; }
 .lp-foot { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--panel); font-size: 11px; color: var(--muted); }
 .lp-foot-key kbd { display: inline-block; min-width: 16px; padding: 1px 5px; border: 1px solid var(--line); border-radius: 4px; background: var(--paper); font: 500 10px var(--font-mono); color: var(--muted); text-align: center; }
@@ -70,7 +70,7 @@
 /* Inspector, while the picker is open: the preview says it is a try, and the column is at least 400px (S3, S12). */
 .tw-inspector-stage.is-trying { border-color: var(--amber); box-shadow: 0 0 0 2px var(--amber); }
 .tw-inspector-trying { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border-radius: 4px; background: var(--amber); color: #fff; font: 700 10px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
-.tw-inspector-change { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--oxford); font: 600 11px var(--font-ui); text-transform: none; letter-spacing: 0; cursor: pointer; }
+.tw-inspector-change { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; padding: 3px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--paper); color: var(--accent-text); font: 600 11px var(--font-ui); text-transform: none; letter-spacing: 0; cursor: pointer; }
 .tw-inspector-change kbd { padding: 0 4px; border-radius: 3px; background: var(--hover); font: 500 10px var(--font-mono); color: var(--muted); }
 .tw-inspector-section-heading { display: flex; align-items: center; }
 /* Inspector › Web page (Capture embed…): each web page on the slide, its saved views, the button. */

@@ -2,7 +2,9 @@ import { _electron as electron } from 'playwright'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, chmodSync, existsSync } from 'node:fs'
 import {join,resolve} from 'node:path'
-const repo=resolve(import.meta.dirname,'..'),shots=join(repo,'docs/design/2026-11-10-record-and-edit-video/built/slice-1')
+const repo=resolve(import.meta.dirname,'..')
+const recordEvidence = process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE === '1'
+const shots = join(repo, recordEvidence ? 'docs/design/2026-11-10-record-and-edit-video/built/slice-1' : 'artefacts/diagnose-saved-words')
 let count=0
 async function snapshot(page, name) {
  await page.mouse.move(24,740)

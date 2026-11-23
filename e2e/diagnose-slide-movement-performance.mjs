@@ -15,7 +15,7 @@ const blocks = Array.from({length:160}, (_,i) => `### Slide ${i}\n{id=s${i}}\n\n
 const source = header + blocks.join('\n')
 const outlinePath = join(deck, 'large-outline.md')
 writeFileSync(outlinePath, source)
-writeFileSync(join(ud, 'config.json'), JSON.stringify({vaultRoot:vault, editorViewMode:'plain'}))
+writeFileSync(join(ud, 'config.json'), JSON.stringify({vaultRoot:vault, openInView:'outline'}))
 const env = {...process.env, TW_E2E:'1', TW_REC_TEST:'1'}
 delete env.ELECTRON_RUN_AS_NODE
 let app
@@ -72,21 +72,23 @@ try {
     handlers.set('talk:compile', async (event, outline, text, ...rest) => {
       if (outline !== path) return compile(event, outline, text, ...rest)
       const call = {at: Date.now(), text, failed: globalThis.__compileSchedule.length === 0}
-      globalThis.__compileSchedule.push(call)
-      event.sender.executeJavaScript('window.__compileCallCount = '+globalThis.__compileSchedule.length)
-      return call.failed ? null : compile(event, outline, text, ...rest)
+      const sequence = globalThis.__compileSchedule.push(call)
+      void event.sender.executeJavaScript('window.__compileCallCount = '+sequence)
+      try { return call.failed ? null : await compile(event, outline, text, ...rest) }
+      finally { void event.sender.executeJavaScript('window.__compileSettledCount = '+sequence) }
     })
     return true
   }, outlinePath), 'real compile IPC handler is available for fault injection')
   const openingAt = Date.now()
   await page.getByText('Movement performance fixture',{exact:true}).first().dblclick()
-  await page.locator('.cm-content').waitFor()
+  const editor = page.locator('[data-view="outline"] .cm-content[contenteditable="true"]')
+  await editor.waitFor()
   await page.getByText('Couldn’t compile this talk', {exact:false}).waitFor()
   const openingCalls = await app.evaluate(() => globalThis.__compileSchedule)
   assert.equal(openingCalls.length, 1, 'first opening attempts compilation once even when it fails')
   assert.ok(openingCalls[0].at - openingAt < 900, 'first opening does not incur the typing debounce')
-  await page.locator('.cm-content').focus()
-  await page.keyboard.press('Meta+End')
+  await editor.focus()
+  await page.keyboard.press(process.platform === 'darwin' ? 'Meta+ArrowDown' : 'Control+End')
   const typedAt = Date.now()
   await page.keyboard.insertText(' scheduling regression')
   await page.waitForTimeout(650)
@@ -101,18 +103,23 @@ try {
   await page.keyboard.press('Meta+z')
   await page.waitForTimeout(1900)
   await page.waitForFunction(({path,source})=>window.tw.talk.readOutline(path).then(t=>t===source), {path:outlinePath,source})
-  await page.locator('.pane-btn[title="Grid"]').click()
+  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Grid', exact: true }).click()
   const card = i => page.locator('.grid-cell').filter({has:page.locator('span',{hasText:new RegExp(`^Slide ${i}$`)})}).first()
   await card(0).waitFor()
   const baseline=readFileSync(outlinePath,'utf8')
   const timings=[]
   for(let i=2;i<7;i++) {
-    const start=performance.now(), mutationAt=Date.now()
+    // The budget measures scheduling from idle. The live compiler deliberately queues
+    // the newest edit until any in-flight compile for this talk replies.
+    await page.waitForFunction(() => window.__compileSettledCount === window.__compileCallCount)
+    const start=performance.now()
     const priorCompiles=await app.evaluate(()=>globalThis.__compileSchedule.length)
-    await card(0).evaluate((s,i)=>{
+    const mutationAt=await card(0).evaluate((s,i)=>{
       const d=[...document.querySelectorAll('.grid-cell')].find(c=>[...c.querySelectorAll('span')].some(x=>x.textContent===`Slide ${i}`))
       const dt=new DataTransfer()
+      const startedAt=Date.now()
       for(const [el,type] of [[s,'dragstart'],[d,'dragover'],[d,'drop'],[s,'dragend']])el.dispatchEvent(new DragEvent(type,{bubbles:true,cancelable:true,dataTransfer:dt}))
+      return startedAt
     },i)
     await page.waitForFunction(i=>{
       const titles=[...document.querySelectorAll('.grid-cell img')].map(x=>x.alt)
@@ -120,8 +127,9 @@ try {
     },i)
     await page.waitForFunction(prior => window.__compileCallCount > prior, priorCompiles)
     const calls=await app.evaluate(()=>globalThis.__compileSchedule)
-    assert.ok(calls.length>priorCompiles && calls[priorCompiles].at-mutationAt<900,
-      'deliberate grid movement compiles without the typing debounce')
+    const scheduleMs=calls[priorCompiles].at-mutationAt
+    assert.ok(scheduleMs>=0 && scheduleMs<900,
+      `deliberate grid movement compiles without the typing debounce (${scheduleMs}ms from drag start)`)
     timings.push(performance.now()-start)
   }
   console.log('five-moves-ms',JSON.stringify(timings))
@@ -154,24 +162,54 @@ try {
   console.log('three-multi-moves-ms',JSON.stringify(multiTimings))
   // Manual rebuilding uses the same progressive route. Reject a late event from another request.
   await page.locator('[data-batch-action="clear"]').click()
+  // Grid already bypasses the typing pause. Rebuild in Outline, with previews in the Slides panel.
+  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Outline', exact: true }).click()
+  await page.locator('[data-view="outline"]').waitFor()
+  await page.getByRole('tab', { name: 'Slides', exact: true }).click()
+  await page.getByRole('button', { name: 'Show slides as previews' }).click()
+  const previewImages = '[data-slides-mode="previews"] .tw-slide-card img'
+  await page.waitForFunction(({selector,count})=>document.querySelectorAll(selector).length===count,
+    {selector:previewImages,count:cold.rows.length})
+  await page.waitForFunction(() => window.__compileSettledCount === window.__compileCallCount)
   await page.evaluate(() => { window.__refreshUpdates=[]; window.__stopRefreshProbe=window.tw.talk.onThumbnailProgress(p=>window.__refreshUpdates.push({id:p.requestId,count:Object.keys(p.thumbnails).length})) })
-  await page.locator('.toolbar-btn').filter({hasText:'Talk'}).click()
-  const refreshAt=Date.now(), beforeRefresh=await app.evaluate(()=>globalThis.__compileSchedule.length)
-  await page.getByText('Rebuild preview',{exact:true}).click()
-  await page.waitForFunction(()=>document.querySelectorAll('.grid-cell img').length>0 && document.querySelectorAll('.grid-cell img').length<162)
-  const rebuildCalls=await app.evaluate(()=>globalThis.__compileSchedule)
-  assert.ok(rebuildCalls.length>beforeRefresh && rebuildCalls[beforeRefresh].at-refreshAt<900,
-    'deliberate rebuild compiles without the typing debounce')
+  await page.getByTitle('Talk menu', { exact: true }).click()
+  const rebuildDeadlineMs = 10_000
+  const beforeRefresh=await app.evaluate(()=>globalThis.__compileSchedule.length)
+  // Hold renderer timers as long as the typing pause until after the compile deadline. A compile
+  // that uses that path cannot reach IPC, even when clearing the cache takes longer than 900 ms.
+  await page.evaluate(({typingPauseMs,deadlineMs}) => {
+    const schedule = window.setTimeout
+    window.setTimeout = (callback, delay, ...args) =>
+      schedule(callback, delay >= typingPauseMs ? delay + deadlineMs : delay, ...args)
+    window.__restoreRebuildTimers = () => { window.setTimeout = schedule }
+  }, {typingPauseMs:900,deadlineMs:rebuildDeadlineMs})
+  const refreshAt=Date.now()
+  try {
+    await page.getByText('Rebuild preview',{exact:true}).click({timeout:rebuildDeadlineMs})
+    await page.waitForFunction(prior=>window.__compileCallCount>prior, beforeRefresh, {timeout:rebuildDeadlineMs})
+      .catch(error => { throw new Error('Deliberate rebuild must request compilation with the typing timers held', {cause:error}) })
+  } finally {
+    await page.evaluate(() => { window.__restoreRebuildTimers(); delete window.__restoreRebuildTimers })
+  }
+  const rebuildCall=await app.evaluate((_electron,index)=>globalThis.__compileSchedule[index], beforeRefresh)
+  assert.equal(rebuildCall.text,baseline,'the rebuild requests compilation for the current outline')
+  assert.ok(rebuildCall.at-refreshAt<rebuildDeadlineMs,'the rebuild requests compilation within 10 seconds')
+  await page.waitForFunction(({selector,count})=>{
+    const visible = document.querySelectorAll(selector).length
+    return visible>0 && visible<count
+  }, {selector:previewImages,count:cold.rows.length})
   const refreshProgress=await page.evaluate(()=>window.__refreshUpdates)
-  assert.ok(refreshProgress.some(p=>p.count>0&&p.count<162),'manual refresh displays partial pictures while the remaining deck renders')
-  await page.waitForFunction(()=>document.querySelectorAll('.grid-cell img').length===162)
-  const imageBefore=await card(0).locator('img').getAttribute('src')
+  assert.ok(refreshProgress.some(p=>p.count>0&&p.count<cold.rows.length),'manual refresh displays partial pictures while the remaining deck renders')
+  await page.waitForFunction(({selector,count})=>document.querySelectorAll(selector).length===count,
+    {selector:previewImages,count:cold.rows.length})
+  const firstPreviewImage=page.locator(previewImages).and(page.getByAltText('Slide 0',{exact:true}))
+  const imageBefore=await firstPreviewImage.getAttribute('src')
   const rowZero=cold.rows.find(r=>r.slide_id==='s0')
   await app.evaluate(({BrowserWindow},payload)=>BrowserWindow.getAllWindows().find(w=>!w.isDestroyed()&&w.webContents.getURL().includes('index.html')).webContents.send('talk:thumbnail-progress',payload),{outlinePath,requestId:'expired-request',thumbnails:{[rowZero.render_hash]:'twthumb://wrong/expired.png'}})
   await page.waitForTimeout(100)
-  assert.equal(await card(0).locator('img').getAttribute('src'),imageBefore,'expired thumbnail events cannot replace the current slide image')
+  assert.equal(await firstPreviewImage.getAttribute('src'),imageBefore,'expired thumbnail events cannot replace the current slide image')
   await page.evaluate(()=>window.__stopRefreshProbe())
-  console.log('PASS manual refresh displays progressively and ignores an expired request')
+  console.log(`PASS manual rebuild requested compilation in ${rebuildCall.at-refreshAt}ms with typing timers held, displays progressively and ignores an expired request`)
   assert.ok(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().every(w=>!w.isVisible())),'all app and render windows remain hidden')
   console.log('PASS progressive thumbnails, cache-first delivery, reorder reuse and five large-deck moves/Undo')
 } finally {

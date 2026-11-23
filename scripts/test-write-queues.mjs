@@ -4,6 +4,7 @@
 // src/main that is not classified in QUEUE_SOURCES, so a new queue cannot slip in unwaited. Also the save-delay test
 // hook: absent from a release. Plain Node, no Electron. (The pending-preference reproduction, with the engine, is in
 // scripts/test-update-engine.mjs, "rule C".)
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -62,8 +63,11 @@ await test('each queue in the table reports its work under its own name, where i
     'settings-store': ['src/main/index.ts', /registerDrainHook\('settings-store', \{\n  idle: \(\) => !sharedSettings \|\| sharedSettings\.store\.pending\(\) === 0,\n  drain: async \(\) => !sharedSettings \|\| await sharedSettings\.store\.flushWithin\(/],
   }
   assert.deepEqual(Object.keys(where).sort(), [...WRITE_QUEUE_NAMES].sort(), 'every queue in the table has its place')
-  for (const [name, [file, pattern]] of Object.entries(where)) assert.match(readFileSync(join(ROOT, file), 'utf8'), pattern, `${name} in ${file}`)
-  const index = readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8')
+  for (const [name, [file, pattern]] of Object.entries(where)) {
+    const code = file === 'src/main/index.ts' ? readMainSource() : readFileSync(join(ROOT, file), 'utf8')
+    assert.match(code, pattern, `${name} in ${file === 'src/main/index.ts' ? 'src/main/' : file}`)
+  }
+  const index = readMainSource()
   assert.match(index, /const outcome = await drainWriteQueues\(20_000, baseline\)/, 'the restart waits for the queues')
   assert.match(index, /writeQueuesBusy: \(\) => writeQueuesBusy\(\),/, 'and reads them in the turn of the native call')
 })
@@ -189,7 +193,7 @@ await test('the save-delay test hook is absent from a release: allowed only in t
   assert.equal(allowed({ updateTest: false, packaged: false, e2e: false }), false, 'a run from source that is not a test')
   assert.match(src, /if \(!saveDelayAllowed\(\{ updateTest: __TW_UPDATE_TEST__, packaged: app\.isPackaged, e2e: process\.env\.TW_E2E === '1' \}\)\) return/)
   assert.match(readFileSync(join(ROOT, 'electron.vite.config.ts'), 'utf8'), /__TW_UPDATE_TEST__: 'false'/, 'a release build defines the flag false')
-  assert.match(readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8'), /await updateTestSaveDelay\(\)/, 'the one place it is awaited')
+  assert.match(readMainSource(), /await updateTestSaveDelay\(\)/, 'the one place it is awaited')
 })
 
 await test('the queue table is the registry\'s, with a line of what each writes', () => {

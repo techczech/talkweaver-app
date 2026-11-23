@@ -2,10 +2,11 @@
 // path from the renderer; shell.openPath hands it to the OS "open" action, which LAUNCHES an app
 // bundle, an installer, a script or an executable as readily as it opens a document. So:
 //
-//   - both: the path must be absolute and stay inside an open vault's folder, lexically and once
+//   - both: the path must be absolute and stay inside a caller-authorised folder, lexically and once
 //     symlinks are resolved (pathStaysInside) — every legitimate caller passes a talk's outline, a
 //     file the build / handout export wrote to <talk>/dist, or a vault folder. The shell call gets
-//     the resolved real path, so a symlink is judged (and opened) as what it points to.
+//     the resolved real path, so a symlink is judged (and opened) as what it points to. Opening uses
+//     vault roots only; revealing also permits the app's contained recovery/merges folder.
 //   - open-path additionally: a folder, or a file whose extension is a document / media type the
 //     app produces or shows (OPENABLE_EXTENSIONS) — an allowlist, not a list of dangerous types,
 //     because a denylist cannot catch an extensionless Mach-O / ELF binary (macOS opens one in
@@ -77,7 +78,7 @@ function insideBundle(path: string): boolean {
   return path.split(sep).some((part) => BUNDLE_EXTENSIONS.has(extname(part).toLowerCase()))
 }
 
-/** `roots`: the open vaults' folders. */
+/** `roots`: caller-authorised folders; opening remains restricted to open vaults. */
 export function decideShellPath(action: ShellPathAction, candidate: unknown, roots: readonly string[], deps: ShellPathDeps = {}): ShellPathDecision {
   if (typeof candidate !== 'string' || !candidate || candidate.includes('\0') || !isAbsolute(candidate)) return { ok: false, reason: 'not-a-path' }
   const inside = deps.inside ?? ((root: string, p: string) => pathStaysInside(root, p, true))

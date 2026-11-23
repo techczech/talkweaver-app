@@ -1,3 +1,4 @@
+// Manual only: pass an owned, signed TalkWeaver executable; never use the installed app.
 // PACKAGED variant of diagnose-insert-html-page.mjs: drives the signed TalkWeaver.app given as argv[2] (executablePath),
 // so the copy runs in the packaged html-page-import-worker.js utility process. Scratch lives under argv[3].
 // Insert › HTML page… in the real built app: hidden Electron, a synthetic vault, the OS file picker

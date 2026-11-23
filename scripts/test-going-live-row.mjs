@@ -42,7 +42,7 @@ import { instantClock, keyProfile, liveWorkerDouble } from './lib/live-worker-do
 import { KeyStoreUnreadable } from '../src/main/live-service-key.ts'
 import { WORKERS_SUBDOMAIN, createFakeCloudflare, fakeCloudflareFetch } from './lib/cloudflare-api-stub.mjs'
 import { workerDistFiles } from './lib/worker-dist.mjs'
-import { readSource } from './lib/read-source.mjs'
+import { mainSourceFileAt, readMainSource, readSource } from './lib/read-source.mjs'
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)))
 const started = Date.now()
@@ -534,7 +534,7 @@ async function goLive(pc) {
 
 {
   // The main process: nothing set up on a use; the prompt reaches Go live and the share sheet; the row has its IPC.
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   const ensure = main.slice(main.indexOf('async function ensureLiveWorker('), main.indexOf('// ── Pre-work for a planned Run'))
   assert.ok(!/deployLiveWorker\(/.test(ensure.replace(/\/\/[^\n]*/g, '')), 'ensureLiveWorker sets nothing up itself')
   assert.ok(/return liveService\(\)\.endpoint\(\)/.test(ensure))
@@ -649,7 +649,7 @@ async function goLive(pc) {
   assert.equal(askedFromTopFrame({ sender: { mainFrame: topFrame }, senderFrame: childFrame }), false, 'an embedded frame cannot set the live service up')
   assert.equal(askedFromTopFrame({ sender: { mainFrame: topFrame }, senderFrame: null }), false, 'a frame that has gone cannot either')
   assert.equal(askedFromTopFrame({}), false)
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   // Fix round 2: and only from an editor window (where the Settings row is). A presenter window is refused.
   const editors = new Set([7])
   const isEditor = (id) => editors.has(id)
@@ -659,7 +659,8 @@ async function goLive(pc) {
   assert.equal(setUpAllowedFrom({ sender: { mainFrame: topFrame }, senderFrame: topFrame }, isEditor), false)
   // Sol review 4 (S1): only the Settings window now; an editor window is refused too (the guard is tested in test-shared-settings.mjs).
   assert.match(main, /handleFromSettingsWindow\(\s*'live-service:set-up',\s*\(\) => \(\{ ok: false, error: 'Going live can be set up only in the Settings window\.'/, 'the handler refuses every sender but the Settings window')
-  assert.ok(!main.includes("ipcMain.handle('live-service:set-up'"), 'no unguarded handler')
+  const unguarded = main.indexOf("ipcMain.handle('live-service:set-up'")
+  assert.ok(unguarded < 0, `no unguarded handler (found in ${mainSourceFileAt(unguarded)})`)
   console.log('PASS 13 (fix 3, round 2; Sol review 4): a set-up is accepted only from the Settings window, never an editor or presenter window; the presenter prompt cannot set anything up (PASS 8)')
 }
 

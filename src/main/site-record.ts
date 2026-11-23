@@ -20,6 +20,8 @@ export interface SiteRecord {
   headers: string
   /** The computer that made this record, by its name in Settings: said when a site cannot be taken over. */
   publishedBy?: string
+  publishedAt?: string
+  publisherVersion?: string
 }
 
 const SHORT_ID = /^[A-Za-z0-9_-]{1,64}$/u
@@ -41,19 +43,21 @@ export function parseSiteRecord(bytes: Uint8Array | string): { ok: true; record:
   if (entries.length > 100_000 || entries.some(([folder, id]) => !FOLDER.test(folder) || typeof id !== 'string' || !SHORT_ID.test(id))) return { ok: false, reason: 'unreadable' }
   if (new Set(entries.map(([, id]) => id)).size !== entries.length) return { ok: false, reason: 'unreadable' }
   const publishedBy = typeof record.publishedBy === 'string' ? record.publishedBy.replace(/[\x00-\x1f\x7f]/gu, ' ').slice(0, 120) : undefined
-  return { ok: true, record: { registry: Object.fromEntries(entries as Array<[string, string]>), shortLinks: record.shortLinks, headers: record.headers, ...(publishedBy ? { publishedBy } : {}) } }
+  const publishedAt = typeof record.publishedAt === 'string' && record.publishedAt.length <= 40 && Number.isFinite(Date.parse(record.publishedAt)) ? record.publishedAt : undefined
+  const publisherVersion = typeof record.publisherVersion === 'string' && /^[0-9A-Za-z.+_-]{1,80}$/u.test(record.publisherVersion) ? record.publisherVersion : undefined
+  return { ok: true, record: { registry: Object.fromEntries(entries as Array<[string, string]>), shortLinks: record.shortLinks, headers: record.headers, ...(publishedBy ? { publishedBy } : {}), ...(publishedAt ? { publishedAt } : {}), ...(publisherVersion ? { publisherVersion } : {}) } }
 }
 
 /** The record's bytes: always the same text for the same record (sorted, fixed key order, one line per entry). */
 export function serialiseSiteRecord(record: SiteRecord): string {
   const registry = Object.fromEntries(Object.entries(record.registry).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-  return JSON.stringify({ format: SITE_RECORD_FORMAT, version: SITE_RECORD_VERSION, shortLinks: record.shortLinks, registry, headers: record.headers, ...(record.publishedBy ? { publishedBy: record.publishedBy } : {}) }, null, 2) + '\n'
+  return JSON.stringify({ format: SITE_RECORD_FORMAT, version: SITE_RECORD_VERSION, shortLinks: record.shortLinks, registry, headers: record.headers, ...(record.publishedBy ? { publishedBy: record.publishedBy } : {}), ...(record.publishedAt ? { publishedAt: record.publishedAt } : {}), ...(record.publisherVersion ? { publisherVersion: record.publisherVersion } : {}) }, null, 2) + '\n'
 }
 
 /** Whether two records say the same about the site (who wrote them aside). */
 export function sameSite(a: SiteRecord, b: SiteRecord): boolean {
-  const { publishedBy: _a, ...left } = a
-  const { publishedBy: _b, ...right } = b
+  const { publishedBy: _a, publishedAt: _atA, publisherVersion: _versionA, ...left } = a
+  const { publishedBy: _b, publishedAt: _atB, publisherVersion: _versionB, ...right } = b
   return serialiseSiteRecord(left) === serialiseSiteRecord(right)
 }
 

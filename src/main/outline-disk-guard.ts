@@ -64,13 +64,17 @@ export interface OutlineDiskGuard {
   tracks(realPath: string): boolean
   /** Whether window `owner` has `outlinePath` open (IPC requests are checked against it). */
   owns(owner: string, outlinePath: string): boolean
+  /** Main-only identity of this owner's current editor load. Every track replaces it. */
+  session(owner: string, outlinePath: string): object | null
   /** Whether the folder of this real path is being watched (false after a watcher error). */
   watching(realPath: string): boolean
   /** The unresolved difference last reported for `owner`'s talk, or null. */
   pendingFor(owner: string): OutlineDiskChange | null
   /** Before a whole-text write of `incoming`, under the lock: the difference when the file on disk
    *  (`diskText`, null = missing) is not the editor's version, else null. */
-  conflict(realPath: string, diskText: string | null, incoming: string): Promise<OutlineDiskChange | null>
+  conflict(realPath: string, diskText: string | null, incoming: string, expectedDiskHash?: string): Promise<OutlineDiskChange | null>
+  /** Explicit Save it again is awaiting its write; ordinary autosave cannot grant this. */
+  canRecreate(realPath: string): boolean
   /** The editor's text `text` is now on disk at `realPath` (under the lock): the new baseline. */
   written(realPath: string, text: string): void
   /** An app save failed after truncating the file; `tempPath` holds its full text. Returns the change
@@ -82,8 +86,9 @@ export interface OutlineDiskGuard {
   diskVersion(outlinePath: string): Promise<{ text: string; hash: string } | null>
   /** The person chose having seen version `hash`: it becomes the baseline, unless the file changed again
    *  (then the newer change, reported to the owners too). `keepPending` (Keep mine, Save it again, Save
-   *  again — a save follows): the difference stays reported until that save lands. */
-  accept(outlinePath: string, hash: string, opts?: { keepPending?: boolean }): Promise<OutlineDiskAccept>
+   *  again — a save follows): the difference stays reported until that save lands. Bound to the owner's
+   *  current editor load when queued; an expired session refuses without changing the entry. */
+  accept(owner: string, outlinePath: string, hash: string, opts?: { keepPending?: boolean }): Promise<OutlineDiskAccept>
   /** The difference currently reported for the file, or null. */
   pending(outlinePath: string): OutlineDiskChange | null
   /** Stops every watcher (app quit, tests). */
@@ -97,8 +102,8 @@ const partialToken = (tempPath: string): string => `partial:${tempPath}`
 
 interface Entry {
   baseline: string
-  /** owner → the outline path as that window knows it. */
-  owners: Map<string, string>
+  /** A fresh record per editor load: identity fences queued requests across a reopen. */
+  owners: Map<string, { path: string }>
   /** The difference last reported (so one version is reported once), or null. */
   reported: OutlineDiskChange | null
   /** Keep mine / Save it again / Save again was accepted and its save has not landed yet: the
@@ -111,7 +116,7 @@ interface Entry {
 
 export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskGuard {
   const entries = new Map<string, Entry>()
-  const firstPath = (entry: Entry, fallback: string): string => entry.owners.values().next().value ?? fallback
+  const firstPath = (entry: Entry, fallback: string): string => entry.owners.values().next().value?.path ?? fallback
 
   // The one place a difference (or its end) reaches the owners: each version is reported once.
   const report = (entry: Entry, change: OutlineDiskChange | null): void => {
@@ -119,7 +124,7 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
     if (change === null ? entry.reported === null : entry.reported?.hash === change.hash) return
     if (change) entry.awaitingSave = false // a newer difference: the person has to choose again
     entry.reported = change
-    for (const [owner, ownerPath] of entry.owners) {
+    for (const [owner, { path: ownerPath }] of entry.owners) {
       try { deps.notify(owner, ownerPath, change && { ...change, outlinePath: ownerPath }) } catch { /* a closed window */ }
     }
   }
@@ -192,7 +197,7 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
       entry.baseline = hashOutlineText(text)
       entry.partial = null
       entry.awaitingSave = false
-      entry.owners.set(owner, outlinePath)
+      entry.owners.set(owner, { path: outlinePath })
       report(entry, null)
       if (!entry.watching) startWatching(realPath, entry)
     },
@@ -215,6 +220,7 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
       const entry = entries.get(deps.canonical(outlinePath))
       return !!entry && entry.owners.has(owner)
     },
+    session: (owner, outlinePath) => entries.get(deps.canonical(outlinePath))?.owners.get(owner) ?? null,
     watching: (realPath) => entries.get(realPath)?.watching ?? false,
     pending(outlinePath) {
       const entry = entries.get(deps.canonical(outlinePath))
@@ -222,12 +228,12 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
     },
     pendingFor(owner) {
       for (const entry of entries.values()) {
-        const ownerPath = entry.owners.get(owner)
-        if (ownerPath !== undefined && entry.reported) return { ...entry.reported, outlinePath: ownerPath }
+        const session = entry.owners.get(owner)
+        if (session && entry.reported) return { ...entry.reported, outlinePath: session.path }
       }
       return null
     },
-    async conflict(realPath, diskText, incoming) {
+    async conflict(realPath, diskText, incoming, expectedDiskHash) {
       const entry = entries.get(realPath)
       if (!entry) return null
       const token = versionOf(diskText)
@@ -238,9 +244,25 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
         report(entry, null)
         return null
       }
+      // Save again / Save it again has explicit versioned permission to replace partial bytes
+      // or recreate a removed file; an adopted buffer may still carry its older disk hash.
+      const explicitRecovery = entry.awaitingSave && token === entry.baseline &&
+        (entry.reported?.kind === 'partial' || entry.reported?.kind === 'removed')
+      if (expectedDiskHash && !entry.partial && !explicitRecovery) {
+        if (diskText !== null && token === expectedDiskHash) return null
+        const change: OutlineDiskChange = {
+          outlinePath: firstPath(entry, realPath), kind: token === ABSENT ? 'removed' : 'changed', hash: token, changedAt: Date.now(),
+        }
+        report(entry, change)
+        return change
+      }
       const change = await differenceFor(realPath, entry, token)
       report(entry, change)
       return change
+    },
+    canRecreate(realPath) {
+      const entry = entries.get(realPath)
+      return !!entry?.awaitingSave && entry.baseline === ABSENT && entry.reported?.kind === 'removed'
     },
     written(realPath, text) {
       const entry = entries.get(realPath)
@@ -263,36 +285,64 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
       if (!entries.has(realPath)) return Promise.resolve(null)
       return deps.withLock(outlinePath, () => recheck(realPath))
     },
-    diskVersion(outlinePath) {
+    async diskVersion(outlinePath) {
       const realPath = deps.canonical(outlinePath)
-      return deps.withLock(outlinePath, async () => {
+      const sample = () => deps.withLock(outlinePath, async () => {
         const text = await deps.readText(realPath)
-        return text === null ? null : { text, hash: hashOutlineText(text) }
+        return { text, mtime: await deps.mtime(realPath) }
       })
+      let before = await sample()
+      let matching = 1
+      for (let attempt = 0; attempt < 6; attempt++) {
+        // Require three matching text/metadata samples across at least 400 ms. External tools
+        // need not take our lock; never hold it while waiting for a paused writer to finish.
+        await new Promise(resolve => setTimeout(resolve, 200))
+        const after = await sample()
+        matching = before.text === after.text && before.mtime === after.mtime ? matching + 1 : 1
+        if (matching >= 3) {
+          return after.text === null ? null : { text: after.text, hash: hashOutlineText(after.text) }
+        }
+        before = after
+      }
+      throw new Error('The outline is still changing on disk. Nothing was merged; retry after the other editor finishes saving.')
     },
-    accept(outlinePath, hash, opts = {}) {
+    accept(owner, outlinePath, hash, opts = {}) {
       const realPath = deps.canonical(outlinePath)
+      const session = entries.get(realPath)?.owners.get(owner)
+      const refused = (): OutlineDiskAccept => ({ ok: false, change: null, error: 'The talk was closed or reloaded before acceptance finished. Review its disk changes again.' })
       return deps.withLock(outlinePath, async (): Promise<OutlineDiskAccept> => {
         const entry = entries.get(realPath)
-        if (!entry) return { ok: true } // not guarded (the talk is no longer open): nothing to accept
+        if (!entry || !session || !entry.owners.has(owner) || entry.owners.get(owner) !== session) return refused()
+        // track/release run outside this lock. Fence every awaited read before mutating the entry.
+        const current = (): boolean => entries.get(realPath) === entry && entry.owners.get(owner) === session
         let text: string | null
         try { text = await deps.readText(realPath) } catch (error) {
           return { ok: false, change: null, error: error instanceof Error ? error.message : String(error) }
         }
+        if (!current()) return refused()
         const token = versionOf(text)
         if (entry.partial) {
           // Save again after a half-finished save: the person accepts that the file is incomplete.
-          if (hash !== partialToken(entry.partial.tempPath)) return { ok: false, change: { ...(await differenceFor(realPath, entry, token))!, outlinePath } }
+          if (hash !== partialToken(entry.partial.tempPath)) {
+            const change = await differenceFor(realPath, entry, token)
+            return current() ? { ok: false, change: change && { ...change, outlinePath } } : refused()
+          }
           entry.partial = null
         } else if (token !== hash) {
           // Changed again since the person looked: report the newer version instead.
           const change = await differenceFor(realPath, entry, token)
+          if (!current()) return refused()
           report(entry, change)
-          if (change) return { ok: false, change: { ...change, outlinePath } }
+          return { ok: false, change: change ? { ...change, outlinePath } : null }
+        }
+        // Reconciliation can discover removal before the watcher updates this report.
+        // Save it again must retain removal permission, including for an adopted buffer's hash.
+        if (token === ABSENT && opts.keepPending && entry.reported?.kind !== 'removed') {
+          report(entry, { outlinePath: firstPath(entry, realPath), kind: 'removed', hash: ABSENT, changedAt: Date.now() })
         }
         entry.baseline = token
         if (opts.keepPending && entry.reported) entry.awaitingSave = true
-        else report(entry, null)
+        else { entry.awaitingSave = false; report(entry, null) }
         return { ok: true }
       })
     },

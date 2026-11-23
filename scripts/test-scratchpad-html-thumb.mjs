@@ -1,5 +1,6 @@
 // Slide Scratchpad HTML thumbnails (src/main/scratchpad-html-thumb.ts): the cache key, the cache folder (never
 // the talk's), one capture at a time, a capture again when the file changes, and no retry of a page that failed.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -138,7 +139,7 @@ try {
     assert.match(src, /const child = pageFrame\(\)\s*\n\s*const raw: unknown = child \? await child\.executeJavaScript/, 'checked before the words')
     assert.doesNotMatch(src, /framesInSubtree/, 'never the first frame found anywhere in the tree')
     assert.match(src, /<iframe sandbox="[^\n]*credentialless/)
-    const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+    const index = readMainSource()
     assert.match(index, /installNavigationGuard\(app, \{[\s\S]*?frameRule: scratchFrameNavigation[\s\S]*?\}\)/, 'the app installs the rule for every window')
   })
   console.log(`${checks} checks passed`)

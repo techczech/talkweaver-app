@@ -1,38 +1,39 @@
+@import "./app-theme.css";
+
 /* The Capture embed window (capture-embed-main.ts): the live page on the left, the slide's saved views on the right. */
-:root { color-scheme: light; --ce-ink: #24211c; --ce-quiet: #6b6458; --ce-line: #ddd5c6; --ce-paper: #f7f3ea; --ce-card: #fffdf8; --ce-accent: #2f5d8a; --ce-error: #9b2c1f; }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
-body { font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: var(--ce-ink); background: var(--ce-paper); }
+body { font: 13px/1.4 var(--font-ui); color: var(--ink); background: var(--paper); }
 #root { display: flex; flex-direction: column; }
-.ce-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px 8px; border-bottom: 1px solid var(--ce-line); }
+.ce-bar { display: flex; align-items: center; gap: 10px; padding: 10px 14px 8px; border-bottom: 1px solid var(--line); }
 .ce-what { flex: 1; min-width: 0; }
 .ce-title { margin: 0; font-size: 14px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ce-host { color: var(--ce-quiet); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-button { font: inherit; border-radius: 6px; border: 1px solid var(--ce-line); background: var(--ce-card); color: var(--ce-ink); padding: 5px 11px; cursor: default; }
-button:focus-visible { outline: 2px solid var(--ce-accent); outline-offset: 1px; }
+.ce-host { color: var(--muted); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+button { font: inherit; border-radius: var(--radius); border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink); padding: 5px 11px; cursor: default; }
+button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 button:disabled { opacity: 0.5; }
 .ce-modes { display: inline-flex; }
 .ce-mode { border-radius: 0; }
-.ce-mode:first-child { border-radius: 6px 0 0 6px; }
-.ce-mode:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
-.ce-mode.is-on { background: var(--ce-ink); color: #fff; border-color: var(--ce-ink); }
-.ce-capture { background: var(--ce-accent); border-color: var(--ce-accent); color: #fff; font-weight: 600; padding: 5px 16px; }
+.ce-mode:first-child { border-radius: var(--radius) 0 0 var(--radius); }
+.ce-mode:last-child { border-radius: 0 var(--radius) var(--radius) 0; border-left: 0; }
+.ce-mode.is-on { background: var(--accent-soft); color: var(--accent-text); border-color: var(--oxford); }
+.ce-capture { background: var(--oxford); border-color: var(--oxford); color: var(--on-accent); font-weight: 600; padding: 5px 16px; }
 .ce-notes { padding: 6px 14px; min-height: 44px; }
 .ce-status, .ce-hint { margin: 0; }
-.ce-status.is-error { color: var(--ce-error); }
-.ce-hint { color: var(--ce-quiet); font-size: 12px; }
+.ce-status.is-error { color: var(--crimson); }
+.ce-hint { color: var(--muted); font-size: 12px; }
 .ce-body { flex: 1; min-height: 0; display: flex; gap: 12px; padding: 0 14px 14px; }
-.ce-live { flex: 7; min-width: 0; display: flex; align-items: center; justify-content: center; background: #e8e2d7; overflow: hidden; }
-.ce-viewport { flex: none; background: #fff; display: flex; align-items: center; justify-content: center; outline: 1px solid var(--ce-line); }
-.ce-live-wait { color: var(--ce-quiet); }
+.ce-live { flex: 7; min-width: 0; display: flex; align-items: center; justify-content: center; background: var(--active); overflow: hidden; }
+.ce-viewport { flex: none; background: #fff; display: flex; align-items: center; justify-content: center; outline: 1px solid var(--line); }
+.ce-live-wait { color: var(--muted); }
 .ce-side { flex: 3; min-width: 220px; overflow-y: auto; }
 .ce-list-heading { font-size: 13px; margin: 0 0 6px; }
-.ce-empty { color: var(--ce-quiet); margin: 0; }
+.ce-empty { color: var(--muted); margin: 0; }
 .ce-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.ce-item { background: var(--ce-card); border: 1px solid var(--ce-line); border-radius: 6px; padding: 6px; }
+.ce-item { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); padding: 6px; }
 .ce-caption { display: flex; justify-content: space-between; gap: 6px; font-size: 12px; margin-bottom: 4px; }
-.ce-new { color: var(--ce-accent); font-weight: 600; }
+.ce-new { color: var(--accent-text); font-weight: 600; }
 /* A tall Entire page view scrolls inside its box. */
 .ce-picture { max-height: 360px; overflow-y: auto; }
 .ce-picture img { display: block; width: 100%; height: auto; }
-.ce-no-picture { color: var(--ce-quiet); font-size: 12px; margin: 0; }
+.ce-no-picture { color: var(--muted); font-size: 12px; margin: 0; }

@@ -1,10 +1,19 @@
-// Qualification only: real hidden Electron, production IPC, disposable checkout fixtures.
+// Hidden Electron qualification with production IPC and a disposable vault. Set SHOTS to keep readback evidence.
 import assert from 'node:assert/strict'
 import {_electron as electron} from 'playwright'
 import * as fs from 'node:fs'
 import {resolve,join} from 'node:path'
 import {createHash} from 'node:crypto'
-const repo=resolve('.'),out=join(repo,'evidence/vault-gallery/final-electron-qualification'),fixture=fs.mkdtempSync(join(out,'fixture-')),vault=join(fixture,'vault'),home=join(fixture,'home'),ud=join(fixture,'userData'),trash=join(fixture,'trash');let app,page;const rows=[]
+import {tmpdir} from 'node:os'
+const repo=resolve('.')
+if(process.platform!=='darwin'||!fs.existsSync(join(repo,'native','vault-gallery'))){
+ console.log('TEST NOT RUN: macOS and the native Gallery helper are required (npm run build:gallery-native).')
+ process.exit(0)
+}
+const fixture=fs.mkdtempSync(join(tmpdir(),'tw-gallery-final-'))
+const out=process.env.SHOTS ? resolve(process.env.SHOTS) : fixture
+fs.mkdirSync(out,{recursive:true})
+const vault=join(fixture,'vault'),home=join(fixture,'home'),ud=join(fixture,'userData'),trash=join(fixture,'trash');let app,page;const rows=[]
 for(const p of [vault,home,ud,trash,join(fixture,'tmp')])fs.mkdirSync(p,{recursive:true})
 fs.cpSync(join(repo,'e2e/fixtures/slide-set-aside'),join(vault,'target'),{recursive:true})
 fs.writeFileSync(join(ud,'config.json'),JSON.stringify({vaultRoot:vault,editorViewMode:'markdown'}))

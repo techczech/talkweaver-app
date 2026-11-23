@@ -2,13 +2,13 @@
 import assert from 'node:assert/strict'
 import { _electron as electron } from 'playwright'
 import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 const repo = resolve('.')
 const evidenceDir=process.env.TW_GRID_CONTINUITY_EVIDENCE_DIR ? resolve(process.env.TW_GRID_CONTINUITY_EVIDENCE_DIR) : null
 if(evidenceDir) {assert.ok(evidenceDir.startsWith(join(repo,'research')+'/'));mkdirSync(evidenceDir,{recursive:true})}
-mkdirSync(new URL('../research/', import.meta.url), { recursive: true })
-const scratch = mkdtempSync(join(repo, 'research/.test-grid-continuity-'))
+const scratch = mkdtempSync(join(tmpdir(), 'tw-grid-move-continuity-'))
 // A run stopped by its time limit or by hand removes its scratch folder too.
 process.on('exit',()=>rmSync(scratch,{recursive:true,force:true}))
 for(const signal of ['SIGINT','SIGTERM'])process.once(signal,()=>{rmSync(scratch,{recursive:true,force:true});process.exit(130)})

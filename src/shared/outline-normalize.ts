@@ -87,6 +87,9 @@ type HeadingTail =
   | { kind: 'keep' }
 
 function headingTail(line: string): HeadingTail | null {
+  // An untitled authored slide needs its id on the heading to remain a heading.
+  // Moving it to a separate line would leave bare hashes and remove the slide from the compiled deck.
+  if (/^#{2,6}[ 	]+\{id=[A-Za-z0-9_-]+\}\s*$/.test(line)) return null
   const m = line.match(TRAILING_BRACES_RE)
   if (!m) return null
   const cleanTitle = line.slice(0, line.length - m[0].length)

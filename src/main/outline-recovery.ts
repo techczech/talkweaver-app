@@ -13,13 +13,16 @@
 // up to date (a newer save replaces it) and deleted after the talk's next successful save. The app's own
 // rename or move of a talk moves its copy with it (`rekey`), so a copy is always offered on the next
 // open of the talk it belongs to. Every operation is best-effort for the caller: it never blocks a save.
-import { createHash } from 'crypto'
-import { mkdir, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises'
+import { createHash, randomUUID } from 'crypto'
+import { mkdir, open, readFile, readdir, rename, stat, unlink, writeFile } from 'fs/promises'
 import { basename, join, sep } from 'path'
 import type { OutlineRecoveryCopy } from '../shared/outline-disk-change.ts'
+import { stageTextAtomic, writeTextAtomic, type StagedWrite } from './atomic-file.ts'
 import { trackWrite } from './write-queues.ts'
 
 export interface OutlineRecovery {
+  /** Immutable merge inputs; last 20 per talk, up to 14 days. Separate from latest-unsaved copies. */
+  preserveMerge(realPath: string, snapshot: { base: string; mine: string; disk: string; draft?: string }): Promise<string>
   /** Keeps `text` as the recovery copy for the talk at `realPath` (replacing an older one). */
   save(realPath: string, text: string): Promise<void>
   /** Deletes the talk's recovery copy, if any (after a successful save, Reload, or Discard). */
@@ -42,8 +45,11 @@ const stamp = (at: number): string => new Date(at).toISOString().replace(/[:.]/g
 // <slug>-<hash>-<YYYY-MM-DDTHH-MM-SS-mmmZ>-outline.md
 const FILE = /^(.*)-([0-9a-f]{12})-(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)-outline\.md$/
 const parseStamp = (s: string): number => Date.parse(s.replace(/^(\d{4}-\d\d-\d\dT\d\d)-(\d\d)-(\d\d)-(\d{3})Z$/, '$1:$2:$3.$4Z'))
+const MERGE_FILE = /^.+-([0-9a-f]{12})-(?:(\d{4}-\d\d-\d\dT\d\d-\d\d-\d\d-\d{3}Z)-)?[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.json$/
 
-export function createOutlineRecovery(dir: string, now: () => number = Date.now): OutlineRecovery {
+export function createOutlineRecovery(dir: string, now: () => number = Date.now, options: {
+  syncDirectory?: (folder: string) => Promise<void>
+} = {}): OutlineRecovery {
   const indexPath = join(dir, 'index.json')
   let index: Index | null = null
   let chain: Promise<unknown> = Promise.resolve()
@@ -51,6 +57,28 @@ export function createOutlineRecovery(dir: string, now: () => number = Date.now)
     const run = trackWrite('outline-recovery', chain.then(work))
     chain = run.catch(() => undefined)
     return run
+  }
+
+  // Only our archive filenames are eligible; latest-unsaved copies and unknown files stay intact.
+  // New names carry the timestamp so pruning need not load potentially large text snapshots.
+  const pruneMerges = async (keep?: string): Promise<void> => {
+    const folder = join(dir, 'merges')
+    const names = await readdir(folder, { withFileTypes: true }).catch(() => [])
+    const groups = new Map<string, Array<{ name: string; at: number }>>()
+    for (const file of names) {
+      const match = file.isFile() && MERGE_FILE.exec(file.name)
+      if (!match) continue
+      const at = match[2] ? parseStamp(match[2]) : await stat(join(folder, file.name)).then(s => s.mtimeMs, () => NaN)
+      if (!Number.isFinite(at)) continue
+      const group = groups.get(match[1]) ?? []
+      group.push({ name: file.name, at }); groups.set(match[1], group)
+    }
+    for (const group of groups.values()) {
+      group.sort((a, b) => Number(b.name === keep) - Number(a.name === keep) || b.at - a.at || b.name.localeCompare(a.name))
+      for (const [i, file] of group.entries()) {
+        if (file.name !== keep && (i >= 20 || file.at < now() - 14 * 86400000)) await unlink(join(folder, file.name)).catch(() => undefined)
+      }
+    }
   }
 
   const filesFor = async (hash: string): Promise<string[]> => {
@@ -91,10 +119,7 @@ export function createOutlineRecovery(dir: string, now: () => number = Date.now)
     return index
   }
   const store = async (next: Index): Promise<void> => {
-    await mkdir(dir, { recursive: true })
-    const temp = `${indexPath}.${process.pid}.tmp`
-    await writeFile(temp, JSON.stringify(next, null, 2))
-    await rename(temp, indexPath)
+    writeTextAtomic(indexPath, JSON.stringify(next, null, 2), { createParent: true })
   }
 
   // The `.path` note beside a copy: the talk's real outline path, which the path hash cannot give back.
@@ -125,6 +150,7 @@ export function createOutlineRecovery(dir: string, now: () => number = Date.now)
     const savedAt = entry?.savedAt ?? (await stat(join(dir, newest)).then((s) => s.mtimeMs, () => now()))
     const toHash = recoveryPathHash(toPath)
     const file = `${slugOf(toPath)}-${toHash}-${stamp(savedAt)}-outline.md`
+    // Not a whole-file replacement: move the existing recovery copy to its new path hash.
     await rename(join(dir, newest), join(dir, file))
     await unlink(noteOf(newest)).catch(() => undefined)
     await writeNote(file, toPath).catch((e) => console.error('[outline-recovery] note', e))
@@ -135,27 +161,54 @@ export function createOutlineRecovery(dir: string, now: () => number = Date.now)
   }
 
   return {
+    preserveMerge: (realPath, snapshot) => serial(async () => {
+      const folder = join(dir, 'merges')
+      await mkdir(folder, { recursive: true, mode: 0o700 })
+      const at = now()
+      const file = join(folder, `${slugOf(realPath)}-${recoveryPathHash(realPath)}-${stamp(at)}-${randomUUID()}.json`)
+      writeTextAtomic(file, JSON.stringify({ outlinePath: realPath, savedAt: at, ...snapshot }), {
+        mode: 0o600,
+        createParent: false,
+      })
+      if (process.platform !== 'win32') {
+        // Some filesystems refuse directory fsync (EINVAL/EBADF). The parent sync is best-effort.
+        await (options.syncDirectory ?? (async (path: string) => {
+          const parent = await open(path, 'r')
+          try { await parent.sync() } finally { await parent.close() }
+        }))(folder).catch(() => undefined)
+      }
+      await pruneMerges(basename(file)).catch(() => undefined)
+      return file
+    }),
     save: (realPath, text) => serial(async () => {
       const idx = await load()
       const at = now()
       const hash = recoveryPathHash(realPath)
       const file = `${slugOf(realPath)}-${hash}-${stamp(at)}-outline.md`
-      await mkdir(dir, { recursive: true })
-      await writeFile(join(dir, file), text, 'utf8')
-      await writeNote(file, realPath).catch((e) => console.error('[outline-recovery] note', e))
-      idx[hash] = { path: realPath, file, savedAt: at }
-      await store(idx)
+      const next = { ...idx, [hash]: { path: realPath, file, savedAt: at } }
+      const writes: StagedWrite[] = []
+      try {
+        // Leave the previous copy and index intact if any of the three files cannot be staged.
+        writes.push(stageTextAtomic(join(dir, file), text, { createParent: true }))
+        writes.push(stageTextAtomic(noteOf(file), realPath, { createParent: false }))
+        writes.push(stageTextAtomic(indexPath, JSON.stringify(next, null, 2), { createParent: false }))
+        for (const write of writes) write.commit()
+      } finally { for (const write of writes) write.discard() }
+      index = next
       await removeAll(hash, file)
     }),
     clear: (realPath) => serial(async () => {
       const idx = await load()
       const hash = recoveryPathHash(realPath)
       if (!idx[hash]) return
-      delete idx[hash]
-      await store(idx)
+      const next = { ...idx }
+      delete next[hash]
+      await store(next)
+      index = next
       await removeAll(hash)
     }),
     read: (realPath) => serial(async () => {
+      await pruneMerges().catch(() => undefined)
       const entry = (await load())[recoveryPathHash(realPath)]
       if (!entry) return null
       try { return { text: await readFile(join(dir, entry.file), 'utf8'), savedAt: entry.savedAt } } catch { return null }

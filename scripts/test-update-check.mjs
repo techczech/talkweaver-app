@@ -508,6 +508,8 @@ await test('the files: one place makes the request, one place downloads and inst
   // ADR-0044: the one file that downloads and installs, and the pure modules that read the feed address only to check links.
   const INSTALLER = 'src/main/update-installer.ts'
   const ENGINE = 'src/main/update-engine.ts'
+  // ADR-0044 §7: the developer-identity check runs codesign, spctl and ditto (absolute paths; scripts/test-update-signature.mjs).
+  const SIGNATURE = 'src/main/update-signature.ts'
   const FEED_READERS = new Set([WIRING, IDENTITY, 'src/shared/update-checker.ts', 'src/shared/update-channels.ts'])
   const ALLOWED_HOSTS = new Set(['talkweaver.app', 'apps.microsoft.com', 'github.com'])
   const walk = (dir) => readdirSync(join(REPO, dir), { withFileTypes: true }).flatMap((e) =>
@@ -531,6 +533,7 @@ await test('the files: one place makes the request, one place downloads and inst
   for (const f of ['src/main/index.ts', 'src/preload/index.ts', 'src/preload/settings.ts']) assert.ok(files.has(f), `${f} is a listed update consumer`)
 
   // index.ts and the preloads are large shared files that legitimately write and spawn elsewhere: they get the feed-address and download checks only (they name other sites and make other requests for other features, so the guarantee there is that none of them can reach the feed address).
+  // These are named exceptions to the existing source-wide scan, for shared entry points.
   const SHARED = new Set(['src/main/index.ts', 'src/preload/index.ts', 'src/preload/settings.ts'])
   const FORBIDDEN = /child_process|execFile|execSync|spawn|autoUpdater|electron-updater|quitAndInstall|writeFile|createWriteStream|downloadURL|downloadUpdate|openPath/
   const REQUEST_CALL = /^(new )?(net\.(request|fetch)|fetch|(https?|http2)\.(get|request)|[\w.]*\.fetch|[\w.]*fetchFromPartition|XMLHttpRequest)$/
@@ -544,7 +547,7 @@ await test('the files: one place makes the request, one place downloads and inst
       const text = textOf(n)
       if (text !== null && /https?:\/\/[^\s'"`]*updates\.json/.test(text)) feedHits.push(f)   // the address; the Settings sentence naming the file is wording
       if (!listed) continue
-      if (!SHARED.has(f) && f !== INSTALLER && f !== ENGINE && (ts.isIdentifier(n) || text !== null)) assert.ok(!FORBIDDEN.test(text ?? n.text), `${f} runs, writes or downloads nothing`)
+      if (!SHARED.has(f) && f !== INSTALLER && f !== ENGINE && f !== SIGNATURE && (ts.isIdentifier(n) || text !== null)) assert.ok(!FORBIDDEN.test(text ?? n.text), `${f} runs, writes or downloads nothing`)
       if (text !== null) {
         if (!SHARED.has(f)) assert.ok(!/persist:/.test(text), `${f} stores nothing the request receives`)
         if (!SHARED.has(f)) for (const host of hostsIn(text)) assert.ok(ALLOWED_HOSTS.has(host), `${f} names no other site (${host})`)
@@ -652,7 +655,8 @@ await test('release notes use the validated feed link for the matching version, 
   assert.equal(notesLinkFor(undefined, '0.41.0'), 'https://talkweaver.app/whats-new#0.41.0')
   assert.equal(notesLinkFor(latest, '../bad'), null)
   const host = readFileSync(join(REPO, 'src/main/settings-update-menu.ts'), 'utf8')
-  assert.match(host, /buildMenuTemplate/)
+  assert.match(host, /taskMenuTemplate/)
+  assert.match(readFileSync(join(REPO, 'src/main/task-menu-template.ts'), 'utf8'), /buildMenuTemplate/)
   assert.match(host, /item as \{ id\?: string \}\)\.id === id/)
   assert.doesNotMatch(host, /const clone|label === 'Check for Updates/)
 })

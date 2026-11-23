@@ -249,7 +249,7 @@ const modalStyle: React.CSSProperties = {
   maxWidth: '92vw',
   maxHeight: '80vh',
   background: 'var(--panel, #f5f0e8)',
-  border: '1px solid var(--line, #c8b89a)',
+  border: '1px solid var(--line)',
   borderRadius: 6,
   zIndex: 1100,
   overflow: 'hidden',
@@ -263,7 +263,7 @@ const headerStyle: React.CSSProperties = {
   alignItems: 'center',
   justifyContent: 'space-between',
   padding: '0.6rem 0.9rem',
-  borderBottom: '1px solid var(--line, #c8b89a)',
+  borderBottom: '1px solid var(--line)',
   flex: '0 0 auto'
 }
 
@@ -279,7 +279,7 @@ const titleStyle: React.CSSProperties = {
 const closeBtnStyle: React.CSSProperties = {
   background: 'transparent',
   border: 'none',
-  color: 'var(--ink-faint, #888)',
+  color: 'var(--faint)',
   fontSize: '1.4rem',
   lineHeight: 1,
   cursor: 'pointer',
@@ -299,9 +299,9 @@ const bodyStyle: React.CSSProperties = {
 
 const noticeStyle: React.CSSProperties = {
   fontSize: '0.8rem',
-  color: 'var(--ink-faint, #7a6f5e)',
+  color: 'var(--faint)',
   background: 'var(--paper-mid, #ede8df)',
-  border: '1px solid var(--line, #c8b89a)',
+  border: '1px solid var(--line)',
   borderRadius: 4,
   padding: '0.4rem 0.6rem',
   flex: '0 0 auto'
@@ -309,7 +309,7 @@ const noticeStyle: React.CSSProperties = {
 
 const codeStyle: React.CSSProperties = {
   fontFamily: 'monospace',
-  background: 'var(--paper-light, #faf7f2)',
+  background: 'var(--hover)',
   padding: '0 3px',
   borderRadius: 3
 }
@@ -325,9 +325,9 @@ const textareaStyle: React.CSSProperties = {
   fontSize: '0.85rem',
   lineHeight: 1.5,
   padding: '0.7rem 0.8rem',
-  border: '1px solid var(--line, #c8b89a)',
+  border: '1px solid var(--line)',
   borderRadius: 4,
-  background: 'var(--paper-light, #faf7f2)',
+  background: 'var(--hover)',
   color: 'var(--ink, #1a1410)',
   outline: 'none',
   tabSize: 2
@@ -339,7 +339,7 @@ const footerStyle: React.CSSProperties = {
   justifyContent: 'space-between',
   gap: '0.75rem',
   padding: '0.6rem 0.9rem',
-  borderTop: '1px solid var(--line, #c8b89a)',
+  borderTop: '1px solid var(--line)',
   flex: '0 0 auto'
 }
 
@@ -352,7 +352,7 @@ const statusStyle: React.CSSProperties = {
 }
 
 const savedStyle: React.CSSProperties = {
-  color: 'var(--oxford, #006644)'
+  color: 'var(--accent-text)'
 }
 
 const errorStyle: React.CSSProperties = {
@@ -384,7 +384,7 @@ const btnPrimaryStyle: React.CSSProperties = {
 const btnSecondaryStyle: React.CSSProperties = {
   background: 'transparent',
   color: 'var(--ink, #1a1410)',
-  border: '1px solid var(--line, #c8b89a)'
+  border: '1px solid var(--line)'
 }
 
 const btnDisabledStyle: React.CSSProperties = {

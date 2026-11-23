@@ -6,7 +6,9 @@ import { _electron as electron } from 'playwright'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, renameSync, chmodSync, statSync, existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-const repo=resolve(import.meta.dirname,'..'), shots=join(repo,'docs/design/2026-11-10-record-and-edit-video/built/slice-1')
+const repo=resolve(import.meta.dirname,'..')
+const recordEvidence = process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE === '1'
+const shots = process.env.TW_SHOTS_DIR || join(repo, recordEvidence ? 'docs/design/2026-11-10-record-and-edit-video/built/slice-1' : 'artefacts/diagnose-presenter-layers')
 const root=mkdtempSync(join(repo,'.slice1-e2e-')), vault=join(root,'vault'), userData=join(root,'userData'), talk=join(vault,'fixture')
 mkdirSync(talk,{recursive:true});mkdirSync(userData,{recursive:true});mkdirSync(shots,{recursive:true})
 const outline=join(talk,'fixture-outline.md'), content='---\ntitle: Layered recording\n---\n\n## Talk\n\n### Opening {id=opening}\n\nRecord the presenter.\n\n### Second {id=second}\n\nThe audience sees slides only.\n'

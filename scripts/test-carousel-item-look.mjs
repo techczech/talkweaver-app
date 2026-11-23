@@ -4,7 +4,7 @@
 //
 //   a. An item with a line of text and a 1500x844 picture: the picture's column takes the item's
 //      band (>= 40% of the item's height) and the picture is not clipped by it.
-//   b. An item led by bold text draws the boxed chip like an ordinary statement (bold is inline,
+//   b. An item led by bold text draws inline bold like an ordinary statement (bold is inline,
 //      its colour differs from its background) and its paragraphs carry no accent bar.
 //   c. An item with a picture and a link line, and an item with only a picture, keep working.
 //   d. Ordinary slides (text + picture, picture + link, picture only, bold-led statement) measure
@@ -103,7 +103,8 @@ assert.notEqual(bold.strong.display, 'block', `bold is not display:block, got ${
 assert.ok(bold.strong.w < bold.strong.parentW - 20, `bold is not full width (${bold.strong.w} of ${bold.strong.parentW})`)
 assert.notEqual(bold.strong.color, bold.strong.bg, `bold text colour differs from its background (${bold.strong.color} on ${bold.strong.bg})`)
 assert.ok(bold.bars.every((b) => parseFloat(b) === 0), `a statement item's paragraphs carry no accent bar, got ${bold.bars}`)
-console.log('PASS bold-led item: inline boxed chip, readable colours, no left bars')
+assert.equal(bold.strong.bg, 'rgba(0, 0, 0, 0)', 'bold emphasis has no accent chip')
+console.log('PASS bold-led item: inline bold, readable colours, no left bars')
 
 // a. text + picture item
 const inside = (inner, outer, label) => assert.ok(inner.top >= outer.top - 1 && inner.bottom <= outer.bottom + 1 && inner.left >= outer.left - 1 && inner.right <= outer.right + 1, `${label} lies inside its box`)
@@ -125,9 +126,9 @@ console.log('PASS picture-only item unchanged')
 const expected = {
   'ord-pic': { '.slot': [[72, 155, 1137, 504]], '.slot-media': [[72, 155, 432, 504]], '.slot-copy': [[549, 352, 659, 110]], img: [[72, 286, 432, 243]] },
   'ord-link': { '.slot': [[72, 155, 1137, 504]], '.slot-media': [[72, 155, 432, 504]], '.slot-copy': [[549, 380, 659, 55]], img: [[72, 309, 432, 197]] },
-  'ord-only': { img: [[178, 140, 923, 519]] },
-  // 0.41 ticket 04 (ADR-0039): an ordinary statement carries the accent bar and its gap, so its paragraphs are wider and the second wraps to more lines.
-  'ord-bold': { '.content-p': [[563, 249, 599, 61], [563, 311, 599, 160]] }
+  // Media clearance from PR 422, reading-weight geometry from PR 416.
+  'ord-only': { img: [[162, 111, 956, 538]] },
+  'ord-bold': { '.content-p': [[563, 249, 585, 61], [563, 311, 585, 160]] }
 }
 for (const [id, checks] of Object.entries(expected)) {
   await show(id)
@@ -137,12 +138,14 @@ for (const [id, checks] of Object.entries(expected)) {
   }
 }
 await show('ord-bold')
-const ordBold = await page.evaluate(() => { const s = document.querySelector('#stage > .slide.active .content-p strong'); const c = getComputedStyle(s); return { display: c.display, color: c.color, bg: c.backgroundColor } })
+const ordBold = await page.evaluate(() => { const s = document.querySelector('#stage > .slide.active .content-p strong'); const c = getComputedStyle(s); return { display: c.display, color: c.color, bg: c.backgroundColor, parentColor: getComputedStyle(s.parentElement).color, weight: c.fontWeight, line: c.textDecorationLine } })
 assert.equal(ordBold.display, 'inline', 'ordinary statement bold is inline')
-assert.equal(ordBold.color, 'rgb(253, 253, 251)', 'ordinary statement bold is paper-coloured')
-assert.notEqual(ordBold.color, ordBold.bg, 'ordinary statement chip is readable')
-assert.equal(bold.strong.color, ordBold.color, 'a carousel item chip uses the ordinary statement text colour')
-assert.equal(bold.strong.display, ordBold.display, 'a carousel item chip uses the ordinary statement display')
+assert.equal(ordBold.color, ordBold.parentColor, 'ordinary statement bold uses its surrounding ink')
+assert.equal(ordBold.weight, '700')
+assert.equal(ordBold.line, 'none')
+assert.equal(ordBold.bg, 'rgba(0, 0, 0, 0)', 'ordinary statement bold has no chip')
+assert.equal(bold.strong.color, ordBold.color, 'a carousel item uses the ordinary statement text colour')
+assert.equal(bold.strong.display, ordBold.display, 'a carousel item uses the ordinary statement display')
 console.log('PASS ordinary text + picture, picture + link, picture-only and statement slides measure as before')
 
 await browser.close()

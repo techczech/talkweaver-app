@@ -29,8 +29,8 @@ import { tmpdir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
-const SHOTS = join(REPO, 'docs', 'design', '2026-09-29-multi-vault', 'build-shots')
-mkdirSync(SHOTS, { recursive: true })
+const SHOTS = process.env.TW_SHOTS_DIR
+if (SHOTS) mkdirSync(SHOTS, { recursive: true })
 
 const results = []
 function record(name, pass, detail) {
@@ -119,7 +119,7 @@ await page.waitForTimeout(1200)
 
 const row = (title) => page.locator(`.tl-tree [data-talk-title="${title}"]`).first()
 const chip = (title) => row(title).locator('[data-conflict-count]')
-const shot = (name) => page.screenshot({ path: join(SHOTS, `09-${name}.png`) })
+const shot = async (name) => SHOTS && page.screenshot({ path: join(SHOTS, `09-${name}.png`) })
 const trashed = () => (existsSync(trash) ? readdirSync(trash) : [])
 const activityFile = (vaultId, slug) => join(userData, 'talk-activity', vaultId, `${slug}.jsonl`)
 async function openInInspector(title) {

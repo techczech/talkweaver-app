@@ -1,11 +1,11 @@
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'fs'
-import { randomUUID } from 'crypto'
-import { basename, dirname, join } from 'path'
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync } from 'fs'
+import { basename, join } from 'path'
 import { isDeepStrictEqual } from 'util'
 import { formatTimecode, type TalkTextModel } from './talkText.ts'
 import { hasGitConflictMarkers } from './conflict-copies.mjs'
 import { GitConflictError, notesGitConflict, notesNotSavedUnreadable } from '../shared/git-conflict.ts'
 import { jsonObject, refuseUnreadableReplace } from './replace-guard.ts'
+import { stageTextAtomic, writeTextAtomic, type AtomicWriteOptions, type StagedWrite } from './atomic-file.ts'
 
 export function slugify(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'section'
@@ -98,8 +98,8 @@ This folder is one Run's rewrite pack. Work only on this Run.
 `
 
 function writePackAgentFiles(packDir: string): void {
-  writeFileAtomic(join(packDir, 'AGENTS.md'), PACK_AGENTS_BRIEF)
-  writeFileAtomic(join(packDir, 'CLAUDE.md'), '@./AGENTS.md')
+  writeTextAtomic(join(packDir, 'AGENTS.md'), PACK_AGENTS_BRIEF)
+  writeTextAtomic(join(packDir, 'CLAUDE.md'), '@./AGENTS.md')
 }
 
 export function writeRewritePack(input: RewritePackInput): { packDir: string; partsDir: string; files: string[] } {
@@ -108,7 +108,7 @@ export function writeRewritePack(input: RewritePackInput): { packDir: string; pa
   const promptPath = join(input.packDir, 'PROMPT.md')
   const transcriptPath = join(input.packDir, 'transcript.md')
   const structurePath = join(input.packDir, 'structure.json')
-  writeFileAtomic(promptPath, renderPromptTemplate(input.promptTemplate, {
+  writeTextAtomic(promptPath, renderPromptTemplate(input.promptTemplate, {
     talkTitle: input.model.meta.talkTitle,
     speaker: input.model.meta.speaker,
     event: input.model.meta.event,
@@ -116,8 +116,8 @@ export function writeRewritePack(input: RewritePackInput): { packDir: string; pa
     packPath: input.packDir,
     firstSectionSlug
   }))
-  writeFileAtomic(transcriptPath, renderTranscriptMarkdown(input.model))
-  writeFileAtomic(structurePath, renderStructureJson(input.model))
+  writeTextAtomic(transcriptPath, renderTranscriptMarkdown(input.model))
+  writeTextAtomic(structurePath, renderStructureJson(input.model))
   writePackAgentFiles(input.packDir)
 
   const destinationInstructionsDir = join(input.packDir, 'instructions')
@@ -125,7 +125,7 @@ export function writeRewritePack(input: RewritePackInput): { packDir: string; pa
     cpSync(input.instructionsDir, destinationInstructionsDir, { recursive: true })
   } else {
     mkdirSync(destinationInstructionsDir, { recursive: true })
-    writeFileAtomic(join(destinationInstructionsDir, 'NOTE.md'), 'Rewrite instructions were not found.\n')
+    writeTextAtomic(join(destinationInstructionsDir, 'NOTE.md'), 'Rewrite instructions were not found.\n')
   }
 
   const partsDir = join(input.packDir, 'parts')
@@ -146,13 +146,13 @@ export function writeCleanPack(input: CleanPackInput): { packDir: string; cleane
   const cleanPath = join(input.packDir, 'CLEAN.md')
   const transcriptPath = join(input.packDir, 'transcript.md')
   const structurePath = join(input.packDir, 'structure.json')
-  writeFileAtomic(cleanPath, renderCleanPrompt(input.cleanTemplate, {
+  writeTextAtomic(cleanPath, renderCleanPrompt(input.cleanTemplate, {
     talkTitle: input.model.meta.talkTitle,
     packPath: input.packDir,
     modeInstructions: input.modeInstructions
   }))
-  if (!existsSync(transcriptPath)) writeFileAtomic(transcriptPath, renderTranscriptMarkdown(input.model))
-  if (!existsSync(structurePath)) writeFileAtomic(structurePath, renderStructureJson(input.model))
+  if (!existsSync(transcriptPath)) writeTextAtomic(transcriptPath, renderTranscriptMarkdown(input.model))
+  if (!existsSync(structurePath)) writeTextAtomic(structurePath, renderStructureJson(input.model))
   writePackAgentFiles(input.packDir)
 
   const destinationInstructionsDir = join(input.packDir, 'instructions')
@@ -161,7 +161,7 @@ export function writeCleanPack(input: CleanPackInput): { packDir: string; cleane
   } else {
     mkdirSync(destinationInstructionsDir, { recursive: true })
     const notePath = join(destinationInstructionsDir, 'NOTE.md')
-    if (!existsSync(notePath)) writeFileAtomic(notePath, 'Rewrite instructions were not found.\n')
+    if (!existsSync(notePath)) writeTextAtomic(notePath, 'Rewrite instructions were not found.\n')
   }
 
   const cleanedDir = join(input.packDir, 'cleaned')
@@ -201,7 +201,9 @@ function isNotesStore(value: unknown): value is NotesStore {
     Object.values(approved).every(isNotesPart)
 }
 
-type AtomicWriteOptions = { beforeCommit?: () => void }
+type StoreWriteOptions = Pick<AtomicWriteOptions, 'beforeCommit' | 'ops' | 'sync'>
+/** File operations for a move or its undo (tests fail one on purpose). */
+type FileOps = AtomicWriteOptions['ops']
 
 function isMissingFile(cause: unknown): boolean {
   return cause instanceof Error && 'code' in cause && cause.code === 'ENOENT'
@@ -216,33 +218,6 @@ function readOptionalFile(filePath: string): string | null {
   }
 }
 
-function refuseSymlinkLeaf(filePath: string): void {
-  try {
-    if (lstatSync(filePath).isSymbolicLink()) throw new Error('pack-file-symlink-refused')
-  } catch (cause) {
-    if (isMissingFile(cause)) return
-    throw cause
-  }
-}
-
-function writeFileAtomic(filePath: string, contents: string, options: AtomicWriteOptions = {}): void {
-  mkdirSync(dirname(filePath), { recursive: true })
-  refuseSymlinkLeaf(filePath)
-  const tempPath = join(dirname(filePath), `.${basename(filePath)}.${process.pid}.${randomUUID()}.tmp`)
-  try {
-    writeFileSync(tempPath, contents, { encoding: 'utf8', flag: 'wx' })
-    options.beforeCommit?.()
-    refuseSymlinkLeaf(filePath)
-    renameSync(tempPath, filePath)
-  } finally {
-    try {
-      unlinkSync(tempPath)
-    } catch (cause) {
-      if (!isMissingFile(cause)) throw cause
-    }
-  }
-}
-
 const APPROVAL_WORDS = {
   conflict: (file: string) => notesGitConflict(basename(file)),
   unreadable: (file: string) => notesNotSavedUnreadable(basename(file)),
@@ -251,12 +226,13 @@ const APPROVAL_WORDS = {
 // A store that is there but cannot be read as one (a Git conflict from syncing, broken JSON, another shape)
 // is never replaced from what a caller holds (replace-guard.ts, 0.45): checked first, and again as the last
 // step before the rename.
-function writeApprovalStore(filePath: string, contents: string, options: AtomicWriteOptions, isStore: (value: unknown) => boolean): void {
+function writeApprovalStore(filePath: string, contents: string, options: StoreWriteOptions, isStore: (value: unknown) => boolean): void {
   const readable = (text: string): boolean => isStore(jsonObject(text))
   refuseUnreadableReplace(filePath, readable, APPROVAL_WORDS)
   const prior = readOptionalFile(filePath)
-  if (prior !== null) writeFileAtomic(`${filePath}.bak`, prior)
-  writeFileAtomic(filePath, contents, { beforeCommit: () => { options.beforeCommit?.(); refuseUnreadableReplace(filePath, readable, APPROVAL_WORDS) } })
+  const fileOptions = { ops: options.ops, sync: options.sync }
+  if (prior !== null) writeTextAtomic(`${filePath}.bak`, prior, fileOptions)
+  writeTextAtomic(filePath, contents, { ...fileOptions, beforeCommit: () => { options.beforeCommit?.(); refuseUnreadableReplace(filePath, readable, APPROVAL_WORDS) } })
 }
 
 export function readNotesStore(filePath: string): NotesStore {
@@ -273,7 +249,7 @@ export function readNotesStore(filePath: string): NotesStore {
   }
 }
 
-export function writeNotesStore(filePath: string, store: NotesStore, options: AtomicWriteOptions = {}): void {
+export function writeNotesStore(filePath: string, store: NotesStore, options: StoreWriteOptions = {}): void {
   if (!isNotesStore(store)) throw new Error('approval-store-schema-invalid')
   writeApprovalStore(filePath, JSON.stringify(store, null, 2), options, isNotesStore)
 }
@@ -362,7 +338,7 @@ export function readCleanedStore(filePath: string): CleanedStore {
   }
 }
 
-export function writeCleanedStore(filePath: string, store: CleanedStore, options: AtomicWriteOptions = {}): void {
+export function writeCleanedStore(filePath: string, store: CleanedStore, options: StoreWriteOptions = {}): void {
   if (!isCleanedStore(store)) throw new Error('approval-store-schema-invalid')
   writeApprovalStore(filePath, JSON.stringify(store, null, 2), options, isCleanedStore)
 }
@@ -401,7 +377,7 @@ export function writeCleanedDraft(
   if (!markdown.trim() && existingMarkdown?.trim() && !options.allowEmpty) {
     throw new Error('empty-cleaned-slide-requires-confirmation')
   }
-  writeFileAtomic(draftPath, cleanedDraftContents(markdown))
+  writeTextAtomic(draftPath, cleanedDraftContents(markdown))
 }
 
 function cleanedDraftContents(markdown: string): string {
@@ -443,15 +419,37 @@ export interface CleanedMoveSnapshot {
   }
 }
 
-function restoreOptionalFile(filePath: string, before: string | null): void {
-  if (before === null) {
-    try {
-      unlinkSync(filePath)
-    } catch (cause) {
-      if (!isMissingFile(cause)) throw cause
-    }
-  } else {
-    writeFileAtomic(filePath, before)
+function removeOptionalFile(filePath: string): void {
+  try {
+    unlinkSync(filePath)
+  } catch (cause) {
+    if (!isMissingFile(cause)) throw cause
+  }
+}
+
+// Rollback puts the saved bytes back without flushing them (as before the atomic write flushed): a disk that
+// has just refused a flush must not also stop the previous version coming back.
+function restoreOptionalFile(filePath: string, before: string | null, ops: FileOps): void {
+  if (before === null) removeOptionalFile(filePath)
+  else writeTextAtomic(filePath, before, { ops, sync: false })
+}
+
+/** Stage (write and flush) every replacement before the first one is put in place; `null` removes the file.
+ *  `discard` removes the temporary file of every replacement not put in place. */
+function stageReplacements(entries: ReadonlyArray<readonly [string, string | null]>, ops: FileOps): { commits: Array<() => void>; discard: () => void } {
+  const staged: StagedWrite[] = []
+  const discard = (): void => { for (const write of staged) write.discard() }
+  try {
+    const commits = entries.map(([filePath, contents]) => {
+      if (contents === null) return () => removeOptionalFile(filePath)
+      const write = stageTextAtomic(filePath, contents, { ops })
+      staged.push(write)
+      return write.commit
+    })
+    return { commits, discard }
+  } catch (cause) {
+    discard()
+    throw cause
   }
 }
 
@@ -470,6 +468,7 @@ export function moveCleanedDrafts(input: {
   source: { slideNumber: number; markdown: string }
   destination: { slideNumber: number; markdown: string }
   afterDraftWrite?: (step: 'destination' | 'source') => void
+  ops?: FileOps
 }): CleanedMoveSnapshot {
   const { source, destination } = input
   if (!Number.isInteger(source.slideNumber) || source.slideNumber <= 0 ||
@@ -501,18 +500,26 @@ export function moveCleanedDrafts(input: {
     }
   }
 
+  const ops = input.ops
+  // Both drafts are written and flushed before either is put in place.
+  const staged = stageReplacements([
+    [destinationPath, snapshot.destination.postMoveDraft],
+    [sourcePath, snapshot.source.postMoveDraft],
+  ], ops)
+  const [commitDestination, commitSource] = staged.commits
   try {
-    writeCleanedDraft(input.cleanedDir, destination.slideNumber, destination.markdown, { allowEmpty: true })
+    commitDestination()
     input.afterDraftWrite?.('destination')
-    writeCleanedDraft(input.cleanedDir, source.slideNumber, source.markdown, { allowEmpty: true })
+    commitSource()
     input.afterDraftWrite?.('source')
-    writeCleanedStore(input.cleanStorePath, postMoveStore)
+    writeCleanedStore(input.cleanStorePath, postMoveStore, { ops })
     return snapshot
   } catch (cause) {
+    staged.discard()
     const rollbackErrors: unknown[] = []
     for (const [filePath, before] of [[sourcePath, sourceBefore], [destinationPath, destinationBefore]] as const) {
       try {
-        restoreOptionalFile(filePath, before)
+        restoreOptionalFile(filePath, before, ops)
       } catch (rollbackCause) {
         rollbackErrors.push(rollbackCause)
       }
@@ -528,7 +535,9 @@ export function undoCleanedDraftMove(input: {
   cleanedDir: string
   cleanStorePath: string
   snapshot: CleanedMoveSnapshot
+  ops?: FileOps
 }): void {
+  const ops = input.ops
   const sourcePath = join(input.cleanedDir, `slide-${input.snapshot.source.slideNumber}.md`)
   const destinationPath = join(input.cleanedDir, `slide-${input.snapshot.destination.slideNumber}.md`)
   let currentSource: string | null
@@ -554,15 +563,17 @@ export function undoCleanedDraftMove(input: {
     throw new Error('undo-stale')
   }
   const restoredStore = storeWithSnapshotEntries(currentStore, input.snapshot)
+  // Both restored drafts are written and flushed before either is put in place.
+  const staged = stageReplacements([
+    [sourcePath, input.snapshot.source.draft],
+    [destinationPath, input.snapshot.destination.draft]
+  ], ops)
 
   try {
     const restoreErrors: unknown[] = []
-    for (const [filePath, before] of [
-      [sourcePath, input.snapshot.source.draft],
-      [destinationPath, input.snapshot.destination.draft]
-    ] as const) {
+    for (const commit of staged.commits) {
       try {
-        restoreOptionalFile(filePath, before)
+        commit()
       } catch (cause) {
         restoreErrors.push(cause)
       }
@@ -570,21 +581,22 @@ export function undoCleanedDraftMove(input: {
     if (restoreErrors.length > 0) {
       throw new AggregateError(restoreErrors, 'cleaned-draft-move-undo-restore-failed')
     }
-    writeCleanedStore(input.cleanStorePath, restoredStore)
+    writeCleanedStore(input.cleanStorePath, restoredStore, { ops })
   } catch (cause) {
+    staged.discard()
     const rollbackErrors: unknown[] = []
     for (const [filePath, before] of [
       [sourcePath, currentSource],
       [destinationPath, currentDestination]
     ] as const) {
       try {
-        restoreOptionalFile(filePath, before)
+        restoreOptionalFile(filePath, before, ops)
       } catch (rollbackCause) {
         rollbackErrors.push(rollbackCause)
       }
     }
     try {
-      writeCleanedStore(input.cleanStorePath, currentStore)
+      writeCleanedStore(input.cleanStorePath, currentStore, { ops, sync: false })
     } catch (rollbackCause) {
       rollbackErrors.push(rollbackCause)
     }

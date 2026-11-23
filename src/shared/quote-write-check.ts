@@ -198,8 +198,8 @@ type Read = (outline: string, headingLine: number) => CompiledQuote | null
  * maps to null. Used by the editor to choose a fence's editor by the compiler's decision (ADR-0042 review F4: a
  * chat fence on a slide with a picture is a media slide's code panel, not a chat session).
  */
-export function compiledLayoutsAt(outline: string, headingLines: readonly number[]): Map<number, string | null> {
-  const out = new Map<number, string | null>()
+function compiledSlideFieldsAt<T>(outline: string, headingLines: readonly number[], field: (read: ReturnType<typeof reader.quoteSlideReading>) => T | null): Map<number, T | null> {
+  const out = new Map<number, T | null>()
   if (!headingLines.length) return out
   const root = parseOutlineTree(outlineCompilerBody(outline).body).root
   const defaults = deckTriggerDefaultsFromMeta(outlineFrontmatterMeta(outline)).attrs
@@ -207,12 +207,20 @@ export function compiledLayoutsAt(outline: string, headingLines: readonly number
     const path = pathToLine(root, line)
     if (!path) { out.set(line, null); continue }
     try {
-      out.set(line, String(reader.quoteSlideReading(path[path.length - 1], defaults).layout ?? '') || null)
+      out.set(line, field(reader.quoteSlideReading(path[path.length - 1], defaults)))
     } catch {
       out.set(line, null)
     }
   }
   return out
+}
+
+export function compiledLayoutsAt(outline: string, headingLines: readonly number[]): Map<number, string | null> {
+  return compiledSlideFieldsAt(outline, headingLines, (read) => String(read.layout ?? '') || null)
+}
+
+export function compiledSimulationLayoutsAt(outline: string, headingLines: readonly number[]): Map<number, { layout: string | null; version: number } | null> {
+  return compiledSlideFieldsAt(outline, headingLines, (read) => ({ layout: String(read.layout ?? '') || null, version: String(read.attrs['sim-version']) === '2' ? 2 : 1 }))
 }
 
 /**

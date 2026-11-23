@@ -3,6 +3,29 @@ import { execFileSync } from 'child_process'
 import { readFileSync } from 'fs'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+import { build as esbuild } from 'esbuild'
+import type { Plugin } from 'vite'
+
+// A sandboxed preload can require 'electron' and nothing else: no sibling file. Rollup puts the
+// modules presentEdit shares with presentRecorder into a chunk both require, which would stop the
+// plain presentation window's ⌘E bridge under its sandbox. This re-bundles that one entry as a
+// single file. presentRecorder (sandbox: false) keeps using the shared chunk.
+function selfContainedPreload(name: string, entry: string): Plugin {
+  return {
+    name: 'tw-self-contained-preload',
+    async generateBundle(_options, bundle) {
+      const chunk = Object.values(bundle).find((c) => c.type === 'chunk' && c.isEntry && c.name === name)
+      if (!chunk || chunk.type !== 'chunk') throw new Error(`self-contained preload: no entry ${name}`)
+      const result = await esbuild({
+        entryPoints: [entry], bundle: true, write: false, platform: 'node', format: 'cjs', target: 'node22',
+        external: ['electron'], logLevel: 'silent'
+      })
+      chunk.code = result.outputFiles[0].text
+      chunk.imports = []
+      if (/require\((?!["']electron["']\))/.test(chunk.code)) throw new Error(`self-contained preload: ${name} still requires something other than electron`)
+    }
+  }
+}
 
 // Build stamp — injected so the running app can show which build it is (bottom-left status bar),
 // so a test session never wastes time on a stale install. Best-effort; never fails the build.
@@ -23,7 +46,19 @@ function gitShort(): string {
     return 'nogit'
   }
 }
-const APP_VERSION = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8')).version
+const PACKAGE = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf8'))
+const APP_VERSION = PACKAGE.version
+// The identity the in-place updater requires of the running copy and of every new version (ADR-0044 §7,
+// src/main/update-signature.ts): the bundle identifier and the Developer ID team from the signing configuration
+// (`build.appId`, `build.mac.identity` "NAME (TEAMID)"). Not a secret; no keychain or certificate is read. The
+// public snapshot rewrites build.appId, so a public build requires its own identifier.
+function updateSigner(): { bundleId: string; team: string } {
+  const bundleId = PACKAGE.build?.appId
+  const team = /\(([A-Z0-9]{10})\)\s*$/.exec(String(PACKAGE.build?.mac?.identity ?? ''))?.[1]
+  if (typeof bundleId !== 'string' || !bundleId || !team) throw new Error('package.json build.appId and build.mac.identity "NAME (TEAMID)" are needed for the updater’s signature check')
+  return { bundleId, team }
+}
+export const UPDATE_SIGNER = updateSigner()
 const BUILD_SHA = gitShort()
 const BUILD_TIME = new Date().toISOString()
 // The shared settings packages are bundled, not left as node_modules files: they are linked by
@@ -33,7 +68,7 @@ const BUNDLED = ['@app-patterns/commands', '@app-patterns/settings', '@app-patte
 
 export default defineConfig({
   main: {
-    define: { __TW_SECURITY_TEST__: 'false', __TW_UPDATE_TEST__: 'false' },
+    define: { __TW_SECURITY_TEST__: 'false', __TW_UPDATE_TEST__: 'false', __TW_UPDATE_SIGNER__: JSON.stringify(UPDATE_SIGNER) },
     plugins: [externalizeDepsPlugin({ exclude: BUNDLED })],
     build: {
       rollupOptions: {
@@ -48,6 +83,7 @@ export default defineConfig({
           'handout-pages-worker': resolve(__dirname, 'src/main/handout-pages-worker.ts'),
           // The live compile (prepareTalk) runs in a utility process of its own (prepare-talk-worker.ts).
           'prepare-talk-worker': resolve(__dirname, 'src/main/prepare-talk-worker.ts'),
+          'directory-watch-worker': resolve(__dirname, 'src/main/directory-watch-worker.ts'),
           // An Insert › HTML page… copy runs in a utility process started in the talk folder (html-page-import-worker.ts).
           'html-page-import-worker': resolve(__dirname, 'src/main/html-page-import-worker.ts'),
           // A saved view of a live web page is written by a utility process started in the talk folder (live-page-capture-worker.ts).
@@ -57,7 +93,7 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin({ exclude: BUNDLED })],
+    plugins: [externalizeDepsPlugin({ exclude: BUNDLED }), selfContainedPreload('presentEdit', resolve(__dirname, 'src/preload/present-edit.ts'))],
     build: {
       rollupOptions: {
         input: {

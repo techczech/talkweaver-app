@@ -134,6 +134,62 @@ try {
   assert.equal(needsDeviceCheck({...saved,cameraDeviceId:'b'},'camera',twins,permission,'Built-in'),false)
   assert.equal(needsDeviceCheck({...saved,cameraDeviceId:'gone'},'camera',twins,permission,'Built-in'),true)
   pass('first check, ten unchanged starts, removed camera, permission change and changed microphone')
+
+  {
+    // Fresh presenter pages can enumerate an anonymous camera until the permitted device is opened.
+    const bundle = await build({ entryPoints: ['src/preload/presenter-device-check.ts'], bundle: true, write: false, format: 'esm', platform: 'node' })
+    const { checkPresenterDevices, openCheckedCamera } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`)
+    const savedPair = { ...saved, cameraDeviceId: 'checked-camera' }
+    const info = { settings: savedPair, ...permission }
+    const mic = { kind: 'audioinput', label: 'Built-in', deviceId: 'built-in' }
+    const camera = { kind: 'videoinput', label: 'FaceTime', deviceId: 'checked-camera' }
+    const opaque = { kind: 'videoinput', label: '', deviceId: '' }
+    const sheet = new Error('device check sheet requested')
+    const asked = [], opened = []
+    let listed = [], stopped = 0, absent = false, cameraLabel = camera.label
+    const ipc = async (channel, ...args) => {
+      asked.push([channel, ...args]); if (channel === 'recording:devices') return info
+    }
+    const globals = { document: Object.getOwnPropertyDescriptor(globalThis, 'document'), navigator: Object.getOwnPropertyDescriptor(globalThis, 'navigator') }
+    try {
+      Object.defineProperty(globalThis, 'document', { configurable: true, value: { getElementById: () => { throw sheet } } })
+      Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { mediaDevices: {
+        enumerateDevices: async () => listed,
+        getUserMedia: async (constraints) => {
+          opened.push(constraints)
+          if (absent) throw new DOMException('Unavailable', 'NotFoundError')
+          listed = [mic, camera]
+          const track = { label: cameraLabel, stop: () => { stopped++; listed = [mic, opaque] } }
+          return { getTracks: () => [track], getVideoTracks: () => [track] }
+        }
+      } } })
+      listed = [mic, camera]
+      for (let i = 0; i < 10; i++) assert.deepEqual(await checkPresenterDevices('camera', 'Built-in', ipc), savedPair)
+      assert.deepEqual(opened, [], 'the ordinary fast path opens no test stream or sheet')
+      listed = [mic, { ...camera, deviceId: 'presenter-origin-id' }]
+      assert.equal((await checkPresenterDevices('camera', 'Built-in', ipc)).cameraDeviceId, 'presenter-origin-id', 'a unique name resolves the current origin’s camera ID')
+      listed = [mic, opaque]
+      assert.deepEqual(await checkPresenterDevices('camera', 'Built-in', ipc), savedPair, 'the same camera in a fresh presenter skips the sheet')
+      assert.deepEqual(opened, [{ audio: false, video: { deviceId: { exact: camera.deviceId } } }], 'only the remembered camera may be identified in the background')
+      assert.equal(stopped, 1, 'the camera is released before the countdown')
+      assert.deepEqual(asked.at(-1), ['recording:device-preview', true, false], 'the permission returns to recording scope')
+      absent = true; listed = [mic, opaque]
+      await assert.rejects(checkPresenterDevices('camera', 'Built-in', ipc), (error) => error === sheet)
+      listed = [mic, camera]
+      await assert.rejects(checkPresenterDevices('camera', 'Built-in', ipc, true), (error) => error === sheet)
+      info.settings = null
+      await assert.rejects(checkPresenterDevices('camera', 'Built-in', ipc), (error) => error === sheet)
+      assert.equal(opened.length, 2, 'a manual or first check does not background-probe the camera')
+      absent = false; listed = [mic, opaque]; cameraLabel = 'A different camera'
+      await assert.rejects(openCheckedCamera(navigator.mediaDevices, listed, savedPair.camera, savedPair.cameraDeviceId), /missing or ambiguous/)
+      assert.equal(stopped, 2, 'a camera with a different identity is released and refused')
+    } finally {
+      for (const [key, descriptor] of Object.entries(globals)) {
+        if (descriptor) Object.defineProperty(globalThis, key, descriptor); else delete globalThis[key]
+      }
+    }
+    pass('remembered camera starts without a sheet in a fresh presenter; absent and explicitly requested setups still show it')
+  }
   const marks=buildSlideTimeIndex([{event:'enter',slideId:'a',tMs:0},{event:'pause',tMs:100},{event:'flag',slideId:'a',tMs:150},{event:'resume',tMs:200},{event:'flag',slideId:'a',tMs:300}])
   assert.deepEqual(marks.filter(m=>m.event==='flag').map(m=>m.tMs),[100,200])
   pass('flag events survive ledger conversion on the pause-aware clock')

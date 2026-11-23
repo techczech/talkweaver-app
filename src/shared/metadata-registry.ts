@@ -376,13 +376,14 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
   },
   {
     key: 'font',
+    aliases: ['typeface'],
     location: 'frontmatter',
     type: 'text',
-    vocabulary: { kind: 'closed', options: [{ value: '', label: 'Default (Trebuchet MS)', explanation: 'Key absent — the locked Trebuchet MS deck face.' }, { value: 'trebuchet', label: 'Trebuchet', explanation: 'Trebuchet MS — the locked deck face (default).' }, { value: 'gill-sans', label: 'Gill Sans', explanation: 'Gill Sans / Gill Sans MT.' }, { value: 'verdana', label: 'Verdana', explanation: 'Verdana — widest, most conservative.' }] },
+    vocabulary: { kind: 'closed', options: [{ value: 'inter', label: 'Inter', explanation: 'Bundled sans serif Inter.' }, { value: 'serif', label: 'Serif', explanation: 'Bundled Fraunces display and Alegreya Sans text.' }, { value: 'geist', label: 'Geist', explanation: 'Bundled Geist.' }, { value: '', label: 'Automatic', explanation: 'Use the palette’s existing typeface.' }, { value: 'trebuchet', label: 'Trebuchet', explanation: 'Trebuchet MS — the original classic deck face.' }, { value: 'gill-sans', label: 'Gill Sans', explanation: 'Gill Sans / Gill Sans MT.' }, { value: 'verdana', label: 'Verdana', explanation: 'Verdana — widest, most conservative.' }] },
     label: 'Deck face',
     group: 'Design',
     explanation:
-      'Deck font option: trebuchet (default), gill-sans or verdana (ADR-0005). Choosing Trebuchet renders exactly as leaving the key out — it is the locked house face. An unlisted face keeps the house face and raises a compiler warning.',
+      'Talk typeface (font: or typeface:): inter, serif or geist, bundled for offline use with Central European letters. Omitting font preserves the palette’s existing typeface. Explicit trebuchet, gill-sans and verdana remain supported. If font and typeface name different faces, font wins and the compiler warns; the editor stores font only. Unknown values warn and use the automatic face.',
     defaultable: true,
     ownership: 'user'
   },

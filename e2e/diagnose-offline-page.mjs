@@ -10,6 +10,7 @@ import { createServer as createTcpServer } from 'node:net'
 import { captureAttack } from './lib/capture-network-attack.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { testProfileEnv } from './lib/test-profile.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 const repo = resolve('.')
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), 'tw-offline-e2e-')))
 const userData = join(scratch, 'userData'), vault = join(scratch, 'vault'), talk = join(vault, 'offline-page'), assets = join(talk, 'assets')
@@ -34,7 +35,7 @@ const attack = `<script>(()=>{
 const networkProof = 'PEERS:0 RTC:undefined CHILD:undefined TRANSPORT:undefined'
 
 const server = createServer((req, res) => {
-  if (req.url === '/page') { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><title>Remote fixture</title><h1>Remote page</h1><p id="security"></p><script>document.querySelector("#security").textContent=typeof window.tw+"/"+typeof require;fetch("/data.json").then(r=>r.json()).then(d=>document.querySelector("h1").textContent="Remote count "+d.count);window.open("https://example.org")</script>'+attack); return }
+  if (req.url === '/page') { res.setHeader('Content-Type', 'text/html'); res.end('<!doctype html><title>Remote fixture</title><h1>Remote page</h1><p id="security"></p><script>document.querySelector("#security").textContent=typeof window.tw+"/"+typeof require;fetch("/data.json").then(r=>r.json()).then(d=>document.querySelector("h1").textContent="Remote count "+d.count);window.open("/popup")</script>'+attack); return }
   if (req.url === '/data.json') { res.setHeader('Content-Type', 'application/json'); res.end('{"count":42,"label":"REMOTE-DATA"}'); return }
   hits++; res.end('must not be reached')
 })
@@ -42,17 +43,16 @@ await new Promise(resolve => server.listen(0, '127.0.0.1', resolve))
 const port = server.address().port
 try {
   writeFileSync(join(assets, 'data.json'), '{"count":42,"label":"SUPPORTING-DATA"}')
-  writeFileSync(join(assets, 'widget.html'), `<!doctype html><title>Widget</title><h1 id="result">Waiting</h1><table><tr><td>Offline table</td></tr></table><canvas width="20" height="20"></canvas><script>fetch('data.json').then(r=>r.json()).then(d=>document.querySelector('h1').textContent='Count '+d.count);fetch('http://127.0.0.1:${port}/leak').catch(()=>{});window.open('https://example.org');</script>`)
+  writeFileSync(join(assets, 'widget.html'), `<!doctype html><title>Widget</title><h1 id="result">Waiting</h1><table><tr><td>Offline table</td></tr></table><canvas width="20" height="20"></canvas><script>fetch('data.json').then(r=>r.json()).then(d=>document.querySelector('h1').textContent='Count '+d.count);fetch('http://127.0.0.1:${port}/leak').catch(()=>{});window.open('http://127.0.0.1:${port}/popup');</script>`)
   await ensureFreshBuild(repo)
   const env = { ...process.env, TW_E2E: '1', ...testProfileEnv(userData), TW_REC_TEST: '1', TW_E2E_LIVE_PAGE_ALLOW: `127.0.0.1:${port}` }; delete env.ELECTRON_RUN_AS_NODE
   app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: repo, env })
+  await app.evaluate(({ shell }) => { shell.openExternal = async () => {} })
   app.on('console', message => { if (message.text().includes('[offline-page]')) console.log(message.text()) })
   const page = await app.firstWindow(); page.setDefaultTimeout(30000)
-  await page.locator('[data-talk-slug="offline-page"]').first().dblclick()
-  await page.locator('.cm-content').waitFor()
-  await page.locator('.tw-slide-card[data-slide-index="0"]').waitFor()
+  await openTalkByTitle(page, 'Offline page')
   const read = () => page.evaluate(() => document.querySelector('.cm-content')?.cmTile?.root?.view?.state.doc.toString())
-  await page.locator('.tw-slide-card[data-slide-index="0"]').click()
+  await page.locator('.cm-content .cm-line').filter({ hasText: /^(?:### )?Widget$/ }).click()
   // Use the menu entry: the same command is also in the palette and Inspector.
   await page.locator('.toolbar-btn', { hasText: 'Insert' }).first().click()
   await page.getByRole('menuitem', { name: 'Offline HTML copy…' }).click()

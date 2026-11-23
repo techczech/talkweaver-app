@@ -160,4 +160,15 @@ const side = (states, neverShown = []) => ({ states, coverage: { complete: true,
   assert.deepEqual(knownClipProblems({ 'c#1': ['div|Neutral card', 'div|Neutral card'] }, { 'c#1': [] }, [{ ...known[0], count: 2 }], 'o', 'ocean'), [], 'an explicit count of two permits two')
   assert.ok(knownClipProblems({ 'c#1': ['div|Other'] }, { 'c#1': [] }, known, 'o', 'ocean').some((line) => line.includes('div|Other')), 'an unlisted clip fails')
 }
+// URL caption text can change while its full destination stays the same. That identity
+// never waives an actual loss in contrast or type size, or a different destination.
+{
+  const url = 'https://example.test/route/long-path'
+  const before = side([st('url', 0, { floor: [run('SPAN|0|0|old caption', 'old caption', { px: 20, link: url })], contrast: [run('A|0|0|old caption', 'old caption', { ratio: 2.8, link: url })] })])
+  const after = (px, ratio, link = url) => side([st('url', 0, { floor: [run('A|1|0|example.test', 'example.test', { px, link })], contrast: [run('A|1|0|example.test', 'example.test', { ratio, link })] })])
+  assert.equal(gateOf(compareTalk(before, after(20, 2.8))), 0, 'same destination and same measurements: display-only change')
+  assert.equal(compareTalk(before, after(18, 2.8)).counts.floor.worsened, 1, 'the same caption becoming smaller still gates')
+  assert.equal(compareTalk(before, after(20, 1.8)).counts.contrast.worsened, 1, 'the same caption losing contrast still gates')
+  assert.equal(compareTalk(before, after(20, 2.8, 'https://other.example.test')).counts.floor.worsened, 1, 'another destination is a new run')
+}
 console.log('PASS audit comparison: worsened runs and elements, unmatched states, identity pairing (ambiguous stays unmatched), direct states outside the gate, known clips as a multiset')

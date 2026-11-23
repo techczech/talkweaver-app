@@ -145,7 +145,9 @@ try {
     assert.ok(!/practice-quote/.test(plain.quote.className))
     assert.equal(plain.quote.mark.content, '"“"')
     assert.equal(plain.quote.cite, true)
-    assert.equal(plain.quote.strong[0].color, plain.accent)
+    assert.equal(plain.quote.strong[0].color, plain.quote.style.color, 'bold emphasis uses the quote ink')
+    assert.equal(plain.quote.strong[0]['font-weight'], '700')
+    assert.equal(plain.quote.strong[0]['background-color'], 'rgba(0, 0, 0, 0)', 'bold emphasis has no accent chip')
     assert.equal(plain.caps.length, 0)
   })
 

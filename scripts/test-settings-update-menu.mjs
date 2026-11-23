@@ -37,7 +37,7 @@ assert.equal(template.slice(1).some((m) => (m.submenu ?? []).some((i) => i.id ==
 item.click(); assert.deepEqual(ran, [UPDATE_CHECK_ID])
 assert.equal(bridle.appCommandIdOf(ran[0]), 'check-for-updates')
 assert.equal(logs.length, 0)
-assert.equal(updateCheckMenuTemplate({ platform: 'linux', keys, run() {}, log: (l) => logs.push(l) }), null, 'off macOS the menu is left alone')
+assert.ok(updateCheckMenuTemplate({ platform: 'linux', keys, run() {}, log: (l) => logs.push(l) }).some(menu => menu.label === 'Talk'), 'task menus are built off macOS too')
 await opened.close()
 // The app menu's role items take their labels from app.name, which is the package name ("talk-weaver").
 // They must carry the product name instead; app.name itself stays as it is (userData and Keychain depend on it).

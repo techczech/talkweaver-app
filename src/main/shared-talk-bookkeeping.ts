@@ -6,9 +6,10 @@ import { readFileSync, rmSync } from 'fs'
 import { basename, dirname, join } from 'path'
 import { ownerTokenKey } from './owner-tokens.ts'
 import {
-  describe, interruptedShareMessage, recordNotRemovedMessage, RecordNotRemoved, writeFileAtomic,
+  describe, interruptedShareMessage, recordNotRemovedMessage, RecordNotRemoved,
   type InterruptedCreate, type PendingCreate, type SharedTalkRecord,
 } from './shared-talk-model.ts'
+import { writeTextAtomic } from './atomic-file.ts'
 import type { ShareCore } from './shared-talk-state.ts'
 import type { Slot, Slots } from './shared-talk-slots.ts'
 
@@ -57,7 +58,7 @@ export function createNotes(core: ShareCore): CreateNotes {
       const id = `${process.pid}-${Date.now().toString(36)}-${noteSeq}`
       const all = readPending()
       all[id] = create
-      writeFileAtomic(pendingPath, `${JSON.stringify({ version: 1, creates: all }, null, 2)}\n`, 0o600)
+      writeTextAtomic(pendingPath, `${JSON.stringify({ version: 1, creates: all }, null, 2)}\n`, { mode: 0o600 })
       underWay.add(id)
       return id
     },
@@ -69,7 +70,7 @@ export function createNotes(core: ShareCore): CreateNotes {
         if (Object.keys(left).length === Object.keys(all).length) return
         // No note left: no file (the user-data folder at rest holds only the registries).
         if (Object.keys(left).length === 0) rmSync(pendingPath, { force: true })
-        else writeFileAtomic(pendingPath, `${JSON.stringify({ version: 1, creates: left }, null, 2)}\n`, 0o600)
+        else writeTextAtomic(pendingPath, `${JSON.stringify({ version: 1, creates: left }, null, 2)}\n`, { mode: 0o600 })
       } catch (error) {
         log(`[shared-talk] a create note was not cleared: ${describe(error)}`) // cleared by the talk's next Share
       }

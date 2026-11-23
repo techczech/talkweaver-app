@@ -16,6 +16,10 @@ import { chromium } from 'playwright'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
 import { extractSlides, extractStyles } from '../compiler/scripts/lib/04-html-extraction.mjs'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+import { missingPopplerTools, reportMissingPoppler } from './lib/test-poppler.mjs'
+
+const missing = missingPopplerTools('pdftotext', 'pdfinfo')
+reportMissingPoppler('My Notes PDF text and page count checks', missing)
 
 const FIXTURE = `---
 title: The current state of AI agents
@@ -314,10 +318,12 @@ try {
     check(inPage.text.includes(HOSTILE) && !inPage.pwned, `${label}: what people typed is text on the page`)
     const pdf = join(scratch, `${label}-notes.pdf`)
     await popup.pdf({ path: pdf, format: 'A4', preferCSSPageSize: true, printBackground: true })
-    const text = pdfText(pdf)
-    check(pageCount(pdf) === 1, `${label}: the notes print on one page (${pageCount(pdf)})`)
-    check(text.includes('What makes an agent useful?') && text.includes('Puzzled by this') && !text.includes('Print or save as PDF') && !text.includes('Allow pop-ups'), `${label}: the printed page has the notes and not the screen bar`)
-    check(!text.includes('An agent can find the form and fill it in.') || text.includes('Ask first, then go.'), `${label}: slides are not printed`)
+    if (missing.length === 0) {
+      const text = pdfText(pdf)
+      check(pageCount(pdf) === 1, `${label}: the notes print on one page (${pageCount(pdf)})`)
+      check(text.includes('What makes an agent useful?') && text.includes('Puzzled by this') && !text.includes('Print or save as PDF') && !text.includes('Allow pop-ups'), `${label}: the printed page has the notes and not the screen bar`)
+      check(!text.includes('An agent can find the form and fill it in.') || text.includes('Ask first, then go.'), `${label}: slides are not printed`)
+    }
     if (shots) { await mkdir(shots, { recursive: true }); execFileSync('cp', [pdf, join(shots, `notes-page-${label}.pdf`)]); await popup.screenshot({ path: join(shots, `notes-page-screen-${label}.png`) }) }
     await popup.close()
     check(page.errors.length === 0, `${label} foot: no page errors (${page.errors.join('; ')})`)
@@ -335,7 +341,7 @@ try {
     check(text.includes('There is nothing to print yet. No notes have been made on this device.') && (await popup.locator('section').count()) === 0, `empty: the page is one line (${text})`)
     const pdf = join(scratch, 'empty.pdf')
     await popup.pdf({ path: pdf, format: 'A4', preferCSSPageSize: true })
-    check(pageCount(pdf) === 1, 'empty: one page')
+    if (missing.length === 0) check(pageCount(pdf) === 1, 'empty: one page')
     if (shots) execFileSync('cp', [pdf, join(shots, 'notes-page-empty.pdf')])
     await popup.close()
     await context.close()
@@ -349,4 +355,4 @@ if (failures.length) {
   console.error(`audience My Notes list and foot DOM: ${failures.length} failure(s)\n - ${failures.join('\n - ')}`)
   process.exit(1)
 }
-console.log('audience My Notes list and foot DOM: Overview at 1440x900 and phone list at 360x740 — exactly the kinds present on each row, legend, row opens the slide, the phone My Notes strip, marks follow what the device holds; the foot has Print or save as PDF then Copy as Markdown and Download .md, no JSON; Markdown holds every kind in slide order; the printed page is the notes with slide titles on one page, no slides, text only; empty prints one line')
+console.log('audience My Notes list and foot DOM: Overview at 1440x900 and phone list at 360x740 — exactly the kinds present on each row, legend, row opens the slide, the phone My Notes strip, marks follow what the device holds; the foot has Print or save as PDF then Copy as Markdown and Download .md, no JSON; Markdown holds every kind in slide order; the print tab has the notes with slide titles, no slides, text only; empty shows one line' + (missing.length ? '' : '; populated and empty notes each print on one page'))

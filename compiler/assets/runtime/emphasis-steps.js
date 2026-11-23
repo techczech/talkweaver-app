@@ -298,7 +298,7 @@ export function paintEmphasisStates(root, els, states) {
  */
 export function stampEmphasisPlainWeight(root, styleOf) {
   if (!root || typeof styleOf !== 'function') return;
-  root.querySelectorAll('strong[data-emph-step]').forEach(function (el) {
+  root.querySelectorAll('strong[data-emph-step], u[data-emph-step]').forEach(function (el) {
     if (!el.parentElement || el.style.getPropertyValue('--emph-plain-weight')) return;
     const weight = styleOf(el.parentElement).fontWeight;
     if (weight) el.style.setProperty('--emph-plain-weight', String(weight));

@@ -7,6 +7,8 @@
 // before the first row is the preamble, and joining preamble and rows with "\n" gives the body back.
 // An unchanged row is always written back from its own lines. Pure: no fs, no DOM.
 import { isTraceHeaderLine } from "./02-triggers-layout.mjs";
+import { readTurnHeader, readTurnBody, quoteTurnLabel, NATIVE_TURN_KINDS } from "./simulation-turn-envelope.mjs";
+export { NATIVE_TURN_KINDS } from "./simulation-turn-envelope.mjs";
 
 export const LABEL_RE = /^(user|bot|model-reasoning|context-retrieval|tool-call|tool-results)(?:[ \t]*\(([^)]*)\))?[ \t]*:(.*)$/i;
 export const UNKNOWN_LABEL_RE = /^(assistant|model|agent|ai|system|human|reasoning|thinking|agent-reasoning|tool|tool-use|tool-result|tool-calls|context|retrieval)(?:[ \t]*\([^)]*\))?[ \t]*:/i;
@@ -49,7 +51,7 @@ function splitGap(lines) {
  *   `content` is the author's text as written (the label line's text after the colon, then the
  *   continuation lines without the common indent), `duration` the parenthesis text or null.
  */
-export function splitTurnSegments(body) {
+export function splitTurnSegments(body, { version = 1 } = {}) {
   const raw = String(body ?? "").split("\n");
   const indent = commonIndent(raw);
   const preamble = [];
@@ -58,8 +60,9 @@ export function splitTurnSegments(body) {
   for (const line of raw) {
     const text = stripCr(line).slice(Math.min(indent, indentOf(stripCr(line))));
     const label = text.match(LABEL_RE);
-    if (label) {
-      current = { label, lines: [line] };
+    const native = version === 2 && readTurnHeader(text);
+    if (label || native) {
+      current = { label, native, lines: [line] };
       rows.push(current);
     } else if (current) current.lines.push(line);
     else preamble.push(line);
@@ -68,8 +71,14 @@ export function splitTurnSegments(body) {
     kind: "turns",
     indent,
     preamble,
-    rows: rows.map(({ label, lines }) => {
+    rows: rows.map(({ label, native, lines }) => {
       const { content, gap } = splitGap(lines);
+      if (native) {
+        const rest = content.slice(1).map((line) => stripCr(line).slice(Math.min(indent, indentOf(stripCr(line)))));
+        const parsed = readTurnBody(native.head, rest);
+        return { envelope: true, role: native.kind, label: native.label, options: native.optionSource, detail: parsed.detail,
+          duration: null, content: parsed.body, headOnLabel: Boolean(native.head), lines, contentLength: content.length, gap };
+      }
       const head = label[3].replace(/^[ \t]+/, "");
       const rest = content.slice(1).map((line) => stripCr(line).slice(Math.min(indent, indentOf(stripCr(line)))));
       return {
@@ -150,8 +159,8 @@ export function splitTraceSegments(body) {
   };
 }
 
-export function splitSegments(kind, body) {
-  if (kind === "turns") return splitTurnSegments(body);
+export function splitSegments(kind, body, options) {
+  if (kind === "turns") return splitTurnSegments(body, options);
   if (kind === "shell") return splitShellSegments(body);
   return splitTraceSegments(body);
 }
@@ -168,6 +177,18 @@ function rowLines(kind, row, eol, indent) {
   const pad = " ".repeat(indent);
   const gap = o?.gap ?? [];
   if (kind === "turns") {
+    if (row.envelope) {
+      const parts = String(row.content ?? '').split('\n');
+      const header = `turn ${row.role} ${quoteTurnLabel(row.label ?? '')}${row.options ? ` ${row.options}` : ''}:`;
+      const escapeField = (line) => /^(detail:|object:)[ \t]*$/.test(line) ? `\\${line}` : line;
+      // A leading payload indent belongs on a continuation: header separators are trimmed by
+      // the reader. Keep an authored body-below-label shape when editing just its label too.
+      const inline = parts[0] !== '' && !/^[ \t]/.test(parts[0]) && (!o || o.headOnLabel);
+      const rest = inline ? parts.slice(1) : row.content ? parts : [];
+      const out = [`${pad}${header}${inline ? ` ${parts[0]}` : ''}`, ...rest.map((line) => `${pad}  ${escapeField(line)}`)];
+      if (row.detail) out.push(`${pad}  detail:`, ...String(row.detail).split('\n').map((line) => `${pad}    ${line}`));
+      return [...out.map((line) => line + cr), ...gap];
+    }
     const label = `${row.role}${row.duration !== null && row.duration !== undefined ? ` (${row.duration})` : ""}:`;
     const parts = String(row.content ?? "").split("\n");
     const headOnLabel = o ? o.headOnLabel && parts[0] !== "" : parts[0] !== "";
@@ -186,7 +207,8 @@ function rowLines(kind, row, eol, indent) {
 }
 
 function rowUnchanged(kind, row, o) {
-  if (kind === "turns") return row.role === o.role && (row.duration ?? null) === (o.duration ?? null) && row.content === o.content;
+  if (kind === "turns") return row.role === o.role && (row.duration ?? null) === (o.duration ?? null) && row.content === o.content
+    && Boolean(row.envelope) === Boolean(o.envelope) && row.label === o.label && row.options === o.options && row.detail === o.detail;
   if (kind === "shell") return row.path === o.path && row.command === o.command && row.output === o.output;
   return row.header === o.header && row.content === o.content;
 }
@@ -198,6 +220,8 @@ function rowUnchanged(kind, row, o) {
  * body is returned unchanged.
  */
 export function serialiseSegments(kind, body, split, rows, preamble = split.preamble) {
+  // A refused edit must leave the complete original body intact, including malformed source.
+  if (kind === 'turns' && rows.some((row) => row.envelope && !NATIVE_TURN_KINDS.includes(row.role))) return String(body ?? "");
   const unchanged = preamble.join("\n") === split.preamble.join("\n")
     && rows.length === split.rows.length
     && rows.every((row, index) => row.original === split.rows[index] && rowUnchanged(kind, row, row.original));

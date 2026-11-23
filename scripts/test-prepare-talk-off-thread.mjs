@@ -11,6 +11,7 @@
  */
 import { strict as assert } from 'node:assert'
 import { EventEmitter } from 'node:events'
+import { mock } from 'node:test'
 import { createPrepareTalkOffThread } from '../src/main/prepare-talk-off-thread.ts'
 
 const made = []
@@ -147,4 +148,82 @@ const outcome = (promise) => promise.then((v) => ({ ok: true, v }), (e) => ({ ok
   await wait(100)
   assert.ok(made[0].killed, 'the idle end still retires the child')
 }
-console.log('prepare-talk-off-thread: jobs stay with their own child process — ok')
+// A compile can send rows before its file has been written. A silent writer releases that file
+// waiter at the deadline, and the already-delivered rows remain a successful compile.
+{
+  made.length = 0
+  const compile = createPrepareTalkOffThread('w.js', spawn, 60_000, 40)
+  const uncached = compile(request)
+  const [child] = made
+  const id = child.posted[0].id
+  child.emit('message', { id, ok: true, model: {}, rows: [{ title: 'current' }], pendingPreview: true })
+  const answered = await uncached
+  assert.equal(answered.rows[0].title, 'current')
+  assert.ok(answered.previewReady instanceof Promise)
+  let ready = false
+  void answered.previewReady.then(() => { ready = true })
+  await Promise.resolve()
+  assert.equal(ready, false)
+  const variant = { key: 'current-variant' }
+  child.emit('message', { id, kind: 'variant', preview: variant })
+  assert.equal(await answered.previewReady, variant)
+
+  const stuck = compile(request)
+  child.emit('message', { id: child.posted.at(-1).id, ok: true, model: {}, rows: [], pendingPreview: true })
+  const compiled = await stuck
+  assert.equal(await compiled.previewReady, undefined)
+  assert.equal(child.killed, true)
+}
+
+// Superseding a marked preview cancels the capture in progress and leaves the child reusable.
+{
+  made.length = 0
+  const compile = createPrepareTalkOffThread('w.js', spawn, 60_000)
+  const previewController = new AbortController()
+  let captureSignal
+  const preview = outcome(compile.markPreview({}, (_url, signal) => {
+    captureSignal = signal
+    return new Promise(resolve => signal.addEventListener('abort', () => resolve(null), { once: true }))
+  }, previewController.signal))
+  const [child] = made
+  const id = child.posted[0].id
+  child.emit('message', { id, kind: 'artwork', url: 'https://preview.example.invalid' })
+  previewController.abort()
+  assert.equal((await preview).ok, false)
+  assert.equal(captureSignal.aborted, true)
+  assert.deepEqual(child.posted.at(-1), { id, kind: 'cancel-preview' })
+  const next = compile(request)
+  child.answer(child.posted.at(-1), 'fresh')
+  assert.equal((await next).model.value, 'fresh')
+}
+// A focused preview's timeout does not retire the child while it is preparing an export.
+{
+  made.length = 0
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    const compile = createPrepareTalkOffThread('w.js', spawn, 60_000, 40)
+    let captureSignal
+    const preview = outcome(compile.markPreview({}, (_url, signal) => {
+      captureSignal = signal
+      return new Promise(resolve => signal.addEventListener('abort', () => resolve(null), { once: true }))
+    }, new AbortController().signal))
+    const [child] = made
+    const { id } = child.posted[0]
+    child.emit('message', { id, kind: 'artwork', url: 'https://preview.example.invalid' })
+    mock.timers.tick(20)
+    const exporting = outcome(compile(request))
+    const exportJob = child.posted.at(-1)
+    mock.timers.tick(20)
+    const timedOut = await preview
+    assert.equal(timedOut.ok, false)
+    assert.match(timedOut.e.message, /slide preview took longer/)
+    assert.equal(captureSignal.aborted, true)
+    assert.deepEqual(child.posted.at(-1), { id, kind: 'cancel-preview' })
+    assert.equal(child.killed, false)
+    child.answer(exportJob, 'exported')
+    assert.equal((await exporting).v.model.value, 'exported')
+  } finally {
+    mock.timers.reset()
+  }
+}
+console.log('prepare-talk-off-thread: job deadlines, preview readiness and cancellation — ok')

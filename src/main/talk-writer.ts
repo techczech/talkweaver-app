@@ -28,8 +28,8 @@
 // again against a fresh read, at most ROUTED_RETRIES more times; a whole-text `next` is never re-applied
 // over a buffer that moved (it would overwrite the typing), so it refuses.
 import { randomBytes } from 'crypto'
-import { constants as fsConstants, ftruncateSync, type Stats } from 'fs'
-import { access, lstat, open, readFile, stat, unlink, type FileHandle } from 'fs/promises'
+import { constants as fsConstants, closeSync, fstatSync, fsyncSync, ftruncateSync, linkSync, openSync, writeSync, type Stats } from 'fs'
+import { access, chmod, lstat, open, readFile, stat, unlink, type FileHandle } from 'fs/promises'
 import { basename, dirname, join } from 'path'
 import { canonicalOutlinePath, outlineIdentity, type OutlineIdentity } from './outline-identity.ts'
 import { CHANGED_ON_DISK_MESSAGE, PARTIAL_WRITE_MESSAGE, REMOVED_ON_DISK_MESSAGE, type OutlineDiskChange } from '../shared/outline-disk-change.ts'
@@ -61,7 +61,9 @@ export interface TalkDiskGuard {
   tracks(realPath: string): boolean
   /** Before a whole-text write of `incoming`: the difference when the file on disk (`diskText`; null =
    *  missing) is not the editor's version, else null. */
-  conflict(realPath: string, diskText: string | null, incoming: string): Promise<OutlineDiskChange | null>
+  conflict(realPath: string, diskText: string | null, incoming: string, expectedDiskHash?: string): Promise<OutlineDiskChange | null>
+  /** Only an explicitly accepted removal may recreate a missing owned talk. */
+  canRecreate?(realPath: string): boolean
   /** The editor's text is now on disk: the new baseline (the app's own saves are never changes). */
   written(realPath: string, text: string): void
   /** A save failed after the file was truncated; `tempPath` holds the full text. */
@@ -99,6 +101,8 @@ export interface TalkWriterRoutes {
 }
 
 export interface TalkWriteOptions {
+  /** The raw disk version the buffer adopted; compare under the write lock, even after a revert. */
+  expectedDiskHash?: string
   /** Synchronous live authority, checked after all staging/locking awaits at the destructive boundary:
    *  just before the truncate on disk, just before each ask to apply in a window. A throw refuses untouched. */
   authorize?(): void
@@ -121,7 +125,7 @@ export function configureTalkWriter(next: TalkWriterRoutes): void {
   routes = next
 }
 
-const DIRECT_ORIGINS: ReadonlySet<TalkWriteOrigin> = new Set(['editor', 'migration'])
+const DIRECT_ORIGINS: ReadonlySet<TalkWriteOrigin> = new Set(['editor', 'migration', 'create-talk'])
 
 // One promise chain per lock key, the same shape as the renderer's save queue. Two kinds of key share
 // the map: `path:<real path>` and `inode:<identity key>`.
@@ -228,6 +232,8 @@ export async function readTalkOutline(outlinePath: string): Promise<string> {
  * the temp removed. A read-only target and a dangling link are refused before anything is staged. If
  * the copy fails after the target was truncated, the temp is KEPT as the only whole copy and the error
  * names it (it is never cleaned up automatically). The caller holds the file's lock.
+ * Explicit removed-file recreation instead links the complete fsynced staging file into place
+ * exclusively, immediately after live authorisation; it never truncates or replaces an occupant.
  *
  * Replacement by another program: `expectKey` is the identity the caller's lock holds. The inode the
  * write opens must be that one, and after the write the path must still name it; otherwise the write
@@ -239,15 +245,18 @@ export async function readTalkOutline(outlinePath: string): Promise<string> {
 export async function writeTalkFileInPlace(
   realPath: string,
   text: string,
-  hooks: { authorize?: () => void; beforeCopy?: () => Promise<boolean>; expectKey?: string; afterCopy?: () => Promise<void>; afterTruncate?: () => Promise<void> } = {},
+  hooks: { recreateRemoved?: boolean; authorize?: () => void; beforeCopy?: () => Promise<boolean>; expectKey?: string; afterCopy?: () => Promise<void>; afterTruncate?: () => Promise<void> } = {},
 ): Promise<'written' | 'aborted'> {
   let previous: Stats | null = null
   try { previous = await lstat(realPath) } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error
   }
+  const occupied = (): Error => new Error('The talk’s path already exists again. Nothing was saved; review the file on disk before saving.')
+  const parentGone = (): Error => new Error('The talk’s parent folder is gone. Nothing was saved; restore the folder before choosing Save it again.')
+  if (hooks.recreateRemoved && previous) throw occupied()
   // Only a dangling link lstat's as a link here (canonicalOutlinePath resolved every live one).
   if (previous?.isSymbolicLink()) throw new Error(`The outline ${realPath} is a link to a file that does not exist.`)
-  if (hooks.authorize && !previous) throw new Error('The owned talk was removed; nothing was saved')
+  if (hooks.authorize && !previous && !hooks.recreateRemoved) throw new Error('The owned talk was removed; nothing was saved')
   if (previous) await access(realPath, fsConstants.W_OK)
   const bytes = Buffer.from(text, 'utf8')
   const temp = join(dirname(realPath), `.${basename(realPath)}.${randomBytes(6).toString('hex')}.tw-write`)
@@ -265,6 +274,9 @@ export async function writeTalkFileInPlace(
   } catch (error) {
     if (staged) await staged.close().catch(() => undefined)
     await unlink(temp).catch(() => undefined)
+    if (hooks.recreateRemoved && (error as NodeJS.ErrnoException)?.code === 'ENOENT') {
+      throw parentGone()
+    }
     throw error
   }
   const replaced = (): Error => new Error('The talk’s file was replaced while writing (by another program). This change was not saved; try again.')
@@ -272,27 +284,57 @@ export async function writeTalkFileInPlace(
   let truncated = false
   let opened = ''
   try {
-    target = await open(realPath, previous ? 'r+' : 'wx', 0o666)
-    const st = await target.stat()
-    opened = `${st.dev}:${st.ino}`
-    if (previous && hooks.expectKey && opened !== hooks.expectKey) throw replaced()
-    hooks.authorize?.()
-    // No event-loop turn between live authority and the first destructive operation.
-    if (hooks.authorize) ftruncateSync(target.fd, 0)
-    else await target.truncate(0)
-    truncated = true
-    await hooks.afterTruncate?.()
-    let offset = 0
-    while (offset < bytes.length) {
-      const { bytesWritten } = await target.write(bytes, offset, bytes.length - offset, offset)
-      offset += bytesWritten
+    if (hooks.recreateRemoved) {
+      const st = await stat(temp)
+      hooks.authorize?.()
+      // Exclusive publication has no event-loop turn after authority, and exposes complete bytes.
+      // A filesystem without hard links (some sync providers, exFAT) falls back to exclusive create.
+      try {
+        linkSync(temp, realPath)
+        opened = `${st.dev}:${st.ino}`
+        // The staging file is private (0600); a talk recreated in place gets ordinary file mode.
+        await chmod(realPath, 0o666 & ~process.umask()).catch(() => undefined)
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code
+        if (code !== 'ENOTSUP' && code !== 'EPERM' && code !== 'EXDEV' && code !== 'EOPNOTSUPP') throw error
+        // Keep live authority adjacent to creation even without hard-link support.
+        const fd = openSync(realPath, 'wx', 0o666)
+        truncated = true // from here the temp is the only whole copy until the write completes
+        try {
+          const created = fstatSync(fd)
+          opened = `${created.dev}:${created.ino}`
+          let offset = 0
+          while (offset < bytes.length) offset += writeSync(fd, bytes, offset, bytes.length - offset, offset)
+          fsyncSync(fd)
+        } finally { closeSync(fd) }
+      }
+    } else {
+      target = await open(realPath, previous ? 'r+' : 'wx', 0o666)
+      const st = await target.stat()
+      opened = `${st.dev}:${st.ino}`
+      if (previous && hooks.expectKey && opened !== hooks.expectKey) throw replaced()
+      hooks.authorize?.()
+      // No event-loop turn between live authority and the first destructive operation.
+      if (hooks.authorize) ftruncateSync(target.fd, 0)
+      else await target.truncate(0)
+      truncated = true
+      await hooks.afterTruncate?.()
+      let offset = 0
+      while (offset < bytes.length) {
+        const { bytesWritten } = await target.write(bytes, offset, bytes.length - offset, offset)
+        offset += bytesWritten
+      }
+      await target.sync()
+      await target.close()
+      target = null
     }
-    await target.sync()
-    await target.close()
-    target = null
   } catch (error) {
     if (target) await target.close().catch(() => undefined)
     if (!truncated) await unlink(temp).catch(() => undefined)
+    if (!truncated && hooks.recreateRemoved) {
+      if ((error as NodeJS.ErrnoException)?.code === 'EEXIST') throw occupied()
+      if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') throw parentGone()
+    }
     if (!truncated) throw error
     const partial = new Error(`${message(error)} — the outline may be incomplete; its full text is kept in ${temp} (rename that file over the outline by hand to recover it)`) as PartialWriteError
     partial.partialTemp = temp
@@ -372,6 +414,9 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
   // stands now, under the lock, so it can never overwrite what it has not seen (tags and frontmatter
   // from the talk list). The open-time migration is exempt (it re-reads the fresh bytes itself, before
   // the editor has them).
+  if (opts.expectedDiskHash && (!tracked || origin !== 'editor' || typeof next === 'function')) {
+    return { ok: false, error: 'The talk is no longer tracked in its editor. Nothing was saved; reopen it to continue.', untouched: true }
+  }
   const guarded = tracked && typeof next !== 'function' && origin !== 'migration'
   let text: string
   let current = ''
@@ -395,7 +440,10 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
   }
   if (guarded) {
     let change: OutlineDiskChange | null = null
-    try { change = await guard!.conflict(realPath, absent ? null : current, text) } catch { /* the guard never blocks on its own failure */ }
+    try { change = await guard!.conflict(realPath, absent ? null : current, text, opts.expectedDiskHash) } catch {
+      if (opts.expectedDiskHash) return { ok: false, error: 'The observed disk version could not be checked. Nothing was saved.', untouched: true }
+      // Preserve the pre-existing policy for callers without an observed-version precondition.
+    }
     if (change) {
       const error = change.kind === 'removed' ? REMOVED_ON_DISK_MESSAGE : change.kind === 'partial' ? PARTIAL_WRITE_MESSAGE : CHANGED_ON_DISK_MESSAGE
       return { ok: false, error, changedOnDisk: change, untouched: true }
@@ -405,6 +453,9 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
   if (empty) return { ok: false, error: empty, untouched: true }
   try {
     await writeTalkFileInPlace(realPath, text, {
+      // This permission comes from the main-process choice, never from an autosave option.
+      // Exclusive creation below refuses any occupant that appeared after the guard's read.
+      recreateRemoved: origin === 'create-talk' || guarded && absent && origin === 'editor' && guard!.canRecreate?.(realPath) === true,
       expectKey: held.key,
       authorize: opts.authorize,
       ...(routes.afterTruncate ? { afterTruncate: () => routes.afterTruncate!(realPath) } : {}),

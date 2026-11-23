@@ -1,6 +1,6 @@
 // test:plain-view-type — the font and text size reach the Plain tab only (plain editing view, spec T13).
 // The real extensions, bundled for chrome-headless-shell, with the compartments Editor.tsx uses:
-//   - Markdown mode with a look set renders exactly what the old flat editor did (line DOM and look);
+//   - Markdown mode with a look set matches the direct Daylight Markdown editor (line DOM and look);
 //   - Plain with Serif at 20 px: Charter stack, 20 px, headings scale (2.1em = 42 px), code stays in the code font;
 //   - changing the look, and switching tab, keep the same view, document, selection and undo depth.
 import { strict as assert } from 'node:assert'
@@ -19,14 +19,13 @@ import { EditorView, keymap } from '@codemirror/view'
 import { EditorState, Compartment } from '@codemirror/state'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { history, undoDepth, historyKeymap } from '@codemirror/commands'
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { languages } from '@codemirror/language-data'
-import { twTheme } from './src/renderer/src/extensions/editorLook.ts'
+import { markdownLookExtension } from './src/renderer/src/extensions/editorLook.ts'
 import { viewModeExtension } from './src/renderer/src/extensions/plainView/index.ts'
 import { plainTypeExtension } from './src/renderer/src/extensions/plainView/theme.ts'
 
 const common = () => [history(), markdown({ base: markdownLanguage, codeLanguages: languages }), keymap.of(historyKeymap)]
-window.mountOld = (doc, host) => window.__old = new EditorView({ parent: host, state: EditorState.create({ doc, extensions: [syntaxHighlighting(defaultHighlightStyle), ...common(), twTheme] }) })
+window.mountMarkdown = (doc, host) => window.__markdown = new EditorView({ parent: host, state: EditorState.create({ doc, extensions: [...common(), markdownLookExtension()] }) })
 const view = new Compartment(), type = new Compartment()
 const typeFor = (mode, look) => mode === 'plain' ? plainTypeExtension(look) : []
 window.mountNew = (doc, host, mode, look) => window.__new = new EditorView({ parent: host, state: EditorState.create({ doc, extensions: [...common(), view.of(viewModeExtension(mode)), type.of(typeFor(mode, look))] }) })
@@ -53,11 +52,12 @@ const browser = await chromium.launch()
 try {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 } })
   await page.setContent('<div id="a" style="width:800px;height:400px"></div><div id="b" style="width:800px;height:400px"></div>')
+  await page.addStyleTag({ path: join(root, 'src/renderer/src/app-theme.css') })
   await page.addScriptTag({ path: outfile })
 
-  // Markdown tab with Serif 20 set: today's editor.
-  await page.evaluate(([d, look]) => { window.mountOld(d, document.getElementById('a')); window.mountNew(d, document.getElementById('b'), 'markdown', look) }, [doc, SERIF20])
-  const [o, n] = await page.evaluate(() => [window.snapshot(window.__old), window.snapshot(window.__new)])
+  // Markdown tab with Serif 20 set: same as Markdown with no Plain look.
+  await page.evaluate(([d, look]) => { window.mountMarkdown(d, document.getElementById('a')); window.mountNew(d, document.getElementById('b'), 'markdown', look) }, [doc, SERIF20])
+  const [o, n] = await page.evaluate(() => [window.snapshot(window.__markdown), window.snapshot(window.__new)])
   assert.equal(n.html, o.html, 'Markdown: same line DOM')
   assert.deepEqual(n.lines, o.lines, 'Markdown: same look per line')
   assert.equal(n.editor, o.editor)

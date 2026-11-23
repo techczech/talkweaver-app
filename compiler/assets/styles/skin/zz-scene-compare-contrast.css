@@ -108,7 +108,7 @@
 .slide .vs-grid > .vs-head.R { grid-column: 3; }
 .slide .vs-grid .vs-head-ico { display: inline-flex; width: 2.0833cqw; height: 2.0833cqw; flex: none; }
 .slide .vs-grid .vs-head-ico svg { width: 100%; height: 100%; }
-.slide .vs-grid .vs-head-text strong { font-weight: 400; }
+.slide .vs-grid .vs-head-text strong { font-weight: var(--weight-emphasis); }
 
 /* Rows: regular weight, one icon each, a hairline between rows. */
 .slide .vs-grid .vs-row {
@@ -136,7 +136,7 @@
 }
 .slide .vs-grid .vs-row.last::after { content: none; }
 .slide .vs-grid .vs-row .vs-text { min-width: 0; overflow-wrap: break-word; }
-.slide .vs-grid .vs-row .vs-text strong { font-weight: 400; }
+.slide .vs-grid .vs-row .vs-text strong { font-weight: var(--weight-emphasis); }
 .slide .vs-grid .vs-ico { display: inline-flex; flex: none; width: 1em; height: 1em; color: var(--c); }
 .slide .vs-grid .vs-ico svg { width: 100%; height: 100%; }
 /* A row with no icon keeps the text where the icon-bearing rows keep theirs. */

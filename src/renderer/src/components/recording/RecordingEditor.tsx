@@ -21,14 +21,15 @@ import type { RecordingSession, Transcript } from '../../../../preload/index'
 import type { RecordingOpen } from '../../../../main/recording-video-ipc'
 import type { EditsSnapshot } from '../../../../main/recording-edits-store'
 import { applyEditOp, DEFAULT_FINISH, emptyFaces, faceOf, normaliseRanges, type EditOp, type TimeRange } from '../../../../shared/recording-edits'
-import { chaptersFor, faceTrack, faceTrackOnClock, keptSpans, type FaceSegment, planEditedToRun, planRunToEdited, withoutCamera } from '../../../../shared/recording-video'
+import { chaptersFor, faceTrack, faceTrackOnClock, type FaceSegment, planEditedToRun, planRunToEdited, withoutCamera } from '../../../../shared/recording-video'
 import {
   boundaryTargets, coveredMs, cutWordsOp, joinsAtSentence, edgeQuality, EDITOR_THRESHOLDS, editorWords, leaveOutOp, moveBoundaryOp, nearestCleanEdge,
-  markedStretch, planDigest, putBackOp, putBoundaryBackOp, quoteWords, resolveRecording, restoreOp, TARGET_WORDS, targetKind, tidyProposals, wordAt, wordsRange,
-  type CutView, type EditorRow, type EditorWords, type TidyKind, type TidyProposal
+  markedStretch, planDigest, putBackOp, putBoundaryBackOp, quoteWords, resolveRecording, restoreOp, rowAtPlayback, rowVideoStart, TARGET_WORDS, targetKind, tidyProposals, wordAt, wordsRange, wouldCutTakeAtEnds,
+  type CutView, type EditorRow, type EditorWords, type ResolvedRecording, type TidyKind, type TidyProposal
 } from '../../../../shared/recording-editor'
 import { recordingRunHome } from '../../../../shared/recording-run-home'
-import { rangesToVideoClock, rowTakeControls, takesInUse, toVideoClock } from '../../../../shared/recording-takes'
+import { flagPlayback, joinPlayback, previewSpans, runStretchPlayback, takeEdges, trimAtPlayhead, wordAtPlayback } from '../../../../shared/recording-positions'
+import { rowTakeControls, takesInUse } from '../../../../shared/recording-takes'
 import { shortcutEventMatches } from '../../../../shared/shortcut-registry'
 import { commandRan } from '../../commands/command-ran'
 import { LayeredPlayer, type LayeredPlayerHandle, type PlayerSource } from './LayeredPlayer'
@@ -37,6 +38,8 @@ import { LookAndSoundSheet, useEvenVoice } from './LookAndSound'
 import { FacePositionSheet, faceLabel } from './FacePosition'
 import { chosenTakes, missingTakeNotice, missingTakeText, TakesPanel, unavailableTakes, useTakes, useTakeSource } from './RecordSlideAgain'
 import './recording-panel.css'
+import { saveRecordingEdit } from '../../../../shared/recording-edit-save'
+import { RecordingSaveNotice, useKeepUnsavedRecordingOpen } from './RecordingSaveNotice'
 import './recording-editor.css'
 
 export type EditorSlide = { title: string; section?: string; thumbUrl: string | null; n: number; cards?: string[] }
@@ -170,14 +173,47 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   const confirmed = useRef<EditsSnapshot | null>(null)
   const shown = useRef<EditsSnapshot | null>(null)
   const queue = useRef<Promise<void>>(Promise.resolve())
-  const pending = useRef(0)
-  const generation = useRef(0)
-  /** The last save that failed (cleared by the next one that succeeds): Export and leaving wait on it. */
+  const pending = useRef<EditOp[]>([])
+  const flushing = useRef(false)
   const saveFailed = useRef<string | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [savingEdits, setSavingEdits] = useState(false)
   const editStarted = useRef<number | null>(null)
+  const hasUnsaved = useCallback(() => pending.current.length > 0, [])
+  useKeepUnsavedRecordingOpen(hasUnsaved)
+
+  const flushEdits = useCallback((): void => {
+    if (flushing.current || !pending.current.length) return
+    flushing.current = true
+    setSavingEdits(true)
+    queue.current = (async () => {
+      while (pending.current.length) {
+        const op = pending.current[0]
+        const base = confirmed.current
+        if (!base) return
+        // Keep both the operation and its base across the lock retry.
+        const r = await saveRecordingEdit(() => window.tw.recordingVideo.edit(runRef, op, base.edits.revision, base.digest))
+        if (!r.ok) {
+          saveFailed.current = r.error
+          setSaveError(r.error)
+          return
+        }
+        pending.current.shift()
+        confirmed.current = r.edits
+        heard(r.edits)
+        if (!pending.current.length) {
+          shown.current = r.edits
+          setEdits(r.edits)
+        }
+      }
+      saveFailed.current = null
+      setSaveError(null)
+    })().finally(() => { flushing.current = false; setSavingEdits(false) })
+  }, [runRef, heard])
+
   const edit = useCallback((op: EditOp): boolean => {
     const cur = shown.current
-    if (!cur || cur.problem || viewingRef.current) return false
+    if (!cur || cur.problem || viewingRef.current || keptOpen || saveFailed.current) return false
     let next
     try { next = applyEditOp(cur.edits, op, durationMs) } catch (e) { setEditError((e as Error).message); return false }
     if (next === cur.edits) return false
@@ -185,53 +221,48 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
     editStarted.current = performance.now()
     const optimistic = { ...cur, edits: next }
     shown.current = optimistic; setEdits(optimistic)
-    pending.current++
-    const gen = generation.current
-    queue.current = queue.current.then(async () => {
-      if (gen !== generation.current) return
-      const base = confirmed.current
-      if (!base) return
-      // The bytes these edits came from: main keeps any other version it finds there instead of writing over it.
-      const r = await window.tw.recordingVideo.edit(runRef, op, base.edits.revision, base.digest)
-      if (r.ok) {
-        confirmed.current = r.edits
-        saveFailed.current = null
-        heard(r.edits)
-        if (pending.current === 1) { shown.current = r.edits; setEdits(r.edits) }
-      } else {
-        // Refused or failed: nothing was saved; show what is on disk and say why.
-        generation.current++
-        saveFailed.current = r.error
-        shown.current = confirmed.current; setEdits(confirmed.current)
-        setEditError(r.error)
-      }
-    }).catch((e) => { generation.current++; saveFailed.current = String(e); shown.current = confirmed.current; setEdits(confirmed.current) }).finally(() => { pending.current = Math.max(0, pending.current - 1) })
+    pending.current.push(op)
+    flushEdits()
     return true
-  }, [runRef, durationMs, heard])
+  }, [durationMs, flushEdits, keptOpen])
+
   /** Wait until every edit made so far has been saved (or one failed). */
   // The digest of the saved state as this window resolves it (with the words it has now).
   const planOf = useRef<(e: EditsSnapshot) => string>(() => '')
   const settle = useCallback(async (): Promise<{ revision: number; plan: string } | { error: string }> => {
     for (;;) { const q = queue.current; await q; if (q === queue.current) break }
-    if (saveFailed.current) return { error: `An edit could not be saved, so nothing was exported: ${saveFailed.current}` }
+    if (pending.current.length) return { error: 'Save or discard the unsaved recording edits before exporting.' }
     const c = confirmed.current
     return c ? { revision: c.edits.revision, plan: planOf.current(c) } : { error: 'The recording is not open.' }
   }, [])
   // Main found the saved state differs from the screen: read the edits and the words again.
   const refresh = useCallback(() => {
     onReloadWords?.()
-    if (pending.current) return
-    void window.tw.recordingVideo.open(runRef).then((r) => { if (r.ok && !pending.current) { confirmed.current = r.edits; shown.current = r.edits; setEdits(r.edits); heard(r.edits) } }).catch(() => {})
+    if (pending.current.length) return
+    const base = confirmed.current
+    void window.tw.recordingVideo.open(runRef).then((r) => {
+      if (r.ok && !pending.current.length && confirmed.current === base) {
+        confirmed.current = r.edits; shown.current = r.edits; setEdits(r.edits); heard(r.edits)
+      }
+    }).catch(() => {})
   }, [onReloadWords, runRef, heard])
+  const discardEdits = (): void => {
+    if (flushing.current) return
+    pending.current = []
+    saveFailed.current = null
+    setSaveError(null)
+    shown.current = confirmed.current
+    setEdits(confirmed.current)
+    refresh()
+  }
   /** Main changed the edits on the owner's word (Start new edits, Restore): they are the edits now. */
   const replaceEdits = useCallback((s: EditsSnapshot) => {
-    generation.current++
-    confirmed.current = s; shown.current = s; setEdits(s); setViewing(null); setEditError(null); saveFailed.current = null
+    confirmed.current = s; shown.current = s; setEdits(s); setViewing(null); setEditError(null)
     heard(s)
   }, [heard])
   const leave = useCallback(async (): Promise<void> => {
-    const r = await settle()
-    if ('error' in r && saveFailed.current) { setEditError(`An edit could not be saved: ${saveFailed.current} The editor stays open; undo or redo the edit, or reopen the recording.`); return }
+    await settle()
+    if (pending.current.length) return
     onBack()
   }, [settle, onBack])
 
@@ -272,7 +303,9 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
     views.forEach((v, i) => { for (let w = v.firstWord; w < v.endWord; w++) out[w] = i })
     return out
   }, [views, n])
-  const playSpans = useMemo(() => (preview ? keptSpans(normaliseRanges(rangesToVideoClock(resolved.clock, normaliseRanges([...cuts, ...preview.cuts], durationMs)), resolved.clockMs), resolved.clockMs) : spans), [preview, cuts, spans, durationMs, resolved.clock, resolved.clockMs])
+  // What the player plays: the video clock's kept spans, with a cut being tried added (trims at the ends included).
+  const playSpans = useMemo(() => previewSpans(resolved, preview?.cuts ?? []), [preview, resolved])
+  const edgesOnClock = useMemo(() => takeEdges(resolved.clock), [resolved.clock])
   const camera = edits?.edits.finish.camera !== false
   const finish = edits?.edits.finish ?? DEFAULT_FINISH
   // The player plays the evened voice when Even out the volume is on (made in main on first use).
@@ -281,7 +314,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   const composed = useTakeSource(runRef, even.source, resolved.clock, durationMs, finish.evenVolume)
   const faces = edits?.edits.faces ?? EMPTY_FACES
   const track = useMemo(() => faceTrack(rows, faces, durationMs), [rows, faces, durationMs])
-  const clockTrack = useMemo(() => faceTrackOnClock(track, resolved.clock), [track, resolved.clock])
+  const clockTrack = useMemo(() => faceTrackOnClock(track, resolved.clock, faces), [track, resolved.clock, faces])
   const enters = useMemo(() => (run.slideTimeIndex ?? []).filter((m) => m.event === 'enter' && Number.isFinite(m.tMs)).sort((a, b) => a.tMs - b.tMs), [run.slideTimeIndex])
   const flagsAfter = useMemo(() => {
     const out = new Map<number, number>()
@@ -304,7 +337,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
     return out
   }, [rows])
   const rowCtx: RowCtx = useMemo(() => ({ ctx, rows, cuts: views, byWord, slides, flagsAfter, stepsBefore, clickBefore, sidecarCuts }), [ctx, rows, views, byWord, slides, flagsAfter, stepsBefore, clickBefore, sidecarCuts])
-  const tidy = useMemo(() => (tidyOpen ? tidyProposals(ctx, rows, run.slideTimeIndex, cuts) : null), [tidyOpen, ctx, rows, run.slideTimeIndex, cuts])
+  const tidy = useMemo(() => (tidyOpen ? tidyProposals(ctx, rows, run.slideTimeIndex, cuts, resolved) : null), [tidyOpen, ctx, rows, run.slideTimeIndex, cuts, resolved])
   // Leaving a slide out is refused when nothing would be left to play.
   const leaveOut = useCallback((row: EditorRow) => {
     const after = resolveRecording({ durationMs, ctx, edits: { cuts: sidecarCuts, boundaries, leftOut: [...leftOutFacts, row.change], restoredTrims }, runTrims: run.trims as TimeRange[] | undefined, marks: run.slideTimeIndex, takes })
@@ -335,12 +368,15 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
     const n = slides[row.slideId]?.n ?? row.index + 1
     return <TakesPanel runRef={runRef} slideN={n} firstMs={Math.max(0, row.end - row.start)} takes={list} chosen={chosenRun} disabled={locked}
       firstVoice={source?.voice ? { url: source.voice, from: row.start, to: row.end } : null}
-      onPlayInVideo={() => { player.current?.seekRun(row.start); player.current?.play() }}
+      onPlayInVideo={() => { player.current?.seekVideo(rowVideoStart(resolved, row)); player.current?.play() }}
       onChoose={(take) => edit({ kind: 'take', change: row.change, run: take })} />
   }
+  // By Run time: for marks and cuts, which belong to the recording as it was.
   const rowAtMs = useCallback((t: number): number => { let r = 0; for (let i = 0; i < rows.length; i++) if (rows[i].start <= t) r = i; return r }, [rows])
+  // While playing: inside a take, that take's row; otherwise by Run time.
+  const playingRow = useCallback((t: number, v: number): number => rowAtPlayback(resolved, t, v), [resolved])
   const range = useMemo(() => selRange(sel), [sel])
-  const currentRow = rowAtMs(runMs)
+  const currentRow = playingRow(runMs, videoMs)
 
   // How long an edit took to show (from the action to the next painted frame), for measurement.
   useLayoutEffect(() => {
@@ -355,9 +391,10 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   const nowRow = useRef(-1)
   const onTime = useCallback((t: number, v: number) => {
     setRunMs(t); setVideoMs(v)
-    if (playUntil.current !== null && t >= playUntil.current) { playUntil.current = null; player.current?.pause(); setPreview(null) }
-    let w = n ? wordAt(ctx, t) : -1
-    while (w >= 0 && !ctx.words[w].timed) w--
+    // A stretch played to a stop (a word, a selection, a join): the stop is on the video clock.
+    if (playUntil.current !== null && v >= playUntil.current) { playUntil.current = null; player.current?.pause(); setPreview(null) }
+    // Inside a new take no word of the Run is playing.
+    const w = wordAtPlayback(resolved, ctx, t, v)
     const root = listRef.current
     if (root && w !== nowWord.current) {
       root.querySelector(`[data-w="${nowWord.current}"]`)?.classList.remove('is-now')
@@ -365,35 +402,39 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
       el?.classList.add('is-now')
       nowWord.current = w
     }
-    const r = rowAtMs(t)
+    const r = playingRow(t, v)
     if (r !== nowRow.current) {
       nowRow.current = r
       if (player.current?.playing()) root?.querySelector(`[data-row="${r}"]`)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
     }
-  }, [ctx, n, rowAtMs])
+  }, [ctx, playingRow, resolved])
   const onPlaying = useCallback((p: boolean) => { setPlaying(p); if (!p) { playUntil.current = null; setPreview(null) } }, [])
+  /** Play from `from` to `until` on the video clock (runStretchPlayback, joinPlayback), with a cut being tried. */
   const playRange = useCallback((from: number, until: number, withCuts?: TimeRange[]) => {
     if (withCuts) setPreview({ cuts: withCuts, until })
     // Let the preview spans reach the player before it starts.
     requestAnimationFrame(() => {
       player.current?.pause()
-      player.current?.seekRun(from)
+      player.current?.seekVideo(from)
       playUntil.current = until
       player.current?.play()
     })
   }, [])
   /** One second either side of a join, as it will sound: across the cut. */
   const playJoin = useCallback((cut: TimeRange, extra?: TimeRange[]) => {
-    const all = normaliseRanges([...cuts, ...(extra ?? [])], durationMs)
-    const plan = keptSpans(all, durationMs)
-    const join = planRunToEdited(plan, cut.start)
-    playRange(planEditedToRun(plan, Math.max(0, join - 1000)), planEditedToRun(plan, join + 1000), extra)
-  }, [cuts, durationMs, playRange])
+    const p = joinPlayback(resolved, cut, extra ?? [])
+    playRange(p.from, p.until, extra)
+  }, [resolved, playRange])
   const playSelection = useCallback(() => {
     if (!range) return
-    const r = wordsRange(ctx, range[0], range[1])
-    playRange(r.start, r.end)
-  }, [range, ctx, playRange])
+    const p = runStretchPlayback(resolved, wordsRange(ctx, range[0], range[1]), { firstStart: ctx.words[range[0]].start, lastEnd: ctx.words[range[1]].end })
+    playRange(p.from, p.until)
+  }, [range, ctx, resolved, playRange])
+  /** Trim start here / Trim end here at the playhead; refused inside a new take (see trimAtPlayhead). */
+  const trimHere = useCallback((kind: 'trim-start' | 'trim-end') => {
+    const t = trimAtPlayhead(resolved, kind, player.current?.videoMs() ?? 0)
+    if (t.ok) edit(t.op); else setEditError(t.error)
+  }, [resolved, edit])
 
   // ---- Actions --------------------------------------------------------------------------------------
   const cutSelection = useCallback(() => {
@@ -413,14 +454,14 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
       const focus = Math.max(0, Math.min(n - 1, from + (s ? delta : 0)))
       const next = extend && s ? { anchor: s.anchor, focus } : { anchor: focus, focus }
       listRef.current?.querySelector(`[data-w="${focus}"]`)?.scrollIntoView({ block: 'nearest' })
-      if (!extend) player.current?.seekRun(ctx.words[focus].start)
+      if (!extend) player.current?.seekVideo(runStretchPlayback(resolved, ctx.words[focus]).from)
       return next
     })
-  }, [n, ctx, runMs])
+  }, [n, ctx, runMs, resolved])
   const goToRow = useCallback((r: number, seek = true) => {
     listRef.current?.querySelector(`[data-row="${r}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-    if (seek && rows[r]) player.current?.seekRun(rows[r].start)
-  }, [rows])
+    if (seek && rows[r]) player.current?.seekVideo(rowVideoStart(resolved, rows[r]))
+  }, [rows, resolved])
 
   // ---- Keyboard (registry ids, behind the text-field guard) ------------------------------------------
   // While a sheet (Tidy up, Export, the shortcut sheet) or the cut popover owns the keys, the editor's keys
@@ -428,8 +469,8 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
   const exportState = useRef<{ open: boolean; close: () => void }>({ open: false, close: () => {} })
   const cutPopRef = useRef<{ playJoin: () => void } | null>(null)
   const sheetUp = lookOpen || faceRow !== null || keptOpen || startNewOpen
-  const keyState = useRef({ range, cutSelection, moveSel, playSelection, edit, pop, choose, tidyOpen, lookOpen, faceRow, keptOpen, startNewOpen, viewing: !!viewing, sheetUp, leave, suspended })
-  keyState.current = { range, cutSelection, moveSel, playSelection, edit, pop, choose, tidyOpen, lookOpen, faceRow, keptOpen, startNewOpen, viewing: !!viewing, sheetUp, leave, suspended }
+  const keyState = useRef({ range, cutSelection, moveSel, playSelection, edit, trimHere, pop, choose, tidyOpen, lookOpen, faceRow, keptOpen, startNewOpen, viewing: !!viewing, sheetUp, leave, suspended })
+  keyState.current = { range, cutSelection, moveSel, playSelection, edit, trimHere, pop, choose, tidyOpen, lookOpen, faceRow, keptOpen, startNewOpen, viewing: !!viewing, sheetUp, leave, suspended }
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       const t = e.target as HTMLElement | null
@@ -472,8 +513,8 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
         case 'studio.editor-extend-next': k.moveSel(1, true); break
         case 'studio.trim-undo': k.edit({ kind: 'undo' }); break
         case 'studio.trim-redo': k.edit({ kind: 'redo' }); break
-        case 'studio.trim-start': k.edit({ kind: 'trim-start', at: player.current?.runMs() ?? 0 }); break
-        case 'studio.trim-end': k.edit({ kind: 'trim-end', at: player.current?.runMs() ?? 0 }); break
+        case 'studio.trim-start': k.trimHere('trim-start'); break
+        case 'studio.trim-end': k.trimHere('trim-end'); break
       }
       commandRan(hit)
     }
@@ -538,7 +579,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
       stop(); dragCleanup.current = null
       // The playhead goes to the selection (so its row is the current one and Play starts there).
       const at = ctx.words[moved ? Math.min(w, last) : w]
-      if (!player.current?.playing() && at.timed) player.current?.seekRun(at.start)
+      if (!player.current?.playing() && at.timed) player.current?.seekVideo(runStretchPlayback(resolved, at).from)
       setPop({ kind: 'selection' })
     }
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
@@ -621,7 +662,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
       const marked = markedStretch(ctx, m.tMs)
       const isCut = marked ? coveredMs(cuts, marked.range) * 2 >= marked.range.end - marked.range.start : false
       const slideN = r ? slides[r.slideId]?.n ?? r.index + 1 : 1
-      out.push({ id: `flag:${m.tMs}`, kind: 'flag', title: `You marked a mistake on slide ${slideN}`, sub: isCut && marked ? `Cut: ${plural(marked.lastWord + 1 - marked.firstWord, 'word')} before the mark` : `“${marked ? quoteWords(ctx, Math.max(marked.firstWord, marked.lastWord - 5), marked.lastWord + 1) : ''}” · ${clock(planRunToEdited(spans, toVideoClock(resolved.clock, m.tMs)))}`, go: () => { goToRow(r?.index ?? 0, false); player.current?.seekRun(Math.max(0, m.tMs - 3000)) } })
+      out.push({ id: `flag:${m.tMs}`, kind: 'flag', title: `You marked a mistake on slide ${slideN}`, sub: isCut && marked ? `Cut: ${plural(marked.lastWord + 1 - marked.firstWord, 'word')} before the mark` : `“${marked ? quoteWords(ctx, Math.max(marked.firstWord, marked.lastWord - 5), marked.lastWord + 1) : ''}” · ${clock(flagPlayback(resolved, m.tMs).editedMs)}`, go: () => { goToRow(r?.index ?? 0, false); player.current?.seekVideo(flagPlayback(resolved, m.tMs).from) } })
     }
     views.forEach((v, i) => {
       if (!v.close || kept.has(`${v.start}-${v.end}`)) return
@@ -646,12 +687,12 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
     return out
     // downloadOffer and goToRow change with the Run and rows only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasWords, run.slideTimeIndex, rows, ctx, cuts, views, kept, slides, spans, offer, rowAtMs, leftOutRows, resolved.clock, resolved.replacedRows])
+  }, [hasWords, run.slideTimeIndex, rows, ctx, cuts, views, kept, slides, offer, rowAtMs, leftOutRows, resolved])
 
   // ---- Render -----------------------------------------------------------------------------------------
   const problem = edits?.problem ?? null
   // Nothing changes the edits while they hold a problem or a kept copy is shown read only.
-  const locked = !!problem || !!viewing
+  const locked = !!problem || !!viewing || !!saveError
   const audioOnly = !!opened && opened.slides.length === 0
   const exportCtl = useRecordingExport({
     runRef, title: run.talkTitle, slides, audioOnly, hasCamera: !!opened?.hasCamera, camera, editedMs,
@@ -683,17 +724,18 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
         <span className="tre-sp" />
         <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Undo" title="Undo (⌘Z)" disabled={locked || !edits?.edits.undo.length} onClick={() => edit({ kind: 'undo' })}><Undo2 className="lt-icon" /></button>
         <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={locked || !edits?.edits.redo.length} onClick={() => edit({ kind: 'redo' })}><Redo2 className="lt-icon" /></button>
-        {keptCount > 0 || problem || viewing ? <button className={`tw-btn tw-btn--quiet tw-btn--icon${viewing ? ' on' : ''}`} aria-label="Kept edits" title="Kept edits: earlier edits set aside rather than lost" data-kept-edits onClick={() => { setPop(null); setKeptOpen(true) }}><History className="lt-icon" /></button> : null}
+        {keptCount > 0 || problem || viewing ? <button className={`tw-btn tw-btn--quiet tw-btn--icon${viewing ? ' on' : ''}`} aria-label="Kept edits" title="Kept edits: earlier edits set aside rather than lost" data-kept-edits disabled={savingEdits || !!saveError} onClick={() => { setPop(null); setKeptOpen(true) }}><History className="lt-icon" /></button> : null}
         <span className="tre-sep" />
         <button className="tw-btn" disabled={!hasWords || locked} onClick={() => { setPop(null); setTidyOpen(true) }}><ListChecks className="lt-icon" /> Tidy up…</button>
         <button className="tw-btn" disabled={!opened || locked} onClick={() => { setPop(null); setLookOpen(true) }}><SlidersHorizontal className="lt-icon" /> Look and sound…</button>
         <span className="tre-len" data-edited-ms={Math.round(editedMs)} title="Length of the video / of the recording">{cuts.length ? <><b>{clock(editedMs)}</b> of {clock(durationMs)}</> : <b>{clock(durationMs)}</b>}</span>
-        <button className="tw-btn tw-btn--primary" disabled={!opened || locked || exportCtl.exporting.state === 'working'} onClick={() => void exportCtl.open()}><Download className="lt-icon" /> {exportCtl.exporting.state === 'working' ? `Exporting ${Math.round(exportCtl.exporting.fraction * 100)}%` : 'Export…'}</button>
+        <button className="tw-btn tw-btn--primary" disabled={!opened || locked || savingEdits || exportCtl.exporting.state === 'working'} onClick={() => void exportCtl.open()}><Download className="lt-icon" /> {exportCtl.exporting.state === 'working' ? `Exporting ${Math.round(exportCtl.exporting.fraction * 100)}%` : 'Export…'}</button>
         <span className="tre-sep" />
         <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Open settings for Studio" title="Open settings for Studio" onClick={onSettings}><Settings className="lt-icon" /></button>
         <button className="tw-btn tw-btn--quiet tw-btn--icon" aria-label="Keyboard cheat-sheet" title="Keyboard cheat-sheet (?)" onClick={onHelp}>?</button>
       </header>
 
+      {saveError ? <RecordingSaveNotice className="tre-note warn tre-save-warning" error={saveError} saving={savingEdits} retry={flushEdits} discard={discardEdits} /> : null}
       <div className="tre-work">
         <div className="tre-list" ref={listRef} onPointerDown={onListPointerDown} data-choosing={choose !== null ? 'yes' : undefined}>
           {openError ? <div className="tre-note warn" role="alert"><AlertTriangle className="lt-icon" /><span className="tre-grow">{openError}</span></div> : null}
@@ -707,7 +749,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
           ) : null}
           {!viewing ? notices.map((n, i) => <EditsNoticeNote key={i} notice={n} onKept={() => setKeptOpen(true)} onDismiss={() => setNotices((all) => all.filter((x) => x !== n))} />) : null}
           {retakeNote ? <div className={`tre-note${retakeNote.warn ? ' warn' : ''}`} role="status"><CircleDot className="lt-icon tre-rec-ico" /><span className="tre-grow">{retakeNote.text}</span><button className="tw-btn tw-btn--quiet tw-btn--icon tw-btn--sm" aria-label="Dismiss" onClick={() => setRetakeNote(null)}><X className="lt-icon" /></button></div> : null}
-          {editError ? <div className="tre-note warn" role="alert"><AlertTriangle className="lt-icon" /><span className="tre-grow">{editError}</span><button className="tw-btn tw-btn--quiet tw-btn--icon tw-btn--sm" aria-label="Dismiss" onClick={() => { setEditError(null); saveFailed.current = null }} title="The edit was not saved; what you see is what is saved"><X className="lt-icon" /></button></div> : null}
+          {editError ? <div className="tre-note warn" role="alert"><AlertTriangle className="lt-icon" /><span className="tre-grow">{editError}</span><button className="tw-btn tw-btn--quiet tw-btn--icon tw-btn--sm" aria-label="Dismiss" onClick={() => setEditError(null)}><X className="lt-icon" /></button></div> : null}
           {state === 'writing' ? (
             <div className="tre-note tre-progress-note" role="status"><Loader2 className="lt-icon spin" /><div className="tre-grow"><div><b>Writing out your words</b> · about a minute</div><div className="tre-progress indeterminate"><i /></div></div><button className="tw-btn tw-btn--quiet tw-btn--sm" onClick={onStopWriting}>Stop</button></div>
           ) : state === 'writing-model' ? (
@@ -750,7 +792,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
 
         <aside className="tre-side">
           <div className="tre-player">
-            {composed.source ? <LayeredPlayer ref={player} source={composed.source} spans={playSpans} durationMs={resolved.clockMs} clock={resolved.clock} camera={camera} dissolve={finish.smoothJoins} faces={clockTrack} notice={composed.problem ?? missingTakeNotice(missingTakes) ?? (composed.pending ? 'Preparing the new take…' : null)} onTime={onTime} onPlaying={onPlaying} />
+            {composed.source ? <LayeredPlayer ref={player} source={composed.source} spans={playSpans} durationMs={resolved.clockMs} clock={resolved.clock} edges={edgesOnClock} camera={camera} dissolve={finish.smoothJoins} faces={clockTrack} notice={composed.problem ?? missingTakeNotice(missingTakes) ?? (composed.pending ? 'Preparing the new take…' : null)} onTime={onTime} onPlaying={onPlaying} />
               : <div className="twrp-player"><div className="twrp-frame twrp-wait">{preparing ? <><Loader2 className="lt-icon spin" /> Preparing playback…</> : null}</div></div>}
           </div>
           <div className="tre-transport">
@@ -793,7 +835,7 @@ export function RecordingEditor({ run, slides, transcript, writing, parakeetRead
         )}
       </footer>
 
-      {tidyOpen && tidy ? <TidySheet tidy={tidy} ctx={ctx} rows={rows} slides={slides} onClose={() => setTidyOpen(false)}
+      {tidyOpen && tidy ? <TidySheet tidy={tidy} recording={resolved} ctx={ctx} rows={rows} slides={slides} onClose={() => setTidyOpen(false)}
         onPlay={(p) => playJoin(p.range, [p.range])} onApply={(ranges) => { if (edit({ kind: 'cut', ranges })) setTidyOpen(false) }} /> : null}
       {faceRow !== null && rows[faceRow] ? <FacePositionSheet row={{ index: faceRow, change: rows[faceRow].change, n: slides[rows[faceRow].slideId]?.n ?? faceRow + 1 }}
         rows={rows.filter((r) => !leftOutRows.has(r.index)).map((r) => ({ index: r.index, change: r.change, n: slides[r.slideId]?.n ?? r.index + 1 }))}
@@ -1145,7 +1187,7 @@ const GROUPS: Array<{ kind: TidyKind; name: string }> = [
   { kind: 'ends', name: 'Silence at the start and end' }
 ]
 
-function TidySheet({ tidy, ctx, rows, slides, onClose, onPlay, onApply }: { tidy: ReturnType<typeof tidyProposals>; ctx: EditorWords; rows: EditorRow[]; slides: Record<string, EditorSlide>; onClose: () => void; onPlay: (p: TidyProposal) => void; onApply: (ranges: TimeRange[]) => void }): ReactNode {
+function TidySheet({ tidy, recording, ctx, rows, slides, onClose, onPlay, onApply }: { tidy: ReturnType<typeof tidyProposals>; recording: ResolvedRecording; ctx: EditorWords; rows: EditorRow[]; slides: Record<string, EditorSlide>; onClose: () => void; onPlay: (p: TidyProposal) => void; onApply: (ranges: TimeRange[]) => void }): ReactNode {
   const clean = tidy.proposals.filter((p) => p.quality === 'clean')
   const listen = tidy.proposals.filter((p) => p.quality === 'close')
   // Clean proposals are ticked; Needs a listen never is until the owner ticks it.
@@ -1154,6 +1196,8 @@ function TidySheet({ tidy, ctx, rows, slides, onClose, onPlay, onApply }: { tidy
   const toggle = (ids: string[], on: boolean): void => setTicked((t) => { const next = new Set(t); for (const id of ids) { if (on) next.add(id); else next.delete(id) } return next })
   const slideN = (p: TidyProposal): number => slides[rows[p.row]?.slideId]?.n ?? p.row + 1
   const chosen = tidy.proposals.filter((p) => ticked.has(p.id))
+  const ranges = chosen.map((p) => p.range)
+  const cutsTake = chosen.some((p) => p.kind === 'ends') && wouldCutTakeAtEnds(recording, ranges)
   const saves = coveredMs(normaliseRanges(chosen.map((p) => p.range), ctx.durationMs), { start: 0, end: ctx.durationMs })
   const describe = (kind: TidyKind, items: TidyProposal[]): ReactNode => {
     if (!items.length) return null
@@ -1208,9 +1252,9 @@ function TidySheet({ tidy, ctx, rows, slides, onClose, onPlay, onApply }: { tidy
         </div>
         <footer>
           <span className="tre-sp" />
-          <span className="tre-sum">{chosen.length ? `Cuts ${Math.max(1, Math.round(saves / 1000))} ${Math.round(saves / 1000) === 1 ? 'second' : 'seconds'}` : 'Nothing ticked'}</span>
+          <span className="tre-sum">{cutsTake ? 'These cuts would also trim a chosen take.' : chosen.length ? `Cuts ${Math.max(1, Math.round(saves / 1000))} ${Math.round(saves / 1000) === 1 ? 'second' : 'seconds'}` : 'Nothing ticked'}</span>
           <button className="tw-btn" onClick={onClose}>Cancel</button>
-          <button className="tw-btn tw-btn--primary" disabled={!chosen.length} onClick={() => onApply(chosen.map((p) => p.range))}><Scissors className="lt-icon" /> Cut the {chosen.length} ticked</button>
+          <button className="tw-btn tw-btn--primary" disabled={!chosen.length || cutsTake} onClick={() => onApply(ranges)}><Scissors className="lt-icon" /> Cut the {chosen.length} ticked</button>
         </footer>
       </div>
     </div>

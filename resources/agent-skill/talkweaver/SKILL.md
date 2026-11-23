@@ -78,7 +78,7 @@ These workflows use the current app contracts. Older standalone conversion, hand
 
 ## File-only workflow
 
-Read and draft with ordinary file tools. Apply requested edits only within the authorised content scope, against freshly read bytes and with concurrent editor state accounted for. If an open unsaved buffer cannot be ruled out, prepare a separate patch/revision instead of overwriting the live outline or manifest. Preserve unrelated keys and bytes.
+Read and draft with ordinary file tools. Apply requested edits only within the authorised content scope, against freshly read bytes. With a running TalkWeaver that supports on-disk edit merging, edit the Markdown outline directly: clean editors reload, independent edits merge, and overlapping edits ask the author to choose or edit the conflicting slides. Do not resolve those choices on the author’s behalf. With an older or unverified app, prepare a separate patch/revision if an open unsaved buffer cannot be ruled out. This merge support covers outlines only; keep the same concurrent-edit safeguards for manifests. Preserve unrelated keys and bytes.
 
 Do not edit the slide ledger or manufacture app-save receipts. External edits cannot be described as app-saved, ledgered or undoable without evidence from the app.
 

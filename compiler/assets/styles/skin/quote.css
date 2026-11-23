@@ -29,7 +29,7 @@
   /* Video: the YouTube player (spec 6.3) */
   .qf-yt { font-family: var(--qf-ui); color: #0f0f0f; }
   .qf-yt-player { background: linear-gradient(160deg, #2b333d 0%, #14181d 55%, #0b0d10 100%); }
-  .qf-yt-captions span { font-family: Roboto, Arial, var(--qf-ui); font-weight: 500; color: #fff; background: rgba(8,8,8,.78); }
+  .qf-yt-captions span { font-family: Roboto, Arial, var(--qf-ui); font-weight: var(--weight-reading, 400); color: #fff; background: rgba(8,8,8,.78); }
   .qf-yt-controls { background: linear-gradient(to top, rgba(0,0,0,.55), rgba(0,0,0,0)); color: #fff; }
   .qf-yt-track { background: rgba(255,255,255,.35); }
   .qf-yt-played, .qf-yt-knob { background: #f00; }

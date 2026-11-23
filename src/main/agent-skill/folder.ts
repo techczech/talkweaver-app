@@ -212,12 +212,14 @@ function replaceable(now: Inspection, opts: { replaces: Replaces; replaceEdited?
  * alone and nothing is deleted. False when the copy could not be put back (it stays where it was moved).
  */
 async function putBack(held: Held, back: string, real: string, moved: Inspection, appId: string, left: string[]): Promise<boolean> {
+  // Not a whole-file replacement: restore a directory that was moved aside.
   try { await rename(back, real); return true } catch { /* the place is taken */ }
   if (moved.kind !== 'owned' || moved.edited || moved.link) return false
   const occupant = await inspectTarget(real, appId)
   if (occupant.kind !== 'owned' || occupant.edited || occupant.link || compareVersions(occupant.version, moved.version) !== -1) return false
   if (!(await stillHeld(held))) return false
   const occupantAside = join(held.path, `.${basename(real)}.old-${suffix()}`)
+  // Not whole-file replacements: swap the lower-version directory and restore on failure.
   try {
     await rename(real, occupantAside)
   } catch { return false }
@@ -271,6 +273,7 @@ export async function writeSkillFolder(target: string, source: SkillSource, opts
     await assertStillReal(held)
     if (now.kind !== 'absent') {
       aside = join(parent, `.${name}.old-${suffix()}`)
+      // Not a whole-file replacement: move the old skill tree aside for inspection.
       await rename(real, aside)
       await opts.hooks?.afterAside?.()
       // What was moved is what must be checked. Anything else goes back untouched.
@@ -286,6 +289,7 @@ export async function writeSkillFolder(target: string, source: SkillSource, opts
       }
     }
     await assertStillReal(held)
+    // Not whole-file replacements: publish the staged skill tree or restore the old one.
     try {
       await rename(tmp, real)
     } catch (e) {
@@ -316,6 +320,7 @@ export async function removeSkillFolder(target: string, appId: string, hooks: Wr
   await hooks.afterInspect?.()
   await assertStillReal(held)
   const gone = join(parent, `.${basename(target)}.rm-${suffix()}`)
+  // Not whole-file replacements: quarantine the skill directory and restore it if it is foreign.
   await rename(real, gone)
   await hooks.afterAside?.()
   if (!ours(await inspectTarget(gone, appId))) {

@@ -133,6 +133,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 } })
   page.on('pageerror', (e) => errors.push(String(e)))
   await page.setContent('<div id="host" style="width:800px;height:700px"></div>')
+  await page.addStyleTag({ path: join(root, 'src/renderer/src/app-theme.css') })
   await page.addScriptTag({ path: outfile })
   const ev = (fn, arg) => page.evaluate(fn, arg)
   const open = (d, mode = 'plain', src = true, outliner = true) => ev(([d, m, s, o]) => { window.mount(d, m, s, o) }, [d, mode, src, outliner])
@@ -166,7 +167,7 @@ try {
     const r = p.getBoundingClientRect(), l = el.getBoundingClientRect()
     return { color: s.color, size: r.height / fs, w: r.width / fs, left: r.left - l.left }
   })
-  assert.equal(geo.color, 'rgb(26, 95, 180)', 'accent blue of the margin layout name')
+  assert.equal(geo.color, 'rgb(29, 78, 216)', 'accent blue of the margin layout name')
   assert.ok(Math.abs(geo.size - 1.15) < 0.02, 'about 1.15em: ' + geo.size)
   // Text of an iconed item starts at one fixed distance from the line start; wrap lines align to it.
   assert.equal(await ev(() => window.bullets(8)), 0)

@@ -1,8 +1,9 @@
+import { readMainSource } from '../../lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
 import ts from 'typescript'
 import {createGalleryClaim} from '../../../src/main/vault-gallery-open.ts'
-const src=readFileSync('src/main/index.ts','utf8');const handlers=new Map();let epoch=0;
+const src=readMainSource();const handlers=new Map();let epoch=0;
 const windows=new Map([1,2].map(id=>[id,{win:{id,isDestroyed:()=>false},outlinePath:id===1?'A':null}]));const reservations=new Map(),epochs=new Map();
 const claims=src.slice(src.indexOf('function claimTalkForWindow('),src.indexOf('// Refresh-in-place (⌘R)'));
 const gallery=src.slice(src.indexOf('const claimGalleryTalk ='),src.indexOf('// Search rows certify'));
@@ -11,6 +12,7 @@ const established=new Map();
 const receipts=new Map();
 let commitFault=null;
 const env={slidePreviewRequests:new Map(),cancelThumbnailRender(){},cancelEditorThumbnails(){},latestThumbnailRequest:{cancel(){}},movedEditorReceipts:receipts,managementMutations:new Map(),mutationBlocks:()=>false,validMoveReceipt:()=>null,retiredMovePaths:new Map(),outlineRecovery:{save:async()=>{}},talkInfoFor:()=>null,dirname:p=>p,establishedGalleryClaims:established,vaultRegistry:{resolve:()=>commitFault==='unregistered'?null:({vault:{id:'fixture',root:'fixture',open:commitFault!=='closed'}})},vaultAvailability:{isUnavailable:()=>commitFault==='unavailable'},statSync:()=>{if(commitFault==='stat')throw Object.assign(new Error('Root disappeared'),{code:'ENOENT'});return {dev:1,ino:2}},editorWindows:windows,galleryReservations:reservations,galleryClaimEpochs:epochs,openRequests:{claimed(){}},noteAppOpen(){},otherEditorHolding:holding,bringToFront(){},outlineDiskGuard:{release(){}},ipcMain:{handle:(k,v)=>handlers.set(k,v)},createGalleryClaim,resolveGalleryTalk:async(_id,p)=>({outlinePath:p}),watchGallerySender(){}};
+env.abortSlidePreviews = () => {}
 const js=ts.transpileModule(claims+'\n'+gallery,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
 const run=Function(...Object.keys(env),'getEpoch', 'let galleryEpoch=getEpoch();'+js+'; return {setEpoch:e=>galleryEpoch=e}')(...Object.values(env),()=>epoch);
 const event=id=>{const mainFrame={};return {sender:{id,mainFrame},senderFrame:mainFrame}};
@@ -62,7 +64,7 @@ const {configureTalkWriter,writeTalkOutline,withTalkFileLock}=await import('../.
 const root=resolve('scripts/vault-gallery/ownership-repairs/main-write-fixture');mkdirSync(root,{recursive:true});const path=resolve(root,'outline.md');
 try {
 writeFileSync(path,'# Original');windows.set(1,{win:{id:1,isDestroyed:()=>false},outlinePath:path});epochs.set(1,epoch);
-const save=src.split("async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string) {")[1].split('  const claimEpoch =')[0];
+const save=src.split("async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string, expectedDiskHash?: string) {")[1].split('  const claimEpoch =')[0];
 const saveJS=ts.transpileModule(save,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
 const authority=Function('movedEditorReceipts','retiredMovePaths','renewEstablishedGalleryClaims','establishedGalleryClaims','_event','outlinePath','galleryEpoch','editorWindows','galleryReservations','galleryClaimEpochs','outlineIdentity','otherEditorHolding',saveJS+';return authorize')(receipts,new Map(),()=>{},new Map(),{sender:{id:1,isDestroyed:()=>false}},path,epoch,windows,reservations,epochs,p=>({key:p}),holding);
 configureTalkWriter({editorBufferFor:()=>null});let release,entered;const ready=new Promise(r=>entered=r);const lock=withTalkFileLock(path,async()=>{entered();await new Promise(r=>release=r)});await ready;

@@ -1,3 +1,4 @@
+import { functionBody, readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -71,7 +72,7 @@ const expectedPaletteIds = [
   'toggle-inspector', 'studio', 'runs', 'history', 'importer', 'plan-run', 'attach-prework', 'attach-postwork', 'pathways', 'add-to-pathway', 'present-pathway', 'new-window', 'open-in-new-window', 'new-talk', 'new-folder',
   'refresh-talks', 'change-vault', 'vault-gallery', 'search-talks',
   'find-talk', 'add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section',
-  'present-window', 'present-presenter',
+  'present-slide-window', 'present-window', 'present-presenter',
   'present-from-here', 'present-audience', 'handout', 'build', 'publish-handout', 'share-for-comments', 'copy-venue-screen-link', 'layout',
   'quote-form-auto', 'quote-form-plain', 'quote-form-tweet', 'quote-form-video', 'quote-form-book', 'quote-form-paper', 'quote-form-web',
   'image', 'search', 'insert-board-slide', 'edit-image', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
@@ -80,10 +81,12 @@ const expectedPaletteIds = [
   'insert-html-page', 'save-offline-page', 'capture-embed',
   'format-bold', 'format-italic', 'format-inline-code', 'format-highlight', 'format-strikethrough', 'format-underline', 'format-link',
   'deck-design', 'metadata', 'tag-slide', 'abstract',
+  'view-panel-previews', 'view-panel-outline', 'split-pasted-picture-row', 'paste-picture', 'duplicate-slide', 'move-current-slide-up', 'move-current-slide-down',
+  'edit-speaker-notes', 'view-slide-panel', 'welcome-slide', 'welcome-outline', 'welcome-markdown',
   'view-slides', 'view-plain', 'view-markdown', 'change-heading-level', 'change-slide-layout', 'view-strip', 'view-grid', 'fold-all', 'unfold-all', 'outline-collapse-all', 'outline-expand-all',
   'move-slide-to', 'move-section-to', 'select-section', 'clear-slide-selection', 'set-aside-slides', 'move-selected-slides-to',
   'search-slides-grid', 'search-next', 'search-previous',
-  'normalize-triggers', 'undo', 'redo', 'new-slide', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings-setup-folder', 'settings', 'check-for-updates', 'whats-new',
+  'normalize-triggers', 'undo', 'redo', 'new-slide', 'new-section', 'new-subsection', 'make-section', 'select-several-slides', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings-setup-folder', 'settings', 'check-for-updates', 'whats-new',
   'get-started-show-example', 'get-started-open-guide', 'get-started-show-guide-button'
 ]
 assert.deepEqual(paletteCommands().map((command) => command.id), expectedPaletteIds, 'palette is generated in its existing order')
@@ -160,7 +163,7 @@ for (const word of ['html', 'page', 'file', 'embed', 'simulation', 'import']) as
 assert.equal(componentEntries.find((entry) => entry.name === 'embed').snippet, '[Embed: https://example.com]', 'Insert embed / simulation keeps its template line')
 assert.equal(componentEntries.find((entry) => entry.name === 'qr').snippet, '[QR: https://example.com | Label]', 'a component inserts its registry trigger unless it declares its own snippet')
 
-// T27: ⌘⇧P is promoted to an explicit command — the Tools menu's "All commands…" opens the palette,
+// T27: ⌘⇧P is promoted to an explicit command — the Tools menu's "All commands" opens the palette,
 // the palette does not list itself, and the shortcut stays owned by the command.
 const paletteCommand = COMMAND_REGISTRY.filter((command) => command.id === 'app.command-palette')
 assert.equal(paletteCommand.length, 1, 'app.command-palette exists exactly once in the registry')
@@ -181,8 +184,12 @@ const toolsToolbar = toolbarCommands('tools')
 assert.ok(
   toolsToolbar.findIndex((command) => command.id === 'settings') < toolsToolbar.findIndex((command) => command.id === 'app.command-palette')
   && toolsToolbar.findIndex((command) => command.id === 'app.command-palette') < toolsToolbar.findIndex((command) => command.id === 'help'),
-  'All commands… sits between Settings and Keyboard shortcuts in the resolved Tools menu'
+  'All commands sits between Settings and Keyboard shortcuts in the resolved Tools menu'
 )
+assert.deepEqual(toolsToolbar.map(command => command.toolbar.menuLabel ?? command.label), [
+  'Studio: record and edit', 'Sessions with an audience', 'Import PowerPoint…',
+  'Settings', 'All commands', 'Keyboard shortcuts', 'Guide'
+], 'the More menu uses the locked labels in order')
 assert.equal(
   objectPaletteCommands(LAYOUTS.map((entry) => entry.name === 'svg'
     ? { ...entry, object: undefined }
@@ -217,15 +224,24 @@ assert.equal(
 
 assert.deepEqual(
   menuCommands().map((command) => [command.menu.path.join('/'), command.id]),
-  [['Help', 'check-for-updates'], ['Help', 'whats-new'], ['Help', 'help'], ['Insert', 'edit-image'], ['Slides', 'set-aside-slides'], ['Talk', 'toggle-inspector'], ['Talk', 'pathways'], ['Tools', 'tools-animated-video'], ['View', 'vault-gallery'], ['View', 'research-panel'], ['View', 'research-find'], ['View', 'scratchpad-panel']],
-  'native custom menu keeps its existing structure'
+  [
+    ['Edit', 'split-pasted-picture-row'], ['Edit', 'paste-picture'], ['Edit', 'duplicate-slide'], ['Edit', 'move-current-slide-up'], ['Edit', 'move-current-slide-down'],
+    ['File', 'welcome-slide'], ['File', 'welcome-outline'], ['File', 'welcome-markdown'],
+    ['Help', 'check-for-updates'], ['Help', 'whats-new'], ['Help', 'help'], ['Insert', 'edit-image'], ['Present', 'present-slide-window'],
+    ['Slides', 'set-aside-slides'], ['Talk', 'toggle-inspector'], ['Talk', 'pathways'],
+    ['Talk', 'new-section'], ['Talk', 'new-subsection'], ['Talk', 'make-section'], ['Talk', 'select-several-slides'],
+    ['Tools', 'tools-animated-video'], ['View', 'vault-gallery'],
+    ['View', 'view-panel-previews'], ['View', 'view-panel-outline'], ['View', 'edit-speaker-notes'], ['View', 'view-slide-panel'],
+    ['View', 'research-panel'], ['View', 'research-find'], ['View', 'scratchpad-panel']
+  ],
+  'window and authoring commands are in the native menus'
 )
 
 const expectedToolbarIds = {
   insert: ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'save-offline-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
   deck: ['deck-design', 'pathways', 'metadata', 'abstract', 'refresh', 'normalize-triggers', 'delete-slide'],
-  tools: ['studio', 'runs', 'importer', 'settings', 'app.command-palette', 'help'],
-  present: ['present-window', 'present-presenter', 'present-from-here', 'present-audience', 'plan-run']
+  tools: ['studio', 'runs', 'importer', 'settings', 'app.command-palette', 'help', 'get-started-open-guide'],
+  present: ['present-slide-window', 'present-window', 'present-presenter', 'present-from-here', 'present-audience', 'plan-run']
 }
 for (const [menu, expectedIds] of Object.entries(expectedToolbarIds)) {
   assert.deepEqual(toolbarCommands(menu).map((command) => command.id), expectedIds, `${menu} toolbar menu resolves from the command register`)
@@ -234,11 +250,12 @@ for (const [menu, expectedIds] of Object.entries(expectedToolbarIds)) {
 const workspace = readFileSync(join(root, 'src/renderer/src/components/WorkspaceLayout.tsx'), 'utf8')
 assert(!workspace.includes("{ id: 'toggle-inspector', title:"), 'WorkspaceLayout must not hand-maintain palette entries')
 assert(workspace.includes('runRegisteredCommand'), 'renderer uses the shared command dispatch channel')
-for (const menu of ['Insert', 'Talk', 'Tools', 'Present']) {
+for (const menu of ['Insert', 'Tools', 'Present']) {
   const block = workspace.match(new RegExp(`<ToolbarMenu(?:(?!<ToolbarMenu)[\\s\\S])*?label="${menu}"(?:(?!<ToolbarMenu)[\\s\\S])*?/>`))?.[0] ?? ''
   assert(block, `${menu} ToolbarMenu exists`)
   assert(!/items=\{\[\s*\{[\s\S]*?label:/.test(block), `${menu} ToolbarMenu must not contain a literal inline item array`)
 }
+assert.match(workspace, /label=\{plainTalkTitle\(activeTalk\.title\)\} title="Talk menu" items=\{toolbarItems\('deck'\)\}/)
 assert(workspace.includes("toolbarItems('tools')"), 'Tools toolbar menu is generated from registered placements')
 const handlerBlock = workspace.match(/commandHandlersRef\.current = (?:reportingHandlers\()?\{([\s\S]*?)\n  \}/)?.[1] ?? ''
 const implementedHandlers = [...handlerBlock.matchAll(/^    (?:'([^']+)'|([a-z][\w-]*)):/gm)]
@@ -492,6 +509,12 @@ try {
   assert.deepEqual(
     surface.map((command) => [command.id, command.shortcutId, command.category]),
     [
+      ['new-section', 'editor.new-section', 'Write the outline'],
+      ['new-subsection', 'editor.new-subsection', 'Write the outline'],
+      ['view-slides', 'app.view-slides', 'See the talk'],
+      ['view-grid', 'app.view-grid', 'See the talk'],
+      ['view-plain', 'app.view-plain', 'See the talk'],
+      ['view-markdown', 'app.view-markdown', 'See the talk'],
       ['check-for-updates', 'app.check-for-updates', 'Set up TalkWeaver'],
       ['whats-new', 'app.whats-new', 'Set up TalkWeaver'],
       ['research-panel', 'app.research-panel', 'Shape the talk'],
@@ -587,7 +610,7 @@ try {
   rmSync(uiBundleDir, { recursive: true, force: true })
 }
 
-const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+const main = readMainSource()
 assert(!main.includes("label: 'Inspector mode'"), 'main menu item must be generated from the command register')
 assert(main.includes('menuCommands()'), 'main menu builder consumes the command register')
 const osRoleAllowlist = new Map([
@@ -598,7 +621,13 @@ const osRoleAllowlist = new Map([
   ['windowMenu', 'OS-standard window management roles'],
   ['close', 'OS-standard Close Window role in the File menu, beside New Window']
 ])
-const nativeRoles = [...main.matchAll(/\{ role: '([^']+)'(?: as const)? \}/g)].map((match) => match[1])
+const menuSource = readMainSource((code, file) => {
+  if (file !== 'src/main/app-menu.ts') return code
+  const macMenu = functionBody(code, 'macAppMenu')
+  const systemRoles = ['about', 'services', 'hide', 'hideOthers', 'unhide', 'quit']
+  return code.replace(macMenu, systemRoles.reduce((body, role) => body.replace(`{ role: '${role}' }`, ''), macMenu))
+})
+const nativeRoles = [...menuSource.matchAll(/\{ role: '([^']+)'(?: as const)? \}/g)].map((match) => match[1])
 assert.deepEqual(nativeRoles.filter((role) => !osRoleAllowlist.has(role)), [], 'native menu role needs a command or justified OS allowlist entry')
 
 // The seven Quote form commands narrow by name: the palette matches the whole query as a substring of the

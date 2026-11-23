@@ -48,6 +48,19 @@ The hierarchy is part of the presentation. `#` names the Talk; `##` establishes 
 
 Heading depth supplies the hierarchy. `####` is not inherently a card: container layouts such as carousel, cards, image-grid or contrast can absorb child headings as cards; an ordinary subsection must retain its children as separate slides. Keep subsection dividers bodyless and put the explanation on their child slides. Preserve the author's deliberate existing containers and heading levels when reusing a source Talk.
 
+For example, **New subsection** under **Next season** creates the divider shown to the audience. Its first slide is one level deeper. Existing IDs stay with their own headings.
+
+```markdown
+## Next season {id=season7}
+
+### Getting involved {id=join5}
+{sub}{role=subsection-title}
+
+#### Volunteer for the watering rota {id=water9}
+
+- Choose one week in the rota.
+```
+
 In the compiler, structural `##` through `######` headings each begin a slide block; `#` is a title boundary. Headings inside code fences or HTML comments are not slide boundaries. Do not split source with an unrestricted heading regex. A slide block includes its trigger line, notes and body until the next structural heading.
 
 Preserve `{id=...}` identifiers and their references. On application save, TalkWeaver can stamp missing IDs, record ledger history and return stamped content. File edits alone do not perform that lifecycle. Keep existing IDs across title changes and moves; new/copied slides need distinct identities under the app's rules, not duplicates of the original IDs.

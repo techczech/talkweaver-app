@@ -44,7 +44,7 @@
 .tw-wf-emptyrow { padding: 16px 12px; display: flex; align-items: center; gap: 10px; color: var(--lt-ink-soft); background: var(--panel); }
 
 
-.tw-wf-thumb { width: 68px; height: 38px; flex: none; border: 1px solid var(--lt-hair, #d9d0bb); border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; box-sizing: border-box; }
+.tw-wf-thumb { width: 68px; height: 38px; flex: none; border: 1px solid var(--line); border-radius: 4px; display: flex; align-items: center; justify-content: center; overflow: hidden; position: relative; box-sizing: border-box; }
 .tw-wf-thumb.icon { background: var(--paper); color: var(--lt-ink-soft); }
 .tw-wf-thumb.icon svg { width: 16px; height: 16px; }
 .tw-wf-thumb.video { background: linear-gradient(135deg, #2f3e52, #1b2533); color: var(--panel); }
@@ -78,7 +78,7 @@
 .tw-wf-route { display: inline-flex; align-items: center; gap: 5px; font: 600 12px/1 var(--lt-sans); padding: 3px 8px; border-radius: 10px; white-space: nowrap; flex: none; }
 .tw-wf-route svg { width: 12px; height: 12px; }
 .tw-wf-route.sent, .tw-wf-route.counts { background: var(--lt-oxford-soft, var(--tw-delivered-bg)); color: var(--lt-oxford, var(--oxford)); border: 1px solid #b9c9de; }
-.tw-wf-route.local { background: #efe9dc; color: #5a5446; border: 1px solid var(--line); }
+.tw-wf-route.local { background: var(--hover); color: var(--muted); border: 1px solid var(--line); }
 .tw-wf-stepbox.open > .tw-wf-r1.step { background: var(--paper); }
 .tw-wf-edit { background: var(--paper); border-top: 1px solid var(--lt-hair-soft, var(--hairline)); padding: 12px 16px 12px 46px; display: flex; flex-direction: column; gap: 10px; }
 .tw-wf-edit h4 { margin: 0; font: 700 11px/1 var(--lt-sans); letter-spacing: .09em; text-transform: uppercase; color: var(--lt-ink-faint); }
@@ -87,7 +87,7 @@
 .tw-wf-seg button { all: unset; box-sizing: border-box; padding: 7px 13px; display: flex; gap: 6px; align-items: center; font: 600 12.5px/1 var(--lt-sans); color: var(--lt-ink-soft); cursor: pointer; }
 .tw-wf-seg button + button { border-left: 1px solid var(--line); }
 .tw-wf-seg button svg { width: 15px; height: 15px; }
-.tw-wf-seg button.on { background: var(--lt-oxford, var(--oxford)); color: var(--panel); }
+.tw-wf-seg button.on { background: var(--lt-oxford, var(--oxford)); color: var(--on-accent); }
 .tw-wf-seg button.on.l { background: #4a443a; }
 .tw-wf-seg button:focus-visible { outline: 1.5px solid var(--lt-oxford-mid, var(--oxford)); outline-offset: -2px; }
 .tw-wf-seg button[disabled] { cursor: default; }

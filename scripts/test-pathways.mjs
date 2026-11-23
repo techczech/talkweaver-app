@@ -1,3 +1,4 @@
+import { readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -296,7 +297,7 @@ console.log('pathways: manifest, resolution, and compiled injection checks passe
 // Exercise the actual main-process mutation/broadcast functions without starting Electron.
 // Both windows enter through mutatePathways; a shared compile gate makes overlapping reads deterministic.
 {
-  const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const source = readMainSource()
   const ast = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true)
   const names = new Set(['pathwaySnapshot', 'mutatePathways', 'notifyPathwaysChanged'])
   const code = ast.statements.filter(node =>

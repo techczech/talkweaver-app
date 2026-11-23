@@ -161,9 +161,7 @@ export function rightColumnTabs(input: { guideUp: boolean; whatsNewUp?: boolean;
   const up: RightColumnTab[] = [...(input.guideUp ? ['guide' as const] : []), ...(input.whatsNewUp ? ['whats-new' as const] : [])]
   if (!input.hasTalk) return up
   return [
-    'inspector', 'slides', 'talk',
-    ...(input.guideUp ? ['guide' as const] : []),
-    'research', 'images',
+    'inspector', 'talk', 'guide', 'research', 'images',
     ...(input.shared ? ['feedback' as const] : []),
     ...(input.whatsNewUp ? ['whats-new' as const] : [])
   ]

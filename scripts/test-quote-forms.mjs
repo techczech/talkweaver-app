@@ -228,14 +228,16 @@ const X = 'https://x.com/techczech/status/1234567890123456789'
     ['https://www.samplesite.example:8080/posts/a?b=1#c', 'samplesite.example'], ['youtu.be/abc', 'youtu.be'], ['samplesite.example', 'samplesite.example'], ['', '']
   ]) assert.equal(siteOf(address), site, `siteOf(${address})`)
   const cite = (href, text) => `Name <a href="${href}" target="_blank" rel="noopener">${text}</a>`
-  assert.equal(shortenAddressLinks(cite('https://www.youtube.com/watch?v=abc', 'https://www.youtube.com/watch?v=abc')), cite('https://www.youtube.com/watch?v=abc', 'youtube.com'), 'an address as text becomes the site, the href stays whole')
-  assert.equal(shortenAddressLinks(cite('https://example.org/a', 'example.org/a')), cite('https://example.org/a', 'example.org'), 'an address typed without its scheme too')
-  assert.equal(shortenAddressLinks(cite('https://doi.org/10.1093/mind/LIX.236.433', 'https://doi.org/10.1093/mind/LIX.236.433')), cite('https://doi.org/10.1093/mind/LIX.236.433', 'doi:10.1093/mind/LIX.236.433'), 'a DOI address reads the DOI itself, the href stays whole')
-  assert.equal(shortenAddressLinks(cite('http://DX.DOI.ORG/10.1/a%2Fb', 'DX.DOI.ORG/10.1/a%2Fb')), cite('http://DX.DOI.ORG/10.1/a%2Fb', 'doi:10.1/a/b'), 'any host case, dx. too, decoded')
+  assert.equal(shortenAddressLinks(cite('https://www.youtube.com/watch?v=abc', 'https://www.youtube.com/watch?v=abc')), 'Name <a href="https://www.youtube.com/watch?v=abc" title="https://www.youtube.com/watch?v=abc" aria-label="https://www.youtube.com/watch?v=abc" target="_blank" rel="noopener">youtube.com/watch</a>', 'an address as text becomes the site, the href stays whole')
+  assert.equal(shortenAddressLinks(cite('https://example.org/a', 'example.org/a')), 'Name <a href="https://example.org/a" title="https://example.org/a" aria-label="https://example.org/a" target="_blank" rel="noopener">example.org/a</a>', 'an address typed without its scheme too')
+  assert.equal(shortenAddressLinks(cite('https://doi.org/10.1093/mind/LIX.236.433', 'https://doi.org/10.1093/mind/LIX.236.433')), cite('https://doi.org/10.1093/mind/LIX.236.433', 'doi:10.1093/mind/LIX.236.433').replace(' target=', ' title="https://doi.org/10.1093/mind/LIX.236.433" aria-label="https://doi.org/10.1093/mind/LIX.236.433" target='), 'a DOI address reads the DOI itself, the href stays whole')
+  assert.equal(shortenAddressLinks(cite('http://DX.DOI.ORG/10.1/a%2Fb', 'DX.DOI.ORG/10.1/a%2Fb')), cite('http://DX.DOI.ORG/10.1/a%2Fb', 'doi:10.1/a/b').replace(' target=', ' title="http://DX.DOI.ORG/10.1/a%2Fb" aria-label="http://DX.DOI.ORG/10.1/a%2Fb" target='), 'any host case, dx. too, decoded')
   assert.equal(shortenAddressLinks(cite('https://doi.org/10.1/x', 'My paper')), cite('https://doi.org/10.1/x', 'My paper'), 'a DOI link with the author\'s own text keeps it')
   assert.equal(doiTextOfAddress('https://example.org/doi.org/10.1/x'), '', 'not a DOI address')
   assert.equal(shortenAddressLinks(cite('https://example.org/a', 'A title')), cite('https://example.org/a', 'A title'), 'a link with a title is left alone')
   assert.equal(shortenAddressLinks(cite('#', 'https://example.org/a')), cite('#', 'https://example.org/a'), 'a link that is not an address is left alone')
+  const withTitle = cite('https://example.org/a', 'https://example.org/a').replace(' target=', ' title="Old caption" aria-label="Old caption" target=')
+  assert.equal(shortenAddressLinks(withTitle), shortenAddressLinks(cite('https://example.org/a', 'https://example.org/a')), 'full destination replaces old title and accessible name without duplicate attributes')
 }
 
 // ── 4. The compile ────────────────────────────────────────────────────────────────────────────

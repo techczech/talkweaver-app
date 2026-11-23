@@ -224,6 +224,7 @@ export function pinRunWork(vaultRoot: string, talkSlug: string, runId: string, p
     try { existing = readFileSync(target) } catch { fail('work-pin-copy-failed') }
     if (!existing.equals(bytes)) fail('work-pin-copy-exists')
   }
+  // Not a mutable file replacement: stage the immutable copy for verification by the separate Run writer.
   const temp = join(folder, `.${pinnedCopyName(phase)}.${process.pid}.${Date.now()}.tmp`)
   try {
     writeFileSync(temp, bytes, { flag: 'wx' })

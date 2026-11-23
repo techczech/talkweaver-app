@@ -1,4 +1,5 @@
 import { plainTalkTitle } from '../shared/plain-title.ts'
+import { escapeAttr } from '../shared/html-escape.ts'
 
 /** The `title:` in the outline's frontmatter, read from the content being presented (it may be unsaved). */
 export function frontmatterTitle(content: string | undefined): string {
@@ -26,7 +27,6 @@ export function authoredTalkTitle(slides: ReadonlyArray<{ id?: unknown; title?: 
   return typeof opening?.title === 'string' ? plainTalkTitle(opening.title) : ''
 }
 
-const escapeAttr = (value: string): string => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
 /** Returns the compiled HTML with the title replaced, or the HTML untouched when the talk has no authored title. */
 export function withTalkTitle(html: string, title: string): string {

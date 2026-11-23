@@ -14,7 +14,9 @@ import { join, resolve } from 'node:path'
 import { boundaryTargets, editorWords, slideRows } from '../src/shared/recording-editor.ts'
 import { makeEditorFixture } from '../scripts/fixtures/recording-editor-fixture.mjs'
 
-const repo = resolve(import.meta.dirname, '..'), shots = join(repo, 'docs/design/2026-11-10-record-and-edit-video/built/0.44.5/shots')
+const repo = resolve(import.meta.dirname, '..')
+const recordEvidence = process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE === '1'
+const shots = process.env.TW_SHOTS_DIR || join(repo, recordEvidence ? 'docs/design/2026-11-10-record-and-edit-video/built/0.44.5/shots' : 'artefacts/diagnose-recording-sentences/shots')
 const root = mkdtempSync(join(repo, '.sentences-e2e-')), vault = join(root, 'vault'), userData = join(root, 'userData'), talk = join(vault, 'fixture')
 for (const dir of [talk, userData, shots]) mkdirSync(dir, { recursive: true })
 const TITLES = ['A single strong claim', 'A plain list, with icons', 'A process, left to right', 'Statement beside a list', 'Big numbers', 'Steps that build']

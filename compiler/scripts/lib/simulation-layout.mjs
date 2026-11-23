@@ -17,6 +17,7 @@ import { resolveAuthoredMode } from "./02-triggers-layout.mjs";
 import { SIM_FENCE_LANGS, simulationLayoutForFence } from "./simulation-fences.mjs";
 // The label and prompt grammar is shared with the editor's lossless turn rows (simulation-segments.mjs).
 import { LABEL_RE, UNKNOWN_LABEL_RE, NEAREST_LABEL } from "./simulation-segments.mjs";
+import { readTurnHeader, readTurnBody } from "./simulation-turn-envelope.mjs";
 import { dedent, parseShellSession, turnSource } from "./simulation-reading.mjs";
 // The readings with no rendering (and no file access) live in simulation-reading.mjs, which the app's editor loads.
 export { compiledRowCount, parseShellSession } from "./simulation-reading.mjs";
@@ -120,13 +121,19 @@ export function formatSimDuration(raw) {
  * exchange = { user, parts, bot }; user/bot = { paragraphs }; part kinds:
  *   reasoning { duration, paragraphs } · context { sources } · tool { name, args, results|null } · result-only { lines }
  */
-export function parseSimulationTurns(text) {
+export function parseSimulationTurns(text, { version = 1 } = {}) {
   const warnings = [];
   const source = turnSource(text);
   const turns = [];
   let current = null;
   let before = false;
   for (const line of source) {
+    const native = version === 2 && readTurnHeader(line, (warning) => warnings.push(warning));
+    if (native) {
+      current = { native, head: native.head, continuation: [] };
+      turns.push(current);
+      continue;
+    }
     const label = line.match(LABEL_RE);
     if (label) {
       current = { label: label[1].toLowerCase(), paren: label[2], head: label[3].replace(/^[ \t]+/, ""), continuation: [] };
@@ -150,7 +157,22 @@ export function parseSimulationTurns(text) {
   const open = () => { if (!exchange) exchange = fresh(); return exchange; };
   const close = () => { if (exchange && hasContent(exchange)) exchanges.push(exchange); exchange = null; };
 
+  const ids = new Map();
   for (const turn of turns) {
+    if (turn.native) {
+      if (exchange?.bot) close();
+      const { warnings: bodyWarnings, ...payload } = readTurnBody(turn.head, turn.continuation);
+      const { warnings: headerWarnings, head, ...header } = turn.native;
+      warnings.push(...headerWarnings, ...bodyWarnings);
+      const row = { ...header, ...payload };
+      const { id, ref } = row.options;
+      if (ref && !ids.has(ref)) warnings.push(['sim-turn-unresolved-ref', ref]);
+      if (id && ids.has(id)) warnings.push(['sim-turn-duplicate-id', id]);
+      else if (id) ids.set(id, row.kind);
+      if (ref && ids.has(ref) && ((row.kind === 'status' && ids.get(ref) !== 'status') || (row.kind === 'tool-result' && ids.get(ref) !== 'tool-call'))) warnings.push(['sim-turn-ref-kind', ref]);
+      open().parts.push({ kind: 'activity', row });
+      continue;
+    }
     if (turn.paren !== undefined && turn.label !== "model-reasoning") warnings.push(["sim-option-ignored", "duration"]);
     if (turn.label === "user") {
       if (exchange && hasContent(exchange)) close();
@@ -222,13 +244,14 @@ export function annotateSimulationLayout(blocks, layout, attrs, slide, warn) {
   for (const block of extra) { block.simIgnored = true; emit(["sim-extra-fence"]); }
 
   const options = simulationOptions(layout, attrs);
+  if (attrs?.['sim-version'] !== undefined && layout !== 'chat') emit(['sim-option-ignored', 'sim-version']);
   for (const key of options.ignored) emit(["sim-option-ignored", key]);
   if (fence.lang === "chat" && layout === "terminal") emit(["sim-fence-tag-mismatch"]);
 
   const sim = { design: layout, options, title: String(slide?.title ?? ""), idBase: slugify(slideId) || "slide" };
   const parsed = layout === "terminal"
     ? parseShellSession(fence.text)
-    : parseSimulationTurns(fence.text);
+    : parseSimulationTurns(fence.text, { version: layout === "chat" && String(attrs?.["sim-version"]) === "2" ? 2 : 1 });
   if (layout === "terminal") { sim.cmds = parsed.cmds; sim.cursor = parsed.cursor; }
   else sim.exchanges = parsed.exchanges;
   for (const w of parsed.warnings) emit(w);
@@ -288,6 +311,21 @@ const reasoningLabel = (part) => (part.duration ? `Thought for ${escapeHtml(part
 
 // ---- chat (rows) ----
 
+function activityRow(row, nextId, anchor, options) {
+  const id = nextId();
+  const icons = { user: 'doc', answer: 'spark', thought: 'spark', 'tool-call': 'wrench', 'tool-result': 'check', status: 'check', files: 'doc' };
+  const kind = Object.hasOwn(icons, row.kind) ? row.kind : 'unknown';
+  const isOpen = row.options.open === 'on' || (row.options.open !== 'off' && options.open === 'all');
+  const label = `${icon(icons[kind] || 'doc')}<span>${escapeHtml(row.label)}</span>`;
+  const head = row.detail
+    ? `<button class="sim-toggle" type="button" aria-expanded="${isOpen}" aria-controls="${id}">${label}${chevron()}</button>`
+    : `<div class="sim-row-label">${label}</div>`;
+  const detail = row.detail ? `<div class="sim-body" id="${id}"><pre class="sim-row-detail">${escapeHtml(row.detail)}</pre></div>` : '';
+  const meta = ['id', 'ref', 'state'].filter((name) => row.options[name]).map((name) => ` data-turn-${name}="${escapeHtml(row.options[name])}"`).join('');
+  const fallback = kind === 'unknown' ? `<p class="sim-row-warning">Unsupported row kind: ${escapeHtml(row.kind)}</p>` : '';
+  return `<div class="sim-part sim-row sim-row-${kind}${stepClass(!anchor)}${row.detail && !isOpen ? ' is-closed' : ''}"${['on', 'off'].includes(row.options.open) ? ` data-row-open="${escapeHtml(row.options.open)}"` : ''}${meta}>${head}${fallback}${row.options.state ? `<p class="sim-row-state">${escapeHtml(row.options.state)}</p>` : ''}<div class="sim-row-body${kind === 'thought' ? ' sim-reasoning-text' : kind === 'answer' ? ' sim-row-answer' : ''}">${escapeHtml(row.body)}</div>${detail}</div>`;
+}
+
 function rowsPart(part, nextId) {
   const id = nextId();
   const toggle = (iconName, label) =>
@@ -342,7 +380,7 @@ function chatExchange(ex, index, sim, nextId) {
   }
   if (hasParts) {
     const render = lanes ? lanesPart : rowsPart;
-    html += `<div class="sim-behind">${ex.parts.map((p) => render(p, nextId)).join("")}</div>`;
+    html += `<div class="sim-behind">${ex.parts.map((p, at) => p.kind === "activity" ? activityRow(p.row, nextId, index === 0 && !ex.user && at === 0 && p.row.kind === "user", sim.options) : render(p, nextId)).join("")}</div>`;
   }
   if (ex.bot) {
     const link = lanes && hasParts
@@ -357,13 +395,39 @@ function renderChat(sim) {
   const lanes = sim.design === "chat-lanes";
   const { options } = sim;
   const nextId = makeIds(sim);
+  const native = sim.exchanges.some((ex) => ex.parts.some((p) => p.kind === "activity"));
   const sidebar = options.sidebar === "on"
     ? `<div class="sim-sidebar"><div class="sim-newchat">${icon("plus")}New chat</div><div class="sim-recent-label">Recent</div><div class="sim-recent sim-recent-current">${escapeHtml(sim.title)}</div>${SIDEBAR_RECENT.map((s) => `<div class="sim-recent">${s}</div>`).join("")}</div>`
     : "";
-  const chrome = `<div class="sim-window" aria-hidden="true">${sidebar}<div class="sim-topbar"><span class="sim-model">${escapeHtml(options.model)}${icon("chevrondown")}</span></div><div class="sim-composer"><span class="sim-composer-plus">${icon("plus")}</span><span class="sim-composer-placeholder">Ask anything</span><span class="sim-composer-send">${icon("arrowup")}</span></div></div>`;
+  const chrome = `<div class="sim-window" aria-hidden="true">${sidebar}<div class="sim-topbar"><span class="sim-model">${native ? icon("spark") : ""}${escapeHtml(options.model)}${native ? "" : icon("chevrondown")}</span>${native ? '<span class="sim-scripted">Scripted simulation</span>' : ""}</div><div class="sim-composer"><span class="sim-composer-plus">${icon("plus")}</span><span class="sim-composer-placeholder">Ask anything</span><span class="sim-composer-send">${icon("arrowup")}</span></div></div>`;
   const panel = lanes ? '<div class="sim-panel"><p class="sim-panel-title">Behind the scenes</p></div>' : "";
   const thread = sim.exchanges.map((ex, i) => chatExchange(ex, i, sim, nextId)).join("");
-  return `<div class="${rootClasses(sim, `sim-chat ${lanes ? "sim-chat-lanes" : "sim-chat-rows"}`)}" data-sidebar="${options.sidebar}" data-open="${options.open}"${options.stream === "on" ? ' data-stream="on"' : ""}>${chrome}${panel}<div class="sim-scroll"><div class="sim-thread">${thread}</div></div></div>`;
+  const transcript = native ? `<template class="sim-transcript-source">${transcriptHtml(sim)}</template>` : '';
+  return `<div class="${rootClasses(sim, `sim-chat ${lanes ? "sim-chat-lanes" : "sim-chat-rows"}${native ? " sim-native-rows" : ""}`)}" data-sidebar="${options.sidebar}" data-open="${options.open}"${options.stream === "on" ? ' data-stream="on"' : ""}>${chrome}${panel}<div class="sim-scroll"><div class="sim-thread">${thread}</div></div>${transcript}</div>`;
+}
+
+function transcriptHtml(sim) {
+  const entry = (kind, label, body, detail = '') => `<article><h3>${escapeHtml(label)} <small>(${escapeHtml(kind)})</small></h3><pre>${escapeHtml(body)}</pre>${detail ? `<h4>Detail</h4><pre>${escapeHtml(detail)}</pre>` : ''}</article>`;
+  const entries = sim.exchanges.map((ex) => {
+    let out = ex.user ? entry('user', 'You', ex.user.paragraphs.join('\n\n')) : '';
+    for (const part of ex.parts) {
+      if (part.kind === 'activity') out += entry(part.row.kind, `${part.row.label}${part.row.options.state ? ` — ${part.row.options.state}` : ''}`, part.row.body, part.row.detail);
+      else if (part.kind === 'reasoning') out += entry('thought', part.duration ? `Thought for ${part.duration}` : 'Reasoning', part.paragraphs.join('\n\n'));
+      else if (part.kind === 'context') out += entry('files', 'Sources', part.sources.join('\n'));
+      else if (part.kind === 'tool') {
+        out += entry('tool-call', part.name, part.args);
+        if (part.results) out += entry('tool-result', 'Tool results', part.results.join('\n'));
+      } else out += entry('tool-result', 'Tool results', part.lines.join('\n'));
+    }
+    if (ex.bot) out += entry('answer', sim.options.model, ex.bot.paragraphs.join('\n\n'));
+    return out;
+  }).join('');
+  return `<h2>${escapeHtml(sim.title)} — complete transcript</h2>${entries}`;
+}
+
+/** Compiler-generated, escaped text only; no authored HTML enters this template. */
+export function simulationTranscript(html) {
+  return /<template class="sim-transcript-source">([\s\S]*?)<\/template>/.exec(String(html ?? ''))?.[1] ?? '';
 }
 
 // ---- terminal-agent ----
@@ -454,5 +518,6 @@ export function simulationStatic(html) {
   if (!text.includes('<div class="sim ')) return text;
   return text
     .replace(/<div class="sim (?!sim-static)/g, '<div class="sim sim-static ')
-    .replace(/<button class="sim-toggle/g, '<button tabindex="-1" class="sim-toggle');
+    .replace(/<button class="sim-toggle/g, '<button tabindex="-1" class="sim-toggle')
+    .replace(/(<button tabindex="-1" class="sim-toggle[^>]*aria-expanded=)"false"/g, '$1"true"');
 }

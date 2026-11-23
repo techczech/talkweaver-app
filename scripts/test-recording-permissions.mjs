@@ -3,6 +3,7 @@
 // requests and for checks: the microphone to a presenter window's own page, audio only; clipboard
 // write and full screen to a window's own page; clipboard read to the editor's pages; nothing else,
 // and nothing at all to a frame embedded in a slide.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
@@ -228,7 +229,7 @@ await test('wiring: installed at app start; the editor and Tools windows are reg
   assert.match(recording, /recordingPermissions\.addPresenter\(win/)
   assert.match(recording, /recordingPermissions\.addAppWindow\(win/)
   assert.ok(!/setPermission\w+Handler/.test(recording), 'recording.ts sets no handler of its own')
-  const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const index = readMainSource()
   assert.match(index, /installRecordingPermissions\(session\.defaultSession\)/)
   assert.match(index, /setupRecordingPermissions\(win\)/)
   // Editor (including the Pathways dock) and Tools: every app-handler window is registered on the next line.

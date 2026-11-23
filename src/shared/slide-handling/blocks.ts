@@ -327,12 +327,12 @@ function outerBlocks(text: string, refs: readonly SlideRef[]): SlideBlock[] | { 
 const nonBlank = (text: string): string => text.split('\n').filter((l) => l.trim() !== '').sort().join('\n')
 
 /** Copy: the clip of every named block, talk order. The talk is not changed. */
-export function copyBlocks(text: string, refs: readonly SlideRef[]): { clip: string; count: number; titles: string[] } | { refused: string } {
+export function copyBlocks(text: string, refs: readonly SlideRef[]): { clip: string; count: number; titles: string[]; lastBlockLine: number } | { refused: string } {
   const blocks = outerBlocks(text, refs)
   if ('refused' in blocks) return blocks
   if (blocks.length === 0) return { refused: MOVE_NOTHING }
   const copies = blocks.map((b) => copyBlock(text, b.line)!)
-  return { clip: copies.map((c) => c.clip).join('\n'), count: copies.length, titles: copies.map((c) => c.block.title) }
+  return { clip: copies.map((c) => c.clip).join('\n'), count: copies.length, titles: copies.map((c) => c.block.title), lastBlockLine: blocks[blocks.length - 1].line }
 }
 
 /**

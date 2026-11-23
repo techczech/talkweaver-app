@@ -7,6 +7,7 @@
 //   - a talk added, removed, renamed or retitled, a vault change, a new compiler and an index reset move it;
 //   - nothing changed: the same stamp;
 //   - with the real scan module, a change during the scan leaves the reply's stamp behind main's.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -170,7 +171,7 @@ try {
 
   await test('IPC queries reuse cached discovery; only full snapshots and probes walk fresh', async () => {
     // Execute the real registrations without starting Electron or importing the rest of main.
-    const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+    const main = readMainSource()
     const start = main.indexOf('function searchTalksOf(')
     const handler = main.indexOf("ipcMain.handle('search:all-slides'", start)
     const end = main.indexOf('\n})', handler) + 4

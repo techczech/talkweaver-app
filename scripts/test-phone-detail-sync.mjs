@@ -11,7 +11,8 @@
  * navigation path, so a future path that forgets to sync fails here.
  */
 import { strict as assert } from 'node:assert'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -37,7 +38,7 @@ const handout = buildShareHtml({
   license: null,
 })
 
-const scratch = await mkdtemp(join(tmpdir(), 'talkweaver-phone-sync-'))
+const scratch = testScratchDir(join(tmpdir(), 'talkweaver-phone-sync-'))
 const file = join(scratch, 'handout.html')
 await writeFile(file, handout)
 

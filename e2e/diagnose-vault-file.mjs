@@ -17,7 +17,7 @@
 //   (F) QUIET    — close/reopen a vault, then quit and relaunch: no vault file changes (bytes and
 //                  mtime), and the migrated plain-folder vault still has no vault file.
 //
-// Screenshots of the sheets go to docs/design/2026-09-29-multi-vault/build-shots/04-*.png.
+// Screenshots go to ignored artefacts. --record-evidence restores the design evidence destination.
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && TW_E2E=1 node e2e/diagnose-vault-file.mjs
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
@@ -29,7 +29,8 @@ import { tmpdir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
-const SHOTS = join(REPO, 'docs', 'design', '2026-09-29-multi-vault', 'build-shots')
+const recordEvidence = process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE === '1'
+const SHOTS = join(REPO, recordEvidence ? 'docs/design/2026-09-29-multi-vault/build-shots' : 'artefacts/diagnose-vault-file')
 mkdirSync(SHOTS, { recursive: true })
 
 const results = []

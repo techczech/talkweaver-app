@@ -10,6 +10,7 @@
 //     window and so can never resize or move one (review round 1);
 //   - the bridge, one way each: a presenter command reported once produces one progress change, and
 //     the state pushed to the presenter is the store's.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
@@ -91,7 +92,7 @@ await test('who may report: an app window anything; a deck window main opened on
 })
 
 await test('main wires the channels through the frame-guarded ipcMain, with the sender checks named', () => {
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   assert.ok(main.indexOf('applyMainFrameOnly(ipcMain)') < main.indexOf('registerPresenterGuideIpc(ipcMain, presenterGuide)'), 'the guard is applied before the handlers are registered')
   assert.ok(main.includes("if (presentWindows.get(senderId)?.mode !== 'presenter') return undefined"), 'only a presenter main opened')
   assert.ok(main.includes('acceptCommandRan({ appWindow, deckWindow: presentWindows.has(event.sender.id) }, id)'), 'command-ran from a deck: presenter ids only')
@@ -161,7 +162,7 @@ await test('All chapters and Hide the button: one-way requests from a presenter 
   assert.equal(await ipc.invoke('guide:present-all-chapters', presenter.main), false)
   assert.equal(await ipc.invoke('guide:present-hide-button', presenter.main), false)
   assert.equal(hidden, 1)
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   assert.ok(main.includes('const win = targetEditorFor(presentWindows.get(senderId)?.outlinePath ?? null)') && main.includes('win.webContents.send(SHOW_CHAPTER_LIST_CHANNEL)'), 'main focuses the editor window and sends a bare signal')
   assert.ok(main.includes('hideButton: () => { setGuideButtonVisible(false) }'), 'the × turns off the one Settings switch')
 })

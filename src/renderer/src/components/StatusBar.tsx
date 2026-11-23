@@ -15,6 +15,8 @@ const STATUS_AGENT_FULL_FROM_PX = 860
 const STATUS_AGENT_FROM_PX = 560
 
 interface Props {
+  workspace?: boolean
+  caretPath?: string
   slideCount?: number | null
   wordCount?: number
   lastSaved?: Date | null
@@ -60,6 +62,8 @@ function basename(p: string): string {
 }
 
 export default function StatusBar({
+  workspace = false,
+  caretPath,
   slideCount = null,
   wordCount = 0,
   lastSaved = null,
@@ -142,8 +146,9 @@ export default function StatusBar({
   }
 
   return (
-    <div style={styles.bar} ref={barRef}>
+    <div style={workspace ? { ...styles.bar, height: 28 } : styles.bar} ref={barRef}>
       <div style={styles.left}>
+        {caretPath && <><span className="workspace-caret-path" title={caretPath}>{caretPath}</span><span style={styles.sep}>|</span></>}
         {chip?.show && placeChip && (
           <>
             <button
@@ -180,7 +185,7 @@ export default function StatusBar({
             {showDates && dateParts.length > 0 && (
               <>
                 <span style={styles.sep}>|</span>
-                <span style={styles.item}>
+                <span style={styles.truncatedItem}>
                   {dateParts.map((part, index) => (
                     <span key={part.text}>
                       {index > 0 && ' · '}
@@ -198,7 +203,7 @@ export default function StatusBar({
               </>
             )}
             <span style={styles.sep}>|</span>
-            <span style={styles.item}>{savedLabel}</span>
+            <span style={styles.truncatedItem} title={savedLabel} data-status-saved>{savedLabel}</span>
           </>
         )}
       </div>
@@ -250,7 +255,7 @@ export default function StatusBar({
 
 const styles: Record<string, React.CSSProperties> = {
   bar: {
-    height: '24px',
+    height: 'var(--status-height)',
     display: 'flex',
     alignItems: 'center',
     padding: '0 12px',
@@ -296,6 +301,13 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--muted)',
     whiteSpace: 'nowrap',
   },
+  truncatedItem: {
+    color: 'var(--muted)',
+    whiteSpace: 'nowrap',
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
   build: {
     color: 'var(--faint)',
     whiteSpace: 'nowrap',
@@ -317,7 +329,7 @@ const styles: Record<string, React.CSSProperties> = {
     border: '1px solid color-mix(in srgb, var(--oxford) 35%, var(--line))',
     borderRadius: '4px',
     background: 'color-mix(in srgb, var(--oxford) 6%, transparent)',
-    color: 'var(--oxford)',
+    color: 'var(--accent-text)',
     fontFamily: 'inherit',
     fontSize: '11px',
     fontWeight: 500,
@@ -353,7 +365,7 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--amber-bg)',
   },
   chipShared: {
-    color: 'var(--oxford)',
+    color: 'var(--accent-text)',
     background: 'color-mix(in srgb, var(--oxford) 8%, transparent)',
   },
   chipBuilding: {

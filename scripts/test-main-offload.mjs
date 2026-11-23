@@ -36,6 +36,7 @@ const { previewVariantBytes: previewVariant, usablePreviewVariant, createPreview
 const { prepareSearchRows } = await src('src/main/search-rows-off-process.ts')
 const { writeGeneratedFile, writeTextInSlices } = await src('src/main/generated-file-write.ts')
 const { markSlidePreviewHtml } = await src('src/shared/slide-preview.ts')
+const { replaceRemoteEmbedFrames } = await src('src/main/embed-preview-policy.ts')
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const base = await mkdtemp(join(tmpdir(), 'tw-main-offload-'))
@@ -74,21 +75,22 @@ try {
     const previewDir = await validateVariantFolder(previewPath)
     const full = await compile({ compilerDir, outlinePath, text: outline('Full'), slug: 'talk', previewDir, options: { allowedAssetRoots: [vault] } })
     assert.equal(typeof full.model.fullHtml, 'string')
-    assert.ok(full.preview, 'a deck with no remote page gets a preview variant')
+    const preview = await full.previewReady
+    assert.ok(preview, 'a deck with no remote page gets a preview variant')
     const expected = Buffer.from(markSlidePreviewHtml(full.model.fullHtml, { localPages: true }), 'utf8')
-    assert.equal(full.preview.bytes, undefined, 'only a descriptor crosses to the main process, never the bytes (no second deck in main)')
-    assert.equal(full.preview.path, join(previewPath, `${full.preview.key}.html`), 'the variant is a file named by its hash, in the folder given')
-    assert.ok((await readFile(full.preview.path)).equals(expected), 'the file is the marked deck, byte for byte')
-    assert.equal(full.preview.key, createHash('sha256').update(expected).digest('hex'), 'its key is the sha256 the thumbnail window keys on')
-    assert.equal(full.preview.size, expected.byteLength)
-    assert.ok(usablePreviewVariant(full.preview, previewDir), 'a variant that came back is usable')
-    assert.equal(usablePreviewVariant(full.preview, { ...previewDir, ino: '1' }), undefined, 'but not from a folder of another identity')
+    assert.equal(preview.bytes, undefined, 'only a descriptor crosses to the main process, never the bytes (no second deck in main)')
+    assert.equal(preview.path, join(previewPath, `${preview.key}.html`), 'the variant is a file named by its hash, in the folder given')
+    assert.ok((await readFile(preview.path)).equals(expected), 'the file is the marked deck, byte for byte')
+    assert.equal(preview.key, createHash('sha256').update(expected).digest('hex'), 'its key is the sha256 the thumbnail window keys on')
+    assert.equal(preview.size, expected.byteLength)
+    assert.ok(usablePreviewVariant(preview, previewDir), 'a variant that came back is usable')
+    assert.equal(usablePreviewVariant(preview, { ...previewDir, ino: '1' }), undefined, 'but not from a folder of another identity')
     // An entry replaced after the write (another file, a hard link, an in-place rewrite) is refused at
     // use, by the preview server and the thumbnail window alike; the original descriptor no longer fits.
     {
-      const variant = usablePreviewVariant(full.preview, previewDir)
+      const variant = usablePreviewVariant(preview, previewDir)
       assert.ok(regularVariantFile(variant), 'the file written this run is accepted')
-      assert.equal(usablePreviewVariant({ ...full.preview, file: undefined }, previewDir), undefined, 'a descriptor without the written file identity is not used')
+      assert.equal(usablePreviewVariant({ ...preview, file: undefined }, previewDir), undefined, 'a descriptor without the written file identity is not used')
       const original = await readFile(variant.path)
       const elsewhere = join(base, 'elsewhere.html')
       await writeFile(elsewhere, original)
@@ -96,7 +98,7 @@ try {
       assert.equal(regularVariantFile(variant), false, 'a same-bytes file renamed over the entry afterwards is refused')
       assert.equal(await openPreviewVariant(variant), null, 'and never served')
       const fresh = await compile({ compilerDir, outlinePath, text: outline('Full'), slug: 'talk', previewDir, options: { allowedAssetRoots: [vault] } })
-      const second = usablePreviewVariant(fresh.preview, previewDir)
+      const second = usablePreviewVariant(await fresh.previewReady, previewDir)
       assert.ok(regularVariantFile(second), 'a fresh write is accepted again')
       const linked = join(base, 'hard-link.html')
       await link(second.path, linked)
@@ -104,7 +106,20 @@ try {
       await unlink(linked)
     }
     const unasked = await compile({ compilerDir, outlinePath, text: outline('Full'), slug: 'talk', options: { allowedAssetRoots: [vault] } })
-    assert.equal(unasked.preview, undefined, 'a compile that does not ask for the variant gets none')
+    assert.equal(unasked.previewReady, undefined, 'a compile that does not ask for the variant gets none')
+
+    const url = 'https://preview.example.invalid/sample'
+    const fullHtml = `<html><head></head><body><section class="slide"><iframe data-src="${url}"></iframe></section></body></html>`
+    const artwork = async (requested) => {
+      assert.equal(requested, url)
+      return 'data:image/png;base64,dGVzdA=='
+    }
+    const args = { outlinePath, content: outline('Full'), fullHtml }
+    const marked = await compile.markPreview(args, artwork, new AbortController().signal)
+    const before = markSlidePreviewHtml(await replaceRemoteEmbedFrames(fullHtml, artwork), { localPages: true })
+    assert.equal(marked.html, before, 'the worker makes exactly the same remote artwork preview')
+    assert.ok(marked.html.includes('data-tw-embed-artwork'))
+    assert.equal(marked.key, createHash('sha256').update(outlinePath).update('\0').update(args.content).update('\0').update(before).digest('hex').slice(0, 24))
   }
 
   // 3b. A deck with a remote page gets no variant (the main process must turn it into pixels first);

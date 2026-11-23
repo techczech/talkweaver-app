@@ -975,7 +975,13 @@ export default function TalkList({
           chordOf={liveShortcutLabel}
           paletteChord={paletteChordText(liveShortcutLabel('app.command-palette'))}
           onRun={runMenuRow}
-          onAllCommands={(query) => { closeRowMenu(false); window.dispatchEvent(new CustomEvent('tw-open-palette', { detail: query })) }}
+          onAllCommands={(query) => {
+            // Carry the row's focus into the palette's own dismissal target, without a late RAF.
+            const target = menuReturnRef.current
+            if (target?.isConnected) target.focus({ preventScroll: true })
+            closeRowMenu(false)
+            window.dispatchEvent(new CustomEvent('tw-open-palette', { detail: query }))
+          }}
           onClose={() => closeRowMenu(true)}
         />,
         document.body

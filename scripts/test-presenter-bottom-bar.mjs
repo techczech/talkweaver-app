@@ -21,9 +21,10 @@
 //   SHOTS=<dir> also saves L1 at 1280x800, 1440x900 and 1728x1117, the More menu open, and Focus,
 //   Highlight and Reveal on at 1440x900. DECK=<compiled deck.html> uses that deck for the shots
 //   (SLIDE_L1 picks its slide); the checks always use the fixture.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
-import { readFileSync, statSync } from 'node:fs'
+import { statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
@@ -286,7 +287,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
     await context.close()
   })
   // ⌘R's own path in main and the item's handler call the same function.
-  const main = readFileSync(join(repo, 'src/main/index.ts'), 'utf8')
+  const main = readMainSource()
   const handler = main.match(/ipcMain\.handle\('present:refresh-deck'[\s\S]*?\n\}\)/)?.[0] || ''
   check(/refreshDeckFromEditor\(win\)/.test(handler), 'main: present:refresh-deck runs refreshDeckFromEditor, the function ⌘R runs')
 

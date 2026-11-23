@@ -30,6 +30,7 @@ import '../studio.css'
 import { clearUploadFailure, showUploadFailure } from '../lib/upload-failure-toast'
 import '../ui-kit.css'
 import { RecordingPanel, type RecordingPanelHandle } from './recording/RecordingPanel'
+import { hasUnsavedRecordingEdits } from './recording/RecordingSaveNotice'
 import { RecordingEditor } from './recording/RecordingEditor'
 import { hasPictureLayers } from '../../../shared/recording-video'
 
@@ -243,6 +244,7 @@ export default function Studio({
     if (!isOpen) return
     void reload().then((all) => {
       setActiveId((cur) => {
+        if (hasUnsavedRecordingEdits()) return cur
         if (initialSessionId && all.some((s) => s.id === initialSessionId || recordingRunKey(s) === initialSessionId)) return initialSessionId
         return cur ?? (all[0] ? recordingRunKey(all[0]) : null)
       })
@@ -251,7 +253,7 @@ export default function Studio({
 
   useEffect(() => {
     if (!isOpen || !initialSessionId) return
-    setActiveId(initialSessionId)
+    if (!hasUnsavedRecordingEdits()) setActiveId(initialSessionId)
   }, [isOpen, initialSessionId])
 
   useEffect(() => {
@@ -659,7 +661,7 @@ export default function Studio({
       if (!filtered.length) return
       const cur = filtered.findIndex((s) => recordingRunKey(s) === activeId || s.id === activeId)
       const next = Math.max(0, Math.min(filtered.length - 1, (cur < 0 ? 0 : cur) + dir))
-      setActiveId(recordingRunKey(filtered[next]))
+      if (!hasUnsavedRecordingEdits()) setActiveId(recordingRunKey(filtered[next]))
     },
     [filtered, activeId]
   )
@@ -820,7 +822,7 @@ export default function Studio({
       if ((e.metaKey || e.ctrlKey) && e.key === '1') { e.preventDefault(); return }
       if ((e.metaKey || e.ctrlKey) && e.key === '2') {
         e.preventDefault()
-        void window.tw.tools.open('runs')
+        if (!hasUnsavedRecordingEdits()) void window.tw.tools.open('runs')
         return
       }
       if (typing) return
@@ -996,7 +998,7 @@ export default function Studio({
                       const recSec = (s.recordingMs - trimMs(s.trims, s.recordingMs)) / 1000
                       const d = deltaOf(recSec, s.timerTargetMin)
                       return (
-                        <button key={recordingRunKey(s)} data-sid={s.id} className={`tws-scard ${active && recordingRunKey(s) === recordingRunKey(active) ? 'active' : ''}`} onClick={() => setActiveId(recordingRunKey(s))}>
+                        <button key={recordingRunKey(s)} data-sid={s.id} className={`tws-scard ${active && recordingRunKey(s) === recordingRunKey(active) ? 'active' : ''}`} onClick={() => { if (!hasUnsavedRecordingEdits()) setActiveId(recordingRunKey(s)) }}>
                           <div className="tws-sc-top">
                             <span className="tws-sc-date">{runTitleAndWhen(s).when}</span><AnimatedVideoChip status={videoStates[recordingRunKey(s)]}/>
                           </div>

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { buildTalkTextModel } from '../src/main/talkText.ts'
@@ -19,7 +20,7 @@ import {
   writeRewritePack
 } from '../src/main/rewritePack.ts'
 
-const root = mkdtempSync(join(tmpdir(), 'talkweaver-rewritepack-'))
+const root = testScratchDir(join(tmpdir(), 'talkweaver-rewritepack-'))
 const instructionsDir = join(root, 'source-instructions')
 mkdirSync(instructionsDir, { recursive: true })
 writeFileSync(join(instructionsDir, 'AGENT-INSTRUCTIONS.md'), '# Agent instructions\n')
@@ -123,7 +124,7 @@ for (const leaf of ['PROMPT.md', 'transcript.md', 'structure.json', 'AGENTS.md',
   symlinkSync(outsidePath, join(symlinkPack, leaf))
   assert.throws(
     () => writeRewritePack({ packDir: symlinkPack, model, promptTemplate, instructionsDir }),
-    /pack-file-symlink-refused/
+    /atomic-write-symlink-refused/
   )
   assert.equal(readFileSync(outsidePath, 'utf8'), 'outside must stay unchanged')
 }

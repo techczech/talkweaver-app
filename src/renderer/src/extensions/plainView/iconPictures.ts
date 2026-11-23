@@ -411,25 +411,25 @@ const endKeys = Prec.high(keymap.of([
 const theme = EditorView.theme({
   '.cm-plain-icon-box': { display: 'inline-block', boxSizing: 'border-box', whiteSpace: 'nowrap', textIndent: '0', verticalAlign: 'baseline' },
   '.cm-plain-icon-inline': { width: `${PICTURE_EM + GAP_EM}em` },
-  '.cm-plain-icon-number': { display: 'inline-block', width: `${NUMBER_EM}em`, color: '#17202a' },
+  '.cm-plain-icon-number': { display: 'inline-block', width: `${NUMBER_EM}em`, color: 'var(--ink)' },
   '.cm-plain-icon-picture': {
     display: 'inline-block', width: `${PICTURE_EM}em`, height: `${PICTURE_EM}em`,
-    color: '#1a5fb4', verticalAlign: '-0.22em'
+    color: 'var(--accent-text)', verticalAlign: '-0.22em'
   },
   '.cm-plain-icon-picture svg': { display: 'block', width: '100%', height: '100%' },
   '.cm-plain-icon-chip': {
-    fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+    fontFamily: 'var(--font-mono)',
     fontSize: '0.82em',
-    background: 'rgba(11, 58, 107, 0.05)',
-    color: '#6b7684',
+    background: 'var(--accent-soft)',
+    color: 'var(--faint)',
     borderRadius: '4px',
     padding: '0 4px',
-    border: '1px solid rgba(11, 58, 107, 0.10)'
+    border: '1px solid var(--line-strong)'
   },
   '.cm-plain-icon-chip-warn': {
-    background: 'rgba(165, 42, 42, 0.10)',
-    color: '#9a3c3c',
-    borderColor: 'rgba(165, 42, 42, 0.24)'
+    background: 'var(--crimson-bg)',
+    color: 'var(--crimson)',
+    borderColor: 'var(--line-strong)'
   }
 })
 

@@ -5,6 +5,7 @@
 //   - the Settings rows render the drawing's wording, the current choice, a sample that follows it,
 //     and call back with the change; the buttons stop at the ends;
 //   - the main process, preload and mock carry the same three calls.
+import { readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, rmSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -104,7 +105,7 @@ try {
   assert.deepEqual(calls, [{ font: 'serif' }, { size: 17 }, { size: 15 }], 'Serif, larger, smaller; the chosen font is not re-sent')
 
   // The wiring: main, preload and the dev mock carry the same calls.
-  const main = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+  const main = readMainSource()
   const preload = readFileSync(join(root, 'src/preload/index.ts'), 'utf8')
   const mock = readFileSync(join(root, 'src/renderer/src/tw-mock.ts'), 'utf8')
   for (const ch of ['preferences:get-plain-look', 'preferences:set-plain-look', 'plain-look:changed']) {

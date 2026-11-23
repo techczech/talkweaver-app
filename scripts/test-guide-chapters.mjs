@@ -13,6 +13,7 @@
 //   - render: each row state of the chapter list and of a chapter, the two key caps of a pair, the variants
 //     row, the flash, Open this talk only when the practice talk is not the open one, the live note, and the
 //     next chapter after a finished one.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -117,7 +118,9 @@ try {
       'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place', 'scratchpad-move-up', 'scratchpad-move-down',
       // Work files ticket 30: the Tools window's commands, held back with pre-work.
       'history', 'tools-copy-invitation', 'tools-copy-link', 'tools-edit-plan', 'tools-go-live', 'tools-new-work-file', 'tools-open-run', 'tools-plan-like-this', 'tools-plan-run', 'tools-publish', 'tools-unpublish', 'tools-view-published', 'tools-view-runs', 'tools-view-sessions', 'tools-view-workfiles',
-      'view-markdown', 'view-plain'].sort())
+      'view-markdown', 'view-plain', 'view-panel-previews', 'view-panel-outline', 'view-slide-panel', 'view-strip',
+      'paste-picture', 'split-pasted-picture-row', 'duplicate-slide', 'move-current-slide-up', 'move-current-slide-down',
+      'edit-speaker-notes', 'present-slide-window', 'welcome-slide', 'welcome-outline', 'welcome-markdown'].sort())
     for (const id of CHAPTER_EXCLUDED) {
       assert.ok(chapterCommands().some((c) => c.id === id), `${id} is still a command (palette, menus)`)
       assert.ok(!placed.includes(id), `${id} is in no chapter`)
@@ -345,13 +348,13 @@ try {
     assert.deepEqual([cfg.value.opened, cfg.value.read], [['Share'], ['how.2']])
     const source = read('src/main/guide-learn-store.ts')
     assert.ok(!/vault/i.test(source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')), 'the store code names no vault')
-    const main = read('src/main/index.ts')
+    const main = readMainSource()
     assert.ok(main.includes("read: () => readConfig()[GUIDE_LEARN_KEY]") && main.includes('write: (record: GuideLearn) => writeConfig({ [GUIDE_LEARN_KEY]: record })'), 'main keeps it through the config file’s own atomic write')
     assert.ok(read('src/main/config-file.ts').includes('rename'), 'that write is temp file plus rename')
   })
 
   await test('main, preload and the mock carry the report; main decides the example from the talk’s path', () => {
-    const main = read('src/main/index.ts')
+    const main = readMainSource()
     for (const channel of ['guide:get-learn', 'guide:command-ran', 'guide:chapter-opened', 'guide:topic-read', 'guide:learn-changed']) assert.ok(main.includes(`'${channel}'`), channel)
     assert.ok(main.includes('vaultRegistry.resolve(outlinePath)') && main.includes('hit?.vault.example === true'))
     // Ticket 10: a deck window main opened may report only a well-formed presenter id (src/main/guide-present.ts).

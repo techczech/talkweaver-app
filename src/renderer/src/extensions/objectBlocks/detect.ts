@@ -12,7 +12,7 @@ import {
   winningAuthoredLayout
 } from '../../../../shared/layout-registry/vocabulary.ts'
 import { readOutlineObjectRegions } from '../../../../shared/objects/outline-object-regions.ts'
-import { compiledLayoutsAt } from '../../../../shared/quote-write-check.ts'
+import { compiledSimulationLayoutsAt } from '../../../../shared/quote-write-check.ts'
 import {
   describeHtmlComment,
   fenceKindForInfo
@@ -70,6 +70,7 @@ export type ObjectBlock = {
   /** A fence card: its info string as written (language for code). */
   info?: string
   /** A chat or terminal session fence: the slide's simulation design. */
+  simulationVersion?: number
   design?: SimulationDesign
   /** A chat/terminal fence the slide does not use as its session (`sim-extra-fence`), or one under another layout. */
   simNote?: 'ignored' | 'other-layout'
@@ -433,12 +434,13 @@ function lineIndexAt(lines: SourceLine[], pos: number): number {
 }
 
 /** The compiler's layout for each slide that holds a chat or terminal fence, for the last text read. */
-let layoutCache: { doc: string; key: string; layouts: Map<number, string | null> } | null = null
+type SimulationReading = { layout: string | null; version: number } | null
+let layoutCache: { doc: string; key: string; layouts: Map<number, SimulationReading> } | null = null
 
-function compilerLayouts(doc: string, headingLines: number[]): Map<number, string | null> {
+function compilerLayouts(doc: string, headingLines: number[]): Map<number, SimulationReading> {
   const key = headingLines.join(',')
   if (layoutCache && layoutCache.doc === doc && layoutCache.key === key) return layoutCache.layouts
-  const layouts = compiledLayoutsAt(doc, headingLines)
+  const layouts = compiledSimulationLayoutsAt(doc, headingLines)
   layoutCache = { doc, key, layouts }
   return layouts
 }
@@ -466,7 +468,7 @@ function resolveSimulationSessions(
   for (const block of sims) {
     const owner = ownerOf(block)
     const lang = block.kind
-    const design = (owner >= 0 ? layouts.get(owner + 1) ?? null : null) as SimulationDesign | null
+    const design = (owner >= 0 ? layouts.get(owner + 1)?.layout ?? null : null) as SimulationDesign | null
     if (!design || !SIMULATION_DESIGNS.has(design)) {
       block.kind = 'code'
       block.simNote = 'other-layout'
@@ -478,6 +480,7 @@ function resolveSimulationSessions(
       continue
     }
     sessionTaken.add(owner)
+    if (design === 'chat' && layouts.get(owner + 1)?.version === 2) block.simulationVersion = 2
     block.design = design
     block.kind = design === 'terminal' ? 'terminal' : 'chat'
     if (lang === 'chat' && design === 'terminal') block.simNote = undefined

@@ -45,7 +45,7 @@
   width: 100% !important; height: 100% !important; display: block; color: inherit;
 }
 .slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li > .fl-text {
-  grid-column: 2; font: 700 max(var(--type-floor, 31px), 2.75cqw)/1.15 var(--look-face-display) !important; color: inherit !important;
+  grid-column: 2; font: var(--weight-item, var(--weight-reading)) max(var(--type-floor, 31px), 2.75cqw)/1.15 var(--look-face-display) !important; color: inherit !important;
   overflow-wrap: break-word; min-width: 0; text-transform: none !important; letter-spacing: 0 !important;
 }
 .slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand])) > li:not(:has(> .fl-icon)) > :is(.fl-text, .fl-sublist) { grid-column: 1 / -1; }
@@ -92,8 +92,8 @@
 }
 
 /* long labels or detail lines (07-assembly stampOceanFit): the compact step, still at the locked minimums */
-.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand]))[data-oc-fit="long"] > li > .fl-text { font-size: max(var(--type-floor, 31px), 2.75cqw) !important; font-weight: 600 !important; }
-.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand]))[data-oc-fit="long"] > li > .fl-text strong { font-weight: 800; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand]))[data-oc-fit="long"] > li > .fl-text { font-size: max(var(--type-floor, 31px), 2.75cqw) !important; font-weight: var(--weight-item, var(--weight-reading)) !important; }
+.slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand]))[data-oc-fit="long"] > li > .fl-text strong { font-weight: var(--weight-emphasis); }
 .slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand]))[data-oc-fit="long"] > li > .fl-icon { width: 6cqw !important; height: 6cqw !important; }
 .slide[data-look="ocean"][data-layout="list"] > .slide-content > .feature-list.fl-iconlist-list:not(.fl-numbered):not(.fl-annotated):not([data-oc-fit="dense"]):not(.fl-narrow-cols:has(> li > .fl-sublist):has(> li > .fl-icon [data-brand]))[data-oc-fit="long"] > li { padding-block: 1.1cqw !important; }
 /* four to six rows: the box sizes of the icon list (icon 112px, label 50px) */

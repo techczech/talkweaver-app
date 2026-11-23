@@ -14,6 +14,7 @@
 //              registry or searched images; T2 a quote-only query makes no FTS call
 //   fix round 2  a failed schema read fails closed and is not kept; one separator list for query
 //              and file names (backslash, tab); a PNG needs all eight signature bytes
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { execFile, execFileSync, spawn } from 'node:child_process'
@@ -774,7 +775,7 @@ await test('twasset://: only a plain pool file reached through plain folders is 
   for (const bad of ['twasset://secret', 'twasset://img-aaaaaaa.png', 'twasset://img-xyz', 'twasset://notes']) assert.equal(twassetFileFor(bad, vaultA, open), null, bad)
   assert.equal(twassetFileFor('not a url', vaultA, open), null)
   // index.ts serves only what this answers
-  const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const index = readMainSource()
   const handler = index.slice(index.indexOf("registerFileProtocol('twasset'"), index.indexOf("registerFileProtocol('twthumb'"))
   assert.match(handler, /twassetFileFor\(request\.url, currentVaultRoot\(\), availableVaults\(\)\)/)
   assert.ok(!/existsSync|join\(/.test(handler), 'no second path resolution in the handler')
@@ -832,7 +833,7 @@ await test('In your talks: a talk in a vault nested inside the picture’s vault
 })
 
 await test('In your talks: index.ts reads sidecars through the one reader, and the app has no second parser', () => {
-  const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const index = readMainSource()
   assert.match(index, /readSidecar: \(vaultRoot, id\) => readSidecarIn\(vaultRoot, id\)/)
   assert.match(index, /function readAssetSidecar\(id: string\): AssetSidecar \| null \{\s*return readSidecarIn\(currentVaultRoot\(\), id\)/, 'asset:read-sidecar and the tab share readSidecarIn')
   assert.equal(index.match(/function parseSidecar\(/g).length, 1)

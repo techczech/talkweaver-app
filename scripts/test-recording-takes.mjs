@@ -1,6 +1,7 @@
 // Release 0.44.5, Record one slide again (the record-and-edit-video design of 10 Nov 2026, contract
 // "retake"): the video clock, the chosen take in the edits file, the resolved plan and a real export.
 // Plain Node; ffmpeg-static stands in for the app's bundled ffmpeg.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
@@ -9,10 +10,11 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { applyEditOp, emptyEdits, parseEditsText, serialiseEdits } from '../src/shared/recording-edits.ts'
-import { captionCues, chaptersFor, toSrt, toWebVtt } from '../src/shared/recording-video.ts'
-import { captionCuesOf, planDigest, resolveRecording } from '../src/shared/recording-editor.ts'
+import { captionCues, chaptersFor, faceTrack, faceTrackOnClock, toSrt, toWebVtt } from '../src/shared/recording-video.ts'
+import { captionCuesOf, changeVideoStart, planDigest, resolveRecording, rowAtPlayback, rowVideoStart } from '../src/shared/recording-editor.ts'
 import { clipsOnVideoClock, fromVideoClock, isTakeRun, parseRetake, RECORD_AGAIN_ENV, rowTakeControls, takesEnabled, takesInUse, verifyRetake, rangesToVideoClock, takeAt, takeClock, toVideoClock, videoClockMs } from '../src/shared/recording-takes.ts'
 import { createVideoExporter, layersOnVideoClock, resolvePictureLayers } from '../src/main/recording-video.ts'
+import { joinPlayback, takeEdges } from '../src/shared/recording-positions.ts'
 import { makeEditorFixture } from './fixtures/recording-editor-fixture.mjs'
 import { listRuns } from '../src/main/runs.ts'
 import { listKeptRuns, runAtHome } from '../src/main/recording-paths.ts'
@@ -40,10 +42,90 @@ try {
     pass('the video clock: a take goes in at its slide start; Run time, ranges and files move with it')
   }
 
-  // ---- Off in 0.44.5 (takesEnabled): no control offers it, no choice is used, main refuses a retake ----
+  // ---- Two takes on slides that start at the same time play one after the other (review 2, item 1) ----
+  {
+    // A 1 s Run, slides entered at 0, 100 and 200 ms, one word over the whole second: the first two rows
+    // collapse to [0, 0]. A 1 s take chosen for each of them.
+    const marks = [{ event: 'enter', slideId: 'a', tMs: 0 }, { event: 'enter', slideId: 'b', tMs: 100 }, { event: 'enter', slideId: 'c', tMs: 200 }]
+    const transcript = { words: [{ text: 'continuous', start: 0, end: 1000 }] }
+    const base = resolveRecording({ durationMs: 1000, edits: emptyEdits(), marks, transcript })
+    assert.deepEqual(base.rows.map((r) => [r.start, r.end]), [[0, 0], [0, 0], [0, 1000]], '(the rows collapse as the review says)')
+    const takes = [{ change: 0, run: 'take-a', durationMs: 1000, words: [{ text: 'first', start: 100, end: 400 }] }, { change: 100, run: 'take-b', durationMs: 1000, words: [{ text: 'second', start: 100, end: 400 }] }]
+    const r = resolveRecording({ durationMs: 1000, edits: emptyEdits(), marks, transcript, takes })
+    assert.equal(r.clockMs, 3000); assert.equal(takeAt(r.clock, 500).insert.run, 'take-a'); assert.equal(takeAt(r.clock, 1500).insert.run, 'take-b')
+    // Picture: the takes' files one after the other, the Run's after both.
+    const pictures = clipsOnVideoClock(r.clock, [{ startMs: 0, endMs: 1000, file: 'run.webm' }], (run) => [{ startMs: 0, endMs: 1000, file: `${run}.webm` }], () => 0)
+    assert.deepEqual(pictures.map((p) => [p.file, p.startMs, p.endMs]).sort((x, y) => x[1] - y[1]), [['take-a.webm', 0, 1000], ['take-b.webm', 1000, 2000], ['run.webm', 2000, 3000]], 'picture')
+    // Picture and voice as the export composes them.
+    const layer = (run) => ({ slides: [{ layer: 'slides', part: 0, file: 'slides.webm', bytes: 1, startMs: 0, endMs: 1000, path: `${run}/slides.webm` }], camera: [], voice: [{ path: `${run}.webm`, startMs: 0, endMs: 1000 }], missing: [] })
+    const composed = layersOnVideoClock(layer('run'), new Map([['take-a', layer('take-a')], ['take-b', layer('take-b')]]), r.clock, r.clockMs)
+    const span = (list) => list.map((p) => [p.path, p.startMs, p.endMs]).sort((x, y) => x[1] - y[1])
+    assert.deepEqual(span(composed.slides), [['take-a/slides.webm', 0, 1000], ['take-b/slides.webm', 1000, 2000], ['run/slides.webm', 2000, 3000]], 'export picture')
+    assert.deepEqual(span(composed.voice), [['take-a.webm', 0, 1000], ['take-b.webm', 1000, 2000], ['run.webm', 2000, 3000]], 'export voice')
+    // Face placement on the video clock.
+    const defaultFaces = { all: { layout: 'corner', corner: 'bottom-right', size: 'medium' }, slides: [] }
+    const faces = faceTrackOnClock(faceTrack(r.rows, defaultFaces, 1000), r.clock, defaultFaces)
+    assert.ok(faces.every((s, k) => k === 0 || s.start >= faces[k - 1].end), `face stretches do not overlap: ${JSON.stringify(faces.map((s) => [s.start, s.end]))}`)
+    assert.deepEqual([faces[0].start, faces.at(-1).end], [0, 3000])
+    // Chapters and captions.
+    const chapters = chaptersFor(r.chapterMarks, { a: { title: 'A' }, b: { title: 'B' }, c: { title: 'C' } }, r.spans)
+    assert.deepEqual(chapters.map((c) => [c.title, c.startMs]), [['A', 0], ['B', 1000], ['C', 2200]], 'chapters: each take\'s slide where its take starts; C at its own change (200 ms of Run time) after both takes')
+    assert.deepEqual(r.captionWords.map((x) => [x.text, x.start, x.end]), [['first', 100, 400], ['second', 1100, 1400], ['continuous', 2000, 3000]], 'caption words: each take\'s in its own stretch, the Run\'s own word after both takes')
+    assert.deepEqual(captionCuesOf(r).cues.map((c) => c.text).join(' '), 'first second continuous')
+    assert.deepEqual(r.clock.inserts.map((i) => [i.run, i.outAt]), [['take-a', 0], ['take-b', 1000]], 'each take has its own start on the video clock, in slide order')
+    pass('two takes on slides that start at the same time play one after the other: clock, picture, voice, face, chapters and captions agree')
+  }
+
+  // ---- Re-check of review 2: four collapsed rows, each with its own take, face choice, Play and highlight ----
+  {
+    // Slide entries at 0/100/200/300 ms, one word over a 1 s Run: rows A, B, C at [0, 0] and D at [0, 1000].
+    const marks = [{ event: 'enter', slideId: 'a', tMs: 0 }, { event: 'enter', slideId: 'b', tMs: 100 }, { event: 'enter', slideId: 'c', tMs: 200 }, { event: 'enter', slideId: 'd', tMs: 300 }]
+    const transcript = { words: [{ text: 'continuous', start: 0, end: 1000 }] }
+    const takes = [0, 100, 200, 300].map((change) => ({ change, run: `take-${change}`, durationMs: 1000, words: null }))
+    const r = resolveRecording({ durationMs: 1000, edits: emptyEdits(), marks, transcript, takes })
+    assert.deepEqual(r.rows.map((x) => [x.start, x.end]), [[0, 0], [0, 0], [0, 0], [0, 1000]], '(the rows collapse as the re-check says)')
+    assert.deepEqual(r.clock.inserts.map((i) => i.outAt), [0, 1000, 2000, 3000])
+    // Face: A Face only, B Slide only, C and D in the corner; each take shows its own slide's choice.
+    const corner = { layout: 'corner', corner: 'bottom-right', size: 'medium' }
+    const faces = { all: corner, slides: [{ change: 0, face: { ...corner, layout: 'face' } }, { change: 100, face: { ...corner, layout: 'slide' } }] }
+    const onClock = faceTrackOnClock(faceTrack(r.rows, faces, 1000), r.clock, faces)
+    const layoutAt = (ms) => onClock.find((seg) => ms >= seg.start && ms < seg.end)?.face.layout
+    assert.deepEqual([500, 1500, 2500, 3500].map(layoutAt), ['face', 'slide', 'corner', 'corner'], 'each take with its own slide\'s face choice')
+    // Play on a row with a chosen take goes to that take; an ordinary row starting there plays after the takes.
+    assert.deepEqual(r.rows.map((row) => rowVideoStart(r, row)), [0, 1000, 2000, 3000], 'each row\'s Play starts its own take')
+    const two = resolveRecording({ durationMs: 1000, edits: emptyEdits(), marks, transcript, takes: takes.slice(0, 2) })
+    assert.deepEqual(two.rows.map((row) => rowVideoStart(two, row)), [0, 1000, 2000, 2000], 'without a take, a row plays where its Run time does: after the takes there')
+    // While playing, the highlighted row is the one whose take is playing, then the Run's own.
+    const at = (v) => rowAtPlayback(r, fromVideoClock(r.clock, v), v)
+    assert.deepEqual([0, 500, 1000, 1500, 2500, 3000, 3500].map(at), [0, 0, 1, 1, 2, 3, 3], 'the row of the take playing; D for the Run after them')
+    assert.equal(rowAtPlayback(two, fromVideoClock(two.clock, 2500), 2500), 3, 'the Run\'s own time after the takes: the last row starting there')
+    // Studio's slide ticks (by the real slide change) go to the slide's take as well.
+    assert.deepEqual([0, 100, 200, 300].map((t) => changeVideoStart(r, t)), [0, 1000, 2000, 3000], 'Go to slide n: its own take')
+    assert.equal(changeVideoStart(two, 300), 2300, 'a slide without a take: its change on the video clock')
+    pass('four collapsed rows: each take shows its own face choice, each row\'s Play starts its own take, the highlight follows the take playing')
+  }
+
+  // ---- Re-check round 3: trims beyond takes; the join after a long take (reviewer's cases) --------------
+  {
+    // Item 1: a 5 s Run with four 1 s takes going in after 1.5 s; Trim end here at 1 s keeps only [0, 1000].
+    const marks = [0, 1500, 1501, 1502, 1503].map((tMs, k) => ({ event: 'enter', slideId: 'abcde'[k], tMs }))
+    const takes = [1500, 1501, 1502, 1503].map((change) => ({ change, run: `t${change}`, durationMs: 1000, words: null }))
+    const trimmed = resolveRecording({ durationMs: 5000, edits: applyEditOp(emptyEdits(), { kind: 'trim-end', at: 1000 }, 5000), marks, takes })
+    assert.deepEqual(trimmed.spans.map((s) => [s.startMs, s.endMs]), [[0, 1000]], 'every take after the end goes')
+    assert.equal(trimmed.editedMs, 1000)
+    const fromStart = resolveRecording({ durationMs: 5000, edits: applyEditOp(emptyEdits(), { kind: 'trim-start', at: 1000 }, 5000), marks, takes })
+    assert.deepEqual([fromStart.spans[0].startMs, fromStart.spans.at(-1).endMs, fromStart.editedMs], [1000, 5500, 4500], 'a start trim before the takes keeps all four (a start trim after them: the clock matrix)')
+    // Item 3: an 8 s Run, its first slide [0, 2650] replaced by a 10 s take, a cut [2650, 5000]: the join is
+    // heard with the end of the take before it (video 9000–10000), then the recording from 15000.
+    const r = resolveRecording({ durationMs: 8000, edits: emptyEdits(), marks: [{ event: 'enter', slideId: 'a', tMs: 0 }, { event: 'enter', slideId: 'b', tMs: 2650 }], takes: [{ change: 0, run: 'long', durationMs: 10_000, words: null }] })
+    assert.deepEqual(joinPlayback(r, { start: 2650, end: 5000 }, [{ start: 2650, end: 5000 }]), { from: 9000, until: 16_000 })
+    pass('re-check round 3: a trim takes every take beyond it; Listen to the join hears the take before the join')
+  }
+
+  // ---- Takes ship on; when disabled in development the controls and choices are hidden ----
   {
     assert.equal(RECORD_AGAIN_ENV, 'TW_RECORD_AGAIN')
-    assert.equal(takesEnabled({ packaged: true, flag: '1' }), false, 'never in a release build')
+    assert.equal(takesEnabled({ packaged: true, flag: undefined }), true, 'available in a release that includes these fixes')
     assert.equal(takesEnabled({ packaged: false, flag: undefined }), false, 'off in development unless asked for')
     assert.equal(takesEnabled({ packaged: false, flag: '1' }), true, 'the development override')
     const row = { hasPicture: true, slideId: 'b', leftOut: false, takes: 2 }
@@ -57,12 +139,12 @@ try {
     const editor = read('src/renderer/src/components/recording/RecordingEditor.tsx'), panel = read('src/renderer/src/components/recording/RecordingPanel.tsx')
     assert.match(editor, /const takesOn = !!opened\?\.recordAgain/); assert.match(editor, /rowTakeControls\(takesOn, \{ hasPicture[^}]*\}\)\.recordAgain \?/); assert.match(editor, /if \(!takesOn\) return null/)
     assert.match(panel, /takesInUse\(takesOn, savedChoices\)/)
-    const main = read('src/main/index.ts')
+    const main = readMainSource()
     assert.match(main, /const TAKES_ENABLED = takesEnabled\(\{ packaged: app\.isPackaged, flag: process\.env\[RECORD_AGAIN_ENV\] \}\)/)
     const present = main.slice(main.indexOf("ipcMain.handle('talk:present'"))
     assert.ok(present.indexOf('if (asked && !TAKES_ENABLED) return { success: false, error: TAKES_OFF_ERROR }') > 0 && present.indexOf('if (asked && !TAKES_ENABLED)') < present.indexOf('verifyRetake('), 'talk:present refuses a retake first')
     assert.ok((main.match(/takesEnabled: \(\) => TAKES_ENABLED/g) ?? []).length === 2, 'both recording IPCs are told')
-    pass('Record one slide again is off unless a development build sets TW_RECORD_AGAIN=1: no row control, no choice used, main refuses a retake')
+    pass('Record one slide again ships on; development without the flag shows no control, uses no choice and refuses a retake')
   }
 
   // ---- The chosen take is an edit ------------------------------------------------------------------
@@ -152,7 +234,7 @@ try {
     ]) assert.equal(verifyRetake(req, p, slug).ok, false, why)
     // In main: only the Tools window may ask, the request is checked before any context is registered,
     // and the context registered is the checked one.
-    const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+    const main = readMainSource()
     const start = main.indexOf("ipcMain.handle('talk:present'"), body = main.slice(start, main.indexOf('\nipcMain.handle(', start + 10))
     const at = (needle) => { const i = body.indexOf(needle); assert.ok(i > 0, `talk:present has ${needle}`); return i }
     assert.ok(at('isToolsWindowSender(event.sender, toolsWindow)') < at('verifyRetake(') && at('verifyRetake(') < at('registerRecordingContext('), 'sender, then truth, then the context')
@@ -233,7 +315,7 @@ try {
     const onClock = { ...run, ...layersOnVideoClock(run, new Map([['sess-take', take]]), r.clock, r.clockMs) }
     const exporter = createVideoExporter({ ffmpeg: () => ffmpeg })
     const out = join(root, 'out'); mkdirSync(out)
-    const done = await exporter.run({ layers: onClock, cuts: r.clockCuts, camera: true, evenVolume: false, smoothJoins: false, extras: { captions: true, chapterList: true, sound: false }, destination: join(out, 'take.mp4'), replace: true, title: 'Take', enters: r.chapterMarks, slides: titles, words: r.captionWords, segments: [] }, () => {})
+    const done = await exporter.run({ layers: onClock, cuts: r.clockCuts, camera: true, evenVolume: false, smoothJoins: true, edges: takeEdges(r.clock), extras: { captions: true, chapterList: true, sound: false }, destination: join(out, 'take.mp4'), replace: true, title: 'Take', enters: r.chapterMarks, slides: titles, words: r.captionWords, segments: [] }, () => {})
     assert.equal(done.state, 'done', JSON.stringify(done))
     assert.ok(Math.abs(done.durationMs - r.editedMs) <= 34, `the video is the edited length (${done.durationMs} vs ${r.editedMs})`)
     const colourAt = (sec) => { const p = spawnSync(ffmpeg, ['-v', 'error', '-ss', String(sec), '-i', done.file, '-frames:v', '1', '-vf', 'scale=4:4,format=rgb24', '-f', 'rawvideo', '-'], { maxBuffer: 1 << 20 }).stdout; const [R, G, B] = [p[15], p[16], p[17]]; return R > 150 && G < 90 ? 'red' : G > 100 && R < 90 && B < 90 ? 'green' : B > 150 && R < 90 ? 'blue' : `${R},${G},${B}` }

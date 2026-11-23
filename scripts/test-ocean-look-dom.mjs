@@ -504,7 +504,7 @@ const reviewText = readFileSync(reviewPath, 'utf8')
   }
 }
 {
-  // palette: bold — light-statement key words keep a text colour that passes AA on white; the amber is an underline.
+  // palette: bold — light-statement key words keep a text colour that passes AA on white and use bold, without underline.
   const boldText = ['---', 'title: Bold', 'palette: bold', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '', '## Part', '',
     '### Light', '{statement}{statement-bg=rule}{id=b-light}', '', 'An agent is a model using **tools** in a **loop**.', ''].join('\n')
   const boldPath = join(work, 'bold.md')
@@ -514,10 +514,10 @@ const reviewText = readFileSync(reviewPath, 'utf8')
   try {
     const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
     await page.goto(pathToFileURL(deck.htmlPath).href, { waitUntil: 'load' })
-    const got = await page.evaluate(() => { const strong = document.querySelector('.slide[data-id="b-light"] strong'); const cs = getComputedStyle(strong); return { color: cs.color, line: cs.textDecorationLine, mark: cs.textDecorationColor } })
+    const got = await page.evaluate(() => { const strong = document.querySelector('.slide[data-id="b-light"] strong'); const cs = getComputedStyle(strong); return { color: cs.color, line: cs.textDecorationLine, weight: cs.fontWeight } })
     assert(contrast(got.color, 'rgb(255, 255, 255)') >= 4.5, `bold: key words pass AA on white (${got.color}, ${contrast(got.color, 'rgb(255, 255, 255)').toFixed(2)}:1)`)
-    assert.equal(got.line, 'underline', 'bold: the amber is carried by an underline')
-    assert.equal(got.mark, 'rgb(255, 159, 28)', 'bold: the underline is amber')
+    assert.equal(got.line, 'none', 'bold: emphasis does not need an underline')
+    assert.equal(got.weight, '700', 'bold: emphasis is bold on regular reading text')
   } finally {
     await browser.close()
   }

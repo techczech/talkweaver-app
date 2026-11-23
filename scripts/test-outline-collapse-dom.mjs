@@ -526,25 +526,25 @@ try {
     const headerAt = (n) => page.locator(`${GRID} [data-section-header]`).nth(n)
     const gridState = () => page.evaluate(() => [...document.querySelectorAll('.grid-view [data-section-header]')].map((h) => (h.textContent.trim().startsWith('▸') ? '▸' : '▾') + h.children[1].textContent))
     const outlineState = () => page.evaluate((sel) => [...document.querySelectorAll(`${sel} .so-section`)].filter((el) => el.querySelector('.so-caret')).map((el) => (el.querySelector('.so-caret').getAttribute('aria-expanded') === 'false' ? '▸' : '▾') + el.querySelector('.so-section-label').textContent), ORG)
-    assert.deepEqual(await gridState(), ['▾(no section)', '▾Alpha', '▾Bravo', '▾Charlie', '▾Bravo', '▾Echo'], 'the grid: the slide before the first section, then the five sections')
+    assert.deepEqual(await gridState(), ['▾Alpha', '▾Bravo', '▾Charlie', '▾Bravo', '▾Echo'], 'the grid names the five sections')
     assert.deepEqual(await outlineState(), ['▾Mixed', '▾Alpha', '▾Bravo', '▾Charlie', '▾Bravo', '▾Echo'])
     // Outline -> grid, one section at a time: id below, no id, id on the heading, the twin with an id.
     const outlineCaretAt = (n) => page.locator(`${ORG} .so-section .so-caret`).nth(n)
-    for (const [n, want] of [[1, ['▾(no section)', '▸Alpha', '▾Bravo', '▾Charlie', '▾Bravo', '▾Echo']], [2, ['▾(no section)', '▸Alpha', '▸Bravo', '▾Charlie', '▾Bravo', '▾Echo']], [3, ['▾(no section)', '▸Alpha', '▸Bravo', '▸Charlie', '▾Bravo', '▾Echo']], [4, ['▾(no section)', '▸Alpha', '▸Bravo', '▸Charlie', '▸Bravo', '▾Echo']]]) {
+    for (const [n, want] of [[1, ['▸Alpha', '▾Bravo', '▾Charlie', '▾Bravo', '▾Echo']], [2, ['▸Alpha', '▸Bravo', '▾Charlie', '▾Bravo', '▾Echo']], [3, ['▸Alpha', '▸Bravo', '▸Charlie', '▾Bravo', '▾Echo']], [4, ['▸Alpha', '▸Bravo', '▸Charlie', '▸Bravo', '▾Echo']]]) {
       await outlineCaretAt(n).click()
       assert.deepEqual(await gridState(), want, `collapsed in the outline (section row ${n}): the grid shows the same`)
     }
     // Opened again in the grid, one at a time: the outline follows, and only that section.
-    await headerAt(2).click()
+    await headerAt(1).click()
     assert.deepEqual(await outlineState(), ['▾Mixed', '▸Alpha', '▾Bravo', '▸Charlie', '▸Bravo', '▾Echo'], 'the first Bravo (no id) opened by its grid header, not its twin')
-    await headerAt(4).click()
+    await headerAt(3).click()
     assert.deepEqual(await outlineState(), ['▾Mixed', '▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▾Echo'], 'the second Bravo (with an id) opened by its grid header')
-    await headerAt(1).click(); await headerAt(3).click()
+    await headerAt(0).click(); await headerAt(2).click()
     assert.deepEqual(await outlineState(), ['▾Mixed', '▾Alpha', '▾Bravo', '▾Charlie', '▾Bravo', '▾Echo'])
     // Grid -> outline: collapse by the grid headers.
-    await headerAt(5).click() // Echo, no id
-    await headerAt(3).click() // Charlie, id on the heading
-    await headerAt(1).click() // Alpha, id on the line below
+    await headerAt(4).click() // Echo, no id
+    await headerAt(2).click() // Charlie, id on the heading
+    await headerAt(0).click() // Alpha, id on the line below
     assert.deepEqual(await outlineState(), ['▾Mixed', '▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▸Echo'], 'collapsed by their grid headers: the outline shows the same three')
     assert.equal(await gridCells(), 1 + 2 * 4, 'the grid shows the Welcome card and the two open sections (a section card and three slides each)')
     const storedMixed = JSON.parse(await page.evaluate(() => window.fakeStorage.getItem('tw-outline-collapse-v1'))).talks[TALK_KEY].keys
@@ -555,27 +555,25 @@ try {
     assert.equal(await page.locator(GRID).count(), 0, 'the grid is closed')
     await page.evaluate(() => window.setUi({ grid: true }))
     await sleep(50)
-    assert.deepEqual(await gridState(), ['▾(no section)', '▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▸Echo'], 'after leaving the grid and returning: the same three collapsed')
+    assert.deepEqual(await gridState(), ['▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▸Echo'], 'after leaving the grid and returning: the same three collapsed')
     await page.evaluate(([k, d]) => window.restartApp(k, d), [TALK_KEY, MIXED])
     await sleep(50)
-    assert.deepEqual(await gridState(), ['▾(no section)', '▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▸Echo'], 'after an app restart: the same three collapsed in the grid')
+    assert.deepEqual(await gridState(), ['▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▸Echo'], 'after an app restart: the same three collapsed in the grid')
     assert.deepEqual(await outlineState(), ['▾Mixed', '▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▸Echo'], 'and in the outline')
     // The save gives the id-less sections ids while two are collapsed: nothing changes in either view.
     await page.evaluate(() => { window.insertAfter('## Echo', '{id=eee55}'); window.insertAfter('## Bravo', '{id=bbb00}') })
     await sleep(80)
     assert.deepEqual(await outlineState(), ['▾Mixed', '▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▸Echo'], 'ids written under the id-less headings: the outline keeps its three')
-    assert.deepEqual(await gridState(), ['▾(no section)', '▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▸Echo'], 'and so does the grid')
-    await headerAt(5).click()
+    assert.deepEqual(await gridState(), ['▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▸Echo'], 'and so does the grid')
+    await headerAt(4).click()
     assert.deepEqual(await outlineState(), ['▾Mixed', '▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▾Echo'], 'Echo, now with an id, still opens from the grid')
-    // The group that is no section (the slide before the first one): collapsed in the grid only, and kept while away.
-    await headerAt(0).click()
-    assert.deepEqual((await gridState())[0], '▸(no section)')
-    assert.deepEqual(await outlineState(), ['▾Mixed', '▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▾Echo'], 'the outline has no such section and is unchanged')
+    const welcomeCard = page.locator(`${GRID} .grid-cell`).filter({ has: page.getByText('Welcome', { exact: true }) })
+    assert.equal(await welcomeCard.count(), 1, 'the card before the first section stays visible without a heading')
     await page.evaluate(() => window.setUi({ grid: false }))
     await page.evaluate(() => window.setUi({ grid: true }))
     await sleep(50)
-    assert.deepEqual(await gridState(), ['▸(no section)', '▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▾Echo'], 'after leaving and returning the grid still shows it collapsed')
-    await headerAt(0).click()
+    assert.equal(await welcomeCard.count(), 1, 'the unsectioned card stays visible when returning to the grid')
+    assert.deepEqual(await gridState(), ['▸Alpha', '▾Bravo', '▸Charlie', '▾Bravo', '▾Echo'])
     pass('sections with an id (below the heading, on the heading), without one, and two with the same title: each collapses and opens alone from either view, is remembered across leaving the grid and a restart, and survives the save writing ids')
   }
 

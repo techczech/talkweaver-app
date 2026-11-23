@@ -1,3 +1,4 @@
+import './lib/appTheme'
 import RecordingDeviceSettings from './components/RecordingDeviceSettings'
 // Entry of the shared Settings window (0.42): @app-patterns/settings-react's window over TalkWeaver's
 // schema and command registry, with the app's own pages (SettingsWindowPages.tsx). State and every
@@ -10,7 +11,7 @@ import type { SectionRequest, SettingsView } from '@app-patterns/settings-electr
 import '@app-patterns/settings-react/settings.css'
 import './settings-page.css'
 import { MENUS, registry } from '../../shared/bridle-commands'
-import { schema } from '../../shared/settings-schema'
+import { schema, THEME_SETTING } from '../../shared/settings-schema'
 import { speechLanguageName } from '../../shared/speech-locales'
 import { BackupsPage, CloudflarePage, GetStartedPage } from './components/SettingsWindowPages'
 import { SetupFolderPage } from './components/SetupFolderPage'
@@ -25,6 +26,7 @@ type Bridge = import('@app-patterns/settings-electron').SettingsBridge
 const bridge = (window as unknown as { bridleSettings: Bridge }).bridleSettings
 
 const ROW_HINTS: Record<string, RowHint> = {
+  [THEME_SETTING]: { control: 'segmented', summary: schema.def(THEME_SETTING)?.help },
   'importing.fallback': { control: 'segmented' },
   'importing.renderer': { control: 'segmented' },
   'writing.plainFont': { control: 'segmented' },

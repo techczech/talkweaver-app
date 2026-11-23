@@ -9,6 +9,7 @@ import { readTalkOutline, writeTalkOutline } from './talk-writer.ts'
 import { researchPaths, replaceResearchLinks } from '../shared/research-links.ts'
 import type { ResearchWriteInput, ResearchWriteResult, ResearchUse, ResearchItem } from '../shared/research.ts'
 import { trackWrite } from './write-queues.ts'
+import { writeTextAtomic } from './atomic-file.ts'
 
 export interface ResearchWriteDeps extends ResearchDeps {
   trash?: (file: string) => Promise<void>
@@ -87,17 +88,20 @@ function freeFile(dir: string, name: string): string {
 function writeExisting(file: string, before: string, after: string, deps: ResearchWriteDeps): void {
   contained(file, deps)
   const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW)
-  const temp = join(dirname(file), `.research-${randomUUID()}.tmp`)
   try {
     const stat = fstatSync(fd)
     if (!stat.isFile() || stat.nlink !== 1 || readFileSync(fd, 'utf8') !== before) throw Error('The research item changed. Try again.')
-    contained(temp, deps, true)
-    writeFileSync(temp, after, { flag: 'wx', mode: stat.mode })
     contained(file, deps)
-    const current = lstatSync(file)
-    if (current.ino !== stat.ino || current.dev !== stat.dev || current.nlink !== 1 || readFileSync(file, 'utf8') !== before) throw Error('The research item changed. Try again.')
-    renameSync(temp, file)
-  } finally { closeSync(fd); rmSync(temp, { force: true }) }
+    writeTextAtomic(file, after, {
+      mode: stat.mode,
+      createParent: false,
+      beforeCommit: () => {
+        contained(file, deps)
+        const current = lstatSync(file)
+        if (current.ino !== stat.ino || current.dev !== stat.dev || current.nlink !== 1 || readFileSync(file, 'utf8') !== before) throw Error('The research item changed. Try again.')
+      },
+    })
+  } finally { closeSync(fd) }
 }
 function matchesLink(outline: string, target: string, path: string): boolean {
   try { return resolve(dirname(outline), decodeURIComponent(path.split(/[?#]/, 1)[0])) === target } catch { return false }
@@ -146,6 +150,7 @@ async function trashGroup(files: string[], talk: string, deps: ResearchWriteDeps
     for (const [i, file] of files.entries()) {
       const target = join(stage, `${i}-${basename(file)}`)
       contained(target, deps, true)
+      // Not a whole-file replacement: move an existing research file into the Trash staging folder.
       renameSync(file, target); moved.push([file, target])
     }
     await deps.trash(stage)
@@ -157,6 +162,7 @@ async function trashGroup(files: string[], talk: string, deps: ResearchWriteDeps
         try { restored = freeFile(dirname(file), basename(file)) }
         catch { restored = freeFile(dirname(file), `restored-${randomUUID()}-${basename(file)}`) }
         contained(restored, deps, true)
+        // Not a whole-file replacement: return the staged original when Trash fails.
         renameSync(target, restored)
         if (restored !== file) restoredNames.push(`${basename(file)}: ${basename(restored)}`)
       } catch (restoreError) { restoreErrors.push(String(restoreError)) }

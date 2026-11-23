@@ -7,6 +7,8 @@ import { mkdirSync, mkdtempSync, writeFileSync, statSync } from 'fs'
 import { tmpdir } from 'os'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 const tempRoot = mkdtempSync(join(tmpdir(), 'tw-insp-'))
+const shots = process.env.SHOTS ?? '/tmp'
+mkdirSync(shots, { recursive: true })
 const vault = join(tempRoot, 'vault')
 const ud = join(tempRoot, 'userData')
 mkdirSync(ud, { recursive: true })
@@ -108,11 +110,11 @@ rec('navigates to section divider by title', await walkInspectorToTitle('Section
 await assertFullDeckPreview('section divider preview uses the full deck with no chrome')
 const accentGroup = await page.locator('.tw-inspector-options').textContent().catch(() => '')
 rec('section slide offers the accent option group', /vermilion/i.test(accentGroup || '') && /emerald/i.test(accentGroup || '') && /cobalt/i.test(accentGroup || ''), (accentGroup || '').slice(0, 120))
-await page.locator('.tw-inspector-options').screenshot({ path: '/tmp/tw-accent-options.png' }).catch(() => {})
+await page.locator('.tw-inspector-options').screenshot({ path: join(shots, 'tw-accent-options.png') }).catch(() => {})
 await page.locator('.cm-line').filter({ hasText: '### Contrast slide' }).click()
 await page.waitForTimeout(600)
 rec('editor cursor moves the Inspector to the clicked slide', await inspectorTitle() === 'Contrast slide', await inspectorTitle())
-await page.locator('.tw-inspector-stage').screenshot({ path: '/tmp/tw-inspector-stage.png' }).catch(() => {})
+await page.locator('.tw-inspector-stage').screenshot({ path: join(shots, 'tw-inspector-stage.png') }).catch(() => {})
 const frameState = await page.frameLocator('.tw-inspector-stage iframe').locator('body').evaluate((b) => ({
   activeSlides: b.querySelectorAll('.slide.active').length,
   slideClasses: [...b.querySelectorAll('.slide')].map((el) => el.className).slice(0, 3),
@@ -143,7 +145,7 @@ const before = (await import('fs')).readFileSync(outlineFile, 'utf8')
 const optBtns = await page.locator('.tw-inspector-options button, .tw-inspector-options [role=button], .tw-inspector-options [tabindex]').count()
 rec('option controls present', optBtns > 0, 'controls=' + optBtns)
 // click the Body-size 'L' segmented button (definitely non-default)
-await page.screenshot({ path: '/tmp/tw-inspector-options.png' })
+await page.screenshot({ path: join(shots, 'tw-inspector-options.png') })
 await page.locator('.tw-inspector-group[data-group="font-body"] button', { hasText: /^L$/ }).first().click()
 await page.waitForTimeout(400)
 const selState = await page.locator('.tw-inspector-group[data-group="font-body"] button', { hasText: /^L$/ }).first().getAttribute('class')
@@ -331,7 +333,7 @@ const menu = await app.evaluate(({ Menu }) => {
 })
 rec('Deck menu has Inspector item', menu.length > 0, JSON.stringify(menu))
 
-await page.screenshot({ path: '/tmp/tw-inspector-live.png' })
+await page.screenshot({ path: join(shots, 'tw-inspector-live.png') })
 await app.close()
 if (failures > 0) {
   console.error(`Inspector gate failed: ${failures} assertion${failures === 1 ? '' : 's'}`)

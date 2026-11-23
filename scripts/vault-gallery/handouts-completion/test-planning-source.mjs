@@ -1,3 +1,4 @@
+import { readMainSource } from '../../lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import {readFileSync,mkdtempSync,rmSync} from 'node:fs'
 import {join} from 'node:path'
@@ -6,7 +7,7 @@ import ts from 'typescript'
 import {createPlannedRunIn} from '../../../src/main/planned-runs-ipc.ts'
 const root=mkdtempSync(join(import.meta.dirname,'plan-fixture-'))
 try {
- const index=readFileSync('src/main/index.ts','utf8')
+ const index=readMainSource()
  const callback=index.slice(index.indexOf('  sourceForPlan: async ('),index.indexOf('  hasTalk: (root, talkSlug) =>'))
  const editors=new Map([[1,{outlinePath:'/vault/b/same-outline.md'}]])
  const sourceForPlan=vm.runInNewContext(ts.transpile('({'+callback+'})',{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}),{editorWindows:editors,verifiedRunSource:async()=> 'b/same-outline.md',writableRootFor:()=>root,writableVaultRoot:()=>root,vaultRegistry:{get:()=>({root})}}).sourceForPlan

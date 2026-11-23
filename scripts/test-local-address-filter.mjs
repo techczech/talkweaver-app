@@ -369,6 +369,7 @@ await test('wiring: default and explicitly isolated windows each retain their re
     if (path.endsWith('local-address-filter.ts')) continue
     if (path.endsWith('update-notices.ts')) continue // the one allowed partition, checked below
     if (path.endsWith('update-installer.ts')) continue // electron-updater's own partition, checked below
+    if (path.endsWith('update-hosts.ts')) continue // the listener for electron-updater's partition, checked below
     if (path.endsWith('live-page-host.ts')) continue // the live page's own session, checked below
     if (['offline-page-capture.ts', 'embed-preview-artwork.ts', 'thumbnails.ts'].some(name => path.endsWith('/' + name)) && /\bfromPartition\(/.test(code)) {
       assert.match(text, /hardenLivePageSession\(isolated/, `${path}: deny permissions and filter remote requests`)
@@ -395,7 +396,7 @@ await test('wiring: default and explicitly isolated windows each retain their re
     assert.ok(!/\bfromPartition\(|\bpartition\s*:/.test(withoutLivePage), `${path} gives a window another session, which this filter does not cover`)
   }
   // Only capture-network adds restrictive capture headers. Existing CSP/framing headers are retained, tested below; the live presenter host never uses it.
-  const expected = ['capture-network.ts:onHeadersReceived', 'index.ts:onBeforeSendHeaders', 'live-page-host.ts:onBeforeRequest', 'local-address-filter.ts:onBeforeRequest']
+  const expected = ['capture-network.ts:onHeadersReceived', 'index.ts:onBeforeSendHeaders', 'live-page-host.ts:onBeforeRequest', 'local-address-filter.ts:onBeforeRequest', 'update-hosts.ts:onBeforeRequest']
   for (const name of ['offline-page-capture.ts', 'thumbnails.ts']) if (existsSync(join(mainDir, name)) && /webRequest\s*\.\s*onBeforeRequest\(/.test(readFileSync(join(mainDir, name), 'utf8'))) expected.push(`${name}:onBeforeRequest`)
   assert.deepEqual(registrations.sort(), expected.sort())
   const host = readFileSync(join(mainDir, 'live-page-host.ts'), 'utf8')
@@ -407,7 +408,11 @@ await test('the in-place update download (ADR-0044): electron-updater\'s own in-
   const text = readFileSync(join(mainDir, 'update-installer.ts'), 'utf8').replace(/\/\/.*$/gm, '')
   assert.deepEqual([...text.matchAll(/fromPartition\(([^)]*)\)/g)].map((m) => m[1].trim()), ['UPDATER_PARTITION, { cache: false }'])
   assert.match(text, /UPDATER_PARTITION = 'electron-updater'/, 'the partition electron-updater itself uses (electronHttpExecutor NET_SESSION_NAME)')
-  assert.match(text, /if \(deps\.filterLocalAddresses\) installLocalAddressFilter\(session\.fromPartition\(UPDATER_PARTITION, \{ cache: false \}\)\)/)
+  assert.match(text, /if \(deps\.filterLocalAddresses\) installUpdaterRequestFilter\(session\.fromPartition\(UPDATER_PARTITION, \{ cache: false \}\), /)
+  // ADR-0044 §7: one listener on that session: GitHub's release hosts only, then this same local-address rule.
+  const hosts = readFileSync(join(mainDir, 'update-hosts.ts'), 'utf8')
+  assert.match(hosts, /const local = localAddressRequestListener\(\{ resolveHost, log \}\)/)
+  assert.match(hosts, /session\.webRequest\.onBeforeRequest\(\{ urls: \[\.\.\.FILTERED_URL_PATTERNS\] \}, updaterRequestListener\(local, log\)\)/)
   const notices = readFileSync(join(mainDir, 'update-notices.ts'), 'utf8')
   assert.match(notices, /filterLocalAddresses: test\.harness === null,/, 'only a test harness (loopback stand-in) goes without the filter')
   const electronHttp = readFileSync(new URL('../node_modules/electron-updater/out/electronHttpExecutor.js', import.meta.url), 'utf8')

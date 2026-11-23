@@ -1,9 +1,10 @@
+import { readMainSource } from '../../lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import vm from 'node:vm'
 import {transformSync,build} from 'esbuild'
-const source=fs.readFileSync('src/main/index.ts','utf8')
+const source=readMainSource()
 const root=fs.mkdtempSync(path.resolve('scripts/vault-gallery/management-repairs/.fs-'))
 try{
  const handlers=new Map();let held=false;let refuseStrip=true;let failureMode="strip-refuse";let duringTrash=()=>{}

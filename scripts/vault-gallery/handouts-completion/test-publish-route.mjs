@@ -1,9 +1,10 @@
+import { readMainSource } from '../../lib/read-source.mjs'
 import assert from 'node:assert/strict'
-import {readFileSync} from 'node:fs'
+
 import vm from 'node:vm'
 import ts from 'typescript'
 import {join,basename,relative} from 'node:path'
-const source=readFileSync('src/main/index.ts','utf8')
+const source=readMainSource()
 const helpers=source.slice(source.indexOf('async function verifiedRunSource('),source.indexOf("ipcMain.handle('run:build-handout'"))
 const handler=source.slice(source.indexOf("ipcMain.handle('run:publish-handout'"),source.indexOf("ipcMain.handle('run:publish-handout'" )+source.slice(source.indexOf("ipcMain.handle('run:publish-handout'")).indexOf('\n//',100))
 // Capture the complete handler up to its next registration instead of testing a parallel resolver.

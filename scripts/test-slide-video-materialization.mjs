@@ -1,3 +1,4 @@
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -15,7 +16,7 @@ const mkdirInVault = (root, dir) => { if (!fs.existsSync(dir)) mkdirBelowRoot(ro
 const writable = (r) => (r && rootFs.isDirectory(r) ? r : undefined)
 
 // Exercise the registered IPC handler with real files, without launching Electron.
-const source = fs.readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+const source = readMainSource()
 const start = source.indexOf("ipcMain.handle('talk:materialize-slide-assets'")
 const end = source.indexOf('\n})', start) + 3
 let handler

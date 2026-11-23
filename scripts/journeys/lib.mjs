@@ -24,6 +24,20 @@ export const OUT_ROOT = join(REPO, 'artefacts', 'journey')
 /** The ffmpeg that `bun install` downloaded (node_modules/ffmpeg-static), as the e2e tests use it. */
 export const FFMPEG = createRequire(import.meta.url)('ffmpeg-static')
 export const pause = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// The Present split button's alternate action opens the presenter, not the single slide window.
+export async function openPresenter(app, page, timeout) {
+  const known = new Set(app.windows())
+  await page.getByRole('button', { name: 'Other ways to present', exact: true }).click()
+  await page.getByRole('menuitem', { name: /^With my notes and a timer\b/ }).click()
+  const deadline = Date.now() + timeout
+  while (Date.now() < deadline) {
+    const presenter = app.windows().find(window => !known.has(window) && !window.isClosed() && window.url().includes('presenter=1'))
+    if (presenter) return presenter
+    await pause(250)
+  }
+  return null
+}
 export const commit = () => execFileSync('git', ['rev-parse', 'HEAD'], { cwd: REPO, encoding: 'utf8' }).trim()
 
 // ── Owned processes ─────────────────────────────────────────────────────────────────────────────────

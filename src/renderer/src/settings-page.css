@@ -1,64 +1,76 @@
+@import "./app-theme.css";
+
 /* The Settings window: the shared window's own look (@app-patterns/settings-react/settings.css) plus the
    few TalkWeaver colours and faces the app's own pages (SettingsWindowPages.tsx) are drawn with.
    The main window's styles.css is not loaded here: its resets would restyle the shared window. */
-:root {
-  --panel: #fffdf8;
-  --hover: #ede8dc;
-  --line: #d9d0c1;
-  --ink: #17202a;
-  --muted: #5d6875;
-  --faint: #8a9099;
-  --oxford: #0b3a6b;
-  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
-}
 html, body, #root { height: 100%; margin: 0; }
 
 /* About is supplied by the app; keep its sole navigation row pinned below Changes. */
 .bsw-navwrap [data-section="updates"] { display: none; }
 
-/* House rule R14 (consistency batch 3): the Settings window wears the writing window's tokens: cream surfaces, the navy
+/* House rule R14 (consistency batch 3): the Settings window wears the writing window's tokens: Daylight surfaces, the blue
    primary, the app's sans face. The shared package (@app-patterns/settings-react, vendored) is not forked: its own hooks
    (--bsw-accent*, --bsw-ink2, --bsw-line on .bsw-root) carry the colours it lets an app set, and the few surface greys
    it fixes in its stylesheet are overridden here by class. */
-:root { --paper: #f7f3ea; --active: #e4ddd0; --hairline: #e3e2dc; --crimson: #9f1239; --green: #166534; --amber: #92600a; }
 .bsw-root {
-  --bsw-accent: var(--oxford); --bsw-accent-hover: #e2e9f2; --bsw-accent-dark: color-mix(in srgb, var(--oxford) 85%, black);
-  --bsw-accent-ink: var(--oxford); --bsw-accent-tint: #e2e9f2; --bsw-accent-wash: var(--paper);
-  --bsw-ink2: var(--muted); --bsw-line: var(--line);
+  --bsw-accent: var(--accent-text); --bsw-accent-hover: var(--accent-soft); --bsw-accent-dark: var(--accent-hover);
+  --bsw-accent-ink: var(--accent-text); --bsw-accent-tint: var(--accent-soft); --bsw-accent-wash: var(--paper);
+  --bsw-mono: var(--font-mono); --bsw-ink2: var(--muted); --bsw-line: var(--line);
   background: var(--paper); color: var(--ink); font-family: var(--font-ui);
 }
 .bsw-side { background: var(--panel); border-right-color: var(--line); padding-top: 28px; } /* the native close buttons (hiddenInset) sit over the top-left; keep the search field clear of them */
 .bsw-sidefoot { background: var(--paper); border-top-color: var(--line); }
 .bsw-pane { background: var(--paper); }
 .bsw-phead { background: var(--panel); border-bottom-color: var(--line); }
-.bsw-search input { background: var(--panel); border-color: var(--line); }
+.bsw-search input { background: var(--panel); border-color: var(--line-strong); }
+.bsw-tool .bsw-search2 input { background: var(--panel); color: var(--ink); border-color: var(--line-strong); }
+.bsw-tool .bsw-search2 input::placeholder { color: var(--faint); }
+.bsw-tool .bsw-search2 input:focus-visible { border-color: var(--focus); }
+.bsw-tool .bsw-search2 svg { color: var(--muted); }
+.bsw-search :is(.bsw-si, .bsw-cl) { color: var(--muted); }
 .bsw-nav:hover { background: var(--hover); }
 .bsw-nav .bsw-cnt { background: var(--hover); color: var(--muted); }
-/* R14: the chosen section is the app's one selected-row look (the Tools rail's): dark navy text on the navy tint, whether
-   or not the pointer is over it (the hover rule above would otherwise turn the shared white text pale on cream). */
-.bsw-nav.bsw-sel, .bsw-nav.bsw-sel:hover { background: var(--bsw-accent-tint); color: var(--oxford); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line); }
-.bsw-nav.bsw-sel .bsw-cnt { background: var(--panel); color: var(--oxford); }
+/* R14: the selected section shares the Tools rail’s blue text and selection tint. */
+.bsw-nav.bsw-sel, .bsw-nav.bsw-sel:hover { background: var(--bsw-accent-tint); color: var(--accent-text); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line); }
+.bsw-nav.bsw-sel .bsw-cnt { background: var(--panel); color: var(--accent-text); }
 .bsw-grp, .bsw-phead .bsw-meta { color: var(--muted); }
 .bsw-card { background: var(--panel); border-color: var(--line); }
-.bsw-card > .bsw-ch { background: var(--paper); border-bottom-color: var(--line); color: var(--muted); }
+.bsw-card > .bsw-ch { background: var(--surface-2); border-bottom-color: var(--line); color: var(--muted); }
 .bsw-row { border-bottom-color: var(--hairline); }
 .bsw-tag.bsw-app { background: var(--hover); color: var(--muted); }
-.bsw-btn { border-color: var(--line); background: var(--hover); color: var(--ink); border-radius: 6px; font-weight: 500; box-shadow: none; }
+.bsw-btn { border-color: var(--line); background: var(--hover); color: var(--ink); border-radius: var(--radius); font-weight: 500; box-shadow: none; }
 .bsw-btn:hover { background: var(--active); }
-.bsw-btn.bsw-pri { background: var(--oxford); border-color: var(--oxford); color: #fff; font-weight: 600; }
-.bsw-btn.bsw-pri:hover { background: color-mix(in srgb, var(--oxford) 85%, black); }
+.bsw-btn.bsw-pri { background: var(--oxford); border-color: var(--oxford); color: var(--on-accent); font-weight: 600; }
+.bsw-btn.bsw-pri:hover { background: var(--accent-hover); }
 .bsw-btn.bsw-dng { color: var(--crimson); }
-.bsw-btn.bsw-dngp { background: var(--crimson); border-color: var(--crimson); color: #fff; }
+.bsw-btn.bsw-dngp { background: var(--crimson); border-color: var(--crimson); color: var(--on-danger); }
 .bsw-tg.bsw-on { background: var(--oxford); }
 .bsw-insp { background: var(--panel); border-left-color: var(--line); }
 .bsw-insp > h4 { background: var(--paper); border-bottom-color: var(--line); color: var(--muted); }
 .bsw-tag.bsw-none { background: var(--hover); color: var(--muted); }
 .bsw-nav svg, .bsw-phead > svg { color: var(--muted); }
-.bsw-nav.bsw-sel svg { color: var(--oxford); }
+.bsw-nav.bsw-sel svg { color: var(--accent-text); }
 .bsw-rcfoot { background: var(--paper); border-top-color: var(--line); }
 
-/* Recording uses the same cream cards and navy controls as the other Settings pages. */
+/* Shared Settings controls retain their geometry and use the host palette. */
+.bsw-root :is(.bsw-sel2, .bsw-txt, .bsw-num, .bsw-path, .bsw-kbd, .bsw-seg, .bsw-segf, .bsw-kv, .bsw-sheet, .bsw-rci) {
+  background: var(--panel); border-color: var(--line-strong); color: var(--ink);
+}
+.bsw-root :is(.bsw-h, .bsw-path svg, .bsw-sel2 svg, .bsw-num .bsw-u, .bsw-num .bsw-st, .bsw-sheet p, .bsw-ib p, .bsw-secv, .bsw-rci .bsw-o) { color: var(--muted); }
+.bsw-root :is(.bsw-num .bsw-st, .bsw-seg button, .bsw-segf button) { border-color: var(--line-strong); }
+.bsw-root :is(.bsw-seg, .bsw-segf) button.bsw-on { background: var(--accent); color: var(--on-accent); }
+.bsw-root .bsw-segf button.bsw-on em { color: var(--on-accent); }
+.bsw-root .bsw-segf button em { background: var(--hover); color: var(--muted); }
+.bsw-root .bsw-segf button.bsw-on em { background: transparent; }
+.bsw-root :is(.bsw-row.bsw-agent, .bsw-rci.bsw-fresh) { background: var(--accent-soft); box-shadow: inset 3px 0 var(--oxford); }
+.bsw-root .bsw-row.bsw-agent.bsw-sel { box-shadow: inset 0 0 0 2px var(--oxford); }
+.bsw-root .bsw-row.bsw-agent .bsw-t::before { background: var(--oxford); }
+.bsw-root :is(.bsw-alink, .bsw-tag.bsw-ag, .bsw-kbd.bsw-rec) { color: var(--accent-text); }
+.bsw-root .bsw-tag.bsw-ag { background: var(--accent-soft); }
+.bsw-root :is(.bsw-row.bsw-err .bsw-h.bsw-e, .bsw-sheet h3 svg, .bsw-kbd.bsw-conf) { color: var(--crimson); }
+.bsw-root :is(.bsw-nav, .bsw-seg button, .bsw-segf button):focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.bsw-root mark { background: var(--amber-bg); color: var(--amber); }
+
 .recording-settings-page { padding: 4px 20px 20px; font: 13px/1.5 var(--font-ui); max-width: 760px; }
 .recording-settings-page p { margin: 12px 0; }
 .recording-device-settings { border-bottom: 1px solid var(--line); margin-bottom: 16px; padding-bottom: 12px; }

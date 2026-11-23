@@ -1,3 +1,4 @@
+import { readMainSource } from '../../../lib/read-source.mjs'
 import {execFileSync} from 'node:child_process'
 const pinned=p=>fs.readFileSync(p,'utf8')
 import assert from 'node:assert/strict'
@@ -131,7 +132,7 @@ try {
   let releaseRetire;const gate=new Promise(r=>releaseRetire=r);let retiring=false;
   const env={ipcMain:{handle:(k,v)=>handlers.set(k,v)},movedEditorReceipts:new Map([[1,receipt]]),editorWindows:new Map([[1,entry]]),retiredMovePaths:new Map(),outlineRecovery:{save:async(p,t)=>{if(retiring)await gate;await h.store.save(p,t)}}};
   env.validMoveReceipt=()=>receipt.retired?null:receipt;
-  vm.createContext(env);const main=pinned('src/main/index.ts');
+  vm.createContext(env);const main=readMainSource();
   {const start=main.indexOf("ipcMain.handle('window:adopt-moved-talk'");vm.runInContext(transformSync(main.slice(start,main.indexOf('\n})',start)+3),{loader:'ts'}).code,env)}
   for(const name of ['preserve','retire']){const start=main.indexOf("ipcMain.handle('window:"+name+"-moved-talk'");vm.runInContext(transformSync(main.slice(start,main.indexOf('\n})',start)+3),{loader:'ts'}).code,env);h.window.tw.windows[name+'MovedTalk']=(from,text)=>handlers.get('window:'+name+'-moved-talk')({sender:{id:1}},from,text)}
   const {adoptMovedTalk}=await import('../../../../src/renderer/src/lib/talkSelection.ts');let acknowledge,entered;const confirming=new Promise(r=>entered=r);

@@ -14,7 +14,7 @@ const pass=name=>{results.push(name);console.log('PASS '+name)}
 try {
  for(const path of [userData,home,join(fixture,'tmp'),join(fixture,'trash')])mkdirSync(path,{recursive:true})
  cpSync(join(repo,'e2e/fixtures/slide-set-aside'),join(vault,'target'),{recursive:true})
- writeFileSync(join(userData,'config.json'),JSON.stringify({vaultRoot:vault,editorViewMode:'markdown'}))
+ writeFileSync(join(userData,'config.json'),JSON.stringify({vaultRoot:vault,openInView:'markdown'}))
  assert.equal(JSON.parse(readFileSync(join(userData,'config.json'))).vaultRoot,vault)
  const env={...process.env,HOME:home,TMPDIR:join(fixture,'tmp'),NODE_COMPILE_CACHE:join(fixture,'compile-cache'),TW_E2E:'1',TW_REC_TEST:'1',TW_E2E_TRASH_DIR:join(fixture,'trash')};delete env.ELECTRON_RUN_AS_NODE
  app=await electron.launch({args:['.',`--user-data-dir=${userData}`,'--use-mock-keychain'],cwd:repo,env})

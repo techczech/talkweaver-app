@@ -6,6 +6,12 @@
 import { eventMatchesEffectiveShortcut } from './store'
 
 export const SURFACE_KEYS = {
+  'new-section': 'editor.new-section',
+  'new-subsection': 'editor.new-subsection',
+  'view-slides': 'app.view-slides',
+  'view-grid': 'app.view-grid',
+  'view-plain': 'app.view-plain',
+  'view-markdown': 'app.view-markdown',
   'check-for-updates': 'app.check-for-updates',
   'whats-new': 'app.whats-new',
   'research-panel': 'app.research-panel',

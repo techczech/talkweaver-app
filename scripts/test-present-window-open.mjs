@@ -1,6 +1,7 @@
 // What window.open / a target="_blank" link may open from an app window (src/main/present-window-open.ts).
 // A child window that is allowed inherits its opener's preload, so only the deck's own pages and the
 // board window open in-app; web and mail links go to the OS; everything else is refused.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import vm from 'node:vm'
 import ts from 'typescript'
@@ -9,6 +10,7 @@ import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { HAND_OUT_MAX_LENGTH, contentHandOutRefusal, handOutLink } from '../src/main/hand-out.ts'
 import { appWindowOpenHandler, decideAppWindowOpen, decidePresentWindowOpen, deckHandOutRefusal, externalLinkOf, isAppAudienceUrl, isSameDeckFile, presentWindowOpenHandler, guardDeckWindowTree } from '../src/main/present-window-open.ts'
+import { presentWindowPreferences } from '../src/main/present-window-prefs.ts'
 
 let passed = 0
 const test = async (name, fn) => {
@@ -368,7 +370,7 @@ await test('the editor\'s own page opens no window: its links go through main (s
     assert.ok(!/\bwindow\.open\(/.test(text), `${path} calls window.open: it would now need a press and could not open a local address`)
     assert.ok(!/_blank/.test(text), `${path} has a target="_blank" link: the same`)
   }
-  const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const index = readMainSource()
   const handler = index.slice(index.indexOf("ipcMain.handle('shell:open-external'"), index.indexOf("ipcMain.handle('shell:open-external'") + 900)
   assert.match(handler, /const link = handOutLink\(url\)/)
   assert.match(handler, /if \(!link \|\| link\.kind !== 'web'\)/)
@@ -409,7 +411,7 @@ await test('every deck window in the tree is asked about ITS OWN presses', () =>
 })
 
 await test('wiring: index.ts gives the deck windows the press ledger', () => {
-  const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const index = readMainSource()
   assert.match(index, /const deckWindowOpenOpts = \{ \.\.\.appWindowOpenOpts, pressedRecently: \(contents: \{ id: number \}\) => pressLedger\.pressedRecently\(contents\.id\)/)
   assert.match(index, /guardDeckWindowTree\(win\.webContents, deckWindowOpenOpts\)/)
 })
@@ -418,10 +420,10 @@ await test('wiring: index.ts gives the deck windows the press ledger', () => {
 // Evaluate the actual constructor/handler options with production E2E=false. Testing only
 // TW_E2E windows would miss the covered-window freeze: those already disabled throttling.
 await test('production presentation windows keep rendering in both creation paths; E2E stays hidden', () => {
-  const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const index = readMainSource()
   const childStart = index.indexOf('const deckWindowOpenOpts = ')
   const childEnd = index.indexOf('\n\n', childStart)
-  const directStart = index.indexOf('const win = new BrowserWindow({', index.indexOf('const bridgePreload ='))
+  const directStart = index.indexOf('const win = new BrowserWindow({', index.indexOf('const deckPrefs = presentWindowPreferences('))
   const directEnd = index.indexOf('    // Keep our role+talk title', directStart)
   assert.ok(childStart >= 0 && directStart >= 0 && directEnd > directStart)
   const evaluate = (source, context) => vm.runInNewContext(ts.transpileModule(source, {
@@ -437,14 +439,15 @@ await test('production presentation windows keep rendering in both creation path
     const childOptions = child.overrideBrowserWindowOptions
     for (const mode of ['audience', 'presenter', 'window']) {
       const direct = evaluate(index.slice(directStart, directEnd) + '\nwin', {
-        E2E, winTitle: 'Synthetic presentation', bridgePreload: mode === 'audience' ? null : '/synthetic/preload.js',
+        E2E, winTitle: 'Synthetic presentation', deckPrefs: presentWindowPreferences(mode, '/synthetic'),
         BrowserWindow: function (options) { return options }, registerWindowKind: () => {}
       })
       if (direct.webPreferences.backgroundThrottling !== false) failures.push(`direct ${mode} E2E=${E2E}`)
       assert.equal(direct.webPreferences.nodeIntegration, false)
       assert.equal(direct.webPreferences.contextIsolation, true)
       assert.equal(direct.show, E2E ? false : undefined)
-      assert.equal(direct.webPreferences.preload, mode === 'audience' ? undefined : '/synthetic/preload.js')
+      assert.equal(direct.webPreferences.preload, { audience: undefined, presenter: '/synthetic/presentRecorder.js', window: '/synthetic/presentEdit.js' }[mode])
+      assert.equal(direct.webPreferences.sandbox, mode !== 'presenter', `${mode}: only the presenter (recorder) window is unsandboxed`)
     }
     if (childOptions?.webPreferences?.backgroundThrottling !== false) failures.push(`runtime audience E2E=${E2E}`)
     assert.equal(childOptions?.show, E2E ? false : undefined)

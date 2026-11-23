@@ -110,8 +110,8 @@ const corner = (options, slide = countdown(1000, 60000)) => {
 let c = corner({ qr: () => ({ svg, url: 'https://handouts.fyi/k7m2', link: true }) })
 assert.ok(c.box && c.img, 'QR present')
 assert.match(c.img.getAttribute('src'), /^data:image\/svg\+xml/)
-assert.equal(c.link.textContent, 'handouts.fyi/k7m2', 'handout link written beside the QR')
-assert.equal(c.link.querySelector('strong').textContent, '/k7m2')
+assert.equal(c.link.textContent, 'handouts.fyi', 'handout link written beside the QR')
+assert.equal(c.link.querySelector('strong'), null, 'QR captions do not embolden a path')
 assert.equal(c.inContent, null, 'corner sits outside the centred content, so it never pushes the countdown')
 c = corner({ qr: () => ({ svg, url: 'https://live.example/abc', link: false }) })
 assert.ok(c.img, 'QR without a handout')
@@ -126,16 +126,16 @@ assert.ok(c.img, 'the clock slide carries it too')
 const talkQr = { qr: () => ({ svg, url: 'https://handouts.fyi/k7m2', link: true }) }
 c = corner(talkQr, { kind: 'text', text: 'Hello', shownAt: 1000 })
 assert.ok(c.img, 'a text slide without a link shows the talk QR')
-assert.equal(c.link.textContent, 'handouts.fyi/k7m2', 'and the handout link as text')
+assert.equal(c.link.textContent, 'handouts.fyi', 'and the handout link as text')
 c = corner({ qr: () => ({ svg, url: 'https://live.example/abc', link: false }) }, { kind: 'text', text: 'Hello', shownAt: 1000 })
 assert.ok(c.img && c.link === null, 'no published handout: the QR alone, no link text')
 c = corner(talkQr, { kind: 'text', text: 'Hello', link: 'https://example.com/form', linkQrSvg: svg, shownAt: 1000 })
 assert.equal(c.box, null, 'a text slide with its own link shows that link and QR, not the talk corner')
 c = corner(talkQr, { kind: 'countdown', startedAt: 1000, durationMs: 60000, shownAt: 1000, link: 'https://example.com/form', linkQrSvg: '<svg xmlns="http://www.w3.org/2000/svg"><title>own</title></svg>' })
 assert.match(decodeURIComponent(c.img.getAttribute('src')), /<title>own<\/title>/, 'a countdown with a link: that link\'s QR in the corner')
-assert.equal(c.link.textContent, 'example.com/form', 'and that link written, not the handout')
+assert.equal(c.link.textContent, 'example.com', 'and that link written, not the handout')
 c = corner(talkQr, { kind: 'countdown', startedAt: 1000, durationMs: 60000, shownAt: 1000 })
-assert.equal(c.link.textContent, 'handouts.fyi/k7m2', 'a countdown with no link: the talk')
+assert.equal(c.link.textContent, 'handouts.fyi', 'a countdown with no link: the talk')
 // Phones opt in to no QR at all: not the talk's, not a link's; the clickable link and the text remain.
 const phoneOpts = { showQr: false }
 const ownSvg = '<svg xmlns="http://www.w3.org/2000/svg"><title>own</title></svg>'
@@ -248,14 +248,15 @@ async function composer(stored) {
   assert.equal(linked.doc.getElementById('instantLinkField').hidden, false, 'the countdown has the Link field too')
   linkInput.value = 'example.com/form'
   linkInput.dispatchEvent(new linked.dom.window.Event('input', { bubbles: true }))
-  assert.match(linked.doc.querySelector('#instantComposeThumb .instant-slide-corner-link').textContent, /^example\.com\/form$/, 'preview names the link, not the handout')
+  assert.equal(linked.doc.querySelector('#instantComposeThumb .instant-slide-corner-qr img'), null, 'this preview has no generated QR yet')
+  assert.equal(linked.doc.querySelector('#instantComposeThumb .instant-slide-corner-link').textContent, 'https://example.com/form', 'without a QR or live link the preview keeps the full typeable address')
   linked.doc.getElementById('instantShow').click()
   assert.equal(linked.actions.at(-1).slide.link, 'https://example.com/form')
   assert.equal(linked.actions.at(-1).slide.endSound, 'alarm')
   linked.dom.window.close()
   // the compiled deck's compose thumbnail carries the QR and handout link
   assert.ok(fresh.doc.querySelector('#instantComposeThumb .instant-slide-corner-qr img'), 'composer preview shows the corner QR')
-  assert.equal(fresh.doc.querySelector('#instantComposeThumb .instant-slide-corner-link').textContent, 'handouts.fyi/k7m2')
+  assert.equal(fresh.doc.querySelector('#instantComposeThumb .instant-slide-corner-link').textContent, 'handouts.fyi')
   fresh.dom.window.close(); next.dom.window.close(); none.dom.window.close(); legacy.dom.window.close(); legacyOn.dom.window.close()
 }
 
@@ -282,14 +283,14 @@ async function composer(stored) {
     text: doc.querySelector('#instantComposeThumb .instant-slide-corner-link').textContent })
   open()
   const handoutQr = thumb()
-  assert.equal(handoutQr.text, 'handouts.fyi/k7m2', 'not live: QR and text are both the handout')
+  assert.equal(handoutQr.text, 'handouts.fyi', 'not live: QR and text are both the handout')
   const joinSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1H0z" fill="#123456"/></svg>'
   join({ shortUrl: 'https://handouts.fyi/live-abc', qrSvg: joinSvg })
   status('live')
   doc.querySelector('[data-instant-label]').click()
   const live = thumb()
   assert.equal(decodeURIComponent(live.src.split(',')[1]), joinSvg, 'live: the QR is the join link')
-  assert.equal(live.text, 'handouts.fyi/k7m2', 'live: the written link is still the published handout')
+  assert.equal(live.text, 'handouts.fyi', 'live: the written link is still the published handout')
   // (left open: the deck's own timers throw if the window is closed under them; the script exits below)
 }
 console.log('instant-slide QR and sound tests passed')

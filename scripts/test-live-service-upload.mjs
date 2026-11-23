@@ -49,7 +49,7 @@ import { CLOUDFLARE_API_BASE, DEPLOY_SUPERSEDED_ERROR, TOKEN_REMOVED, send } fro
 import { instantClock, keyProfile, liveWorkerDouble } from './lib/live-worker-double.mjs'
 import { REPLY_TEXT_MARK, WORKERS_SUBDOMAIN, createFakeCloudflare, fakeCloudflareFetch, workerDomainId } from './lib/cloudflare-api-stub.mjs'
 import { workerDistFiles } from './lib/worker-dist.mjs'
-import { readSource } from './lib/read-source.mjs'
+import { readMainSource, readSource } from './lib/read-source.mjs'
 import { sharedTalkLink } from '../src/shared/shared-talk.ts'
 import { runResultsLink } from '../src/shared/run-results-share.ts'
 
@@ -730,7 +730,7 @@ const NO_OVERRIDE = { override_scope: false, override_existing_origin: false, ov
     const starts = file.endsWith('live-service-key.ts') ? /(?<!\.)\bexec(?:File)?(?:Sync)?\(/ : /\bexec(?:File)?(?:Sync)?\(/
     assert.ok(!/from ['"](?:node:)?child_process['"]|wrangler-launcher|runBundledWrangler|\bspawn(?:Sync)?\(/.test(code) && !starts.test(code), `${file} imports no process or launcher module and starts nothing`)
   }
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   const body = main.slice(main.indexOf('function deployLiveWorker('), main.indexOf('async function startLocalLiveWorker('))
   assert.ok(body.includes('return deployLiveService({') && !/wrangler|spawn|launch/i.test(body.replace(/\/\/[^\n]*/g, '')), 'the main process\'s set-up hands the sequence no launcher')
   assert.ok(/shipped: \(\) => shippedLiveWorker\(\)/.test(body) && /expectedBuild: LIVE_WORKER_VERSION/.test(body))
@@ -1150,7 +1150,7 @@ const NO_OVERRIDE = { override_scope: false, override_existing_origin: false, ov
       // Settings is read only where the field is shown, saved and handed to the share-address action as the address asked for.
       {
         const strip = (code) => code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1')
-        const main = strip(readSource(join(repo, 'src/main/index.ts')))
+        const main = strip(readMainSource())
         assert.deepEqual(main.match(/linkBase:[^\n]*/g), ['linkBase: () => attachedShareLinkBase(),', 'linkBase: () => attachedShareLinkBase(),'], 'shares and Run results links: the one function')
         assert.match(main, /function attachedShareLinkBase\(\): string \| undefined \{\n  return shareLinkBase\(shareDomainRecords\(\)\)\n\}/)
         // Every function of the main process that names the typed value, by the function it is in.
@@ -1459,7 +1459,7 @@ const NO_OVERRIDE = { override_scope: false, override_existing_origin: false, ov
     const set = await setUp(w, { shipped: read })
     assert.deepEqual([set.ok, set.error, w.fake.requests.length], [false, INSTALLATION_INCOMPLETE, 0])
   }
-  const mainSource = readSource(join(repo, 'src/main/index.ts'))
+  const mainSource = readMainSource()
   assert.ok(/function shippedLiveWorker\(\)[\s\S]{0,400}readShippedFiles\(/.test(mainSource), 'the main process reads the shipped files through readShippedFiles')
   console.log('PASS 15 (fix 5): a manifest of null, an array, a number, a string or true is an incomplete installation, not a crash')
 }

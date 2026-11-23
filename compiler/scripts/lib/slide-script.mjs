@@ -22,6 +22,7 @@ import { audioChipTitle } from './audio-chip-title.mjs'
 import { shownReference } from './shown-reference.mjs'
 import { isBareUrl } from './02-triggers-layout.mjs'
 import { countQuoteBlocks, readQuoteSlideLines } from './quote-forms.mjs'
+import { SIM_FENCE_LANGS } from './simulation-fences.mjs'
 
 // Fence languages the slide renders as a picture rather than as code (06-block-renderers.mjs).
 const DIAGRAM_FENCE_LANGS = new Set(['mermaid', 'svg'])
@@ -31,7 +32,7 @@ const DIAGRAM_FENCE_LANGS = new Set(['mermaid', 'svg'])
  *          | {type:'media',alt:string}
  *          | {type:'audio',title:string}
  *          | {type:'diagram'}
- *          | {type:'code',text:string}
+ *          | {type:'code',text:string,simulationTranscript?:true}
  *          | {type:'table',rows:string[][]}} ScriptBlock */
 
 /**
@@ -74,9 +75,10 @@ function audienceTree(sourceMarkdown) {
  *   that folds its `####` children (columns, compare, cards…) this is the wider slice covering
  *   them (`scriptSourceMarkdown`): each child's title is drawn on the slide, so it becomes a
  *   paragraph before that child's text; its notes stay out like any other notes.
+ * @param {{simulationTranscript?: boolean}} [options] mark the native simulation fence replaced by its phone transcript
  * @returns {ScriptBlock[]}
  */
-export function parseSlideScript(sourceMarkdown) {
+export function parseSlideScript(sourceMarkdown, { simulationTranscript = false } = {}) {
   const blocks = []
   let chartFenceOpening = null
   // A content code fence is one `code` block, its lines verbatim (dedented by the fence's own
@@ -85,7 +87,7 @@ export function parseSlideScript(sourceMarkdown) {
   let codeFence = null
   const flushCode = () => {
     const text = codeFence.lines.join('\n').replace(/\n+$/, '')
-    if (text.trim()) blocks.push(codeFence.diagram ? { type: 'diagram' } : { type: 'code', text })
+    if (text.trim()) blocks.push(codeFence.diagram ? { type: 'diagram' } : { type: 'code', text, ...(codeFence.simulationTranscript ? { simulationTranscript: true } : {}) })
     codeFence = null
   }
 
@@ -116,8 +118,10 @@ export function parseSlideScript(sourceMarkdown) {
           lines: [],
           indent: new RegExp(`^[ \\t]{0,${indent}}`),
           // The lexer's lang is the whole info string, lowercased (03-markdown-lexer.mjs, takeFence).
-          diagram: DIAGRAM_FENCE_LANGS.has(opening.info.toLowerCase())
+          diagram: DIAGRAM_FENCE_LANGS.has(opening.info.toLowerCase()),
+          simulationTranscript: simulationTranscript && SIM_FENCE_LANGS.has(opening.info.toLowerCase())
         }
+        if (codeFence.simulationTranscript) simulationTranscript = false
         return
       }
     }
@@ -268,9 +272,10 @@ export function buildSlideScriptPayload(slides) {
     }
     // A slide that folded its `####` children (columns, compare, cards…) carries the wider slice
     // covering them as scriptSourceMarkdown (08-source-adapters.mjs, absorbFoldedChildren).
+    const hasTranscript = slide.blocks?.some((block) => block.sim?.exchanges?.some((ex) => ex.parts.some((part) => part.kind === 'activity')))
     const blocks = promotedQuoteAsQuote(addressSourceAsAttribution(parseSlideScript(typeof slide.scriptSourceMarkdown === 'string'
       ? slide.scriptSourceMarkdown
-      : slide.sourceMarkdown), slide), slide)
+      : slide.sourceMarkdown, { simulationTranscript: Boolean(hasTranscript) }), slide), slide)
     if (blocks.length) out[slide.id] = blocks
   }
   return out

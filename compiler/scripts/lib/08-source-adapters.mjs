@@ -43,6 +43,7 @@ import { readSectionColours, resolveSectionLeads, sectionLeadName } from "./sect
 import { resolveStatementOptions } from "./statement-options.mjs";
 import { LIST_STYLES, cardsLayoutDecision, deckTriggerDefaultsFrom, foldChildLayoutNodes, impliedListStyle, nodeContentLinesAndAttrs, sectionDividerDecision, slideLayoutPlan } from "./authored-layout.mjs";
 import { pictureKeyForSlide } from "./10-projections.mjs";
+import { checkPublicationFiles } from './publication-files.mjs';
 import { createAssetContainment, remoteReferenceUrl } from "./asset-containment.mjs";
 import { referenceFileName, shownReference } from "./shown-reference.mjs";
 import { withEmbedLead, embedPageTitle } from "./embed-frame.mjs";
@@ -368,8 +369,7 @@ export function parseLicense(meta) {
 // 09-output-builders). Escapes all text; the licence name links to its URL when known.
 export function renderLicenseBody(license) {
   if (!license) return "";
-  const esc = (s) => String(s == null ? "" : s)
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  const esc = escapeHtml;
   const parts = ["<h3>License</h3>"];
   if (license.name) {
     // The licence link is a web address or it is not a link (a `license-url:` is talk content).
@@ -515,14 +515,17 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
   // urgent-at never exceeds warn-at — but the clamp is now stated rather than applied in silence.
   if (urgentAtRequested > warnAtMinutes) warnings.push(`timer-threshold-clamped:urgent-at:${urgentAtRequested}:${warnAtMinutes}`);
   const urgentAtMinutes = Math.min(urgentAtRequested, warnAtMinutes);
-  // Deck font (ADR-0005, locked 2026-07-11): Trebuchet MS is the face; frontmatter
-  // `font: gill-sans` / `font: verdana` are the sanctioned user options. Anything else warns
-  // and falls back to the default stack.
-  const fontChoice = readDeckChoice(meta.font, DECK_FONTS, { aliases: { "trebuchet-ms": "trebuchet" } });
-  if (fontChoice.state === "unknown") warnings.push(`font-unknown:${fontChoice.raw}`);
-  // `trebuchet` is the locked house face: it is a documented CHOICE but stamps no attribute, so
-  // picking it is byte-identical to leaving the key out.
-  const deckFont = fontChoice.value === "trebuchet" ? "" : fontChoice.value;
+  // Bundled faces extend ADR-0005's font key; typeface is its alias.
+  // Absence differs from explicit Trebuchet: only absence takes Ocean's Inter default.
+  if (Object.hasOwn(meta, "font") && Object.hasOwn(meta, "typeface") && String(meta.font).trim().toLowerCase() !== String(meta.typeface).trim().toLowerCase()) warnings.push("font-both-keys");
+  const fontValue = meta.font ?? meta.typeface;
+  const fontChoice = readDeckChoice(fontValue, DECK_FONTS, { aliases: { "trebuchet-ms": "trebuchet" } });
+  if (fontChoice.state === "unknown") {
+    // The frontmatter reader represents a blank value as an empty mapping.
+    const blank = typeof fontValue === "object" && Object.keys(fontValue).length === 0;
+    warnings.push(`font-unknown:${blank ? "(empty)" : fontChoice.raw}`);
+  }
+  const deckFont = fontChoice.value;
   // Deck-level logo colour (Task 9a): by default a {logolist} slide that mixes full-colour svgl
   // marks with single-colour silhouette-only marks is brought to one deck accent colour so the row
   // reads as one system (applySlideMonochrome, in 07-assembly). Frontmatter `logo-colour: brand`
@@ -681,13 +684,14 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
   // then mapBlocksToLayout) so it renders FULL-BLEED via the normal renderers — NOT card-chrome.
   // The returned object is shaped for renderSlideContent in 07-assembly (title/kicker/layout/blocks
   // + the title attrs it reads). `kicker` is the parent slide's shared context (section eyebrow).
-  function buildCarouselSubSlide(title, rawSubBlocks, kicker) {
+  function buildCarouselSubSlide(title, rawSubBlocks, kicker, mediaOptions = {}) {
     const probe = { attrs: {}, lines: [], cards: [] };
     // inferLayout reads s.lines (it re-lexes) and s.cards — give it pre-lexed blocks via a shim:
     // we lex once here and let inferLayout see the same blocks by stashing them on `lines` is not
     // possible, so instead derive the layout from the blocks directly using the same rules.
     const subLayout = inferLayoutFromBlocks(rawSubBlocks);
     const mapped = mapBlocksToLayout(subLayout, rawSubBlocks);
+    const hasMedia = rawSubBlocks.some(block => block && ["image", "video", "embed", "qr", "media-row", "image-row"].includes(block.type));
     return {
       title: title || "",
       kicker: kicker || "",
@@ -696,7 +700,8 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
       // A sub-slide draws its own visible title by default (full slide behaviour). Quote/statement
       // layouts keep their own title defaults via renderSlideContent (quote = nav-only).
       titleMode: "",
-      noTitle: false,
+      noTitle: hasMedia && mediaOptions.noTitle === true,
+      ...(hasMedia && mediaOptions.mediaTitle === "overlay" ? { mediaTitle: "overlay" } : {}),
       colsCount: "",
       split: "",
       titleTop: false,
@@ -1079,7 +1084,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
         // full slide, so a card with multiple quotes simply renders both — no per-quote split.)
         const cardSubs = slide.cards.map((c) => {
           const subBlocks = featurizeCardBlocks(quotifyCardBlocks(lexMarkdownBlocks(c.lines)));
-          return buildCarouselSubSlide(c.title, subBlocks, subKicker);
+          return buildCarouselSubSlide(c.title, subBlocks, subKicker, c);
         });
         slide.carousel = [...leadSubs, ...cardSubs];
         // The leading media cards come before the #### cards: the sequencer gives them beats of
@@ -1139,7 +1144,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
     // tokens took the slide over (the divider layout is gone, so its role must go with it: a
     // tokened parent heading compiles exactly like the same heading without children), or unless
     // the author named a role outright, which always wins over the derivation.
-    const derivedSectionRole = slide.isSection && !(dividerDecision.structural && !dividerDecision.divider)
+    const derivedSectionRole = dividerDecision.divider || (slide.isSection && !dividerDecision.structural)
       ? (slide.nodeLevel <= 2 ? "section-title" : "subsection-title")
       : "";
     const parsedRole = slide.attrs.role === "section-title" || slide.attrs.role === "subsection-title"
@@ -1256,6 +1261,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
       // {reveal=steps} attr is kept as an alias for {mode=reveal} (documented; migrate lazily).
       mode: simulationMode(layout, resolveAuthoredMode(slide.attrs)),
       titleMode: slide.attrs.title === "show" || slide.attrs.title === "compact" ? slide.attrs.title : "",
+      ...(slide.attrs["media-title"] === "overlay" ? { mediaTitle: "overlay" } : {}),
       // {notitle}: drop the on-slide heading (nav-only sr-only h1 stays). Title-less statement etc.
       noTitle: slide.attrs.notitle === true,
       // {columns} column count: explicit {cols=N} (also set by {2col}/{3col}); empty = auto.
@@ -1620,7 +1626,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
         current.sectionTimer = timer || null;
         current.subsection = null;
         sections.push(current.section);
-      } else if (isSection && node.level > 2 && current.section) {
+      } else if ((isSection || node.attrs?.role === "subsection-title") && node.level > 2 && current.section) {
         current.subsection = { id: node.id, section: current.section.id, title: node.title };
         subsections.push(current.subsection);
       }
@@ -2492,12 +2498,14 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
         refuse(slideId, block.src);
         return unresolvedBlock(block);
       }
-      if (!found) {
+      const missing = () => {
         model.warnings.push(`missing-asset:${slideId}:${containment.label(block.src)}`);
         return unresolvedBlock(block);
-      }
+      };
+      if (!found) return missing();
       const absolute = found.real;
-      const info = await stat(absolute);
+      const info = await stat(absolute).catch(() => null);
+      if (!info) return missing();
       // videoRef: the reference as authored, kept on the <video> (data-video-ref) so a recording can name the original file.
       const out = { ...block, videoName: referenceFileName(block.src), videoRef: block.src };
       // Poster: a sibling image with the same stem (talk.mp4 → talk.png/.jpg/.jpeg/.webp),
@@ -2520,7 +2528,8 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
       }
       const mime = VIDEO_MIME_TYPES.get(extname(found.lexical).toLowerCase()) || "video/mp4";
       if (budget.allowsVideo(info.size)) {
-        const inlined = await inlineDataUri(absolute, mime);
+        const inlined = await inlineDataUri(absolute, mime).catch(() => null);
+        if (!inlined) return missing();
         budget.spend(info.size);
         return { ...out, src: inlined.uri };
       }
@@ -2548,15 +2557,18 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
         refuse(slideId, block.src);
         return unresolvedBlock({ ...block, audioName: unresolvedAudioName });
       }
-      if (!found) {
+      const missing = () => {
         model.warnings.push(`missing-asset:${slideId}:${containment.label(block.src)}`);
         return unresolvedBlock({ ...block, audioName: unresolvedAudioName });
-      }
+      };
+      if (!found) return missing();
       const absolute = found.real;
-      const info = await stat(absolute);
+      const info = await stat(absolute).catch(() => null);
+      if (!info) return missing();
       const out = { ...block, audioName: basename(block.src.split(/[?#]/)[0]) };
       if (budget.allowsVideo(info.size)) {
-        const inlined = await inlineDataUri(absolute, AUDIO_MIME_TYPES.get(extname(found.lexical).toLowerCase()) || "audio/mpeg");
+        const inlined = await inlineDataUri(absolute, AUDIO_MIME_TYPES.get(extname(found.lexical).toLowerCase()) || "audio/mpeg").catch(() => null);
+        if (!inlined) return missing();
         budget.spend(info.size);
         return { ...out, src: inlined.uri };
       }
@@ -2588,7 +2600,11 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
       // Self-contained: the HTML document is inlined into the slide. No external file, no copy
       // step — survives Present (even from tmpdir), build, and a shared standalone file. The frame
       // that will hold it is sandboxed with an opaque origin (ticket 11; embed-frame.mjs).
-      const page = await readFile(absolute, "utf8");
+      const page = await readFile(absolute, "utf8").catch(() => null);
+      if (page === null) {
+        model.warnings.push(`missing-asset:${slideId}:${containment.label(block.src)}`);
+        return { ...block, src: shownName(block.src), missing: true };
+      }
       const srcdoc = withEmbedPolicy(page);
       const pageTitle = embedPageTitle(page);
       return { ...block, srcdoc, ...(pageTitle ? { pageTitle } : {}), shownName: shownName(block.src) };
@@ -2834,6 +2850,7 @@ async function prepareSourceModel(sourcePath, sourceText, explicitTitle, sourceS
     // the talk's vault). With none given, the talk's own folder is the only one.
     const sourceDir = dirname(resolve(sourcePath));
     const containment = createAssetContainment(Array.isArray(options?.allowedAssetRoots) ? options.allowedAssetRoots : [sourceDir], options.galleryAcquiredAssets);
+    if (options.publicationPreflight) return { publicationFiles: await checkPublicationFiles(model, sourceDir, containment) };
     model.pictureKeys = await pictureKeysForModel(model, sourceDir, containment);
     await addPictureText(model, sourceDir, containment, options?.pictureText);
     // Projections-only (search index / cross-talk search): buildPerSlideProjections reads model.slides

@@ -86,7 +86,11 @@ function renderInlineEscaped(text) {
       return `<a href="${safe}"${titleAttr} target="_blank" rel="noopener">${label}</a>`;
     });
     out = out.replace(/(^|[\s(])(https?:\/\/[^\s<]+?)([.,;:)\]]*)(?=\s|$|<)/g,
-      (_, lead, url, trail) => `${lead}<a href="${url}" target="_blank" rel="noopener">${url}</a>${trail}`);
+      (_, lead, url, trail) => {
+        // The text is already escaped: a trailing ; that closes an entity (it's → it&#39;s) is not punctuation.
+        if (trail[0] === ";" && /&#?[a-z0-9]+$/i.test(url)) { url += ";"; trail = trail.slice(1); }
+        return `${lead}<a href="${url}" target="_blank" rel="noopener">${url}</a>${trail}`;
+      });
     return out;
   };
 
@@ -101,6 +105,6 @@ function renderInlineEscaped(text) {
   const { masked, restore } = protectInlineSegments(escaped, (segment) =>
     segment.kind === "code"
       ? `<code>${renderLegacyEscaped(segment.content)}</code>`
-      : renderLegacyEscaped(segment.source));
+      : renderLegacyEscaped(segment.source), { escaped: true });
   return restore(renderLegacyEscaped(replaceInlineMarks(masked)));
 }

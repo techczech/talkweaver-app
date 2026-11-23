@@ -102,6 +102,9 @@ function rawLines(key: string, value: string, eol: string): string[] {
  * body text and line endings. This is the single editor used by metadata and deck settings.
  */
 export function editFrontmatterText(text: string, edits: FrontmatterEdit[]): string {
+  const reverse = [...edits].reverse()
+  const fontEdit = reverse.find(edit => edit.key === 'font') ?? reverse.find(edit => edit.key === 'typeface')
+  if (fontEdit) edits = [...edits.filter(edit => edit.key !== 'font' && edit.key !== 'typeface'), { ...fontEdit, key: 'font', aliases: ['typeface'] }]
   const block = locateFrontmatter(text)
   if (!block) {
     const sets = edits.filter((edit) => edit.value !== null)
@@ -117,6 +120,18 @@ export function editFrontmatterText(text: string, edits: FrontmatterEdit[]): str
   let lines = original
   for (const edit of edits) {
     const spellings = [edit.key, ...(edit.aliases ?? [])]
+    // Font has one stored spelling: preserve the canonical key and remove conflicting aliases.
+    if (edit.key === 'font') {
+      const kept: string[] = []
+      for (let at = 0; at < lines.length; at++) {
+        if (/^(?:font|typeface):/.test(lines[at])) {
+          while (at + 1 < lines.length && /^[ \t]/.test(lines[at + 1])) at++
+        } else kept.push(lines[at])
+      }
+      lines = kept
+      if (edit.value !== null) lines.push(`font: ${serializeYamlValue(edit.value)}`)
+      continue
+    }
     const index = lines.findIndex((line) => {
       const match = line.match(/^([A-Za-z0-9_-]+):/)
       return match !== null && spellings.includes(match[1])

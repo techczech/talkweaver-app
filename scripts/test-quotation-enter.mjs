@@ -9,12 +9,11 @@
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
-import { chromium } from 'playwright'
+import { launchEditorTestBrowser, reportMissingEditorTestBrowser } from './lib/editor-test-browser.mjs'
 
-const SHELL = join(homedir(), '.cache/puppeteer/chrome-headless-shell/mac_arm-146.0.7680.66/chrome-headless-shell-mac-arm64/chrome-headless-shell')
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'talk-weaver-quotation-enter-'))
 const outfile = join(dir, 'bundle.js')
@@ -55,9 +54,10 @@ window.bindsShiftEnter = () => buildEditorKeyBindings().filter((b) => b.key === 
 `
 await build({ stdin: { contents: entry, resolveDir: root, loader: 'js' }, bundle: true, format: 'iife', outfile, logLevel: 'silent' })
 
-const browser = await chromium.launch({ executablePath: SHELL, headless: true })
+let browser
 let ran = 0
 try {
+  browser = await launchEditorTestBrowser()
   const page = await browser.newPage()
   await page.setContent('<div id="host"></div>')
   await page.addScriptTag({ path: outfile })
@@ -178,7 +178,9 @@ try {
     assert.equal(await shown(), '> First paragraph.|')
   })
   console.log(`quotation enter ok: ${ran} cases; two Enters leave a quotation with one blank line, Shift-Enter starts a paragraph in it, and lists, code blocks and other lines are as they were`)
+} catch (error) {
+  reportMissingEditorTestBrowser(error)
 } finally {
-  await browser.close()
+  await browser?.close()
   rmSync(dir, { recursive: true, force: true })
 }

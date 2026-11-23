@@ -221,4 +221,15 @@ test('the runtime source is self-contained (with the step-ownership source the d
   assert.ok(api.simTypingUnits(slideFor('terminal', '$ ls\na  b\n$ pwd\n/home', { reveal: 'steps' }), { from: 0, to: 2, stepped: true }).length > 0, 'the inlined source finds the slide\'s own terminal')
 })
 
+test('native thought/answer bodies stream on the same clock; labels and tool rows stay complete', () => {
+  const body = 'turn user "You": Start.\nturn thought "Thinking": Check the samples.\nturn tool-call "Read": read_files sample/\nturn tool-result "Found": Three files.\nturn answer "Agent": The comparison is ready.'
+  const slide = slideFor('chat', body, { 'sim-version': '2', stream: 'on', reveal: 'steps' })
+  const units = simTypingUnits(slide, { from: 0, to: 4, stepped: true })
+  assert.deepEqual(units.map((u) => u.length > 0), [true, false, false, true])
+  assert.equal(units[0].nodes.map((n) => n.data).join(''), 'Check the samples.')
+  assert.equal(units[3].nodes.map((n) => n.data).join(''), 'The comparison is ready.')
+  const off = slideFor('chat', body, { 'sim-version': '2', reveal: 'steps' })
+  assert.deepEqual(simTypingUnits(off, { from: 0, to: 4, stepped: true }), [])
+})
+
 console.log(`sim typing: ${passed} checks passed`)

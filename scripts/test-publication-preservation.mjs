@@ -1,3 +1,4 @@
+import { readMainSource } from './lib/read-source.mjs'
 import { publicationOutcome } from '../src/main/publication-preservation.ts'
 import { readPublishingInventory } from '../src/main/publishing-inventory.ts'
 import ts from 'typescript'
@@ -329,7 +330,7 @@ test('a deployment Cloudflare refuses is definite and clears the journal for ret
 
 
 test('Go live displays the preservation sentence with its support code', async () => {
-  const source = ts.createSourceFile('index.ts', readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8'), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const source = ts.createSourceFile('main-source.ts', readMainSource(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const declaration = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'ensureLiveJoinUrl')
   assert.ok(declaration)
   const compiled = ts.transpileModule(declaration.getText(source), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText

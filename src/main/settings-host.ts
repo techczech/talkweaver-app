@@ -15,7 +15,7 @@ import { Menu } from 'electron'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { SettingsState } from '@app-patterns/settings'
-import type { SettingsStore } from '@app-patterns/settings/node'
+import { SETTINGS_FILE_NAME, WATCH_DEBOUNCE_MS, WATCH_MAX_WAIT_MS, type SettingsStore } from '@app-patterns/settings/node'
 import { installSettings, type SettingsHost } from '@app-patterns/settings-electron/main'
 import type { SecretSlots } from '@app-patterns/settings-electron'
 import { APP_ID, MENUS, appCommandIdOf, registry } from '../shared/bridle-commands'
@@ -24,6 +24,7 @@ import { schema } from '../shared/settings-schema'
 import type { MigrationOutcome } from './settings-migration'
 import type { ConfigOverlay, OverlayFile } from './settings-overlay'
 import { openSettings } from './settings-open'
+import { watchDirectory, type DirectoryWatch } from './directory-watch'
 
 /** Pages of the Settings window that are the app's own (settings-main.tsx draws them). */
 export const CUSTOM_PAGES = ['get-started', 'backups', 'cloudflare', 'setup-folder'] as const
@@ -73,6 +74,7 @@ export async function startSettingsHost(deps: SettingsHostDeps): Promise<TalkWea
     dir: deps.dir,
     appVersion: deps.appVersion,
     file: deps.file,
+    watch: false,
     log,
     ...(deps.waitBeforeWrite ? { waitBeforeWrite: deps.waitBeforeWrite } : {}),
     onChange: (keys, state) => {
@@ -95,7 +97,8 @@ export async function startSettingsHost(deps: SettingsHostDeps): Promise<TalkWea
       deps.openMain()
       deps.runInEditor(appId)
     },
-    window: deps.window,
+    // Keep the shared Settings window hidden alongside the app's other test windows.
+    window: { ...deps.window, showOnReady: process.env.TW_E2E !== '1' },
     ...(deps.slots ? { slots: deps.slots } : {}),
     extraSections: [...CUSTOM_PAGES],
     pathKind: (key) => (FILE_PATHS.has(key) ? 'file' : 'folder'),
@@ -103,12 +106,34 @@ export async function startSettingsHost(deps: SettingsHostDeps): Promise<TalkWea
   })
 
   placeUpdateCheckInAppMenu(store, deps, host)
+  // Keep SettingsStore's own directory watcher out of main. Reload still uses the store's queue.
+  let settingsWatch: DirectoryWatch | undefined
+  let reloadTimer: ReturnType<typeof setTimeout> | undefined
+  let firstChangeAt = 0
+  const reportWatchError = (error: unknown): void => log(`[settings] watching for outside changes: ${error}`)
+  try {
+    settingsWatch = watchDirectory(deps.dir, { persistent: false }, (_event, name) => {
+      if (name !== null && name !== SETTINGS_FILE_NAME) return
+      const now = Date.now()
+      if (reloadTimer) clearTimeout(reloadTimer)
+      else firstChangeAt = now
+      const delay = Math.max(0, Math.min(WATCH_DEBOUNCE_MS, firstChangeAt + WATCH_MAX_WAIT_MS - now))
+      reloadTimer = setTimeout(() => {
+        reloadTimer = undefined
+        void store.reload().catch(reportWatchError)
+      }, delay)
+      reloadTimer.unref()
+    })
+    settingsWatch.on('error', reportWatchError)
+  } catch (error) { reportWatchError(error) }
   return {
     overlay,
     host,
     store,
     migration,
     async dispose() {
+      settingsWatch?.close()
+      clearTimeout(reloadTimer)
       host?.dispose()
       await opened.close()
     }

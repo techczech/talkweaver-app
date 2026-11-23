@@ -12,6 +12,7 @@
 //     touched (the module imports none of it);
 //   - the renderer names an action by id and main holds the link; main feeds the rows from the same status functions
 //     Settings' IPC calls; the probe runs on ask, never at startup.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
@@ -183,7 +184,7 @@ await test('built-in transcription works without Python; timing and unsupported 
   assert.equal(r.action, null)
   assert.match(r.need, /external Python engine you set up/)
   assert.match(r.without, /Precise word timing is a separate setting/)
-  const main = read('src/main/index.ts')
+  const main = readMainSource()
   assert.match(main, /builtinTranscription: !!nativeSpeechHelper\(\)/)
   assert.match(read('src/renderer/src/App.tsx'), /action === 'open-transcription'\) openSettingsWindow\('get-started'\)/)
 })
@@ -330,7 +331,7 @@ await test('the action names a link and main holds the URL; the probe runs on as
   assert.deepEqual(Object.keys(GUIDE_LINKS), ['online-content-report', 'slidewell-download'])
   assert.equal(isGuideLinkId('slidewell-download'), true)
   for (const bad of ['https://example.com', 'zotero-download', '', null, undefined, 3, { id: 'slidewell-download' }]) assert.equal(isGuideLinkId(bad), false)
-  const main = read('src/main/index.ts')
+  const main = readMainSource()
   assert.ok(main.includes("ipcMain.handle('guide:connections'") && main.includes("ipcMain.handle('guide:open-link'"))
   const handler = main.slice(main.indexOf("ipcMain.handle('guide:open-link'"), main.indexOf("ipcMain.handle('guide:open-link'") + 500)
   assert.ok(handler.includes('isAppWindow') && handler.includes('isGuideLinkId(id)') && handler.includes('GUIDE_LINKS[id]'), 'checked in main; the renderer sends an id only')
@@ -340,7 +341,10 @@ await test('the action names a link and main holds the URL; the probe runs on as
     const probe = main.slice(main.indexOf('probeConnections({'), main.indexOf("ipcMain.handle('guide:connections'"))
     assert.ok(probe.includes(call), `the Guide reads ${call} too`)
   }
-  assert.equal((main.match(/probeConnections\(/g) ?? []).length, 1, 'one probe call, inside readConnections')
+  const calls = readMainSource((code, file) => file === 'src/main/guide-connections.ts'
+    ? code.replace('export async function probeConnections(', '')
+    : code)
+  assert.equal((calls.match(/probeConnections\(/g) ?? []).length, 1, 'one probe call, inside readConnections')
   assert.equal((main.match(/readConnections\(\)/g) ?? []).length, 2, 'readConnections is declared once and called by the ask handler only')
   const preload = read('src/preload/index.ts')
   assert.ok(preload.includes("connections: (): Promise<ConnectionRow[]> => ipcRenderer.invoke('guide:connections')"))

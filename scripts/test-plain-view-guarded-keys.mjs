@@ -69,8 +69,10 @@ import { search, searchPanelOpen } from '@codemirror/search'
 import { foldedRanges } from '@codemirror/language'
 import * as guardKeys from './src/renderer/src/extensions/plainView/guardKeys.ts'
 import { viewModeExtension } from './src/renderer/src/extensions/plainView/index.ts'
+import { startBodyWithBullet } from './src/renderer/src/extensions/outliner.ts'
 import { tokenProtectExtension } from './src/renderer/src/extensions/idProtect.ts'
-import { focusScopeExtension } from './src/renderer/src/extensions/focusScope.ts'
+import { focusScopeExtension, setFocusRange } from './src/renderer/src/extensions/focusScope.ts'
+import { focusRangeForSlideLine } from './src/renderer/src/components/slideFocusModel.ts'
 import { frontmatterTableExtension } from './src/renderer/src/extensions/frontmatterTable.ts'
 import { editorBaseKeymap, editorHistoryKeymap } from './src/renderer/src/extensions/editorBaseKeymap.ts'
 import { buildEditorKeyBindings } from './src/renderer/src/keymap/store.ts'
@@ -83,17 +85,18 @@ const compartment = new Compartment()
 const mac = /Mac/.test(navigator.platform)
 window.mount = (doc, mode = 'plain') => {
   document.getElementById('host').innerHTML = ''
+  const workspace = mode === 'workspace'
   const view = new EditorView({ parent: document.getElementById('host'), state: EditorState.create({
     doc, selection: EditorSelection.cursor(0),
     extensions: [
       history(), markdown({ base: markdownLanguage, codeLanguages: languages }),
-      tokenProtectExtension(), focusScopeExtension(), frontmatterTableExtension(),
+      tokenProtectExtension(), focusScopeExtension(), frontmatterTableExtension(), startBodyWithBullet.of(workspace),
       // The state the app's bound commands read (the object blocks' fields).
       appKeyState(), search(),
       keymap.of([...editorBaseKeymap]),
       // The app's own keys, as Editor.tsx installs them.
       Prec.highest(keymap.of(buildEditorKeyBindings())),
-      compartment.of(viewModeExtension(mode, { iconSvg: async () => STAR })),
+      compartment.of(viewModeExtension(workspace ? 'plain' : mode, { iconSvg: async () => STAR, hideLayoutCodes: workspace })),
       EditorView.lineWrapping,
       failOnCaughtExceptions()
     ]
@@ -121,6 +124,7 @@ window.keys = () => {
   return out
 }
 window.caret = (pos) => window.__v.dispatch({ selection: EditorSelection.cursor(pos), userEvent: 'select' })
+window.focusFirstSlide = () => setFocusRange(window.__v, focusRangeForSlideLine(window.docText(), 1))
 window.head = () => window.__v.state.selection.main.head
 window.empty = () => window.__v.state.selection.main.empty
 window.caretLine = () => window.__v.state.doc.lineAt(window.__v.state.selection.main.head).text
@@ -291,6 +295,39 @@ try {
 
   const keys = await ev(() => window.keys())
   const chords = keys.map(([name, shift, source]) => ({ name: (shift ? 'Shift-' : '') + name, key: chord(name, shift), source }))
+  await check('Slide view takes a spaced title and a real first bullet on an untitled slide', async () => {
+    for (const rest of ['\n\n', '\n{list}\n\n', '\n\n### Next slide\nNext point', '\n### Next slide\nNext point', '\n{list}\n### Next slide\nNext point']) {
+      await open('### {id=first}' + rest, 'workspace')
+      await ev(() => window.focusFirstSlide())
+      await caret(4)
+      await page.keyboard.type('Watering rota')
+      assert.match(await text(), /^### Watering rota[ ]?\{id=first\}/)
+      await page.keyboard.press('Enter')
+      assert.equal(await ev(() => window.caretLine()), '- ')
+      await page.keyboard.type('Share the tools')
+      assert.match(await text(), /^### Watering rota[ ]?\{id=first\}\n(?:\{list\}\n)?- Share the tools(?:\n|$)/)
+      if (rest.includes('Next slide')) assert.match(await text(), /\n### Next slide\nNext point$/)
+    }
+  })
+
+  await check('A divider name reads as a title in both modes and Enter selects its first child without writing', async () => {
+    for (const mode of ['plain', 'markdown']) {
+      const divider = '##  {id=section}\n{role=section-title}\n\n### First slide {id=child}\n- Point\n'
+      await open(divider, mode)
+      if (mode === 'plain') {
+        assert.ok((await ev(() => window.shown())).includes('Section name'))
+        assert.ok(!(await ev(() => window.shown())).includes('Write, or press / to insert'))
+      }
+      await caret(3)
+      await page.keyboard.type('Money')
+      const named = await text()
+      assert.match(named, /^## Money \{id=section\}/)
+      await page.keyboard.press('Enter')
+      assert.equal(await text(), named)
+      assert.match(await ev(() => window.caretLine()), /^### First slide/)
+    }
+  })
+
   await check('the key list is the editor\'s own', async () => {
     assert.ok(chords.length > 60, `${chords.length} keys were read from the keymaps`)
     assert.ok(chords.some((c) => c.name === 'Backspace') && chords.some((c) => c.name === 'Delete'), 'Backspace and Delete are among them')

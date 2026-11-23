@@ -13,8 +13,8 @@ import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdirSync, writeFileSync } from 'fs'
+import { scratchVault } from './lib/scratch-vault.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -54,7 +54,8 @@ const FIX = [
   ''
 ].join('\n')
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-hp-' + String(Date.now()) + '-'))
+using fixture = scratchVault('tw-e2e-hp-')
+const tempRoot = fixture.root
 const tempVault = join(tempRoot, 'vault')
 const userDataDir = join(tempRoot, 'userData')
 const fxDir = join(tempVault, 'hp-fixture')
@@ -65,10 +66,10 @@ mkdirSync(otherDir, { recursive: true })
 writeFileSync(join(otherDir, 'other-talk-outline.md'), '---\ntitle: Other\n---\n\n## X\n\n### Y\n{a}{id=zzz999}\n\nbody\n')
 const fxPath = join(fxDir, 'hp-fixture-outline.md')
 writeFileSync(fxPath, FIX)
-writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault }, null, 2))
+writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault, openInView: 'markdown' }, null, 2))
 
 await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
+await using app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir, '--use-mock-keychain'], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
@@ -297,6 +298,5 @@ try {
 } finally {
   const failed = results.filter((r) => !r.pass)
   console.log(`\n=== HEADING-PROTECT SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
-  await app.close()
-  process.exit(failed.length === 0 ? 0 : 1)
+  process.exitCode = failed.length === 0 ? 0 : 1
 }

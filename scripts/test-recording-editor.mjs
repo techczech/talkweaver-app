@@ -10,7 +10,7 @@ import { performance } from 'node:perf_hooks'
 import { applyEditOp, effectiveCuts, emptyEdits, fitEditsBudget, parseEdits, parseEditsText, RECORDING_EDITS_VERSION, serialiseEdits, EDITS_WRITE_BUDGET } from '../src/shared/recording-edits.ts'
 import { captionCues, chaptersFor, frameOf, keptSpans, msOfFrame } from '../src/shared/recording-video.ts'
 import { alignedCutEdge, CLEAN_CUT } from '../src/shared/transcript-contract.ts'
-import { boundaryTargets, joinsAtSentence, TARGET_WORDS, planDigest, cutWordsOp, edgeQuality, EDITOR_THRESHOLDS, editorWords, isLeftOut, leaveOutOp, moveBoundaryOp, nearestCleanEdge, projectWordTimes, putBackOp, putBoundaryBackOp, resolveRecording, restoreOp, slideRows, slideVisits, tidyProposals, wordAt, wordsRange } from '../src/shared/recording-editor.ts'
+import { boundaryTargets, captionCuesOf, joinsAtSentence, TARGET_WORDS, planDigest, cutWordsOp, edgeQuality, EDITOR_THRESHOLDS, editorWords, isLeftOut, leaveOutOp, moveBoundaryOp, nearestCleanEdge, projectWordTimes, putBackOp, putBoundaryBackOp, resolveRecording, restoreOp, slideRows, slideVisits, tidyProposals, wordAt, wordsRange } from '../src/shared/recording-editor.ts'
 import { createRecordingEditsStore } from '../src/main/recording-edits-store.ts'
 import { registerRecordingVideoIpc } from '../src/main/recording-video-ipc.ts'
 import { TAKE_STEP_OFF_ERROR, TAKES_OFF_ERROR } from '../src/shared/recording-takes.ts'
@@ -338,6 +338,19 @@ try {
     pass('Tidy up proposes long pauses, silent ends, exact repeats and marked stretches with their quality; um and er says why it is empty; nothing applies by itself')
   }
   {
+    // The original Run is silent at both ends. Its last slide has since been recorded with speech.
+    const ctx = editorWords({ words: [w('original', 3800, 4900)], silence: [{ start: 0, end: 3500 }, { start: 5000, end: 10000 }] }, 10000)
+    const marks = [{ event: 'enter', slideId: 'a', tMs: 0 }, { event: 'enter', slideId: 'b', tMs: 9000 }]
+    const takes = [{ change: 9000, run: 'spoken', durationMs: 2000, words: [w('replacement', 300, 1500)] }]
+    const recording = resolve(ctx, {}, marks, { takes })
+    assert.equal(recording.clock.inserts.length, 1)
+    assert.ok(recording.clock.inserts[0].at >= 5300, 'the original silent end would cover the new take')
+    const endOffers = (r) => tidyProposals(ctx, r.rows, marks, r.cuts, r).proposals.filter((p) => p.kind === 'ends')
+    assert.deepEqual(endOffers(resolve(ctx, {}, marks)).map((p) => p.range), [{ start: 0, end: 3200 }, { start: 5300, end: 10000 }])
+    assert.deepEqual(endOffers(recording).map((p) => p.range), [{ start: 0, end: 3200 }], 'the silent end must not offer to cut the spoken take')
+    pass('Tidy up retains safe silent suggestions and does not offer a silent end across a chosen take')
+  }
+  {
     // Exact tokens only: case and punctuation are not words; different words are never "nearly" equal.
     const ws = ['So', 'the', 'plan,', 'so', 'the', 'plan.', 'The', 'plans', 'the', 'plan'].map((t, i) => w(t, i * 300, i * 300 + 250))
     const ctx = editorWords({ words: ws }, 4000)
@@ -517,6 +530,58 @@ try {
     assert.notEqual(planDigest(ra, segA.segments), planDigest(rb, segB.segments), 'two segment-only transcripts with different text differ')
     assert.equal(planDigest(ra, segA.segments), planDigest(resolveRecording({ durationMs: 3000, edits: noEdits, marks, transcript: segA }), segA.segments))
     pass('round 3, item 4: the plan fingerprint covers the caption cues actually written, from words or from segments')
+  }
+
+  // ---- Review 2 of the 0.44.5 takes: a chosen take read again after the save panel; a take's untimed words ----
+  {
+    const marks = [{ event: 'enter', slideId: 'A', tMs: 0 }, { event: 'enter', slideId: 'B', tMs: 2000 }]
+    const a = (s0, e0) => ({ status: 'aligned', confidence: 0.9, normalised: 'x', unsupported: [], start: s0, end: e0 })
+    const takeWords = (text) => ({ words: [w(text, 100, 400, { alignment: a(100, 400) })], segments: [{ start: 100, end: 400, text }] })
+    // A Run of a talk with a 1.5 s take of slide B (its own voice and slides picture), chosen in the edits.
+    const takeSetup = async (name, takeTranscript, dialog) => {
+      const dir = join(root, name), vault = join(dir, 'vault'), ud = join(dir, 'ud'), runs = join(vault, '_PRESENTATIONS', 'talk'), rec = join(ud, 'recordings')
+      mkdirSync(runs, { recursive: true }); mkdirSync(join(rec, 'take1'), { recursive: true })
+      writeFileSync(join(runs, 'run1.json'), JSON.stringify({ id: 'run1', talkSlug: 'talk', startedAt: '2026-11-11T10:00:00Z', recordingMs: 4000, audio: { segments: [] }, slideTimeIndex: marks, capture: { layers: {} } }))
+      writeFileSync(join(runs, 'take1.json'), JSON.stringify({ id: 'take1', talkSlug: 'talk', startedAt: '2026-11-11T11:00:00Z', recordingMs: 1500, takeOf: { runId: 'run1', change: 2000, slideId: 'B' }, audio: { segments: [{ file: 'take1.webm', startMs: 0, endMs: 1500 }] }, capture: { layers: { slides: { file: 'slides.webm', bytes: 4, startMs: 0 } } } }))
+      writeFileSync(join(rec, 'take1.webm'), 'webm'); writeFileSync(join(rec, 'take1', 'slides.webm'), 'webm')
+      const handlers = new Map(), sent = [], wc = { isDestroyed: () => false, send: (...m) => sent.push(m) }, win = { isDestroyed: () => false, webContents: wc }
+      const out = { dialogs: 0, handlers, sent, rec, ev: { sender: wc }, ref: { talkSlug: 'talk', runId: 'run1' } }
+      registerRecordingVideoIpc({ ipcMain: { handle: (c, f) => handlers.set(c, f) }, toolsWindow: () => win, userDataDir: () => ud, vaultFor: () => vault, tempRecordFile: () => join(ud, 'temps.json'),
+        readiness: () => ({ ffmpeg: { found: false, path: null } }), readTranscript: async (_v, _t, runId) => { const t = runId === 'take1' ? takeTranscript(out) : null; return t ? { state: 'ok', transcript: t } : { state: 'none' } },
+        showSaveDialog: async () => { out.dialogs++; return dialog(out) }, reveal: () => {}, defaultFolder: () => dir, takesEnabled: () => true })
+      const chosen = await handlers.get('recording-video:edit')(out.ev, out.ref, { kind: 'take', change: 2000, run: 'take1' }, 0)
+      assert.equal(chosen.ok, true, JSON.stringify(chosen))
+      out.edits = chosen.edits
+      return out
+    }
+    const save = (o) => ({ canceled: false, filePath: join(root, o.ref.talkSlug + o.dialogs + '.m4a') })
+    const exportNow = (o) => o.handlers.get('recording-video:export')(o.ev, o.ref, { captions: true, chapterList: false, sound: false, revision: o.edits.edits.revision })
+    const settle = () => new Promise((done) => setImmediate(() => setImmediate(done)))
+    // Item 2: the take's slides picture is removed while the save panel is open: refused, nothing scheduled.
+    const gone = await takeSetup('take-gone', () => takeWords('kept'), (o) => { rmSync(join(o.rec, 'take1', 'slides.webm')); return save(o) })
+    const g = await exportNow(gone); await settle()
+    assert.equal(gone.dialogs, 1); assert.equal(g.ok, false, `refused: ${JSON.stringify(g)}`); assert.equal(g.jobId, undefined)
+    assert.match(g.error, /new take chosen for a slide cannot be found/); assert.deepEqual(gone.sent, [], 'no export was scheduled')
+    // Item 2: the take's words change while the save panel is open: stale, nothing scheduled.
+    let text = 'before'
+    const changed = await takeSetup('take-words', () => takeWords(text), (o) => { text = 'after'; return save(o) })
+    const c = await exportNow(changed); await settle()
+    assert.equal(changed.dialogs, 1); assert.equal(c.ok, false, `refused: ${JSON.stringify(c)}`); assert.equal(c.stale, true); assert.deepEqual(changed.sent, [], 'no export was scheduled')
+    // Unchanged across the panel, the same fixture goes on to the export.
+    const same = await takeSetup('take-same', () => takeWords('same'), save)
+    const s = await exportNow(same); await settle()
+    assert.equal(s.ok, true, JSON.stringify(s)); assert.ok(s.jobId)
+    pass('review 2, item 2: a chosen take is read again after the save panel; its files gone or its words changed refuse the export and schedule nothing')
+
+    // Item 3: "do not delete" with "not" unplaced keeps "not" in the take's row and in its caption.
+    const un = { status: 'unplaced', confidence: 0, normalised: 'not', unsupported: [], reason: 'confidence' }
+    const dnd = { words: [w('do', 0, 300, { alignment: a(0, 300) }), w('not', 1100, 1300, { alignment: un }), w('delete', 320, 700, { alignment: a(320, 700) })], segments: [{ start: 0, end: 700, text: 'do not delete' }] }
+    const t3 = await takeSetup('take-untimed', () => dnd, save)
+    const listed = await t3.handlers.get('recording-video:takes')(t3.ev, t3.ref)
+    assert.deepEqual(listed.takes[0].words.map((x) => x.text), ['do', 'not', 'delete'], 'the take\'s row keeps every word')
+    const r = resolveRecording({ durationMs: 4000, edits: t3.edits.edits, marks, transcript: null, takes: [{ change: 2000, run: 'take1', durationMs: 1500, words: listed.takes[0].words }] })
+    assert.deepEqual(captionCuesOf(r).cues.map((q) => q.text), ['do not delete'], 'and its caption')
+    pass('review 2, item 3: a take\'s word without a placed time stays in its row and rides in its neighbour\'s caption cue')
   }
 
   // ---- Record one slide again is off in 0.44.5 (takesEnabled): main refuses take requests, finds no takes,

@@ -294,3 +294,40 @@
 .sim-static .sim-panel, .sim-static .sim-term-window { box-shadow: none !important; }
 .sim-static .sim-step { opacity: 1 !important; visibility: visible !important; }
 .sim-static .sim-link { visibility: visible !important; }
+
+/* Opt-in envelope rows: Ocean surfaces, without changing any legacy selector. */
+.sim-native-rows { --col-w: 1320; --top-h: 80; --composer-h: 100; }
+.sim-native-rows .sim-behind { gap: calc(22 * var(--u)); }
+.sim-native-rows .sim-row { --k: #0d5a9e; border-left: calc(6 * var(--u)) solid var(--k); border-radius: calc(14 * var(--u)); background: #f2f4f7; padding: calc(18 * var(--u)) calc(26 * var(--u)); color: #16181d; }
+.sim-native-rows .sim-row-user { margin-left: auto; max-width: 90%; background: #e8f1fc; }
+.sim-native-rows .sim-row-tool-call { --k: #9b5700; background: #fff6e8; }
+.sim-native-rows .sim-row-tool-result { background: #e8f1fc; }
+.sim-native-rows .sim-row-status { border-left-color: #ff9f1c; }
+.sim-native-rows .sim-row-label, .sim-native-rows .sim-row .sim-toggle { display: flex; align-items: center; gap: calc(14 * var(--u)); padding: 0; color: var(--k); font: 700 calc(40 * var(--u))/1.25 var(--sans); }
+.sim-native-rows .sim-row-body { margin-top: calc(10 * var(--u)); font: 400 calc(40 * var(--u))/1.35 var(--sans); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sim-native-rows .sim-row .sim-reasoning-text { margin: calc(10 * var(--u)) 0 0; padding: 0; border: 0; color: #4a5361; font-style: normal; }
+.sim-native-rows :is(.sim-row-tool-call, .sim-row-tool-result, .sim-row-files) .sim-row-body { font: 400 calc(38 * var(--u))/1.35 var(--mono); }
+.sim-native-rows .sim-row-detail { margin-top: calc(16 * var(--u)); padding: calc(14 * var(--u)) calc(20 * var(--u)); border-left: calc(4 * var(--u)) solid #1273c4; font: 400 calc(38 * var(--u))/1.35 var(--mono); color: #4a5361; }
+.sim-native-rows .sim-row-state, .sim-native-rows .sim-row-warning { margin-top: calc(10 * var(--u)); font: 700 calc(36 * var(--u))/1.25 var(--sans); }
+.sim-native-rows .sim-row.is-superseded { display: none; }
+.sim-print-transcript { display: none; }
+@media print {
+  .sim-print-transcript { display: block; break-before: page; color: #16181d; background: #fff; padding: 1.5rem; font: 1.125rem/1.5 sans-serif; }
+  .sim-print-transcript pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 1.125rem/1.5 ui-monospace, Menlo, monospace; }
+  .sim-print-transcript h2, .sim-print-transcript h3, .sim-print-transcript h4 { break-after: avoid; }
+}
+
+.sim-native-rows .sim-topbar { background: #0d5a9e; color: #fff; justify-content: space-between; }
+.sim-native-rows .sim-model { color: #fff; font-size: calc(40 * var(--u)); }
+.sim-native-rows .sim-scripted { font-size: calc(32 * var(--u)); }
+.sim-native-rows .sim-row-thought { background: #e8f1fc; }
+.sim-native-rows .sim-row .sim-chevron { margin-left: auto; }
+.sim-native-rows .sim-row .sim-toggle { width: 100%; }
+
+.sim-native-rows.sim-static { --composer-h: 0; --composer-pad: 0; }
+.sim-native-rows.sim-static .sim-composer { display: none; }
+.sim-native-rows .sim-row-label > span, .sim-native-rows .sim-toggle > span { min-width: 0; overflow-wrap: anywhere; }
+@media print {
+  .sim-native-rows { --composer-h: 0; --composer-pad: 0; }
+  .sim-native-rows .sim-composer { display: none; }
+}

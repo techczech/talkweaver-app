@@ -1,8 +1,9 @@
-import { lstatSync,readFileSync,readdirSync,realpathSync,watch, type FSWatcher } from 'node:fs'
+import { lstatSync,readFileSync,readdirSync,realpathSync } from 'node:fs'
 import { join, resolve, relative, sep, isAbsolute } from 'node:path'
 import { spawn } from 'node:child_process'
 import type { VideoPackStatus } from '../preload/index.ts'
 import { assertPathInsideVault } from './talkTextPathSafety.ts'
+import { watchDirectory, type DirectoryWatch } from './directory-watch.ts'
 
 const regular=(path:string,kind:'file'|'directory'):boolean=>{
   try {const s=lstatSync(path);return !s.isSymbolicLink() && (kind==='file'?s.isFile():s.isDirectory())}catch{return false}
@@ -104,11 +105,11 @@ export function videoLengthReader(ffmpeg:()=>string|null):VideoLength{
 /** Native notifications plus reconciliation while subscribed: some macOS streams miss output writes.
  * IPC owns one reconciliation for all its Runs and passes zero to avoid one timer per talk. */
 export function watchVideoPackages(source:VideoStatusSource,changed:()=>void,reconcileMs=2000):()=>void{
-  let watcher:FSWatcher|undefined,timer:ReturnType<typeof setTimeout>|undefined,closed=false
+  let watcher:DirectoryWatch|undefined,timer:ReturnType<typeof setTimeout>|undefined,closed=false
   const talkDir=realpathSync(source.talkDir)
-  const notify=()=>{if(timer)clearTimeout(timer);timer=setTimeout(()=>{if(!closed)changed()},300);timer.unref()}
+  const notify=()=>{if(closed)return;if(timer)clearTimeout(timer);timer=setTimeout(()=>{if(!closed)changed()},300);timer.unref()}
   try{
-    watcher=watch(talkDir,{recursive:true},(_event,name)=>{
+    watcher=watchDirectory(talkDir,{recursive:true},(_event,name)=>{
       const file=String(name??'').replaceAll('\\','/')
       if(!file||file==='video-packs'||file.startsWith('video-packs/'))notify()
     })

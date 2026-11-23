@@ -80,6 +80,7 @@ export class AlignmentModelStore {
       }
       if(received!==pin.bytes || hash.digest('hex')!==pin.sha256)throw Error('Model checksum mismatch; file refused')
       await file.sync();await file.close();file=undefined
+      // Not a whole-file replacement: publish a streamed model only after verification.
       controller.signal.throwIfAborted();await rename(temp,target);await this.removeSuperseded(pin,true);return target
     }finally{if(file)await file.close().catch(()=>{});if(owns)await rm(temp,{force:true});this.active.delete(pin.id)}
   }
@@ -117,6 +118,7 @@ export class AlignmentModelStore {
       if (received !== pin.bytes || hash.digest('hex') !== pin.sha256) throw Error('Model checksum mismatch; file refused')
       await file.sync(); await file.close(); file = undefined
       controller.signal.throwIfAborted()
+      // Not a whole-file replacement: publish the verified, fully downloaded model.
       await rename(temp, target)
       await this.removeSuperseded(pin,true)
       return target

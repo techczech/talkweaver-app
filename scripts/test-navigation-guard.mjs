@@ -1,6 +1,7 @@
 // No window navigates away from its own page (src/main/navigation-guard.ts): a main-frame navigation
 // stays within the page's own file / origin / app-scheme host; web and mail links go to the OS;
 // everything else is refused. Driven with the URLs the app really loads.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -93,6 +94,7 @@ await test('helpers', () => {
 })
 
 await test('index.ts registers exactly the app schemes this guard knows', () => {
+  // Privileged schemes and the global navigation guard are installed at entry-point startup.
   const src = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   const block = src.slice(src.indexOf('protocol.registerSchemesAsPrivileged(['), src.indexOf('])', src.indexOf('protocol.registerSchemesAsPrivileged([')))
   const registered = [...block.matchAll(/scheme: '([a-z]+)'/g)].map((m) => m[1]).sort()
@@ -426,7 +428,7 @@ await test('guard: a hidden renderer hands nothing to the OS and navigates nowhe
 })
 
 await test('wiring: the hand-out rule is for every window; the thumbnail window is a hidden renderer', () => {
-  const src = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const src = readMainSource()
   assert.match(src, /refuseHandOut: \(_contents, link, from\) => contentHandOutRefusal\(\{ url: link, from \}\),/)
   assert.match(src, /isHiddenRenderer: \(contents\) => isHiddenRenderer\(/)
   const thumbnails = readFileSync(new URL('../src/main/thumbnails.ts', import.meta.url), 'utf8')

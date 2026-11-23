@@ -10,6 +10,8 @@
 //   4. `palette: classic` markup is byte-identical to main's: every slide section of the neutral fixtures, compiled as
 //      classic, hashed against scripts/fixtures/ocean-look/classic-markup-main.json (recorded with
 //      `node scripts/test-section-colours.mjs --record-main=<a checkout or extract of main's compiler/>`).
+//      An intentional shared-style change uses --record-current --reason=…; it must keep every source fingerprint
+//      and slide count and records its reason alongside the new hashes.
 //   5. Contrast (WCAG 2.1) of every pair the five leads set: the type on each lead and the leads as text or line on
 //      white and on the light panel. Pairs that fail are listed by name with their ratio and must match exactly:
 //      the approved colours are not adjusted, the failures are reported (build record, known limits).
@@ -51,15 +53,31 @@ async function classicHashes(compilerRoot) {
     const text = asClassic(readFileSync(path, 'utf8'))
     assert.ok(/palette: classic/.test(text), `${rel} has a title line`)
     const model = await prepare(path, text, 'classic', statSync(path), undefined, { allowedAssetRoots: [dirname(path), join(repo, 'e2e/fixtures')] })
-    out[rel] = render(model).map((markup) => createHash('sha256').update(markup).digest('hex').slice(0, 20))
+    // ++underline++ now reveals bold glyphs using strong's word wrappers. Its tag, text and
+    // step identity are unchanged; test:emphasis-steps pins the added wrappers themselves.
+    const beforeWeightReveal = markup => markup.replace(/(<u data-emph-step="underline">)([\s\S]*?)(<\/u>)/g,
+      (_, open, words, close) => open + words.replace(/<span class="es-w" data-w="[^"]*">([^<]*)<\/span>/g, '$1') + close)
+    out[rel] = render(model).map((markup) => createHash('sha256').update(beforeWeightReveal(markup)).digest('hex').slice(0, 20))
   }
   return out
 }
 const recordMain = process.argv.find((arg) => arg.startsWith('--record-main='))?.slice('--record-main='.length)
-if (recordMain) {
-  const hashes = await classicHashes(resolve(recordMain))
+const recordCurrent = process.argv.includes('--record-current')
+const updateReason = process.argv.find(arg => arg.startsWith('--reason='))?.slice('--reason='.length)
+if (recordMain || recordCurrent) {
+  if (recordCurrent) assert(updateReason, 'an intentional current-reference update needs --reason=…')
+  const hashes = await classicHashes(recordCurrent ? repo : resolve(recordMain))
   const fingerprint = Object.fromEntries(NEUTRAL.map((rel) => [rel, createHash('sha256').update(readFileSync(join(repo, rel))).digest('hex').slice(0, 20)]))
-  writeFileSync(CLASSIC_REFERENCE, `${JSON.stringify({ recordedFrom: 'origin/main f79e5ce1c', fingerprint, hashes }, null, 1)}\n`)
+  let reference = { recordedFrom: 'origin/main f79e5ce1c', fingerprint, hashes }
+  if (recordCurrent) {
+    const previous = JSON.parse(readFileSync(CLASSIC_REFERENCE, 'utf8'))
+    assert.deepEqual(fingerprint, previous.fingerprint, 'intentional shared-style update must keep the source fixtures unchanged')
+    for (const rel of NEUTRAL) assert.equal(hashes[rel].length, previous.hashes[rel].length, `${rel}: an intentional look update cannot drop slides`)
+    const changed = NEUTRAL.reduce((count, rel) => count + hashes[rel].filter((hash, i) => hash !== previous.hashes[rel][i]).length, 0)
+    reference = changed ? { ...previous, hashes, intentionalUpdates: [...(previous.intentionalUpdates || []), { date: new Date().toISOString().slice(0, 10), reason: updateReason, changedSlides: changed }] } : previous
+    console.log(`intentional classic reference: ${changed} slide hashes change; all source fingerprints retained`)
+  }
+  writeFileSync(CLASSIC_REFERENCE, `${JSON.stringify(reference, null, 1)}\n`)
   console.log(`recorded classic markup of ${NEUTRAL.length} outlines to ${CLASSIC_REFERENCE}`)
   process.exit(0)
 }
@@ -218,11 +236,11 @@ ok('palette: bold leads every section in amber', () => {
   for (const id of ['deck-title', 'one-first', 'two-first', 'three-first', 'four-first']) assert.equal(bold.bySlide[id], 'amber', id)
 })
 
-// ---- 4. classic is main's markup -------------------------------------------------------------------------
+// ---- 4. classic retains its reference, including recorded intentional shared-style updates -------------------------------------------------------------------------
 {
   const reference = JSON.parse(readFileSync(CLASSIC_REFERENCE, 'utf8'))
   const now = await classicHashes(repo)
-  ok('palette: classic slide markup is identical to main on the neutral fixtures', () => {
+  ok('palette: classic slide markup matches the historical reference plus its recorded intentional updates', () => {
     for (const rel of NEUTRAL) {
       assert.equal(createHash('sha256').update(readFileSync(join(repo, rel))).digest('hex').slice(0, 20), reference.fingerprint[rel], `${rel} changed since the reference was recorded: record it again from main`)
       assert.deepEqual(now[rel], reference.hashes[rel], rel)

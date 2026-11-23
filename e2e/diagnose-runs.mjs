@@ -2,12 +2,13 @@
 // TW_REC_TEST stubs the Cloudflare deploy seam; no network request is made.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from '../scripts/lib/test-scratch.mjs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const repo = process.cwd()
-const tempRoot = mkdtempSync(join(tmpdir(), 'talkweaver-runs-'))
+const tempRoot = testScratchDir(join(tmpdir(), 'talkweaver-runs-'))
 const vault = join(tempRoot, 'vault')
 const userData = join(tempRoot, 'userData')
 const talkSlug = 'run-probe'

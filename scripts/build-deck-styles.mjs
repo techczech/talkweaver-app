@@ -35,7 +35,7 @@ export function buildDeckStyles() {
       blocks.push({
         order: pendingOrder ?? Number.POSITIVE_INFINITY,
         sequence: sequence++,
-        css: `${node.raws.before ?? ''}${node.toString()}`
+        css: `${node.raws.before ?? ''}${node.toString()}`.replace(/url\(['"]?\.\.\/\.\.\/fonts\/([^)'"]+)['"]?\)/g, (_, name) => `url(data:font/woff2;base64,${readFileSync(join(repo, 'compiler/assets/fonts', name)).toString('base64')})`)
       })
       pendingOrder = null
     }

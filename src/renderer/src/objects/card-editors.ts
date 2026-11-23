@@ -8,6 +8,7 @@ import {
   splitSegments,
   turnContentHints,
   TURN_ROLES,
+  NATIVE_TURN_KINDS,
   type AnyRow,
   type SegmentKind,
   type Segments
@@ -127,6 +128,10 @@ function codeEditorFactory(block: ObjectBlock, replacementFor: (inner: string) =
 // ── Rows: chat turns, terminal commands, trace turns ─────────────────────────────────────────────
 
 type EditableRow = {
+  envelope?: boolean
+  label?: string
+  options?: string
+  detail?: string
   role?: string
   duration?: string | null
   content?: string
@@ -141,6 +146,7 @@ type EditableRow = {
 const NEXT_ROLE: Readonly<Record<string, string>> = { user: 'bot', 'tool-call': 'tool-results', bot: 'user' }
 
 function freshRow(kind: SegmentKind, after?: EditableRow): EditableRow {
+  if (kind === 'turns' && after?.envelope) return { envelope: true, role: after.role === 'tool-call' ? 'tool-result' : after.role === 'user' ? 'answer' : 'user', label: after.role === 'user' ? 'Agent' : 'You', options: '', detail: '', duration: null, content: '' }
   if (kind === 'turns') return { role: NEXT_ROLE[after?.role ?? ''] ?? 'user', duration: null, content: '' }
   if (kind === 'shell') return { path: after?.path ?? '', command: '', output: '', promptOnly: '' }
   return { header: 'user:', content: '' }
@@ -149,7 +155,7 @@ function freshRow(kind: SegmentKind, after?: EditableRow): EditableRow {
 function rowFields(kind: SegmentKind, row: AnyRow): EditableRow {
   if (kind === 'turns') {
     const turn = row as Extract<AnyRow, { role: string }>
-    return { role: turn.role, duration: turn.duration, content: turn.content, original: row }
+    return { role: turn.role, duration: turn.duration, content: turn.content, ...(turn.envelope ? { envelope: true, label: turn.label, options: turn.options, detail: turn.detail } : {}), original: row }
   }
   if (kind === 'shell') {
     const command = row as Extract<AnyRow, { command: string }>
@@ -171,12 +177,12 @@ function structureOf(kind: SegmentKind, rows: Array<Record<string, unknown>>): s
  * whose serialise() is lossless and whose refusal() names a row that would read back as a different
  * structure (a content line that starts a new turn or command).
  */
-export function mountRowsEditor(kind: SegmentKind, body: string, cheatSheet?: ShellCheatSheet): MountedEditor {
-  const split = splitSegments(kind, body) as Segments
+export function mountRowsEditor(kind: SegmentKind, body: string, cheatSheet?: ShellCheatSheet, version = 1): MountedEditor {
+  const split = splitSegments(kind, body, { version }) as Segments
   let rows: EditableRow[] = split.rows.map((row) => rowFields(kind, row))
   let preamble = split.preamble.join('\n')
   /** How many more rows the deck reads in the body as written than the editor splits (normally 0). */
-  const deckOffset = compiledRowCount(kind, body) - split.rows.length
+  const deckOffset = compiledRowCount(kind, body, { version }) - split.rows.length
   const host = el('div', `oe-rows oe-rows-${kind}`)
   host.tabIndex = -1
   let focusAfterRender: { row: number; field: string } | null = null
@@ -248,7 +254,7 @@ export function mountRowsEditor(kind: SegmentKind, body: string, cheatSheet?: Sh
       const last = fields[fields.length - 1]
       if (last && last.dataset.row === String(index) && last.dataset.field === name) {
         event.preventDefault()
-        insertAt(rows.length, freshRow(kind, rows[rows.length - 1]))
+        insertAt(rows.length, freshRow(kind, rows[rows.length - 1] ?? (version === 2 ? { envelope: true } : undefined)))
       }
     }
   }
@@ -273,7 +279,7 @@ export function mountRowsEditor(kind: SegmentKind, body: string, cheatSheet?: Sh
     select.addEventListener('change', () => {
       const action = select.value
       select.value = ''
-      if (action === 'above') insertAt(index, freshRow(kind, rows[index - 1]))
+      if (action === 'above') insertAt(index, freshRow(kind, rows[index - 1] ?? (version === 2 ? { envelope: true } : undefined)))
       else if (action === 'below') insertAt(index + 1, freshRow(kind, rows[index]))
       else if (action === 'up') move(index, -1)
       else if (action === 'down') move(index, 1)
@@ -299,13 +305,14 @@ export function mountRowsEditor(kind: SegmentKind, body: string, cheatSheet?: Sh
     }
     rows.forEach((row, index) => {
       const line = el('div', browse && index === current ? 'oe-row oe-row-sel' : 'oe-row')
+      if (row.envelope) line.classList.add('oe-row-envelope')
       line.append(rowMenu(index))
       if (kind === 'turns') {
         const role = el('select', 'oe-row-role')
         role.dataset.row = String(index)
         role.dataset.field = 'role'
-        role.setAttribute('aria-label', 'Role')
-        for (const name of TURN_ROLES) {
+        role.setAttribute('aria-label', row.envelope ? 'Kind' : 'Role')
+        for (const name of row.envelope ? [...new Set([...NATIVE_TURN_KINDS, String(row.role)])] : TURN_ROLES) {
           const option = el('option', '', name)
           option.value = name
           role.append(option)
@@ -313,6 +320,14 @@ export function mountRowsEditor(kind: SegmentKind, body: string, cheatSheet?: Sh
         role.value = String(row.role)
         role.addEventListener('change', () => { rows[index] = { ...rows[index], role: role.value }; render() })
         line.append(role)
+        if (row.envelope) {
+          line.append(fieldInput(index, 'label', String(row.label ?? ''), false, 'Label'))
+          const extra = el('details', 'oe-row-extra')
+          extra.append(el('summary', '', 'Detail and options'))
+          extra.append(fieldInput(index, 'options', String(row.options ?? ''), false, 'Options (open, id, ref, state)'))
+          extra.append(fieldInput(index, 'detail', String(row.detail ?? ''), true, 'Detail (optional)'))
+          line.append(extra)
+        }
         if (row.role === 'model-reasoning' || (row.duration !== null && row.duration !== undefined)) {
           line.append(fieldInput(index, 'duration', String(row.duration ?? ''), false, 'Duration'))
         }
@@ -325,7 +340,7 @@ export function mountRowsEditor(kind: SegmentKind, body: string, cheatSheet?: Sh
           hint.append(clear)
           line.append(hint)
         }
-        for (const found of turnContentHints(String(row.content ?? ''))) {
+        for (const found of row.envelope ? [] : turnContentHints(String(row.content ?? ''))) {
           const hint = el('div', 'oe-row-hint', `A line starts with "${found.word}:". TalkWeaver reads it as part of this turn. Use ${found.nearest}: `)
           const split = el('button', 'oe-row-hint-action', 'Make it a turn')
           split.type = 'button'
@@ -354,7 +369,7 @@ export function mountRowsEditor(kind: SegmentKind, body: string, cheatSheet?: Sh
     const add = el('div', 'addbar')
     const button = el('button', '', kind === 'shell' ? '+ Add command' : '+ Add turn')
     button.type = 'button'
-    button.addEventListener('click', () => insertAt(rows.length, freshRow(kind, rows[rows.length - 1])))
+    button.addEventListener('click', () => insertAt(rows.length, freshRow(kind, rows[rows.length - 1] ?? (version === 2 ? { envelope: true } : undefined))))
     add.append(button)
     host.append(add)
     if (focusAfterRender) {
@@ -416,7 +431,7 @@ export function mountRowsEditor(kind: SegmentKind, body: string, cheatSheet?: Sh
   const pasteInBrowse = (raw: string): void => {
     const text = raw.replace(/\r\n?/g, '\n')
     // The line ending a copied block usually ends with is not a blank line of the chat.
-    const pasted = splitSegments(kind, text.replace(/\n+$/, '')) as Segments
+    const pasted = splitSegments(kind, text.replace(/\n+$/, ''), { version }) as Segments
     if (pasted.rows.length && pasted.preamble.every((line) => !line.trim())) {
       // Written byte for byte only when the body takes the lines as they are (no indent of its own, LF);
       // otherwise the rows are written in the body's own indent and line ending, with the same words.
@@ -453,15 +468,18 @@ export function mountRowsEditor(kind: SegmentKind, body: string, cheatSheet?: Sh
     focus: () => (host.querySelector<HTMLElement>('[data-field]') ?? host).focus(),
     onEscape: enterBrowse,
     refusal: (source: string) => {
+      if (kind === 'turns' && rows.some((row) => row.envelope && !NATIVE_TURN_KINDS.includes(String(row.role)))) {
+        return 'unsupported row kind. Choose a supported Kind, or edit in the Markup tab'
+      }
       const expected = structureOf(kind, rows as Array<Record<string, unknown>>)
-      const reread = splitSegments(kind, source) as Segments
+      const reread = splitSegments(kind, source, { version }) as Segments
       const actual = structureOf(kind, reread.rows as unknown as Array<Record<string, unknown>>)
       const noun = kind === 'shell' ? 'command' : 'turn'
       if (expected.length === actual.length && expected.every((value, index) => value === actual[index])) {
         // The deck's own reading must find the rows the editor holds: added and removed rows are fine,
         // a row it would split or merge is not. A difference the body already had (a line ending only
         // the deck reads as a break) is kept as it was, never a reason to refuse every edit.
-        const deck = compiledRowCount(kind, source)
+        const deck = compiledRowCount(kind, source, { version })
         const wanted = rows.length + deckOffset
         if (deck === wanted) return null
         return `the slide would show ${deck} ${noun}${deck === 1 ? '' : 's'} where the editor has ${wanted}. Check the ${noun} lines, or edit in the Markup tab`
@@ -506,8 +524,9 @@ export function mountCardEditor(
     const noun = rowKind === 'shell' ? 'command' : 'turn'
     // Rows only when they are what the slide shows: a body the deck reads as a different number of rows
     // (a line ending only the deck breaks on) opens on its lines as written, never as rows that mislead.
+    const version = block.simulationVersion ?? 1
     const asRows = (source: string): boolean =>
-      compiledRowCount(rowKind, source) === (splitSegments(rowKind, source) as Segments).rows.length
+      compiledRowCount(rowKind, source, { version }) === (splitSegments(rowKind, source, { version }) as Segments).rows.length
     if (!asRows(inner)) {
       return mountShell({
         kind: `${card.label}${design} · lines as written`,
@@ -519,9 +538,9 @@ export function mountCardEditor(
     }
     return mountShell({
       kind: `${card.label}${design}`,
-      editor: mountRowsEditor(rowKind, inner, cheatSheet),
+      editor: mountRowsEditor(rowKind, inner, cheatSheet, version),
       markup,
-      parseEditor: (source) => (asRows(source) ? mountRowsEditor(rowKind, source, cheatSheet) : null),
+      parseEditor: (source) => (asRows(source) ? mountRowsEditor(rowKind, source, cheatSheet, version) : null),
       foot: `⇥ next field · ⇥ past the last adds a ${noun} · ⌃⌘↑↓ move ${noun} · esc select rows, paste adds ${noun}s · esc again leave · ⌘↵ done`,
       api,
       cheatSheet

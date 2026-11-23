@@ -1,9 +1,5 @@
-// The quiet bar at the top of an open talk when its outline file differs from what the editor holds
-// (shared-talk ticket 01): "This talk changed on disk at 09:12 · Reload · Keep mine", and its variants
-// for a talk removed on disk, a save that failed halfway, and unsaved text kept from an earlier session.
-// No dialog; the talk stays usable in every view, and saves wait (refused by the main process) until a
-// choice is made. OutlineDiskChangeSheet is the same choice when the person leaves the talk.
-// lib/outlineDiskChange.ts carries out the choice.
+// Disk-change status and leave sheet. Changed files offer Review merge; removed files,
+// partial writes and earlier-session recovery keep their existing explicit choices.
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { describeDiskChange, type OutlineDiskChange, type OutlineDiskChoice } from '../lib/outlineDiskChange';

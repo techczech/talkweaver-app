@@ -4,7 +4,10 @@ import {_electron as electron} from 'playwright'
 import * as fs from 'node:fs'
 import {resolve,join} from 'node:path'
 import {createHash} from 'node:crypto'
-const repo=resolve('.'),out=join(repo,'evidence/vault-gallery/final-electron-qualification'),fixture=fs.mkdtempSync(join(out,'fixture-')),vault=join(fixture,'vault'),home=join(fixture,'home'),ud=join(fixture,'userData'),trash=join(fixture,'trash');let app,page;const rows=[]
+const repo=resolve('.')
+const out=process.env.SHOTS ? resolve(process.env.SHOTS) : join(repo,'evidence/vault-gallery/final-electron-qualification')
+fs.mkdirSync(out,{recursive:true})
+const fixture=fs.mkdtempSync(join(out,'fixture-')),vault=join(fixture,'vault'),home=join(fixture,'home'),ud=join(fixture,'userData'),trash=join(fixture,'trash');let app,page;const rows=[]
 for(const p of [vault,home,ud,trash,join(fixture,'tmp')])fs.mkdirSync(p,{recursive:true})
 fs.cpSync(join(repo,'e2e/fixtures/slide-set-aside'),join(vault,'target'),{recursive:true})
 fs.writeFileSync(join(ud,'config.json'),JSON.stringify({vaultRoot:vault,editorViewMode:'markdown'}))

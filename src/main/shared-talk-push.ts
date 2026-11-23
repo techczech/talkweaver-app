@@ -5,9 +5,10 @@ import { createHash } from 'crypto'
 import { ownerFetch } from './owner-tokens.ts'
 import type { SharedTalkSlide } from '../shared/shared-talk.ts'
 import {
-  abortable, Cancelled, describe, errorMessage, HttpError, readJson, readRevisionSnapshot, revisionSnapshotPath, writeFileAtomic,
+  abortable, Cancelled, describe, errorMessage, HttpError, readJson, readRevisionSnapshot, revisionSnapshotPath,
   type Attempt, type PushMode, type RevisionSnapshot, type SharedTalkRecord,
 } from './shared-talk-model.ts'
+import { writeTextAtomic } from './atomic-file.ts'
 import type { ShareCore } from './shared-talk-state.ts'
 import { trackWrite } from './write-queues.ts'
 
@@ -36,7 +37,7 @@ export function createPush(core: ShareCore): { enqueue(key: string, mode: PushMo
   function keepRevision(record: SharedTalkRecord, attempt: Attempt, revision: number, pushedAt: string): void {
     try {
       const snapshot: RevisionSnapshot = { shareId: record.shareId, revision, pushedAt, slides: attempt.slides, source: attempt.source }
-      writeFileAtomic(revisionSnapshotPath(record.outlinePath, record.shareId, revision), JSON.stringify(snapshot, null, 2))
+      writeTextAtomic(revisionSnapshotPath(record.outlinePath, record.shareId, revision), JSON.stringify(snapshot, null, 2))
     } catch (error) {
       log(`[shared-talk] revision ${revision} slide text not kept: ${describe(error)}`)
     }

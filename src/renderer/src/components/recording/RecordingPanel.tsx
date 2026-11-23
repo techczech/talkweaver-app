@@ -8,7 +8,8 @@ import type { RecordingSession, Transcript } from '../../../../preload/index'
 import type { RecordingOpen } from '../../../../main/recording-video-ipc'
 import type { EditsSnapshot } from '../../../../main/recording-edits-store'
 import { trimEndAt, trimStartAt, type EditOp, type TimeRange } from '../../../../shared/recording-edits'
-import { planDigest, resolveRecording } from '../../../../shared/recording-editor'
+import { changeVideoStart, planDigest, resolveRecording, wouldCutTakeAtEnds } from '../../../../shared/recording-editor'
+import { takeEdges, trimAtPlayhead } from '../../../../shared/recording-positions'
 import { chaptersFor, faceTrack, faceTrackOnClock, planRunToEdited, silentEndSuggestions } from '../../../../shared/recording-video'
 import { recordingRunHome } from '../../../../shared/recording-run-home'
 import { LayeredPlayer, type LayeredPlayerHandle, type PlayerSource } from './LayeredPlayer'
@@ -19,6 +20,8 @@ import { mediaAwaySentence } from '../../../../shared/recording-place'
 import { useRecordingExport } from './useRecordingExport'
 import { EditorLook, EditsNoticeNote, KeptEditsSheet, StartNewEditsSheet, noticesOf } from './KeptEdits'
 import type { EditsNotice } from '../../../../shared/recording-edits-kept'
+import { saveRecordingEdit } from '../../../../shared/recording-edit-save'
+import { RecordingSaveNotice, useKeepUnsavedRecordingOpen } from './RecordingSaveNotice'
 import './recording-panel.css'
 
 export type PanelSlide = { title: string; section?: string; n: number; cards?: string[] }
@@ -54,6 +57,7 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   const [preparing, setPreparing] = useState(false)
   const [unreadable, setUnreadable] = useState<string[]>([])
   const [edits, setEdits] = useState<EditsSnapshot | null>(null)
+  const editsRef = useRef<EditsSnapshot | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
   const [runMs, setRunMs] = useState(0)
   const [playing, setPlaying] = useState(false)
@@ -61,6 +65,14 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set())
   const player = useRef<LayeredPlayerHandle>(null)
   const track = useRef<HTMLDivElement>(null)
+
+  const pending = useRef<EditOp[]>([])
+  const flushing = useRef(false)
+  const saveFailed = useRef(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [savingEdits, setSavingEdits] = useState(false)
+  const hasUnsaved = useCallback(() => pending.current.length > 0, [])
+  useKeepUnsavedRecordingOpen(hasUnsaved)
 
   // Commands for Studio's keys; set each render so they always act on the current edits.
   const actions = useRef({ trimStart: () => {}, trimEnd: () => {}, undo: () => {}, redo: () => {} })
@@ -74,12 +86,14 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   // Open the Run's layers and edits, then prepare playback copies (seconds, once per recording).
   useEffect(() => {
     let alive = true
+    editsRef.current = null
     setOpened(null); setOpenError(null); setSource(null); setEdits(null); setUnreadable([]); setEditError(null); setDismissed(new Set())
     // A window without this bridge (an older preload, a test double) shows no panel rather than failing.
     if (!window.tw.recordingVideo) { setOpenError('Playback is not available in this window.'); return }
     void window.tw.recordingVideo.open(runRef).then((r) => {
       if (!alive) return
       if (!r.ok) { setOpenError(r.error); return }
+      editsRef.current = r.edits
       setOpened(r); setEdits(r.edits); heard(r.edits)
       if (exportOnly) return
       setPreparing(true)
@@ -123,9 +137,10 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
     lastWordsKey.current = wordsKey
   }, [wordsKey, transcript?.words?.length])
   const cuts = resolved.cuts
+  const edgesOnClock = useMemo(() => takeEdges(resolved.clock), [resolved.clock])
   const spans = resolved.spans
   const editedMs = resolved.editedMs
-  const faces = useMemo(() => edits ? faceTrackOnClock(faceTrack(resolved.rows, edits.edits.faces, durationMs), resolved.clock) : undefined, [edits, resolved.rows, resolved.clock, durationMs])
+  const faces = useMemo(() => edits ? faceTrackOnClock(faceTrack(resolved.rows, edits.edits.faces, durationMs), resolved.clock, edits.edits.faces) : undefined, [edits, resolved.rows, resolved.clock, durationMs])
   const startAt = drag?.side === 'start' ? drag.at : trimStartAt(sidecarCuts)
   const endAt = drag?.side === 'end' ? drag.at : trimEndAt(sidecarCuts, durationMs)
   const camera = edits?.edits.finish.camera !== false
@@ -139,11 +154,13 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
     for (const e of enters) if (e.tMs <= t + 1) found = e.slideId
     return found ? slides[found] ?? null : null
   }, [enters, slides])
-  const suggestions = useMemo(() => silentEndSuggestions(transcript?.silence, durationMs, trimStartAt(sidecarCuts), trimEndAt(sidecarCuts, durationMs)).filter((s) => !dismissed.has(`${s.side}:${s.at}`)), [transcript?.silence, durationMs, sidecarCuts, dismissed])
+  const suggestions = useMemo(() => silentEndSuggestions(transcript?.silence, durationMs, trimStartAt(sidecarCuts), trimEndAt(sidecarCuts, durationMs)).filter((s) => {
+    const range = s.side === 'start' ? { start: 0, end: s.at } : { start: s.at, end: durationMs }
+    return !dismissed.has(`${s.side}:${s.at}`) && !wouldCutTakeAtEnds(resolved, [range])
+  }), [transcript?.silence, durationMs, sidecarCuts, dismissed, resolved])
 
   // Edits go to main one at a time, each based on the revision the previous one returned, so quick
   // clicks are applied in order rather than refused as a conflict.
-  const editsRef = useRef<EditsSnapshot | null>(null); editsRef.current = edits
   // Kept edits (0.45): what main kept instead of losing, the list, and Start new edits asked.
   const [notices, setNotices] = useState<EditsNotice[]>([])
   const [keptCount, setKeptCount] = useState(0)
@@ -155,32 +172,59 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
     if (typeof s.keptCount === 'number') setKeptCount(s.keptCount)
     else if (add.length) setKeptCount((n) => n + 1)
   }, [])
-  const replaceEdits = useCallback((s: EditsSnapshot) => { editsRef.current = s; setEdits(s); setEditError(null); saveFailed.current = null; heard(s) }, [heard])
+  const replaceEdits = useCallback((s: EditsSnapshot) => { editsRef.current = s; setEdits(s); setEditError(null); heard(s) }, [heard])
   const queue = useRef<Promise<void>>(Promise.resolve())
-  const saveFailed = useRef<string | null>(null)
-  const edit = useCallback((op: EditOp): Promise<void> => {
-    queue.current = queue.current.then(async () => {
-      const current = editsRef.current
-      if (!current) return
-      setEditError(null)
-      // The bytes these edits came from (0.45): main keeps any other version it finds there instead of writing over it.
-      const r = await window.tw.recordingVideo.edit(runRef, op, current.edits.revision, current.digest)
-      if (r.ok) { editsRef.current = r.edits; setEdits(r.edits); saveFailed.current = null; heard(r.edits) }
-      else { setEditError(r.error); saveFailed.current = r.error }
-    }).catch((e) => { saveFailed.current = String(e) })
-    return queue.current
+  const flushEdits = useCallback((): void => {
+    if (flushing.current || !pending.current.length) return
+    flushing.current = true
+    setSavingEdits(true)
+    queue.current = (async () => {
+      while (pending.current.length) {
+        const current = editsRef.current
+        const op = pending.current[0]
+        if (!current) return
+        const r = await saveRecordingEdit(() => window.tw.recordingVideo.edit(runRef, op, current.edits.revision, current.digest))
+        if (!r.ok) {
+          // Leave this operation at the front. Only Retry may send it or any later operation.
+          saveFailed.current = true
+          setSaveError(r.error)
+          return
+        }
+        pending.current.shift()
+        editsRef.current = r.edits
+        setEdits(r.edits)
+        heard(r.edits)
+      }
+      saveFailed.current = false
+      setSaveError(null)
+    })().finally(() => { flushing.current = false; setSavingEdits(false) })
   }, [runRef, heard])
-  // Export waits for every queued edit and does not start after a failed save.
+
+  const edit = (op: EditOp): void => {
+    if (saveFailed.current || !editsRef.current || editsRef.current.problem || keptOpen || startNewOpen) return
+    setEditError(null)
+    pending.current.push(op)
+    flushEdits()
+  }
+  const discardEdits = (): void => {
+    if (flushing.current) return
+    pending.current = []
+    saveFailed.current = false
+    setSaveError(null)
+  }
   const settle = useCallback(async (): Promise<{ revision: number; plan: string } | { error: string }> => {
-    await queue.current
-    if (saveFailed.current) return { error: `An edit could not be saved, so the video was not exported: ${saveFailed.current}` }
+    for (;;) { const q = queue.current; await q; if (q === queue.current) break }
+    if (pending.current.length) return { error: 'Save or discard the unsaved recording edits before exporting.' }
     const current = editsRef.current
     return current ? { revision: current.edits.revision, plan: planOf.current(current) } : { error: 'The recording is not open.' }
   }, [])
   const refresh = useCallback(() => {
     onReloadWords?.()
-    void window.tw.recordingVideo?.open(runRef).then((r) => { if (r.ok) { editsRef.current = r.edits; setEdits(r.edits); heard(r.edits) } }).catch(() => {})
-  }, [onReloadWords, runRef, heard])
+    if (hasUnsaved()) return
+    void window.tw.recordingVideo?.open(runRef).then((r) => {
+      if (r.ok && !hasUnsaved()) { editsRef.current = r.edits; setEdits(r.edits); heard(r.edits) }
+    }).catch(() => {})
+  }, [onReloadWords, runRef, heard, hasUnsaved])
 
   const time = useCallback((t: number, v: number) => { setRunMs(t); setVideoMs(v); onTime(t) }, [onTime])
   const playingChanged = useCallback((p: boolean) => { setPlaying(p); onPlaying(p) }, [onPlaying])
@@ -192,7 +236,9 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   }
   const startDrag = (side: 'start' | 'end') => (e: React.PointerEvent): void => {
     e.preventDefault(); e.stopPropagation()
+    if (saveFailed.current || editsRef.current?.problem) return
     const move = (ev: PointerEvent): void => {
+      if (saveFailed.current) { setDrag(null); return }
       const t = atPointer(ev.clientX)
       setDrag({ side, at: side === 'start' ? Math.min(t, endAt - 500) : Math.max(t, startAt + 500) })
     }
@@ -213,8 +259,14 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
     window.addEventListener('pointermove', move); window.addEventListener('pointerup', up)
   }
 
-  const trimStartHere = (): void => { void edit({ kind: 'trim-start', at: player.current?.runMs() ?? runMs }) }
-  const trimEndHere = (): void => { void edit({ kind: 'trim-end', at: player.current?.runMs() ?? runMs }) }
+  // At the playhead, on the video clock; refused inside a new take (trimAtPlayhead).
+  const trimHere = (kind: 'trim-start' | 'trim-end'): void => {
+    if (saveFailed.current) return
+    const t = trimAtPlayhead(resolved, kind, player.current?.videoMs() ?? videoMs)
+    if (t.ok) void edit(t.op); else setEditError(t.error)
+  }
+  const trimStartHere = (): void => trimHere('trim-start')
+  const trimEndHere = (): void => trimHere('trim-end')
   actions.current = { trimStart: trimStartHere, trimEnd: trimEndHere, undo: () => { void edit({ kind: 'undo' }) }, redo: () => { void edit({ kind: 'redo' }) } }
 
   const audioOnlyRun = !!opened && opened.slides.length === 0
@@ -238,10 +290,12 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
   const trimmed = startAt > 0 || endAt < durationMs
   const busy = exporting.state === 'working'
   const problem = edits.problem
+  const editsPending = savingEdits || !!saveError
+  const editsBlocked = !!problem || !!saveError
 
   if (exportOnly) return (
     <span className="twrp-export-only" data-recording-export>
-      <button className="tw-btn tw-btn--sm" disabled={busy || !!problem} onClick={() => { if (exporting.state === 'working') setExporting({ ...exporting, hidden: false }); else void exportCtl.open() }} title="Export this Run's sound, with captions if you like">
+      <button className="tw-btn tw-btn--sm" disabled={busy || !!problem || editsPending} onClick={() => { if (exporting.state === 'working') setExporting({ ...exporting, hidden: false }); else void exportCtl.open() }} title="Export this Run's sound, with captions if you like">
         <Download className="lt-icon" /> {exporting.state === 'working' ? `Exporting ${Math.round(exporting.fraction * 100)}%` : 'Export sound…'}
       </button>
       {sheet}
@@ -256,30 +310,32 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
         </button>
         <span className="twrp-clock" aria-live="off"><b>{clock(planRunToEdited(spans, videoMs))}</b> / {clock(editedMs)}{cuts.length ? <span className="twrp-of"> of {clock(durationMs)}</span> : null}</span>
  <span className="twrp-sep" />
-        <button className="twrp-icon" aria-label="Undo" title="Undo (⌘Z)" disabled={!!problem || !edits.edits.undo.length} onClick={() => void edit({ kind: 'undo' })}><Undo2 className="lt-icon" /></button>
-        <button className="twrp-icon" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={!!problem || !edits.edits.redo.length} onClick={() => void edit({ kind: 'redo' })}><Redo2 className="lt-icon" /></button>
+        <button className="twrp-icon" aria-label="Undo" title="Undo (⌘Z)" disabled={editsBlocked || !edits.edits.undo.length} onClick={() => void edit({ kind: 'undo' })}><Undo2 className="lt-icon" /></button>
+        <button className="twrp-icon" aria-label="Redo" title="Redo (⇧⌘Z)" disabled={editsBlocked || !edits.edits.redo.length} onClick={() => void edit({ kind: 'redo' })}><Redo2 className="lt-icon" /></button>
         <span className="twrp-grow" />
         {opened.hasCamera ? (
-          <button className={`twrp-switch ${camera ? 'on' : ''}`} role="switch" aria-checked={camera} aria-label="Camera" disabled={!!problem} onClick={() => void edit({ kind: 'finish', finish: { camera: !camera } })} title={camera ? 'Your camera is in the video. Click to leave it out.' : 'Your camera is left out of the video. Click to put it in.'}>
+          <button className={`twrp-switch ${camera ? 'on' : ''}`} role="switch" aria-checked={camera} aria-label="Camera" disabled={editsBlocked} onClick={() => void edit({ kind: 'finish', finish: { camera: !camera } })} title={camera ? 'Your camera is in the video. Click to leave it out.' : 'Your camera is left out of the video. Click to put it in.'}>
             {camera ? <Video className="lt-icon" /> : <VideoOff className="lt-icon" />}<span>Camera</span><span className="twrp-switch-track" aria-hidden="true"><span className="twrp-switch-knob" /></span><span className="twrp-switch-state">{camera ? 'On' : 'Off'}</span>
           </button>
         ) : null}
-        {onEdit && !audioOnly ? <button className="twrp-primary" data-edit-video disabled={!!problem} onClick={() => { player.current?.pause(); onEdit() }} title="Edit the video by its words, slide by slide"><SquarePen className="lt-icon" /><span className="twrp-label">Edit video</span></button> : null}
-        <button className={onEdit && !audioOnly ? 'twrp-btn' : 'twrp-primary'} aria-label={audioOnly ? 'Export sound…' : 'Export video…'} disabled={busy || !!problem} onClick={() => void exportCtl.open()}><Download className="lt-icon" /><span className="twrp-label twrp-l-export">{audioOnly ? 'Export sound…' : 'Export video…'}</span></button>
+        {onEdit && !audioOnly ? <button className="twrp-primary" data-edit-video disabled={!!problem || editsPending} onClick={() => { player.current?.pause(); onEdit() }} title="Edit the video by its words, slide by slide"><SquarePen className="lt-icon" /><span className="twrp-label">Edit video</span></button> : null}
+        <button className={onEdit && !audioOnly ? 'twrp-btn' : 'twrp-primary'} aria-label={audioOnly ? 'Export sound…' : 'Export video…'} disabled={busy || !!problem || editsPending} onClick={() => void exportCtl.open()}><Download className="lt-icon" /><span className="twrp-label twrp-l-export">{audioOnly ? 'Export sound…' : 'Export video…'}</span></button>
       </div>
+
+      {saveError ? <RecordingSaveNotice className="twrp-problem" error={saveError} count={pending.current.length} saving={savingEdits} retry={flushEdits} discard={discardEdits} /> : null}
 
       {problem ? (
         <div className="twrp-problem" role="alert">
           <AlertTriangle className="lt-icon" />
           <span>{problem.message} It is kept unchanged.</span>
           {problem.kind === 'git-conflict' ? <button className="twrp-btn" data-edits-show-file onClick={() => { void window.tw.shell.showInFolder(problem.file) }}>Show in Finder</button> : null}
-          <button className="twrp-btn" data-start-new onClick={() => setStartNewOpen(true)}>Start new edits</button>
-          {keptCount > 0 ? <button className="twrp-btn" data-kept-edits onClick={() => setKeptOpen(true)}>Kept edits…</button> : null}
+          <button className="twrp-btn" data-start-new disabled={editsPending} onClick={() => setStartNewOpen(true)}>Start new edits</button>
+          {keptCount > 0 ? <button className="twrp-btn" data-kept-edits disabled={editsPending} onClick={() => setKeptOpen(true)}>Kept edits…</button> : null}
         </div>
       ) : null}
       {notices.length || keptOpen || (startNewOpen && problem) ? (
         <EditorLook>
-          {notices.map((n, i) => <EditsNoticeNote key={i} notice={n} onKept={() => setKeptOpen(true)} onDismiss={() => setNotices((all) => all.filter((x) => x !== n))} />)}
+          {notices.map((n, i) => <EditsNoticeNote key={i} notice={n} onKept={() => { if (!hasUnsaved()) setKeptOpen(true) }} onDismiss={() => setNotices((all) => all.filter((x) => x !== n))} />)}
           {keptOpen ? <KeptEditsSheet runRef={runRef} onClose={() => setKeptOpen(false)} onRestored={(s) => { setKeptOpen(false); replaceEdits(s) }} /> : null}
           {startNewOpen && problem ? <StartNewEditsSheet where="panel" gitConflict={problem.kind === 'git-conflict'} onClose={() => setStartNewOpen(false)}
             onStart={() => { setStartNewOpen(false); void window.tw.recordingVideo.startFresh(runRef).then((r) => { if (r.ok) replaceEdits(r.edits); else setEditError(r.error) }) }} /> : null}
@@ -289,7 +345,7 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
       <div className="twrp-stage">
         <div className="twrp-unit">
         {composed.source ? (
-          <LayeredPlayer ref={player} source={composed.source} spans={spans} durationMs={resolved.clockMs} clock={resolved.clock} camera={camera} dissolve={edits?.edits.finish.smoothJoins !== false} faces={faces} notice={composed.problem ?? missingTakeNotice(missingTakes) ?? notice} onTime={time} onPlaying={playingChanged} />
+          <LayeredPlayer ref={player} source={composed.source} spans={spans} durationMs={resolved.clockMs} clock={resolved.clock} edges={edgesOnClock} camera={camera} dissolve={edits?.edits.finish.smoothJoins !== false} faces={faces} notice={composed.problem ?? missingTakeNotice(missingTakes) ?? notice} onTime={time} onPlaying={playingChanged} />
         ) : (
           <div className="twrp-player"><div className="twrp-frame twrp-wait">{preparing ? <><Loader2 className="lt-icon spin" /> Preparing playback…</> : null}</div></div>
         )}
@@ -299,29 +355,29 @@ export const RecordingPanel = forwardRef<RecordingPanelHandle, {
           {drag ? <span className="twrp-cut twrp-cut-draft" style={drag.side === 'start' ? { left: 0, width: pct(drag.at) } : { left: pct(drag.at), width: pct(durationMs - drag.at) }} /> : null}
           {enters.map((e, i) => {
             const s = e.slideId ? slides[e.slideId] : undefined
-            return <button key={`${e.tMs}-${i}`} className="twrp-tick" style={{ left: pct(e.tMs) }} title={`${s ? `${s.n} · ${s.title}` : 'Slide'} at ${clock(e.tMs)}`} aria-label={`Go to slide ${s?.n ?? i + 1}`} onPointerDown={(ev) => ev.stopPropagation()} onClick={() => player.current?.seekRun(e.tMs)}><span>{s?.n ?? ''}</span></button>
+            return <button key={`${e.tMs}-${i}`} className="twrp-tick" style={{ left: pct(e.tMs) }} title={`${s ? `${s.n} · ${s.title}` : 'Slide'} at ${clock(e.tMs)}`} aria-label={`Go to slide ${s?.n ?? i + 1}`} onPointerDown={(ev) => ev.stopPropagation()} onClick={() => player.current?.seekVideo(changeVideoStart(resolved, e.tMs))}><span>{s?.n ?? ''}</span></button>
           })}
           <span className="twrp-head" style={{ left: pct(runMs) }} aria-hidden="true"><span className="twrp-head-knob" /></span>
-          <span className="twrp-handle start" role="slider" aria-label="Trim start" aria-valuemin={0} aria-valuemax={durationMs} aria-valuenow={Math.round(startAt)} tabIndex={0} style={{ left: pct(startAt) }} onPointerDown={startDrag('start')} />
-          <span className="twrp-handle end" role="slider" aria-label="Trim end" aria-valuemin={0} aria-valuemax={durationMs} aria-valuenow={Math.round(endAt)} tabIndex={0} style={{ left: pct(endAt) }} onPointerDown={startDrag('end')} />
+          <span className="twrp-handle start" role="slider" aria-label="Trim start" aria-valuemin={0} aria-valuemax={durationMs} aria-valuenow={Math.round(startAt)} aria-disabled={editsBlocked} tabIndex={editsBlocked ? -1 : 0} style={{ left: pct(startAt) }} onPointerDown={startDrag('start')} />
+          <span className="twrp-handle end" role="slider" aria-label="Trim end" aria-valuemin={0} aria-valuemax={durationMs} aria-valuenow={Math.round(endAt)} aria-disabled={editsBlocked} tabIndex={editsBlocked ? -1 : 0} style={{ left: pct(endAt) }} onPointerDown={startDrag('end')} />
         </div>
         <div className="twrp-trims">
           <span className="twrp-trim-side">
-            <button className="twrp-btn twrp-trim" disabled={!!problem} onClick={trimStartHere} title="Start the video at the playhead (I)"><ArrowLeftToLine className="lt-icon" />Trim start here</button>
+            <button className="twrp-btn twrp-trim" disabled={editsBlocked} onClick={trimStartHere} title="Start the video at the playhead (I)"><ArrowLeftToLine className="lt-icon" />Trim start here</button>
             <span title="Where the video starts"><b>{tenths(startAt)}</b>{startSlide ? ` · slide ${startSlide.n}` : ''}</span>
           </span>
           <span className="twrp-trim-side end">
             <span title="Where the video ends"><b>{tenths(endAt)}</b>{endSlide ? ` · slide ${endSlide.n}` : ''}</span>
-            <button className="twrp-btn twrp-trim" disabled={!!problem} onClick={trimEndHere} title="End the video at the playhead (O)">Trim end here<ArrowRightToLine className="lt-icon" /></button>
+            <button className="twrp-btn twrp-trim" disabled={editsBlocked} onClick={trimEndHere} title="End the video at the playhead (O)">Trim end here<ArrowRightToLine className="lt-icon" /></button>
           </span>
         </div>
         <div className="twrp-notes">
-          {trimmed ? <button className="twrp-link" disabled={!!problem} onClick={() => void edit({ kind: 'restore-all' })}><RotateCcw className="lt-icon" /> Use the whole recording</button> : null}
+          {trimmed ? <button className="twrp-link" disabled={editsBlocked} onClick={() => void edit({ kind: 'restore-all' })}><RotateCcw className="lt-icon" /> Use the whole recording</button> : null}
           {run.trims?.length ? <span className="twrp-quiet">{run.trims.length === 1 ? 'A trim' : `${run.trims.length} trims`} made in the transcript also apply.</span> : null}
           {suggestions.map((s) => (
             <span key={`${s.side}:${s.at}`} className="twrp-suggest">
               {s.side === 'start' ? `Silent start: ${(s.silentMs / 1000).toFixed(1)} s.` : `Silent end: ${(s.silentMs / 1000).toFixed(1)} s.`}
-              <button className="twrp-link" onClick={() => void edit(s.side === 'start' ? { kind: 'trim-start', at: s.at } : { kind: 'trim-end', at: s.at })}>{s.side === 'start' ? `Start at ${tenths(s.at)}` : `End at ${tenths(s.at)}`}</button>
+              <button className="twrp-link" disabled={editsBlocked} onClick={() => void edit(s.side === 'start' ? { kind: 'trim-start', at: s.at } : { kind: 'trim-end', at: s.at })}>{s.side === 'start' ? `Start at ${tenths(s.at)}` : `End at ${tenths(s.at)}`}</button>
               <button className="twrp-x" aria-label="Dismiss suggestion" onClick={() => setDismissed((d) => new Set(d).add(`${s.side}:${s.at}`))}><X className="lt-icon" /></button>
             </span>
           ))}

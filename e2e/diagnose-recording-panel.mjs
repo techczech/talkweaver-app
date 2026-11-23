@@ -11,7 +11,9 @@ import { join, resolve } from 'node:path'
 import { captionCues, keptSpans, cameraRect, chaptersFor } from '../src/shared/recording-video.ts'
 import { effectiveCuts } from '../src/shared/recording-edits.ts'
 
-const repo = resolve(import.meta.dirname, '..'), shots = join(repo, 'docs/design/2026-11-10-record-and-edit-video/built/slice-3a/shots')
+const repo = resolve(import.meta.dirname, '..')
+const recordEvidence = process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE === '1'
+const shots = process.env.TW_SHOTS_DIR || join(repo, recordEvidence ? 'docs/design/2026-11-10-record-and-edit-video/built/slice-3a/shots' : 'artefacts/diagnose-recording-panel/shots')
 const root = mkdtempSync(join(repo, '.slice3a-e2e-')), vault = join(root, 'vault'), userData = join(root, 'userData'), talk = join(vault, 'fixture'), out = join(root, 'exports')
 for (const dir of [talk, userData, shots, out]) mkdirSync(dir, { recursive: true })
 const outline = join(talk, 'fixture-outline.md')

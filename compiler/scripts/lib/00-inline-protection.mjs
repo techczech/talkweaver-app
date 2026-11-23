@@ -95,14 +95,17 @@ export function markdownLinkAt(source, from) {
   };
 }
 
-export function bareUrlAt(source, from) {
+// `escaped`: the source is already HTML-escaped, so a ; that closes an entity (&#39;) is part of the URL.
+// Raw source keeps the plain rule: a trailing ; is punctuation (`?q=art&exact;` links to `q=art&exact`).
+export function bareUrlAt(source, from, { escaped = false } = {}) {
   const prefix = source.slice(from, from + 8).toLowerCase();
   if (!prefix.startsWith("http://") && !prefix.startsWith("https://")) return null;
   if (from > 0 && !/[\s(]/.test(source[from - 1])) return null;
   let to = from;
   while (to < source.length && !/[\s<]/.test(source[to])) to += 1;
   const candidate = source.slice(from, to);
-  const trailing = candidate.match(/[.,;:)\]]+$/)?.[0] ?? "";
+  let trailing = candidate.match(/[.,;:)\]]+$/)?.[0] ?? "";
+  if (escaped && trailing[0] === ";" && /&#?[a-z0-9]+$/i.test(candidate.slice(0, candidate.length - trailing.length))) trailing = trailing.slice(1);
   to -= trailing.length;
   if (to <= from) return null;
   const url = source.slice(from, to);
@@ -114,7 +117,7 @@ export function bareUrlAt(source, from) {
  * backtick-run lengths; Markdown links protect label, URL, and title; bare URLs are protected
  * because this compiler turns them into anchors too.
  */
-export function segmentInlineSource(source) {
+export function segmentInlineSource(source, options = {}) {
   const segments = [];
   const codeCloseByOpen = indexCodeSpanClosers(source);
   let textFrom = 0;
@@ -138,7 +141,7 @@ export function segmentInlineSource(source) {
     const protectedSegment =
       codeSpanAt(source, cursor, codeCloseByOpen)
       ?? markdownLinkAt(source, cursor)
-      ?? bareUrlAt(source, cursor);
+      ?? bareUrlAt(source, cursor, options);
     if (protectedSegment) {
       pushProtected(protectedSegment);
       continue;
@@ -259,11 +262,11 @@ export function replaceInlineMarks(text, render = (inner, kind) => MARK_HTML[kin
  * can match across them (`++see [x](u)++`) without ever matching inside them. `restore(text)`
  * puts the segments back, rendered by `renderSegment` (default: their own source).
  */
-export function protectInlineSegments(source, renderSegment = (segment) => segment.source) {
+export function protectInlineSegments(source, renderSegment = (segment) => segment.source, options = {}) {
   const protectedSegments = [];
   let tokenPrefix = "\u0001TW";
   while (source.includes(tokenPrefix)) tokenPrefix += "TW";
-  const masked = segmentInlineSource(source).map((segment) => {
+  const masked = segmentInlineSource(source, options).map((segment) => {
     if (segment.kind === "text") return segment.source;
     const token = `${tokenPrefix}${protectedSegments.length.toString(36)}\u0002`;
     protectedSegments.push({ token, rendered: renderSegment(segment) });

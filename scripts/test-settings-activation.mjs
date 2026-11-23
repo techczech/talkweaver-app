@@ -1,8 +1,9 @@
 // Exercise the real activate callback at its editor lookup / creation seam, without Electron.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+
 import { runInNewContext } from 'node:vm'
-const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+const main = readMainSource()
 const start = main.indexOf("app.on('activate', () => {")
 assert.ok(start >= 0)
 const handler = main.slice(start, main.indexOf('\n})', start) + 3)

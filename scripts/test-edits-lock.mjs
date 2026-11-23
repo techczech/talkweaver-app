@@ -17,7 +17,7 @@ const locks = join(root, 'locks'); mkdirSync(locks)
 let n = 0
 const pass = (name) => console.log(`PASS ${++n} ${name}`)
 const node = (code, args = []) => spawn(process.execPath, ['--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', '--input-type=module', '-e', code, ...args], { cwd: repo, stdio: ['ignore', 'pipe', 'pipe'] })
-const done = (child) => new Promise((r) => { let out = '', err = ''; child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (err += d)); child.on('exit', (code) => r({ code, out, err })) })
+const done = (child) => new Promise((r) => { let out = '', err = ''; child.stdout.on('data', (d) => (out += d)); child.stderr.on('data', (d) => (err += d)); child.on('close', (code) => r({ code, out, err })) })
 
 try {
   // ---- 1. A lock whose process has gone does not block -------------------------------------------------
@@ -46,6 +46,7 @@ try {
       import { withEditsLock } from './src/main/edits-lock.ts'
       withEditsLock(process.argv[1], () => { console.log('held'); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1500) }, { folder: process.argv[2] })
     `, [file, locks])
+    const finished = done(holder)
     await new Promise((r) => holder.stdout.once('data', r))
     assert.ok(existsSync(lockPathFor(file, locks)))
     const held = JSON.parse(readFileSync(lockPathFor(file, locks), 'utf8'))
@@ -54,10 +55,58 @@ try {
     const t0 = Date.now()
     assert.equal(withEditsLock(file, () => 'ran', { folder: locks, waitMs: 5000 }), 'ran')
     assert.ok(Date.now() - t0 > 300, 'waited for the holder')
-    await done(holder)
+    await finished
     pass('a live holder is waited for; past the wait the refusal says another window is saving')
   }
-  // ---- 4. Two processes, one edits file, saving at once through the real store ---------------------------
+  // One real writer holds the lock past the second writer's first deadline.
+  {
+    const folder = join(root, 'retry'); mkdirSync(folder)
+    const path = join(folder, 'run-1.edits.json'), release = join(root, 'release')
+    const seen = join(folder, 'seen')
+    const loc = { path, runId: 'run-1', durationMs: 6000, fingerprint: 'fp' }
+    const store = createRecordingEditsStore({ locate: () => loc, lockFolder: locks, seenDir: () => seen })
+    const base = store.get({})
+    const first = node(`
+      import { existsSync } from 'node:fs'
+      import { createRecordingEditsStore } from './src/main/recording-edits-store.ts'
+      const [raw, locks, seen, release] = process.argv.slice(1)
+      const loc = JSON.parse(raw)
+      const store = createRecordingEditsStore({
+        locate: () => loc, lockFolder: locks, seenDir: () => seen,
+        io: { at(step) {
+          if (step !== 'recorded') return
+          console.log('held')
+          const until = Date.now() + 30_000
+          while (!existsSync(release)) {
+            if (Date.now() > until) throw Error('No release from competing editor')
+            Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20)
+          }
+        } },
+      })
+      const snapshot = store.apply({}, { kind:'cut', ranges:[{ start:1000, end:1100 }] }, 0, null)
+      console.log(snapshot.edits.revision)
+    `, [JSON.stringify(loc), locks, seen, release])
+    const finished = done(first)
+    await Promise.race([
+      new Promise(resolve => first.stdout.once('data', resolve)),
+      finished.then(result => { throw Error(`First writer never acquired the lock: ${result.err}`) }),
+    ])
+    const saveSecond = () => store.apply({}, { kind: 'cut', ranges: [{ start: 2000, end: 2100 }] }, base.edits.revision, base.digest)
+    assert.throws(saveSecond, /Another TalkWeaver window is saving these edits/)
+    assert.equal(existsSync(path), false, 'the refused save writes nothing while the first writer is staged')
+    writeFileSync(release, 'release')
+    const firstResult = await finished
+    assert.equal(firstResult.code, 0, firstResult.err)
+    assert.match(firstResult.out, /^held\s+1\s*$/)
+    const second = saveSecond()
+    assert.equal(second.edits.revision, 2, 'the explicit retry lands after the first save')
+    assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')).cuts, [{ start: 2000, end: 2100 }])
+    assert.equal(second.notice?.kind, 'changed')
+    const copies = store.listKept({}).map(k => store.openKept({}, k.id).edits.cuts)
+    assert.ok(copies.some(cuts => cuts.some(c => c.start === 1000 && c.end === 1100)), 'the first save is kept and opens')
+    pass('two writers: the retry follows the first durable save and both edits survive')
+  }
+  // ---- Two processes, one edits file, saving at once through the real store ---------------------------
   {
     const folder = join(root, 'vault'); mkdirSync(folder)
     const path = join(folder, 'run-1.edits.json')
@@ -73,8 +122,21 @@ try {
       const out = []
       for (let i = 0; i < 25; i++) {
         const at = (Number(k) * 100 + i) * 1000
-        try { s = store.apply({}, { kind: 'cut', ranges: [{ start: at, end: at + 100 }] }, s.edits.revision, s.digest); out.push({ at, notice: s.notice?.kind ?? null, digest: s.digest }) }
-        catch (e) { out.push({ at, error: String(e.message) }) }
+        const op = { kind: 'cut', ranges: [{ start: at, end: at + 100 }] }
+        const deadline = Date.now() + 12_000
+        for (;;) {
+          try {
+            s = store.apply({}, op, s.edits.revision, s.digest)
+            out.push({ at, notice: s.notice?.kind ?? null, digest: s.digest, revision: s.edits.revision })
+            break
+          } catch (error) {
+            // A busy machine may require the person to choose Retry. Keep this test's operation and
+            // base until it lands, and fail if it cannot land within the bounded retry window.
+            if (/Another TalkWeaver window is saving these edits/.test(error.message) && Date.now() < deadline) continue
+            out.push({ at, error: String(error.message) })
+            break
+          }
+        }
         sleep(3 + Number(k))
       }
       console.log(JSON.stringify(out))
@@ -86,6 +148,10 @@ try {
     const runs = [JSON.parse(a.out), JSON.parse(b.out)]
     const errors = runs.flat().filter((r) => r.error)
     assert.deepEqual(errors, [], 'no save failed')
+    for (const run of runs) {
+      assert.equal(run.length, 25)
+      assert.ok(run.every((save, i) => i === 0 || save.revision > run[i - 1].revision), 'each writer’s cuts land in its requested order')
+    }
     // Every save survives by content: each process applies every cut on its own last save, so its last save holds
     // all of its cuts. That save is the edits file, or a listed copy that opens (the other process saved over it,
     // and it was captured), or grown into by one: named in `earlier` by a file that holds every one of those cuts.

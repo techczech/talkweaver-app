@@ -2,7 +2,7 @@
 // the share record and the module's interfaces, the fixed messages, the error kinds, and the
 // revision files Compare reads. No state lives here.
 import { createHash } from 'crypto'
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
+import { readFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { isShareId } from '../shared/share-id.ts'
 import { OwnerRequestError, validOwnerToken, type OwnerTokens } from './owner-tokens.ts'
@@ -159,13 +159,6 @@ export function revisionSnapshotPath(outlinePath: string, shareId: string, revis
   if (!isShareId(shareId)) throw new Error(`Not a share id: ${JSON.stringify(shareId)}`)
   if (!Number.isInteger(revision) || revision < 1) throw new Error(`Not a revision: ${revision}`)
   return join(feedbackDirFor(outlinePath), `${shareId}-revisions`, `${revision}.json`)
-}
-
-export function writeFileAtomic(path: string, text: string, mode?: number): void {
-  mkdirSync(dirname(path), { recursive: true })
-  const temp = `${path}.${process.pid}.${Date.now().toString(36)}.tmp`
-  writeFileSync(temp, text, mode === undefined ? 'utf8' : { encoding: 'utf8', mode })
-  renameSync(temp, path)
 }
 
 /** A confirmed revision as kept on disk: null when it was never kept; THROWS when the file is there

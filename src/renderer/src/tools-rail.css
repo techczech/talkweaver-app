@@ -1,5 +1,5 @@
 /* The Tools window's shell: the rail, the one shared header and toolbar, and the empty states (house rules R9 and R14).
-   The window uses the writing window's own tokens (styles.css): its sans type, cream surfaces and navy primary.
+   The window uses the writing window's own tokens (styles.css): its sans type, cool grey surfaces and blue primary.
    Buttons and badges are the one set in ui-kit.css. */
 .tw-tools-shell { position: fixed; inset: 0; display: flex; background: var(--paper); font: 13px/1.4 var(--font-ui); color: var(--ink); -webkit-font-smoothing: antialiased; }
 :where(.tw-tools-shell) button { font: inherit; }
@@ -12,8 +12,8 @@
 .tw-tools-rail .tw-tools-rail-item span { text-align: center; font-size: 11.5px; line-height: 1.1; }
 .tw-tools-rail-item svg { width: 20px; height: 20px; stroke-width: 1.7; }
 .tw-tools-rail-item:hover { background: var(--hover); }
-.tw-tools-rail-item.on { background: var(--tw-delivered-bg); color: var(--oxford); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line); }
-.tw-tools-rail-item:focus-visible { outline: 1.5px solid var(--oxford); outline-offset: -1.5px; }
+.tw-tools-rail-item.on { background: var(--tw-delivered-bg); color: var(--accent-text); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line); }
+.tw-tools-rail-item:focus-visible { outline: 1.5px solid var(--focus); outline-offset: -1.5px; }
 
 .tw-tools-view { position: absolute; inset: 0; display: flex; background: var(--paper); }
 .tw-tools-view.tw-runs { flex-direction: column; }
@@ -52,7 +52,7 @@
 .tw-tools-none svg { width: 32px; height: 32px; stroke-width: 1.5; }
 /* A count on a rail item (2026-10-19 prework-responses, mockup 05: Runs with responses waiting). */
 .tw-tools-rail .tw-tools-rail-icon { position: relative; display: inline-flex; }
-.tw-tools-rail .tw-tools-rail-badge { position: absolute; top: -7px; right: -12px; min-width: 17px; height: 17px; box-sizing: border-box; padding: 0 4px; border-radius: 9px; background: var(--oxford); color: #fff; font: 700 11px/17px var(--font-ui); text-align: center; box-shadow: 0 0 0 2px var(--panel); }
+.tw-tools-rail .tw-tools-rail-badge { position: absolute; top: -7px; right: -12px; min-width: 17px; height: 17px; box-sizing: border-box; padding: 0 4px; border-radius: 9px; background: var(--oxford); color: var(--on-accent); font: 700 11px/17px var(--font-ui); text-align: center; box-shadow: 0 0 0 2px var(--panel); }
 
 /* R17: when the window narrows the toolbar gives up words before it gives up controls: the filter chips drop their
    icons and the longer labels shorten, and the search field shrinks first. */

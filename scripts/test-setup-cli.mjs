@@ -549,6 +549,7 @@ try {
   assert.equal(APP_OPEN_STATE, 'app-open')
   assert.equal(appOpenRefusal(['cloudflare', 'connect', TOKEN]), APP_OPEN_ERROR, 'nothing typed is repeated back')
   // The wiring (the e2e proves the behaviour): setup asks for the app's lock, and refuses before any of its work.
+  // The instance lock and heap switches are ordered at entry-point startup.
   const indexSource = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   const top = indexSource.slice(0, indexSource.indexOf('// Renderer heap headroom'))
   // (0.42: `settings` takes no lock, as the settings file has its own; setup still takes the app's.)

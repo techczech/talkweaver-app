@@ -1,3 +1,4 @@
+// Manual only: requires the local alignment model fixture at scripts/precise-word-timing/local/model_int8.onnx.
 /** Hidden built app, fixture profile; never attaches to any installed/running owner app. */
 import assert from 'node:assert/strict'
 import { _electron as electron } from 'playwright'
@@ -7,7 +8,9 @@ import { sourceIdentity } from '../scripts/precise-word-timing/source-identity.m
 import { mkdtempSync,mkdirSync,writeFileSync,readFileSync,copyFileSync,rmSync } from 'node:fs'
 import { join,resolve } from 'node:path'
 const require=createRequire(import.meta.url),root=process.cwd(),scratch=mkdtempSync(join(root,'.tw-alignment-ui-'))
-const shots=resolve('docs/design/2026-11-10-record-and-edit-video/built/slice-2b');mkdirSync(shots,{recursive:true})
+const recordEvidence = process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE === '1'
+const shots = resolve(recordEvidence ? 'docs/design/2026-11-10-record-and-edit-video/built/slice-2b' : 'artefacts/diagnose-precise-word-timing')
+mkdirSync(shots, { recursive: true })
 let app
 try {
  const profile=join(scratch,'profile'),home=join(scratch,'home');mkdirSync(profile);mkdirSync(home)

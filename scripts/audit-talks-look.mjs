@@ -16,7 +16,7 @@
 //   node scripts/audit-talks-look.mjs --talks <folder> --before <older checkout> [--after <checkout>] --out <dir> [--jobs 3]
 //        [--max-steps-per-slide 1000] [--max-presses 4000] [--typing-timeout-ms 30000]
 //        [--match <regex on the outline path>] [--limit <n talks>] [--report-only] [--redo-after] [--no-sheets]
-//        [--keep-decks]
+//        [--keep-decks] [--font <face>]
 //
 // A compiled deck (decks/<talk>-<side>.html: the whole talk with its pictures inlined) is removed as soon as its walk
 // ends. Nothing reads it again: the report, the sheets and --redo-after use records/ and shots/. Kept, one round over
@@ -42,6 +42,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 import { chromium } from 'playwright'
 import { readabilityProbe, walkSlides } from './lib/slide-readability.mjs'
+import { waitForSlidePaint } from './lib/settled-paint.mjs'
 import { FAULTS, faultsOf, compareTalk, gateOf, CONTRAST_TOLERANCE, FLOOR_TOLERANCE_PX, EMPTY_TOLERANCE } from './lib/audit-compare.mjs'
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -144,6 +145,8 @@ async function compile(root, outlinePath, slug) {
     const { resolveImageRefs } = await import(pathToFileURL(join(repo, 'src/main/image-refs.ts')).href)
     text = resolveImageRefs(text, TALKS, outlinePath)
   } catch { /* pooled picture ids stay as written */ }
+  // --font <face>: the after side draws every talk in that slide typeface (font: replaces font:/typeface:).
+  if (root === AFTER && arg('font')) text = text.replace(/^---\r?\n([\s\S]*?)\r?\n---/, (_, fm) => `---\nfont: ${arg('font')}\n${fm.replace(/^(?:font|typeface):.*$/gm, '')}\n---`)
   const model = await prepareSource(outlinePath, text, slug, statSync(outlinePath), undefined, { allowedAssetRoots: [dirname(outlinePath), TALKS] })
   return model
 }
@@ -154,7 +157,26 @@ function stateProbe() {
   const stage = slide.getBoundingClientRect()
   const tol = 1.5
   const visible = (e) => { const cs = getComputedStyle(e); if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) return false; const r = e.getBoundingClientRect(); return r.width > 0 && r.height > 0 }
-  const keyOf = (e) => `${e.tagName.toLowerCase()}|${(e.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 48) || [...e.classList].slice(0, 2).join('.')}`
+  // Canonicalise generated address captions to the full destination on both sides. A
+  // shorter display label must not turn the same clipped element into a different element.
+  const captionOrigin = e => {
+    const link = e.closest('a[href]')
+    const caption = e.closest('.link-url')
+    const value = link?.closest('cite, figcaption, .qr-caption, .slide-source, .link-url')
+      ? link.getAttribute('href') : caption?.getAttribute('href') || caption?.getAttribute('title') || caption?.textContent?.trim()
+    return /^https?:\/\//i.test(value || '') ? value : ''
+  }
+  const identityText = e => {
+    if (e.nodeType === 3) return e.textContent
+    if (e.nodeType !== 1) return ''
+    return captionOrigin(e) || [...e.childNodes].map(identityText).join('')
+  }
+  const keyOf = e => {
+    const origin = captionOrigin(e)
+    const tag = e.matches('.link-url') ? 'link-caption' : e.tagName.toLowerCase()
+    return origin ? `${tag}|url:${origin}` : `${tag}|${identityText(e).replace(/\s+/g, ' ').trim().slice(0, 48) || [...e.classList].slice(0, 2).join('.')}`
+  }
+
   const clips = []
   const textBoxes = []
   const painted = []
@@ -210,7 +232,7 @@ function stateProbe() {
     // an icon-row with panel details: its number of panels and of detail lines in the longest panel
     panels: detail ? (() => { const row = detail.closest('.icon-row'); const items = [...row.querySelectorAll(':scope > .ir-item')]; return `${items.length}x${Math.max(...items.map((i) => i.querySelectorAll('.ir-desc > li').length))}` })() : '',
     // the smallest drawn text on the state (canvas px times the whole-slide zoom), and a fingerprint of the drawing
-    // (every drawn element's box and type size, to half a px) so two sides can be compared for "drawn the same"
+    // (every drawn element's box, type, weight, decoration and text; boxes to half a px) so two sides can be compared for "drawn the same"
     smallestPx: 0, drawing: '',
   }
   {
@@ -223,7 +245,8 @@ function stateProbe() {
       const cs = getComputedStyle(e)
       if (cs.display === 'none') continue
       const r = e.getBoundingClientRect()
-      add(`${e.tagName}|${half(r.left - stage.left)}|${half(r.top - stage.top)}|${half(r.width)}|${half(r.height)}|${cs.fontSize}|${cs.visibility}|${cs.opacity};`)
+      const ownText = [...e.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').replace(/\s+/g, ' ').trim()
+      add(`${e.tagName}|${half(r.left - stage.left)}|${half(r.top - stage.top)}|${half(r.width)}|${half(r.height)}|${cs.fontSize}|${cs.fontWeight}|${cs.textDecorationLine}|${cs.visibility}|${cs.opacity}|${ownText};`)
       if (cs.visibility !== 'hidden' && [...e.childNodes].some((n) => n.nodeType === 3 && n.textContent.trim())) {
         const zoomed = parseFloat(cs.fontSize) * (parseFloat(fitted?.style.zoom) || 1)
         if (zoomed > 0 && zoomed < smallest) smallest = zoomed
@@ -243,6 +266,9 @@ async function auditDeck(htmlPath, slides, shotsDir) {
     let probe
     let read
     try {
+      // Reduced motion does not cover every old look's CSS transition. Measure its final
+      // painted state on both sides, rather than whichever fade frame a loaded CPU reaches.
+      await waitForSlidePaint(page)
       read = await page.evaluate(readabilityProbe, { floorPx: 30, smallFloorPx: 24 })
       probe = await page.evaluate(stateProbe)
       if (!read || read.id !== state.id || probe.id !== state.id) throw new Error('active slide changed during measurement')
@@ -278,7 +304,7 @@ async function auditDeck(htmlPath, slides, shotsDir) {
 }
 
 // Version of the record layout: records of another version are measured again.
-const RECORD_FORMAT = 3
+const RECORD_FORMAT = 5
 
 async function auditTalk(outlinePath) {
   const talk = relative(TALKS, outlinePath)

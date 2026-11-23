@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, copyFileSync } from 'node:fs'
 import { join, basename } from 'node:path'
 import { execFileSync } from 'node:child_process'
-import { launch, launchChromium, closeApp, runFolders, ledger, shooter, size, pause, hardLimit, winCall, capturePage, writeJson, commit, REPO } from './lib.mjs'
+import { launch, launchChromium, closeApp, runFolders, ledger, shooter, size, pause, hardLimit, openPresenter, winCall, capturePage, writeJson, commit, REPO } from './lib.mjs'
 import { makeVault, TITLE, SECTION_OVERRIDES, SLIDE_IDS, EXPECTED_SLIDES, EXPECTED_PRINT_PAGES, CAROUSEL_CARDS, DECK, expectedSteps } from './talk.mjs'
 import { statusBarMeasured, statusBarKnownCollapse } from './could-not-allowed.mjs'
 import { openTalkByTitle } from '../../e2e/lib/talklist.mjs'
@@ -39,8 +39,10 @@ async function auditPdf(file, route) {
     if (!videoPage && /short clip from the last walk/i.test(t.replace(/\s+/g, ' '))) videoPage = n
   }
   const flat = (n) => execFileSync('pdftotext', ['-raw', '-f', String(n), '-l', String(n), file, '-'], { encoding: 'utf8' }).replace(/\s+/g, '')
-  const addr = 'walks.example.org/handouts/planning-a-river-walk-for-volunteers'
-  record(`print.${route}.qr-address`, flat(1).includes(addr) && flat(pages).includes(addr), `title page ${flat(1).includes(addr)}, closing page ${flat(pages).includes(addr)}`, rel(file))
+  const addr = 'handouts.walks.example.org'
+  // This QR host differs from the byline's website, so that footer cannot stand in for a missing caption.
+  const captionOnly = n => flat(n).includes(addr) && !['/', '…', '?', '#'].some(suffix => flat(n).includes(addr + suffix))
+  record(`print.${route}.qr-address`, captionOnly(1) && captionOnly(pages), `domain-only title page ${captionOnly(1)}, closing page ${captionOnly(pages)}`, rel(file))
   record(`print.${route}.own-text`, pages > 0 && foreign.length === 0, foreign.length ? JSON.stringify(foreign.slice(0, 6)) : `${pages} pages clean`, rel(file), { pages, foreign })
   // The video page: its picture prints (not a blank page). Measured below the title band.
   let ink = null
@@ -126,6 +128,20 @@ try {
   main.on('pageerror', (e) => errors.push('main: ' + e.message))
   await size(main)
   await pause(2500)
+  const editor = main.locator('[data-view="outline"] .cm-content[contenteditable="true"]')
+  const sidebar = main.getByRole('tablist', { name: 'Sidebar', exact: true })
+  const selectSlidePanel = () => sidebar.getByRole('tab', { name: 'Slide', exact: true }).click()
+  const placeCaret = (text) => editor.evaluate((element, needle) => {
+    const view = element.cmTile.root.view
+    for (let n = 1; n <= view.state.doc.lines; n++) {
+      const line = view.state.doc.line(n)
+      if (!line.text.includes(needle)) continue
+      view.focus()
+      view.dispatch({ selection: { anchor: line.to }, scrollIntoView: true })
+      return
+    }
+    throw new Error(`The Outline editor does not hold "${needle}"`)
+  }, text)
 
   // ── 1. Open and edit ───────────────────────────────────────────────────────────────────────────
   if (only.includes('1')) await step('1 open-edit', async () => {
@@ -133,15 +149,23 @@ try {
     const body0 = await main.locator('body').innerText()
     record('open.lists-talk', body0.includes(TITLE) && body0.includes('Winter walks'), body0.slice(0, 200).replace(/\s+/g, ' '), s0)
     await openTalkByTitle(main, TITLE)
-    await pause(2500)
+    await main.getByTestId('outline-toggle').click()
+    await editor.waitFor()
     const s1 = await shot(main, 'talk-open')
-    const editorText = await main.locator('.cm-content').first().innerText().catch(() => '')
+    const editorText = await editor.evaluate(element => element.cmTile.root.view.state.doc.toString())
     record('open.editor', editorText.includes('Every walk starts with') && editorText.includes('From first idea to the walk itself'), `editor shows ${editorText.length} characters; head: ${editorText.slice(0, 80).replace(/\s+/g, ' ')}`, s1)
-    // Inspector preview: the stage counter "N / M" follows Next, one slide per press.
-    const counter = () => main.evaluate(() => { const t = document.body.innerText.match(/(\d+)\s*\/\s*(\d+)/); return t ? { n: Number(t[1]), of: Number(t[2]) } : null })
+    // Next in the Slide panel advances the editor's preview, including across section dividers.
+    await main.getByTestId('slides-toggle').click()
+    await selectSlidePanel()
+    const position = main.locator('[data-view="slide"] .workspace-slide-crumb strong')
+    const counter = async () => {
+      const text = await position.innerText()
+      const match = text.match(/^Slide (\d+) of (\d+)$/)
+      return match ? { n: Number(match[1]), of: Number(match[2]) } : null
+    }
     const c0 = await counter()
-    const nextBtn = main.getByRole('button', { name: 'Next slide', exact: true }).first()
-    for (let i = 0; i < 3; i++) { await nextBtn.click(); await pause(500) }
+    const nextBtn = main.locator('.pane--inspector').getByRole('button', { name: 'Next slide', exact: true })
+    for (let i = 0; i < 3; i++) await nextBtn.click()
     const c1 = await counter()
     const s2 = await shot(main, 'inspector-preview-slide4')
     record('open.preview-steps', !!c0 && !!c1 && c0.of === EXPECTED_SLIDES && c1.of === EXPECTED_SLIDES && c1.n === c0.n + 3, `${JSON.stringify(c0)} → ${JSON.stringify(c1)}; the deck has ${EXPECTED_SLIDES} slides`, s2, { c0, c1 })
@@ -160,9 +184,9 @@ try {
     }
     const grid = { cells: cellIndexes.length, unpictured }
     record('open.grid', grid.cells === EXPECTED_SLIDES && unpictured.length === 0, `${grid.cells} cells (${EXPECTED_SLIDES} slides in the deck); without a picture after 5 s in view: ${unpictured.join(',') || 'none'}`, s3, grid)
-    await main.getByTestId('slides-toggle').click(); await pause(800)
+    await main.getByTestId('outline-toggle').click()
     // The Slide Browser (⌘S): the other talk's slides, with no help from the harness.
-    await main.locator('.cm-content').first().click(); await pause(300)
+    await editor.focus()
     await main.keyboard.press('Meta+s'); await pause(2500)
     const lt = await main.locator('.lt-browser-root').count()
     let cards = 0
@@ -174,15 +198,19 @@ try {
     record('open.slide-browser', lt === 1 && cards === 5 && stated === 5, `browser=${lt} cards=${cards} stated=${stated}; head: ${head.slice(0, 80)}`, s4, { lt, cards, stated })
     await main.keyboard.press('Escape'); await pause(500)
     if (await main.locator('.lt-browser-root').count()) { await main.keyboard.press('Escape'); await pause(500) }
-    // Edit a line in the Plain editor: it must reach the disk and the preview.
-    const line = main.locator('.cm-line', { hasText: 'Every walk starts with' }).first()
-    await line.scrollIntoViewIfNeeded(); await line.click(); await pause(400)
-    await main.keyboard.press('End')
+    // The Outline document may own the line before CodeMirror renders it in the viewport.
+    await placeCaret('Every walk starts with')
     await main.keyboard.type(' Bring a flask of tea.', { delay: 25 })
     let disk = false, inPreview = false
     for (let i = 0; i < 30 && !(disk && inPreview); i++) {
       disk = readFileSync(outlinePath, 'utf8').includes('Bring a flask of tea.')
-      if (!inPreview) for (const f of main.frames()) { try { if (await f.evaluate(() => document.body?.innerText.includes('Bring a flask of tea'))) inPreview = true } catch {} }
+      if (!inPreview) {
+        const preview = await main.locator('iframe[title="Inspector live preview"]').elementHandle({ timeout: 500 }).catch(() => null)
+        const frame = await preview?.contentFrame()
+        inPreview = await frame?.evaluate(() =>
+          document.body?.innerText.replace(/\s+/g, ' ').includes('Bring a flask of tea')
+        ).catch(() => false) ?? false
+      }
       if (!(disk && inPreview)) await pause(500)
     }
     const s5 = await shot(main, 'edited-line-preview')
@@ -191,7 +219,7 @@ try {
     // the editor's own "Talk details" line repeats the words, so page text proves nothing).
     const fieldValues = () => main.evaluate(() => [...document.querySelectorAll('input, textarea')].filter((i) => i.getBoundingClientRect().width > 0 && i.offsetParent !== null).map((i) => i.value))
     const valuesBefore = await fieldValues()
-    await main.locator('.rc-tab-btn', { hasText: 'Talk' }).first().click(); await pause(1200)
+    await sidebar.getByRole('tab', { name: 'Talk', exact: true }).click(); await pause(1200)
     const talkTab = await main.locator('body').innerText()
     const valuesAfter = await fieldValues()
     const s6 = await shot(main, 'talk-tab')
@@ -199,42 +227,32 @@ try {
     const shows = wants.filter((t) => valuesAfter.includes(t) && !valuesBefore.includes(t))
     record('open.talk-tab', shows.length === wants.length, `fields that appeared with the tab holding the talk's values: ${shows.join(', ') || 'none'}`, s6, { shows })
     writeFileSync(join(out, 'talk-tab.txt'), talkTab)
-    // For the guide: the Talk tab at its Section colours control.
-    const sc = main.getByText('Section colours', { exact: true }).first()
+    // For the guide: the Talk tab's talk-wide Section colours control.
+    const sc = main.locator('[data-talk-tab]').getByText('Section colours', { exact: true })
     const scVisible = (await sc.count()) > 0 && await sc.isVisible().catch(() => false)
     if (scVisible) {
       await sc.evaluate((el) => el.scrollIntoView({ block: 'start' })); await pause(800)
       await main.screenshot({ path: join(GUIDE, 'talk-tab-section-colours.png') })
     }
     record('open.section-colours-control', scVisible, scVisible ? 'guide picture taken' : 'no visible "Section colours" label in the Talk tab', scVisible ? rel(join(GUIDE, 'talk-tab-section-colours.png')) : '')
-    await main.locator('.rc-tab-btn', { hasText: 'Inspector' }).first().click(); await pause(500)
+    await selectSlidePanel()
   })
 
   // ── 2. Present ─────────────────────────────────────────────────────────────────────────────────
   let presenter, audience
   if (only.includes('2') || only.includes('3')) await step('2 present', async () => {
     if (!(await main.locator('.cm-content').count())) { await openTalkByTitle(main, TITLE); await pause(1500) }
-    const known = new Set(app.windows())
-    await main.locator('[data-command="present-presenter"]').first().click()
-    const newWin = async (ms) => { for (let i = 0; i < ms / 250; i++) { const w = app.windows().find((x) => !known.has(x) && !x.isClosed()); if (w) return w; await pause(250) } return null }
-    presenter = await newWin(30000)
-    if (presenter) record('present.presenter-opens', true, 'opened from the action bar')
+    presenter = await openPresenter(app, main, 30000)
+    if (presenter) record('present.presenter-opens', true, 'opened from the Present menu')
     else {
       const s = await shot(main, 'presenter-did-not-open')
       record('present.presenter-opens', false, 'no window within 30 s; ' + (await main.locator('body').innerText()).slice(-300).replace(/\s+/g, ' '), s)
-      await main.locator('button.toolbar-btn', { hasText: 'Present' }).first().click(); await pause(800)
-      await shot(main, 'present-menu')
-      writeFileSync(join(out, 'present-menu.txt'), await main.locator('body').innerText())
-      const item = main.getByRole('menuitem').filter({ hasText: /Presenter/ }).first()
-      if (await item.count()) await item.click(); else await main.keyboard.press('Escape')
-      presenter = await newWin(40000)
+      throw new Error('no presenter window from the Present menu')
     }
-    if (!presenter) throw new Error('no presenter window from the action bar or the Present menu')
     presenter.on('pageerror', (e) => errors.push('presenter: ' + e.message))
     await presenter.waitForLoadState('domcontentloaded')
     await presenter.waitForSelector('#currentPreview iframe', { timeout: 30000 })
     if (await presenter.locator('#twResume:not([hidden])').count().catch(() => 0)) await presenter.locator('#twResumeNo').click().catch(() => {})
-    known.add(presenter)
     // "Presenter view" is "Open presenter and audience": the audience window may already be open.
     const audienceWin = async (ms) => { for (let i = 0; i < ms / 250; i++) { const w = app.windows().find((x) => !x.isClosed() && x.url().includes('audience=1')); if (w) return w; await pause(250) } return null }
     audience = await audienceWin(8000)
@@ -373,9 +391,10 @@ try {
     record('present.status-bar-1280', barClean ? true : statusBarKnownCollapse(bar) ? null : false, JSON.stringify(bar).slice(0, 600), await shot(presenter, 'presenter-1280'), bar)
     await winCall(app, 'presenter=1', 'w.setBounds({ x: 0, y: 0, width: 1440, height: 900 }); return w.getBounds()'); await size(presenter, 1440, 900); await pause(600)
   })
-  // The long handout address on the title and closing slides, and the mind map's drawn size (PR 385).
+  // QR captions identify the domain; links and the enlarged view keep the full handout destination.
   if (only.includes('2') && presenter) await step('2 present', async () => {
-    const FULL = 'walks.example.org/handouts/planning-a-river-walk-for-volunteers'
+    const FULL = 'https://handouts.walks.example.org/handouts/planning-a-river-walk-for-volunteers'
+    const DOMAIN = 'handouts.walks.example.org'
     for (const id of ['deck-title', 'deck-thanks']) {
       await presenter.evaluate((id) => { location.hash = id }, id); await pause(2000)
       const q = await audience.evaluate(() => {
@@ -383,10 +402,17 @@ try {
         const r = cap.getBoundingClientRect(), sr = document.querySelector('.slide.active').getBoundingClientRect(), c = getComputedStyle(cap)
         const lines = new Set(); const range = document.createRange(); range.selectNodeContents(cap); for (const x of range.getClientRects()) if (x.width > 0.5) lines.add(Math.round(x.top))
         let clippedBy = null; for (let a = cap; a && !a.classList.contains('slide'); a = a.parentElement) { const ar = a.getBoundingClientRect(); const o = getComputedStyle(a); if (/(hidden|clip)/.test(o.overflow + o.overflowX + o.overflowY) && (r.bottom > ar.bottom + 1 || r.right > ar.right + 1)) { clippedBy = a.className.toString().slice(0, 40); break } }
-        return { active: document.querySelector('.slide.active').dataset.id, text: cap.innerText.replace(/\s+/g, ''), lines: lines.size, overflow: cap.scrollWidth > cap.clientWidth + 1 || cap.scrollHeight > cap.clientHeight + 1, ellipsis: /…/.test(cap.innerText) || c.textOverflow === 'ellipsis' && cap.scrollWidth > cap.clientWidth, insideSlide: r.right <= sr.right + 1 && r.bottom <= sr.bottom + 1, clippedBy }
+        return { active: document.querySelector('.slide.active').dataset.id, text: cap.innerText.replace(/\s+/g, ''), href: cap.querySelector('a')?.getAttribute('href'), title: cap.querySelector('a')?.getAttribute('title'), accessible: cap.querySelector('a')?.getAttribute('aria-label'), encoded: cap.closest('figure')?.querySelector('.qr-code')?.dataset.qrUrl, lines: lines.size, overflow: cap.scrollWidth > cap.clientWidth + 1 || cap.scrollHeight > cap.clientHeight + 1, ellipsis: /…/.test(cap.innerText) || c.textOverflow === 'ellipsis' && cap.scrollWidth > cap.clientWidth, insideSlide: r.right <= sr.right + 1 && r.bottom <= sr.bottom + 1, clippedBy }
       })
       const file = join(out, `address-${id}.png`); await capturePage(app, 'audience=1', file)
-      record(id === 'deck-title' ? 'present.qr-title' : 'present.qr-closing', q.active === id && q.text === FULL && !q.overflow && !q.ellipsis && q.insideSlide && !q.clippedBy, JSON.stringify(q), rel(file))
+      // The projector window is display-only; the presenter opens the shared QR gallery with Z.
+      await presenter.keyboard.press('z')
+      const enlarged = audience.locator('.lightbox.qr-focus.open #lightboxCaption')
+      await enlarged.waitFor({ state: 'visible' })
+      q.zoom = await enlarged.evaluate(e => { const r = e.getBoundingClientRect(); return { text: e.textContent, size: parseFloat(getComputedStyle(e).fontSize), inside: r.left >= -1 && r.top >= -1 && r.right <= innerWidth + 1 && r.bottom <= innerHeight + 1 } })
+      await presenter.keyboard.press('Escape')
+      await enlarged.waitFor({ state: 'hidden' })
+      record(id === 'deck-title' ? 'present.qr-title' : 'present.qr-closing', q.active === id && q.text === DOMAIN && [q.href, q.title, q.accessible, q.encoded, q.zoom.text].every(value => value === FULL) && q.zoom.size >= 28 && q.zoom.inside && !q.overflow && !q.ellipsis && q.insideSlide && !q.clippedBy, JSON.stringify(q), rel(file))
     }
     await presenter.evaluate(() => { location.hash = 'mindmap' }); await pause(2500)
     const mm = await audience.evaluate(() => {

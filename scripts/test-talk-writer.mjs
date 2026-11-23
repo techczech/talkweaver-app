@@ -2,7 +2,8 @@
 // (src/main/talk-writer.ts) over a temp vault, with a fake editor-window registry wired through
 // configureTalkWriter the way index.ts wires the real one (editorEntryForOutline → the window's buffer).
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import fsModule, { chmodSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { configureTalkWriter, flushTalkForPublish, writeTalkFileInPlace, writeTalkOutline } from '../src/main/talk-writer.ts'
@@ -405,6 +406,62 @@ try {
     assert.deepEqual(order, ['read'])
     configureTalkWriter({ editorBufferFor: () => null })
   }
+  // Neon re-check 3: force the no-hard-link fallback and inject failures after exclusive create.
+  const fallbackFailures=[]
+  for(const fault of ['stat','write','sync','authority']) {
+    const folder=join(root,`fallback-${fault}`);mkdirSync(folder)
+    const path=join(folder,'outline.md')
+    const original=Object.fromEntries(['linkSync','openSync','fstatSync','writeSync','fsyncSync'].map(key=>[key,fsModule[key]]))
+    const originalOpen=fsModule.promises.open
+    let targetFd,allowed=true,publishedWhileAllowed=false
+    const injected=()=>{throw Object.assign(Error(`injected fallback ${fault}`),{code:'EIO'})}
+    fsModule.linkSync=()=>{
+      if(fault==='authority')queueMicrotask(()=>{allowed=false})
+      throw Object.assign(Error('hard links unavailable'),{code:'ENOTSUP'})
+    }
+    fsModule.openSync=(p,...args)=>{
+      const fd=original.openSync(p,...args)
+      if(p===path)targetFd=fd
+      return fd
+    }
+    fsModule.fstatSync=(fd,...args)=>{if(fd===targetFd&&fault==='stat')injected();return original.fstatSync(fd,...args)}
+    fsModule.writeSync=(fd,...args)=>{
+      if(fd===targetFd){if(fault==='write')injected();publishedWhileAllowed=allowed}
+      return original.writeSync(fd,...args)
+    }
+    fsModule.fsyncSync=(fd,...args)=>{if(fd===targetFd&&fault==='sync')injected();return original.fsyncSync(fd,...args)}
+    fsModule.promises.open=async(p,...args)=>{
+      const handle=await originalOpen(p,...args)
+      if(p===path){
+        targetFd=handle.fd
+        if(fault==='stat')handle.stat=async()=>injected()
+        if(fault==='sync')handle.sync=async()=>injected()
+        const write=handle.write.bind(handle)
+        handle.write=async(...args)=>{if(fault==='write')injected();publishedWhileAllowed=allowed;return write(...args)}
+      }
+      return handle
+    }
+    syncBuiltinESMExports()
+    try {
+      let error
+      try {await writeTalkFileInPlace(path,OUTLINE,{recreateRemoved:true,authorize:()=>assert.equal(allowed,true)})}catch(e){error=e}
+      if(fault==='authority') {
+        assert.equal(error,undefined)
+        assert.equal(publishedWhileAllowed,true,'fallback publication must not yield after live authority')
+        assert.equal(readFileSync(path,'utf8'),OUTLINE)
+        assert.deepEqual(strays(path),[])
+      } else {
+        assert.ok(error?.partialTemp,`${fault}: a created target requires partial-write recovery`)
+        assert.equal(readFileSync(error.partialTemp,'utf8'),OUTLINE,`${fault}: full staged bytes retained`)
+        assert.ok(existsSync(path),`${fault}: incomplete target is reported, never silently abandoned`)
+        if(fault==='stat')assert.equal(readFileSync(path,'utf8'),'')
+      }
+    } catch(error) {fallbackFailures.push(`${fault}: ${error.message}`)}
+    finally {
+      Object.assign(fsModule,original);fsModule.promises.open=originalOpen;syncBuiltinESMExports()
+    }
+  }
+  assert.deepEqual(fallbackFailures,[],'exclusive-create fallback failure and authority regressions')
 } finally {
   configureTalkWriter({ editorBufferFor: () => null })
   rmSync(root, { recursive: true, force: true })

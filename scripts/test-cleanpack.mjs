@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { buildTalkTextModel } from '../src/main/talkText.ts'
@@ -16,7 +17,7 @@ import {
   writeCleanPack
 } from '../src/main/rewritePack.ts'
 
-const root = mkdtempSync(join(tmpdir(), 'talkweaver-cleanpack-'))
+const root = testScratchDir(join(tmpdir(), 'talkweaver-cleanpack-'))
 const instructionsDir = join(root, 'source-instructions')
 mkdirSync(instructionsDir, { recursive: true })
 writeFileSync(join(instructionsDir, 'clean-format.md'), '# Clean faithfully\n')
@@ -106,7 +107,7 @@ for (const leaf of ['CLEAN.md', 'AGENTS.md', 'CLAUDE.md']) {
   symlinkSync(outsideCleanPath, join(symlinkCleanPack, leaf))
   assert.throws(
     () => writeCleanPack({ packDir: symlinkCleanPack, model, cleanTemplate: template, instructionsDir, modeInstructions: 'One pass.' }),
-    /pack-file-symlink-refused/
+    /atomic-write-symlink-refused/
   )
   assert.equal(readFileSync(outsideCleanPath, 'utf8'), 'outside must stay unchanged')
 }

@@ -12,6 +12,7 @@
 // How a child is started is passed in (spawn): the app passes Electron's utilityProcess
 // (prepare-talk-utility-process.ts, forkUtilityChild); tests pass a fake, or a plain Node child
 // process (scripts/lib/node-compile-child.mjs). This file imports nothing of Electron.
+import { PUBLICATION_FILES_PENDING } from '../shared/publication-files.ts'
 import type { HandoutPagesJob, HandoutPagesResult } from './handout-pages'
 
 export type HandoutPagesReply = { ok: true; result: HandoutPagesResult } | { ok: false; error: string }
@@ -64,9 +65,14 @@ export function createHandoutPagesOffProcess(childPath: string, spawn: SpawnHand
       child.on('exit', (code: number) => {
         fail(`The handout could not be built (the build stopped with code ${code}).`)
       })
+      const limit = job.kind === 'preflight' ? Math.min(deadlineMs, 30_000) : deadlineMs
       timer = setTimeout(() => {
-        fail(`The handout could not be built (the build took longer than ${formatLimit(deadlineMs)}).`)
-      }, deadlineMs)
+        if (job.kind === 'preflight') {
+          settle(() => resolve({ warnings: [PUBLICATION_FILES_PENDING], publicationFiles: { checked: 0, findings: [] } }))
+          return
+        }
+        fail(`The handout could not be built (the build took longer than ${formatLimit(limit)}).`)
+      }, limit)
       try {
         child.postMessage(job)
       } catch (error) {

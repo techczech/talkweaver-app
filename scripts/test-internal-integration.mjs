@@ -1,10 +1,11 @@
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { join, basename, relative } from 'node:path'
 import ts from 'typescript'
 import { closeFrozen } from '../src/renderer/src/lib/closeFreeze.ts'
 const compile = source => ts.transpileModule(source, {compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText
-const main = readFileSync('src/main/index.ts','utf8')
+const main = readMainSource()
 const start = main.indexOf('async function verifiedRunSource(')
 const source = main.slice(start,main.indexOf('async function qualifiedRunTalk(',start))
 let nativeReads=0, outlineReads=0, unavailable=false, refused=false, rootChanged=false, missing=false

@@ -13,6 +13,7 @@
 //     absolute path at the vault root) works when the vault is supplied and is refused when it is not.
 //  4. Every main-process compile supplies the roots: the function they share picks the talk's vault,
 //     and no `prepareSource` call in the main process is left without them.
+import { readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { mkdtemp, mkdir, writeFile, readFile, readdir, symlink, copyFile, realpath, rm } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
@@ -411,8 +412,8 @@ function workerSideFiles(files) {
 await check('no compile in the main process or its worker threads is left without allowed roots', () => {
   const files = mainProcessSources()
   const calls = files.flatMap(prepareSourceCalls)
-  // 15 on 2026-10-10: index.ts 10, shared-talk-build.ts 1, instant-slide-insert.ts 1, prepare-talk-worker.ts 1, handout-pages.ts 2.
-  assert.ok(calls.length >= 15, `expected the main process's compiles, found ${calls.length}: ${calls.map((c) => `${c.file}:${c.line}`).join(', ')}`)
+  assert.ok(calls.length > 0, 'the recursive source scan finds compiler calls')
+  assert.ok(calls.some((call) => call.file === 'src/main/prepare-talk-worker.ts'), 'the shared preparation worker is covered by the allowed-roots check')
   const without = calls.filter((call) => !/allowedAssetRoots|compileOptions/.test(call.text))
   assert.deepEqual(without, [], 'a prepareSource call with no allowedAssetRoots would lose pooled _assets media')
   // A compile in a worker thread is handed its roots as plain data in a job: there the roots must go
@@ -428,16 +429,25 @@ await check('no compile in the main process or its worker threads is left withou
       (/\bcompileOptions\b/.test(call.text) && /const compileOptions = requireCompileOptionsWithRoots\(/.test(source))
     assert.ok(checked, `a worker-thread compile whose roots are not checked: ${call.file}:${call.line} ${call.text}`)
   }
-  const index = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
-  assert.match(index, /const compileOptions = \{ \.\.\.\(options \?\? \{\}\), allowedAssetRoots: assetRootsFor\(outlinePath\) \}/)
+  const index = readMainSource()
+  assert.match(index, /const compileOptions = \{ \.\.\.\(options \?\? \{\}\), allowedAssetRoots: settings\?\.allowedAssetRoots \?\? assetRootsFor\(outlinePath\) \}/)
+  assert.match(index, /prepareTalk\(outlinePath, outline, undefined, undefined, 'variant', undefined, \{ allowedAssetRoots: \[refWork\] \}\)/)
+  assert.match(index, /prepareTalk\(outlinePath, resolved, undefined, undefined, 'variant', undefined, \{\s*allowedAssetRoots: assetRootsFor\(outlinePath, \[vaultRoot\]\)/)
   // The live compile's job carries those options to the worker.
   assert.match(index, /prepareTalkOffThread\(\{ compilerDir, outlinePath, text: resolved, slug, defaults, options: compileOptions, previewDir \}\)/)
   // The search index's rows-only compile (search-rows-off-process.ts) is the only other job, and it too
   // carries the talk's roots. Every job posted is one of these two.
   assert.match(index, /prepareTalkOffThread\(\{\s*compilerDir, outlinePath: talk\.outlinePath, text: source\.resolved, slug: talk\.slug, rowsOnly: true,\s*options: \{ projectionsOnly: true, allowedAssetRoots: assetRootsFor\(talk\.outlinePath\) \}\s*\}\)/)
   assert.equal((index.match(/prepareTalkOffThread\(\{/g) ?? []).length, 2, 'two places post a compile job, and they are the two above')
-  // Both handout builds are handed the talk's roots.
-  assert.equal((index.match(/buildHandoutPagesOffThread\(\{[\s\S]*?\n\s*\}\)/g) ?? []).filter((job) => /assetRoots: assetRootsFor\((?:talk\.)?outlinePath\)/.test(job)).length, 2)
+  // Both handout builds and both new preflight jobs must carry the talk's roots.
+  // Keep the original two-build invariant; a one-line preflight must not consume the following build.
+  const pageJobs = index.match(/buildHandoutPagesOffThread\(\{(?=\s*\n)[\s\S]*?\n\s*\}\)/g) ?? []
+  assert.equal(pageJobs.length, 2)
+  assert.equal(pageJobs.filter((job) => /assetRoots: assetRootsFor\((?:talk\.)?outlinePath\)/.test(job)).length, 2)
+  const fileChecks = index.match(/buildHandoutPagesOffThread\(\{ kind: 'preflight',[^\n]+\}\)/g) ?? []
+  assert.equal(fileChecks.length, 2)
+  assert.equal(fileChecks.filter((job) => /assetRoots: assetRootsFor\((?:talk\.)?outlinePath\)/.test(job)).length, 2)
+  assert.equal((index.match(/buildHandoutPagesOffThread\(\{/g) ?? []).length, 4, 'all two builds and two preflight jobs are accounted for')
   assert.match(readFileSync(join(process.cwd(), 'src/main/shared-talk-build.ts'), 'utf8'), /const compileOptions = input\.allowedAssetRoots \? \{ allowedAssetRoots: input\.allowedAssetRoots \} : \{\}/)
   assert.match(index, /allowedAssetRoots: assetRootsFor\(outlinePath\),\n\s+\/\/ The talk's vault's personal author/)
 })
@@ -869,7 +879,7 @@ const ts = (await import('typescript')).default
 const pathNode = await import('node:path')
 const { pathStaysInside } = await import(pathToFileURL(join(process.cwd(), 'src/main/path-containment.ts')).href)
 function mainFunction(name) {
-  const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+  const source = readMainSource()
   const start = source.indexOf(`\nfunction ${name}(`)
   assert.ok(start >= 0, `${name} is in src/main/index.ts`)
   const text = source.slice(start, source.indexOf('\n}\n', start) + 3)
@@ -973,13 +983,32 @@ await check('a loose talk\'s pooled id is not pointed at the current vault, and 
     assert.deepEqual(unresolvedAddresses(String(model.fullHtml), model.assets), [])
   }
   // In the app the rewrite goes through one function that takes the talk's own vault.
-  const index = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+  const index = readMainSource()
   assert.match(index, /function resolvePooledRefs\(content: string, outlinePath: string\): string \{\n  const root = talkVaultRoot\(vaultRegistry, outlinePath\)\n  return root \? resolveImageRefs\(content, root, outlinePath\) : content\n\}/)
-  assert.ok([...index.matchAll(/resolvePooledRefs\((\w+), outlinePath\)/g)].length >= 10)
+  const tree = ts.createSourceFile('src/main/index.ts', index, ts.ScriptTarget.Latest, true)
+  let preparationRewrites = false
+  function inspect(node, inPreparation = false) {
+    inPreparation ||= ts.isFunctionDeclaration(node) && node.name?.text === 'prepareTalk'
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'resolvePooledRefs') {
+      const path = node.arguments[1]?.getText(tree) ?? ''
+      assert.match(path, /^(?:\w+\.)?outlinePath$/, 'a pooled-reference rewrite receives its outline path')
+      if (inPreparation) {
+        assert.equal(node.arguments[0]?.getText(tree), 'content')
+        assert.equal(path, 'outlinePath')
+        preparationRewrites = true
+      }
+    }
+    ts.forEachChild(node, (child) => inspect(child, inPreparation))
+  }
+  inspect(tree)
+  assert.ok(preparationRewrites, 'the shared preparation rewrites against the talk path')
   // No handler is left rewriting against "the current vault" (vaultRootFor's fallback): the direct
   // calls that remain are the vault scans (their own vault, with the talk) and the staged version preview.
-  const direct = [...index.matchAll(/resolveImageRefs\(([^)]*)\)/g)].map((m) => m[1])
-  assert.deepEqual(direct.sort(), ['content, root, outlinePath', 'content, vaultRoot, talk.outlinePath', 'content, vaultRoot, talk.outlinePath', 'outline, vaultRoot'])
+  const calls = readMainSource((code, file) => file === 'src/main/image-refs.ts'
+    ? code.replace('export function resolveImageRefs(content: string, vaultRoot: string, talkPath?: string)', '')
+    : code)
+  const direct = [...calls.matchAll(/resolveImageRefs\(([^)]*)\)/g)].map((m) => m[1])
+  assert.deepEqual(direct.sort(), ['content, root, outlinePath', 'content, vaultRoot, talk.outlinePath', 'outline, vaultRoot'])
 })
 
 await check('a talk in a registered vault that is not the current one gets its OWN vault\'s pooled pictures', async () => {

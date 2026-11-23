@@ -32,7 +32,7 @@ const live = () => page.locator('[data-testid="outline-disk-change-live"]').text
 
 await page.evaluate((c) => window.show(c), change('changed', 'aaa'))
 check((await popup()) === 1, 'the popover opens by itself with the change')
-check((await page.getByRole('button', { name: 'Reload' }).count()) === 1, 'Reload is in the popover')
+check((await page.getByRole('button', { name: 'Review merge' }).count()) === 1, 'Review merge is in the popover')
 const firstText = await live()
 await page.locator('.tw-disk-chip-btn').click()
 check((await popup()) === 0, 'the chip closes the popover')

@@ -13,7 +13,7 @@ import { CLEAN_CUT, type AlignmentProvenance, type TranscriptSentence, type Tran
 import { ALIGNMENT_CONFIDENCE } from './word-alignment.ts'
 import { effectiveCuts, normaliseRanges, trimEndAt, trimStartAt, type EditBoundary, type EditOp, type RecordingEdits, type TimeRange } from './recording-edits.ts'
 import { captionCues, editedDurationMs, frameOf, keptSpans, msOfFrame, silentEndSuggestions, VIDEO_FRAME, type KeptSpan } from './recording-video.ts'
-import { NO_TAKES, rangesToVideoClock, takeClock, toVideoClock, videoClockMs, type TakeClock, type TakeInsert } from './recording-takes.ts'
+import { NO_TAKES, rangesToVideoClock, runStartOnVideoClock, takeAt, takeClock, toVideoClock, videoClockMs, type TakeClock, type TakeInsert } from './recording-takes.ts'
 
 /**
  * Every threshold the editor uses, in one place. The clean-edge pair is slice 2's measured choice
@@ -703,6 +703,8 @@ export type ResolvedRecording = {
   leftOutRows: Set<number>
   /** Every cut the plan applies, in Run time: saved cuts, the Run's own Trims less restored parts, slides left out. */
   cuts: TimeRange[]
+  /** Saved cuts and Run trims, before cuts for replaced or excluded slides. */
+  ownCuts: TimeRange[]
   /** The kept spans on the 30 fps grid: what the player plays and the export keeps. */
   spans: KeptSpan[]
   editedMs: number
@@ -740,6 +742,28 @@ export type ResolvedRecording = {
   replacedRows: Map<number, string>
 }
 
+/** Explicit end trims also remove takes beyond the retained section of the Run. */
+function takeEndCuts(clock: TakeClock, ownCuts: readonly TimeRange[], durationMs: number): TimeRange[] {
+  const lead = trimStartAt(ownCuts)
+  const tail = trimEndAt(ownCuts, durationMs)
+  return [
+    ...(lead > 0 ? [{ start: 0, end: toVideoClock(clock, lead) }] : []),
+    ...(tail < durationMs ? [{ start: toVideoClock(clock, tail), end: videoClockMs(clock, durationMs) }] : [])
+  ]
+}
+
+/** Silence in the original Run cannot tell us whether a replacement take is silent. */
+export function wouldCutTakeAtEnds(recording: ResolvedRecording, ranges: readonly TimeRange[]): boolean {
+  const { clock, ctx, ownCuts, spans } = recording
+  if (!clock.inserts.length) return false
+  const own = normaliseRanges([...ownCuts, ...ranges], ctx.durationMs)
+  const ends = takeEndCuts(clock, own, ctx.durationMs)
+  return ends.some((cut) => clock.inserts.some((take) => spans.some((span) =>
+    Math.max(frameOf(cut.start), frameOf(take.outAt), span.startFrame) <
+    Math.min(frameOf(cut.end), frameOf(take.outAt + take.length), span.endFrame)
+  )))
+}
+
 /**
  * The one resolved edit state of a layered Run. The editor's words, the length in the bar, the player,
  * the recording panel, captions, chapters and the export all read this, so they cannot disagree about
@@ -757,7 +781,7 @@ export function resolveRecording(input: {
    * Takes chosen in the edits that can be played, with their lengths (a missing take is left out) and
    * their own timed words on their own clock (null: not written out yet).
    */
-  takes?: ReadonlyArray<{ change: number; run: string; durationMs: number; words?: ReadonlyArray<{ text: string; start: number; end: number }> | null }>
+  takes?: ReadonlyArray<{ change: number; run: string; durationMs: number; words?: ReadonlyArray<{ text: string; start: number; end: number; timed?: boolean }> | null }>
   /** The transcript's segments, when the caller passes `ctx` rather than the transcript. */
   segments?: ReadonlyArray<{ start: number; end: number; text: string }> | null
 }): ResolvedRecording {
@@ -770,61 +794,58 @@ export function resolveRecording(input: {
   // A slide recorded again plays its chosen take where it starts; its own stretch is cut. Each slide
   // change has one row at most that a take replaces (the first visit), and never one left out.
   const replacedRows = new Map<number, string>()
-  const inserts: TakeInsert[] = []
   // Where each take goes in, in whole milliseconds: the one value the cut, the clock and the chapter use.
-  const insertAt = new Map<number, number>()
+  const inserts: Array<Omit<TakeInsert, 'outAt'>> = []
   for (const t of input.takes ?? []) {
     const r = rows.find((row) => row.change === Math.round(t.change) && !leftOutRows.has(row.index) && !replacedRows.has(row.index))
     if (!r || !(t.durationMs > 0)) continue
-    const at = Math.round(r.start)
     replacedRows.set(r.index, t.run)
-    insertAt.set(r.index, at)
-    inserts.push({ at, length: Math.round(t.durationMs), run: t.run, change: r.change, end: Math.round(r.end) })
+    inserts.push({ at: Math.round(r.start), length: Math.round(t.durationMs), run: t.run, change: r.change, end: Math.round(r.end) })
   }
   const replacedSpans = inserts.map((i) => ({ start: i.at, end: i.end }))
+  // Each take's own start on the video clock (several can go in at one Run time: one after the other).
   const clock = inserts.length ? takeClock(inserts) : NO_TAKES
+  const insertOf = new Map(clock.inserts.map((i) => [i.change, i]))
   const trims = effectiveCuts([], input.runTrims as TimeRange[] | undefined, durationMs, edits.restoredTrims ?? [])
   const cuts = normaliseRanges([...edits.cuts, ...trims, ...leftOutSpans, ...replacedSpans], durationMs)
   const runSpans = keptSpans(cuts, durationMs)
   const clockMs = videoClockMs(clock, durationMs)
-  const clockCuts = inserts.length ? normaliseRanges(rangesToVideoClock(clock, cuts), clockMs) : cuts
+  // A cut of the recording's own words keeps the takes that go in inside it (they are not the Run's
+  // material). A trim at an end (a cut from the very start, or to the very end: Trim start here, Trim end
+  // here, the Run's own Trims) removes every take beyond it as well; the take choices stay for Undo.
+  const ownCuts = normaliseRanges([...edits.cuts, ...trims], durationMs)
+  const clockCuts = inserts.length ? normaliseRanges([...rangesToVideoClock(clock, cuts), ...takeEndCuts(clock, ownCuts, durationMs)], clockMs) : cuts
   const spans = inserts.length ? keptSpans(clockCuts, clockMs) : runSpans
   const views = planViews(ctx, runSpans, durationMs, { sidecar: edits.cuts, leftOut: [...leftOutSpans, ...replacedSpans], trims })
   const wordCut = new Uint8Array(ctx.words.length)
   for (const v of views) for (let w = v.firstWord; w < v.endWord; w++) wordCut[w] = 1
   // A chapter starts at the slide's real change unless the owner moved that slide's start; the inferred
   // start of a slide's words is for showing them on rows, not for chapters (an untouched Run keeps PR 347's).
-  const chapterMarks = rows.filter((r) => !leftOutRows.has(r.index) && r.slideId).map((r) => ({ tMs: toVideoClock(clock, r.index === 0 ? 0 : insertAt.get(r.index) ?? (r.moved ? r.start : r.enterMs)), slideId: r.slideId }))
+  const chapterMarks = rows.filter((r) => !leftOutRows.has(r.index) && r.slideId).map((r) => ({ tMs: rowChapterVideoMs({ clock, replacedRows }, r), slideId: r.slideId }))
   // A kept word that runs over the point where a take goes in is held to its side of it (by its middle),
-  // so it never stays on screen across the take.
+  // so it never stays on screen across the take. A word that starts where takes go in plays after them.
   const wordOnClock = (start: number, end: number): { start: number; end: number } => {
     if (!inserts.length) return { start, end }
     for (const ins of clock.inserts) if (start < ins.at && end > ins.at) { if ((start + end) / 2 < ins.at) end = ins.at; else start = ins.at }
-    const endShift = clock.inserts.reduce((n, i) => n + (i.at < end && i.at > start ? 0 : i.at < end ? i.length : 0), 0)
-    return { start: toVideoClock(clock, start), end: Math.max(toVideoClock(clock, start), end + endShift) }
+    // Held to one side, the word moves whole: by the takes that go in at or before its start.
+    const shift = runStartOnVideoClock(clock, start) - start
+    return { start: start + shift, end: Math.max(start, end) + shift }
   }
   const captionWords: Array<{ text: string; start: number; end: number; order: number }> = []
   const words = ctx.words
-  for (let i = 0; i < words.length; i++) {
-    if (wordCut[i]) continue
-    if (words[i].timed) { captionWords.push({ text: words[i].text, ...wordOnClock(words[i].start, words[i].end), order: i }); continue }
-    // An untimed word joins the cue of the kept timed word next to it: that word's times, its own place.
-    let j = i - 1
-    while (j >= 0 && (wordCut[j] || !words[j].timed)) j--
-    if (j < 0) { j = i + 1; while (j < words.length && (wordCut[j] || !words[j].timed)) j++ }
-    if (j < words.length) captionWords.push({ text: words[i].text, ...wordOnClock(words[j].start, words[j].end), order: i })
-  }
-  // A chosen take's own words, on the video clock where the take plays; never another take's.
+  for (const w of wordsWithCaptionTimes(words, (i) => !!wordCut[i])) captionWords.push({ text: w.text, ...wordOnClock(w.start, w.end), order: w.index })
+  // A chosen take's own words, on the video clock where the take plays; never another take's. The same
+  // caption rule as the Run's: an untimed word rides with its timed neighbour.
   let takesWithoutWords = 0
   const takeWords: Array<{ text: string; start: number; end: number; order: number }> = []
-  inserts.forEach((ins, k) => {
+  clock.inserts.forEach((ins, k) => {
     const own = input.takes?.find((t) => t.run === ins.run && Math.round(t.change) === ins.change)?.words
     if (!own) { takesWithoutWords++; return }
-    const at = toVideoClock(clock, ins.at)
-    own.forEach((w, j) => {
-      if (!w || typeof w.text !== 'string' || !Number.isFinite(w.start) || !Number.isFinite(w.end) || w.end < w.start || (w.start + w.end) / 2 >= ins.length) return
-      takeWords.push({ text: w.text, start: at + Math.max(0, w.start), end: at + Math.min(ins.length, w.end), order: words.length + (k + 1) * 1_000_000 + j })
-    })
+    const bad = (j: number): boolean => { const w = own[j]; return !w || typeof w.text !== 'string' || !Number.isFinite(w.start) || !Number.isFinite(w.end) || w.end < w.start }
+    for (const w of wordsWithCaptionTimes(own, bad)) {
+      if ((w.start + w.end) / 2 >= ins.length) continue
+      takeWords.push({ text: w.text, start: ins.outAt + Math.max(0, w.start), end: ins.outAt + Math.min(ins.length, w.end), order: words.length + (k + 1) * 1_000_000 + w.index })
+    }
   })
   // Captions: words where the transcript has timed words (all of them cut is no captions, never segments);
   // otherwise the transcript's segments, none from a replaced stretch, on the video clock.
@@ -833,12 +854,75 @@ export function resolveRecording(input: {
   const captionSource: ResolvedRecording['captionSource'] = words.length ? 'words' : rawSegments.length || takeWords.length ? 'segments' : 'none'
   let captionSegments: ResolvedRecording['captionSegments'] = []
   if (captionSource === 'segments') {
-    captionSegments = rawSegments.filter((g) => !replacedSpans.some((r) => g.end > r.start && g.start < r.end)).map((g) => ({ text: g.text, start: toVideoClock(clock, g.start), end: toVideoClock(clock, g.end) }))
+    captionSegments = rawSegments.filter((g) => !replacedSpans.some((r) => g.end > r.start && g.start < r.end)).map((g) => { const start = runStartOnVideoClock(clock, g.start); return { text: g.text, start, end: Math.max(start, toVideoClock(clock, g.end)) } })
     captionSegments.push(...wordsAsSegments(takeWords))
     captionSegments.sort((a, b) => a.start - b.start)
   } else captionWords.push(...takeWords)
   captionWords.sort((a, b) => a.start - b.start || a.order - b.order)
-  return { ctx, rows, leftOutRows, cuts, spans, editedMs: editedDurationMs(spans), views, chapterMarks, wordCut, captionWords, captionSource, captionSegments, takesWithoutWords, clock, clockMs, clockCuts, replacedRows }
+  return { ctx, rows, leftOutRows, cuts, ownCuts, spans, editedMs: editedDurationMs(spans), views, chapterMarks, wordCut, captionWords, captionSource, captionSegments, takesWithoutWords, clock, clockMs, clockCuts, replacedRows }
+}
+
+/**
+ * The caption rule for words, one for a Run and for a take: a kept timed word keeps its times; a kept
+ * untimed word (precise word timing could not place it) takes the times of the kept timed word before it,
+ * or after it when none is before, and keeps its own place, so it rides in that word's cue in transcript
+ * order. An untimed word with no kept timed word is left out. `skip(i)`: word i is cut (or unusable).
+ */
+export function wordsWithCaptionTimes(words: ReadonlyArray<{ text: string; start: number; end: number; timed?: boolean }>, skip: (i: number) => boolean = () => false): Array<{ index: number; text: string; start: number; end: number }> {
+  const timed = (i: number): boolean => !skip(i) && words[i].timed !== false
+  const out: Array<{ index: number; text: string; start: number; end: number }> = []
+  for (let i = 0; i < words.length; i++) {
+    if (skip(i)) continue
+    let j = i
+    if (!timed(i)) {
+      j = i - 1
+      while (j >= 0 && !timed(j)) j--
+      if (j < 0) { j = i + 1; while (j < words.length && !timed(j)) j++ }
+      if (j >= words.length) continue
+    }
+    out.push({ index: i, text: words[i].text, start: words[j].start, end: words[j].end })
+  }
+  return out
+}
+
+/**
+ * Where a row's Play goes on the video clock: a row played from a new take, that take's own start; any other
+ * row, where its Run time plays (after any takes that go in at that moment). Rows that share one start
+ * (slides entered close together) each start their own take.
+ */
+export function rowVideoStart(r: Pick<ResolvedRecording, 'clock' | 'replacedRows'>, row: Pick<EditorRow, 'index' | 'change' | 'start'>): number {
+  const take = r.replacedRows.has(row.index) ? r.clock.inserts.find((i) => i.change === row.change) : undefined
+  return take ? take.outAt : runStartOnVideoClock(r.clock, row.start)
+}
+
+/**
+ * Where a slide change marked on a Run-time track (Studio's "Go to slide n") goes on the video clock: where
+ * that slide's chapter starts (its take, its moved start, or its real change, after any takes there).
+ */
+export function changeVideoStart(r: Pick<ResolvedRecording, 'rows' | 'clock' | 'replacedRows'>, enterMs: number): number {
+  const row = r.rows.find((x) => Math.round(x.enterMs) === Math.round(enterMs))
+  return row ? rowChapterVideoMs(r, row) : runStartOnVideoClock(r.clock, enterMs)
+}
+
+/**
+ * Where a slide's chapter starts on the video clock: its take's start; otherwise its real slide change (the
+ * start the owner moved it to, if moved; 0 for the first), after any takes that go in at that moment.
+ */
+export function rowChapterVideoMs(r: Pick<ResolvedRecording, 'clock' | 'replacedRows'>, row: Pick<EditorRow, 'index' | 'change' | 'start' | 'enterMs' | 'moved'>): number {
+  const take = r.replacedRows.has(row.index) ? r.clock.inserts.find((i) => i.change === row.change) : undefined
+  return take ? take.outAt : runStartOnVideoClock(r.clock, row.index === 0 ? 0 : row.moved ? row.start : row.enterMs)
+}
+
+/**
+ * The row playing (its place in `rows`), from the player's Run time and video time: inside a new take, the
+ * row that take replaces; otherwise the last row starting at or before the Run time.
+ */
+export function rowAtPlayback(r: Pick<ResolvedRecording, 'rows' | 'clock' | 'replacedRows'>, runMs: number, videoMs: number): number {
+  const inTake = takeAt(r.clock, videoMs)
+  if (inTake) { const k = r.rows.findIndex((row) => row.change === inTake.insert.change && r.replacedRows.get(row.index) === inTake.insert.run); if (k >= 0) return k }
+  let k = 0
+  for (let i = 0; i < r.rows.length; i++) if (r.rows[i].start <= runMs) k = i
+  return k
 }
 
 /** Timed words as caption lines (a take's words where the Run has segments only): broken at a pause or at the cue length. */
@@ -934,7 +1018,7 @@ export function markedStretch(ctx: EditorWords, flagMs: number): { firstWord: nu
  * Tidy up's proposals. Never applies anything: the sheet ticks the clean ones and lists the close ones
  * under "Needs a listen". Leaves out what is already cut (half or more of it).
  */
-export function tidyProposals(ctx: EditorWords, rows: readonly EditorRow[], marks: readonly RunMark[] | undefined, cuts: readonly TimeRange[]): TidyResult {
+export function tidyProposals(ctx: EditorWords, rows: readonly EditorRow[], marks: readonly RunMark[] | undefined, cuts: readonly TimeRange[], recording?: ResolvedRecording): TidyResult {
   const out: TidyProposal[] = []
   const { words, gaps } = ctx
   const n = words.length
@@ -986,6 +1070,7 @@ export function tidyProposals(ctx: EditorWords, rows: readonly EditorRow[], mark
   // Silence at the start and end.
   for (const s of silentEndSuggestions(ctx.silence, ctx.durationMs, trimStartAt(cuts as TimeRange[]), trimEndAt(cuts as TimeRange[], ctx.durationMs))) {
     const range = s.side === 'start' ? { start: 0, end: s.at } : { start: s.at, end: ctx.durationMs }
+    if (recording && wouldCutTakeAtEnds(recording, [range])) continue
     add('ends', range, s.side === 'start' ? 0 : n, s.side === 'start' ? 0 : n, s.side === 'start' ? `${(s.silentMs / 1000).toFixed(1)} s before your first word` : `${(s.silentMs / 1000).toFixed(1)} s after your last word`, rangeQuality(range))
   }
 

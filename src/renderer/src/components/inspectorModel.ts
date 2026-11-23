@@ -1,3 +1,4 @@
+import { isEmptyAuthoringSlide } from '../../../shared/redesign-window-source.ts'
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import type { ProjectionRow } from '../../../preload/index.ts'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor.ts'
@@ -220,7 +221,7 @@ export function inspectorModel(
   // prompt, example and settings, read from the slide's own text.
   const isBoard = !unresolved && selectedTokens['poll-type'] === 'poll=board'
   return {
-    title: plainInlineText(row?.nav_title || row?.title) || '(untitled)',
+    title: isEmptyAuthoringSlide(row?.source_markdown ?? '') ? 'New slide' : plainInlineText(row?.nav_title || row?.title) || '(untitled)',
     layoutName,
     unresolved,
     unresolvedFindings,

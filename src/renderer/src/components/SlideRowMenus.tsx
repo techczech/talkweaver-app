@@ -9,7 +9,7 @@
 // and every operation is one call on `ops` (the editor's whole-slide operations): this file owns no
 // text arithmetic.
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpDown, ChevronsDownUp, ChevronsUpDown, CircleHelp, ClipboardPaste, Copy, MoreHorizontal, Scissors, Search, Trash2 } from 'lucide-react'
+import { ArrowUpDown, BookmarkPlus, CornerDownRight, Plus, SquareStack, ChevronsDownUp, ChevronsUpDown, CircleHelp, ClipboardPaste, Copy, MoreHorizontal, Scissors, Search, Trash2 } from 'lucide-react'
 import { useClamped, useDismiss, useMenuKeyNav } from './talklist/menus'
 import { liveShortcutLabel } from '../keymap/store'
 import { notify } from '../lib/notify'
@@ -34,10 +34,20 @@ export interface SlideMenuRequest {
   startAtFirst?: boolean
 }
 
-export type SlideRowAction = 'move' | 'set-aside' | 'cut' | 'copy' | 'paste' | 'delete' | 'collapse' | 'explain' | 'more'
+type StructureRowAction = 'new-slide-after' | 'new-section-after' | 'new-subsection-after' | 'select-several'
+export type StructureRowItems = (line: number | null) => ReadonlyArray<{
+  action: StructureRowAction
+  label: string
+  disabled?: string
+  run: () => void
+}>
+
+export type SlideRowAction = StructureRowAction | 'move' | 'set-aside' | 'cut' | 'copy' | 'paste' | 'delete' | 'collapse' | 'explain' | 'more'
 
 interface Props {
+  isCurrent?: () => boolean
   request: SlideMenuRequest | null
+  structureItems?: StructureRowItems
   /** The outline rows of the talk's current text. */
   rows: readonly SlideRow[]
   ops: SlideBlockOps | null
@@ -58,7 +68,7 @@ interface Props {
   collapseChords?: { collapse: string; expand: string }
 }
 
-interface Item { action: SlideRowAction; icon: JSX.Element; label: string; k?: string; danger?: boolean; breakAfter?: boolean }
+interface Item { action: SlideRowAction; icon: JSX.Element; label: string; k?: string; danger?: boolean; breakAfter?: boolean; disabled?: string }
 const IC = 13
 
 /** The rows of the menu, in order. Exported for the tests. */
@@ -95,7 +105,7 @@ function RowMenu({ x, y, items, label, startAtFirst, onAction, onClose }: {
 }) {
   useDismiss(onClose)
   const { ref, left, top } = useClamped(x, y)
-  const [active, setActive] = useMenuKeyNav(items.length, (i) => onAction(items[i].action), startAtFirst)
+  const [active, setActive] = useMenuKeyNav(items.length, (i) => items[i] && !items[i].disabled && onAction(items[i].action), startAtFirst)
   return (
     <div ref={ref} className="tl-menu" style={{ left, top }} role="menu" aria-label={label} data-slide-row-menu onClick={(e) => e.stopPropagation()}>
       {items.map((it, i) => (
@@ -105,10 +115,12 @@ function RowMenu({ x, y, items, label, startAtFirst, onAction, onClose }: {
             className={`tl-mi ${it.danger ? 'tl-mi--danger' : ''} ${i === active ? 'tl-mi--kbd' : ''}`}
             role="menuitem"
             data-slide-row-action={it.action}
+            disabled={!!it.disabled}
+            title={it.disabled}
             onClick={() => onAction(it.action)}
             onMouseEnter={() => setActive(i)}
           >
-            {it.icon}{it.label}{it.k && <span className="tl-mi-k">{it.k}</span>}
+            {it.icon}{it.label}{it.disabled && <small>{it.disabled}</small>}{it.k && <span className="tl-mi-k">{it.k}</span>}
           </button>
           {it.breakAfter && <hr />}
         </Fragment>
@@ -240,11 +252,11 @@ export function writeSlideClipboard(clip: string, cut: boolean): void {
   try { navigator.clipboard.writeText(clip).catch(failed) } catch { failed() }
 }
 
-export default function SlideRowMenus({ request, rows, ops, onClose, onActed, onLanded, onCut, onSetAside, onToggleCollapse, onExplain, onMore, collapseChords }: Props) {
+export default function SlideRowMenus({ request, rows, ops, onClose, onActed, onLanded, onCut, onSetAside, onToggleCollapse, onExplain, onMore, collapseChords, structureItems, isCurrent }: Props) {
   // 'move' once the menu's Move … to… row is chosen (or at once, for the two commands).
   // Held as the request it was chosen for, so a new request always starts at its own first step.
   const [movingFor, setMovingFor] = useState<SlideMenuRequest | null>(null)
-  if (!request) return null
+  if (!request || isCurrent?.() === false) return null
   const moving = movingFor === request
   const line = request.line
   const at = line == null ? -1 : rows.findIndex((r) => r.line === line)
@@ -261,7 +273,7 @@ export default function SlideRowMenus({ request, rows, ops, onClose, onActed, on
         onChoose={(option) => {
           onClose()
           onActed?.()
-          if (!option.target || !ops) return
+          if (!option.target || !ops || isCurrent?.() === false) return
           const landed = ops.moveTo(line, option.target)
           if (landed != null) onLanded?.(landed)
         }}
@@ -272,12 +284,24 @@ export default function SlideRowMenus({ request, rows, ops, onClose, onActed, on
   // A grid card keeps Explain rendering and More actions… whatever its heading is (a section-title
   // card's line is a section's); a grid section header, which passes `collapsed`, has neither.
   const forHeader = request.collapsed != null
-  const items = slideRowMenuItems({ section, hasLine, editable, collapsed: request.collapsed ?? null, explain: !!onExplain && !forHeader, more: !!onMore && !forHeader, setAside: !!onSetAside && !forHeader, collapseChords })
+  const existing = slideRowMenuItems({ section, hasLine, editable, collapsed: request.collapsed ?? null, explain: !!onExplain && !forHeader, more: !!onMore && !forHeader, setAside: !!onSetAside && !forHeader, collapseChords })
+  const extra = structureItems?.(line) ?? []
+  const glyph = { 'new-slide-after': Plus, 'new-section-after': BookmarkPlus, 'new-subsection-after': CornerDownRight, 'select-several': SquareStack }
+  const keys = { 'new-slide-after': 'editor.new-slide', 'new-section-after': 'editor.new-section',
+    'new-subsection-after': 'editor.new-subsection', 'select-several': null } as const
+  const items: Item[] = [...extra.map((item, i) => {
+    const Icon = glyph[item.action]
+    const chord = keys[item.action]
+    return { ...item, icon: <Icon size={IC} />, k: chord ? liveShortcutLabel(chord) : undefined, breakAfter: i === extra.length - 1 && existing.length > 0 }
+  }), ...existing]
   if (items.length === 0) return null
   const run = (action: SlideRowAction): void => {
+    if (isCurrent?.() === false) { onClose(); return }
     if (action === 'move') { setMovingFor(request); return }
     onClose()
     onActed?.()
+    const picked = extra.find(item => item.action === action)
+    if (picked && !picked.disabled) { picked.run(); return }
     switch (action) {
       case 'set-aside': onSetAside?.(); break
       case 'cut': {
@@ -293,6 +317,7 @@ export default function SlideRowMenus({ request, rows, ops, onClose, onActed, on
       case 'paste':
         navigator.clipboard.readText()
           .then((text) => {
+            if (isCurrent?.() === false) return
             const landed = ops?.paste(text, line) ?? null
             if (landed != null) onLanded?.(landed)
           })

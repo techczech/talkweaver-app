@@ -7,6 +7,7 @@
 // It tests the pure function (`applyMetadataDefaults`) and the Settings view model, plus source
 // checks that every surface reaches the store through the one existing settings mechanism.
 
+import { readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
@@ -132,7 +133,7 @@ const stored = normaliseMetadataDefaults(METADATA_REGISTRY, {
 assert.deepEqual(stored, { author: 'Dominik Lukeš' }, 'the store keeps trimmed defaultable values only — no blanks, no per-talk or system keys')
 
 // ── 7. One persistence path, one application path ─────────────────────────────
-const mainSource = readFileSync(join(root, 'src/main/index.ts'), 'utf8')
+const mainSource = readMainSource()
 const preloadSource = readFileSync(join(root, 'src/preload/index.ts'), 'utf8')
 // 0.42: the Settings rows are schema settings (the shared Settings window draws them).
 const settingsSource = readFileSync(join(root, 'src/shared/settings-schema.ts'), 'utf8')

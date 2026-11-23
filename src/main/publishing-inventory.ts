@@ -21,10 +21,13 @@ export const NO_PRODUCTION_REVISION = 'no-production-deployment'
  */
 export async function readPublishingInventory(authorisation: PublishAuthorisation, standIn: string | null = null): Promise<PreservationInventory | null> {
   try {
+    const startedAt = Date.now()
+    const startedTick = performance.now()
     const read = await authorisation.run(credentials => queryProductionInventory({
       fetch, apiBase: standIn ?? CLOUDFLARE_API_BASE, allowLoopbackForTests: standIn !== null, token: credentials.CLOUDFLARE_API_TOKEN,
       accountId: authorisation.accountId, projectName: authorisation.project,
-      clock: Date.now, deadlineAt: Date.now() + 45_000,
+      clock: () => startedAt + (performance.now() - startedTick), deadlineAt: startedAt + 45_000,
+      useResponseTimeForPublishing: true,
     }))
     if (read.superseded) return null
     if (read.result.outcome === 'incomplete' && read.result.noProductionDeployment === true) {

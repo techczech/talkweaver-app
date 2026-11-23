@@ -44,6 +44,9 @@
    (the reason base.css re-declares --tint there). */
 
 .slide {
+  /* Reading and authored emphasis, shared by every look and output. */
+  --weight-reading: 400;
+  --weight-emphasis: 700;
   --hue-1: var(--accent);
   --hue-1-tint: var(--tint);
   --hue-2: var(--sec-hue-2, #0a7a5c);

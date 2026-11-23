@@ -220,15 +220,18 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
   async function startCapture(): Promise<void> {
     if (preparing || !['idle', 'saved'].includes(controller.getState())) return
     preparing = true
+    captureChoice.disabled = true
     try {
       if (!layered) { await controller.start(); return }
       const inputs = await controller.microphones()
-      const devices = await navigator.mediaDevices.enumerateDevices()
-      const checked = await checkPresenterDevices(controller.captureChoice(), inputs.chosen?.label || controller.microphoneName() || devices.find(d => d.kind === 'audioinput' && d.deviceId !== 'default')?.label || '', (channel, ...args) => ipcRenderer.invoke(channel, ...args))
+      const checked = await checkPresenterDevices(controller.captureChoice(), inputs.chosen?.label || controller.microphoneName() || inputs.inputs[0]?.label || '', (channel, ...args) => ipcRenderer.invoke(channel, ...args))
       if (!checked) return
       controller.checkedCamera(checked.camera, checked.cameraDeviceId)
-      const checkedInput = (await controller.microphones()).inputs.find(input => input.label === checked.microphone)
-      if (checkedInput && controller.microphoneName() !== inputName(checkedInput)) await controller.chooseMicrophone(checkedInput)
+      if (controller.microphoneName() !== inputName({ label: checked.microphone })) {
+        const checkedInput = inputs.inputs.find((input) => input.label === checked.microphone)
+          ?? (await controller.microphones()).inputs.find((input) => input.label === checked.microphone)
+        if (checkedInput) await controller.chooseMicrophone(checkedInput)
+      }
       // The slides picture's surface gets ready during the countdown, so it is painting when the voice starts.
       void ipcRenderer.invoke('recording:layers-warm').catch(() => {})
       const countdown = document.createElement('div')
@@ -237,7 +240,7 @@ export function mountRecUi(controller: RecorderController, layered = false): voi
       try { for (const number of [3, 2, 1]) { countdown.textContent = String(number); await new Promise(resolve => setTimeout(resolve, 1000)) } }
       finally { countdown.remove() }
       await controller.start()
-    } finally { preparing = false }
+    } finally { preparing = false; captureChoice.disabled = false }
   }
   // 1) Styles — once.
   if (!document.getElementById('twrec-styles')) {

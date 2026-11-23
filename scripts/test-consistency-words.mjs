@@ -62,7 +62,8 @@ test('the talk is a Talk and the audience window has one name in the command reg
   assert.ok(!labels.some((label) => /presentations?…|\bDeck design|Audience view|Normalize trigger/.test(label)), 'no old name survives')
   assert.equal(COMMAND_REGISTRY.find((command) => command.id === 'present-audience').label, 'Open audience window')
   const toolbar = readFileSync(resolve(root, 'src/renderer/src/components/WorkspaceLayout.tsx'), 'utf8')
-  assert.match(toolbar, /label="Talk"/)
+  assert.match(toolbar, /title="Talk menu"/)
+  assert.match(toolbar, /label=\{plainTalkTitle\(activeTalk\.title\)\}/)
   assert.doesNotMatch(toolbar, /label="Deck"/)
 })
 

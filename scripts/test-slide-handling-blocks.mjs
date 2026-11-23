@@ -165,6 +165,10 @@ refused(TALK, moveBlocks(TALK, [ref(TALK, '### A {id=a}')], place('before', TALK
   const copy = copyBlocks(T, [ref(T, '### A'), ref(T, '### D')])
   assert(!('refused' in copy) && copy.clip === cut.clip && copy.count === 2)
   cases += 1
+  const copiedSection = copyBlocks(T, [ref(T, '## One'), ref(T, '### A')])
+  assert(!('refused' in copiedSection) && copiedSection.count === 1)
+  assert.equal(copiedSection.lastBlockLine, lineOf(T, '## One'), 'duplicate after the whole section, even when its child is also selected')
+  cases += 1
   // refusals: stale ref, the talk's title; nothing applied
   refused(T, cutBlocks(T, [{ line: lineOf(T, '### A'), headingText: '### Z' }]), MOVE_STALE, 'cut stale')
   refused(T, cutBlocks(T, [ref(T, '# T')]), CUT_TITLE, 'cut title')

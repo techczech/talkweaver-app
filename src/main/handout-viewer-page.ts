@@ -1,5 +1,6 @@
 import { join } from 'path'
 import { pathToFileURL } from 'url'
+import { escapeHtml } from '../shared/html-escape.ts'
 
 // The handout's landing/viewer page (Open + Download + QR + short link). The Open/Download buttons point
 // at the sibling handout file. The heading shows the title's inline formatting (**bold**, *italic*,
@@ -17,16 +18,12 @@ async function inlineTitleHelpers(compilerDir: string): Promise<InlineTitleHelpe
   return { renderInline, plainInlineText }
 }
 
-export function escapeHtmlAttr(s: string): string {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
-}
-
 export async function viewerPageHtml(opts: { title: string; handoutFile: string; url: string; qr: string }, compilerDir: string | InlineTitleHelpers): Promise<string> {
   const inline = typeof compilerDir === 'string' ? await inlineTitleHelpers(compilerDir) : compilerDir
   const display = opts.url.replace(/^https?:\/\//, '')
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${escapeHtmlAttr(inline.plainInlineText(opts.title))} — handout</title>
+<title>${escapeHtml(inline.plainInlineText(opts.title))} — handout</title>
 <style>
   :root { color-scheme: light; }
   body { font-family: -apple-system, system-ui, sans-serif; background: #f7f3ea; color: #17202a; margin: 0; display: grid; place-items: center; min-height: 96vh; }
@@ -49,7 +46,7 @@ export async function viewerPageHtml(opts: { title: string; handoutFile: string;
     <a class="btn dl" href="${opts.handoutFile}" download="${opts.handoutFile}">Download</a>
   </div>
   <div class="qr">${opts.qr}</div>
-  <p class="tiny">${escapeHtmlAttr(display)}</p>
+  <p class="tiny">${escapeHtml(display)}</p>
 </main></body></html>
 `
 }

@@ -1,0 +1,93 @@
+diff --git a/install.js b/install.js
+--- a/install.js
++++ b/install.js
+@@ -7,8 +7,10 @@
+ const envPaths = require('env-paths')
+ const FileCache = require('@derhuerst/http-basic/lib/FileCache').default
+-const {extname} = require('path')
++const {dirname, extname, isAbsolute, join} = require('path')
++const {randomUUID} = require('crypto')
++const {serialize, deserialize} = require('v8')
+ var ProgressBar = require("progress");
+ var request = require('@derhuerst/http-basic')
+-const {createGunzip} = require('zlib')
++const {createGunzip, gzipSync, gunzipSync} = require('zlib')
+ const {pipeline} = require('stream')
+ const binaryPath = require('.')
+@@ -104,5 +106,5 @@
+     maxRedirects: 3,
+     gzip: true,
+-    cache,
++    cache: installCachePath ? undefined : cache,
+     timeout: 30 * 1000, // 30s
+     retry: true,
+@@ -176,4 +178,64 @@
+ const licenseUrl = `${baseUrl}/${platform}-${arch}.LICENSE`
+
++// Cache a complete default install before GitHub can redirect to a new signed URL.
++// An agent-run dependency install supplies its shared npm cache explicitly.
++const npmCache = process.env.npm_config_cache
++const cacheRoot = npmCache && isAbsolute(npmCache)
++  ? join(npmCache, 'ffmpeg-static-installs')
++  : envPaths('ffmpeg-static-installs').cache
++const installCachePath = !process.env[RELEASE_ENV_VAR] && !process.env[BINARIES_URL_ENV_VAR]
++  && !process.env[pkg[pkg.name]['binary-path-env-var']]
++  ? join(cacheRoot, 'v1', pkg.version, `${release}-${platform}-${arch}.gz`)
++  : null
++const installPaths = [binaryPath, `${binaryPath}.README`, `${binaryPath}.LICENSE`]
++
++function restoreInstall() {
++  let files
++  try {
++    files = deserialize(gunzipSync(fs.readFileSync(installCachePath)))
++    if (!Array.isArray(files) || files.length !== installPaths.length
++      || !Buffer.isBuffer(files[0]) || files[0].length === 0
++      || !files.slice(1).every(file => file === null || Buffer.isBuffer(file))) {
++      throw new Error('invalid install archive')
++    }
++  } catch (err) {
++    if (err.code !== 'ENOENT') console.warn('ffmpeg-static: could not read install cache: ' + err.message)
++    return false
++  }
++  // The executable signals a complete install to the upstream existence check.
++  for (const index of [1, 2, 0]) {
++    if (files[index] !== null) fs.writeFileSync(installPaths[index], files[index], {mode: index === 0 ? 0o755 : 0o644})
++  }
++  console.info(`ffmpeg-static: restored ${release} ${platform}-${arch} from install cache`)
++  return true
++}
++
++function saveInstall() {
++  const staged = `${installCachePath}.${randomUUID()}.tmp`
++  try {
++    const files = installPaths.map((path, index) => {
++      try { return fs.readFileSync(path) }
++      catch (err) {
++        if (index !== 0 && err.code === 'ENOENT') return null
++        throw err
++      }
++    })
++    fs.mkdirSync(dirname(installCachePath), {recursive: true, mode: 0o700})
++    fs.writeFileSync(staged, gzipSync(serialize(files)), {flag: 'wx', mode: 0o600})
++    // Simultaneous installs publish complete archives at the same path.
++    fs.renameSync(staged, installCachePath)
++    console.info(`ffmpeg-static: cached ${release} ${platform}-${arch} install`)
++  } catch (err) {
++    console.warn('ffmpeg-static: could not write install cache: ' + err.message)
++  } finally {
++    try { fs.unlinkSync(staged) }
++    catch (err) {
++      if (err.code !== 'ENOENT') console.warn('ffmpeg-static: could not remove staging file: ' + err.message)
++    }
++  }
++}
++
++if (installCachePath && restoreInstall()) process.exit(0)
++
+ downloadFile(downloadUrl, binaryPath, onProgress)
+ .then(() => {
+@@ -187,2 +249,4 @@
+ .then(() => downloadFile(licenseUrl, `${binaryPath}.LICENSE`))
+ .catch(exitOnErrorOrWarnWith(`Failed to download the ${executableBaseName} LICENSE.`))
++
++.then(() => { if (installCachePath) saveInstall() })

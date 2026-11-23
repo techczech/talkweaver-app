@@ -335,7 +335,8 @@ for (const name of OWNER_TOKEN_REGISTRY_NAMES) {
     writeLegacy(path, legacy)
     const half = JSON.stringify(legacy, null, 2).slice(0, 120)
     writeFileSync(join(dir, `${file}.4242.mfz1k2ab.tmp`), half) // the earlier writers' temporary name
-    writeFileSync(join(dir, `.${file}.3b0e7a52-6f0c-4d7e-9a57-0d0c3f1f2a11.tmp`), half) // this version's
+    writeFileSync(join(dir, `.${file}.3b0e7a52-6f0c-4d7e-9a57-0d0c3f1f2a11.tmp`), half) // the importer helper's
+    writeFileSync(join(dir, '.tw-0123456789abcdef.tmp'), half) // the shared atomic write's (atomic-file.ts)
     writeFileSync(join(dir, 'handout-registry.json'), '{}')
     writeFileSync(join(dir, `${file}.bak`), 'not a temporary file')
     writeFileSync(join(dir, `other-${file}.4242.mfz1k2ab.tmp`), 'another file\'s temporary')

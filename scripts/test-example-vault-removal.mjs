@@ -6,6 +6,7 @@
 // Then the e2e stand-in Bin's guard, the registry's remove, the wiring in main and preload, the palette
 // command, and render checks of the confirmation (state 15), the ⋯ menu (17), the Guide's link (15, 17)
 // and Settings → Get started after removal (16).
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import {
   existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync,
@@ -527,7 +528,7 @@ try {
 
   // ── the wiring ──
   await test('main: no path crosses; only app windows ask; the trash is shell.trashItem through the harness guard; open windows are named from main’s bookkeeping and none is closed', () => {
-    const main = read('src/main/index.ts')
+    const main = readMainSource()
     const block = main.slice(main.indexOf('// ── Remove the example vault and bring it back'), main.indexOf("ipcMain.handle('vault:add'"))
     for (const needle of ["'example:state'", "'example:removal-preview'", "'example:remove'", "'example:restore'", "'example:changed'", 'isAppWindow(event.sender.id)', 'exampleRemoval.preview(event.sender.id)', 'exampleRemoval.remove(token, event.sender.id)', 'resolveExampleTrash(', 'shell.trashItem(path)', 'openWindows: windowsShowingExample', 'windowsOnExample(', 'editorWindows.values()', 'presentWindows.get(id)', 'toolsWindow', 'isHiddenRenderer(id)']) {
       assert.ok(block.includes(needle), needle)

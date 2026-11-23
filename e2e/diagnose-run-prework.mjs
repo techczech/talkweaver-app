@@ -13,7 +13,8 @@
 //   (h) a Run's own numbers survive: nothing of the page is written to the outline.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from '../scripts/lib/test-scratch.mjs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { OUTLINE, RUN_ID, SLUG, entry, plannedRun } from '../scripts/lib/prework-run-fixture.mjs'
@@ -21,7 +22,7 @@ import { OUTLINE, RUN_ID, SLUG, entry, plannedRun } from '../scripts/lib/prework
 const repo = process.cwd()
 const shots = join(tmpdir(), 'tw-b18-shots')
 mkdirSync(shots, { recursive: true })
-const tempRoot = mkdtempSync(join(tmpdir(), 'talkweaver-run-answers-'))
+const tempRoot = testScratchDir(join(tmpdir(), 'talkweaver-run-answers-'))
 const vault = join(tempRoot, 'vault')
 const userData = join(tempRoot, 'userData')
 mkdirSync(userData, { recursive: true })

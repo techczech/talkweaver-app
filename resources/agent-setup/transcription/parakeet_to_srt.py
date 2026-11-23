@@ -14,6 +14,7 @@ from pathlib import Path
 # Electron app's GPU processes) is competing for the GPU. 120s chunks with parakeet-mlx's own
 # 15s overlap merge keep peak allocation small and flat regardless of recording length.
 DEFAULT_CHUNK_SECONDS = 120.0
+DEFAULT_MODEL = "mlx-community/parakeet-tdt-0.6b-v3"
 
 
 def to_ms(seconds: float) -> int:
@@ -123,7 +124,7 @@ def write_srt(result, output_path: Path) -> int:
 def transcribe_to_srt(
     audio_path: Path,
     output_path: Path | None = None,
-    model_id: str = "mlx-community/parakeet-tdt-0.6b-v3",
+    model_id: str = DEFAULT_MODEL,
     chunk_seconds: float = DEFAULT_CHUNK_SECONDS,
     words_path: Path | None = None,
 ):
@@ -168,10 +169,13 @@ def transcribe_to_srt(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate SRT subtitles (and optionally word timings) from audio with Parakeet MLX.")
+    parser = argparse.ArgumentParser(
+        description="Generate SRT subtitles (and optionally word timings) from audio with Parakeet MLX.",
+        epilog=f"Default Parakeet model: {DEFAULT_MODEL}",
+    )
     parser.add_argument("audio", type=Path, help="Input audio file")
     parser.add_argument("-o", "--output", type=Path, help="Output .srt path")
-    parser.add_argument("--model", default="mlx-community/parakeet-tdt-0.6b-v3", help="Parakeet model ID")
+    parser.add_argument("--model", default=DEFAULT_MODEL, help="Parakeet model ID")
     parser.add_argument(
         "--chunk-seconds",
         type=float,

@@ -4,7 +4,7 @@
 //   (T) the window's own close: FIRST_EDIT typed, then the close; while its save runs the editor says "Saving before
 //       closing…" and refuses SECOND_EDIT (typing, a paste, ⌘Z); the window closes with FIRST_EDIT on disk and the
 //       editor never held SECOND_EDIT. This is review round two's finding 1 (it lost SECOND_EDIT).
-//   (S) "Stay here" on the changed-on-disk sheet unfreezes the editor: typing works again, nothing was lost.
+//   (S) A conflicting close opens merge review. “Stay here” returns to the editor and a later merge saves both edits.
 //   (Q) a quit with typing waiting: the same freeze, and the text is on disk after the app has quit.
 // Editor assertions read CodeMirror's own document; file assertions read the real file.
 //
@@ -12,6 +12,7 @@
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
+import { typeAtOutlineLineEnd } from './lib/outline-typing.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
@@ -35,7 +36,7 @@ mkdirSync(join(vault, 'freeze-talk'), { recursive: true })
 mkdirSync(userDataDir, { recursive: true })
 const OUTLINE_PATH = join(vault, 'freeze-talk', 'freeze-talk-outline.md')
 writeFileSync(OUTLINE_PATH, outline(TITLE, 'frz'))
-writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
+writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'outline' }, null, 2))
 const disk = () => readFileSync(OUTLINE_PATH, 'utf8')
 const slowSaves = (ms) => { if (ms) writeFileSync(DELAY_FILE, String(ms)); else rmSync(DELAY_FILE, { force: true }) }
 
@@ -70,9 +71,7 @@ async function openTalk() {
   await waitFor(async () => (await editorText())?.includes('First slide body text.'), 6000)
 }
 async function typeAtEndOfBody(text) {
-  await page.locator('.cm-content .cm-line', { hasText: 'First slide body text.' }).first().click()
-  await page.keyboard.press('End')
-  await page.keyboard.type(text)
+  await typeAtOutlineLineEnd(page, 'First slide body text.', text)
 }
 const freezeText = () => page.locator('[data-close-freeze]').first().innerText().catch(() => '')
 const MOD = process.platform === 'darwin' ? 'Meta' : 'Control'
@@ -102,28 +101,36 @@ try {
   slowSaves(0)
   await closeApp()
 
-  // (S) "Stay here" unfreezes.
+  // (S) Close with a same-slide conflict. Dismiss the review, type again, then save that version.
   await launch()
   await openTalk()
-  writeFileSync(OUTLINE_PATH, disk() + '\n### Outside {id=frz7}\n\nChanged outside.\n')
-  await waitFor(async () => (await page.locator('[data-testid="outline-disk-change-bar"], [data-testid="outline-disk-change-chip"]').count()) > 0, 4000)
+  const beforeStay = disk()
   await typeAtEndOfBody(' STAY_TYPED')
+  const outside = beforeStay.replace('First slide body text.', 'First slide body text. OUTSIDE_STAY')
+  writeFileSync(OUTLINE_PATH, outside)
+  const review = page.getByTestId('outline-merge-sheet')
+  await review.waitFor()
+  await review.getByRole('button', { name: 'Stay here', exact: true }).click()
+  await review.waitFor({ state: 'hidden' })
   const win2 = await app.browserWindow(page)
   await win2.evaluate((w) => w.close())
-  const sheet = await waitFor(async () => (await page.locator('[data-testid="outline-disk-change-sheet"]').count()) > 0, 4000)
-  const frozenUnderSheet = (await freezeText()) === 'Saving before closing…'
-  if (sheet !== null) await page.locator('[data-testid="outline-disk-change-sheet"]').getByRole('button', { name: 'Stay here' }).click()
+  await review.waitFor()
+  const openWithTyping = !page.isClosed() &&
+    (await review.getByRole('textbox', { name: 'Mine 1', exact: true }).inputValue()).includes('STAY_TYPED') &&
+    (await review.getByRole('textbox', { name: 'On disk 1', exact: true }).inputValue()).includes('OUTSIDE_STAY') &&
+    disk() === outside
+  await review.getByRole('button', { name: 'Stay here', exact: true }).click()
+  await review.waitFor({ state: 'hidden' })
   const thawed = await waitFor(async () => (await page.locator('[data-close-freeze]').count()) === 0, 3000)
   await typeAtEndOfBody(' AFTER_STAY')
   const afterStay = await editorText()
-  record('(S) "Stay here" on the close\'s sheet: the editor was frozen under the sheet, and is unfrozen after it; typing works; nothing was lost',
-    sheet !== null && frozenUnderSheet && thawed !== null && !!afterStay?.includes('STAY_TYPED') && !!afterStay?.includes('AFTER_STAY'),
-    `sheet=${sheet}ms, frozen under it=${frozenUnderSheet}, unfrozen=${thawed}ms, editor has STAY_TYPED=${afterStay?.includes('STAY_TYPED')} AFTER_STAY=${afterStay?.includes('AFTER_STAY')}`)
-  // Keep mine, so the next case starts from the person's text.
-  await win2.evaluate((w) => w.close())
-  await waitFor(async () => (await page.locator('[data-testid="outline-disk-change-sheet"]').count()) > 0, 4000)
-  await page.locator('[data-testid="outline-disk-change-sheet"]').getByRole('button', { name: 'Keep mine' }).click().catch(() => {})
-  await sleep(1500)
+  await page.getByTestId('outline-disk-change-bar').getByRole('button', { name: 'Review merge', exact: true }).click()
+  await review.getByRole('button', { name: 'Use mine', exact: true }).click()
+  await review.getByRole('button', { name: 'Apply merge', exact: true }).click()
+  const saved = await waitFor(async () => /STAY_TYPED/.test(disk()) && /AFTER_STAY/.test(disk()), 5000)
+  record('(S) close opens merge review, Stay here restores editing, and applying the merge saves both edits',
+    openWithTyping && thawed !== null && afterStay?.includes('STAY_TYPED') && afterStay?.includes('AFTER_STAY') && saved !== null,
+    `review kept both versions=${openWithTyping}, unfrozen=${thawed}ms, saved after merge=${saved !== null}`)
   await closeApp()
 
   // (Q) A quit with typing waiting for its autosave.

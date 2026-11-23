@@ -5,8 +5,7 @@
 // bare name such as `ffmpeg`, → the one missing thing; cleared again → Ready. No Python runs and no installed app or data is touched.
 //
 // TW_SHOTS_DIR=<dir> saves a picture of the Settings window in each state.
-// The three paths are the Recording page's rows, which take a path only through the file chooser: the test answers the chooser
-// with the fixture's path (Electron's dialog, answered in the main process) and presses the row's real Choose… button.
+// The paths are entered through the Recording page's Advanced recording settings.
 import { _electron as electron } from 'playwright'
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -20,9 +19,15 @@ const scratch = mkdtempSync(join(tmpdir(), 'tw-transcription-settings-'))
 const userData = join(scratch, 'userData')
 const vault = join(scratch, 'vault')
 mkdirSync(userData, { recursive: true })
+mkdirSync(join(userData, 'recordings'), { recursive: true })
 mkdirSync(join(vault, 'probe'), { recursive: true })
+mkdirSync(join(vault, '_PRESENTATIONS', 'probe'), { recursive: true })
 writeFileSync(join(vault, 'probe', 'probe-outline.md'), ['---', 'title: Probe', 'outline_version: 2', '---', '', '### One', '{id=one}', ''].join('\n'))
-writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault }))
+writeFileSync(join(vault, '_PRESENTATIONS', 'probe', 'run-0001.json'), JSON.stringify({
+  id: 'run-0001', talkSlug: 'probe', audio: { segments: [{ file: 'run-0001.webm', startMs: 0, endMs: 2000 }] }
+}))
+writeFileSync(join(userData, 'recordings', 'run-0001.webm'), 'fixture audio')
+writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, transcriptionEngine: 'parakeet' }))
 // A fixture environment and script: files only, nothing runs.
 const venv = join(userData, 'transcription', 'venv')
 const python = join(venv, process.platform === 'win32' ? 'Scripts' : 'bin', process.platform === 'win32' ? 'python.exe' : 'python')
@@ -84,13 +89,6 @@ try {
     await openSettingsWindow(app, page, 'get-started')
     await part('status').waitFor({ state: 'visible' })
   }
-  // The Recording page's path rows: choose a file (the chooser answered with `path`), or put a value in with the window's own call.
-  const choose = async (rowLabel, path) => {
-    await app.evaluate(({ dialog }, answer) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [answer] }) }, path)
-    await openSettingsWindow(app, page, 'recording')
-    await sw.getByRole('button', { name: `Choose ${rowLabel}` }).click()
-    await sw.waitForFunction((want) => [...document.querySelectorAll('.bsw-path')].some((el) => el.getAttribute('title') === want), path, { timeout: 10_000 })
-  }
   const setPath = async (key, value) => {
     const outcome = await sw.evaluate(({ key: k, value: v }) => window.bridleSettings.set(k, v), { key, value })
     if (!outcome?.ok) throw new Error(`the window refused ${key}: ${JSON.stringify(outcome)}`)
@@ -109,15 +107,22 @@ try {
   await part('steps').waitFor({ state: 'visible' })
   await shot('02-set-up-steps')
   const prompt = await sw.evaluate(() => window.tw.settings.transcriptionAgentPrompt())
-  await sw.bringToFront().catch(() => {})
+  await sw.evaluate(() => {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText: async (text) => { window.__testCopiedPrompt = text } }
+    })
+  })
   await part('copy-prompt').click()
-  const copied = await app.evaluate(({ clipboard }) => clipboard.readText()).catch(() => '')
+  await sw.waitForFunction((text) => window.__testCopiedPrompt === text, prompt)
   const stepsShown = (await part('steps').innerText()).includes('Copy instructions for your agent')
-  record(3, stepsShown && prompt.includes(join('resources', 'agent-setup', 'transcription', 'SETUP.md')) && [userData, realpathSync(userData)].some((folder) => prompt.includes(join(folder, 'transcription', 'venv'))),
-    `copied to the clipboard: ${copied === prompt ? 'yes' : 'not readable here (hidden window)'}`)
+  record(3, stepsShown && prompt.includes(join('resources', 'agent-setup', 'transcription', 'SETUP.md')) && [userData, realpathSync(userData)].some((folder) => prompt.includes(join(folder, 'transcription', 'venv'))))
 
-  await choose('Transcription Python', python)
-  await choose('Transcription script', script)
+  await openSettingsWindow(app, page, 'recording')
+  await sw.getByText('Advanced recording settings', { exact: true }).click()
+  for (const [label, key, path] of [['Transcription Python', 'python', python], ['Transcription script', 'script', script]]) {
+    await sw.getByRole('textbox', { name: label, exact: true }).fill(path)
+    await sw.waitForFunction(async ({ key, path }) => (await window.tw.settings.getTranscription())[key] === path, { key, path })
+  }
   await reread()
   await sw.waitForFunction(() => ['ready', 'ffmpeg-not-found'].includes(document.querySelector('[data-transcription="status"]')?.getAttribute('data-state') ?? ''), null, { timeout: 20_000 })
   const readyState = await part('status').getAttribute('data-state')

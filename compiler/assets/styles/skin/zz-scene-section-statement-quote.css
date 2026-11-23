@@ -34,8 +34,8 @@
 }
 
 /* ---- 2. Quote: no box, pale mark, regular-weight words, coloured source line ---- */
-/* Never bold: the boxed emphasis (the accent chip) stays, at the quote's own weight. */
-.slide-content.layout-quote > blockquote strong { font-weight: 400; }
+/* Authored emphasis is bold on the regular quote text (owner, 17 Nov 2026). */
+.slide-content.layout-quote > blockquote strong { font-weight: var(--weight-emphasis); }
 /* The source line: mono caps in the accent, led by a short rule (shared by every placement). */
 .slide-content.layout-quote > blockquote cite,
 .slide-content.layout-quote > blockquote + cite {

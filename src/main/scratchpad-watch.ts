@@ -2,7 +2,8 @@
 // folder appearing; one on the folder itself notices files. Events for the app's own state file and its temp
 // files are ignored, so a state write never wakes the watcher it came from. A metadata-only
 // reconciliation also repairs silent native-event loss (observed with macOS directory watches).
-import { watch, lstatSync, readdirSync, type FSWatcher } from 'node:fs'
+import { lstatSync, readdirSync } from 'node:fs'
+import { watchDirectory, type DirectoryWatch } from './directory-watch.ts'
 import { join } from 'node:path'
 import { SCRATCH_FOLDER_NAME, STATE_FILE_NAME } from '../shared/scratchpad.ts'
 
@@ -12,8 +13,8 @@ export function watchScratchFolder(talkDir: string, onChange: () => void, deboun
   const folder = join(talkDir, SCRATCH_FOLDER_NAME)
   let closed = false
   let timer: ReturnType<typeof setTimeout> | null = null
-  let talkWatcher: FSWatcher | null = null
-  let folderWatcher: FSWatcher | null = null
+  let talkWatcher: DirectoryWatch | null = null
+  let folderWatcher: DirectoryWatch | null = null
 
   const ours = (name: string | Buffer | null): boolean => {
     const text = name === null ? '' : String(name)
@@ -46,14 +47,20 @@ export function watchScratchFolder(talkDir: string, onChange: () => void, deboun
   const attachFolder = (): void => {
     if (closed || folderWatcher || !watchedIdentity) return
     try {
-      folderWatcher = watch(folder, (_event, name) => { if (!ours(name)) fire() })
-      folderWatcher.on('error', () => { folderWatcher?.close(); folderWatcher = null })
+      const watcher = watchDirectory(folder, {}, (_event, name) => { if (folderWatcher === watcher && !ours(name)) fire() })
+      folderWatcher = watcher
+      watcher.on('error', () => {
+        if (folderWatcher !== watcher) return
+        folderWatcher = null
+        watcher.close()
+      })
     } catch { folderWatcher = null }
   }
   const reconcile = (): void => {
     const next = metadata()
     if (next?.identity !== watchedIdentity) {
-      folderWatcher?.close(); folderWatcher = null
+      folderWatcher?.close()
+      folderWatcher = null
       watchedIdentity = next?.identity
     }
     attachFolder()
@@ -62,17 +69,22 @@ export function watchScratchFolder(talkDir: string, onChange: () => void, deboun
     onChange()
   }
   try {
-    talkWatcher = watch(talkDir, (_event, name) => {
+    talkWatcher = watchDirectory(talkDir, {}, (_event, name) => {
       if (name !== null && String(name) !== SCRATCH_FOLDER_NAME) return
       fire()
     })
-    talkWatcher.on('error', () => { talkWatcher?.close(); talkWatcher = null })
+    const watcher = talkWatcher
+    watcher.on('error', () => {
+      if (talkWatcher !== watcher) return
+      talkWatcher = null
+      watcher.close()
+    })
   } catch { talkWatcher = null }
   attachFolder()
   queueMicrotask(fire)
   // A successful fs.watch registration does not prove its stream will deliver events.
   // Native events keep the fast path; this periodic scan reads no file contents and creates
-  // no child process. Snapshot comparison also coalesces late native events with a repair.
+  // no compiler work. Snapshot comparison also coalesces late native events with a repair.
   const repair = setInterval(fire, 2000)
   repair.unref()
 
@@ -81,7 +93,8 @@ export function watchScratchFolder(talkDir: string, onChange: () => void, deboun
       closed = true
       if (timer) clearTimeout(timer)
       clearInterval(repair)
-      talkWatcher?.close(); folderWatcher?.close()
+      talkWatcher?.close()
+      folderWatcher?.close()
       talkWatcher = null; folderWatcher = null
     }
   }

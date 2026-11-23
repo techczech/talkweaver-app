@@ -11,6 +11,7 @@
 //   5. a computer with an empty site folder and the token alone publishes into a 600-file site;
 //   and the site record: read and merged, made at bootstrap only by a computer whose registry covers the site.
 import { test } from 'node:test'
+import { testNetworkPermit } from '../src/main/test-network-guard.ts'
 import assert from 'node:assert/strict'
 import { chmodSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -98,6 +99,12 @@ function liveSite(talks, record) {
 async function world(t, { talks = {}, record, local = {}, stub = {}, commitMessage } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'tw-per-talk-'))
   t.after(() => { try { chmodRecursive(root) } catch { /* gone */ } rmSync(root, { recursive: true, force: true }) })
+  const marker = 'publish-anywhere-test-profile'
+  assert.equal(testNetworkPermit({ packaged: false, env: { TW_E2E: '1', TW_E2E_CLOUDFLARE_API_BASE_URL: 'http://127.0.0.1:9/client/v4', TW_E2E_PROFILE_MARKER: marker }, userData: root, tempDirs: [tmpdir()], realpath: path => path, readMarker: () => marker }).state, 'granted')
+  const safeFetch = (input, init) => {
+    if (new URL(String(input)).hostname !== '127.0.0.1') throw Error('Test blocked an external network request')
+    return fetch(input, init)
+  }
   const seed = liveSite(talks, record)
   const api = await startCloudflareApiStub({
     accounts: [{ id: ACCOUNT, name: 'Ada' }], tokens: { [TOKEN]: { accounts: [ACCOUNT] } }, accountSites: { [ACCOUNT]: [SITE] },
@@ -108,7 +115,7 @@ async function world(t, { talks = {}, record, local = {}, stub = {}, commitMessa
   const config = { accountId: '', project: SITE, baseUrl: '', productionBranch: 'main' }
   const connection = createCloudflareConnection({
     secrets: secrets.store, settings: { read: () => ({ ...config }), write: (patch) => Object.assign(config, patch) },
-    fetch: (input, init) => fetch(input, init), apiBase: () => api.baseUrl, timeoutMs: 5000, onChange: () => {},
+    fetch: safeFetch, apiBase: () => api.baseUrl, timeoutMs: 5000, onChange: () => {},
   })
   await connection.saveToken(TOKEN)
   await connection.idle()
@@ -125,7 +132,7 @@ async function world(t, { talks = {}, record, local = {}, stub = {}, commitMessa
     authorise: () => connection.authorisePublish(),
     live: async () => ({ baseUrl: '' }),
     bundlingHazard: () => null,
-    pages: () => ({ fetch: (input, init) => fetch(input, init), apiBase: api.baseUrl, allowLoopbackForTests: true, sleep: async () => {}, contentType: wranglerContentType }),
+    pages: () => ({ fetch: safeFetch, apiBase: api.baseUrl, allowLoopbackForTests: true, sleep: async () => {}, contentType: wranglerContentType }),
     blake3: () => blake3,
     registry: { read: () => readRegistryStrict(registryFiles.registry), write: (registry) => writeRegistry(registryFiles.registry, registry), origin: () => registryOrigin(registryFiles, local.originIo) },
     shortLinks: { read: () => state.shortLinks, write: (value) => { state.shortLinks = value } },
@@ -394,7 +401,7 @@ test('bootstrap: only the computer that published what is live makes the first r
     const result = await w.service.publish(w.talkJob('talk-c', { 'index.html': 'C' }))
     if (allowed !== true) {
       assert.deepEqual([result.ok, result.error, w.deploymentsPosted().length], [false, allowed, 0], `${label}: refused, nothing sent`)
-      assert.match(SITE_BOOTSTRAP_REFUSED, /Publish once from the computer that published last/)
+      assert.match(SITE_BOOTSTRAP_REFUSED, /Import a verified site recovery record/)
       continue
     }
     assert.equal(result.ok, true, `${label}: ${JSON.stringify(result)}`)
@@ -453,6 +460,7 @@ test('2. bootstrap refuses when this computer\'s registry is missing, even with 
   writePublicationRecord(join(w.root, 'coordination'), site, w.production().id)
   const result = await w.service.publish(w.talkJob('talk-b', { 'index.html': 'B' }))
   assert.deepEqual([result.ok, result.error, w.deploymentsPosted().length], [false, SITE_BOOTSTRAP_CHANGED, 0])
+  assert.equal(result.notReady?.fix.action, 'import-site-recovery')
 })
 
 test('3. a Run from before folders were recorded is never bound by the site\'s record alone', async (t) => {
@@ -663,3 +671,319 @@ test('A2. the record is flushed: a real failure while making it stops the publis
   assert.ok(existsSync(fileFails.registryFiles.origin), 'the file stays')
   assert.throws(() => registryOrigin(fileFails.registryFiles), (error) => error.kind === 'unreadable', 'a later read finds it damaged')
 })
+
+test('a slow Mac clock uses the Pages response time when publishing', async (t) => {
+  const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+  const now = Date.now()
+  w.production().created_on = new Date(now - 1000).toISOString()
+  const localClock = Date.now
+  Date.now = () => now - 20 * 60_000
+  try {
+    const result = await w.service.publish(w.talkJob('from-slow-clock', { 'index.html': 'Synthetic page' }))
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(w.deploymentsPosted().length, 1)
+    assert.ok(w.production().files['/from-slow-clock/index.html'])
+  } finally {
+    Date.now = localClock
+  }
+})
+
+test('Pages response time still rejects a future deployment on a fast Mac', async (t) => {
+  const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+  const now = Date.now()
+  w.production().created_on = new Date(now + 10 * 60_000).toISOString()
+  const localClock = Date.now
+  Date.now = () => now + 20 * 60_000
+  try {
+    const result = await w.service.publish(w.talkJob('from-fast-clock', { 'index.html': 'Synthetic page' }))
+    assert.deepEqual([result.ok, result.error, w.deploymentsPosted().length], [false, 'PUBLISH_INVENTORY_UNAVAILABLE', 0])
+  } finally {
+    Date.now = localClock
+  }
+})
+
+// Emergency adoption must add only the record. No talk is compiled or replaced.
+test('record-only migration preserves all page hashes and exact controls', async (t) => {
+  const talks = { 'talk-a': { 'index.html': 'A', 'a.png': 'picture' }, 'talk-b': { 'index.html': 'B' } }
+  const registry = { 'talk-a': 'aa', 'talk-b': 'bb' }
+  const headers = '/*\n  X-Robots-Tag: noindex\n'
+  const w = await world(t, { talks, local: { registry, shortLinks: true } })
+  const redirects = buildRedirects(registry, Object.keys(talks))
+  const before = { ...w.production().files }
+  w.ports.headers = () => headers
+  writePublicationRecord(w.ports.preservationRoot, `cf-pages:${ACCOUNT}:${SITE}`, w.production().id, { controls: {
+    '/_redirects': publicationBinding([['/_redirects', createHash('sha256').update(redirects).digest('hex')]]),
+    '/_headers': publicationBinding([['/_headers', createHash('sha256').update(headers).digest('hex')]]),
+  } })
+  const result = await w.service.publish({ entry: 'live-short-link', prepare: async () => ({ ok: true, built: null }) })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  const after = { ...w.production().files }
+  assert.ok(after[SITE_RECORD_PATH])
+  delete after[SITE_RECORD_PATH]
+  assert.deepEqual(after, before)
+  assert.equal(w.production().redirects, redirects)
+  assert.equal(w.production().headers, headers)
+  assert.deepEqual(recordOf(w.production(), w.api.model.assets).registry, registry)
+})
+
+test('another Mac adopts a legacy site with an explicitly accepted revision-bound recovery proof', async (t) => {
+  const talks = { 'talk-a': { 'index.html': 'A', 'image.png': 'bytes' }, 'talk-b': { 'index.html': 'B' } }
+  const registry = { 'talk-a': 'aa', 'talk-b': 'bb' }
+  const headers = '/*\n  X-Robots-Tag: noindex\n'
+  const w = await world(t, { talks, local: { registry: null, shortLinks: false } })
+  const before = { ...w.production().files }
+  const redirects = buildRedirects(registry, Object.keys(talks))
+  const proof = { format: 'talkweaver-site-recovery', version: 1, site: `cf-pages:${ACCOUNT}:${SITE}`, revision: w.production().id,
+    record: { registry, shortLinks: true, headers }, controls: {
+      '/_redirects': publicationBinding([['/_redirects', createHash('sha256').update(redirects).digest('hex')]]),
+      '/_headers': publicationBinding([['/_headers', createHash('sha256').update(headers).digest('hex')]]),
+    } }
+  const result = await w.service.publish({ entry: 'site-adoption', siteRecovery: proof, prepare: async () => ({ ok: true, built: null }) })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  const after = { ...w.production().files }; delete after[SITE_RECORD_PATH]
+  assert.deepEqual(after, before)
+  assert.equal(w.production().redirects, redirects)
+  assert.equal(w.production().headers, headers)
+  assert.deepEqual(recordOf(w.production(), w.api.model.assets).registry, registry)
+  assert.equal(existsSync(join(w.ports.preservationRoot, publicationBinding(proof.site)+'.controls.json')), true)
+})
+
+test('a reviewed recovery cannot apply after the site changes to an empty revision', async (t) => {
+  const w = await world(t, { talks: { 'talk-a': { 'index.html': 'A' } } })
+  const proof = { format: 'talkweaver-site-recovery', version: 1, site: `cf-pages:${ACCOUNT}:${SITE}`, revision: w.production().id,
+    record: { registry: {}, shortLinks: false, headers: '' }, controls: {} }
+  w.api.seed(ACCOUNT, SITE, { files: {} })
+  const result = await w.service.publish({ entry: 'site-adoption', siteRecovery: proof, prepare: async () => ({ ok: true, built: null }) })
+  assert.deepEqual([result.ok, w.deploymentsPosted().length], [false, 0])
+})
+
+test('adoption proof for another revision or changed controls cannot replace legacy routing', async (t) => {
+  for (const variant of ['wrong-revision', 'wrong-site', 'wrong-candidate', 'changed-controls', 'duplicate-ids']) {
+    const w = await world(t, { talks: { 'talk-a': { 'index.html': 'A' } }, local: { registry: null } })
+    const before = { ...w.production().files }
+    const proof = { format: 'talkweaver-site-recovery', version: 1, site: `cf-pages:${ACCOUNT}:${SITE}`, revision: w.production().id,
+      record: { registry: {}, shortLinks: false, headers: '' }, controls: {} }
+    if (variant === 'wrong-revision') proof.revision = 'wrong'
+    if (variant === 'wrong-site') proof.site = 'cf-pages:other:site'
+    if (variant === 'changed-controls') proof.controls['/_headers'] = 'wrong'
+    if (variant === 'duplicate-ids') proof.record.registry = { 'talk-a': 'aa', 'talk-b': 'aa' }
+    if (variant === 'wrong-candidate') proof.candidateDigest = 'a'.repeat(64)
+    const result = await w.service.publish({ entry: 'site-adoption', siteRecovery: proof, prepare: async () => assert.fail('mismatched proof') })
+    assert.equal(result.ok, false, variant)
+    assert.deepEqual(w.production().files, before, variant)
+    assert.equal(w.deploymentsPosted().length, 0)
+  }
+})
+
+test('publish history records real inventory, upload and confirmation without credentials', async (t) => {
+  const { createPublishHistory } = await import('../src/main/publish-history.ts')
+  const w = await world(t, { talks: { 'other-talk': { 'index.html': 'untouched' } }, record: { registry: { 'other-talk': 'aa' }, shortLinks: true, headers: '' }, local: { registry: { 'other-talk': 'bb' }, shortLinks: false } })
+  const history = createPublishHistory(join(w.root, 'publishing-history.json'))
+  w.ports.observe = event => history.record(event)
+  w.ports.appVersion = () => '0.45.1-test'
+  const result = await w.service.publish(w.talkJob('new-talk', { 'index.html': 'new bytes' }))
+  assert.equal(result.ok, true, JSON.stringify(result))
+  const rows = history.list()
+  assert.equal(rows.length, 1)
+  assert.equal(rows[0].outcome, 'published')
+  const sharedRecord = recordOf(w.production(), w.api.model.assets)
+  assert.equal(sharedRecord.publishedBy, 'Air')
+  assert.equal(sharedRecord.publisherVersion, '0.45.1-test')
+  assert.ok(Number.isFinite(Date.parse(sharedRecord.publishedAt)))
+  assert.ok(rows[0].events.some(e => e.stage === 'inventory' && e.files >= 1))
+  assert.ok(rows[0].events.some(e => e.linksReconciled > 0), 'the accessible log records automatic short-link reconciliation')
+  assert.ok(rows[0].events.some(e => e.linkStyleChanged === true))
+  assert.equal(sharedRecord.registry['other-talk'], 'aa', 'the site retains its authoritative short id')
+  assert.equal(readRegistryStrict(w.registryFiles.registry)['other-talk'], 'aa', 'this Mac follows the live site')
+  assert.ok(rows[0].events.some(e => e.stage === 'built'))
+  assert.ok(rows[0].events.some(e => e.stage === 'uploaded' && e.files > 0))
+  assert.equal(rows[0].events.find(e => e.stage === 'confirmed').revision, w.production().id)
+  assert.equal(JSON.stringify(rows).includes(TOKEN), false)
+  assert.equal(JSON.stringify(rows).includes('Bearer'), false)
+})
+
+test('an unavailable history writer cannot fail an otherwise successful real publish', async (t) => {
+  const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+  w.ports.observe = () => { throw Error(TOKEN) }
+  const result = await w.service.publish(w.talkJob('new-talk', { 'index.html': 'new bytes' }))
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(JSON.stringify(result).includes(TOKEN), false)
+  assert.ok(w.production().files['/new-talk/index.html'])
+})
+
+test('unknown deployment outcomes stay unconfirmed in publishing history', async (t) => {
+  const { createPublishHistory } = await import('../src/main/publish-history.ts')
+  const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+  const history = createPublishHistory(join(w.root, 'publishing-history.json'))
+  w.ports.observe = event => history.record(event)
+  w.api.model.pendingDeployments = true
+  const result = await w.service.publish(w.talkJob('new-talk', { 'index.html': 'new bytes' }))
+  assert.equal(result.ok, false)
+  assert.equal(history.list()[0].outcome, 'unknown')
+  assert.equal(history.list()[0].events.some(event => event.stage === 'confirmed'), false)
+})
+
+test('damaged optional history is retained while the real publish still succeeds', async (t) => {
+  const { createPublishHistory } = await import('../src/main/publish-history.ts')
+  const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+  const path = join(w.root, 'publishing-history.json')
+  const damaged = '{"version":1,"attempts":[{"computer":{}}]}'
+  writeFileSync(path, damaged)
+  const history = createPublishHistory(path)
+  w.ports.observe = event => history.record(event)
+  const result = await w.service.publish(w.talkJob('new-talk', { 'index.html': 'new bytes' }))
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(readFileSync(path, 'utf8'), damaged)
+  assert.throws(() => history.list())
+})
+
+test('a real compiler preflight records the media review before any upload', async t => {
+  const {createPublishHistory}=await import('../src/main/publish-history.ts')
+  const {buildHandoutPages}=await import('../src/main/handout-pages.ts')
+  const {publicationMediaReview}=await import('../src/shared/publication-files.ts')
+  const w=await world(t,{record:{registry:{},shortLinks:false,headers:''}})
+  const path=join(w.root,'synthetic-outline.md')
+  const text='---\ntitle: Synthetic check\n---\n\n## Widget {id=ab12}\n\n[Simulation: absent.html]\n'
+  writeFileSync(path,text)
+  const history=createPublishHistory(join(w.root,'publishing-history.json'))
+  w.ports.observe=event=>history.record(event)
+  const result=await w.service.publish({entry:'talk',begin:async report=>{
+    const checked=await buildHandoutPages({kind:'preflight',compilerDir:join(repo,'compiler/scripts'),outlinePath:path,text,assetRoots:[w.root]},html=>html)
+    report?.({checked:checked.publicationFiles.checked,missing:checked.publicationFiles.findings.length})
+    const {prompt}=publicationMediaReview(checked.publicationFiles, checked.warnings)
+    assert.equal(prompt?.kind,'media-warning')
+    return {fail:{error:prompt.title}}
+  },prepare:async()=>{throw Error('A missing-file check must not reach the build')}})
+  assert.equal(result.ok,false)
+  assert.equal(w.deploymentsPosted().length,0)
+  const events=history.list()[0].events
+  assert.ok(events.some(event=>event.stage==='files'&&event.files===1&&event.missing===1))
+  assert.equal(history.list()[0].outcome,'stopped')
+})
+
+test('a confirmed Run handout stays published when this Mac cannot save its link', async (t) => {
+  const { createPublishHistory } = await import('../src/main/publish-history.ts')
+  const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+  const history = createPublishHistory(join(w.root, 'publishing-history.json'))
+  w.ports.observe = event => history.record(event)
+  const job = { ...w.talkJob('run-handout', { 'index.html': 'Run handout' }), entry: 'run' }
+  const result = await w.service.publish({ ...job, record: () => { throw Error(TOKEN) } })
+  assert.equal(result.ok, true, JSON.stringify(result))
+  assert.equal(result.localRecordFailed, true)
+  assert.equal(w.deploymentsPosted().length, 1)
+  assert.ok(w.production().files['/run-handout/index.html'])
+  const attempt = history.list()[0]
+  assert.equal(attempt.outcome, 'published')
+  assert.equal(attempt.events.find(event => event.stage === 'confirmed').revision, w.production().id)
+  assert.ok(attempt.events.some(event => event.stage === 'local-record-failed'))
+  assert.equal(JSON.stringify([result, attempt]).includes(TOKEN), false)
+})
+
+for (const displacedAgain of [false, true]) {
+  test(displacedAgain ? 'two Macs: a second displacement warns and keeps the live registry' : 'two Macs: retry merges both publications and both short links', async (t) => {
+    const headings = { 'old-talk': { 'index.html': 'Keep this page' } }
+    const initialRecord = { registry: { 'old-talk': 'old' }, shortLinks: true, headers: '/*\n  X-Robots-Tag: noindex\n' }
+    const w = await world(t, { talks: headings, record: initialRecord })
+    const initialHash = w.production().files['/old-talk/index.html']
+    const transport = w.ports.pages()
+    let checks = 0, posts = 0, releaseChecks, releasePosts, winningDeployment
+    const bothChecked = new Promise(resolve => { releaseChecks = resolve })
+    const bothPosted = new Promise(resolve => { releasePosts = resolve })
+    const timer = setTimeout(() => { releaseChecks(); releasePosts() }, 3000)
+    t.after(() => clearTimeout(timer))
+    const fetchTogether = async (input, init) => {
+      const route = new URL(String(input)).pathname
+      const isProject = route.endsWith(`/pages/projects/${SITE}`)
+      const posting = init?.method === 'POST' && route.endsWith('/deployments')
+      const reply = await transport.fetch(input, init)
+      if ((init?.method ?? 'GET') === 'GET' && isProject && checks < 2) {
+        checks++
+        if (checks === 2) releaseChecks()
+        await bothChecked
+      }
+      if (posting) {
+        posts++
+        if (posts === 2) { winningDeployment = w.production(); releasePosts() }
+        if (posts <= 2) await bothPosted
+        else if (displacedAgain && posts === 3) {
+          const winner = recordOf(winningDeployment, w.api.model.assets)
+          const replacement = liveSite({ 'third-talk': { 'index.html': 'Third publisher' } }, { ...winner, registry: { ...winner.registry, 'third-talk': 'third' } })
+          w.api.seed(ACCOUNT, SITE, { files: { ...winningDeployment.files, ...replacement.files }, bytes: replacement.assets, headers: initialRecord.headers })
+        }
+      }
+      return reply
+    }
+    w.ports.pages = () => ({ ...transport, fetch: fetchTogether })
+    let otherRegistry = {}
+    const otherPorts = { ...w.ports, siteDir: () => join(w.root, 'second-mac-site'), preservationRoot: join(w.root, 'second-mac-receipts'),
+      registry: { read: () => ({ ...otherRegistry }), write: next => { otherRegistry = { ...next } }, origin: () => ({ state: 'none' }) } }
+    const other = createHandoutPublishing(otherPorts)
+    const recorded = []
+    const job = (name, id, ports) => ({
+      entry: 'talk',
+      prepare: async build => {
+        const folder = build.makeFolder(join(build.dir, name))
+        writeFileSync(join(folder, 'index.html'), name)
+        ports.registry.write({ ...ports.registry.read(), [name]: id })
+        return { ok: true, built: name }
+      },
+      record: name => { recorded.push(name) },
+    })
+    const outcomes = await Promise.all([w.service.publish(job('pro-talk', 'pro', w.ports)), other.publish(job('air-talk', 'air', otherPorts))])
+    assert.equal(checks, 2)
+    assert.equal(posts, 3, 'one deployment to merge in the displaced publication')
+    const won = w.production()
+    const registry = recordOf(won, w.api.model.assets).registry
+    assert.equal(won.files['/old-talk/index.html'], initialHash)
+    assert.equal(won.headers, initialRecord.headers)
+    if (displacedAgain) {
+      const lost = outcomes.findIndex(result => !result.ok)
+      assert.equal(outcomes.filter(result => result.ok).length, 1)
+      assert.equal(outcomes[lost].error, 'Published, but another Mac published at the same moment — press Publish again')
+      const lostName = ['pro-talk', 'air-talk'][lost]
+      assert.equal(registry[lostName], undefined)
+      assert.equal(won.files[`/${lostName}/index.html`], undefined)
+      assert.equal(registry['third-talk'], 'third')
+      assert.equal(recorded.includes(lostName), false, 'do not remember the displaced link as live')
+      const lostSite = lost === 0 ? w.siteDir : otherPorts.siteDir()
+      assert.equal(existsSync(join(lostSite, lostName, 'index.html')), false, 'do not mirror a displaced handout')
+      assert.deepEqual((lost === 0 ? w.ports : otherPorts).registry.read(), registry)
+    } else {
+      assert.ok(outcomes.every(result => result.ok), JSON.stringify(outcomes))
+      assert.deepEqual(registry, { 'air-talk': 'air', 'old-talk': 'old', 'pro-talk': 'pro' })
+      assert.equal(won.files['/pro-talk/index.html'], hashOf('pro-talk', '/pro-talk/index.html'))
+      assert.equal(won.files['/air-talk/index.html'], hashOf('air-talk', '/air-talk/index.html'))
+      assert.match(won.redirects, /\/pro  \/pro-talk\/  302/u)
+      assert.match(won.redirects, /\/air  \/air-talk\/  302/u)
+      assert.deepEqual(recorded.sort(), ['air-talk', 'pro-talk'])
+    }
+  })
+}
+
+for (const lag of ['base revision', 'own deployment id', 'own candidate digest']) {
+  test(`production readback waits once for ${lag}`, async (t) => {
+    const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+    const inventory = w.ports.inventory
+    let previous
+    let lagReads = 0
+    w.ports.inventory = async (authorisation) => {
+      if (w.deploymentsPosted().length === 0) {
+        previous = await inventory(authorisation)
+        return previous
+      }
+      const current = await inventory(authorisation)
+      if (lagReads++ !== 0) return current
+      if (lag === 'base revision') return previous
+      if (lag === 'own deployment id') return { ...previous, revision: current.revision }
+      return { ...previous, revision: 'other-revision', candidateDigest: current.candidateDigest }
+    }
+    const pages = w.ports.pages()
+    const sleeps = []
+    w.ports.pages = () => ({ ...pages, sleep: async ms => { sleeps.push(ms) } })
+    const result = await w.service.publish(w.talkJob('one-talk', { 'index.html': 'synthetic content' }))
+    assert.equal(result.ok, true, JSON.stringify(result))
+    assert.equal(w.deploymentsPosted().length, 1, 'no second deployment when readback catches up')
+    assert.equal(lagReads, 2)
+    assert.equal(sleeps.filter(ms => ms === 250).length, 1)
+  })
+}

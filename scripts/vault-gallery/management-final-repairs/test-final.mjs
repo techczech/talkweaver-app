@@ -1,15 +1,20 @@
+import { readMainSource } from '../../lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import vm from 'node:vm'
 import {transformSync,build} from 'esbuild'
-const source=fs.readFileSync('src/main/index.ts','utf8')
+import { randomBytes } from 'node:crypto'
+import { pathStaysInside } from '../../../src/main/path-containment.ts'
+import { newTalkSource } from '../../../src/shared/redesign-window-source.ts'
+const source=readMainSource()
 const root=fs.mkdtempSync(path.resolve('scripts/vault-gallery/management-final-repairs/.fs-'))
 try{
  const handlers=new Map();let held=false;let refuseStrip=true;let failureMode="strip-refuse";let duringTrash=()=>{}
  const outline=path.join(root,'old/old-outline.md');fs.mkdirSync(path.dirname(outline));fs.writeFileSync(outline,'---\ntitle: Old\nhandout_url: https://fixture.invalid/old\n---\nDirty text\n')
  const context={slidePreviewRequests:new Map(),cancelThumbnailRender(){},cancelEditorThumbnails(){},latestThumbnailRequest:{cancel(){}},...fs,...path,console,ipcMain:{handle:(name,fn)=>handlers.set(name,fn)},writableRootFor:()=>root,vaultRootFor:()=>root,otherEditorUnder:()=>held,otherEditorHolding:()=>held?{}:null,editorWindows:new Map(),pathSep:path.sep,resolvePath:path.resolve,canonicalOutlinePath:p=>p,outlineDiskGuard:{forget(){}},outlineRecovery:{rekey:async()=>{}},invalidateVaultCaches(){},mkdirInVault:(_,p)=>fs.mkdirSync(p,{recursive:true}),shell:{trashItem:async p=>{await duringTrash(p);fs.renameSync(p,path.join(root,'fixture-bin'))}},talkFolderOfOutline:(_,p)=>({ok:true,path:path.dirname(p)}),siblingTalkFolder:(_,p,slug)=>({ok:true,path:path.join(path.dirname(p),slug)}),folderSlugFor:s=>s,talkPlace:p=>{const a=fs.lstatSync(path.dirname(p)),b=fs.lstatSync(p);return `${a.dev}:${a.ino}/${b.dev}:${b.ino}`},slugifyTalk:s=>s.toLowerCase().replaceAll(' ','-'),renameSlugFiles:(dir,old,slug)=>fs.renameSync(path.join(dir,old+'-outline.md'),path.join(dir,slug+'-outline.md')),findOutlineIn:dir=>path.join(dir,fs.readdirSync(dir).find(n=>n.endsWith('-outline.md'))),retitleOutline:async(p,t)=>fs.writeFileSync(p,fs.readFileSync(p,'utf8').replace('title: Old','title: '+t)),writeTalkOutline:async(p,transform,origin)=>{if(refuseStrip && origin===(failureMode.startsWith('retitle')?'retitle':'strip-published')){if(failureMode.endsWith('throw'))throw Error('injected writer exception');return {ok:false,error:'injected writer refusal'}};fs.writeFileSync(p,transform(fs.readFileSync(p,'utf8')));return {ok:true}},talkInfoFor:dir=>({path:dir,outlinePath:path.join(dir,fs.readdirSync(dir).find(n=>n.endsWith('-outline.md')))}) ,moveTalkTargets:(_,p,topic)=>({ok:true,srcDir:path.dirname(p),destParent:path.join(root,topic),dest:path.join(root,topic,path.basename(path.dirname(p)))})}
  context.galleryEpoch=0;context.outlineIdentity=p=>({key:fs.existsSync(p)?`${fs.statSync(p).dev}:${fs.statSync(p).ino}`:p});context.writableRootFor=()=>root;context.galleryReservations=new Map();context.openRequests={claimed(){}};context.noteAppOpen=()=>{};context.bringToFront=()=>{};context.outlineDiskGuard.release=()=>{};context.outlineDiskGuard.openUnder=()=>[];context.outlineDiskGuard.check=async()=>{};
+ Object.assign(context, { abortSlidePreviews() {}, pathStaysInside, newTalkSource, randomBytes })
  vm.createContext(context)
  vm.runInContext(transformSync(source.slice(source.indexOf("const movedEditorReceipts ="),source.indexOf("const galleryReservations =")),{loader:"ts"}).code,context)
  const claimStart=source.indexOf("function claimTalkForWindow(");vm.runInContext(transformSync(source.slice(claimStart,source.indexOf("\nipcMain.handle('window:claim-talk'",claimStart)),{loader:"ts"}).code,context)

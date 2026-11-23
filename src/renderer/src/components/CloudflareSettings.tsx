@@ -1,3 +1,4 @@
+import PublishHistoryPanel from './PublishHistoryPanel'
 import { useEffect, useRef, useState } from 'react'
 import type { CloudflareReply, CloudflareStatus, GoingLiveRow, LiveSetUpReply, RecordingStorageRow } from '../../../preload/index'
 import {
@@ -57,6 +58,7 @@ export default function CloudflareSettings({ look, record, onStatus, onSetUpReco
   const [replacing, setReplacing] = useState(false)
   const [howTo, setHowTo] = useState(false)
   const [details, setDetails] = useState(false)
+  const [showHistory, setShowHistory] = useState(false)
   const [account, setAccount] = useState('')
   const [recording, setRecording] = useState<RecordingStorageRow | null>(null)
   const [live, setLive] = useState<GoingLiveRow | null>(null)
@@ -141,7 +143,7 @@ export default function CloudflareSettings({ look, record, onStatus, onSetUpReco
   const edge = (shown: RowEdge, name: string, act?: () => void, beside = false): React.ReactNode => {
     if (shown.kind === 'none') return null
     if (shown.kind === 'action') {
-      return <button style={{ ...look.btn, borderColor: 'var(--oxford)', color: 'var(--oxford)' }} disabled={busy} onClick={act} data-cloudflare={name}>{shown.label}</button>
+      return <button style={{ ...look.btn, borderColor: 'var(--oxford)', color: 'var(--accent-text)' }} disabled={busy} onClick={act} data-cloudflare={name}>{shown.label}</button>
     }
     // A state that stands beside a button keeps to one line (its width is then its own, not a share of the row's).
     return <div style={{ ...rowState, ...(beside ? { maxWidth: 'none', whiteSpace: 'nowrap' } : {}), color: tone[shown.tone] }} data-cloudflare={name}>{shown.text}</div>
@@ -254,7 +256,7 @@ export default function CloudflareSettings({ look, record, onStatus, onSetUpReco
                 <a
                   href={link.href}
                   data-cloudflare="publishing-address"
-                  style={{ color: 'var(--oxford)' }}
+                  style={{ color: 'var(--accent-text)' }}
                   onClick={(event) => { event.preventDefault(); void window.tw.shell.openExternal(link.href) }}
                 >{link.label}</a>
               </>)
@@ -321,6 +323,11 @@ export default function CloudflareSettings({ look, record, onStatus, onSetUpReco
       )}
 
     </div>
+
+    <div style={{ marginBottom: 12 }}>
+      <button style={look.btn} aria-expanded={showHistory} onClick={() => setShowHistory(value => !value)}>{showHistory ? 'Hide publishing history' : 'View publishing history'}</button>
+    </div>
+    {showHistory && <PublishHistoryPanel />}
 
     {(status.details || live?.details) && (
       <div style={{ padding: '0 0 6px' }}>

@@ -1,15 +1,18 @@
+import { displayWebAddress } from '../../scripts/lib/address-display.mjs'
+
 export const instantSlideStyles = `
-.instant-slide-surface{position:fixed;inset:0;z-index:55;display:grid;place-items:center;background:#fffdf2;color:#17202a;font-family:system-ui,sans-serif;container-type:inline-size;overflow:hidden}
+.instant-slide-surface{position:fixed;inset:0;z-index:55;display:grid;place-items:center;background:#fffdf2;color:#17202a;font-family:var(--instant-face-text,system-ui),sans-serif;container-type:inline-size;overflow:hidden}
 .instant-slide-surface[hidden]{display:none!important}
 .instant-slide-content{width:min(86%,1500px);display:flex;flex-direction:column;justify-content:center;align-items:center;gap:2.5cqw;min-height:60%;text-align:center}
 .instant-slide-kicker{font-size:clamp(14px,2cqw,34px);font-weight:650;color:var(--accent,#0a7a5c)}
-.instant-slide-text{font-size:clamp(32px,5.2cqw,100px);line-height:1.14;font-weight:600;text-align:left;overflow-wrap:anywhere;width:100%;margin:0}
+.instant-slide-text{font-family:var(--instant-face-display,inherit);font-size:clamp(32px,5.2cqw,100px);line-height:1.14;font-weight:var(--weight-reading,400);text-align:left;overflow-wrap:anywhere;width:100%;margin:0}
 .instant-slide-link{font-size:clamp(25px,3.3cqw,64px);line-height:1.2;overflow-wrap:anywhere;color:#17202a}
 .instant-slide-link strong{color:var(--accent,#0a7a5c)}
 .instant-slide-link a{color:inherit;text-decoration:underline;text-decoration-color:#17202a55;text-underline-offset:.15em}
 .instant-slide-link a:hover{text-decoration-color:var(--accent,#0a7a5c)}
 .instant-slide-corner-link a{color:inherit;text-decoration:underline;text-decoration-color:#17202a55}
 .instant-slide-qr{width:min(19cqw,280px);padding:1cqw;background:white;border-radius:1cqw;box-shadow:0 5px 28px #17202a22}
+.instant-qr-enlarge{border:0;cursor:zoom-in;line-height:0}
 .instant-slide-qr img{width:100%;height:auto;display:block}
 .instant-slide-content:has(.instant-slide-image){width:calc(100% - 9cqw);height:calc(100% - 8cqw);min-height:0}
 .instant-slide-image{display:block;max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain}
@@ -25,7 +28,7 @@ export const instantSlideStyles = `
 .instant-slide-bar-meta{display:flex;justify-content:space-between;width:100%;color:#697682;font-size:clamp(12px,1.4cqw,24px)}
 .instant-slide-thumb{position:relative;inset:auto;z-index:auto;width:100%;aspect-ratio:16/9;border:1px solid #304151;border-radius:6px}
 .instant-slide-thumb .instant-slide-content{gap:1.5cqw}
-.instant-slide-thumb .instant-slide-text{font-size:5cqw}
+.instant-slide-thumb .instant-slide-text{font-family:var(--instant-face-display,inherit);font-size:5cqw}
 .instant-slide-thumb .instant-slide-link{font-size:3.3cqw}
 .instant-slide-thumb .instant-slide-digits{font-size:14cqw}
 .presenter-current-panel #currentPreview>.instant-slide-thumb{position:absolute;inset:0;width:100%;height:100%;aspect-ratio:auto;z-index:5;border:0}
@@ -184,6 +187,8 @@ export function createInstantSlideSurface(mount, options = {}) {
   let slide = null;
   let timer = null;
   let breakEnd = null;
+  let qrZoom = null;
+  let qrOpener = null;
   const now = options.now || Date.now;
   function add(tag, className, text, parent = surface) {
     const node = document.createElement(tag);
@@ -212,23 +217,76 @@ export function createInstantSlideSurface(mount, options = {}) {
       if (decision.play) { try { options.chime.play(decision.sound); } catch {} }
     }
   }
-  // A written link: an anchor on surfaces people can tap, plain text elsewhere (thumbnails, projector, venue). `options.clickable === false` turns anchors off.
-  function addWrittenLink(parent, url, className) {
-    const written = writtenInstantLink(url);
+  // The same web-address display policy as compiled captions; the existing host normaliser
+  // keeps quick-slide IDNs in their canonical form, as before.
+  function addWrittenLink(parent, url, className, hasQr = false) {
     const box = add('div', className, null, parent);
     const holder = options.clickable === false || options.thumbnail ? box : add('a', '', null, box);
-    if (holder !== box) { holder.href = url; holder.target = '_blank'; holder.rel = 'noopener noreferrer'; }
-    holder.appendChild(document.createTextNode(written.host));
-    if (written.path) add('strong', '', written.path, holder);
+    const linked = holder !== box;
+    if (linked) { holder.href = url; holder.target = '_blank'; holder.rel = 'noopener noreferrer'; }
+    else holder.setAttribute('role', 'note');
+    holder.title = url;
+    holder.setAttribute('aria-label', url);
+    const canonical = writtenInstantLink(url);
+    const displayInput = hasQr || linked ? 'https://' + canonical.host + canonical.path : url;
+    holder.textContent = displayWebAddress(displayInput, { qr: hasQr, linked, maxLength: className === 'instant-slide-corner-link' ? 48 : 80 });
     return box;
   }
-  // A QR code in a box of class `boxClass`. Drawn only on surfaces that opt in with `options.showQr`
-  // (projector, presenter preview, venue screen); phones never get one.
-  function addQr(parent, boxClass, svg, alt) {
-    if (!options.showQr || !svg) return;
-    const image = add('img', '', null, add('div', boxClass, null, parent));
+  function closeQrZoom() {
+    if (qrZoom) qrZoom.remove();
+    qrZoom = null;
+    const opener = qrOpener;
+    qrOpener = null;
+    if (opener?.isConnected) opener.focus();
+  }
+  function enlargeQr(button, svg, url) {
+    closeQrZoom();
+    const overlay = document.createElement('div');
+    overlay.className = 'qr-fullscreen';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-label', 'QR code, full screen');
+    overlay.tabIndex = -1;
+    const image = add('img', '', null, add('div', 'qr-fs-code', null, overlay));
+    // Keep SVG in image context, as on the quick slide; it never becomes executable DOM.
+    image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    image.alt = 'QR code for ' + url;
+    const address = add('div', 'qr-fs-url', null, overlay);
+    address.title = url;
+    address.setAttribute('aria-label', url);
+    String(url).split(/(?<=[/\-])/).forEach((part, index, parts) => {
+      address.appendChild(document.createTextNode(part));
+      if (index < parts.length - 1) address.appendChild(document.createElement('wbr'));
+    });
+    overlay.addEventListener('click', closeQrZoom);
+    overlay.addEventListener('keydown', (event) => {
+      event.stopPropagation();
+      if (event.key === 'Tab') event.preventDefault();
+      if (['Escape', 'Enter', ' '].includes(event.key)) { event.preventDefault(); closeQrZoom(); }
+    });
+    document.body.appendChild(overlay);
+    qrZoom = overlay;
+    qrOpener = button;
+    overlay.focus();
+  }
+  // Caption and enlarge control retain the full destination; thumbnails stay passive unless
+  // they are the presenter's actual Current pane (allowQrZoom).
+  function addQr(parent, boxClass, svg, alt, url) {
+    if (!options.showQr || !svg) return false;
+    const interactive = Boolean(url) && (!options.thumbnail || options.allowQrZoom);
+    const box = add(interactive ? 'button' : 'div', boxClass + (interactive ? ' instant-qr-enlarge' : ''), null, parent);
+    if (interactive) {
+      box.type = 'button'; box.title = url; box.setAttribute('data-qr-url', url); box.setAttribute('aria-label', 'Enlarge QR code for ' + url);
+      box.addEventListener('click', event => {
+        event.preventDefault(); event.stopPropagation();
+        if (options.onQrZoom) options.onQrZoom();
+        else enlargeQr(box, svg, url);
+      });
+    }
+    const image = add('img', '', null, box);
     image.alt = alt;
     image.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    return true;
   }
   // The talk's QR code, and its link when the talk has a published handout, bottom-right of the
   // clock, break and text slides that carry no link of their own. `options.qr()` supplies { svg, url, link } where the page has one;
@@ -237,20 +295,21 @@ export function createInstantSlideSurface(mount, options = {}) {
     // A countdown that carries its own link shows that link's QR here instead of the talk's.
     if (slide.kind === 'countdown' && slide.link) {
       const corner = add('div', 'instant-slide-corner');
-      addQr(corner, 'instant-slide-corner-qr', slide.linkQrSvg, 'QR code for this link');
-      addWrittenLink(corner, slide.link, 'instant-slide-corner-link');
+      const hasQr = addQr(corner, 'instant-slide-corner-qr', slide.linkQrSvg, 'QR code for this link', slide.link);
+      addWrittenLink(corner, slide.link, 'instant-slide-corner-link', hasQr);
       return;
     }
     let qr = null;
     try { qr = options.qr ? options.qr() : null; } catch { qr = null; }
     if (!qr || !qr.svg || !options.showQr) return;
     const corner = add('div', 'instant-slide-corner');
-    addQr(corner, 'instant-slide-corner-qr', qr.svg, 'QR code for this talk');
+    const hasQr = addQr(corner, 'instant-slide-corner-qr', qr.svg, 'QR code for this talk', qr.url);
     // The written link is the published handout (qr.linkUrl), which can differ from what the QR encodes (the live join link).
     const linkUrl = qr.linkUrl || qr.url;
-    if (qr.link && linkUrl) addWrittenLink(corner, linkUrl, 'instant-slide-corner-link');
+    if (qr.link && linkUrl) addWrittenLink(corner, linkUrl, 'instant-slide-corner-link', hasQr);
   }
   function show(next) {
+    closeQrZoom();
     if (timer != null) clearInterval(timer);
     timer = null;
     slide = next;
@@ -258,12 +317,18 @@ export function createInstantSlideSurface(mount, options = {}) {
     surface.replaceChildren();
     surface.hidden = !slide;
     if (!slide) return;
+    const active = document.querySelector('.stage > .slide.active');
+    const modern = active && ['inter', 'serif', 'geist'].includes(active.dataset.deckFont);
+    for (const [target, source] of [['--instant-face-text','--look-face-text'],['--instant-face-display','--look-face-display']]) {
+      const family = modern ? document.defaultView.getComputedStyle(active).getPropertyValue(source).trim() : '';
+      if (family) surface.style.setProperty(target, family); else surface.style.removeProperty(target);
+    }
     const content = add('div', 'instant-slide-content');
     if (slide.kind === 'text') {
       add('p', 'instant-slide-text', slide.text, content);
       if (slide.link) {
-        addWrittenLink(content, slide.link, 'instant-slide-link');
-        addQr(content, 'instant-slide-qr', slide.linkQrSvg, 'QR code for this link');
+        addWrittenLink(content, slide.link, 'instant-slide-link', Boolean(options.showQr && slide.linkQrSvg));
+        addQr(content, 'instant-slide-qr', slide.linkQrSvg, 'QR code for this link', slide.link);
       } else addCornerQr();
     }
     else if (slide.kind === 'image') {
@@ -273,8 +338,8 @@ export function createInstantSlideSurface(mount, options = {}) {
     }
     else if (slide.kind === 'link') {
       add('div', 'instant-slide-kicker', 'Link', content);
-      addWrittenLink(content, slide.url, 'instant-slide-link');
-      addQr(content, 'instant-slide-qr', slide.qrSvg, 'QR code for this link');
+      addWrittenLink(content, slide.url, 'instant-slide-link', Boolean(options.showQr && slide.qrSvg));
+      addQr(content, 'instant-slide-qr', slide.qrSvg, 'QR code for this link', slide.url);
     } else {
       const label = slide.kind === 'countdown' ? String(slide.label || '').trim() : '';
       if (label) add('div', 'instant-slide-kicker', label, content);
@@ -292,9 +357,9 @@ export function createInstantSlideSurface(mount, options = {}) {
       timer = setInterval(updateClock, slide.kind === 'time' ? 1000 : 100);
     }
   }
-  return { show, element: surface, destroy() { if (timer != null) clearInterval(timer); surface.remove(); } };
+  return { show, element: surface, destroy() { closeQrZoom(); if (timer != null) clearInterval(timer); surface.remove(); } };
 }
 
 export function instantSlideRuntimeSource() {
-  return [instantSlideFromText, writtenInstantLink, normaliseInstantLink, instantEndSound, nextBreakEnd, createBreakChime, createInstantSlideSurface].map((fn) => fn.toString()).join('\n');
+  return [displayWebAddress, instantSlideFromText, writtenInstantLink, normaliseInstantLink, instantEndSound, nextBreakEnd, createBreakChime, createInstantSlideSurface].map((fn) => fn.toString()).join('\n');
 }

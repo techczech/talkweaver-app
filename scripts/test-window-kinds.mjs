@@ -2,6 +2,7 @@
 // closed under rule B; blocker: the person closes it; helper: stopped and closed). This fails for a `new BrowserWindow`
 // in src/main without a registration next to it, for a kind missing from WINDOW_KINDS or from the ADR's table, and for
 // a Settings window made somewhere new. Plain Node, no Electron.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
@@ -54,7 +55,7 @@ await test('every new BrowserWindow in src/main registers its kind where it is c
 await test('windows opened by a deck window, at any depth, are registered as deck-child; the Settings window is known by identity', () => {
   const open = readFileSync(join(ROOT, 'src/main/present-window-open.ts'), 'utf8')
   assert.match(open, /contents\.on\('did-create-window', \(child\) => \{\n    try \{ opts\.childOpened\?\.\(child\) \}/)
-  const index = readFileSync(join(ROOT, 'src/main/index.ts'), 'utf8')
+  const index = readMainSource()
   assert.match(index, /childOpened: \(child: unknown\) => registerWindowKind\(child as BrowserWindow, 'deck-child'\)/)
   assert.match(index, /guardDeckWindowTree\(win\.webContents, deckWindowOpenOpts\)/)
   assert.match(index, /return settingsWindow && !settingsWindow\.isDestroyed\(\) && settingsWindow === win \? 'settings' : null/)

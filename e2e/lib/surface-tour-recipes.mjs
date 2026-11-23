@@ -111,10 +111,17 @@ const SKIP_PUBLISH = 'would publish or contact a network service'
 
 // ---- helpers shared by recipes -----------------------------------------------------------------------------------
 const talkRow = (t, title = 'Embedded Page') => t.page.locator(`aside.talk-list [data-talk-title*="${title}"]`).first()
-const bar = (name) => (t) => t.click(t.page.locator('.toolbar-btn', { hasText: name }))
+const bar = (name) => (t) => {
+  const buttonName = name === 'Present' ? 'Other ways to present' : name
+  return t.click(t.page.getByRole('button', { name: buttonName, exact: true }).filter({ visible: true }).first())
+}
 /** Caret onto the editor line that contains `text` (places the slide selection there). */
 async function gotoLine(t, text, opts = {}) {
   const line = t.page.locator('.cm-line', { hasText: text }).filter({ visible: true }).nth(opts.nth ?? 0)
+  if (!await line.count() && await t.visible('[data-view="slide"]')) {
+    await t.command('view-plain')
+    await t.sleep(400)
+  }
   await line.scrollIntoViewIfNeeded({ timeout: 3000 }).catch(() => {})
   await line.click({ position: { x: 50, y: 6 }, timeout: 3500 })
   await t.page.waitForTimeout(350)
@@ -138,10 +145,20 @@ const clickIn = async (t, page, loc, opts = {}) => { await loc.filter({ visible:
 // ---- Authoring and commands ------------------------------------------------------------------------------------
 R['action-bar'] = { run: async (t) => { t.method = 'visible by default (Settings → Writing → Show the action bar is on)' }, verify: (t) => t.visible('.tw-action-bar-btn') }
 R['toolbar-insert'] = { run: bar('Insert') }
-R['toolbar-deck'] = { run: bar('Talk') } // the Talk menu (named Deck before batch 1)
+R['toolbar-deck'] = { run: async (t) => {
+  await t.click(t.page.locator('button[title="Talk menu"]'))
+  t.method = 'open the menu labelled with the talk name'
+}, verify: (t) => t.visible('.toolbar-menu') }
 R['toolbar-tools'] = { run: bar('Tools') }
 R['toolbar-present'] = { run: bar('Present') }
-R['slide-context'] = { run: async (t) => { const tab = t.page.locator('[data-rc-tab="slides"] button'); if (await tab.count()) await tab.first().click(); await t.sleep(500); await t.page.locator('.tw-slide-card').first().click({ button: 'right' }); t.method = 'right-click a slide card in the strip (the sidebar\'s Strip tab)' } }
+for (const [surface, command] of [['layout-menu', 'change-slide-layout'], ['icon-search', 'icon-picker']]) {
+  R[surface] = { run: async (t) => {
+    await t.command('view-markdown')
+    await gotoLine(t, 'Title stays one size')
+    await t.command(command)
+  } }
+}
+R['slide-context'] = { run: async (t) => { await t.command('view-panel-previews'); await t.sleep(500); await t.page.locator('.tw-slide-card').first().click({ button: 'right' }); t.method = 'right-click a slide card in the strip (the slides panel)' } }
 R['actions-here'] = { run: async (t) => { await t.click(t.page.locator('.tw-place-chip')) } }
 R['status-place'] = { run: async (t) => { await t.click(t.page.locator('.tw-place-chip')) } }
 R['talk-menu'] = { run: async (t) => { await t.click(talkRow(t), { button: 'right' }) } }
@@ -203,7 +220,7 @@ R['migration'] = { skip: 'legacy recording migration is offered by the main proc
 
 // ---- slides, images, reuse ----------------------------------------------------------------------------------------
 R['image-meta'] = { run: async (t) => { await t.command('image'); await t.sleep(700); t.missing('the vault image pool is empty (the drawer says pictures appear once filed), so there is no image to open the details of') } }
-R['plain-icon'] = { run: async (t) => { await t.page.locator('.tw-editor-tab', { hasText: 'Plain' }).click(); await t.sleep(900); await gotoLine(t, 'About'); await t.sleep(300); await t.command('icon-picker'); await t.sleep(600) } }
+R['plain-icon'] = { run: async (t) => { await t.command('view-plain'); await t.sleep(900); await gotoLine(t, 'About'); await t.sleep(300); await t.command('icon-picker'); await t.sleep(600) } }
 R['focus-detach'] = { skip: 'needs a reused slide in Slide Focus; the demo talks hold no reused slide to detach' }
 R['propagation'] = { skip: 'offered after editing a slide reused in other talks; the demo vault has no reused slides' }
 R['merge-slides'] = { run: async (t) => { await t.command('search'); await t.sleep(800); t.missing('merge needs slides ticked in two talks and a version cluster; not reachable here') } }
@@ -212,9 +229,10 @@ R['slide-batch'] = { run: async (t) => { await t.command('view-grid'); await t.s
 R['inspector'] = { run: async (t) => { await ensureInspector(t) }, verify: (t) => t.visible('.tw-inspector') }
 R['explain'] = { run: async (t) => { await ensureInspector(t); await t.click(/Explain & markup/) } }
 R['unresolved'] = { skip: 'needs an outline with unresolved trigger lines and an output operation (build or publish) to be started' }
-R['disk-change-bar'] = { observe: /changed on disk/, run: async (t) => {
+R['disk-change-bar'] = { verify: (t) => t.visible('[data-testid="outline-disk-change-chip"]'), run: async (t) => {
   const { writeFileSync, readFileSync } = await import('node:fs'); const { join } = await import('node:path')
-  const f = join(t.vault, 'layout-showcase', 'layout-showcase-outline.md'); writeFileSync(f, readFileSync(f, 'utf8') + '\n<!-- changed outside -->\n'); await t.sleep(2500); t.method = 'change the open outline on disk from outside' } }
+  const f = join(t.vault, 'layout-showcase', 'layout-showcase-outline.md'); writeFileSync(f, readFileSync(f, 'utf8') + '\n<!-- changed outside -->\n')
+  await t.waitFor('[data-testid="outline-disk-change-chip"]', t.page, 6000); t.method = 'change the open outline on disk from outside' } }
 R['disk-change-sheet'] = { run: async (t) => {
   const { writeFileSync, readFileSync } = await import('node:fs'); const { join } = await import('node:path')
   const f = join(t.vault, 'layout-showcase', 'layout-showcase-outline.md'); await t.page.keyboard.type(' x'); writeFileSync(f, readFileSync(f, 'utf8') + '\n<!-- changed outside -->\n'); await t.sleep(2500)
@@ -338,7 +356,7 @@ R['merge-slides'] = { run: async (t) => t.missing('merge needs a version cluster
 // ---- Inspector and slide kinds ---------------------------------------------------------------------------------
 /** Select a slide by its title through the Slide outline sidebar (the editor only renders the lines in view). */
 async function selectSlideByTitle(t, title) {
-  await t.page.locator('.sidebar-mode-btn', { hasText: 'Slide outline' }).click({ timeout: 3000 }); await t.sleep(500)
+  await t.command('view-panel-outline'); await t.sleep(500)
   await t.page.locator('button.so-slide', { hasText: title }).first().click({ timeout: 3500 }); await t.sleep(900)
 }
 // The Inspector is the default tab of the right sidebar (R11a); make sure it is the one showing.

@@ -1,9 +1,9 @@
 // Sanitisation is reconstruction from a closed data format. No remote HTML string is stored.
+import { escapeHtml as escape } from '../shared/html-escape.ts'
 export const OFFLINE_PAGE_MAX_BYTES = 20 * 1024 * 1024
 export const OFFLINE_PAGE_CSP = "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
 const TAGS = new Set('address article aside b blockquote br caption code dd del details div dl dt em figcaption figure footer h1 h2 h3 h4 h5 h6 header hr i li main nav ol p pre s section small span strong sub summary sup table tbody td th thead time tr u ul img'.split(' '))
 const STYLES = new Set('display color background-color font-family font-size font-weight font-style line-height text-align white-space border-top-width border-top-style border-top-color border-bottom-width border-bottom-style border-bottom-color border-left-width border-left-style border-left-color border-right-width border-right-style border-right-color border-collapse padding-top padding-right padding-bottom padding-left margin-top margin-right margin-bottom margin-left max-width width height'.split(' '))
-const escape = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 export const isOfflineImage = (s: unknown): s is string => typeof s === 'string' && /^data:image\/(?:png|jpeg|gif|webp|avif);base64,[A-Za-z0-9+/=]+$/.test(s)
 export interface OfflinePageResult { html: string; title: string; omitted: number; images: number; dataFiles: number }
 

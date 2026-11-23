@@ -9,6 +9,7 @@
 //    camera and GPS data never carried into the new file, a picture never made bigger, the pixel
 //    limit refused, a damaged file handled as before, thumbnail colours put back the right way.
 // The same facts were compared on sharp 0.34.5 and 0.35.5 (research/runtime-advisories-2026-10-27/).
+import { readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, readFileSync, rmSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -26,8 +27,9 @@ const ok = (condition, message) => { assert.ok(condition, message); checks += 1 
 const equal = (actual, expected, message) => { assert.deepEqual(actual, expected, message); checks += 1 }
 
 // ── 1. The calls are the source's ────────────────────────────────────────────────────────────────
-const source = (file) => readFileSync(join(repo, file), 'utf8').replace(/\s+/g, ' ')
-const index = source('src/main/index.ts')
+const flatten = (text) => text.replace(/\s+/g, ' ')
+const source = (file) => flatten(readFileSync(join(repo, file), 'utf8'))
+const index = flatten(readMainSource())
 ok(index.includes(".resize({ width: 2560, height: 2560, fit: 'inside', withoutEnlargement: true }) .webp({ quality: 82 })"), 'talk:optimize-images still resizes inside 2560 and writes WebP q82')
 ok(index.includes('sharp(buf).webp({ quality: 82 }).toBuffer()'), 'the clipboard paste still writes WebP q82')
 ok(source('src/main/thumbnails.ts').includes('sharp(bitmap, { raw: { width, height, channels: 4 } }) .recomb([[0, 0, 1], [0, 1, 0], [1, 0, 0]]) .png()'), 'thumbnails still swap channels 0 and 2 of the raw bitmap and write PNG')

@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { extractPptx, inspectPptx, renderOriginalSlides, safeArchiveEntry } from '../src/main/importer/pptx.ts'
 
-const root = mkdtempSync(join(tmpdir(), 'talkweaver-importer-pptx-'))
+const root = testScratchDir(join(tmpdir(), 'talkweaver-importer-pptx-'))
 const packageDir = join(root, 'package')
 const pptxPath = join(root, 'fixture.pptx')
 

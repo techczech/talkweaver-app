@@ -58,7 +58,7 @@ export const SUBGROUP_ORDER: Readonly<Record<TaskGroup, readonly string[]>> = {
   'Write the outline': ['Format text', 'Fold', 'Headings and levels', 'Lists', 'Reorder slides and items', 'Undo and redo'],
   'Build a slide': ['Inspector', 'Layouts', 'Images and icons', 'Objects', 'Components'],
   'Reuse slides': ['Where used and versions', 'Find a talk', 'Slides from other talks', 'Tags'],
-  'See the talk': ['Views (slides, grid, strip)', 'Focus on a slide', 'Sidebar and outline search'],
+  'See the talk': ['Views', 'Focus on a slide', 'Sidebar and outline search'],
   'Shape the talk': ['Plan a Run', 'Pathways', 'Talk design', 'Metadata and abstract'],
   'Present': ['Open presenter and audience', 'Live audience, polls and questions', 'Move through slides', 'Timer', 'Recording', 'Display modes', 'Speaker notes (added)', 'Live board (added)', 'Help and commands'],
   'Share': ['Handout', 'HTML presentation', 'Publish', 'Share for comments', 'Video'],
@@ -89,6 +89,11 @@ export const MERGED_ROWS: readonly MergedRow[] = [
  */
 export const CHAPTER_EXCLUDED: ReadonlySet<string> = new Set([
   'present-window', 'present-audience',
+  // ADR-0045. The window teaches the view and welcome choices directly. The new toolbar
+  // actions are also in the palette; the existing practice chapters retain their exercises.
+  'view-panel-previews', 'view-panel-outline', 'view-slide-panel', 'paste-picture', 'split-pasted-picture-row', 'duplicate-slide',
+  'move-current-slide-up', 'move-current-slide-down', 'edit-speaker-notes', 'present-slide-window',
+  'welcome-slide', 'welcome-outline', 'welcome-markdown', 'view-strip',
   // Plain editing view ticket 01: the two tabs are named in the Guide by ticket 10, not by a practice row yet.
   'view-plain', 'view-markdown',
   // Plain editing view ticket 04: the margin menus' palette entries; ticket 10 writes them into the Guide.

@@ -4,8 +4,8 @@
 // `{ [vaultId]: string[] }`), never in the vault. This Mac's names (hostname, ComputerName) are
 // slugged the way OneDrive writes them and stored for each vault the first time it is asked about.
 
-import { readFileSync, writeFileSync, mkdirSync, renameSync } from 'fs'
-import { dirname } from 'path'
+import { readFileSync } from 'fs'
+import { writeTextAtomic } from './atomic-file.ts'
 import { machineSlug } from './conflict-copies.mjs'
 
 export interface VaultMachines {
@@ -40,10 +40,7 @@ export function createVaultMachines({ file, thisMac }: { file: string; thisMac: 
   }
   function save(all: Record<string, string[]>): void {
     try {
-      mkdirSync(dirname(file), { recursive: true })
-      const tmp = `${file}.tmp`
-      writeFileSync(tmp, JSON.stringify(all, null, 2), 'utf8')
-      renameSync(tmp, file)
+      writeTextAtomic(file, JSON.stringify(all, null, 2), { createParent: true })
     } catch { /* best effort: rule (b) still recognises most machine names */ }
   }
   function merge(existing: string[], add: string[]): string[] {

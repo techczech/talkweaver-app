@@ -28,15 +28,15 @@ export const plainHighlightStyle = HighlightStyle.define([
   { tag: t.strong, fontWeight: '700' },
   { tag: t.emphasis, fontStyle: 'italic' },
   { tag: t.strikethrough, textDecoration: 'line-through' },
-  { tag: t.url, color: '#5d6875' },
-  { tag: t.processingInstruction, color: '#8a9099' },
+  { tag: t.url, color: 'var(--muted)' },
+  { tag: t.processingInstruction, color: 'var(--faint)' },
   { tag: t.monospace, ...mono },
   // Code inside fences keeps its colours (a small set; the Markdown tab uses CodeMirror's default).
-  { tag: [t.keyword, t.operatorKeyword, t.modifier], color: '#708' },
-  { tag: [t.string, t.regexp], color: '#a11' },
-  { tag: [t.number, t.bool, t.null], color: '#164' },
-  { tag: [t.comment, t.quote], color: '#6b7684' },
-  { tag: [t.definition(t.variableName), t.function(t.variableName), t.typeName, t.className], color: '#00f' }
+  { tag: [t.keyword, t.operatorKeyword, t.modifier], color: 'light-dark(#708, #deb3ef)' },
+  { tag: [t.string, t.regexp], color: 'var(--crimson)' },
+  { tag: [t.number, t.bool, t.null], color: 'light-dark(#166534, #86dfa0)' },
+  { tag: [t.comment, t.quote], color: 'var(--faint)' },
+  { tag: [t.definition(t.variableName), t.function(t.variableName), t.typeName, t.className], color: 'var(--accent-text)' }
 ])
 
 export const plainTheme = EditorView.theme({
@@ -44,30 +44,30 @@ export const plainTheme = EditorView.theme({
     height: '100%',
     fontSize: '16px',
     fontFamily: PLAIN_SANS,
-    background: '#f7f3ea'
+    background: 'var(--panel)'
   },
   // Left: 32 px, which with the line's own 6 px is the 38 px the heading mark hangs in (conceal.ts).
   '.cm-content': {
     padding: '16px 20px 16px 32px',
-    caretColor: '#0b3a6b',
+    caretColor: 'var(--accent-text)',
     fontFamily: PLAIN_SANS
   },
-  '.cm-line': { lineHeight: '1.6', color: '#17202a' },
+  '.cm-line': { lineHeight: '1.6', color: 'var(--ink)' },
   '.cm-plain-code': { fontFamily: CODE_FONT, fontSize: '14px' },
   '.cm-gutters': {
-    backgroundColor: '#f0ebe0',
-    borderRight: '1px solid #d9d0c1',
-    color: '#8a9099',
+    backgroundColor: 'var(--surface-2)',
+    borderRight: '1px solid var(--line)',
+    color: 'var(--faint)',
     fontFamily: CODE_FONT,
     fontSize: '14px'
   },
-  '.cm-activeLineGutter': { backgroundColor: '#e4ddd0' },
-  '.cm-activeLine': { backgroundColor: '#e8e3d6' },
-  '&.cm-focused .cm-cursor': { borderLeftColor: '#0b3a6b', borderLeftWidth: '2px' },
+  '.cm-activeLineGutter': { backgroundColor: 'var(--active)', color: 'var(--muted)' },
+  '.cm-activeLine': { backgroundColor: 'var(--hover)' },
+  '&.cm-focused .cm-cursor': { borderLeftColor: 'var(--accent-text)', borderLeftWidth: '2px' },
   '&.cm-focused .cm-selectionBackground, .cm-selectionBackground': {
-    backgroundColor: '#0b3a6b22'
+    backgroundColor: 'var(--selection)'
   },
-  '.cm-matchingBracket': { backgroundColor: '#0b3a6b15', outline: '1px solid #0b3a6b30' }
+  '.cm-matchingBracket': { backgroundColor: 'var(--accent-soft)', outline: '1px solid var(--line-strong)' }
 }, { dark: false })
 
 // Lines inside a fenced code block stay in the code font (nested language tokens carry no monospace tag).

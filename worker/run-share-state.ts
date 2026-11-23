@@ -221,6 +221,9 @@ export function runShareAlarmAt(share: StoredRunShare): number | null {
 
 // ── The page ────────────────────────────────────────────────────────────────────────────────
 
+// Local, not the shared src/shared/html-escape.ts: the worker compiles on its own under Wrangler and its
+// source digest (scripts/lib/worker-dist.mjs) covers worker/ only. Same five characters as 00-html.mjs;
+// scripts/test-html-escape.mjs checks the two agree.
 export function escapeHtml(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }

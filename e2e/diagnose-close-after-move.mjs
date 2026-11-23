@@ -14,12 +14,17 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 delete env.ELECTRON_RUN_AS_NODE
 let app
+let ownedProcess
 let checks = 0
 async function cleanup() {
-  if (!app) return
-  const proc = app.process()
+  const closing = app
+  const proc = ownedProcess
+  app = undefined
+  ownedProcess = undefined
+  // Playwright can dispose the application handle as soon as the child quits.
+  if (!proc || proc.exitCode !== null || proc.signalCode !== null) return
   let timer
-  try { await Promise.race([app.close().catch(() => {}), new Promise(r => { timer = setTimeout(r, 2000) })]) }
+  try { await Promise.race([closing.close().catch(() => {}), new Promise(r => { timer = setTimeout(r, 2000) })]) }
   finally {
     clearTimeout(timer)
     if (proc.exitCode === null && proc.signalCode === null) {
@@ -27,7 +32,6 @@ async function cleanup() {
       proc.kill('SIGKILL')
       await exited
     }
-    app = null
   }
 }
 async function waitFor(fn, label, ms = 8000) {
@@ -49,16 +53,19 @@ try {
     const outline = join(vault, 'garden-notes/garden-notes-outline.md')
     if (scenario.undo) writeFileSync(outline, readFileSync(outline, 'utf8').replace('{id=g1}\n', ''))
     const original = readFileSync(outline, 'utf8')
-    writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, editorViewMode: 'plain' }))
+    writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'outline' }))
     const delay = join(root, 'save-delay')
     app = await electron.launch({ args: ['.', `--user-data-dir=${ud}`, '--use-mock-keychain'], cwd: repo,
       env: { ...env, TW_UPDATE_TEST_SAVE_DELAY_FILE: delay } })
+    const proc = ownedProcess = app.process()
+    assert.ok(proc, 'the test owns the Electron child')
+    const exited = new Promise(r => proc.once('exit', (code, signal) => r({ code, signal })))
     const page = await app.firstWindow()
     page.setDefaultTimeout(10000)
     assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(w => !w.isVisible())), true)
     await openTalkByTitle(page, 'Garden notes')
     await page.locator('.cm-content').waitFor()
-    await page.locator('.pane-btn[title="Grid"]').click()
+    await page.getByTestId('grid-toggle').click()
     const cards = page.locator('.grid-view .grid-cell[draggable="true"]')
     const first = cards.filter({ hasText: 'Where the plot is' }).first()
     const next = cards.filter({ hasText: 'What we grow' }).first()
@@ -81,7 +88,7 @@ try {
       await page.keyboard.press('Meta+z')
       await waitFor(() => disk().indexOf('### Where the plot is') < disk().indexOf('### What we grow'), 'the undo was saved')
     } else {
-      await page.locator('.pane-btn[title="Slides"]').click()
+      await page.getByTestId('outline-toggle').click()
       if (scenario.slow) writeFileSync(delay, '1500')
       await page.locator('.cm-content').click()
       await page.keyboard.press('Meta+ArrowDown')
@@ -89,7 +96,7 @@ try {
       await page.keyboard.type(` CLOSE_EDIT_${i}`)
       if (scenario.slow) await sleep(1000) // the 900ms autosave has started and is waiting in main
     }
-    await page.locator('.pane-btn[title="Slides"]').click()
+    await page.getByTestId('outline-toggle').click()
     await page.locator('.cm-content').waitFor()
     const held = await page.evaluate(() => document.querySelector('.cm-content').cmTile.root.view.state.doc.toString())
     if (scenario.stall) {
@@ -108,8 +115,6 @@ try {
         })
       })
     }
-    const proc = app.process()
-    const exited = new Promise(r => proc.once('exit', () => r(true)))
     let closed = false
     page.once('close', () => { closed = true })
     const started = Date.now()
@@ -130,7 +135,10 @@ try {
     }
     if (scenario.quit) {
       let timer
-      try { assert.equal(await Promise.race([exited, new Promise(r => { timer = setTimeout(() => r(false), 8000) })]), true, 'ordinary quit finishes') }
+      try {
+        const result = await Promise.race([exited, new Promise(r => { timer = setTimeout(() => r(null), 8000) })])
+        assert.deepEqual(result, { code: 0, signal: null }, 'ordinary quit finishes with a normal process exit')
+      }
       finally { clearTimeout(timer) }
     } else await waitFor(() => closed, 'ordinary window close finishes')
     const after = disk()
@@ -144,7 +152,7 @@ try {
     await cleanup()
   }
 } finally {
-  await cleanup()
-  rmSync(scratch, { recursive: true, force: true })
+  try { await cleanup() }
+  finally { rmSync(scratch, { recursive: true, force: true }) }
 }
 console.log(`close after move: ${checks} checks passed`)

@@ -2,19 +2,19 @@
 // vault asset (img-XXXXXXX), legacy double-prefix (img-img-XXXXXXX), and a path image
 // (assets/pic.png via twfile://). Isolated temp vault + userData.
 //
-// Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-images.mjs
+// Run after building: node e2e/diagnose-images.mjs (optional SHOTS=<directory>).
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempSync, writeFileSync, copyFileSync, existsSync } from 'fs'
+import { mkdirSync, mkdtempDisposableSync, writeFileSync, copyFileSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
-const SHOTS = join(__dirname, 'shots')
-mkdirSync(SHOTS, { recursive: true })
+const shots = process.env.SHOTS
+if (shots) mkdirSync(shots, { recursive: true })
 
 const PNG_B64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
@@ -25,7 +25,8 @@ function record(name, pass, detail) {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`)
 }
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-img-' + String(Date.now()) + '-'))
+using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-img-'))
+const tempRoot = fixture.path
 const tempVault = join(tempRoot, 'vault')
 const userDataDir = join(tempRoot, 'userData')
 const talkDir = join(tempVault, 'img-fixture')
@@ -36,7 +37,7 @@ writeFileSync(outlinePath, '---\ntitle: Img Fixture\n---\n\n## S\n\n### Slide\n\
 writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault }, null, 2))
 
 await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
+await using app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
@@ -91,7 +92,7 @@ try {
       twfile: schemes.filter((s) => s === 'twfile').length
     }
   })
-  await page.screenshot({ path: join(SHOTS, 'img-all-render.png') })
+  if (shots) await page.screenshot({ path: join(shots, 'img-all-render.png') })
 
   record('all four image refs render as widgets', info.widgets >= 4, `widgets=${info.widgets}`)
   record('all widget images actually paint (incl. URL-encoded spaced path)', info.loaded >= 4, `loaded=${info.loaded}/${info.imgs}`)
@@ -102,6 +103,5 @@ try {
 } finally {
   const failed = results.filter((r) => !r.pass)
   console.log(`\n=== IMAGES SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
-  await app.close()
-  process.exit(failed.length === 0 ? 0 : 1)
+  process.exitCode = failed.length === 0 ? 0 : 1
 }

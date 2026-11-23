@@ -25,6 +25,7 @@ import { join, relative, resolve } from 'node:path'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
+import { closeSettingsWindow, openSettingsWindow } from './lib/settings-window.mjs'
 import { PRE_WORK, POST_WORK } from '../scripts/lib/work-page-fixture.mjs'
 import { REPLY_TEXT_MARK, WORKERS_SUBDOMAIN, startCloudflareApiStub } from '../scripts/lib/cloudflare-api-stub.mjs'
 import { APP_CONFIG_MARK, appWrittenLoopback } from '../src/main/handout-publishing.ts'
@@ -158,7 +159,7 @@ try {
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }
-  app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: root, env })
+  app = await electron.launch({ args: ['.', '--use-mock-keychain', `--user-data-dir=${userData}`], cwd: root, env })
   app.process().stdout.on('data', (chunk) => { output += chunk })
   app.process().stderr.on('data', (chunk) => { output += chunk })
   // Nothing leaves the app: a published link is not opened in a browser, a saved file's folder is
@@ -188,17 +189,16 @@ try {
   if (!onThrowaway) throw new Error('not on the throwaway user-data folder: stopping before any token is saved')
   await openTalkByTitle(page, 'Publish probe')
 
-  const SETTINGS = '[aria-label="Settings"]'
-  const settings = page.locator(SETTINGS).first()
+  let settings = null
   const part = (name) => settings.locator(`[data-cloudflare="${name}"]`)
   const sheet = page.locator('[data-testid="publish-not-ready"]')
   const toasts = page.locator('[role="status"]')
-  const settled = () => page.waitForFunction(() => document.querySelector('[data-cloudflare="connection"]')?.getAttribute('data-busy') === 'no', null, { timeout: 40_000 })
+  const settled = () => settings.waitForFunction(() => document.querySelector('[data-cloudflare="connection"]')?.getAttribute('data-busy') === 'no', null, { timeout: 40_000 })
   const rowText = async () => (await part('publishing').innerText()).replace(/\s+/g, ' ').trim()
   const shot = async (name, target = page) => { if (shots) await target.screenshot({ path: join(shots, `${name}.png`) }).catch(() => {}) }
-  const closeSettings = async () => { await page.keyboard.press('Escape'); await page.locator(SETTINGS).waitFor({ state: 'detached' }) }
+  const closeSettings = async () => { await closeSettingsWindow(app); settings = null }
   const openSettings = async () => {
-    if (await page.locator(SETTINGS).count() === 0) await page.keyboard.press('ControlOrMeta+,')
+    settings = await openSettingsWindow(app, page, 'cloudflare')
     await part('connection').waitFor({ state: 'visible' })
     await part('connection').scrollIntoViewIfNeeded()
   }
@@ -209,7 +209,7 @@ try {
     if (await replace.count()) await replace.click()
     await part('token').locator('input').fill(token)
     await part('token').getByRole('button', { name: 'Save token' }).click()
-    await page.waitForFunction(() => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === 'Connected · Ada Lovelace', null, { timeout: 40_000 })
+    await settings.waitForFunction(() => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === 'Connected · Ada Lovelace', null, { timeout: 40_000 })
     await settled()
   }
   /** Publish as the toolbar, the menu and the palette do: the app's own command, handled by the window. */
@@ -256,18 +256,14 @@ try {
   // 3. Open Settings from the sheet.
   await pressPublish()
   await sheet.waitFor({ state: 'visible', timeout: 20_000 })
-  await sheet.getByRole('button', { name: 'Open Settings' }).click()
+  const settingsOpened = app.waitForEvent('window', {
+    timeout: 20_000,
+    predicate: candidate => candidate.waitForURL(/\/settings\.html(?:[?#]|$)/, { timeout: 20_000 })
+      .then(() => true, () => false)
+  })
+  ;[settings] = await Promise.all([settingsOpened, sheet.getByRole('button', { name: 'Open Settings' }).click()])
   await part('connection').waitFor({ state: 'visible', timeout: 20_000 })
-  // The section is scrolled to the top once Settings has been laid out: waited for, not timed.
-  const inView = await page.waitForFunction(() => {
-    const section = document.querySelector('[data-cloudflare="section"]')
-    const panel = section?.closest('[aria-label="Settings"]')
-    if (!section || !panel) return false
-    const head = section.getBoundingClientRect()
-    const body = panel.getBoundingClientRect()
-    return head.top >= body.top && head.bottom <= body.bottom
-  }, null, { timeout: 10_000 }).then(() => true, () => false)
-  record(3, inView && await sheet.count() === 0 && (await part('connection-label').innerText()) === 'Not connected')
+  record(3, await sheet.count() === 0 && (await part('connection-label').innerText()) === 'Not connected')
 
   // 4. A token that can publish pages and cannot run the live service: published without live features.
   await useToken(TOKENS.pagesOnly)
@@ -313,7 +309,7 @@ try {
   const failing = (request) => (request.method === 'PUT' && /\/workers\/scripts\/[^/]+$/.test(request.path)
     ? { status: 400, body: { success: false, errors: [{ code: 10021, message: `The Worker could not be validated (${REPLY_TEXT_MARK})` }], messages: [], result: null } } : undefined)
   api.model.answer = failing
-  const liveIs = (state) => page.waitForFunction((wanted) => document.querySelector('[data-cloudflare="live-service"]')?.getAttribute('data-state') === wanted, state, { timeout: 120_000 })
+  const liveIs = (state) => settings.waitForFunction((wanted) => document.querySelector('[data-cloudflare="live-service"]')?.getAttribute('data-state') === wanted, state, { timeout: 120_000 })
   await liveIs('not-set-up')
   await part('live-service-label').click()
   await liveIs('failed')
@@ -370,7 +366,7 @@ try {
 
   // 10. The row after the refusal, and after "Check again".
   await openSettings()
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="publishing"]')?.getAttribute('data-state') === 'no-permission', null, { timeout: 20_000 })
+  await settings.waitForFunction(() => document.querySelector('[data-cloudflare="publishing"]')?.getAttribute('data-state') === 'no-permission', null, { timeout: 20_000 })
   const rowRefused = await rowText()
   const requestsBefore = api.requests.length
   await settings.getByRole('button', { name: 'Check again' }).click()
@@ -387,14 +383,14 @@ try {
   // 11. The permission is added at Cloudflare (the token is not replaced): the next publish goes up, and only then is the row Ready.
   api.model.tokens.get(TOKENS.readOnly).pages = true
   const fourth = await publish()
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="publishing"]')?.getAttribute('data-state') === 'ready', null, { timeout: 20_000 }).catch(() => {})
+  await settings.waitForFunction(() => document.querySelector('[data-cloudflare="publishing"]')?.getAttribute('data-state') === 'ready', null, { timeout: 20_000 }).catch(() => {})
   const rowReady = await rowText()
   const afterAllowed = gate('talk, after the permission was added')
   record(11, fourth?.success === true && rowReady === `Publishing handouts Site ${SITE} · ${SITE}.pages.dev Ready`, `${fourth?.success ? 'published' : `not published: ${String(fourth?.error).slice(0, 160)}`} · "${rowReady}"`)
 
   // 12. Disconnected: the Run's publish and unpublish say what is missing, and change nothing.
   await settings.getByRole('button', { name: 'Disconnect' }).click()
-  await page.waitForFunction(() => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === 'Not connected', null, { timeout: 20_000 })
+  await settings.waitForFunction(() => document.querySelector('[data-cloudflare="connection-label"]')?.textContent === 'Not connected', null, { timeout: 20_000 })
   await settled()
   await closeSettings()
   const sentBefore = api.requests.length

@@ -1,3 +1,7 @@
+import { readMainSource } from '../../lib/read-source.mjs'
+import {hasGitConflictMarkers} from '../../../src/main/conflict-copies.mjs'
+import {publicationMediaReview,publicationBuildWarnings} from '../../../src/shared/publication-files.ts'
+import {runCompileOption} from '../../../src/main/handout-pages.ts'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import {join,basename,relative,dirname} from 'node:path'
@@ -9,14 +13,14 @@ const base=fs.mkdtempSync(join(import.meta.dirname,'fixture-'))
 try {
  const bundled=await build({entryPoints:['src/main/runs.ts'],bundle:true,write:false,format:'cjs',platform:'node',packages:'external'}), m={exports:{}}
  new Function('require','module','exports',bundled.outputFiles[0].text)(createRequire(import.meta.url),m,m.exports)
- const runs=m.exports, source=fs.readFileSync('src/main/index.ts','utf8')
+ const runs=m.exports, source=readMainSource()
  const helpers=source.slice(source.indexOf('async function verifiedRunSource('),source.indexOf("ipcMain.handle('run:build-handout'"))
  const start=source.indexOf("ipcMain.handle('run:publish-handout'"),end=source.indexOf('\nipcMain.handle(',start+1)
  for(const mode of ['unchanged','close','unavailable','root','move','source','delete','replace','changed-id','changed-slug','conflict','wrong-id','wrong-slug']) {
  const root=join(base,mode);fs.mkdirSync(join(root,'a'),{recursive:true});const exact=join(root,'a/same-outline.md');fs.writeFileSync(exact,'# Source')
  const run={id:'r',talkSlug:'same',sourceOutline:'a/same-outline.md'};runs.persistRun(root,run)
  const file=join(root,'_PRESENTATIONS/same/r.json');let open=true,unavailable=false,job,fn
- const ctx={...fs,join,basename,dirname,relative,process,app:{isPackaged:false,getAppPath:()=>process.cwd()},vaultRegistry:{list:()=>[{id:mode,root,open}],get:()=>({id:mode,root,open})},vaultAvailability:{isUnavailable:()=>unavailable},writableRootFor:()=>open?root:undefined,readGallerySource:async()=>{},findTalks:()=>[{slug:'same',outlinePath:exact}],runVaultFor:()=>({root}),readRun:runs.readRun,readRunForTalk:runs.readRunForTalk,requireRunForTalk:runs.requireRunForTalk,runFileProblem:runs.runFileProblem,ipcMain:{handle:(n,f)=>fn=f},presenterPublications:{ticket:()=>1,published:()=>[]},handoutPublishing:()=>({publish:async j=>{job=j;return {ok:false,error:'captured'}}}),stampRunWork:r=>r,setRunHandoutUrl:(r,url,folder)=>({...r,handoutUrl:url,handoutFolder:folder}),persistRun:runs.persistRun}
+ const ctx={hasGitConflictMarkers,publicationMediaReview,publicationBuildWarnings,runCompileOption,...fs,join,basename,dirname,relative,process,app:{isPackaged:false,getAppPath:()=>process.cwd()},vaultRegistry:{list:()=>[{id:mode,root,open}],get:()=>({id:mode,root,open})},vaultAvailability:{isUnavailable:()=>unavailable},writableRootFor:()=>open?root:undefined,readGallerySource:async()=>{},findTalks:()=>[{slug:'same',outlinePath:exact}],runVaultFor:()=>({root}),readRun:runs.readRun,readRunForTalk:runs.readRunForTalk,requireRunForTalk:runs.requireRunForTalk,runFileProblem:runs.runFileProblem,ipcMain:{handle:(n,f)=>fn=f},presenterPublications:{ticket:()=>1,published:()=>[]},handoutPublishing:()=>({publish:async j=>{job=j;return {ok:false,error:'captured'}}}),stampRunWork:r=>r,setRunHandoutUrl:(r,url,folder)=>({...r,handoutUrl:url,handoutFolder:folder}),persistRun:runs.persistRun}
  vm.runInNewContext(ts.transpile(helpers+source.slice(start,end),{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}),ctx)
  if(mode.startsWith('wrong-'))fs.writeFileSync(file,JSON.stringify({...run,...(mode==='wrong-id'?{id:'other'}:{talkSlug:'other'})}))
  await fn({}, {vaultId:mode,talkSlug:'same',runId:'r'})

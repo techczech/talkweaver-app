@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Built app only. Run under agent-run. Mutates only an explicitly disposable .perf-fixture vault.
- * Usage: npm run perf:large-talk -- VAULT OUTPUT.json [--talk=relative/outline.md] [--session-seconds=600]
+ * Usage: npm run perf:large-talk -- VAULT OUTPUT.json [--talk=relative/outline.md] [--session-seconds=600] [--action=export-handout|render-preview|check-embeds]
  * --session-seconds=0 is a cheap repeat, not the ten-minute memory baseline.
  * Traces retain timings and code frames only; never source strings, screenshots or IPC payloads.
  */
@@ -13,13 +13,22 @@ import { openTalkByTitle } from "../../e2e/lib/talklist.mjs";
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const [vaultArg, outputArg, ...flags] = process.argv.slice(2);
 if (!vaultArg || !outputArg)
-  throw Error("Expected VAULT OUTPUT.json [--talk=relative/outline.md] [--session-seconds=600]");
+  throw Error("Expected VAULT OUTPUT.json [--talk=relative/outline.md] [--session-seconds=600] [--action=export-handout|render-preview|check-embeds]");
 const vault = realpathSync(resolve(vaultArg)), output = resolve(outputArg);
 if (!output.endsWith(".json"))
   throw Error("Output filename must end in .json");
 if (!vault.startsWith(realpathSync(join(repo, ".perf-fixture")) + "/"))
   throw Error("Only disposable vaults inside this worktree/.perf-fixture are allowed");
 const opt = Object.fromEntries(flags.map((s) => s.replace(/^--/, "").split("=")));
+const action = opt.action;
+const actionChannels = {
+  "export-handout": "talk:export-handout",
+  "render-preview": "slide:render-preview",
+  "check-embeds": "talk:check-embeds",
+};
+const actionChannel = action && Object.hasOwn(actionChannels, action) ? actionChannels[action] : null;
+if (action !== undefined && !actionChannel)
+  throw Error("Unknown action: " + action);
 const seconds = Number(opt["session-seconds"] ?? 600);
 if (!Number.isFinite(seconds) || seconds < 0)
   throw Error("Invalid session duration");
@@ -138,7 +147,7 @@ try {
   app = await electron.launch({ args: [".", "--use-mock-keychain", `--user-data-dir=${join(scratch, "userData")}`], cwd: repo, env, timeout: 6e4 });
   page = await app.firstWindow();
   page.setDefaultTimeout(2e4);
-  await app.evaluate(async ({ app: app2, BrowserWindow, ipcMain }) => {
+  await app.evaluate(async ({ app: app2, BrowserWindow, ipcMain }, actionChannel) => {
     const { monitorEventLoopDelay } = process.getBuiltinModule("node:perf_hooks");
     const delay = monitorEventLoopDelay({ resolution: 10 });
     delay.enable();
@@ -172,7 +181,9 @@ try {
     }, 20);
     p.focus = [];
     ipcMain.prependListener("talk:thumbnail-focus", (_e, _path, indices) => { p.focus.push({ atMs: performance.now() - p.started, indices: Array.isArray(indices) ? indices.slice(0, 12) : null }); });
-    for (const channel of ["talk:compile", "talk:thumbnails", "talk:present"]) {
+    const channels = new Set(["talk:compile", "talk:thumbnails", "talk:present", "slide:render-preview"]);
+    if (actionChannel) channels.add(actionChannel);
+    for (const channel of channels) {
       const old = ipcMain._invokeHandlers.get(channel);
       if (!old)
         continue;
@@ -206,7 +217,7 @@ try {
     p.inspector = session;
     await new Promise((r, j) => session.post("Profiler.enable", (e) => e ? j(e) : r()));
     await new Promise((r, j) => session.post("Profiler.start", (e) => e ? j(e) : r()));
-  });
+  }, actionChannel);
   result.editorWebContentsId = await app.evaluate(({BrowserWindow}) => BrowserWindow.getAllWindows()[0].webContents.id);
   cdp = await page.context().newCDPSession(page);
   await cdp.send("Emulation.setCPUThrottlingRate", { rate: 3 });
@@ -255,6 +266,90 @@ try {
       }
     }, true);
   });
+  if (action) {
+    await timed(action, async () => {
+      await page.waitForFunction(() => !!window.tw?.talk?.compile);
+      if (action === "render-preview") {
+        const rows = await page.evaluate(({ outline, source }) => window.tw.talk.compile(outline, source), { outline, source });
+        if (!Array.isArray(rows) || !rows.length) throw Error("Could not prepare the preview deck");
+      }
+      await mainRead(() => globalThis.__largePerf.delay.reset());
+      const reply = await page.evaluate(({ outline, source, action }) => {
+        if (action === "render-preview") return window.tw.slide.renderPreview(outline, source);
+        if (action === "check-embeds") return window.tw.talk.checkEmbeds(outline, source);
+        return window.tw.talk.exportHandout(outline, source);
+      }, { outline, source, action });
+      if (action === "render-preview" && typeof reply !== "string")
+        throw Error("Focused preview could not be rendered");
+      if (action === "check-embeds" && !Array.isArray(reply))
+        throw Error("Check embeds did not return its result list");
+      if (action === "export-handout" && (!reply.success || !existsSync(reply.path)))
+        throw Error("Handout export failed: " + reply.error);
+      // Give the delay sampler a turn after any synchronous tail in the handler.
+      await page.waitForTimeout(30);
+      return await app.evaluate((_electron, channel) => {
+        const { delay, ipc } = globalThis.__largePerf;
+        return { maxMainDelayMs: delay.max / 1e6, ipcMs: ipc.findLast((event) => event.channel === channel)?.ms };
+      }, actionChannel);
+    });
+  } else {
+    await measureEditorJourney();
+  }
+} catch (e) {
+  result.errors.push({ phase, error: String(e.message).split("\n")[0] });
+  console.log(JSON.stringify({ error: result.errors.at(-1) }));
+  process.exitCode = 1;
+} finally {
+  if (app) {
+    try {
+      result.main = await app.evaluate(async () => {
+        const p = globalThis.__largePerf;
+        if (!p)
+          return null;
+        clearInterval(p.timer);
+        p.delay.disable();
+        const profile = await new Promise((r, j) => p.inspector.post("Profiler.stop", (e, v) => e ? j(e) : r(v.profile)));
+        p.inspector.disconnect();
+        return { thumbnailFocus:p.focus, thumbnailWarnings:p.thumbnailWarnings, epochMs: p.epochMs, inflight: p.inflight, maxInflight: p.maxInflight, prepareCount: globalThis.__twPrepareCount, ipc: p.ipc, drift: p.drift, fsStats: p.fsStats, slowFs: p.slowFs, delay: { maxMs: p.delay.max / 1e6, p95Ms: p.delay.percentile(95) / 1e6 }, profile };
+      });
+      if (result.main?.slowFs)
+        result.main.slowFs = result.main.slowFs.map((x) => ({ ...x, stack: x.stack.split(repo + "/").join("").split(vault).join("[vault]") }));
+      if (result.main?.profile) {
+        result.main.profile.nodes = result.main.profile.nodes.map((n) => ({ ...n, callFrame: frame(n.callFrame) }));
+        writeFileSync(output.replace(/\.json$/, ".main-profile.json"), JSON.stringify(result.main.profile));
+        delete result.main.profile;
+      }
+    } catch (e) {
+      result.errors.push({ phase: "main-finalise", error: String(e.message).split("\n")[0] });
+    }
+    if (tracing) {
+      try {
+        const complete = new Promise((r) => cdp.once("Tracing.tracingComplete", r));
+        await cdp.send("Tracing.end");
+        await complete;
+        writeFileSync(output.replace(/\.json$/, ".trace.json"), JSON.stringify({ traceEvents }));
+        const tasks = traceEvents.filter((e) => e.dur > 1e5);
+        result.traceLongTasks = tasks.sort((a, b) => b.dur - a.dur).slice(0, 100);
+      } catch (e) {
+        result.errors.push({ phase: "trace-finalise", error: String(e.message).split("\n")[0] });
+      }
+    }
+    await app.close().catch(() => {
+      app.process().kill("SIGKILL");
+    });
+  }
+  writeFileSync(outline, original);
+  if (!hadPresent)
+    rmSync(presentPath, { force: true });
+  rmSync(scratch, { recursive: true, force: true });
+  if (result.errors.length)
+    process.exitCode = 1;
+  result.totalMs = performance.now() - t0;
+  writeFileSync(output, JSON.stringify(result, null, 2));
+  console.log(JSON.stringify({ output: relative(repo, output), errors: result.errors.length, totalMs: result.totalMs }));
+}
+
+async function measureEditorJourney() {
   await timed("openEditable", async () => {
     await openTalkByTitle(page, title, { timeout: 6e4 });
     await paint();
@@ -493,56 +588,4 @@ try {
   const finalDisk = readFileSync(outline, "utf8");
   result.reliability = { bufferDiskAgree: finalBuffer === finalDisk, bufferBytes: Buffer.byteLength(finalBuffer), diskBytes: Buffer.byteLength(finalDisk), bufferSha256: createHash("sha256").update(finalBuffer).digest("hex"), diskSha256: createHash("sha256").update(finalDisk).digest("hex") };
   result.renderer = await page.evaluate(() => window.__largePerf);
-} catch (e) {
-  result.errors.push({ phase, error: String(e.message).split("\n")[0] });
-  console.log(JSON.stringify({ error: result.errors.at(-1) }));
-  process.exitCode = 1;
-} finally {
-  if (app) {
-    try {
-      result.main = await app.evaluate(async () => {
-        const p = globalThis.__largePerf;
-        if (!p)
-          return null;
-        clearInterval(p.timer);
-        p.delay.disable();
-        const profile = await new Promise((r, j) => p.inspector.post("Profiler.stop", (e, v) => e ? j(e) : r(v.profile)));
-        p.inspector.disconnect();
-        return { thumbnailFocus:p.focus, thumbnailWarnings:p.thumbnailWarnings, epochMs: p.epochMs, inflight: p.inflight, maxInflight: p.maxInflight, prepareCount: globalThis.__twPrepareCount, ipc: p.ipc, drift: p.drift, fsStats: p.fsStats, slowFs: p.slowFs, delay: { maxMs: p.delay.max / 1e6, p95Ms: p.delay.percentile(95) / 1e6 }, profile };
-      });
-      if (result.main?.slowFs)
-        result.main.slowFs = result.main.slowFs.map((x) => ({ ...x, stack: x.stack.split(repo + "/").join("").split(vault).join("[vault]") }));
-      if (result.main?.profile) {
-        result.main.profile.nodes = result.main.profile.nodes.map((n) => ({ ...n, callFrame: frame(n.callFrame) }));
-        writeFileSync(output.replace(/\.json$/, ".main-profile.json"), JSON.stringify(result.main.profile));
-        delete result.main.profile;
-      }
-    } catch (e) {
-      result.errors.push({ phase: "main-finalise", error: String(e.message).split("\n")[0] });
-    }
-    if (tracing) {
-      try {
-        const complete = new Promise((r) => cdp.once("Tracing.tracingComplete", r));
-        await cdp.send("Tracing.end");
-        await complete;
-        writeFileSync(output.replace(/\.json$/, ".trace.json"), JSON.stringify({ traceEvents }));
-        const tasks = traceEvents.filter((e) => e.dur > 1e5);
-        result.traceLongTasks = tasks.sort((a, b) => b.dur - a.dur).slice(0, 100);
-      } catch (e) {
-        result.errors.push({ phase: "trace-finalise", error: String(e.message).split("\n")[0] });
-      }
-    }
-    await app.close().catch(() => {
-      app.process().kill("SIGKILL");
-    });
-  }
-  writeFileSync(outline, original);
-  if (!hadPresent)
-    rmSync(presentPath, { force: true });
-  rmSync(scratch, { recursive: true, force: true });
-  if (result.errors.length)
-    process.exitCode = 1;
-  result.totalMs = performance.now() - t0;
-  writeFileSync(output, JSON.stringify(result, null, 2));
-  console.log(JSON.stringify({ output: relative(repo, output), errors: result.errors.length, totalMs: result.totalMs }));
 }

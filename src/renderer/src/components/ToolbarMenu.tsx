@@ -1,11 +1,12 @@
-import { Fragment, useEffect, useState } from 'react'
+import { Fragment, useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 // ── Inline icon set (Lucide-derived, 24×24 stroke paths, currentColor) ───────────────────────────
 export type IconName =
-  | 'chevron-down' | 'share' | 'present' | 'insert' | 'tools'
+  | 'chevron-down' | 'section' | 'subsection' | 'share' | 'present' | 'insert' | 'tools'
   | 'handout' | 'html' | 'publish'
-  | 'layout' | 'image' | 'slides' | 'sparkles' | 'board'
-  | 'abstract' | 'settings' | 'keyboard' | 'refresh'
+  | 'layout' | 'image' | 'slides' | 'sparkles' | 'board' | 'arrow-up' | 'arrow-down' | 'copy'
+  | 'abstract' | 'settings' | 'keyboard' | 'guide' | 'refresh'
   | 'window' | 'presenter' | 'audience'
   | 'file' | 'folder' | 'folder-open' | 'enter'
   | 'file-plus' | 'folder-plus' | 'collapse' | 'swap'
@@ -15,6 +16,8 @@ export type IconName =
 
 const PATHS: Record<IconName, string> = {
   'chevron-down': 'M6 9l6 6 6-6',
+  section: 'M6 4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v17l-6-4-6 4V4 M9 9h6 M12 6v6',
+  subsection: 'M5 4v8a4 4 0 0 0 4 4h10 M15 12l4 4-4 4',
   share: 'M4 12v7a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-7 M16 6l-4-4-4 4 M12 2v13',
   present: 'M2 3h20v14H2z M8 21h8 M12 17v4',
   insert: 'M12 5v14 M5 12h14',
@@ -31,6 +34,7 @@ const PATHS: Record<IconName, string> = {
   abstract: 'M4 6h16 M4 12h12 M4 18h16',
   settings: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z M19.4 13.5a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.3 6.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 2.9-1.2V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-1.2 2.9V11a1.7 1.7 0 0 0 1.5 2.5z',
   keyboard: 'M3 5h18a1 1 0 0 1 1 1v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1z M6 9h0 M10 9h0 M14 9h0 M18 9h0 M6 13h0 M18 13h0 M8 16h8',
+  guide: 'M2 10l10-5 10 5-10 5z M6 12v4c3 3 9 3 12 0v-4 M22 10v6',
   refresh: 'M21 12a9 9 0 1 1-2.6-6.4 M21 4v5h-5',
   window: 'M3 4h18a1 1 0 0 1 1 1v14a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z M2 9h20',
   presenter: 'M3 4h18a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z M8 20h8 M12 16v4 M7 8h5 M7 11h8',
@@ -67,6 +71,9 @@ const PATHS: Record<IconName, string> = {
   bold: 'M6 12h9a4 4 0 0 1 0 8H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1h7a4 4 0 0 1 0 8',
   italic: 'M19 4h-9 M14 20H5 M15 4 9 20',
   link: 'M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71 M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71',
+  'arrow-up': 'M12 19V5 M5 12l7-7 7 7',
+  'arrow-down': 'M12 5v14 M5 12l7 7 7-7',
+  copy: 'M8 8h12v12H8z M16 4H4v12',
   more: 'M5 12h.01 M12 12h.01 M19 12h.01',
   // The six object inserts (T27) — minimal Lucide-style glyphs in the same 24×24 stroke language:
   // table = gridded sheet; mindmap = two branches into one node; chart = axis + bars; mermaid =
@@ -106,7 +113,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   )
 }
 
-export type MenuItem = { icon: IconName; label: string; onClick: () => void; danger?: boolean; hint?: string; separatorBefore?: boolean; disabled?: boolean }
+export type MenuItem = { icon: IconName; label: string; onClick: () => void; danger?: boolean; hint?: string; separatorBefore?: boolean; disabled?: boolean; note?: string }
 
 // A toolbar button that opens a polished popup menu of icon+label items.
 export default function ToolbarMenu({
@@ -114,60 +121,78 @@ export default function ToolbarMenu({
   label,
   items,
   primary,
-  title
+  title,
+  defaultAction,
+  iconOnly,
+  opensUp
 }: {
   icon: IconName
   label: string
   items: MenuItem[]
   primary?: boolean
   title?: string
+  defaultAction?: () => void
+  iconOnly?: boolean
+  opensUp?: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const buttonRef = useRef<HTMLButtonElement>(null)
   useEffect(() => {
     if (!open) return
     const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setOpen(false) }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open])
+  const anchor = open && opensUp ? buttonRef.current?.getBoundingClientRect() : undefined
+  const popup = open ? <>
+    <div className="toolbar-menu-backdrop" onClick={() => setOpen(false)} />
+    <div className="toolbar-menu" role="menu" style={anchor ? {
+      position: 'fixed', top: 'auto', right: 'auto', width: 272,
+      left: Math.max(8, Math.min(window.innerWidth - 280, anchor.right - 272)),
+      bottom: window.innerHeight - anchor.top + 5
+    } : undefined}>
+      {items.map((it, i) => (
+        <Fragment key={i}>
+          {it.separatorBefore && <div className="toolbar-menu-separator" role="separator" />}
+          <button
+            role="menuitem"
+            className={`toolbar-menu-item ${it.danger ? 'is-danger' : ''}`}
+            disabled={it.disabled}
+            aria-disabled={it.disabled || undefined}
+            onClick={() => { if (it.disabled) return; setOpen(false); it.onClick() }}
+          >
+            <Icon name={it.icon} size={15} />
+            <span>{it.label}</span>
+            {it.hint && <span className="toolbar-menu-hint">{it.hint}</span>}
+          </button>
+          {it.note && <div className="toolbar-menu-note">{it.note}</div>}
+        </Fragment>
+      ))}
+    </div>
+  </> : null
   return (
-    <div style={{ position: 'relative', display: 'inline-block' }}>
+    <div className={defaultAction ? 'toolbar-split' : undefined} style={{ position: 'relative', display: defaultAction ? 'inline-flex' : 'inline-block' }}>
+      {defaultAction && (
+        <button type="button" className="toolbar-btn toolbar-btn--primary" onClick={defaultAction} title={title ?? label}>
+          <span className="toolbar-btn-content"><Icon name={icon} size={15} /><span>{label}</span></span>
+        </button>
+      )}
       <button
+        ref={buttonRef}
         className={`toolbar-btn ${primary ? 'toolbar-btn--primary' : ''}`}
         onClick={() => setOpen((o) => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        aria-label={label}
-        title={title ?? label}
+        aria-label={defaultAction ? 'Other ways to present' : label}
+        title={defaultAction ? 'Other ways to present' : title ?? label}
       >
         <span className="toolbar-btn-content">
-          <Icon name={icon} size={15} />
-          <span>{label}</span>
-          <Icon name="chevron-down" size={12} />
+          {!defaultAction && <Icon name={icon} size={15} />}
+          {!defaultAction && !iconOnly && <span>{label}</span>}
+          {(!iconOnly || defaultAction) && <Icon name="chevron-down" size={12} />}
         </span>
       </button>
-      {open && (
-        <>
-          <div className="toolbar-menu-backdrop" onClick={() => setOpen(false)} />
-          <div className="toolbar-menu" role="menu">
-            {items.map((it, i) => (
-              <Fragment key={i}>
-                {it.separatorBefore && <div className="toolbar-menu-separator" role="separator" />}
-                <button
-                  role="menuitem"
-                  className={`toolbar-menu-item ${it.danger ? 'is-danger' : ''}`}
-                  disabled={it.disabled}
-                  aria-disabled={it.disabled || undefined}
-                  onClick={() => { if (it.disabled) return; setOpen(false); it.onClick() }}
-                >
-                  <Icon name={it.icon} size={15} />
-                  <span>{it.label}</span>
-                  {it.hint && <span className="toolbar-menu-hint">{it.hint}</span>}
-                </button>
-              </Fragment>
-            ))}
-          </div>
-        </>
-      )}
+      {anchor ? createPortal(popup, document.body) : popup}
     </div>
   )
 }

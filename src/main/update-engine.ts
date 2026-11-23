@@ -49,6 +49,7 @@
 //  attempt has an identity and anything arriving for an ended one is ignored; Windows is refused in start().
 import { snapshotWriteFailures, writeQueueFailuresSince, type WriteFailureBaseline } from './write-queues.ts'
 import { CancellationToken, Provider, type AppUpdater, type UpdateInfo } from 'electron-updater'
+export { CancellationToken }
 import type { ProviderRuntimeOptions } from 'electron-updater/out/providers/Provider'
 import { compareVersions } from '@app-patterns/updates'
 import { spawn } from 'node:child_process'
@@ -115,16 +116,22 @@ export interface Withdrawal {
   after: Presence
 }
 
+export type GateAnswer = string | null | { failed: FailReason; why: string }
+
 export interface EnginePorts {
   platform: string
-  /** Why no update may start now (a Store copy, a development run, a protected task…), or null. Read at the click. */
-  gate(offer: Offer): string | null
+  /** Why no update may start now (a Store copy, a development run, a protected task…), or null. Read at the click.
+   *  A `{ failed }` answer ends the click in that failed state (the person reads why, with Try again). It may answer
+   *  later (a Promise: the running copy's identity check, ADR-0044 §7); a sync answer keeps the click synchronous. */
+  gate(offer: Offer): GateAnswer | Promise<GateAnswer>
   /** Everything a restart now would cost the person, read from the main process at the moment of asking. */
   blockers(): RestartBlocker[]
   downloader(): Downloader
-  /** Size and version of the downloaded file; null when it is the version offered. */
-  verify(file: string, offer: Offer): Promise<FailReason | null>
-  /** D3 only: serve the verified file on electron-updater's local address and set Squirrel.Mac's feed to it. */
+  /** Size, version and identity of the downloaded file; null when it may be installed. `token` is the attempt's:
+   *  Cancel cancels it, and the checks stop and clean up. */
+  verify(file: string, offer: Offer, token?: CancellationToken): Promise<FailReason | null>
+  /** D3 only: serve the verified file on electron-updater's local address and set Squirrel.Mac's feed to it.
+   *  A rejection whose code is ERR_TW_UNVERIFIED (the verified bytes changed) fails as 'unverified'. */
   handOver(file: string): Promise<void>
   /** Squirrel.Mac (a stand-in in a run from source, which logs instead of installing). Asked only in D3. */
   native(): NativeUpdater
@@ -187,6 +194,8 @@ export function createUpdateEngine(ports: EnginePorts) {
   let nativeOwner: Attempt | null = null
   let nativeHooked = false
   let lastTold = 0
+  /** A click whose gate is still answering (asynchronously): a second click waits for nothing and starts nothing. */
+  let gating = false
   /**
    * Squirrel.Mac has, or may have, armed ShipIt in this run and the restart did not happen (D4). No native request
    * is made again until TalkWeaver is reopened (Squirrel.Mac launches ShipIt once per run of the app).
@@ -477,7 +486,7 @@ export function createUpdateEngine(ports: EnginePorts) {
         set({ type: 'progress', received, total })
       })
       if (!live(a)) return 'ended'
-      const problem = await ports.verify(file, a.offer)
+      const problem = await ports.verify(file, a.offer, a.token)
       if (!live(a)) return 'ended'
       if (problem) { ports.log(`the downloaded file was refused (${problem})`); return problem }
       return { file }
@@ -499,7 +508,20 @@ export function createUpdateEngine(ports: EnginePorts) {
       if (state.phase !== 'idle' && state.phase !== 'failed') return state
       // A withdrawal still being checked decides whether this run may ask Squirrel.Mac again: wait for its answer.
       if (withdrawing > 0) { ports.log('a withdrawal is still being checked: Update waits for its answer'); return state }
-      const refused = ports.gate(offer)
+      if (gating) return state
+      let refused = ports.gate(offer)
+      if (refused instanceof Promise) {
+        gating = true
+        try { refused = await refused } catch (error) { refused = { failed: 'unverified', why: `the gate failed: ${message(error)}` } } finally { gating = false }
+        if (state.phase !== 'idle' && state.phase !== 'failed') return state
+        if (withdrawing > 0) { ports.log('a withdrawal is still being checked: Update waits for its answer'); return state }
+      }
+      if (refused !== null && typeof refused === 'object') {
+        ports.log(`update refused (${refused.failed}): ${refused.why}`)
+        state = { phase: 'failed', version: offer.version, reason: refused.failed }
+        ports.changed()
+        return state
+      }
       if (refused !== null) { ports.log(`update refused: ${refused}`); return state }
       if (spent) {
         ports.log('Squirrel.Mac cannot install again in this run: reopen TalkWeaver first')
@@ -570,7 +592,7 @@ export class OfferProvider extends Provider<UpdateInfo> {
  * feed) only records the download and tells its listeners. The returned handOver() runs the dependency's own
  * updateDownloaded() for that verified file: the engine calls it only at restart time (D3).
  */
-export function closeDependencyInstallPath(u: AppUpdater, log: (message: string) => void): { handOver(file: string): Promise<void> } {
+export function closeDependencyInstallPath(u: AppUpdater, log: (message: string) => void): { handOver(file: string, serve?: string): Promise<void> } {
   u.autoDownload = false
   u.autoInstallOnAppQuit = false
   u.autoRunAppAfterInstall = true
@@ -590,9 +612,11 @@ export function closeDependencyInstallPath(u: AppUpdater, log: (message: string)
     writable: false, configurable: false,
   })
   return {
-    async handOver(file: string): Promise<void> {
+    /** `serve`: the file electron-updater's local address pipes to Squirrel.Mac instead of the download (the
+     *  verified private copy, ADR-0044 §7). */
+    async handOver(file: string, serve?: string): Promise<void> {
       if (!last || last.event?.downloadedFile !== file) throw new Error('no verified download to hand over')
-      await ownHandOver(last.zip, last.event)
+      await ownHandOver(last.zip, serve === undefined ? last.event : { ...last.event, downloadedFile: serve })
     },
   }
 }

@@ -36,6 +36,11 @@ Bread and honey arrive fresh. See the market page.
 
 > **Try it.** Choose **New slide** there too. On its heading, <kbd>⌘⇧←</kbd> moves it up a level and <kbd>⌘⇧→</kbd> back down.
 
+### Organise the outline
+{id=practice-sections}
+
+> **Try it.** In the Section menu, add a section with <kbd>⌃⌘S</kbd> or a subsection with <kbd>⌃⇧⌘S</kbd>. To group adjacent slides, use **Select several slides…**, then **Make a section from selected slides**.
+
 ### Who runs it
 {id=s6}
 

@@ -25,6 +25,8 @@ import { RunPage } from './RunPage'
 import { RunLedger } from './RunLedger'
 import { StateBadge, badgeStateOfPill } from './StateBadge'
 import { UnpublishRunConfirm } from './UnpublishRunConfirm'
+import PublishNotReadySheet from './PublishNotReadySheet'
+import type { MediaPublishChoice, PublishNotReady } from '../../../shared/publish-status'
 import { ConfirmCard, BIN_CONSEQUENCE } from './cards'
 import KeyboardHelp from './KeyboardHelp'
 import '../ui-kit.css'
@@ -80,6 +82,7 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
   /** Run files that hold Git conflict markers (0.45): named here, since the list cannot show their Runs. */
   const [runConflicts, setRunConflicts] = useState<Array<{ vaultId: string; name: string; message: string }>>([])
   const [now, setNow] = useState(() => new Date())
+  const [publishRecovery, setPublishRecovery] = useState<{ key: string; notReady: PublishNotReady; outlinePath?: string } | null>(null)
   const [version, setVersion] = useState(0)
   const [filters, setFilters] = useState<SessionFilter[]>([])
   const [kinds, setKinds] = useState<RunKind[]>([...DEFAULT_RUN_KINDS])
@@ -154,6 +157,8 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
   const empty = sources !== null && sources.length === 0
   const source = selected ? sources?.find((candidate) => candidate.vaultId === selected.vaultId && sessionRunKey(candidate) === sessionRunKey(selected.ref)) ?? null : null
   const runKey = source ? `${source.vaultId}|${sessionRunKey(source)}` : null
+  const activeRunKey = useRef(runKey)
+  activeRunKey.current = runKey
   const ref = source && source.kept !== 'app-data' ? { vaultId: source.vaultId, talkSlug: source.talkSlug, runId: source.runId } : null
 
   // The Run this view chose itself (a click, the first row, a filter that moved the selection) as opposed to one named
@@ -178,15 +183,17 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
   // Re-check live (History's header button and R): boards left open are pulled in, and every published handout is asked again.
   const recheckAll = useCallback(async (): Promise<void> => {
     const boards = await window.tw.history.recheckBoards().catch(() => ({ runs: [] as RecordingSession[], late: 0 }))
+    // The row badges read the list's Run summaries. Reload them after the board pull writes a Run.
+    if (boards.runs.length) await load()
     if ('warning' in boards && boards.warning) { notify(boards.warning, 'info'); return }
+    if (!boards.runs.length) setVersion((n) => n + 1)
     const urls = [...new Set((sources ?? []).map((candidate) => candidate.handoutUrl).filter((url): url is string => !!url))]
-    if (!urls.length) { notify(boards.runs.length ? `Boards re-checked · ${boards.late} late card${boards.late === 1 ? '' : 's'}` : 'No published handouts to check', 'info'); setVersion((n) => n + 1); return }
+    if (!urls.length) { notify(boards.runs.length ? `Boards re-checked · ${boards.late} late card${boards.late === 1 ? '' : 's'}` : 'No published handouts to check', 'info'); return }
     const results: Array<{ status: string }> = []
     for (let start = 0; start < urls.length; start += 6) results.push(...await Promise.all(urls.slice(start, start + 6).map((url) => window.tw.history.checkLive(url, true))))
     setReachable((current) => ({ ...current, ...Object.fromEntries(urls.map((url, index) => [url, results[index]?.status === 'live'])) }))
-    setVersion((n) => n + 1)
     notify(`${urls.length} handout${urls.length === 1 ? '' : 's'} re-checked · ${results.filter((r) => r.status === 'live').length} still live`, 'info')
-  }, [sources])
+  }, [load, sources])
 
   const loadFiles = useCallback(async (key: string, target: { vaultId: string; talkSlug: string; runId: string }) => {
     try {
@@ -227,7 +234,7 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
     return () => window.clearTimeout(timer)
   }, [resultsRequest])
 
-  const perform = async (effect: RunPageEffect): Promise<void> => {
+  const perform = async (effect: RunPageEffect, mediaChoice?: MediaPublishChoice): Promise<void> => {
     if (!source || !ref || !runKey) return
     setNotice(null)
     setBusy(true)
@@ -272,8 +279,11 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
         setPublishing((current) => new Set(current).add(key))
         try {
           // The selected Run's own vault: main publishes that vault's Run, never another vault's with the same names.
-          const result = await window.tw.history.publishRunHandout(source.talkSlug, source.runId, source.vaultId)
-          if (!result.success) say(result.error === 'run-not-found' ? 'That Run is no longer there.' : result.error ?? 'Publishing did not finish.')
+          const result = await window.tw.history.publishRunHandout(source.talkSlug, source.runId, source.vaultId, mediaChoice)
+          if (!result.success && result.notReady) {
+            setPublishRecovery({ key, notReady: result.notReady, outlinePath: result.recoveryOutlinePath })
+            say(result.notReady.title)
+          } else if (!result.success) say(result.error === 'run-not-found' ? 'That Run is no longer there.' : result.error ?? 'Publishing did not finish.')
           else if (result.warning) say(result.warning)
           else if (result.liveNotice) say(result.liveNotice)
         } finally {
@@ -557,6 +567,20 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
         <UnpublishRunConfirm title={confirmText.title} body={confirmText.body} busy={busy}
           onCancel={() => setConfirming(null)} onConfirm={() => { void unpublish() }} />
       )}
+      {publishRecovery && <PublishNotReadySheet what="Publish handout for this Run" notReady={publishRecovery.notReady}
+        outlinePath={publishRecovery.outlinePath} onClose={() => setPublishRecovery(null)}
+        onRetry={() => {
+          if (activeRunKey.current !== publishRecovery.key) { notify('Select the original Run and publish again.', 'info'); return }
+          void perform({ kind: 'publish' })
+        }}
+        onRecheck={() => {
+          if (activeRunKey.current !== publishRecovery.key) { notify('Select the original Run and publish again.', 'info'); return }
+          void perform({ kind: 'publish' }, 'recheck-media')
+        }}
+        onPublishAnyway={() => {
+          if (activeRunKey.current !== publishRecovery.key) { notify('Select the original Run and publish again.', 'info'); return }
+          void perform({ kind: 'publish' }, publishRecovery.notReady.kind === 'media-warning' ? 'with-placeholders' : undefined)
+        }} />}
       {deleting && (
         <ConfirmCard
           title={deleting.planned ? 'Delete this planned Run?' : 'Delete this Run?'}

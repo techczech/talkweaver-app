@@ -41,13 +41,18 @@ export default function ActionBar({ sections, lead }: ActionBarProps): ReactElem
       const lastRight = left + widths[widths.length - 1]
       const overflowRight = measure.querySelector<HTMLElement>('[data-measure-overflow]')?.getBoundingClientRect().right ?? lastRight
       const style = getComputedStyle(bar)
-      const leadWidth = leadRef.current ? leadRef.current.getBoundingClientRect().width + 10 : 0
+      const leadElement = leadRef.current
+      const leadMargins = leadElement && getComputedStyle(leadElement)
+      const leadWidth = leadElement && leadMargins
+        ? leadElement.getBoundingClientRect().width + parseFloat(leadMargins.marginLeft) + parseFloat(leadMargins.marginRight) + parseFloat(style.columnGap)
+        : 0
       const available = bar.getBoundingClientRect().width - parseFloat(style.paddingLeft || '0') - parseFloat(style.paddingRight || '0') - leadWidth
       setVisibleCount(planButtonOverflow({ available, prefixWidths: widths, overflowChunk: overflowRight - lastRight, tailChunk: 0 }).visible)
     }
     replan()
     const observer = new ResizeObserver(replan)
     observer.observe(bar)
+    if (leadRef.current) observer.observe(leadRef.current)
     return () => observer.disconnect()
   }, [layoutKey])
 
@@ -142,7 +147,8 @@ export default function ActionBar({ sections, lead }: ActionBarProps): ReactElem
         </div>
       )}
       {tip && <span ref={tipRef} className="tw-action-bar-tip" role="tooltip" style={{ top: tip.top, left: tip.left }}>{tip.content}</span>}
-      <div className="tw-action-bar-measure" ref={measureRef} aria-hidden="true">
+      <div className="tw-action-bar-measure-clip" aria-hidden="true">
+      <div className="tw-action-bar-measure" ref={measureRef}>
         {items.map((entry, index) => (
           <Fragment key={entry.item.commandId}>
             {index > 0 && entry.section !== items[index - 1].section && <span className="tw-action-bar-sep" />}
@@ -151,6 +157,7 @@ export default function ActionBar({ sections, lead }: ActionBarProps): ReactElem
         ))}
         <span className="tw-action-bar-sep" />
         <span className="tw-action-bar-btn" data-measure-overflow=""><Icon name="more" size={16} /></span>
+      </div>
       </div>
     </div>
   )

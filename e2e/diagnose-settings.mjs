@@ -5,7 +5,7 @@ import { openTalkByTitle } from './lib/talklist.mjs'
 import { openSettingsWindow, closeSettingsWindow, findSettingsWindow } from './lib/settings-window.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempDisposableSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -19,7 +19,8 @@ function record(name, pass, detail) {
 
 const FIX = ['---', 'title: Settings Fixture', '---', '', '### Slide', '', 'Bold me line', ''].join('\n')
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-set-' + String(Date.now()) + '-'))
+using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-set-'))
+const tempRoot = fixture.path
 const vault = join(tempRoot, 'vault')
 const ud = join(tempRoot, 'userData')
 const td = join(vault, 'settings-fixture')
@@ -103,5 +104,5 @@ try {
   console.log(`\n=== SETTINGS SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
   await Promise.race([app.close().catch(() => {}), new Promise((r) => setTimeout(r, 8000))])
   try { process.kill(pid) } catch { /* gone */ }
-  process.exit(failed.length === 0 ? 0 : 1)
+  process.exitCode = failed.length === 0 ? 0 : 1
 }

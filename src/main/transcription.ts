@@ -1,10 +1,6 @@
-// Transcription — main-process bridge to a local speech-to-text engine (Parakeet via Python).
-// The engine command + script are set in Settings → Get started → Transcription (unset by default; the feature
-// is optional and stays dormant until set up, spec docs/plans/cloudflare-setup-in-app D16). Whether
-// it can run, and which ffmpeg it uses, is decided once in transcription-setup.ts (ffmpeg: the one
-// set in Settings, else the one that ships with the app). Runs one job at a time, stores small
-// transcript JSON beside the Run, and keeps renderer errors human-readable rather than leaking
-// Python/ffmpeg stack noise.
+// Transcription runs on this Mac via Apple's speech helper or via a configured Parakeet script.
+// Both engines use the ffmpeg resolved in transcription-setup.ts. One job runs at a time and
+// stores transcript JSON beside the Run.
 //
 // Word timings (video ticket 01): a script that advertises `--words <file.json>` in its --help
 // output (asked once per configured script, the answer remembered) is also asked for the words of
@@ -81,7 +77,7 @@ export interface TranscriptionDeps {
   config: () => TranscriptionConfig // Settings → Get started → Transcription, with defaults expanded
   // The Transcription row and the ffmpeg to use, for these settings (transcription-setup.ts).
   readiness: () => { row: TranscriptionRow; ffmpeg: FfmpegResolution }
-  selection?: () => Pick<TranscriptionConfig, 'engine' | 'locale'>
+  selection?: () => Pick<TranscriptionConfig, 'engine' | 'locale'> & { allowInstalledFallback?: boolean }
   alignAfterTranscription?: (slug:string,sid:string,root?:string|null)=>Promise<void>
   jobOwner?: symbol
   nativeHelper?: () => string | null
@@ -334,6 +330,25 @@ function humanProcessError(prefix: string, result: { error: string; stderr: stri
   return `${prefix}: ${detail}`
 }
 
+function languageCode(locale: string): string | undefined {
+  try { return new Intl.Locale(locale.replaceAll('_', '-')).language }
+  catch { return undefined }
+}
+
+function languageName(code: string | undefined): string {
+  return (code && new Intl.DisplayNames('en', { type: 'language', fallback: 'none' }).of(code)) || 'the selected language'
+}
+
+type ScriptCapabilities = { words: boolean; languages?: readonly string[] }
+
+function parakeetLanguages(help: string): readonly string[] | undefined {
+  const model = /^Default Parakeet model: (?:mlx-community|nvidia)\/parakeet-tdt-0\.6b-(v[23])\s*$/m.exec(help)?.[1]
+  if (model === 'v2') return ['en']
+  // NVIDIA's v3 model card lists the languages supported by the shipped model.
+  if (model === 'v3') return ['bg', 'hr', 'cs', 'da', 'nl', 'en', 'et', 'fi', 'fr', 'de', 'el', 'hu', 'it', 'lv', 'lt', 'mt', 'pl', 'pt', 'ro', 'sk', 'sl', 'es', 'sv', 'ru', 'uk']
+  return undefined
+}
+
 function humanFfmpegError(result: { error: string; stderr: string }): string {
   if (/ENOENT|EACCES|spawn/i.test(result.error)) {
     return 'ffmpeg could not be started. Check it in Settings → Get started → Transcription.'
@@ -379,24 +394,23 @@ export function sweepTranscriptionTemps(folder?: string): void {
 // Transcription has one writer across the normal IPC and captured-vault package operations.
 let activeJob: ActiveJob | null = null
 
-/** The transcription service: one job at a time, the words-option answer remembered per script. */
+/** The transcription service: one job at a time, with capabilities remembered per script. */
 export function createTranscription(deps: TranscriptionDeps): Transcription {
   const owner=deps.jobOwner ?? Symbol('transcription-service')
   const files = deps.files ?? nodeFiles
-  // `<python>\0<script>\0<mtime:size>` → whether that script's --help offers `--words`.
-  const offersWords = new Map<string, boolean>()
+  const capabilities = new Map<string, ScriptCapabilities>()
 
-  async function scriptHasWordsOption(job: ActiveJob, cfg: TranscriptionConfig, env: NodeJS.ProcessEnv): Promise<boolean | 'cancelled'> {
+  async function probeScript(job: ActiveJob, cfg: TranscriptionConfig, env: NodeJS.ProcessEnv): Promise<ScriptCapabilities | 'cancelled'> {
     const key = `${cfg.python}\0${cfg.script}\0${scriptStamp(cfg.script)}`
-    const known = offersWords.get(key)
-    if (known !== undefined) return known
+    const known = capabilities.get(key)
+    if (known) return known
     const help = await spawnAndCollect(job, cfg.python, [cfg.script, '--help'], null, undefined, env, deps.probeTimeoutMs ?? PROBE_TIMEOUT_MS)
     if (!help.ok && help.error === 'cancelled') return 'cancelled'
-    // A probe that ran out of time says nothing about the script: no words this run, asked again next.
-    if (!help.ok && help.error === 'timeout') return false
+    // A timed-out probe is retried next time.
+    if (!help.ok && help.error === 'timeout') return { words: false }
     // A script whose --help fails is asked for no words (it may still transcribe); remembered too.
-    const answer = help.ok && scriptOffersWords(help.stdout)
-    offersWords.set(key, answer)
+    const answer = help.ok ? { words: scriptOffersWords(help.stdout), languages: parakeetLanguages(help.stdout) } : { words: false }
+    capabilities.set(key, answer)
     return answer
   }
 
@@ -483,18 +497,18 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
       }
       let initialStamp: string
       try { initialStamp = sourceStamp() } catch { return {ok:false,error:'The recording source could not be read.'} }
-      const guardPublish = () => {
+      const assertRunCurrent = () => {
         if (job.cancelled || signal?.aborted) throw Error('cancelled')
         if (deps.vaultRoot() !== capturedRoot || deps.userDataDir() !== capturedUserData || sourceStamp() !== initialStamp) throw Error('The recording changed. Retry with the current source.')
       }
       const publish = (transcript: TranscriptJson, words: WordTiming[]) => {
-        guardPublish()
+        assertRunCurrent()
         let previous: TranscriptJson | null = null
         try { previous = normaliseTranscript(JSON.parse(readFileSync(target.path,'utf8'))) } catch { /* first transcript */ }
         if (!words.length && !transcript.segments.length && previous?.words?.length) return {ok:false as const,error:'No words were found; the earlier transcript was kept. Retry with another language.'}
         const checked = transcriptForPublish(withoutAlignment({...transcript,words}))
         if (!checked) return {ok:false as const,error:'The new timings could hide transcript content; the earlier transcript was kept. Retry with another language.'}
-        return store(slug,sid,checked,checked.words ?? [],sink,guardPublish)
+        return store(slug,sid,checked,checked.words ?? [],sink,assertRunCurrent)
       }
       const job: ActiveJob = { owner, sessionId: sid, child: null, cancelled: false, tempPaths: [] }
       activeJob = job
@@ -514,28 +528,43 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
         const selected = deps.selection?.()
         const cfg = {...configured,engine:choice ?? selected?.engine ?? configured.engine,locale:selected?.locale ?? configured.locale}
         const ready = deps.readiness()
-        const native = cfg.engine === 'native'
-        const nativeHelper = native ? deps.nativeHelper?.() : null
-        if (native && (!nativeHelper || (deps.nativeAvailable && !await deps.nativeAvailable(cfg.locale || 'en-US')))) return {ok:false,error:'Built-in words are unavailable for this language on this Mac.'}
+        const locale = cfg.locale || 'en-US'
+        const nativeHelper = cfg.engine === 'native' ? deps.nativeHelper?.() : null
+        const native = nativeHelper && (!deps.nativeAvailable || await deps.nativeAvailable(locale))
+        const automaticFallback = !native && !choice && selected?.allowInstalledFallback === true
+        // A language check can finish after the user switches vaults.
+        if (cfg.engine === 'native') assertRunCurrent()
+        const language = languageCode(locale)
+        if (cfg.engine === 'native' && !native && (!automaticFallback || ready.row.state !== 'ready')) {
+          return { ok: false, error: `This Mac’s speech recognition is unavailable for ${languageName(language)}.` }
+        }
         const refusal = native ? null : transcriptionActionMessage(ready.row)
         if (refusal || !ready.ffmpeg.found) return { ok: false, error: refusal ?? transcriptionActionMessage({ ...ready.row, state: 'ffmpeg-not-found' }) ?? 'ffmpeg could not be found. Check it in Settings → Get started → Transcription.' }
         const ffmpegPath = ready.ffmpeg.path
+        const childEnv = childEnvWithFfmpegDir(ffmpegPath)
 
-        const source = readRecordingSource(deps.vaultRoot(), deps.userDataDir(), slug, sid)
+        emitProgress(sink, native ? 'Writing out words on this Mac.' : 'Checking the transcription script.')
+        const script: ScriptCapabilities | 'cancelled' = native ? { words: false } : await probeScript(job, cfg, childEnv)
+        if (script === 'cancelled' || job.cancelled) return { ok: false, error: 'cancelled' }
+        assertRunCurrent()
+        const englishOnly = script.languages?.length === 1
+        if (automaticFallback && englishOnly && language !== 'en') {
+          return { ok: false, error: `This Mac cannot transcribe ${languageName(language)}, and the installed Parakeet model is English only.` }
+        }
+        if (cfg.engine === 'native' && !native) {
+          emitProgress(sink, `This Mac’s speech recognition is unavailable for ${languageName(language)}. Transcribing with Parakeet.`)
+        }
+        const askWords = script.words
+
+        const source = readRecordingSource(capturedRoot, capturedUserData, slug, sid)
         // Empty segments (a 0-byte file, no recorded span) hold no audio and are left out.
-        const audioSegments = await audibleSegmentPaths(deps.userDataDir(), sid, source, ffmpegPath)
+        const audioSegments = await audibleSegmentPaths(capturedUserData, sid, source, ffmpegPath)
         if (!audioSegments.length) {
-          const listed = recordedSegmentPaths(deps.userDataDir(), sid, source).length > 0
+          const listed = recordedSegmentPaths(capturedUserData, sid, source).length > 0
           return { ok: false, error: listed ? 'The local recording has no audio segments.' : 'The local audio file for this Run is missing.' }
         }
         const sources = audioSegments.map((segment) => segment.path)
         const recordingMs=Math.max(Number(source?.record.recordingMs)||0,...audioSegments.map(s=>s.endMs))
-        const childEnv = childEnvWithFfmpegDir(ffmpegPath)
-
-        // The cheap step first: whether the script offers word timings (asked once per script version).
-        emitProgress(sink, native ? 'Writing out words on this Mac.' : 'Checking the transcription script.')
-        const askWords = native ? false : await scriptHasWordsOption(job, cfg, childEnv)
-        if (askWords === 'cancelled' || job.cancelled) return { ok: false, error: 'cancelled' }
 
         // pid + random as well as the time: two processes (or test runs) never share a temp name.
         const base = `${basename(sid)}-${process.pid}-${Date.now()}-${randomBytes(4).toString('hex')}`
@@ -545,7 +574,7 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
         job.tempPaths.push(wavPath, srtPath, wordsTemp)
 
         emitProgress(sink, native ? 'Preparing the saved voice for built-in words.' : sources.length > 1 ? `Joining ${sources.length} audio segments into one WAV for Parakeet.` : 'Converting WebM audio to WAV for Parakeet.')
-        const ffmpeg = await spawnAndCollect(job, ffmpegPath, recordingTranscodeArgs(audioSegments,recordingMs,wavPath), sink, 'ffmpeg', childEnv)
+        const ffmpeg = await spawnAndCollect(job, ffmpegPath, recordingTranscodeArgs(audioSegments,recordingMs,wavPath), native ? null : sink, 'ffmpeg', childEnv)
         if (!ffmpeg.ok) {
           if (ffmpeg.error === 'cancelled') return { ok: false, error: 'cancelled' }
           return { ok: false, error: humanFfmpegError(ffmpeg) }
@@ -553,9 +582,8 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
         if (job.cancelled) return { ok: false, error: 'cancelled' }
 
         if (native) {
-          const helper = deps.nativeHelper?.()
-          if (!helper) return {ok:false,error:'Built-in words need macOS 26 and the speech helper. Choose an installed better model in Settings → Recording.'}
-          const result = await spawnAndCollect(job, helper, [wavPath, cfg.locale || 'en-US'], sink, undefined, undefined, 30 * 60_000, false)
+          emitProgress(sink, 'Transcribing on this Mac. macOS may download a speech model the first time you use this language.')
+          const result = await spawnAndCollect(job, nativeHelper, [wavPath, locale], sink, undefined, undefined, 30 * 60_000, false)
           if (!result.ok) return {ok:false,error:result.error === 'cancelled' ? 'cancelled' : humanProcessError('Words could not be written out. Retry',result)}
           const raw = JSON.parse(result.stdout)
           if (!['apple-speech-transcriber','apple-dictation'].includes(raw.engine) || !Array.isArray(raw.words) || !Array.isArray(raw.segments)) throw Error('Invalid native transcript')
@@ -591,13 +619,23 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
 
         if (!existsSync(srtPath)) return { ok: false, error: 'Parakeet finished but did not write an SRT file.' }
         const segments = parseSrt(readFileSync(srtPath, 'utf8'))
+        // The model may not report a detected language. Preserve a supported selection for alignment.
+        let engineLocale = !automaticFallback || script.languages?.some(code => code === language) ? locale : undefined
+        if (englishOnly) engineLocale = 'en-US'
         let words: WordTiming[] = []
         if (askWords) {
           if (!existsSync(wordsTemp)) throw new Error('Parakeet did not write the advertised word timings.')
           let payload: unknown
           try { payload = JSON.parse(readFileSync(wordsTemp, 'utf8')) }
           catch { throw new Error('Parakeet wrote invalid word timings JSON.') }
-          const list = Array.isArray(payload) ? payload : (payload as { words?: unknown } | null)?.words
+          const metadata = payload as { words?: unknown; locale?: unknown } | null
+          const list = Array.isArray(payload) ? payload : metadata?.words
+          const detected = metadata?.locale
+          const detectedLanguage = typeof detected === 'string' ? languageCode(detected) : undefined
+          if (!englishOnly && typeof detected === 'string' && validLocale(detected) &&
+              (!automaticFallback || script.languages?.some(code => code === detectedLanguage))) {
+            engineLocale = new Intl.Locale(detected.replaceAll('_', '-')).toString()
+          }
           if (!Array.isArray(list) || list.some(item => !item || typeof item.text !== 'string' || !item.text.trim() || typeof item.start !== 'number' || !Number.isFinite(item.start) || typeof item.end !== 'number' || !Number.isFinite(item.end))) {
             throw new Error('Parakeet wrote structurally invalid word timings.')
           }
@@ -612,7 +650,7 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
         if (helper && words.length) {
           try {
             files.writeFile(wordsTemp,JSON.stringify(words.map(w=>({text:w.text,startMs:w.start,endMs:w.end}))))
-            const result = await spawnAndCollect(job,helper,['--annotate',wavPath,cfg.locale || 'en-US',wordsTemp],null,undefined,undefined,deps.annotationTimeoutMs ?? 30 * 60_000,false)
+            const result = await spawnAndCollect(job,helper,['--annotate',wavPath,engineLocale ?? locale,wordsTemp],null,undefined,undefined,deps.annotationTimeoutMs ?? 30 * 60_000,false)
             if (job.cancelled) return {ok:false,error:'cancelled'}
             if (result.ok) {
               const measured = JSON.parse(result.stdout)
@@ -626,7 +664,7 @@ export function createTranscription(deps: TranscriptionDeps): Transcription {
         let previous: TranscriptJson | null = null
         try { previous = normaliseTranscript(JSON.parse(readFileSync(target.path,'utf8'))) } catch { /* first transcript */ }
         const corrections = rematchCorrections([...(previous?.captionCorrections ?? []),...(previous?.unmatchedCorrections ?? [])],words)
-        const stored = publish({ engine: 'parakeet', createdAt: new Date().toISOString(), segments, timingClock:'recording-v2', schemaVersion:2, locale:cfg.locale || 'en-US',engineVersion:scriptStamp(cfg.script),configVersion:'parakeet-v1',sourceFingerprint:initialStamp,...annotation,captionCorrections:corrections.matched,unmatchedCorrections:corrections.unmatched }, words)
+        const stored = publish({ engine: 'parakeet', createdAt: new Date().toISOString(), segments, timingClock:'recording-v2', schemaVersion:2, locale:engineLocale,engineVersion:scriptStamp(cfg.script),configVersion:'parakeet-v1',sourceFingerprint:initialStamp,...annotation,captionCorrections:corrections.matched,unmatchedCorrections:corrections.unmatched }, words)
         if (stored.ok) {
           emitProgress(sink, stored.hasWords
             ? `Transcript written with ${segments.length} segments and ${words.length} word timings.`

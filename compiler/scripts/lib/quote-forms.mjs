@@ -31,6 +31,8 @@ import { scanQuotes, takeParagraph, QUOTE_DASH_LEAD_RE } from './quote-grammar.m
 import { isBareUrl, normalizeEmbedUrl } from './02-triggers-layout.mjs'
 import { IMAGE_SYNTAX_RE, imageSyntaxIsAudio, imageSyntaxIsVideo, isImageBlockLine } from './image-line-rules.mjs'
 import { plainInlineText } from './00-inline-render.mjs'
+import { escapeAttr, escapeHtml } from './00-html.mjs'
+import { displayWebAddress } from './address-display.mjs'
 import { readPastedReference, stripOuterQuotes } from './quote-reference-styles.mjs'
 
 export const QUOTE_FORM_VALUES = Object.freeze(['auto', 'plain', 'tweet', 'video', 'book', 'paper', 'web'])
@@ -234,18 +236,18 @@ export function doiTextOfAddress(address) {
 }
 
 /**
- * A rendered source line (`<cite>` content) with every link whose visible text is its own address cut to the site
- * (`<a href="https://youtu.be/x?t=3">https://youtu.be/x?t=3</a>` becomes `youtu.be`). The `href` is untouched, so the
+ * A rendered source line (`<cite>` content) with every link whose visible text is its own address shortened
+ * to a bounded host/path caption. The `href` is untouched, so the
  * full address stays the link; a link with any other text (a title, a name) is left alone.
  */
 export function shortenAddressLinks(html) {
   const bare = (text) => String(text).replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '')
   return String(html ?? '').replace(/(<a href=")([^"]*)("[^>]*>)([^<]*)(<\/a>)/g, (all, open, href, mid, text, close) => {
     if (!/^https?:\/\//i.test(href) || bare(text) !== bare(href)) return all
-    const doi = doiTextOfAddress(href)
-    if (doi) return `${open}${href}${mid}${esc(doi)}${close}`
-    const site = siteOf(href)
-    return /^[a-z0-9.-]+$/.test(site) ? `${open}${href}${mid}${site}${close}` : all
+    const full = href.replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&')
+    const doi = doiTextOfAddress(full)
+    const attributes = mid.replace(/\s(?:title|aria-label)="[^"]*"/g, '')
+    return `${open}${href}" title="${escapeAttr(full)}" aria-label="${escapeAttr(full)}${attributes}${escapeHtml(doi || displayWebAddress(full, { linked: true, maxLength: 56 }))}${close}`
   })
 }
 
@@ -1297,7 +1299,7 @@ export function annotateQuoteForm(blocks, layout, attrs, slideId, warn) {
 
 const X_MARK_PATH = 'M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z'
 
-export const esc = (value) => String(value ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+export const esc = escapeHtml
 
 function icon(helpers, name, size) {
   const body = helpers.iconBody(name)

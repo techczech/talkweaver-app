@@ -9,6 +9,7 @@
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
+import { thumbAddressParts } from '../src/shared/thumb-url.ts'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
@@ -112,8 +113,7 @@ try {
   record('no card is on the schematic title fallback', first.cards.every((c) => !c.fallback))
   const srcs = new Set(first.cards.map((c) => c.src).filter(Boolean))
   record('thumbnails are distinct per slide', srcs.size === expected, `distinct=${srcs.size}`)
-  // A card's address is twthumb://<slug>/<key>?vault=<id>: the key is the last path segment.
-  const keyOf = (src) => { try { return new URL(src).pathname.replace(/^\//, '') } catch { return '' } }
+  const keyOf = (src) => src ? thumbAddressParts(new URL(src))?.key : undefined
   record('card keys are the fresh render_hash values, not the seeded stale ones',
     first.cards.every((c) => c.src && freshRows.some((r) => keyOf(c.src) === r.render_hash)) &&
     first.cards.every((c) => !staleRows.some((r) => keyOf(c.src) === r.render_hash)))

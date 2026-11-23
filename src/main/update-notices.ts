@@ -188,7 +188,7 @@ export function installUpdateNotices(ports: UpdateNoticesPorts): ChannelChecker 
   const withInstall = (s: CheckerSnapshot): UpdateSnapshot => {
     const offer = newerOffer(s.state.channels, s.alpha, running)
     const file = updateFileFor(offer, process.platform, process.arch)
-    const key = `${offer?.version ?? ''} ${file?.url ?? ''} ${file?.bundleId ?? ''}`
+    const key = `${offer?.version ?? ''} ${file?.url ?? ''} ${file?.bundleId ?? ''} ${installer.identity()}`
     if (!refusals.has(key)) refusals.set(key, installer.refusal(file, s.source))
     const install = installer.state()
     // While working on an update the mark stays (unless presenting), whatever the offer says.

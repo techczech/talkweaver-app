@@ -94,6 +94,16 @@ const job = { kind: 'pages', n: 1 }
   assert.equal((await outcome(refusing(job))).e.message, 'no child')
 }
 
+// The advisory child gives the next build a chance to hydrate media.
+{
+  made.length = 0
+  const build = createHandoutPagesOffProcess('w.js', spawn, 20)
+  const result = await build({ kind: 'preflight' })
+  assert.match(result.warnings[0], /still be downloading/)
+  assert.deepEqual(result.publicationFiles, { checked: 0, findings: [] })
+  assert.ok(made[0].killed)
+}
+
 // 5. A silent child is killed at the deadline; late events change nothing.
 {
   made.length = 0

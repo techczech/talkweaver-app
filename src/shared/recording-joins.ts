@@ -38,15 +38,38 @@ export function voiceSplicePlan(spans: readonly KeptSpan[], totalFrames: number,
   spans.forEach((span, k) => {
     const s = span.startFrame * SAMPLES_PER_FRAME, e = span.endFrame * SAMPLES_PER_FRAME
     const first = k === 0, last = k === spans.length - 1
+    // Spans that meet with nothing cut between them (a new take's edge, splitAtEdges) join two recordings:
+    // there is no removed material to crossfade with, so each side fades out and in.
+    const meetsPrev = !first && spans[k - 1].endFrame === span.startFrame, meetsNext = !last && spans[k + 1].startFrame === span.endFrame
     let from = s, to = e
-    if (!first && smooth) { out.push({ op: 'mix-b', from: s - HALF, to: s + HALF, join: k - 1 }); from = s + HALF }
+    if (!first && smooth && !meetsPrev) { out.push({ op: 'mix-b', from: s - HALF, to: s + HALF, join: k - 1 }); from = s + HALF }
     else if (s > 0) { out.push({ op: 'fade-in', from: s, to: s + FADE }); from = s + FADE }
     const tail: SplicePiece[] = []
-    if (!last && smooth) { tail.push({ op: 'mix-a', from: e - HALF, to: e + HALF, join: k }); to = e - HALF }
+    if (!last && smooth && !meetsNext) { tail.push({ op: 'mix-a', from: e - HALF, to: e + HALF, join: k }); to = e - HALF }
     else if (span.endFrame < totalFrames) { tail.push({ op: 'fade-out', from: e - FADE, to: e }); to = e - FADE }
     if (to > from) out.push({ op: 'copy', from, to })
     out.push(...tail)
   })
+  return out
+}
+
+/**
+ * A new take's edges are joins too (Record this slide again): the kept spans split at each edge that falls
+ * inside one (video clock, ms), on the frame grid. No frame is added or lost; the split spans meet with no
+ * time between them, which the splice and the dissolve treat as a join of different recordings.
+ */
+export function splitAtEdges(spans: readonly KeptSpan[], edgesMs: readonly number[]): KeptSpan[] {
+  const fps = VIDEO_FRAME.fps
+  const out: KeptSpan[] = []
+  for (const span of spans) {
+    const cuts = [...new Set(edgesMs.map((ms) => Math.round((ms * fps) / 1000)))].filter((f) => f > span.startFrame && f < span.endFrame).sort((a, b) => a - b)
+    let from = span.startFrame
+    for (const f of [...cuts, span.endFrame]) {
+      const edited = span.editedStartMs + ((from - span.startFrame) * 1000) / fps
+      out.push({ ...span, startFrame: from, endFrame: f, startMs: (from * 1000) / fps, endMs: (f * 1000) / fps, editedStartMs: edited, editedEndMs: edited + ((f - from) * 1000) / fps, fadeIn: from === span.startFrame ? span.fadeIn : false, fadeOut: f === span.endFrame ? span.fadeOut : false })
+      from = f
+    }
+  }
   return out
 }
 

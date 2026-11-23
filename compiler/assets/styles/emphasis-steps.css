@@ -7,7 +7,7 @@
      NOTHING HERE CHANGES LAYOUT. A span that is off keeps every box it has when on, and only its
      paint differs, so no word moves when emphasis turns on and the slide fit measures one geometry.
        highlight   the marker sweep has no width yet
-       underline   the line is transparent
+       underline   bold, using the same paint-only reveal as strong (owner, 17 Nov 2026)
        strike      the line is transparent and the text is at full strength
        bold        the <strong> keeps its weight, padding and box; its colour, background and
                    shadow fall back to the surrounding text's, the bold glyphs are not filled, and
@@ -18,7 +18,7 @@
      Screen only: print shows all emphasis whatever state the page was left in. */
   .es-w { position: relative; white-space: nowrap; }
   @media screen {
-    strong[data-emph-step] .es-w::before {
+    :is(strong, u)[data-emph-step] .es-w::before {
       content: attr(data-w);
       content: attr(data-w) / "";
       position: absolute;
@@ -34,7 +34,7 @@
       pointer-events: none;
       user-select: none;
     }
-    strong[data-emph-state="off"] {
+    :is(strong, u)[data-emph-state="off"] {
       color: inherit !important;
       background-color: transparent !important;
       background-image: none !important;
@@ -42,12 +42,11 @@
       text-shadow: none !important;
       border-color: transparent !important;
     }
-    strong[data-emph-state="off"] .es-w { -webkit-text-fill-color: transparent; }
-    strong[data-emph-state="off"] .es-w::before { opacity: 1; }
+    :is(strong, u)[data-emph-state="off"] .es-w { -webkit-text-fill-color: transparent; }
+    :is(strong, u)[data-emph-state="off"] .es-w::before { opacity: 1; }
 
     mark.ink-marker[data-emph-step] { background-repeat: no-repeat; background-size: 100% 100%; }
     mark.ink-marker[data-emph-state="off"] { background-size: 0% 100%; }
-    u[data-emph-state="off"] { text-decoration-color: transparent; }
     s[data-emph-state="off"] { text-decoration-color: transparent; opacity: 1; }
 
     /* About 200 ms, paint properties only. .emph-anim arrives a frame after a slide's first
@@ -56,11 +55,11 @@
       transition: color 200ms ease, background-color 200ms ease, background-size 200ms ease,
         box-shadow 200ms ease, text-decoration-color 200ms ease, opacity 200ms ease;
     }
-    .slide.emph-anim strong[data-emph-step] .es-w { transition: -webkit-text-fill-color 200ms ease; }
-    .slide.emph-anim strong[data-emph-step] .es-w::before { transition: opacity 200ms ease; }
+    .slide.emph-anim :is(strong, u)[data-emph-step] .es-w { transition: -webkit-text-fill-color 200ms ease; }
+    .slide.emph-anim :is(strong, u)[data-emph-step] .es-w::before { transition: opacity 200ms ease; }
   }
   @media (prefers-reduced-motion: reduce) {
     .slide.emph-anim [data-emph-step],
-    .slide.emph-anim strong[data-emph-step] .es-w,
-    .slide.emph-anim strong[data-emph-step] .es-w::before { transition: none; }
+    .slide.emph-anim :is(strong, u)[data-emph-step] .es-w,
+    .slide.emph-anim :is(strong, u)[data-emph-step] .es-w::before { transition: none; }
   }

@@ -1,5 +1,6 @@
+import { readMainSource } from '../../lib/read-source.mjs'
 import assert from 'node:assert/strict'
-import {readFileSync,writeFileSync,mkdirSync,rmSync,statSync,existsSync} from 'node:fs'
+import { writeFileSync, mkdirSync, rmSync, statSync, existsSync } from 'node:fs'
 import {resolve,basename} from 'node:path'
 import {createHash} from 'node:crypto'
 import ts from 'typescript'
@@ -8,7 +9,7 @@ import {createGalleryFacts} from '../../../src/main/vault-gallery-facts.ts'
 const root=resolve('scripts/vault-gallery/ownership-repairs/media-fixture');mkdirSync(root,{recursive:true});
 try {
 const outlinePath=resolve(root,'outline.md'),media=resolve(root,'art.png'),old=resolve(root,'obsolete.png');const text='# Talk\n![](art.png)';writeFileSync(outlinePath,text);writeFileSync(media,'one');writeFileSync(old,'obsolete');
-const index=readFileSync('src/main/index.ts','utf8');const body=index.split('const galleryFacts = createGalleryFacts({')[1].split('  read: async t => {')[1].split('\n  },\n  render:')[0];
+const index=readMainSource();const body=index.split('const galleryFacts = createGalleryFacts({')[1].split('  read: async t => {')[1].split('\n  },\n  render:')[0];
 const names={app:{isPackaged:false,getAppPath:()=>root},join:(...p)=>p.join('/'),readGallerySource:()=>({text,stat:statSync(outlinePath)}),vaultRegistry:{get:()=>({open:true,root})},vaultAvailability:{isUnavailable:()=>false},galleryEpoch:0,createHash,thumbCacheRoot:()=>root,searchCache:new Map([[outlinePath,{rows:[{thumbnail_hash:'obsolete'}]}]]),isSearchIndexEntryFresh:()=>true,galleryCoverFile:()=>old,talkThumbCacheDir:()=>root,thumbUrl:(_s,key)=>key,basename,mediaFingerprint,resolvePooledRefs:s=>s,galleryArtwork:new Map(),existsSync};
 const js=ts.transpileModule(`async function read(t) {${body}\n}`,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
 const read=Function(...Object.keys(names),js+';return read')(...Object.values(names));let renders=0;

@@ -12,8 +12,8 @@
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
   }/* @order 1427 */
-  .deck[data-deck-font="gill-sans"] { --sans: "Gill Sans", "Gill Sans MT", system-ui, -apple-system, "Segoe UI", sans-serif; }/* @order 1428 */
-  .deck[data-deck-font="verdana"] { --sans: Verdana, system-ui, -apple-system, "Segoe UI", sans-serif; }/* @order 1432 */
+  .deck[data-deck-font="gill-sans"], .slide[data-deck-font="gill-sans"] { --sans: "Gill Sans", "Gill Sans MT", system-ui, -apple-system, "Segoe UI", sans-serif; }/* @order 1428 */
+  .deck[data-deck-font="verdana"], .slide[data-deck-font="verdana"] { --sans: Verdana, system-ui, -apple-system, "Segoe UI", sans-serif; }/* @order 1432 */
   .kicker {
     font-family: var(--mono);
     font-size: max(14px, .55em);
@@ -173,3 +173,5 @@
   .trace .body { text-transform: none !important; font-size: 1em; line-height: 1.55; letter-spacing: 0; }/* @order 1780 */
   .trace .turn { margin-bottom: 1em; }/* @order 1781 */
   .trace .role { font-size: .58em; }
+
+.deck[data-deck-font="trebuchet"], .slide[data-deck-font="trebuchet"] { --sans: "Trebuchet MS", system-ui, -apple-system, "Segoe UI", sans-serif; }

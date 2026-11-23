@@ -1,6 +1,7 @@
 // The presenter's clipboard read, in main (src/main/live-read-clipboard.ts, src/main/recent-press.ts;
 // embed-sandbox design 4.3, matrix row 18): only a focused presenter window that had a real key or
 // mouse press in the last five seconds; text capped; one image.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { CLIPBOARD_IMAGE_LIMIT_BYTES, CLIPBOARD_TEXT_LIMIT, capClipboardText, decideClipboardRead, liveReadClipboardHandler } from '../src/main/live-read-clipboard.ts'
@@ -156,9 +157,10 @@ await test('handler: a check that throws refuses; text is capped; an empty or ov
 })
 
 await test('wiring: main owns the read; the preload asks only with a user activation and no longer reads the clipboard', () => {
-  const index = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const index = readMainSource()
   assert.match(index, /ipcMain\.handle\('live:read-clipboard', liveReadClipboardHandler\(\{/)
-  assert.match(index, /isPresenter: \(wcId\) => livePresenterContexts\.has\(wcId\)/)
+  assert.match(index, /isPresenter: \(wcId\) => host\.livePresenterContexts\.has\(wcId\)/)
+  assert.match(index, /pressedRecently: host\.pressedRecently/)
   assert.match(index, /pressedRecently: \(wcId\) => pressLedger\.pressedRecently\(wcId\)/)
   assert.match(index, /installPressLedger\(app, pressLedger\)/)
   const preload = readFileSync(new URL('../src/preload/present-live-bridge.ts', import.meta.url), 'utf8')

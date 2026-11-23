@@ -219,7 +219,7 @@ export function unregisteredFieldViewModel(key: string, value: string): SurfaceF
 
 function valueFor(entry: MetadataEntry, pairs: ReadonlyArray<SurfacePair>): { value: string; present: boolean } {
   const spellings = [entry.key, ...(entry.aliases ?? [])]
-  const pair = pairs.find((candidate) => spellings.includes(candidate.key))
+  const pair = spellings.map(key => pairs.find(candidate => candidate.key === key)).find(Boolean)
   return pair ? { value: pair.value, present: true } : { value: '', present: false }
 }
 
@@ -417,7 +417,7 @@ export function applyMetadataDefaults(
     const value = typeof stored[entry.key] === 'string' ? stored[entry.key].trim() : ''
     if (value === '') continue
     const spellings = [entry.key, ...(entry.aliases ?? [])]
-    const existing = pairs.find((pair) => spellings.includes(pair.key))
+    const existing = spellings.map(key => pairs.find(pair => pair.key === key)).find(Boolean)
     const authored = existing != null && existing.value.trim() !== ''
     if (authored && options.mode === 'fill-missing') {
       skipped.push(entry.key)

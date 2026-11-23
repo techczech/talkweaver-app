@@ -7,6 +7,7 @@
 //   4. a talk may name a file by its file name; a file with a bad id is still listed;
 //   5. an empty vault and a missing folder list nothing; folders, links, big files and non-.md files are skipped.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-work-files-view.mjs
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -315,7 +316,7 @@ assert.deepEqual(readTalkWorkNames('﻿---\r\nprework: x\r\n---\r\n'), { prework
     // The view and the IPC carry the vault.
     const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
     assert.match(read('src/renderer/src/components/WorkFilesView.tsx'), /addStep\(item\.fileName, add, item\.vaultId\)/)
-    assert.match(read('src/main/index.ts'), /workFileWriteRoot\(i\.vaultId, writableRootOfVault\)/)
+    assert.match(readMainSource(), /workFileWriteRoot\(i\.vaultId, writableRootOfVault\)/)
     // Where a step's answer goes follows the same rule: a file of the same name in the current vault is left alone,
     // and a vault that is not open is refused.
     write(a, 'session-feedback.md', SFB)
@@ -326,7 +327,7 @@ assert.deepEqual(readTalkWorkNames('﻿---\r\nprework: x\r\n---\r\n'), { prework
     assert.notEqual(readFileSync(join(b, 'Work files', 'session-feedback.md'), 'utf8'), sfB)
     assert.equal(readFileSync(join(a, 'Work files', 'session-feedback.md'), 'utf8'), SFB, 'the current vault file of the same name is untouched')
     assert.equal(workFileWriteRoot('nope', rootOf), undefined, 'set-step-local in a vault that is not open has no root')
-    const main = read('src/main/index.ts')
+    const main = readMainSource()
     const handler = main.slice(main.indexOf("ipcMain.handle('work-files:set-step-local'"), main.indexOf("ipcMain.handle('work-files:move-prework'"))
     assert.match(handler, /workFileWriteRoot\(i\.vaultId, writableRootOfVault\)/, 'set-step-local resolves the vault like add-step')
     assert.match(handler, /i\.vaultId \? 'That vault is not open\.' : 'No vault is open\.'/, 'and refuses a vault that is not open in the same words')

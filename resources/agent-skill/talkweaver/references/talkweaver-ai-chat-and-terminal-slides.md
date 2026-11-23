@@ -2,6 +2,42 @@
 
 Four layouts that draw a fake chat window or terminal from authored text. Ship in TalkWeaver 0.38.1; absent from 0.38.0 and earlier (an older app shows the fence as a plain code block). Typing, `stream=on`, Current-pane clicks and scrolling need 0.38.1-preview.3 or later; preview.1-2 lack them (`stream=on` is an unknown option there). No model is called; the slide is text only.
 
+## Native activity rows (new; requires an app with `sim-version=2` support)
+
+Use the existing **chat** layout with an explicit version trigger. Older apps cannot render this syntax. Do not use it with `chat-lanes` or `terminal-agent` yet. Existing labelled simulations keep their rendering and behaviour.
+
+````markdown
+### Compare sample quotes
+{chat sim-version=2 reveal=steps size=large sidebar=off}
+
+```chat
+turn user "You": Compare the sample quotes for 40 people.
+turn thought "Thought for 3 s" open=off: Check the inputs first.
+  detail:
+    Use the same group size for every quote.
+turn tool-call "Read the quote files" id=quotes: read_files sample-quotes/
+  detail:
+    {"limit":3}
+turn tool-result "3 quotes found" ref=quotes: Cedar £840; Harbour £960; Grove £1,100.
+turn status "Comparison ready" state=done: Cedar costs least for this group size.
+turn files "Found 3 files": sample-quotes/
+  ├─ cedar.md
+  ├─ harbour.md
+  └─ grove.md
+turn answer "Agent": The comparison is ready.
+```
+````
+
+- Envelope: `turn <kind> "<label>" [options]: <body>`. Kinds: `user`, `answer`, `thought`, `tool-call`, `tool-result`, `status`, `files`. Label is required, plain quoted text. Escape a quote as `\"` and a backslash as `\\`. Colons inside quoted labels/options are safe.
+- Body is escaped literal text. Indent continuation lines by two spaces. Line breaks and indentation in file lists and payloads are preserved; nothing executes, opens a host file or calls a model. A thought is an authored teaching summary.
+- Optional `detail:` is reserved at **two columns** beneath a turn (one tab counts as two spaces); trailing whitespace after the colon is allowed. Its content starts at four columns, with extra indentation preserved. A dedent ends the detail. Use `\detail:` or `\object:` at two spaces for literal field-looking body text. Indent a legacy label such as `user:` when it belongs inside a payload.
+- `open=on|off` on a row overrides the simulation's `open=all|none`. An empty detail has no chevron. Clicking a detail never consumes a presenter step; Current, audience and late joins share disclosure and scroll as in existing chats.
+- First user is the visible anchor. Every later row is one Next press, including each tool result. Back restores the earlier prefix. Default `stream=off` gives literal one-item-per-press delivery; `stream=on` streams visible thought/answer bodies, and Next finishes typing before it advances.
+- `id=...` introduces an id in this simulation; `ref=...` refers to an earlier id. A tool result can refer to its call but keeps its own step. A status referring to an earlier status replaces its displayed state when revealed; Back restores the earlier state. `state=working|done` is displayed text, never a live timer. Handout/print transcripts keep both states.
+- The rows editor preserves unchanged source bytes. It edits Kind, Label, Content, and the optional Detail and options. Markup remains available. Legacy rows never migrate automatically.
+- Only a complete header with a supported kind opens a row. Other lines stay in the current body; quoted header-like mistakes get authoring diagnostics. Duplicate ids/fields, unresolved refs and unsupported options produce diagnostics with source retained. Reply `object:` blocks, child chats, panels, gauges and replay controls are not available in this version. Put other objects on their own slides.
+- Handouts show the static expanded poster plus a complete flowing transcript beneath it. Print/PDF includes the transcript on continuation pages, including long payloads and all details, rather than relying on the bounded chat viewport.
+
 ## Choose the layout
 
 | Purpose | Tag | Fence |
@@ -41,7 +77,7 @@ user: ...
 | `reveal` | `all`, `steps` | all four | `steps` = one press per part (see Step reveal). `{reveal}` and `{mode=reveal}` mean the same; `{mode=focus}` is treated as reveal |
 | `sidebar` | `on`, `off` | chat, chat-lanes | `off` drops the history sidebar; column recentres. Always write `sidebar=off`; bare `{sidebar}` is the title-placement trigger, not this |
 | `model` | text, default `Model` | chat, chat-lanes, terminal-agent | model-picker text; status-line text in `terminal-agent` |
-| `open` | `none`, `all` | chat, chat-lanes, terminal-agent | start state of every disclosure. No per-part control |
+| `open` | `none`, `all` | chat, chat-lanes, terminal-agent | start state of disclosures; native rows can override with `open=on|off` |
 | `window-title` | text; default `shell` / `agent-cli` | terminal, terminal-agent | title-bar text; in `terminal-agent` the header line after `◆ ` |
 | `stream` | `off`, `on` | chat, chat-lanes | `on` = answer and reasoning text stream in as they come on screen (see Typing and streaming). Write `stream=on`; no bare form |
 | `size` | `compact`, `large` | all four | `large` raises running text towards the deck type floor (chat text 28 px base, terminal 26 px, scaled with the window furniture); geometry stays; long content still scrolls |
@@ -173,29 +209,29 @@ e90f1aa Add manager sign-off over £200
 
 ## Typing and streaming
 
-- Rate: 70 tokens/s at 4 characters a token = 280 characters/s. One fixed constant; no option sets it.
-- `{terminal}`, `{terminal-agent}`: always type. Whole text of each part (command, output, prompt, thinking, tool block, answer) types when it comes on screen. No author switch-off. Off only by: `prefers-reduced-motion: reduce` (nothing types), Back/jump/arriving backwards (shown complete), print, handout, share pages.
+- Rate: 40 tokens/s at 4 characters a token = 160 characters/s. One fixed constant; no option sets it.
+- `{terminal}`, `{terminal-agent}`: type the whole text of each part revealed by a forward step (command, output, prompt, thinking, tool block, answer). Arriving at a slide, Back and jumps show complete text. Print, handout and share pages are static. Reduced motion does not disable simulation typing.
 - `{chat}`, `{chat-lanes}`: type only with `stream=on`, and only the answer text and the reasoning text. Question, context, tool call and results appear whole.
-- Closed disclosure rows never type. In `{chat}` (default `open=none`) the reasoning sits in a closed row, so only the answer streams; use `open=all` to see reasoning stream. In `{chat-lanes}` reasoning cards are always open and stream; the tool-result control stays click-only. Opening a row later shows it whole.
-- When: on a forward move only. Next onto the slide types what arrives with it (all parts under `reveal=all`; the anchor under `reveal=steps`). Next on a step types the part that step reveals. Parts arriving together type one after another in reading order; waiting parts are hidden, space kept, nothing moves.
+- Closed legacy disclosure bodies do not type. In legacy `{chat}` (default `open=none`), only the answer streams; use `open=all` to see reasoning stream. In `{chat-lanes}`, reasoning cards are always open and stream. Native thought/answer bodies stream when revealed even if their optional detail is closed; their labels and detail stay complete. Opening detail later shows it whole.
+- When: on a forward reveal step only. Arriving at a slide shows complete text, including its visible anchor. Next on a step types the part that step reveals. Parts revealed together type one after another in reading order; waiting parts are hidden, space kept, nothing moves. Use `reveal=steps` to demonstrate streaming; `reveal=all` arrives complete.
 - Next press while typing finishes the typing and does not step; the next press steps.
 - Action row (`chat`) and "+N lines" (`terminal-agent`) appear after their part has typed.
-- Combine freely with `reveal=steps` and `open`. Audience, plain presentation window and Current pane type the same characters (shared clock); a late joiner sees it finished.
+- Combine freely with `reveal=steps` and `open`. Audience, plain presentation window and Current pane type the same characters (shared clock); a late joiner follows the same state and elapsed clock.
 - No blinking cursor.
 
 ### Minimal streaming
 
-Demo-talk slide "Behind the scenes, streaming (arrive with next)": the `{chat-lanes}` example above with the tag line
+Use the `{chat-lanes}` example above with step reveal and open reasoning:
 
 ```markdown
-{chat-lanes model="Example model" stream=on}
+{chat-lanes model="Example model" stream=on reveal=steps open=all}
 ```
 
-Next onto the slide: reasoning and answer type in; the question, context and tool call appear whole.
+The question is complete on arrival. Reveal the reasoning and answer on their steps to stream their text; context and tool payloads appear whole.
 
 ### Minimal typing
 
-No option. The `{terminal}` shell example above types as is; Next onto the slide types the whole session, one line after another.
+Terminal typing needs no `stream` option. Add `reveal=steps` to the shell example above: arrival shows the first command complete, and each Next reveals and types the next command/output part. An all-at-once session arrives complete.
 
 ## Warnings
 

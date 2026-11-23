@@ -4,8 +4,10 @@ import { chromium } from 'playwright'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 const root=resolve(import.meta.dirname,'..')
-mkdirSync(join(root,'evidence/vault-gallery/redesign-repairs/layout-completion'),{recursive:true})
-const dir=mkdtempSync(join(root,'evidence/vault-gallery/redesign-repairs/.dom-'))
+const recordEvidence=process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE==='1'
+const evidence=join(root,recordEvidence?'evidence/vault-gallery/redesign-repairs':'artefacts/test-vault-gallery-dom')
+mkdirSync(evidence,{recursive:true})
+const dir=mkdtempSync(join(evidence,'.dom-'))
 let browser
 try {
  await build({stdin:{resolveDir:root,loader:'tsx',contents:`
@@ -22,13 +24,13 @@ try {
  await editor.fill('Dirty buffer preserved')
  await editor.evaluate(el=>{window.savedEditor=el;el.setSelectionRange(2,8);el.scrollTop=12;window.savedScroll=el.scrollTop})
  await page.getByRole('button',{name:'Browse',exact:true}).click()
- await page.screenshot({path:join(root,'evidence/vault-gallery/redesign-repairs/layout-overview.png')})
+ await page.screenshot({path:join(evidence,'layout-overview.png')})
  await page.setViewportSize({width:390,height:844})
  await page.waitForFunction(()=>{const g=document.querySelector('.vault-gallery');return g.clientWidth===390&&g.scrollWidth<=390})
  await page.getByRole('button',{name:'Show all talks'}).click()
  await page.getByRole('button',{name:'Folders',exact:true}).click();await page.getByRole('tree').getByRole('treeitem',{name:/Work/}).click()
  assert.match(await page.getByRole('navigation',{name:'Location'}).innerText(),/Work/)
- await page.screenshot({path:join(root,'evidence/vault-gallery/redesign-repairs/layout-folder-narrow.png')})
+ await page.screenshot({path:join(evidence,'layout-folder-narrow.png')})
  await page.getByRole('row',{name:'First twin'}).click()
  await page.getByRole('button',{name:'Open talk',exact:true}).click()
  assert.equal(await page.getByRole('dialog').count(),1)

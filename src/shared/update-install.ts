@@ -76,7 +76,7 @@ export function blockersSentence(blockers: readonly RestartBlocker[]): string {
 
 // ── When a copy cannot replace itself ───────────────────────────────────────────────────────────
 
-export type InPlaceRefusal = 'store' | 'development' | 'windows' | 'platform' | 'no-file' | 'disk-image' | 'translocated' | 'read-only' | 'other-copy'
+export type InPlaceRefusal = 'store' | 'development' | 'windows' | 'platform' | 'no-file' | 'disk-image' | 'translocated' | 'read-only' | 'other-copy' | 'unsigned'
 
 export interface InPlaceFacts {
   platform: string
@@ -93,6 +93,10 @@ export interface InPlaceFacts {
   writeError?: string | null
   /** Mac: CFBundleIdentifier of the running app, or null when it could not be read. */
   bundleId: string | null
+  /** Mac: whether the running copy itself meets the developer-identity requirement (update-signature.ts,
+   *  ADR-0044 §7). false (unsigned, signed by anyone else, or the check could not run): no in-place update.
+   *  Absent when not checked (a test run from source, another platform). */
+  developerSigned?: boolean
 }
 
 /** Why this copy cannot update itself in place, or null when it can. */
@@ -111,6 +115,7 @@ export function inPlaceRefusal(facts: InPlaceFacts): InPlaceRefusal | null {
   }
   if (!facts.writable) return 'read-only'
   if (facts.platform === 'darwin' && facts.file.bundleId !== undefined && facts.bundleId !== facts.file.bundleId) return 'other-copy'
+  if (facts.platform === 'darwin' && facts.developerSigned === false) return 'unsigned'
   return null
 }
 
@@ -124,11 +129,12 @@ export const REFUSAL_TEXT: Record<InPlaceRefusal, string> = {
   translocated: 'TalkWeaver cannot replace itself here: macOS is running it from a temporary place. Move it to Applications and open it again.',
   'read-only': 'TalkWeaver cannot replace itself here: this account cannot change the app’s folder.',
   'other-copy': 'TalkWeaver cannot replace itself here: this copy was built for testing.',
+  unsigned: 'TalkWeaver cannot replace itself here: this copy is not signed by TalkWeaver’s developer.',
 }
 
 // ── The states of the click ─────────────────────────────────────────────────────────────────────
 
-export type FailReason = 'network' | 'mismatch' | 'wrong-version' | 'signature' | 'disk' | 'reopen' | 'other'
+export type FailReason = 'network' | 'mismatch' | 'wrong-version' | 'signature' | 'unverified' | 'disk' | 'reopen' | 'other'
 
 /** Why a restart the person asked for did not happen while macOS may have prepared the update (ADR-0044 §3, D4). */
 export type ReopenCause = 'held' | 'no-answer' | 'install-failed'
@@ -209,6 +215,7 @@ export function failReasonOf(error: unknown): FailReason {
   const e = (error ?? {}) as { code?: unknown; message?: unknown }
   const code = typeof e.code === 'string' ? e.code : ''
   const message = typeof e.message === 'string' ? e.message : String(error ?? '')
+  if (code === 'ERR_TW_UNVERIFIED') return 'unverified'
   if (code === 'ERR_CHECKSUM_MISMATCH' || /sha512 checksum mismatch|checksum mismatch|size mismatch|ERR_UPDATER_.*SIZE/i.test(message)) return 'mismatch'
   if (code === 'ERR_UPDATER_INVALID_SIGNATURE' || /code signature|did not pass validation|code requirement|not signed by the application owner|SQRLCodeSignature/i.test(message)) return 'signature'
   if (code === 'ENOSPC' || /ENOSPC|no space left/i.test(message)) return 'disk'
@@ -221,6 +228,8 @@ export const FAIL_TEXT: Record<FailReason, string> = {
   mismatch: 'The downloaded file did not match the published one, so it was not used.',
   'wrong-version': 'The download was not the version offered, so it was not installed.',
   signature: 'The new version is not signed by TalkWeaver’s developer, so it was not installed.',
+  /** TalkWeaver's own check of the new app (update-signature.ts): codesign and Gatekeeper, before Squirrel.Mac. */
+  unverified: 'This update could not be verified and was not installed.',
   disk: 'There is not enough space on this computer.',
   reopen: 'An earlier update was stopped part-way. Quit and reopen TalkWeaver, then press Update again.',
   other: 'Something went wrong while updating.',

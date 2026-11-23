@@ -1,10 +1,11 @@
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { inspectPptxSources, pptxFilesInFolder } from '../src/main/importer/ipc.ts'
 
 const preload = readFileSync(new URL('../src/preload/index.ts', import.meta.url), 'utf8')
 const ipc = readFileSync(new URL('../src/main/importer/ipc.ts', import.meta.url), 'utf8')
-const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+const main = readMainSource()
 
 for (const method of [
   'capabilities', 'chooseSources', 'chooseDestination', 'start', 'resume', 'listRuns', 'getRun', 'updateSlide', 'resetSlide', 'preparePack',

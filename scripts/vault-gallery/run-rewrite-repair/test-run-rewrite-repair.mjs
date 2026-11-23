@@ -1,3 +1,4 @@
+import { readMainSource } from '../../lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -5,7 +6,7 @@ import { createPlannedRun, readRunForTalk, persistRunForTalk } from '../../../sr
 import { pinRunWork } from '../../../src/main/run-work-pin.ts'
 import { runPublicationFixture } from '../../../scripts/lib/run-publication-fixture.mjs'
 const home = fs.mkdtempSync(join(import.meta.dirname, 'fixture-'))
-const source = fs.readFileSync('src/main/index.ts', 'utf8')
+const source = readMainSource()
 let count = 0
 try {
 for (const qualified of [false, true]) for (const mode of ['own', 'before-pin', 'at-write', 'after-pre', 'source', 'closed', 'tuple']) {

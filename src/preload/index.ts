@@ -1,3 +1,5 @@
+import type { PublishHistoryAttempt, PublishSiteCheck } from '../shared/publish-history'
+import type { SlidesPanelView, WorkspaceView } from '../shared/workspace-view'
 import type { ImageEditPreview, ImageEditRecipe, ImageEditResult } from '../shared/image-edit'
 import type { OfflinePageInput, OfflinePageSaveResult } from '../shared/offline-page'
 import type { GalleryHandouts } from '../shared/gallery-handouts'
@@ -50,7 +52,7 @@ import type { CloudflareStatus } from '../shared/cloudflare-status'
 import type { RecordingStorageRow } from '../shared/recording-storage-status'
 import type { GoingLiveRow, LiveSetupPrompt } from '../shared/live-service-status'
 import type { TranscriptionRow } from '../shared/transcription-status'
-import type { PublishNotReady } from '../shared/publish-status'
+import type { MediaPublishChoice, PublishNotReady } from '../shared/publish-status'
 import type { FeedbackList, FeedbackStatus, FeedbackSummary } from '../shared/feedback'
 import type { AcceptRecord } from '../shared/feedback-accept'
 import type { TalkFolderCount, TalkSearchOptions, TalkSearchResult } from '../shared/talk-search'
@@ -80,7 +82,7 @@ export type { CloudflareStatus } from '../shared/cloudflare-status'
 export type { RecordingStorageRow } from '../shared/recording-storage-status'
 export type { GoingLiveRow, LiveSetupPrompt } from '../shared/live-service-status'
 export type { TranscriptionRow } from '../shared/transcription-status'
-export type { PublishNotReady } from '../shared/publish-status'
+export type { MediaPublishChoice, PublishNotReady } from '../shared/publish-status'
 export type { ImageSearchHit, ImageSearchResult, ImageSearchStatus, ImageSource, ImageUse, ImportedImage, MatchMode, VaultPictureResult } from '../shared/image-search'
 
 /** What outline.setHeadingIcon and outline.setParagraphIcon answer (compiler/scripts/lib/12-outline-edit.mjs). */
@@ -95,6 +97,8 @@ export type IconVerbResult =
 export type PublishReplyExtras = {
   /** Publishing could not start: what is missing and the one button that fixes it (the sheet). */
   notReady?: PublishNotReady
+  /** Main's qualified source for the failed Run, retained only for its recovery action. */
+  recoveryOutlinePath?: string
   /** "Published. Going live is not set up: Settings → Cloudflare", with the sorted reason when a set-up failed. */
   liveNotice?: string
   /** What lies behind `liveNotice`; shown on request, never as the message. */
@@ -662,6 +666,7 @@ const api = {
     getRoot: (): Promise<string | null> => ipcRenderer.invoke('vault:get-root'),
     // Test-only (TW_E2E=1); the app changes the root with chooseRoot.
     setRoot: (path: string): Promise<{ success: boolean; error?: string }> => ipcRenderer.invoke('vault:set-root', path),
+    useDefaultRoot: (): Promise<string | null> => ipcRenderer.invoke('vault:use-default-root'),
     chooseRoot: (): Promise<string | null> => ipcRenderer.invoke('vault:choose-root'),
     // Open example vault (onboarding ticket 06): no argument; main writes to its fixed path.
     openExample: (): Promise<ExampleVaultResult> => ipcRenderer.invoke('vault:open-example'),
@@ -873,6 +878,14 @@ const api = {
       ipcRenderer.invoke('preferences:get-action-bar'),
     setActionBarVisible: (visible: boolean): Promise<boolean> =>
       ipcRenderer.invoke('preferences:set-action-bar-visible', visible),
+    getWorkspaceViews: (): Promise<{ openIn: WorkspaceView; slidesPanel: SlidesPanelView }> =>
+      ipcRenderer.invoke('preferences:get-workspace-views'),
+    setSlidesPanel: (view: SlidesPanelView): Promise<void> => ipcRenderer.invoke('preferences:set-slides-panel', view),
+    onWorkspaceViewsChanged: (cb: (view: { openIn: WorkspaceView; slidesPanel: SlidesPanelView }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, preferences: { openIn: WorkspaceView; slidesPanel: SlidesPanelView }) => cb(preferences)
+      ipcRenderer.on('workspace-views:changed', listener)
+      return () => ipcRenderer.removeListener('workspace-views:changed', listener)
+    },
     getEditorViewMode: (): Promise<'plain' | 'markdown'> =>
       ipcRenderer.invoke('preferences:get-editor-view-mode'),
     setEditorViewMode: (mode: 'plain' | 'markdown'): Promise<'plain' | 'markdown'> =>
@@ -968,11 +981,17 @@ const api = {
     // External-change guard: the file's text + version on disk now (Reload), and accepting the version
     // the person saw (Keep mine / Reload); a newer change refuses with it.
     outlineDiskVersion: (outlinePath: string): Promise<{ text: string; hash: string } | null> =>
-      ipcRenderer.invoke('talk:outline-disk-version', outlinePath),
-    // `keepPending`: a save follows (Keep mine, Save it again, Save again) — the difference stays until it lands.
-    acceptOutlineDiskVersion: (outlinePath: string, hash: string, opts?: { keepPending?: boolean }): Promise<OutlineDiskAccept> =>
+      ipcRenderer.invoke('talk:outline-disk-version', outlinePath).then((reply: { text: string; hash: string } | { error: string } | null) => {
+        if (reply && 'error' in reply) throw new Error(reply.error)
+        return reply
+      }),
+    // `keepPending`: a save follows. `revision`: captured immediately after a no-write adoption,
+    // acknowledging that revision only, not typing made while the acknowledgement was pending.
+    acceptOutlineDiskVersion: (outlinePath: string, hash: string, opts?: { keepPending?: boolean; revision?: number }): Promise<OutlineDiskAccept> =>
       ipcRenderer.invoke('talk:outline-accept-disk', outlinePath, hash, opts),
     // The recovery copy a refused save kept for this talk (userData/recovery), and dropping it.
+    preserveOutlineMerge: (outlinePath: string, snapshot: { base: string; mine: string; disk: string; draft?: string }): Promise<string | null> =>
+      ipcRenderer.invoke('talk:outline-preserve-merge', outlinePath, snapshot),
     outlineRecovery: (outlinePath: string): Promise<OutlineRecoveryCopy | null> =>
       ipcRenderer.invoke('talk:outline-recovery', outlinePath),
     discardOutlineRecovery: (outlinePath: string): Promise<boolean> =>
@@ -1030,7 +1049,7 @@ const api = {
     writeOutline: (
       outlinePath: string,
       content: string,
-      opts?: { revision?: number }
+      opts?: { revision?: number; expectedDiskHash?: string }
     ): Promise<{ ok: true; collisions: string[]; content?: string } | { ok: false; refused: 'empty-over-nonempty' | 'ownership' } | { ok: false; refused: 'outside-vault'; error: string } | OutlineChangedOnDiskRefusal | false> =>
       ipcRenderer.invoke('talk:write-outline', outlinePath, content, opts),
     // `{ superseded: true }`: a newer live-preview compile of the same talk from this window replaced
@@ -1118,7 +1137,8 @@ const api = {
     // renderer does not adopt it: it stamps its own buffer as it stands, WorkspaceLayout).
     publishHandout: (
       outlinePath: string,
-      content: string
+      content: string,
+      mediaChoice?: MediaPublishChoice
     ): Promise<{
       success: boolean
       url?: string
@@ -1128,7 +1148,7 @@ const api = {
       details?: string
       updatedOutline?: string
       warning?: string
-    } & PublishReplyExtras> => ipcRenderer.invoke('talk:publish-handout', outlinePath, content),
+    } & PublishReplyExtras> => ipcRenderer.invoke('talk:publish-handout', outlinePath, content, mediaChoice),
     // `lane` separates independent requesters inside ONE window: the editor strip and the Slide
     // Browser's background per-talk render must not supersede each other (2026-09-15).
     thumbnails: (outlinePath: string, content: string, opts?: { lane?: string; requestId?: string }): Promise<Record<string, string> | null> =>
@@ -1218,10 +1238,14 @@ const api = {
   slide: {
     // Compile the full live outline through the presentation pipeline and return its stable
     // twpresent:// document URL. The renderer adds a slide-id hash for navigation.
-    renderPreview: (outlinePath: string, outlineContent: string): Promise<string | null> =>
-      ipcRenderer.invoke('slide:render-preview', outlinePath, outlineContent)
+    renderPreview: (outlinePath: string, outlineContent: string, surface: 'workspace' | 'detail' = 'detail'): Promise<string | null> =>
+      ipcRenderer.invoke('slide:render-preview', outlinePath, outlineContent, surface)
   },
   publish: {
+    history: (): Promise<{ ok: true; attempts: PublishHistoryAttempt[] } | { ok: false; error: string }> => ipcRenderer.invoke('publish:history'),
+    checkSite: (): Promise<PublishSiteCheck> => ipcRenderer.invoke('publish:check-site'),
+    getLibraryFiles: (outlinePath: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('publish:get-library-files', outlinePath),
+    importSiteRecovery: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('publish:import-site-recovery'),
     // Cloudflare Pages publishing config (Settings → Cloudflare). getConfig NEVER returns the token —
     // only hasToken. The token is saved and removed through `cloudflare` below.
     getConfig: (): Promise<{
@@ -1388,6 +1412,8 @@ const api = {
     // outlinePath: the talk being edited; the image goes to that talk's vault (default: the current vault).
     pasteImage: (bytes: ArrayBuffer, ext?: string, outlinePath?: string): Promise<{ id: string; ext: string; path: string } | null> =>
       ipcRenderer.invoke('asset:paste-image', bytes, ext ?? 'png', outlinePath),
+    pasteTalkPictures: (outlinePath: string, pictures?: ArrayBuffer[]): Promise<string[] | null> =>
+      ipcRenderer.invoke('asset:paste-talk-pictures', outlinePath, pictures),
     // Ingest a video / animated GIF (ADR-0028). Pass a file `path` (drag-drop) or `bytes` (paste).
     // GIFs convert to MP4; the result is content-addressed as `vid-<id>` with a generated poster.
     // `origin`: 'gif' (autoplay/loop), 'video' (manual), or 'image' (static GIF / conversion fallback → img-).
@@ -1650,9 +1676,9 @@ const api = {
       success: boolean; path?: string; slideIds?: string[]; missing?: string[]; error?: string
     }> => ipcRenderer.invoke('run:build-handout', { talkSlug, runId }),
     // `vaultId`: the Run's own vault (the Sessions view sends it); main acts there only and refuses a vault that is not open.
-    publishRunHandout: (talkSlug: string, runId: string, vaultId?: string): Promise<{
+    publishRunHandout: (talkSlug: string, runId: string, vaultId?: string, mediaChoice?: MediaPublishChoice): Promise<{
       success: boolean; url?: string; path?: string; slideIds?: string[]; missing?: string[]; error?: string; details?: string; warning?: string
-    } & PublishReplyExtras> => ipcRenderer.invoke('run:publish-handout', { talkSlug, runId, ...(vaultId ? { vaultId } : {}) }),
+    } & PublishReplyExtras> => ipcRenderer.invoke('run:publish-handout', { talkSlug, runId, ...(vaultId ? { vaultId } : {}), ...(mediaChoice ? { mediaChoice } : {}) }),
     unpublishRunHandout: (talkSlug: string, runId: string, vaultId?: string): Promise<{ success: boolean; error?: string; details?: string } & Pick<PublishReplyExtras, 'notReady'>> =>
       ipcRenderer.invoke('run:unpublish-handout', { talkSlug, runId, ...(vaultId ? { vaultId } : {}) }),
     // Live-presenting ticket 07 (L6): where each recorded instant slide's anchor sits in the talk NOW

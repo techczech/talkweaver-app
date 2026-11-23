@@ -11,7 +11,8 @@
  *   - so the bare key is recovered by stripping ONLY the 16-hex prefix, never by last-dash split.
  */
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, writeFileSync, readdirSync } from 'node:fs'
+import { writeFileSync, readdirSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
@@ -31,7 +32,7 @@ function buildBareIndex(dir) {
   return byKey
 }
 
-const dir = mkdtempSync(join(tmpdir(), 'talkweaver-thumb-key-'))
+const dir = testScratchDir(join(tmpdir(), 'talkweaver-thumb-key-'))
 
 // A realistic render_hash (contains a dash) and a 16-hex documentId, exactly as production writes.
 const renderHash = 'sha256-' + createHash('sha256').update('slide-model').digest('hex')

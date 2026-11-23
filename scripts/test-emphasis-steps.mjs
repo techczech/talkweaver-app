@@ -133,14 +133,14 @@ const marked = markEmphasisSteps(body)
 assert.equal(marked.count, 4, 'bold, highlight, underline and strike are steps; italic is not')
 assert.match(marked.html, /<strong data-emph-step="bold">/)
 assert.match(marked.html, /<mark class="ink-marker" data-emph-step="highlight">mark<\/mark>/)
-assert.match(marked.html, /<u data-emph-step="underline">underline<\/u>/)
+assert.match(marked.html, /<u data-emph-step="underline"><span class="es-w" data-w="underline">underline<\/span><\/u>/)
 assert.match(marked.html, /<s data-emph-step="strike">strike<\/s>/)
 assert.match(marked.html, /<em>italic<\/em>/, 'italic is left as it was')
 assert.equal(text(marked.html), text(body), 'no character of text is added, removed or moved')
 assert.deepEqual([...marked.html.matchAll(/<span class="es-w" data-w="([^"]*)">([^<]*)<\/span>/g)].map((m) => [m[1], m[2]]),
-  [['bold', 'bold'], ['state-', 'state-'], ['of-', 'of-'], ['the-', 'the-'], ['art', 'art'], ['phrase', 'phrase']],
+  [['bold', 'bold'], ['state-', 'state-'], ['of-', 'of-'], ['the-', 'the-'], ['art', 'art'], ['phrase', 'phrase'], ['underline', 'underline']],
   'each unbreakable piece of a bold run is one word span carrying its own text; a compound still breaks after its hyphens')
-assert.doesNotMatch(marked.html.replace(/<strong data-emph-step[\s\S]*?<\/strong>/g, ''), /es-w/, 'only bold words are wrapped')
+assert.doesNotMatch(marked.html.replace(/<(strong|u) data-emph-step[\s\S]*?<\/\1>/g, ''), /es-w/, 'only the two weight-emphasis forms are wrapped')
 
 const nested = markEmphasisSteps(`<p>${renderInline('==a **b _c_** d== and **say "x" & <y>**')}</p>`)
 assert.equal(nested.count, 3)

@@ -131,6 +131,7 @@ function run(job) {
         let existing;
         try { existing = fs.lstatSync(copy); } catch (e) { if (e.code !== 'ENOENT') throw e; }
         if (existing && !existing.isFile()) throw new Error('Invalid private snapshot');
+        // Not a whole-file replacement: publish a write-once private snapshot of agent media.
         if (!existing) {
           const staging = path.join(bucket,'.'+crypto.randomBytes(12).toString('hex')+'.tmp');
           try {
@@ -156,6 +157,7 @@ function run(job) {
     if (!plain(job.name) || !job.name.startsWith('scratchpad-state.broken-') || !job.name.endsWith('.json')) throw new Error('Invalid recovery filename');
     fs.writeFileSync(job.name,job.previous,{flag:'wx',mode:0o600});
   } else if (job.action === 'write') {
+    // Keep the replacement relative to this child's pinned working directory.
     const temp = '.scratchpad-state.json.'+process.pid+'.'+crypto.randomBytes(8).toString('hex')+'.tmp';
     try { fs.writeFileSync(temp,job.text,{flag:'wx',mode:0o600}); fs.renameSync(temp,'scratchpad-state.json'); }
     finally { try { fs.unlinkSync(temp); } catch {} }

@@ -19,6 +19,8 @@ export interface BatchBarProps {
   moveOpen: boolean
   onMoveOpenChange: (open: boolean) => void
   onClear: () => void
+  onMakeSection?: () => void
+  makeSectionReason?: string
   onMove: (place: SlidePlace) => void
   onCut: () => void
   onCopy: () => void
@@ -88,7 +90,7 @@ function MoveToMenu({ count, rows, selectedLines, onChoose, onClose }: {
   )
 }
 
-export default function BatchBar({ count, outlineEditable = true, rows, selectedLines, moveOpen: moving, onMoveOpenChange: setMoving, onClear, onMove, onCut, onCopy, onDelete, onSetAside, onAddToPathway, onHeight }: BatchBarProps) {
+export default function BatchBar({ count, outlineEditable = true, rows, selectedLines, moveOpen: moving, onMoveOpenChange: setMoving, onClear, onMakeSection, makeSectionReason, onMove, onCut, onCopy, onDelete, onSetAside, onAddToPathway, onHeight }: BatchBarProps) {
   const close = useCallback(() => setMoving(false), [setMoving])
   const barRef = useRef<HTMLDivElement>(null)
   const showing = count >= 2
@@ -131,6 +133,8 @@ export default function BatchBar({ count, outlineEditable = true, rows, selected
     <div ref={barRef} className="batch-bar" data-batch-bar role="toolbar" aria-label="Selected slides" onClick={(e) => e.stopPropagation()}>
       <span className="batch-bar-n" data-batch-count>{count} selected</span>
       <button type="button" className="batch-bar-link" data-batch-action="clear" onClick={onClear}>Clear</button>
+      {onMakeSection && <button type="button" className="batch-bar-btn" data-batch-action="make-section"
+        disabled={!!makeSectionReason || !outlineEditable} title={makeSectionReason} onClick={onMakeSection}>Make a section</button>}
       {!outlineEditable && <span>Generated slides can only be added to a pathway.</span>}
       <span className="batch-bar-wrap">
         <button type="button" className="batch-bar-btn" data-batch-action="move" disabled={!outlineEditable} aria-haspopup="dialog" onClick={() => setMoving(!moving)}>Move to…</button>

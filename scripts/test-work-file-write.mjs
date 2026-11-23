@@ -9,7 +9,8 @@
 //   6. the writer stays inside Work files/ (a linked folder is refused, no overwrite).
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-work-file-write.mjs
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, symlinkSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readWorkFile } from '../src/shared/work-file.ts'
@@ -137,7 +138,7 @@ t('title checks name the reason', () => {
   }
 })
 
-const tmp = () => mkdtempSync(join(tmpdir(), 'tw-wf-write-'))
+const tmp = () => testScratchDir(join(tmpdir(), 'tw-wf-write-'))
 
 t('createWorkFile writes Work files/<slug>.md, makes the folder, never overwrites', () => {
   const vault = tmp()

@@ -13,14 +13,17 @@ import { EditorState, StateField, type Extension, type Range, type Text } from '
 import { headingLine } from '../../../../shared/plain-view-heading-line'
 import { isStructureLine, outlineHeading } from '../../../../shared/plain-view-outline-lines'
 import { hiddenLayoutOf, plainFactsOf } from './outlineLines'
+import { headingTail } from './headingTail'
+import { startBodyWithBullet } from '../outliner'
 
 export const TITLE_PLACEHOLDER = 'Slide title'
+const SECTION_PLACEHOLDER = 'Section name'
 export const BODY_PLACEHOLDER = 'Write, or press / to insert'
 
 /** Marks alone (`##`): no heading yet for the compiler or the other rules, but a title being typed, which gets its placeholder. */
 const BARE_MARKS = /^#{1,6}$/
 const isHeading = (text: string): boolean => !!headingLine(text) || BARE_MARKS.test(text)
-const isEmptyHeading = (text: string): boolean => BARE_MARKS.test(text) || !!headingLine(text)?.empty
+
 
 class PlaceholderWidget extends WidgetType {
   constructor(readonly text: string, readonly kind: 'title' | 'body') { super() }
@@ -36,8 +39,8 @@ class PlaceholderWidget extends WidgetType {
 }
 
 /** Positions of the placeholders for a document and the carets in it. Exported for tests. */
-export function placeholderSpots(doc: Text, heads: readonly number[]): Array<{ pos: number; kind: 'title' | 'body' }> {
-  const spots: Array<{ pos: number; kind: 'title' | 'body' }> = []
+export function placeholderSpots(doc: Text, heads: readonly number[]): Array<{ pos: number; kind: 'title' | 'body'; section?: true }> {
+  const spots: Array<{ pos: number; kind: 'title' | 'body'; section?: true }> = []
   // Only lines the compiler reads whole as outline are looked at (outlineLines.ts): a `##` line in
   // fenced code, a comment, notes or the front matter is no title.
   const facts = plainFactsOf(doc)
@@ -48,8 +51,13 @@ export function placeholderSpots(doc: Text, heads: readonly number[]): Array<{ p
   for (let n = 1; n <= doc.lines; n += 1) {
     if (!headingOn(n)) continue
     const line = doc.line(n)
-    const emptyTitle = isEmptyHeading(line.text)
-    if (emptyTitle) spots.push({ pos: line.to, kind: 'title' })
+    const heading = headingLine(line.text)
+    const tail = headingTail(line.from, line.text)
+    const emptyTitle = BARE_MARKS.test(line.text) || !!heading?.empty ||
+      (!!heading && !!tail && tail.textEnd <= line.from + heading.textFrom)
+    const section = facts.compiler.slideLayouts.get(n - 1)?.divider
+    if (emptyTitle) spots.push({ pos: tail?.textEnd ?? line.to, kind: 'title', ...(section ? { section: true } : {}) })
+    if (section) continue
     // The body: skip the layout lines under the heading, then it must be blank up to the next heading.
     const under = hidden.runAfter.get(n - 1)
     const m = under ? under.last + 2 : n + 1
@@ -66,19 +74,21 @@ export function placeholderSpots(doc: Text, heads: readonly number[]): Array<{ p
 
 function build(state: EditorState): DecorationSet {
   const heads = state.selection.ranges.map((r) => r.head)
+  const bodyPlaceholder = state.facet(startBodyWithBullet) ? 'First point' : BODY_PLACEHOLDER
   const ranges: Range<Decoration>[] = placeholderSpots(state.doc, heads).map((s) =>
-    Decoration.widget({ widget: new PlaceholderWidget(s.kind === 'title' ? TITLE_PLACEHOLDER : BODY_PLACEHOLDER, s.kind), side: 1 }).range(s.pos))
+    Decoration.widget({ widget: new PlaceholderWidget(s.kind === 'title' ? s.section ? SECTION_PLACEHOLDER : TITLE_PLACEHOLDER : bodyPlaceholder, s.kind), side: 1 }).range(s.pos))
   return Decoration.set(ranges, true)
 }
 
 const placeholderField = StateField.define<DecorationSet>({
   create: build,
-  update: (value, tr) => (tr.docChanged || tr.selection ? build(tr.state) : value),
+  update: (value, tr) => (tr.docChanged || tr.selection ||
+    tr.startState.facet(startBodyWithBullet) !== tr.state.facet(startBodyWithBullet) ? build(tr.state) : value),
   provide: (f) => EditorView.decorations.from(f)
 })
 
 const placeholderTheme = EditorView.theme({
-  '.cm-plain-placeholder': { color: '#a0a6ad', pointerEvents: 'none', userSelect: 'none', whiteSpace: 'nowrap' },
+  '.cm-plain-placeholder': { color: 'var(--faint)', pointerEvents: 'none', userSelect: 'none', whiteSpace: 'nowrap' },
   '.cm-plain-placeholder-title': { fontWeight: '700', fontSize: '1.25em' }
 }, { dark: false })
 

@@ -17,13 +17,14 @@ import type { EditorViewMode } from '../../../../shared/editor-view-mode'
 import { titleStartPastMarks } from '../outliner'
 
 export interface PlainViewOptions extends MarginMenuHandlers {
+  hideLayoutCodes?: boolean
   /** Where icon pictures come from (`window.tw.icons.svg`). Without it a list item's `{icon=…}` stays a chip. */
   iconSvg?: IconSvgSource
   // (The margin's labels arrive through `setMarginLabels`; its menus are raised through `onLevelMenu` / `onLayoutMenu`.)
 }
 
 export function plainViewExtension(options: PlainViewOptions = {}): Extension {
-  return [plainLookExtension(), concealExtension(), iconPicturesExtension(options.iconSvg), listMarksExtension(), hiddenLinesExtension(), marginExtension(options), talkDetailsExtension(), guardKeysExtension(), settleCaretExtension(), placeholdersExtension(), titleStartPastMarks.of(true)]
+  return [plainLookExtension(), concealExtension(), iconPicturesExtension(options.iconSvg), listMarksExtension(), hiddenLinesExtension(options.hideLayoutCodes), marginExtension(options), talkDetailsExtension(), guardKeysExtension(), settleCaretExtension(), placeholdersExtension(), titleStartPastMarks.of(true)]
 }
 
 /** What the view compartment holds for a mode. Markdown = exactly today's editor. */

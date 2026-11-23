@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { basename, join } from 'node:path'
 import type { ImportCleanupPass, ImportSuggestion } from '../../shared/importer.ts'
-import { writeJsonAtomic, writeTextAtomic } from './atomic.ts'
+import { writeJsonAtomic, writeTextAtomic } from '../atomic-file.ts'
 import { applySlidePatch, loadRun } from './storage.ts'
 
 export interface WriteImportCleanupPackInput {
@@ -45,13 +45,13 @@ function renderPrompt(template: string, values: Record<string, string>): string 
 }
 
 function copyFileAtomic(source: string, destination: string): void {
-  writeTextAtomic(destination, readFileSync(source))
+  writeTextAtomic(destination, readFileSync(source), { sync: false })
 }
 
 function copyInstructions(resourcesDir: string, packDir: string): void {
   const sourceDir = join(resourcesDir, 'instructions')
   if (!existsSync(sourceDir)) {
-    writeTextAtomic(join(packDir, 'instructions', 'NOTE.md'), 'Importer cleanup instructions were not found.\n')
+    writeTextAtomic(join(packDir, 'instructions', 'NOTE.md'), 'Importer cleanup instructions were not found.\n', { sync: false })
     return
   }
   for (const file of readdirSync(sourceDir).sort()) {
@@ -109,14 +109,14 @@ export function writeImportCleanupPack(input: WriteImportCleanupPackInput): stri
     ? readFileSync(promptTemplatePath, 'utf8')
     : '# Clean {{TALK_TITLE}}\n\nPack: {{PACK_PATH}}\n\nPasses: {{PASSES}}\n'
 
-  writeTextAtomic(join(packDir, 'AGENTS.md'), PACK_AGENTS)
-  writeTextAtomic(join(packDir, 'CLAUDE.md'), '@./AGENTS.md')
+  writeTextAtomic(join(packDir, 'AGENTS.md'), PACK_AGENTS, { sync: false })
+  writeTextAtomic(join(packDir, 'CLAUDE.md'), '@./AGENTS.md', { sync: false })
   writeTextAtomic(join(packDir, 'PROMPT.md'), renderPrompt(promptTemplate, {
     TALK_TITLE: loaded.manifest.talk.title,
     PACK_PATH: packDir,
     PASSES: input.passes.join(', '),
     SLIDES: selected.join(', ')
-  }))
+  }), { sync: false })
   writeJsonAtomic(join(packDir, 'manifest.json'), {
     schemaVersion: 1,
     packId: input.packId,
@@ -126,15 +126,15 @@ export function writeImportCleanupPack(input: WriteImportCleanupPackInput): stri
     source: loaded.manifest.source,
     passes: input.passes,
     slideNumbers: selected
-  })
+  }, { sync: false })
   const priority = new Map([['failed', 0], ['fallback', 1], ['review', 2], ['converted', 3], ['extracted', 4]])
   writeJsonAtomic(join(packDir, 'priority-queue.json'), loaded.slides
     .filter((slide) => selected.includes(slide.slideNumber))
     .sort((a, b) => (priority.get(a.status) ?? 9) - (priority.get(b.status) ?? 9) || a.slideNumber - b.slideNumber)
-    .map((slide) => ({ slideNumber: slide.slideNumber, status: slide.status, warnings: slide.warnings })))
+    .map((slide) => ({ slideNumber: slide.slideNumber, status: slide.status, warnings: slide.warnings })), { sync: false })
   copyInstructions(input.resourcesDir, packDir)
   for (const slideNumber of selected) evidenceForSlide(input.runDir, packDir, slideNumber)
-  writeJsonAtomic(join(packDir, 'suggestions', '.keep.json'), { note: 'Agents write slide-NNN.json files in this folder.' })
+  writeJsonAtomic(join(packDir, 'suggestions', '.keep.json'), { note: 'Agents write slide-NNN.json files in this folder.' }, { sync: false })
   return packDir
 }
 

@@ -5,7 +5,8 @@
 // as the release workflow zips it, from a stand-in feed on 127.0.0.1. The real window is driven: Check for Updates…,
 // the mark, Update, and Restart. Before the good update it runs the failure cases for real: the file changed after
 // the feed was written; the network dropped mid-download; a copy re-signed ad hoc (an attacker who controls the
-// feed AND the file); a genuinely signed build of the OLD version put under the new name. Then the order of
+// feed AND the file: refused by TalkWeaver's own developer-identity check, ADR-0044 §7); a genuinely signed build of
+// the OLD version put under the new name. Then the order of
 // ADR-0044 §3 (nothing handed to Squirrel.Mac until the person commits to restarting now), with "nothing armed"
 // checked each time (no ShipIt job in launchd, no install request on disk):
 //  (b) Cancel during the download, then quit at once: nothing installs;
@@ -15,7 +16,7 @@
 //      says what will happen, and quitting then installs exactly what it said;
 //  (c) Restart pressed with nothing holding: it restarts into the new version, and the result is checked:
 //      version, code signature, the user data kept, timings.
-//  (e)–(h) the restart's close when an editor cannot confirm its save (slow, failed, Stay here, the watchdog);
+//  (e)–(h) the restart's close when an editor cannot confirm its save (slow, failed, Stay here, a late merge);
 //  (i) a Tools window open: the restart waits behind it and closes nothing (ADR-0044 §6, rule A);
 //  (j) in (c), typing during the restart's slow save is refused and nothing is lost (rule B);
 //  (k) in (c), a preference write held pending in main is waited for before the native call and is in the settings
@@ -177,7 +178,7 @@ const vault = join(work, 'vault')
 mkdirSync(join(vault, 'proof-talk'), { recursive: true })
 writeFileSync(join(vault, 'proof-talk', 'proof-talk-outline.md'), ['---', 'title: Update Proof', '---', '', '## Opening', '', '### One', '', '- A point that must survive the update', ''].join('\n'))
 mkdirSync(USER_DATA, { recursive: true })
-writeFileSync(join(USER_DATA, 'config.json'), JSON.stringify({ vaultRoot: vault, updatesAlphaVersions: true }, null, 2))
+writeFileSync(join(USER_DATA, 'config.json'), JSON.stringify({ vaultRoot: vault, updatesAlphaVersions: true, openInView: 'markdown' }, null, 2))
 const MARKER = `kept-${Date.now()}`
 writeFileSync(join(USER_DATA, 'proof-marker.txt'), MARKER)
 
@@ -298,15 +299,20 @@ try {
   s = await waitFor((x) => x.install.phase === 'failed')
   step('failure: the network dropping mid-download is reported; the app is unchanged', s.install.reason === 'network' && plist(INSTALLED, 'CFBundleShortVersionString') === OLD_VERSION, { install: s.install })
 
-  // 3. An attacker who controls the feed and the file: a copy re-signed ad hoc, its own hash in the feed.
+  // 3. An attacker who controls the feed and the file: a copy re-signed ad hoc, its own hash in the feed. TalkWeaver's
+  //    own developer-identity check (ADR-0044 §7: codesign against the compiled-in requirement) refuses it before
+  //    Squirrel.Mac is asked: no request reaches electron-updater's local address.
   serve = 'adhoc'
   await page.evaluate(() => window.tw.updates.check())
   const adhocClick = Date.now()
+  const adhocProxiedBefore = (logText().match(/requested by Squirrel\.Mac/g) ?? []).length
   await pressUpdate()
   s = await waitFor((x) => x.install.phase === 'failed', 300000)
-  step('failure: a new version not signed by the Developer ID is refused by Squirrel.Mac; the app is unchanged and still running; nothing is left staged',
-    s.install.reason === 'signature' && plist(INSTALLED, 'CFBundleShortVersionString') === OLD_VERSION && codesign(INSTALLED).valid && isRunning().length > 0 && !shipItJob() && !requestThere(),
-    { install: s.install, seconds: Math.round((Date.now() - adhocClick) / 100) / 10, installed: codesign(INSTALLED), shipItJob: shipItJob(), installRequest: requestThere() })
+  const adhocProxiedAfter = (logText().match(/requested by Squirrel\.Mac/g) ?? []).length
+  step('failure: a new version not signed by the Developer ID is refused by TalkWeaver\'s own check before Squirrel.Mac sees it ("could not be verified"); the app is unchanged and still running; nothing is left staged',
+    s.install.reason === 'unverified' && adhocProxiedAfter === adhocProxiedBefore && /NOT verified \(unverified\): codesign fail/.test(logText())
+      && plist(INSTALLED, 'CFBundleShortVersionString') === OLD_VERSION && codesign(INSTALLED).valid && isRunning().length > 0 && !shipItJob() && !requestThere(),
+    { install: s.install, squirrelRequests: adhocProxiedAfter - adhocProxiedBefore, seconds: Math.round((Date.now() - adhocClick) / 100) / 10, installed: codesign(INSTALLED), shipItJob: shipItJob(), installRequest: requestThere() })
 
   // 4. A genuinely signed build of the OLD version under the new version's name (its own hash in the feed).
   serve = 'old'
@@ -424,10 +430,10 @@ try {
   backToOld(afterQuitD)
 
   // (e)–(h): the restart's close (ADR-0044 §6). A window counts as closed only with its work positively saved; a
-  // slow save, a failed save, "Stay here" and the watchdog each call the restart off, withdraw and check it, and
+  // slow save, a failed save and an unresolved merge each call the restart off, withdraw and check it, and
   // leave the editor usable with the person's text. The editor's buffer is made unsaved at the moment of the close
   // by typing until the app logs that the close began (the 1.5-second autosave never fires meanwhile).
-  const closeCase = async (tag, { delayMs = 0, prepare = null, onClose = null, waitMs = 180000 }) => {
+  const closeCase = async (tag, { delayMs = 0, prepare = null, onClose = null }) => {
     if (delayMs) writeFileSync(SAVE_DELAY_FILE, String(delayMs)); else rmSync(SAVE_DELAY_FILE, { force: true })
     await launchApp()
     const pid = app.process().pid
@@ -439,15 +445,13 @@ try {
     const closeBegan = await typeUntilClose(from, tag)
     const closeAt = Date.now()
     await onClose?.(from)
-    const ended = await waitFor((x) => x.install.phase !== 'restarting', waitMs, 200)
+    const ended = await waitFor((x) => x.install.phase !== 'restarting', 180000, 200)
     const checked = await waitFor((x) => x.install.phase !== 'reopen' || x.install.pending === false, 20000, 200)
     return { pid, from, closeBegan, ended: ended.install, checked: checked.install, secondsToClose: Math.round((closeAt - clicked) / 100) / 10, secondsCloseToOff: Math.round((Date.now() - closeAt) / 100) / 10 }
   }
-  const quitAndCompare = async (tag, state, { onSheet = null } = {}) => {
+  const quitAndCompare = async (tag, state) => {
     const pid = app.process().pid
-    const closing = app.close()
-    if (onSheet) await onSheet()
-    await closing
+    await app.close()
     await waitGone([pid])
     await pause(10000)
     const after = installed()
@@ -504,39 +508,65 @@ try {
     await quitAndCompare('f', c.checked)
   })
 
-  // (g) "Stay here": the talk changes on disk while the close's save is in flight; the sheet comes up.
-  const sheet = '[data-testid="outline-disk-change-sheet"]'
-  const changeOnDisk = (tag) => writeFileSync(OUTLINE, `${outlineText()}\n- Changed elsewhere ${tag}\n`)
-  const answerSheet = async (label) => { await page.waitForSelector(sheet, { timeout: 60000 }); await page.locator(`${sheet} button`, { hasText: label }).first().click() }
+  const mergeReview = () => page.getByTestId('outline-merge-sheet')
+  const mergeButton = (name) => mergeReview().getByRole('button', { name, exact: true })
+  const closeWithConflict = async (tag) => {
+    let outside = ''
+    const closed = await closeCase(tag, { delayMs: 2500, onClose: async () => {
+      // Both edits append at the same point in the last slide so the app must ask what to keep.
+      outside = `${outlineText()}\n- Changed elsewhere ${tag}\n`
+      writeFileSync(OUTLINE, outside)
+      await mergeReview().waitFor({ state: 'visible', timeout: 30000 })
+    } })
+    const sides = await Promise.all(['Mine 1', 'On disk 1'].map(name =>
+      mergeReview().getByRole('textbox', { name, exact: true }).inputValue()))
+    const reviewShowsBoth = sides[0].includes(`mark-${tag}`) && sides[1].includes(`Changed elsewhere ${tag}`)
+    const keptDisk = outlineText() === outside && !outside.includes(`mark-${tag}`)
+    const blockedApply = await mergeButton('Apply merge').isDisabled()
+    const log = logText().slice(closed.from)
+    const unarmed = nothingArmed() && !/restarting into \S+: \d+ windows open/.test(log)
+    const held = closed.closeBegan && closed.ended.phase === 'reopen' && closed.ended.cause === 'held'
+      && closed.checked.pending === false && /a window was kept open/.test(log)
+      && /withdrawing: before, ShipIt job (present|absent|unknown)/.test(log)
+      && reviewShowsBoth && keptDisk && blockedApply && unarmed && alive(closed.pid) && installed() === OLD_VERSION
+    return { ...closed, held, reviewShowsBoth, keptDisk, blockedApply, unarmed, outside }
+  }
+  const applyMine = async () => {
+    await mergeButton('Use mine').click()
+    await mergeButton('Apply merge').click()
+    await mergeReview().waitFor({ state: 'hidden', timeout: 30000 })
+  }
+
+  // (g) Leave the conflict unresolved with Stay here, then reopen the review to finish the ordinary quit.
   await safely('g', async () => {
-    let sheetSeen = false
-    const c = await closeCase('G', { delayMs: 2500, onClose: async () => { changeOnDisk('G'); await page.waitForSelector(sheet, { timeout: 30000 }).then(() => { sheetSeen = true }, () => {}); if (sheetSeen) await answerSheet('Stay here') } })
-    const log = logText().slice(c.from)
+    const { outside, ...c } = await closeWithConflict('G')
+    await mergeButton('Stay here').click()
+    await mergeReview().waitFor({ state: 'hidden', timeout: 30000 })
     const u = await usable('mark-G')
-    step('(g) "Stay here" on the changed-on-disk sheet during the restart\'s close: the editor stays open with its text, the restart is off ("held"), withdrawn and checked',
-      c.closeBegan && sheetSeen && c.ended.phase === 'reopen' && c.ended.cause === 'held' && /a window was kept open/.test(log) && u.editorAnswers && u.editorHasTheText && alive(c.pid) && installed() === OLD_VERSION,
-      { ...c, sheetSeen, ...u })
+    const diskUnchanged = outlineText() === outside
+    step('(g) "Stay here" in merge review: the restart is held and unarmed, and the editor and disk keep their own text',
+      c.held && u.editorAnswers && u.editorHasTheText && diskUnchanged && nothingArmed() && installed() === OLD_VERSION,
+      { ...c, ...u, diskUnchanged, ...armedNow() })
     rmSync(SAVE_DELAY_FILE, { force: true })
-    await quitAndCompare('g', c.checked, { onSheet: () => answerSheet('Keep mine').catch(() => {}) })
+    await page.getByTestId('outline-disk-change-bar').getByRole('button', { name: 'Review merge', exact: true }).click()
+    await applyMine()
+    await quitAndCompare('g', c.checked)
   })
 
-  // (h) The watchdog while the sheet waits for the person; then a late answer ("Keep mine") after the restart is off.
+  // (h) Apply the merge in the same editor after the unresolved conflict has called the restart off.
   await safely('h', async () => {
-    let sheetSeen = false
-    const c = await closeCase('H', { delayMs: 2500, waitMs: 420000, onClose: async () => { changeOnDisk('H'); sheetSeen = await page.waitForSelector(sheet, { timeout: 30000 }).then(() => true, () => false) } })
-    const log = logText().slice(c.from)
+    const { outside, ...c } = await closeWithConflict('H')
     const u = await usable('mark-H')
-    step('(h) the watchdog while the close waits on the sheet: the restart is off ("held": the windows did not close in time), withdrawn and checked; the editor is still there',
-      c.closeBegan && sheetSeen && c.ended.phase === 'reopen' && c.ended.cause === 'held' && /the windows did not close in time/.test(log) && u.editorAnswers && alive(c.pid) && installed() === OLD_VERSION,
-      { ...c, sheetSeen, ...u })
+    step('(h) the unresolved merge holds the restart and keeps the editor text and outside file',
+      c.held && u.editorAnswers && u.editorHasTheText && outlineText() === outside, { ...c, ...u })
     rmSync(SAVE_DELAY_FILE, { force: true })
-    await answerSheet('Keep mine')
-    let landed = false
-    for (let i = 0; i < 80 && !landed; i++) { landed = outlineText().includes('mark-H'); if (!landed) await pause(250) }
-    await pause(3000)
+    await applyMine()
     const u2 = await usable('mark-H')
-    step('(h) a late answer after the restart was called off ("Keep mine"): the text is saved, and the window the restart had asked to close stays open and usable',
-      landed && u2.editorAnswers && u2.editorHasTheText && u2.windows.some((w) => w.visible), { savedOnDisk: landed, ...u2 })
+    const saved = outlineText()
+    const savedMine = saved.includes('mark-H') && !saved.includes('Changed elsewhere H')
+    step('(h) "Use mine" and "Apply merge" save the text in the same editor without reviving the restart',
+      savedMine && u2.editorAnswers && u2.editorHasTheText && u2.windows.some(w => w.visible)
+        && alive(c.pid) && installed() === OLD_VERSION && nothingArmed(), { savedMine, ...u2, ...armedNow() })
     await quitAndCompare('h', c.checked)
   })
 
@@ -652,6 +682,10 @@ try {
     updaterCacheAfterRestart: existsSync(updaterCache) ? readdirSync(updaterCache) : 'removed',
   }
   step('(c) Restart with nothing holding (no Cancel while restarting): the app quit, was replaced and opened again as the new version, from the same place', relaunched.length > 0 && after.version === NEW_VERSION && cancelInRestarting === 0, { ...evidence.result.seconds, cancelButtonsWhileRestarting: cancelInRestarting })
+  step('TalkWeaver checked the developer identity itself: the running process met the compiled-in requirement, the new version passed codesign (Gatekeeper asked; not required in this un-notarised test build), and Squirrel.Mac was served the verified private copy after a re-hash',
+    /this copy meets the developer-identity requirement/.test(logText()) && new RegExp(`${NEW_VERSION.replace(/\./g, '\\.')}: verified: codesign pass`).test(logText())
+      && /the verified copy still has its SHA-512: Squirrel\.Mac is served that copy/.test(logText()) && /requested by Squirrel\.Mac, pipe \S*\/verified-[^/\s]+\/update\.zip/.test(logText()),
+    { log: logText().split('\n').filter((l) => /developer-identity|verified|pipe /.test(l)).slice(-6) })
   step('the result is validly signed: Developer ID, same team, hardened runtime', after.signature.valid && /^Developer ID Application:/.test(after.signature.authority ?? '') && after.signature.team === opt.team && after.signature.runtime, after.signature)
   step('the user data is intact (marker, vault, alpha setting, the talk) and the new version recorded its launch', Object.values(evidence.result.userData).slice(0, 3).every(Boolean) && evidence.result.talk && evidence.result.userData.lastVersionRun === NEW_VERSION, evidence.result.userData)
   step('(c) the editor saved the text typed up to the restart\'s close before its window closed (on disk when the old app ended); the native install was called with zero windows open, hidden ones included',

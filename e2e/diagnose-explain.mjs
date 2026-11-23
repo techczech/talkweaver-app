@@ -1,7 +1,7 @@
 // Real-Electron harness for "Explain rendering" (ADR-0024): right-click a slide → see WHY it
 // rendered that way, read from the ACTUAL compiled <section> decisions. Proves the trace
-// reports correct layout + title placement for explicit {statement} triggers (deterministic
-// side-by-side), and that the panel opens on right-click.
+// reports the statement layout and default top title placement, and that the slide menu opens
+// its Explain panel.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openFirstTalk } from './lib/talklist.mjs'
@@ -16,7 +16,7 @@ const FIX = [
   '---', 'title: Explain Fixture', '---', '',
   '### Short statement', '{statement}', '', 'Brief.', '',
   '### Rich statement', '{statement}', '',
-  'A much longer statement with many more words so it is well beyond the sixty character sparse threshold and therefore keeps the normal side-by-side rail.', '',
+  'A longer statement with a more substantial paragraph and two supporting points gives the trace a second body shape to report.', '',
   '- one', '- two', ''
 ].join('\n')
 
@@ -45,18 +45,22 @@ try {
   const richT = await page.evaluate(({ p, c, i }) => window.tw.talk.explainSlide(p, c, i), { p: fxPath, c: FIX, i: richIdx })
 
   record('both resolve to layout=statement', shortT?.layout === 'statement' && richT?.layout === 'statement', `short=${shortT?.layout} rich=${richT?.layout}`)
-  // Explicit {statement} is DETERMINISTIC now: both short and long stay side-by-side (left rail).
-  // title-density scaling was removed (SD-7); titleLayout alone confirms placement.
-  record('explicit short {statement} stays side-by-side (left rail)', shortT?.titleLayout === 'left', `titleLayout=${shortT?.titleLayout}`)
-  record('explicit rich {statement} stays side-by-side (left rail)', richT?.titleLayout === 'left', `titleLayout=${richT?.titleLayout}`)
+  // The current statement frame places its title above the slide body for both text lengths.
+  record('explicit short {statement} places its title at the top', shortT?.titleLayout === 'top', `titleLayout=${shortT?.titleLayout}`)
+  record('explicit rich {statement} places its title at the top', richT?.titleLayout === 'top', `titleLayout=${richT?.titleLayout}`)
   record('trace reports the {statement} trigger the author wrote', Array.isArray(shortT?.triggers) && shortT.triggers.includes('{statement}'), `triggers=${JSON.stringify(shortT?.triggers)}`)
 
-  // Right-click a slide card → the Explain panel opens.
-  await page.locator('.tw-slide-card').first().click({ button: 'right' })
-  await page.waitForTimeout(400)
-  const open = await page.locator('[aria-label="Explain rendering"]').count()
+  // Open the Slides strip, right-click the authored slide and choose Explain rendering.
+  const stripTab = page.locator('[data-rc-tab="slides"] button')
+  if (await stripTab.count()) await stripTab.click()
+  await page.locator(`[data-place-region="strip"] [data-slide-index="${shortIdx}"]`).first().click({ button: 'right' })
+  await page.getByRole('listbox', { name: 'Actions here' }).locator('[data-actions-here-row="explain-rendering"]').click()
+  const panel = page.getByRole('dialog', { name: 'Explain rendering' })
+  await panel.waitFor({ state: 'visible' })
+  const open = await panel.count()
   record('right-click a slide opens the Explain panel', open > 0, `panel=${open}`)
-  const txt = open ? await page.locator('[aria-label="Explain rendering"]').first().innerText() : ''
+  await panel.getByText('Stacked — title on top, content below.', { exact: true }).waitFor({ state: 'visible', timeout: 8000 })
+  const txt = await panel.innerText()
   record('panel explains layout + placement', /Layout/i.test(txt) && /placement/i.test(txt), `hasLayout=${/Layout/i.test(txt)} hasPlacement=${/placement/i.test(txt)}`)
 } catch (e) {
   record('explain harness completed without throwing', false, String(e && e.stack ? e.stack : e))

@@ -1,3 +1,4 @@
+import { readMainSource } from './lib/read-source.mjs'
 import { macAppMenu, helpMenu } from '../src/main/app-menu.ts'
 // The research-capture verb (src/main/research-capture.ts) against a fake `scout` on PATH: the argv it
 // builds, the body on stdin, the JSON it reads, scout missing, a failing scout, and the vault
@@ -338,7 +339,7 @@ try {
     assert.match(capturedNotice('a.md', false), /not in a search index yet/)
   })
   await test('registry: the content command has a verb, the chrome command a reason', async () => {
-    const mainSource = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+    const mainSource = readMainSource()
     const fallback = mainSource.slice(mainSource.indexOf('function installFallbackMenu()'), mainSource.indexOf("\n}\n", mainSource.indexOf('function installFallbackMenu()')) + 3)
     const { stripTypeScriptTypes } = await import('node:module')
     const { runInNewContext } = await import('node:vm')

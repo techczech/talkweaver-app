@@ -7,6 +7,7 @@
 // them now, after any surface saved or removed one) and __twLivePageInteract(false) (Esc in the page
 // gave the keys back).
 // Nothing the page shows is ever read back from the web page itself.
+import './lib/appTheme'
 import './capture-embed.css'
 
 type View = { src: string | null; alt: string; mode?: 'view' | 'page'; fresh?: boolean }

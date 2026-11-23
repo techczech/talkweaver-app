@@ -34,6 +34,7 @@ import { minimalChange } from '../lib/minimalChange'
 import { hasOpenObjectBlock, objectBlocksIn } from './objectBlocks/field'
 import { typedByKey } from './keyTypedMark'
 import { currentFocusRange } from './focusScope'
+import { plainFactsOf } from './plainView/outlineLines'
 import { insertAtHeadingEnd } from './headingEndInsert'
 import { relocateBlock, relocateBlockInto, relocateBlockToEnd } from './slideOutline'
 import { reLevelHeadingLines } from '../../../shared/heading-relevel'
@@ -674,10 +675,14 @@ export function getCursorListItemContext(view: EditorView): CursorListItemContex
 
 const LIST_RE = /^(\s*)([-*+]|\d+[.)])(\s+)(.*)$/
 
+/** The authoring views start a list on Enter from a slide title. Raw Markdown keeps its own keys. */
+export const startBodyWithBullet = Facet.define<boolean, boolean>({ combine: values => values.some(Boolean) })
+
 function landAfterTriggerBlock(
   view: EditorView,
   lines: string[],
-  headingIndex: number
+  headingIndex: number,
+  marker = ''
 ): boolean {
   const target = caretLineAfterTriggerBlock(lines, headingIndex)
   if (!target) return false
@@ -688,15 +693,40 @@ function landAfterTriggerBlock(
     const at = atDocEnd
       ? view.state.doc.length
       : view.state.doc.line(target.insertBlankAt + 1).from // doc.line is 1-based
+    return openBodyLine(view, at, atDocEnd, marker)
+  }
+  const at = view.state.doc.line(target.targetLine + 1).from
+  if (objectStartsAt(view, at)) return openLineAboveObject(view, at, marker)
+  return moveToBodyLine(view, at, marker)
+}
+
+function openBodyLine(view: EditorView, at: number, atDocEnd: boolean, marker = ''): boolean {
+  const focus = currentFocusRange(view.state)
+  // The start of the next heading is outside the focused slide. Insert at
+  // the previous line's end so the new body line belongs to this slide.
+  const beforeNextHeading = !!marker && !!focus && at === focus.to + 1
+  const from = beforeNextHeading ? at - 1 : at
+  const after = atDocEnd || beforeNextHeading
+  view.dispatch({
+    changes: { from, insert: after ? '\n' + marker : marker + '\n' },
+    selection: EditorSelection.cursor(from + marker.length + Number(after)),
+    ...typedByKey()
+  })
+  return true
+}
+
+function moveToBodyLine(view: EditorView, at: number, marker = ''): boolean {
+  const focus = currentFocusRange(view.state)
+  const line = view.state.doc.lineAt(at)
+  if (marker && !line.text.trim()) {
+    if (focus && at === focus.to + 1) return openBodyLine(view, at, false, marker)
     view.dispatch({
-      changes: { from: at, insert: '\n' },
-      selection: EditorSelection.cursor(atDocEnd ? at + 1 : at),
+      changes: { from: at, to: line.to, insert: marker },
+      selection: EditorSelection.cursor(at + marker.length),
       ...typedByKey()
     })
     return true
   }
-  const at = view.state.doc.line(target.targetLine + 1).from
-  if (objectStartsAt(view, at)) return openLineAboveObject(view, at)
   view.dispatch({ selection: EditorSelection.cursor(at) })
   return true
 }
@@ -708,10 +738,10 @@ function objectStartsAt(view: EditorView, pos: number): boolean {
   return objectBlocksIn(view.state).some((block) => block.from === pos)
 }
 
-function openLineAboveObject(view: EditorView, at: number): boolean {
+function openLineAboveObject(view: EditorView, at: number, marker = ''): boolean {
   view.dispatch({
-    changes: { from: at, insert: '\n\n' },
-    selection: EditorSelection.cursor(at),
+    changes: { from: at, insert: marker + '\n\n' },
+    selection: EditorSelection.cursor(at + marker.length),
     scrollIntoView: true,
     ...typedByKey()
   })
@@ -721,30 +751,15 @@ function openLineAboveObject(view: EditorView, at: number): boolean {
 function landAfterUnstampedHeading(
   view: EditorView,
   lines: string[],
-  headingIndex: number
+  headingIndex: number,
+  marker: string
 ): boolean {
   const next = headingIndex + 1
-  if (next >= lines.length) {
-    const at = view.state.doc.length
-    view.dispatch({
-      changes: { from: at, insert: '\n' },
-      selection: EditorSelection.cursor(at + 1),
-      ...typedByKey()
-    })
-    return true
-  }
+  if (next >= lines.length) return openBodyLine(view, view.state.doc.length, true, marker)
   const at = view.state.doc.line(next + 1).from
-  if (headingLevel(lines[next]) > 0) {
-    view.dispatch({
-      changes: { from: at, insert: '\n' },
-      selection: EditorSelection.cursor(at),
-      ...typedByKey()
-    })
-    return true
-  }
-  if (objectStartsAt(view, at)) return openLineAboveObject(view, at)
-  view.dispatch({ selection: EditorSelection.cursor(at) })
-  return true
+  if (headingLevel(lines[next]) > 0) return openBodyLine(view, at, false, marker)
+  if (objectStartsAt(view, at)) return openLineAboveObject(view, at, marker)
+  return moveToBodyLine(view, at, marker)
 }
 
 /** The Plain view reads every caret before a title's first visible character as the title's start
@@ -825,6 +840,7 @@ function openLineAboveTitle(view: EditorView, line: { from: number }): boolean {
 // text of, its own rule above is the one that holds (the caret onto the body line, a blank line
 // made only when there is none), and this command runs before the Plain view's own Enter binding.
 export const headingEnterOwners = Facet.define<(view: EditorView) => boolean>()
+export const goToSectionChild = Facet.define<(line: number) => void>()
 
 export function enterFromHeading(view: EditorView, headings: { test(line: string): boolean } = PROTECTED_HEADING_RE): boolean {
   const sel = view.state.selection.main
@@ -849,8 +865,21 @@ export function enterFromHeading(view: EditorView, headings: { test(line: string
   if (fenced[line.number - 1]) return false
   // (Not while an input method is composing: its Enter confirms the composition.)
   if (!view.composing && !view.compositionStarted && caretAtTitleStart(view, line, sel.head) && openLineAboveTitle(view, line)) return true
-  return landAfterTriggerBlock(view, lines, line.number - 1)
-    || landAfterUnstampedHeading(view, lines, line.number - 1)
+  const layout = plainFactsOf(view.state.doc).compiler.slideLayouts.get(line.number - 1)
+  if (layout?.divider) {
+    const first = layout.keptChildren[0]
+    if (first != null) {
+      const navigate = view.state.facet(goToSectionChild)[0]
+      if (navigate) navigate(first + 1)
+      else if (!currentFocusRange(view.state)) {
+        view.dispatch({ selection: { anchor: view.state.doc.line(first + 1).from }, scrollIntoView: true })
+      }
+    }
+    return true // Empty sections offer Add its first slide in the Slide view.
+  }
+  const marker = view.state.facet(startBodyWithBullet) && headingLevel(line.text) >= 2 ? '- ' : ''
+  return landAfterTriggerBlock(view, lines, line.number - 1, marker)
+    || landAfterUnstampedHeading(view, lines, line.number - 1, marker)
 }
 
 function canonicalTriggerHeading(

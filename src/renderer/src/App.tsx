@@ -1,4 +1,4 @@
-import { LayoutGrid } from 'lucide-react'
+import { GalleryThumbnails, LayoutGrid, Library, ListTree } from 'lucide-react'
 import { NARROW_WINDOW_PX } from '../../shared/window-widths'
 import { flushSync } from 'react-dom'
 import ManagementLayer from './components/vault-gallery/ManagementLayer'
@@ -7,12 +7,14 @@ import { adoptMovedTalk, selectGuardedTalk, type GalleryOpenGuard } from './lib/
 import VaultGallery from './components/vault-gallery/VaultGallery'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { TalkInfo, VaultView } from '../../preload/index'
-import VaultSetup from './components/VaultSetup'
+import WelcomeTalk from './components/WelcomeTalk'
+import { WELCOME_COMMANDS, type SlidesPanelView, type StartingView, type WorkspaceView } from '../../shared/workspace-view'
+import { safeTalkSlug } from '../../shared/vault-gallery-browse'
 import TalkList, { PromptModal } from './components/talklist/TalkList'
-import WorkspaceLayout, { type OutlineOps } from './components/WorkspaceLayout'
-import NewTalkDialog, { createdTalk } from './components/NewTalkDialog'
-import SlidesOrganizer from './components/SlidesOrganizer'
+import WorkspaceLayout from './components/WorkspaceLayout'
+import NewTalkDialog, { createdTalk, newTalkSlug } from './components/NewTalkDialog'
 import Studio from './components/Studio'
+import { hasUnsavedRecordingEdits } from './components/recording/RecordingSaveNotice'
 import TalkText from './components/TalkText'
 import Importer from './components/Importer'
 import Toasts from './components/Toasts'
@@ -59,7 +61,7 @@ type SidebarMode = 'talks' | 'slides'
 type SidebarCommandId = 'sidebar.talks' | 'sidebar.outline' | 'sidebar.toggle'
 
 const SIDEBAR_STORAGE_KEY = 'tw-sidebar'
-const SIDEBAR_DEFAULT = 220
+const SIDEBAR_DEFAULT = 262
 // R17: below this window width the left sidebar collapses to its rail so the content keeps its room; the sidebar is never more than this share of the window.
 const SIDEBAR_COLLAPSE_BELOW_PX = NARROW_WINDOW_PX
 const SIDEBAR_MAX_SHARE_VW = 28
@@ -172,6 +174,7 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
   }, [])
 
   const showTalkText = useCallback((sessionId: string): void => {
+    if (hasUnsavedRecordingEdits()) return
     setTalkTextSessionId(sessionId)
     setView('talktext')
   }, [])
@@ -194,7 +197,7 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
 
   useEffect(() => {
     return window.tw.tools.onShow(({ view: requested, sessionId, run, command }) => {
-      if (!isToolsView(requested)) return
+      if (!isToolsView(requested) || hasUnsavedRecordingEdits()) return
       const nextView = canonicalToolsView(requested)
       if (nextView === 'runs') {
         showRuns(run ?? null)
@@ -222,9 +225,12 @@ function ToolsShell({ initialView }: { initialView: ToolsView }): JSX.Element {
   // The Tools commands the window itself carries out (work-files ticket 30): the views and Plan a Run. The old
   // History and Sessions commands (`tools-view-sessions`) are aliases of the Runs one. The Run page's, Published
   // pages' and Work files' own commands are offered by those views.
-  const planRun = (): void => { setView('runs'); setPlanPending(true) }
+  const planRun = (): void => {
+    if (hasUnsavedRecordingEdits()) return
+    setView('runs'); setPlanPending(true)
+  }
   const showRail = (next: CanonicalToolsView): void => {
-    if (next === shown) return
+    if (next === shown || hasUnsavedRecordingEdits()) return
     if (next === 'studio') showStudio()
     else { setSessionsRun(null); setView(next) }
   }
@@ -302,6 +308,7 @@ function MainApp() {
   // (null = the first open vault).
   const [newTalkTopic, setNewTalkTopic] = useState<string | null>(null)
   const [newTalkVaultId, setNewTalkVaultId] = useState<string | null>(null)
+  const [newTalkStartView, setNewTalkStartView] = useState<StartingView | null>(null)
   const [newFolderOpen, setNewFolderOpen] = useState(false)
   // Add vault / Edit this vault / join / refusal sheet (several-vaults ticket 04).
   const [vaultSheet, setVaultSheet] = useState<VaultSheetState | null>(null)
@@ -437,15 +444,30 @@ function MainApp() {
   // collapsed. Talks is the orientation point when reopening; the persisted value is deliberately
   // ignored at startup (both stay switchable within the session, and the effects below still record
   // the live state for anything else that reads it).
+  const [welcomeStart, setWelcomeStart] = useState<{ path: string; view: WorkspaceView } | null>(null)
+  const [previewsHost, setPreviewsHost] = useState<HTMLDivElement | null>(null)
+  const [slidesPanelView, setSlidesPanelView] = useState<SlidesPanelView>('previews')
+  const [openInView, setOpenInView] = useState<WorkspaceView>('slide')
+  useEffect(() => {
+    let mounted = true
+    const change = (prefs: { openIn: WorkspaceView; slidesPanel: SlidesPanelView }) => {
+      if (mounted) { setOpenInView(prefs.openIn); setSlidesPanelView(prefs.slidesPanel) }
+    }
+    void window.tw.settings.getWorkspaceViews?.().then(change).catch(() => {})
+    const unsubscribe = window.tw.settings.onWorkspaceViewsChanged?.(change)
+    return () => { mounted = false; unsubscribe?.() }
+  }, [])
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>('talks')
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
-  // R17: a narrow window gives the content its room by collapsing this sidebar to its rail.
+  const sidebarModeRef = useRef(sidebarMode)
+  sidebarModeRef.current = sidebarMode
+  // A narrow window collapses the talks list. The slides panel has its own compact layout.
   useEffect(() => {
     // Collapse once, on crossing into the narrow range; inside it the person's last choice stands (a height-only resize changes nothing).
     let wasNarrow = false
     const collapseWhenNarrow = (): void => {
       const narrow = window.innerWidth < SIDEBAR_COLLAPSE_BELOW_PX
-      if (narrow && !wasNarrow) setSidebarCollapsed(true)
+      if (narrow && !wasNarrow && sidebarModeRef.current === 'talks') setSidebarCollapsed(true)
       wasNarrow = narrow
     }
     collapseWhenNarrow()
@@ -454,30 +476,7 @@ function MainApp() {
   }, [])
   const sidebarShowsTalksRef = useRef(true)
   sidebarShowsTalksRef.current = sidebarMode === 'talks' && !sidebarCollapsed
-  // The current talk's outline, mirrored up from WorkspaceLayout so the Slide-outline
-  // sidebar view renders the live structure; jumpRef jumps the editor + strip to a line.
-  const [outlineContent, setOutlineContent] = useState('')
-  // The source line of the slide the editor cursor is in, mirrored up from WorkspaceLayout so the
-  // Slide-outline sidebar can follow the cursor (highlight + scroll the current slide into view).
-  const [activeOutlineLine, setActiveOutlineLine] = useState<number | null>(null)
   const [researchJump, setResearchJump] = useState<{ file: string; line: number; nonce: number } | null>(null)
-  const jumpRef = useRef<((line: number, opts?: { takeFocus?: boolean }) => void) | null>(null)
-  const [outlineOps, setOutlineOps] = useState<OutlineOps | null>(null)
-  // STABLE registration sink + identity bail. outlineOps is the one register* channel that
-  // lives in STATE (the Slides sidebar re-renders from it) — an inline `(ops) => setOutlineOps(ops)`
-  // gets a new identity on every MainApp render, which re-fires the editor's registration effect,
-  // which setStates a fresh ops object, which re-renders MainApp: a silent microtask-speed render
-  // loop that pinned the renderer at 100% CPU whenever a talk was open (the beachball). The
-  // useCallback([]) breaks the identity link; the same-functions bail stops re-registrations of
-  // identical commands from scheduling renders at all.
-  const registerOutlineOps = useCallback((ops: OutlineOps) => {
-    setOutlineOps((prev) =>
-      prev && prev.move === ops.move && prev.reLevel === ops.reLevel && prev.moveTo === ops.moveTo &&
-        prev.moveToEnd === ops.moveToEnd && prev.moveInto === ops.moveInto && prev.slides === ops.slides
-        ? prev
-        : ops
-    )
-  }, [])
   const sidebarKeysRef = useRef<Record<SidebarCommandId, string>>({
     'sidebar.talks': effectiveKeys('sidebar.talks'),
     'sidebar.outline': effectiveKeys('sidebar.outline'),
@@ -705,7 +704,12 @@ function MainApp() {
       void window.tw.tools.open('runs')
     }
     const openImporter = (): void => { void window.tw.tools.open('importer') }
-    const newTalk = (): void => { setNewTalkVaultId(null); setNewTalkTopic('') }
+    const newTalk = (event: Event): void => {
+      const startingView = (event as CustomEvent<StartingView | undefined>).detail
+      setNewTalkStartView(startingView ?? null)
+      setNewTalkVaultId(null)
+      setNewTalkTopic('')
+    }
     const newFolder = (): void => setNewFolderOpen(true)
     const refresh = (): void => { void refreshTalks() }
     // "Add vault…" (palette command id change-vault): the Add vault flow, never a replacement of the
@@ -862,10 +866,6 @@ function MainApp() {
     try { await run } finally { loadingRef.current = null }
   }
 
-  async function handleVaultChosen(_root: string) {
-    await loadVaults({ force: true })
-  }
-
   async function refreshTalks() {
     await loadVaults({ force: true })
   }
@@ -986,10 +986,55 @@ function MainApp() {
     )
   }
 
+  async function startFromWelcome(title: string, view: StartingView, vault?: VaultView): Promise<string | null> {
+    const slug = safeTalkSlug(newTalkSlug(title))
+    if (!title || !slug) return 'Give the talk a name with at least one letter or number.'
+    commandRan(WELCOME_COMMANDS[view])
+    if (!vault && !await window.tw.vault.useDefaultRoot()) return 'The TalkWeaver folder could not be opened. Choose a folder and try again.'
+    const talk = await window.tw.vault.createTalk({ title, slug, vaultId: vault?.id })
+    if (!talk) return 'A folder with that name already exists, or this location is unavailable. Change the name or folder and try again.'
+    if (!vault) await loadVaults({ force: true })
+    setWelcomeStart({ path: talk.outlinePath, view })
+    if (!await selectTalk(talk)) return 'The talk was created. Open it from your talks list.'
+    setSidebarMode('slides')
+    setSidebarCollapsed(false)
+    void refreshTalks()
+    return null
+  }
+
+  function welcomeContent(vault?: VaultView) {
+    const choose = () => {
+      if (state.phase === 'setup') void window.tw.vault.chooseRoot().then(root => { if (root) void loadVaults({ force: true }) })
+      else void addVault()
+    }
+    const folder = vault?.root
+    const savedIn = !folder || /(?:^|[/\\])Documents[/\\]TalkWeaver[/\\]?$/.test(folder) ? 'Documents/TalkWeaver' : folder
+    return <WelcomeTalk folder={savedIn}
+      onStart={(title, view) => startFromWelcome(title, view, vault)}
+      onChangeFolder={() => { commandRan('change-vault'); choose() }}
+      onExamples={() => {
+        commandRan('get-started-show-example')
+        void openExampleVault().then(message => { if (message) notify(message, 'info') })
+      }}
+      onOpenTalks={() => {
+        commandRan('search-talks')
+        if (state.phase === 'setup') choose()
+        else window.dispatchEvent(new Event('tw-search-talks'))
+      }}
+      onImport={() => { commandRan('importer'); window.dispatchEvent(new Event('tw-open-importer')) }} />
+  }
+
+  function chooseSlidesPanelView(mode: SlidesPanelView): void {
+    setSlidesPanelView(mode)
+    void window.tw.settings.setSlidesPanel?.(mode).catch(() => notify('The slides panel choice could not be saved.', 'warning'))
+    setSidebarMode('slides')
+    setSidebarCollapsed(false)
+  }
+
   exampleListedRef.current = state.phase === 'ready' && state.vaults.some((v) => v.example === true)
 
   if (state.phase === 'setup') {
-    return <VaultSetup onVaultChosen={handleVaultChosen} onOpenExample={openExampleVault} />
+    return <div className="tw-welcome-window"><div className="tw-welcome-titlebar" />{welcomeContent()}</div>
   }
 
   // The vault a talk is in decides which root the editor and panels work against; with no talk open, the
@@ -1057,16 +1102,9 @@ function MainApp() {
   const guideButton = guideButtonOn ? { open: guideOpen, onToggle: () => { if (guideOpen) setGuideOpen(false); else openGuide() } } : null
 
   const modes: Array<{ id: SidebarMode; label: string }> = [
-    { id: 'talks', label: 'Talks' },
-    { id: 'slides', label: 'Slide outline' }
+    { id: 'slides', label: 'Slides' },
+    { id: 'talks', label: 'Talks' }
   ]
-
-  // Mirror the live outline (and cursor line) up from WorkspaceLayout ONLY while the
-  // Slide-outline sidebar is visible — it is the sole consumer. Passing the setters
-  // unconditionally re-rendered App + TalkList on EVERY keystroke for a hidden pane.
-  // On switching to the Slides tab, WorkspaceLayout's mirror effect re-fires (the
-  // callback identity is in its deps) and pushes the current content immediately.
-  const slidesOutlineVisible = !sidebarCollapsed && sidebarMode === 'slides'
 
   return (
     <div className="app-shell">
@@ -1093,6 +1131,7 @@ function MainApp() {
         <div
           className="sidebar-wrap"
           data-sidebar
+          data-slides-mode={sidebarMode === 'slides' ? slidesPanelView : undefined}
           style={{ width: `min(${sidebarWidth}px, ${SIDEBAR_MAX_SHARE_VW}vw)`, ['--sidebar-width' as string]: `min(${sidebarWidth}px, ${SIDEBAR_MAX_SHARE_VW}vw)` }}
         >
           <div className="sidebar-modebar">
@@ -1105,10 +1144,19 @@ function MainApp() {
                   className={`sidebar-mode-btn ${sidebarMode === m.id ? 'sidebar-mode-btn--active' : ''}`}
                   onClick={() => setSidebarMode(m.id)}
                 >
-                  {m.label}
+                  {m.id === 'slides' ? <GalleryThumbnails size={15} /> : <Library size={15} />}
+                  <span>{m.label}</span>
                 </button>
               ))}
             </div>
+            {activeTalk && sidebarMode === 'slides' && (
+              <div className="tw-slides-switch" role="group" aria-label="Show slides as">
+                <button type="button" aria-pressed={slidesPanelView === 'previews'} aria-label="Show slides as previews" title="Show slides as previews"
+                  onClick={() => window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail: 'view-panel-previews' }))}><GalleryThumbnails size={15} /></button>
+                <button type="button" aria-pressed={slidesPanelView === 'outline'} aria-label="Show slides as an outline" title="Show slides as an outline"
+                  onClick={() => window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail: 'view-panel-outline' }))}><ListTree size={15} /></button>
+              </div>
+            )}
             <button className="icon-btn vault-gallery-entry" onClick={() => setGalleryOpen(true)} title="Vault Gallery" aria-label="Vault Gallery"><LayoutGrid size={15} aria-hidden /></button>
             <button
               className="icon-btn"
@@ -1147,11 +1195,7 @@ function MainApp() {
               guideButton={guideButton}
             />
           )}
-          {sidebarMode === 'slides' && (
-            <div className="sidebar-nav-body">
-              <SlidesOrganizer content={outlineContent} onJump={(line, opts) => jumpRef.current?.(line, opts)} ops={outlineOps} currentLine={activeOutlineLine} talkKey={activeTalk?.outlinePath ?? null} talkTitle={activeTalk?.title ?? null} />
-            </div>
-          )}
+          {sidebarMode === 'slides' && <div className="sidebar-nav-body" ref={setPreviewsHost} />}
 
           <div
             className="sidebar-resizer"
@@ -1163,7 +1207,7 @@ function MainApp() {
         </div>
       )}
       {newTalkTopic !== null && newTalkVault && (
-        <ManagementLayer onDismiss={()=>setNewTalkTopic(null)}>
+        <ManagementLayer onDismiss={() => { setNewTalkTopic(null); setNewTalkStartView(null) }}>
         <NewTalkDialog
           vaultRoot={newTalkVault.root}
           vaultId={newTalkVault.id}
@@ -1171,10 +1215,12 @@ function MainApp() {
           defaultTopic={newTalkTopic}
           onCreated={async (talk) => {
             setNewTalkTopic(null)
+            setNewTalkStartView(null)
+            if (newTalkStartView) setWelcomeStart({ path: talk.outlinePath, view: newTalkStartView })
             await refreshTalks()
-            if (await selectTalk(createdTalk(talk, newTalkVault.id))) setGalleryOpen(false)
+            if (await selectTalk(createdTalk(talk, newTalkVault.id))) { setGalleryOpen(false); setSidebarMode('slides') }
           }}
-          onClose={() => setNewTalkTopic(null)}
+          onClose={() => { setNewTalkTopic(null); setNewTalkStartView(null) }}
         />
         </ManagementLayer>
       )}
@@ -1217,12 +1263,15 @@ function MainApp() {
           void selectTalk(target).then(selected => { if (selected) setResearchJump({ file: use.file, line: use.slideLine, nonce: Date.now() }) })
         }}
         activeTalk={activeTalk}
+        startView={welcomeStart?.path === activeTalk?.outlinePath ? welcomeStart?.view : undefined}
+        defaultView={openInView}
+        welcome={welcomeContent(firstUsableVault ?? undefined)}
+        leftPreviewsHost={sidebarMode === 'slides' && !sidebarCollapsed ? previewsHost : null}
+        slidesPanelView={slidesPanelView}
+        onChooseSlidesPanelView={chooseSlidesPanelView}
         vaultRoot={activeVault.root}
-        onOutlineChange={slidesOutlineVisible ? setOutlineContent : undefined}
         leftSidebarShown={!sidebarCollapsed}
         onNeedRoom={() => setSidebarCollapsed(true)}
-        registerJump={(fn) => { jumpRef.current = fn }}
-        registerOutlineOps={registerOutlineOps}
         onOpenSettings={() => openSettingsWindow()}
         onSelectTalk={selectTalk}
         onEditorEngaged={onEditorEngaged}
@@ -1230,7 +1279,6 @@ function MainApp() {
         onMetadataSaved={() => { void refreshTalks() }} // sidebar title/subtitle/event may have changed
         registerLeaveGuard={(fn) => { leaveGuardRef.current = fn }}
         onDiscardTalk={() => { void selectTalk(null) }}
-        onActiveLineChange={slidesOutlineVisible ? setActiveOutlineLine : undefined}
         guide={{ open: guideOpen, nonce: guideNonce, body: guideBody, onClose: () => setGuideOpen(false) }}
       />
       {removeConfirm && (

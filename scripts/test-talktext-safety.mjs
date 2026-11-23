@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -21,7 +22,7 @@ import {
   writeNotesStore
 } from '../src/main/rewritePack.ts'
 
-const root = mkdtempSync(join(tmpdir(), 'talkweaver-talktext-safety-'))
+const root = testScratchDir(join(tmpdir(), 'talkweaver-talktext-safety-'))
 
 let pathSafety = null
 let rendererSafety = null

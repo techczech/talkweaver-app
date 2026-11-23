@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -51,7 +52,7 @@ import { heldKeysCases, heldKeysDouble } from './lib/held-keys-cases.mjs'
 // Owner tokens live in the secrets store (an in-memory one here), never in a registry file.
 const testOwnerTokens = memoryOwnerTokens()
 
-const root = mkdtempSync(join(tmpdir(), 'talkweaver-runs-'))
+const root = testScratchDir(join(tmpdir(), 'talkweaver-runs-'))
 const baseInput = {
   talkSlug: 'age-of-the-claw',
   talkTitle: 'The Age of the Claw',
@@ -201,7 +202,7 @@ assert.equal(JSON.parse(readFileSync(join(root, '_PRESENTATIONS', baseInput.talk
 // A non-directory entry in _PRESENTATIONS (e.g. a Finder .DS_Store) must NOT make listRuns throw —
 // otherwise the whole History window silently blanks even though the recordings are right there.
 import { writeFileSync as _writeFileSync, mkdirSync as _mkdirSync, existsSync, readdirSync, symlinkSync } from 'node:fs'
-const dsRoot = mkdtempSync(join(tmpdir(), 'talkweaver-dsstore-'))
+const dsRoot = testScratchDir(join(tmpdir(), 'talkweaver-dsstore-'))
 _mkdirSync(join(dsRoot, '_PRESENTATIONS'), { recursive: true })
 _writeFileSync(join(dsRoot, '_PRESENTATIONS', '.DS_Store'), 'not a directory', 'utf8')
 _writeFileSync(join(dsRoot, '_PRESENTATIONS', 'stray-file.txt'), 'also not a directory', 'utf8')
@@ -213,7 +214,7 @@ assert.equal(survived[0].id, 'survivor')
 // Live-presenting ticket 07: instant slides shown in a session are stamped on the Run, once each,
 // with the slide they followed; "Add to talk" is recorded on the entry and survives later flushes.
 {
-  const instantRoot = mkdtempSync(join(tmpdir(), 'talkweaver-instant-'))
+  const instantRoot = testScratchDir(join(tmpdir(), 'talkweaver-instant-'))
   const WEBP_PIXEL = 'data:image/webp;base64,UklGRiQAAABXRUJQVlA4IBgAAAAwAQCdASoBAAEAAwA0JaQAA3AA/vuUAAA='
   const bare = persistRun(instantRoot, normaliseRun({ id: 'run-live', talkSlug: 'live-talk', startedAt: '2026-09-23T13:05:00.000Z' }))
   assert.equal('instantSlides' in bare, false, 'a Run without instant slides carries no instantSlides key')
@@ -244,7 +245,7 @@ assert.equal(survived[0].id, 'survivor')
     assert.equal('link' in shown[1], false, 'a text slide without a link carries no link key')
     const kept = applyRunInstantSlides(bare, withLink)
     assert.deepEqual(kept.instantSlides.map((e) => e.link), [link, link])
-    const dir = mkdtempSync(join(tmpdir(), 'talkweaver-instant-link-'))
+    const dir = testScratchDir(join(tmpdir(), 'talkweaver-instant-link-'))
     persistRun(dir, kept)
     assert.deepEqual(readRun(dir, 'live-talk', 'run-live').instantSlides, kept.instantSlides, 'the link survives a write and re-read')
     assert.equal(runInstantSlideFrom({ kind: 'text', text: 'T', link: 'https://x.com/<!--', shownAt: 8000 }, null).link, 'https://x.com/%3C!--', 'a Run stores the canonical href')
@@ -301,7 +302,7 @@ assert.equal(survived[0].id, 'survivor')
 // withdrawn: true) and questions ({text, name?, slideId, tMs, answered}) as optional fields. Old Runs
 // read and re-persist byte for byte; malformed entries are dropped and the rest of the Run is kept.
 {
-  const vault = mkdtempSync(join(tmpdir(), 'talkweaver-feedback-'))
+  const vault = testScratchDir(join(tmpdir(), 'talkweaver-feedback-'))
   const old = { id: 'run-old', talkSlug: 'feedback-talk', talkTitle: 'Feedback talk', kind: 'delivery', status: 'delivered',
     slideSet: { kind: 'full' }, startedAt: '2026-09-23T13:05:00.000Z', endedAt: '2026-09-23T14:00:00.000Z',
     recordingMs: 0, wallClockMs: 0, timerTargetMin: 30, context: null, pathwayId: null, audio: null, transcript: null,
@@ -434,7 +435,7 @@ assert.equal(survived[0].id, 'survivor')
 // Ticket 07 path boundary: a Run is read only from its talk's folder, only when it names that talk,
 // and written back only to that same path. Hostile ids and slugs are refused and write nothing.
 {
-  const vault = mkdtempSync(join(tmpdir(), 'talkweaver-run-boundary-'))
+  const vault = testScratchDir(join(tmpdir(), 'talkweaver-run-boundary-'))
   persistRun(vault, normaliseRun({ id: 'run-a', talkSlug: 'talk-a', startedAt: '2026-09-23T13:05:00.000Z' }))
   persistRun(vault, normaliseRun({ id: 'run-b', talkSlug: 'other-talk', startedAt: '2026-09-23T13:05:00.000Z' }))
   // A Run file in talk-a's folder whose own id/talkSlug point elsewhere.
@@ -457,7 +458,7 @@ assert.equal(survived[0].id, 'survivor')
   assert.equal(existsSync(join(vault, '..', 'outside')), false)
   assert.equal(existsSync(join(vault, 'escape')), false)
   // A talk folder that is a symlink out of the vault is refused.
-  const outside = mkdtempSync(join(tmpdir(), 'talkweaver-run-outside-'))
+  const outside = testScratchDir(join(tmpdir(), 'talkweaver-run-outside-'))
   symlinkSync(outside, join(vault, '_PRESENTATIONS', 'linked-talk'))
   assert.equal(runPathForTalk(vault, 'linked-talk', 'run-x'), null)
   assert.throws(() => persistRunForTalk(vault, 'linked-talk', 'run-x', normaliseRun({ id: 'run-x', talkSlug: 'linked-talk' })), /run-path-unsafe/)
@@ -469,7 +470,7 @@ assert.equal(survived[0].id, 'survivor')
   assert.equal(readRunForTalk(vault, 'new-talk', 'run-n')?.id, 'run-n')
 
   // Round 2 (re-review of 743fef9): a Run file linked to matching JSON outside the vault is refused.
-  const elsewhere = mkdtempSync(join(tmpdir(), 'talkweaver-run-elsewhere-'))
+  const elsewhere = testScratchDir(join(tmpdir(), 'talkweaver-run-elsewhere-'))
   _writeFileSync(join(elsewhere, 'run-l.json'), JSON.stringify({ id: 'run-l', talkSlug: 'talk-a', startedAt: '2026-09-23T13:05:00.000Z' }))
   symlinkSync(join(elsewhere, 'run-l.json'), join(vault, '_PRESENTATIONS', 'talk-a', 'run-l.json'))
   assert.equal(readRunForTalk(vault, 'talk-a', 'run-l'), null, 'a Run file symlinked out of the vault is not read')
@@ -485,21 +486,21 @@ assert.equal(survived[0].id, 'survivor')
 // Round 2: `_PRESENTATIONS` itself symlinked out of the vault, with the talk folder absent — the
 // writer must create nothing outside (the old check skipped a folder whose realpath failed).
 {
-  const vault = mkdtempSync(join(tmpdir(), 'talkweaver-run-linked-root-'))
-  const outside = mkdtempSync(join(tmpdir(), 'talkweaver-run-linked-root-outside-'))
+  const vault = testScratchDir(join(tmpdir(), 'talkweaver-run-linked-root-'))
+  const outside = testScratchDir(join(tmpdir(), 'talkweaver-run-linked-root-outside-'))
   symlinkSync(outside, join(vault, '_PRESENTATIONS'))
   assert.equal(runPathForTalk(vault, 'new-talk', 'run-a'), null)
   assert.throws(() => persistRunForTalk(vault, 'new-talk', 'run-a', normaliseRun({ id: 'run-a', talkSlug: 'new-talk' })), /run-path-unsafe/)
   assert.deepEqual(readdirSync(outside), [], 'nothing created outside the vault')
   assert.equal(readRunForTalk(vault, 'new-talk', 'run-a'), null)
   // A dangling `_PRESENTATIONS` link is refused too.
-  const dangling = mkdtempSync(join(tmpdir(), 'talkweaver-run-dangling-'))
+  const dangling = testScratchDir(join(tmpdir(), 'talkweaver-run-dangling-'))
   symlinkSync(join(outside, 'not-there'), join(dangling, '_PRESENTATIONS'))
   assert.throws(() => persistRunForTalk(dangling, 'new-talk', 'run-a', normaliseRun({ id: 'run-a', talkSlug: 'new-talk' })), /run-path-unsafe/)
   assert.equal(existsSync(join(outside, 'not-there')), false)
   // A vault reached through a symlink (e.g. a synced folder) still works: containment is judged on real paths.
-  const realVault = mkdtempSync(join(tmpdir(), 'talkweaver-run-real-vault-'))
-  const linkedVault = join(mkdtempSync(join(tmpdir(), 'talkweaver-run-vault-link-')), 'vault')
+  const realVault = testScratchDir(join(tmpdir(), 'talkweaver-run-real-vault-'))
+  const linkedVault = join(testScratchDir(join(tmpdir(), 'talkweaver-run-vault-link-')), 'vault')
   symlinkSync(realVault, linkedVault)
   persistRunForTalk(linkedVault, 'talk-z', 'run-z', normaliseRun({ id: 'run-z', talkSlug: 'talk-z' }))
   assert.equal(readRunForTalk(linkedVault, 'talk-z', 'run-z')?.id, 'run-z')
@@ -509,7 +510,7 @@ assert.equal(survived[0].id, 'survivor')
 // ADR-0032 point 5 / boards ticket 07: a planned Run carries a start time, an optional head count and
 // an optional pre-work window; old Runs re-persist byte for byte.
 {
-  const planRoot = mkdtempSync(join(tmpdir(), 'talkweaver-plan-'))
+  const planRoot = testScratchDir(join(tmpdir(), 'talkweaver-plan-'))
   const legacy = { id: 'old', talkSlug: 'plan-talk', talkTitle: 'Plan talk', kind: 'delivery', status: 'planned', plannedDate: '2026-10-06', eventTitle: 'Old plan', audience: 'X', slideSet: { kind: 'full' } }
   const legacyRun = normaliseRun(legacy)
   for (const key of ['startTime', 'expectedPeople', 'preworkOpens', 'preworkCloses']) assert.equal(key in legacyRun, false, `a Run without ${key} carries no ${key} key`)
@@ -576,7 +577,7 @@ assert.equal(survived[0].id, 'survivor')
 
 // The planned-Run writers take renderer-supplied names: none may reach a path outside _PRESENTATIONS.
 {
-  const boundary = mkdtempSync(join(tmpdir(), 'talkweaver-plan-boundary-'))
+  const boundary = testScratchDir(join(tmpdir(), 'talkweaver-plan-boundary-'))
   const vaultB = join(boundary, 'vault')
   _mkdirSync(join(vaultB, '_PRESENTATIONS', 'real-talk'), { recursive: true })
   const outsideDir = join(boundary, 'outside')
@@ -605,7 +606,7 @@ assert.equal(survived[0].id, 'survivor')
 // Feedback-boards ticket 06: the board on the Run — merged by id, validated on read, old Runs
 // byte-stable; hidden cards kept on the Run and never in Markdown or on the share link.
 {
-  const boardsRoot = mkdtempSync(join(tmpdir(), 'talkweaver-run-boards-'))
+  const boardsRoot = testScratchDir(join(tmpdir(), 'talkweaver-run-boards-'))
   const ended = Date.UTC(2026, 8, 28, 14, 2)
   const board = (cards, extra = {}) => ({
     id: 'poll-board', slideId: 'slide-44', question: 'What should we keep, change, try?',
@@ -768,7 +769,7 @@ assert.equal(survived[0].id, 'survivor')
 // Boards fix round, item 2: a share link that could not be pushed after the Run changed is reported,
 // never swallowed; Put back returns it as a warning.
 {
-  const shareRoot = mkdtempSync(join(tmpdir(), 'talkweaver-share-fail-'))
+  const shareRoot = testScratchDir(join(tmpdir(), 'talkweaver-share-fail-'))
   let fail = false
   const fakeFetch = async (url, init = {}) => {
     if (String(url).endsWith('/results') && init.method === 'POST') return new Response(JSON.stringify({ shareId: 'abcd2345', ownerToken: 'owner-token-0123456789' }), { status: 201 })
@@ -805,7 +806,7 @@ assert.equal(survived[0].id, 'survivor')
 // Going live from several Macs: a Run's results link is made with whichever key held for the live
 // service it accepts, as Go live does.
 {
-  const heldRoot = mkdtempSync(join(tmpdir(), 'talkweaver-share-held-'))
+  const heldRoot = testScratchDir(join(tmpdir(), 'talkweaver-share-held-'))
   const posts = []
   const inner = async (url, init = {}) => {
     if (String(url).endsWith('/results') && init.method === 'POST') { posts.push(init.body); return new Response(JSON.stringify({ shareId: `sh00000${posts.length}`, ownerToken: `owner-token-0123456789-${posts.length}` }), { status: 201 }) }
@@ -886,7 +887,7 @@ assert.equal(survived[0].id, 'survivor')
   assert.equal(normaliseRun({ ...planned, prework: { entries: 'no' } }).prework, undefined, 'unreadable pre-work is dropped, the Run is kept')
 
   // Written and read back through the atomic writer; kept when the delivery is attached to the plan.
-  const root = mkdtempSync(join(tmpdir(), 'talkweaver-run-prework-'))
+  const root = testScratchDir(join(tmpdir(), 'talkweaver-run-prework-'))
   _mkdirSync(join(root, '_PRESENTATIONS', 'pw-talk'), { recursive: true })
   persistRunForTalk(root, 'pw-talk', 'run-pw', second)
   assert.deepEqual(readRunForTalk(root, 'pw-talk', 'run-pw').prework, second.prework, 'the pre-work survives a write and a read')
@@ -929,7 +930,7 @@ assert.equal(survived[0].id, 'survivor')
   assert.deepEqual(preworkWindowMs(zoned, 'America/New_York'), { opensAt: Date.UTC(2026, 9, 1, 13), closesAt: Date.UTC(2026, 9, 6, 14) })
   assert.deepEqual(preworkWindowMs(zoned), { opensAt: new Date(2026, 9, 1, 9).getTime(), closesAt: new Date(2026, 9, 6, 10).getTime() }, 'no zone: the machine\'s own')
   assert.equal(preworkWindowMs({ opens: '2026-10-25T01:30', closes: '2026-10-25T03:00' }, 'Europe/London').opensAt, Date.UTC(2026, 9, 25, 0, 30), 'a repeated hour reads as the first')
-  const zRoot = mkdtempSync(join(tmpdir(), 'talkweaver-run-zone-'))
+  const zRoot = testScratchDir(join(tmpdir(), 'talkweaver-run-zone-'))
   const zoneRun = createPlannedRun(zRoot, { talkSlug: 'z-talk', talkTitle: 'Z', plannedDate: '2026-10-06', eventTitle: 'E', audience: '', slideSet: { kind: 'full' },
     startTime: '10:00', preworkOpens: '2026-10-01T09:00', timeZone: 'America/New_York' }, () => 'run-z')
   assert.equal(zoneRun.timeZone, 'America/New_York', 'the zone sent with the times is kept')
@@ -950,7 +951,7 @@ assert.equal(survived[0].id, 'survivor')
 // The pre-work service against a fake Worker: publish creates once and pushes the form; pull pages
 // the entries onto the Run through the atomic writer and moves the cursor only after; close stops it.
 {
-  const root = mkdtempSync(join(tmpdir(), 'talkweaver-prework-service-'))
+  const root = testScratchDir(join(tmpdir(), 'talkweaver-prework-service-'))
   const vault = join(root, 'vault')
   _mkdirSync(join(vault, '_PRESENTATIONS', 'pw-talk'), { recursive: true })
   const run = normaliseRun({ id: 'run-pw', talkSlug: 'pw-talk', talkTitle: 'T', kind: 'delivery', status: 'planned', plannedDate: '2026-10-06',
@@ -1034,7 +1035,7 @@ assert.equal(survived[0].id, 'survivor')
 
 // Time zone kept on edit (fix round 2): a Run planned for Prague, edited from a London machine.
 {
-  const zRoot = mkdtempSync(join(tmpdir(), 'talkweaver-run-zone-edit-'))
+  const zRoot = testScratchDir(join(tmpdir(), 'talkweaver-run-zone-edit-'))
   const prague = createPlannedRun(zRoot, { talkSlug: 'z-talk', talkTitle: 'Z', plannedDate: '2026-10-06', eventTitle: 'E', audience: '', slideSet: { kind: 'full' },
     startTime: '10:00', preworkOpens: '2026-10-01T09:00', timeZone: 'Europe/Prague' }, () => 'run-prague')
   const before = preworkWindowMs(preworkWindow(prague), prague.timeZone)
@@ -1121,7 +1122,7 @@ assert.equal(survived[0].id, 'survivor')
   // The budget is what the ink takes in the written file (indented), not its compact form.
   const compact = capped.reduce((sum, m) => sum + new TextEncoder().encode(JSON.stringify(m)).length, 0)
   assert.ok(compact < INK_READBACK_BYTES / 3, `compact ${compact} is a fraction of the file form ${bytes}`)
-  const fileVault = mkdtempSync(join(tmpdir(), 'talkweaver-run-ink-file-'))
+  const fileVault = testScratchDir(join(tmpdir(), 'talkweaver-run-ink-file-'))
   const plain = { id: 'sess-20261009-110000-a', talkSlug: 'ink-file', startedAt: '2026-10-09T11:00:00.000Z', slideTimeIndex: [{ event: 'enter', slideId: 's1', tMs: 0 }] }
   persistRunForTalk(fileVault, 'ink-file', plain.id, normaliseRun(plain))
   const plainSize = readFileSync(runPathForTalk(fileVault, 'ink-file', plain.id)).length
@@ -1156,7 +1157,7 @@ assert.equal(survived[0].id, 'survivor')
 
 // Work-file attachments (work-files ticket 03): pre and post per Run, windows checked, 0.39 Runs migrated.
 {
-  const root = mkdtempSync(join(tmpdir(), 'talkweaver-work-'))
+  const root = testScratchDir(join(tmpdir(), 'talkweaver-work-'))
   const base = { timeZone: 'Europe/London', talkSlug: 'work-talk', talkTitle: 'Work talk', plannedDate: '2026-10-06', startTime: '10:00', eventTitle: 'Briefing', audience: '', slideSet: { kind: 'full' } }
   const pre = { fileId: 'intake', opens: '2026-09-22T09:00', closes: '2026-10-05T18:00', timeZone: 'Europe/London' }
   const post = { fileId: 'after', closes: '2026-10-20T18:00', timeZone: 'Europe/London' }
@@ -1454,7 +1455,7 @@ assert.equal(survived[0].id, 'survivor')
 
   // Kept on the Run through the checked writer; other fields untouched; null takes them away and the file
   // is byte for byte what it was. An unsafe name or a Run that is not there writes nothing.
-  const vault = mkdtempSync(join(tmpdir(), 'tw-run-extras-'))
+  const vault = testScratchDir(join(tmpdir(), 'tw-run-extras-'))
   persistRunForTalk(vault, 'ex-talk', 'ex', normaliseRun({ ...base, expectedPeople: 24 }))
   const file = runPathForTalk(vault, 'ex-talk', 'ex')
   const before = readFileSync(file, 'utf8')

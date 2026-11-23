@@ -48,7 +48,8 @@ for name, sentences in cases.items():
     out[name] = mod.words_from_result(NS(sentences=built))
 print(json.dumps(out))
 `
-const run = spawnSync(python, ['-I', '-c', program, script], { input: JSON.stringify(CASES), encoding: 'utf8', timeout: 60_000 })
+// The isolated interpreter ignores PYTHON* variables; -B keeps importlib's bytecode out of the checkout.
+const run = spawnSync(python, ['-I', '-B', '-c', program, script], { input: JSON.stringify(CASES), encoding: 'utf8', timeout: 60_000 })
 assert.equal(run.status, 0, `the assembly program failed:\n${run.stderr}`)
 const got = JSON.parse(run.stdout)
 const texts = (name) => got[name].map((w) => w.text)

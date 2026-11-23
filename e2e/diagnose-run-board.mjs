@@ -223,10 +223,14 @@ try {
   await row.waitFor()
   record('the list row says the board is open (R9)', (await text(row.locator('[data-board-badge]'))).startsWith('Board open'), await text(row.locator('[data-board-badge]')))
   await history.locator('[data-runs-recheck]').click()
+  savedBoard = await until(
+    () => JSON.parse(readFileSync(plannedPath, 'utf8')).boards[0],
+    (board) => board.cards.some((c) => c.id === lateAck?.cardId && c.text === 'Recording of the demo, please'),
+    15_000, 'the confirmed late card to be saved on the Run',
+  )
+  record('the late card is on the Run file', true)
   await until(() => text(row.locator('[data-board-badge]')), (value) => value === 'Board open · 1 late card', 15_000, 'late card on the ledger')
   record('Re-check live pulls the late card in: "Board open · 1 late card" (R9)', true)
-  savedBoard = JSON.parse(readFileSync(plannedPath, 'utf8')).boards[0]
-  record('the late card is on the Run file', savedBoard.cards.some((c) => c.text === 'Recording of the demo, please'))
   // R9 is drawn with the row closed: select the other Run for the shot.
   await history.locator('[data-sessions-row$="/run-sep"]').click()
   await history.waitForTimeout(300)
@@ -247,7 +251,7 @@ try {
   // A fourth phone card, then Refresh from the board (R4).
   const dan = await phone('dan')
   await dan.add('try', 'An online follow-up for those who missed it')
-  await block.locator('.rb-bt', { hasText: 'Refresh from the board' }).click()
+  await block.getByRole('button', { name: 'Refresh from the board', exact: true }).click()
   await block.locator('[data-board-banner="pulled"]').waitFor()
   const pulled = await text(block.locator('[data-board-banner="pulled"]'))
   record('Refresh from the board pulls the new card in (R4)', pulled.includes('1 late card pulled in just now.'), pulled)
@@ -269,7 +273,7 @@ try {
   await dialog.waitFor()
   record('the share dialog: the board ticked, pre-work off, 30 days by default (R7)',
     await dialog.locator('[data-share-board]').isChecked() && !(await dialog.locator('[data-share-prework]').isChecked())
-    && (await dialog.locator('[data-share-lifetime="30"]').getAttribute('class'))?.includes('active'))
+    && await dialog.locator('[data-share-lifetime="30"]').getAttribute('aria-pressed') === 'true')
   await history.screenshot({ path: join(shots, 'R7-share-read-only-link-1440x900.png') })
   await dialog.locator('[data-share-copy]').click()
   await dialog.waitFor({ state: 'detached' })
@@ -292,7 +296,7 @@ try {
   await history.keyboard.press('Escape')
 
   // Close it now.
-  await block.locator('.rb-bt', { hasText: 'Close it now' }).click()
+  await block.getByRole('button', { name: 'Close it now', exact: true }).click()
   await until(() => text(block.locator('.rb-h')), (value) => value.includes('closed'), 15_000, 'board closed on the Run card')
   record('Close it now: the card says closed; no banner', await block.locator('.rb-banner').count() === 0)
   record('the list badge goes', await row.locator('[data-board-badge]').count() === 0)

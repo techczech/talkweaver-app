@@ -1,5 +1,5 @@
 // test:consistency-batch4 — house rules R7, R8, R11 and R16 (consistency review batch 4), the parts that need no window:
-//   - the Talk tab is the third tab of the right sidebar, and Talk design… / Metadata… keep their command ids (aliases that open it);
+//   - the Talk tab is next to Slide in the right sidebar, and Talk design… / Metadata… keep their command ids (aliases that open it);
 //   - the Slide outline's section numbers (§n) and layout marks come from the margin's labels and the compiled rows, the strip's own text;
 //   - the Markdown gutter numbers the title slide on the `# ` heading when the file opens with front matter;
 //   - the presenter's counters are slide numbers out of the slides, not beat positions (the 43-vs-45 defect);
@@ -17,7 +17,7 @@ import { marginWord } from '../src/shared/plain-view-margin.ts'
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
 // R11: the tab and the aliases.
-assert.deepEqual(rightColumnTabs({ guideUp: false, hasTalk: true }), ['inspector', 'slides', 'talk', 'research', 'images'], 'Talk is beside Inspector and Strip')
+assert.deepEqual(rightColumnTabs({ guideUp: false, hasTalk: true }), ['inspector', 'talk', 'guide', 'research', 'images'], 'Talk is beside Slide')
 for (const id of ['deck-design', 'metadata']) {
   const command = COMMAND_REGISTRY.find((c) => c.id === id)
   assert.ok(command, `${id} is still a command`)

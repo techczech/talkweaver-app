@@ -1,8 +1,8 @@
 // Compiler-generated authoring markup only; remote pages are represented by pixels.
 import { DOMParser } from '@xmldom/xmldom'
 import { parseLivePageUrl } from './live-page-policy.ts'
+import { escapeAttr } from '../shared/html-escape.ts'
 
-const escapeAttribute = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 
 function iframeAttributes(markup: string): Map<string, string> | null {
   let valid = true
@@ -81,7 +81,7 @@ export async function replaceRemoteEmbedFrames(
         ? await Promise.race([artwork(url.href, controller.signal).catch(() => null), deadline]) : null
       if (signal?.aborted || shouldCancel?.()) throw new Error('Embed preview cancelled')
       const replacement = image
-        ? `<img data-tw-embed-artwork src="${escapeAttribute(image)}" alt="Web page preview" style="width:100%;height:100%;object-fit:contain">`
+        ? `<img data-tw-embed-artwork src="${escapeAttr(image)}" alt="Web page preview" style="width:100%;height:100%;object-fit:contain">`
         : '<span class="embed-poster" style="display:flex">Web page preview unavailable. Use Capture embed to open the page.</span>'
       html = html.replace(match[0], replacement)
     }

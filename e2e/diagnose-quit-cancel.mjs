@@ -1,4 +1,4 @@
-// Real menu, deck close offer, editor conflict sheet and restart-window ports. The test copy
+// Real menu, deck close offer, editor merge review and restart-window ports. The test copy
 // exposes the updater's existing ports at its adapter boundary; no test hook ships in the app.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -7,6 +7,7 @@ import { cpSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, sym
 import { dirname, join, resolve } from 'node:path'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
+import { typeAtOutlineLineEnd } from './lib/outline-typing.mjs'
 import { buildNativeQuitMenu } from './lib/native-quit-menu.mjs'
 
 const repo = resolve(import.meta.dirname, '..'), evidence = join(repo, 'artefacts/quit-helpers')
@@ -43,7 +44,7 @@ try {
     const fixture = join(root, scenario), userData = join(fixture, 'userData'), vault = join(fixture, 'vault')
     mkdirSync(userData, { recursive: true }); cpSync(join(repo, 'resources/example-vault'), vault, { recursive: true })
     const outline = join(vault, 'garden-notes/garden-notes-outline.md'), content = readFileSync(outline, 'utf8')
-    writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, editorViewMode: 'plain' }))
+    writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'outline' }))
     let proc
     try {
       const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }; delete env.ELECTRON_RUN_AS_NODE
@@ -64,7 +65,13 @@ try {
         if (addon) process.getBuiltinModule('module').createRequire(app.getAppPath() + '/package.json')(addon).clickQuit(pid, item.label)
         else setImmediate(() => item.click())
         }, { addon, pid: proc.pid, userData })
-        await until(() => app.evaluate(() => globalThis.quitEvents).then(count => count > before), 'native Quit did not enter before-quit')
+        await until(async () => {
+          try { return await app.evaluate(() => globalThis.quitEvents) > before }
+          catch (error) {
+            if (/Execution context was destroyed/.test(error.message)) return false
+            throw error
+          }
+        }, 'native Quit did not enter before-quit')
       }
       const picture = async () => {
         stage('draw fresh picture')
@@ -93,15 +100,36 @@ try {
         await restoredEditor()
         await picture()
       } else if (scenario === 'stay') {
-        writeFileSync(outline, content + '\n### Outside {id=outside}\n\nOutside change.\n')
-        await page.locator('[data-testid="outline-disk-change-bar"], [data-testid="outline-disk-change-chip"]').first().waitFor()
-        await page.locator('.cm-content .cm-line', { hasText: 'Behind the station, through the green gate.' }).first().click()
-        await page.keyboard.press('End'); await page.keyboard.type(' STAY_TYPED')
+        // Independent edits merge during Quit. Change the same slide on both sides to exercise cancellation.
+        const line = 'Behind the station, through the green gate.'
+        const before = readFileSync(outline, 'utf8')
+        await typeAtOutlineLineEnd(page, line, ' STAY_TYPED')
+        const outside = before.replace(line, line + ' DISK_CONFLICT') + '\n### Outside {id=outside}\n\nOutside change.\n'
+        assert.match(outside, /DISK_CONFLICT/, 'the outside write must overlap the typed slide')
+        writeFileSync(outline, outside)
+        const review = page.getByTestId('outline-merge-sheet')
+        const stay = review.getByRole('button', { name: 'Stay here', exact: true })
+        await stay.click()
+        await review.waitFor({ state: 'hidden' })
+        stage('native Quit reopens merge review')
         await quit()
-        const sheet = page.getByTestId('outline-disk-change-sheet'); await sheet.waitFor()
-        await sheet.getByRole('button', { name: 'Stay here', exact: true }).click()
+        await review.waitFor()
+        assert.match(await review.getByRole('textbox', { name: 'Mine 1', exact: true }).inputValue(), /STAY_TYPED/)
+        assert.match(await review.getByRole('textbox', { name: 'On disk 1', exact: true }).inputValue(), /DISK_CONFLICT/)
+        assert.equal(readFileSync(outline, 'utf8'), outside, 'Quit must leave the disk version intact while the choice is pending')
+        await stay.click()
+        await review.waitFor({ state: 'hidden' })
         await until(async () => await page.locator('[data-close-freeze]').count() === 0, 'editor did not unfreeze')
         await picture()
+        stage('save the typed slide and independent outside edit')
+        await page.getByRole('button', { name: 'Review merge', exact: true }).click()
+        await review.getByRole('button', { name: 'Use mine', exact: true }).click()
+        await review.getByRole('button', { name: 'Apply merge', exact: true }).click()
+        await review.waitFor({ state: 'hidden' })
+        const saved = readFileSync(outline, 'utf8')
+        assert.match(saved, /STAY_TYPED/, 'the text entered before Quit must reach disk')
+        assert.match(saved, /Outside change\./, 'the independent outside edit must survive the merge')
+        assert.doesNotMatch(saved, /DISK_CONFLICT/, 'the selected editor version must win the overlapping slide')
       } else {
         await page.evaluate(({ outline, content }) => window.tw.talk.present(outline, content, 'presenter'), { outline, content })
         let presenter

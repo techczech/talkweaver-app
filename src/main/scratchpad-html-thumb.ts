@@ -6,8 +6,9 @@
 // the panel's search. One capture at a time; a page that does not finish in time gets no thumbnail (the panel keeps
 // its placeholder) and is not retried until it changes.
 import { createHash } from 'node:crypto'
-import { lstatSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { stageTextAtomic } from './atomic-file.ts'
 import { scratchSnapshotIdentity } from './scratchpad-disk.ts'
 import type { ScratchHtmlPreview } from './scratchpad-html.ts'
 
@@ -55,13 +56,14 @@ export function createHtmlThumbnailer(deps: HtmlThumbDeps): HtmlThumbnailer {
     const words = got === null || Buffer.isBuffer(got) ? '' : got.text.slice(0, MAX_RENDERED_TEXT)
     if (!png || png.length === 0 || png.length > MAX_THUMB_BYTES) { failed.add(id); return null }
     try {
-      mkdirSync(deps.cacheDir, { recursive: true })
-      const tmp = `${file}.${process.pid}.tmp`
-      writeFileSync(tmp, png)
-      renameSync(tmp, file)
-      const wordsTmp = `${textFile(id)}.${process.pid}.tmp`
-      writeFileSync(wordsTmp, words)
-      renameSync(wordsTmp, textFile(id))
+      const picture = stageTextAtomic(file, png, { createParent: true })
+      try {
+        const text = stageTextAtomic(textFile(id), words, { createParent: false })
+        try {
+          picture.commit()
+          text.commit()
+        } finally { text.discard() }
+      } finally { picture.discard() }
     } catch { /* an unwritable cache only costs a re-capture */ }
     texts.set(id, words)
     return dataUrl(png)

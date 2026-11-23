@@ -12,7 +12,8 @@
  * focused — so the guard is a guard, not a keyboard shutdown.
  */
 import { strict as assert } from 'node:assert'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { readFileSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -38,7 +39,7 @@ const handout = buildShareHtml({
   license: null,
 })
 
-const scratch = await mkdtemp(join(tmpdir(), 'talkweaver-audience-keys-'))
+const scratch = testScratchDir(join(tmpdir(), 'talkweaver-audience-keys-'))
 const file = join(scratch, 'handout.html')
 await writeFile(file, handout)
 

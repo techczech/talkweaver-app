@@ -12,19 +12,15 @@
 export type ChosenTake = { change: number; run: string }
 
 /**
- * Record one slide again ships switched off in 0.44.5: its take paths still had open faults when the release
- * was cut (PR 373 holds the fixes for the next release). It is on only in a development build started with
- * TW_RECORD_AGAIN=1. Main decides (takesEnabled) and passes the answer to the editor with the opened recording.
- * Off: no control offers it, main refuses every take request, and take discovery returns none, so a
- * recording plays, exports, captions and is deleted as one without takes. Take choices already in an edits
- * file (only a development build can have written them) stay in the file and are not used.
+ * Record one slide again is available in packaged builds. Development builds opt in with
+ * TW_RECORD_AGAIN=1 so the ordinary recording journey can also exercise the no-takes path.
  */
 export const RECORD_AGAIN_ENV = 'TW_RECORD_AGAIN'
 export const TAKES_OFF_ERROR = 'Recording a slide again is not available in this version of TalkWeaver.'
 /** Undo or Redo of a step that would change the take choices, while off. */
 export const TAKE_STEP_OFF_ERROR = 'This step belongs to recording a slide again, which is not available in this version.'
 export function takesEnabled(context: { packaged: boolean; flag: unknown }): boolean {
-  return !context.packaged && context.flag === '1'
+  return context.packaged || context.flag === '1'
 }
 /** The take choices the player, the export and the editor use: none while Record one slide again is off. */
 export function takesInUse(enabled: boolean, chosen: readonly ChosenTake[] | undefined): ChosenTake[] {
@@ -35,19 +31,33 @@ export function rowTakeControls(enabled: boolean, row: { hasPicture: boolean; sl
   if (!enabled) return { recordAgain: false, chooser: false }
   return { recordAgain: row.hasPicture && !!row.slideId && !row.leftOut, chooser: row.takes > 0 && !row.leftOut }
 }
-/** One insertion: at Run time `at` (the slide's start), `length` ms of the take `run`. */
-export type TakeInsert = { at: number; length: number; run: string; change: number; end: number }
+/**
+ * One insertion: at Run time `at` (the slide's start), `length` ms of the take `run`. `outAt` is where it
+ * starts on the video clock: `at` plus every insertion before it, including earlier ones at the same Run
+ * time (slides whose rows start together play their takes one after the other, in slide order). Picture,
+ * voice, captions, chapters and face placement all place the take there.
+ */
+export type TakeInsert = { at: number; length: number; run: string; change: number; end: number; outAt: number }
 export type TakeClock = { inserts: TakeInsert[] }
 export const NO_TAKES: TakeClock = { inserts: [] }
 
-export function takeClock(inserts: readonly TakeInsert[]): TakeClock {
-  return { inserts: [...inserts].filter((i) => i.length > 0).sort((a, b) => a.at - b.at) }
+export function takeClock(inserts: ReadonlyArray<Omit<TakeInsert, 'outAt'>>): TakeClock {
+  let before = 0
+  const sorted = [...inserts].filter((i) => i.length > 0).sort((a, b) => a.at - b.at || a.change - b.change)
+  return { inserts: sorted.map((i) => { const outAt = i.at + before; before += i.length; return { ...i, outAt } }) }
 }
 
-/** Run time to the video clock. The slide start itself goes to the start of its take. */
+/** Run time to the video clock. The slide start itself goes to the start of the first take there. */
 export function toVideoClock(clock: TakeClock, runMs: number): number {
   let t = runMs
   for (const i of clock.inserts) if (i.at < runMs) t += i.length
+  return t
+}
+
+/** Where Run time starting at `runMs` plays on the video clock: after every take that goes in at or before it. */
+export function runStartOnVideoClock(clock: TakeClock, runMs: number): number {
+  let t = runMs
+  for (const i of clock.inserts) if (i.at <= runMs) t += i.length
   return t
 }
 
@@ -111,7 +121,7 @@ export function clipsOnVideoClock<T extends { startMs: number; endMs: number }>(
     }
   })
   for (const i of clock.inserts) {
-    const at = toVideoClock(clock, i.at)
+    const at = i.outAt
     takeFiles(i.run).forEach((clip, k) => {
       const end = Math.min(clip.endMs, i.length)
       if (end <= clip.startMs) return

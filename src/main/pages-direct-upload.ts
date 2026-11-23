@@ -167,8 +167,8 @@ export interface PagesSiteApi {
   uploadAssets(staged: readonly StagedAsset[], allHashes: readonly string[], stillCurrent?: () => boolean): Promise<{ missing: string[]; sent: string[] }>
   /** Step 7: ONE deployment request (see the top: never retried here). */
   createDeployment(form: { manifest: Record<string, string>; branch: string; commitMessage: string; redirects: string; headers: string }): Promise<{ id: string }>
-  /** Step 8: the deployment `id` is production and its files are exactly `manifest`. */
-  confirm(id: string, manifest: Record<string, string>): Promise<boolean>
+  /** Step 8: the deployment succeeded and its files match. Require the current revision unless the caller reads it back. */
+  confirm(id: string, manifest: Record<string, string>, requireCurrent?: boolean): Promise<boolean>
   /**
    * An earlier attempt's deployment, by its id or (its answer lost) by the candidate digest of its commit message: `absent` when
    * there is none, else its state and id. By digest, the project's deployments are read page by page (newest first) until it is
@@ -345,7 +345,7 @@ export function pagesSiteApi(transport: PagesTransport, site: { token: string; a
       return { id: result.id }
     },
 
-    async confirm(id, manifest) {
+    async confirm(id, manifest, requireCurrent = true) {
       let deployment: Record<string, unknown> | null = null
       for (let attempts = 0; attempts < PAGES_UPLOAD.statusAttempts; attempts++) {
         await sleep(2 ** attempts * 1000)
@@ -365,7 +365,7 @@ export function pagesSiteApi(transport: PagesTransport, site: { token: string; a
       // The site-level files are sent beside the manifest; should Cloudflare list them among the files, they are not the manifest's.
       const keys = Object.keys(files).filter((key) => !SITE_LEVEL.has(key))
       if (keys.length !== Object.keys(manifest).length || keys.some((key) => files[key] !== manifest[key])) return false
-      try { return (await productionId()) === id } catch { return false }
+      try { return !requireCurrent || (await productionId()) === id } catch { return false }
     },
 
     async findDeployment(which) {

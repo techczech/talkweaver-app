@@ -1,6 +1,6 @@
 import { ipcMain, shell, type BrowserWindow, type IpcMainInvokeEvent } from 'electron'
 import { runTitleAndWhen } from '../shared/sessions-list'
-import { existsSync, mkdirSync, readFileSync, watch } from 'fs'
+import { existsSync, mkdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 import {
   buildTalkTextModel,
@@ -42,6 +42,7 @@ import { readRun } from './runs'
 import { assertPathInsideVault, resolveTalkTextPaths, type TalkTextPaths } from './talkTextPathSafety'
 import { isToolsWindowSender } from './talkTextSender'
 import { createDirectoryWatcherRegistry } from './talkTextWatchers'
+import { watchDirectory } from './directory-watch.ts'
 import { isGitConflictError } from '../shared/git-conflict'
 
 type TalkInfo = { slug: string; title: string; outlinePath: string }
@@ -80,7 +81,7 @@ export interface TalkTextIpcController {
 }
 
 export function registerTalkTextIpc(deps: TalkTextIpcDeps): TalkTextIpcController {
-  const watchers = createDirectoryWatcherRegistry((directory, onChange) => watch(directory, onChange))
+  const watchers = createDirectoryWatcherRegistry((directory, onChange) => watchDirectory(directory, {}, onChange))
   const moveUndo = createCleanedMoveUndoStore()
   const watcherOwner = (talkSlug: string, sessionId: string): string => `${talkSlug}\u0000${sessionId}`
   const isToolsSender = (event: IpcMainInvokeEvent): boolean => {

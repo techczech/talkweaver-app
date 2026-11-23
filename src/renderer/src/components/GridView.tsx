@@ -1,6 +1,8 @@
+import { isEmptyAuthoringSlide } from '../../../shared/redesign-window-source'
 import { isWorkspaceCovered } from '../lib/workspaceCover'
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { DropSide } from '../../../shared/talk-structure'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { TalkInfo, ProjectionRow } from '../../../preload/index'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
 import { surfacedWarnings } from './SlideStrip'
@@ -14,10 +16,10 @@ import { IcCollapse, IcExpand } from './talklist/icons'
 import { notify } from '../lib/notify'
 import type { SlideRow } from '../extensions/slideOutline'
 import type { SlideBlockOps } from './Editor'
-import SlideRowMenus, { type SlideMenuRequest } from './SlideRowMenus'
+import SlideRowMenus, { type SlideMenuRequest, type StructureRowItems } from './SlideRowMenus'
 import { releaseSelectionOutside } from '../lib/outlineSelection'
 import type { SlideRef } from '../../../shared/slide-handling/blocks'
-import { slideKeys, useSlideSelection } from '../lib/useSlideSelection'
+import { slideKeys, useSlideSelection, type SlideSelection } from '../lib/useSlideSelection'
 import BatchBar from './slide-handling/BatchBar'
 import { writeSlideClipboard } from './SlideRowMenus'
 import { registerSlideSelection } from '../lib/slideSelectionBus'
@@ -28,7 +30,15 @@ import { firstHitFrom, hitPosition, runSearch, stepHit } from '../lib/slideSearc
 import { registerSearchSurface, usePictureText, useSlideQuery } from '../lib/slideSearch'
 
 interface Props {
+  selection?: SlideSelection
+  rowStructureItems?: StructureRowItems
+  onMakeSection?: () => void
+  makeSectionReason?: string
+  structureSource?: string
+  onStructureDrop?: (slides: readonly SlideRef[], target: SlideRef, side: DropSide) => void
+  structureDropLabel?: (target: number, side: DropSide) => string | undefined
   talk: TalkInfo
+  searchOnDemand?: boolean
   compiledSlides: ProjectionRow[] | null
   triggerFindings: readonly LayoutDoctorFinding[]
   thumbnails?: Record<string, string> | null
@@ -95,7 +105,7 @@ interface SectionGroup {
 
 // Group consecutive rows sharing the same `section` string into runs. Section title:
 // prefer the row whose role === 'section-title' in that run (its nav_title/title),
-// else the section string, else "(no section)".
+// else the section string; unsectioned cards have no heading.
 function groupBySection(rows: ProjectionRow[], keys: ReadonlyArray<string | null>): SectionGroup[] {
   const groups: SectionGroup[] = []
   let block = 0
@@ -112,7 +122,7 @@ function groupBySection(rows: ProjectionRow[], keys: ReadonlyArray<string | null
       current = {
         key: `group:${keys[globalIndex]}`,
         section,
-        title: section || '(no section)',
+        title: section,
         rows: []
       }
       currentSection = section
@@ -200,7 +210,7 @@ const CellThumb = React.memo(function CellThumb({ row, thumbnailUrl, triggerFind
       previous.identity === identity && previous.url === null ? previous : { identity, url: null })
   }, [identity, thumbnailUrl, previewsPending])
   const visibleUrl = decoded.identity === identity ? decoded.url : thumbnailUrl
-  const title = plainInlineText(row.nav_title || row.title) || 'Slide'
+  const title = isEmptyAuthoringSlide(row.source_markdown ?? '') ? 'New slide' : plainInlineText(row.nav_title || row.title) || 'Slide'
   const warnings = surfacedWarnings(row, 'strip-badge', triggerFindings)
   return (
     <div style={{ position: 'relative', paddingTop: '56.25%', background: 'var(--paper)' }}>
@@ -280,6 +290,7 @@ interface GridCellProps {
   blockIndex: number | null
   isActive: boolean
   isDropTarget: boolean
+  dropLabel?: string
   isDragging: boolean
   isSelected: boolean
   pathwayNumber: number
@@ -313,6 +324,7 @@ const GridCell = React.memo(function GridCell({
   blockIndex,
   isActive,
   isDropTarget,
+  dropLabel,
   isDragging,
   isSelected,
   pathwayNumber,
@@ -333,7 +345,7 @@ const GridCell = React.memo(function GridCell({
 }: GridCellProps) {
   const key = thumbKey(row)
   const thumbnailUrl = key && thumbnails ? thumbnails[key] ?? null : null
-  const title = plainInlineText(row.nav_title || row.title) || '(untitled)'
+  const title = isEmptyAuthoringSlide(row.source_markdown ?? '') ? 'New slide' : plainInlineText(row.nav_title || row.title) || '(untitled)'
 
   // Carousel sub-slides (ADR-0022): one full-bleed thumbnail per stepped sub-slide
   // of a #### / {carousel} slide, keyed `${key}__N`. Static multi-part layouts emit
@@ -398,6 +410,7 @@ const GridCell = React.memo(function GridCell({
           transition: 'box-shadow 0.08s ease, border-color 0.08s ease'
         }}
       >
+        {isDropTarget && dropLabel && <span className="tw-structure-drop tw-structure-drop--grid">{dropLabel}</span>}
         {isDropTarget && (
           <div
             aria-hidden
@@ -502,7 +515,7 @@ const GridCell = React.memo(function GridCell({
               alignItems: 'center'
             }}
           >
-            <span style={{ fontSize: '10px', color: 'var(--oxford)', fontFamily: 'var(--font-mono)' }}>
+            <span style={{ fontSize: '10px', color: 'var(--accent-text)', fontFamily: 'var(--font-mono)' }}>
               ↳ {globalIndex + 1}.{i + 1}
             </span>
             <span style={{ fontSize: '10px', color: 'var(--muted)' }}>step</span>
@@ -529,6 +542,8 @@ const GridCell = React.memo(function GridCell({
 })
 
 export default function GridView({
+  searchOnDemand = false,
+  selection, onMakeSection, makeSectionReason, rowStructureItems, structureSource, onStructureDrop, structureDropLabel,
   talk,
   compiledSlides,
   triggerFindings,
@@ -586,6 +601,7 @@ export default function GridView({
   const hitsInGroup = useMemo(() => groups.map((g) => g.rows.filter((r) => run.isHit.has(r.globalIndex)).length), [groups, run])
   const outlineKeys = useMemo(() => matchGroupsToSections(snap.rows, groups.map((g) => ({ section: g.section, title: g.title }))), [snap.rows, groups])
   const isCollapsedAt = (gi: number): boolean => {
+    if (!groups[gi]?.title) return false
     const key = outlineKeys[gi]
     return key ? snap.collapsed.has(key) : localCollapsed.has(groups[gi]?.key ?? '')
   }
@@ -849,9 +865,19 @@ export default function GridView({
   const stepSearch = (dir: 1 | -1): void => gotoHit(stepHit(run.order, hitIndex, dir))
   const orderKey = run.order.join(',')
   const searchInputRef = useRef<HTMLInputElement>(null)
+  const [searchOpen, setSearchOpen] = useState(false)
+  useLayoutEffect(() => {
+    if (searchOpen) {
+      searchInputRef.current?.focus()
+      searchInputRef.current?.select()
+    }
+  }, [searchOpen])
   const surfaceRef = useRef<{ focus(): void; step(dir: 1 | -1): boolean }>({ focus: () => {}, step: () => false })
   surfaceRef.current = {
-    focus: () => { searchInputRef.current?.focus(); searchInputRef.current?.select() },
+    focus: () => {
+      if (searchOnDemand && !searchOpen) setSearchOpen(true)
+      else { searchInputRef.current?.focus(); searchInputRef.current?.select() }
+    },
     step: (dir) => { if (!searching) return false; stepSearch(dir); return true }
   }
   useEffect(() => registerSearchSurface('grid', { focus: () => surfaceRef.current.focus(), step: (d) => surfaceRef.current.step(d) }), [])
@@ -991,7 +1017,13 @@ export default function GridView({
     () => (compiledSlides ? slideKeys(compiledSlides, (i) => !!onAddToPathway || isOutlineBlock(compiledSlides[i])) : []),
     [compiledSlides, onAddToPathway]
   )
-  const sel = useSlideSelection(slideKeyList)
+  const localSelection = useSlideSelection(slideKeyList)
+  const sel = selection ?? localSelection
+  const onStructureDropRef = useRef(onStructureDrop)
+  onStructureDropRef.current = onStructureDrop
+  const structureSourceRef = useRef(structureSource)
+  structureSourceRef.current = structureSource
+  const dragSource = useRef<string | undefined>(undefined)
   const pathwayGridRef = useRef({ onAddToPathway, compiledSlides })
   pathwayGridRef.current = { onAddToPathway, compiledSlides }
   const addSelectedToPathway = useCallback((): boolean => {
@@ -1042,11 +1074,14 @@ export default function GridView({
         const visible = new Set<number>()
         L.groups.forEach((g, gi) => { if (!L.isCollapsedAt(gi)) for (const r of g.rows) visible.add(r.globalIndex) })
         L.sel.extendTo(index, L.activeIndex, (i) => visible.has(i))
-      } else if (L.canReorder && (e?.metaKey || e?.ctrlKey)) L.sel.toggle(index)
+      } else if (L.canReorder && (e?.metaKey || e?.ctrlKey)) {
+        if (selection && L.sel.count === 0 && index !== L.activeIndex) L.sel.addMany([L.activeIndex, index])
+        else L.sel.toggle(index)
+      }
       else L.sel.reset(index)
       onSelectSlideRef.current(index)
     },
-    []
+    [!!selection]
   )
   const onTick = useCallback((index: number) => {
     containerRef.current?.focus({ preventScroll: true })
@@ -1103,6 +1138,7 @@ export default function GridView({
 
   const onDragStart = useCallback(
     (e: React.DragEvent, index: number, blockIdx: number | null) => {
+      dragSource.current = structureSourceRef.current
       dragFromRef.current = index
       dragFromBlockRef.current = blockIdx
       // What is dragged: the card's heading line and text as the buffer has them NOW, so a drop after
@@ -1180,7 +1216,11 @@ export default function GridView({
       const target = slideRefOfRef.current?.(boundary ? boundary.refIndex : index)
       if (!target) return
       // Dragging down lands after the target card's block, dragging up before it (the drop line shows which).
-      onMoveSlidesRef.current?.(dragged, placeAtHeading(boundary ? boundary.kind : index > from ? 'after' : 'before', target))
+      const side = boundary ? boundary.kind : index > from ? 'after' : 'before'
+      if (onStructureDropRef.current) {
+        if (dragSource.current === structureSourceRef.current) onStructureDropRef.current(dragged, target, side)
+      }
+      else onMoveSlidesRef.current?.(dragged, placeAtHeading(side, target))
     },
     [resetDrag]
   )
@@ -1232,7 +1272,16 @@ export default function GridView({
     const target = slideRefOf?.(last.globalIndex)
     if (!target) return
     if (scratchId) { onScratchDropRef.current?.(scratchId, placeAtHeading('after', target)); return }
-    onMoveSlidesRef.current?.(dragged, placeAtHeading('after', target)) // the host selects the moved slide
+    if (onStructureDropRef.current) {
+      if (dragSource.current === structureSourceRef.current) onStructureDropRef.current(dragged, target, 'after')
+    } else onMoveSlidesRef.current?.(dragged, placeAtHeading('after', target))
+  }
+
+  function dropLabelForCell(index: number): string | undefined {
+    if (dropTarget !== index || dragFrom === null || scratchDragging) return undefined
+    const boundary = sectionDropBoundary(dropRowsRef.current, dragFrom, index)
+    const line = lineOfSlide?.(boundary?.refIndex ?? index)
+    return line == null ? undefined : structureDropLabel?.(line, boundary?.kind ?? (index > dragFrom ? 'after' : 'before'))
   }
 
   if (!compiledSlides || compiledSlides.length === 0) {
@@ -1301,8 +1350,9 @@ export default function GridView({
         }
       }}
     >
-      <div
+      {(!searchOnDemand || searchOpen) && <div
         data-grid-toolbar
+        data-grid-search-popover={searchOnDemand || undefined}
         style={{ position: 'sticky', top: '-16px', zIndex: 2, display: 'flex', alignItems: 'center', gap: '6px', margin: '-16px -16px 12px', padding: '6px 16px', background: 'var(--panel)', borderBottom: '1px solid var(--line)' }}
       >
         <input
@@ -1318,7 +1368,11 @@ export default function GridView({
           onKeyDown={(e) => {
             e.stopPropagation()
             if (e.key === 'Enter' && searching && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); stepSearch(e.shiftKey ? -1 : 1) }
-            else if (e.key === 'Escape' && query) { e.preventDefault(); setQuery('') }
+            else if (e.key === 'Escape' && (query || searchOnDemand)) {
+              e.preventDefault()
+              setQuery('')
+              if (searchOnDemand) { setSearchOpen(false); containerRef.current?.focus() }
+            }
           }}
           onCut={(e) => e.stopPropagation()}
           onCopy={(e) => e.stopPropagation()}
@@ -1334,14 +1388,14 @@ export default function GridView({
         <span style={{ flex: 1 }} />
         <button type="button" className="tl-tbtn" title="Collapse all sections" aria-label="Collapse all sections" data-grid-collapse-all onClick={() => collapseAllSections(tk)}><IcCollapse /></button>
         <button type="button" className="tl-tbtn" title="Expand all sections" aria-label="Expand all sections" data-grid-expand-all onClick={() => expandAllSections(tk)}><IcExpand /></button>
-      </div>
+      </div>}
       {groups.map((group, groupIndex) => {
         const isCollapsed = isCollapsedAt(groupIndex)
         const isHeaderDrop = (scratchDragging || dragFrom !== null) && dropTarget === SECTION_DROP + group.key
         const groupHits = hitsInGroup[groupIndex]
         return (
           <section key={group.key} style={{ marginBottom: '20px' }} data-group-dim={searching && groupHits === 0 ? 'true' : undefined}>
-            <div
+            {group.title && <div
               className="grid-section-header"
               data-section-header
               data-section-drop={canReorder && lastBlockOf(group) ? group.key : undefined}
@@ -1378,7 +1432,7 @@ export default function GridView({
                 aria-hidden
                 style={{
                   fontSize: '11px',
-                  color: 'var(--oxford)',
+                  color: 'var(--accent-text)',
                   width: '12px',
                   display: 'inline-block',
                   textAlign: 'center'
@@ -1423,7 +1477,7 @@ export default function GridView({
                   Select section
                 </button>
               )}
-            </div>
+            </div>}
 
             {!isCollapsed && (
               <div
@@ -1446,6 +1500,7 @@ export default function GridView({
                     blockIndex={blockIndex}
                     isActive={activeIndex === globalIndex}
                     isDropTarget={dropTarget === globalIndex && (scratchDragging || (dragFrom !== null && dragFrom !== globalIndex))}
+                    dropLabel={dropLabelForCell(globalIndex)}
                     isDragging={dragFrom === globalIndex || (dragMulti && dragFrom !== null && sel.isSelected(globalIndex))}
                     isSelected={sel.isSelected(globalIndex)}
                     pathwayNumber={pathwayIds ? pathwayIds.indexOf(row.slide_id) + 1 : 0}
@@ -1493,6 +1548,7 @@ export default function GridView({
           moveOpen={moveOpen}
           onMoveOpenChange={setMoveOpen}
           onClear={() => sel.clear()}
+          onMakeSection={onMakeSection} makeSectionReason={makeSectionReason}
           onMove={(place) => { const refs = selectedRefs(); if (refs.length > 0) { explicitRevealRef.current = true; onMoveSlidesRef.current?.(refs, place) } }}
           onAddToPathway={onAddToPathway ? () => { addSelectedToPathway() } : undefined}
           onCut={() => { void cutSelected('cut') }}
@@ -1504,6 +1560,7 @@ export default function GridView({
       )}
       <SlideRowMenus
         request={menu}
+        structureItems={rowStructureItems}
         rows={menuRows}
         ops={cardMenuOps}
         onClose={() => setMenu(null)}

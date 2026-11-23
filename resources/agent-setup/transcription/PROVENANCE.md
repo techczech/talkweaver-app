@@ -18,10 +18,14 @@ transcription assumes nothing outside this repository (spec
   word after it and other punctuation the word before; SRT times are now
   rounded to the nearest millisecond (they were truncated) so each word lies inside its segment.
   Without `--words` the script behaves as before. SHA-256 of the file as shipped now:
-  `e45d0de86786edef8fdb699fff058df5cf0cf9b332729edfd4d1afd1ed593487`.
+  `0413fc5f1137c45e5a2c55bb62999e40c08a5156d2a2e11da6780539821b3b85`.
 - Changed 2026-11-03: punctuation-only sentences append their text without extending a word
   beyond the preceding sentence’s time span. Trailing pending punctuation within the same sentence
   retains its end time.
+- Changed 2026-11-21: `--help` reports the default model on a `Default Parakeet model:` line.
+  TalkWeaver uses that declaration before passing audio to an automatic fallback. Multilingual
+  Parakeet MLX results contain text and timings. A custom script can also return a detected
+  `locale` in the words JSON when its engine supplies one.
 - Licence: the copy ships under TalkWeaver's MIT licence (`LICENSE` at the repository root);
   Dominik Lukeš, who holds the copyright in both, confirmed this on 2026-10-09. The source carries
   no licence file; its own provenance record classes the skill as Dominik's original work ("fine to

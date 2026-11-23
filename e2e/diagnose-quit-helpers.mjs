@@ -1,17 +1,19 @@
 // A real editor action queues thumbnail work; native Quit must save it, destroy every helper,
-// and reach Electron's terminal quit event. TW_QUIT_REPEATS=10 TW_QUIT_MATRIX=1 runs the release matrix.
+// and reach normal process exit after one request. TW_QUIT_REPEATS=10 TW_QUIT_MATRIX=1 runs the release matrix.
 import assert from 'node:assert/strict'
 import { _electron as electron } from 'playwright'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { openTalkByTitle } from './lib/talklist.mjs'
+import { typeAtOutlineLineEnd } from './lib/outline-typing.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { buildNativeQuitMenu } from './lib/native-quit-menu.mjs'
 
 const repo = resolve(import.meta.dirname, '..')
 const evidence = join(repo, 'artefacts/quit-helpers')
 mkdirSync(evidence, { recursive: true })
+const interactiveQuitLimitMs = 2000
 const repeats = Number(process.env.TW_QUIT_REPEATS ?? 1)
 assert.ok(Number.isInteger(repeats) && repeats > 0)
 const scenarios = (process.env.TW_QUIT_SCENARIOS ?? (process.env.TW_QUIT_MATRIX === '1' ? 'typing,move,move-undo,autosave,browser' : 'move,edit,browser')).split(',')
@@ -84,7 +86,7 @@ try {
     cpSync(join(repo, 'resources/example-vault'), vault, { recursive: true })
     const outline = join(vault, 'garden-notes/garden-notes-outline.md')
     if (scenario === 'move-undo') writeFileSync(outline, readFileSync(outline, 'utf8').replace('{id=g1}\n', ''))
-    writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, editorViewMode: 'plain' }))
+    writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'outline' }))
     const disk = () => readFileSync(outline, 'utf8')
     const original = disk(), marker = ` QUIT_HELPERS_${scenario}_${route}_${repeat}`
     const record = { scenario, route, repeat, pass: false }
@@ -94,6 +96,8 @@ try {
       app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`, '--use-mock-keychain'], cwd: repo,
         env: { ...env, TW_UPDATE_TEST_SAVE_DELAY_FILE: delay } })
       proc = app.process(); record.pid = proc.pid
+      let exitedAt = null
+      proc.once('exit', () => { exitedAt = Date.now() })
       proc.stdout?.on('data', bytes => { if (bytes.toString().includes('[update-test] this save waits 1500 ms')) saveBegan = Date.now() })
       try { const socket = readlinkSync(join(userData, 'SingletonSocket')); if (/\/scoped_dir[^/]+\/SingletonSocket$/.test(socket)) sockets.add(dirname(socket)) } catch {}
       const runtime = await app.evaluate(({ app, BrowserWindow }) => ({ version: app.getVersion(), electron: process.versions.electron, packaged: app.isPackaged, appPath: app.getAppPath(), userData: app.getPath('userData'), hidden: BrowserWindow.getAllWindows().every(w => !w.isVisible()) }))
@@ -107,7 +111,7 @@ try {
       await openTalkByTitle(page, 'Garden notes'); await page.locator('.cm-content').waitFor()
       const text = () => page.evaluate(() => document.querySelector('.cm-content').cmTile.root.view.state.doc.toString())
       if (scenario === 'move' || scenario === 'move-undo') {
-        await page.locator('.pane-btn[title="Grid"]').click()
+        await page.getByTestId('grid-toggle').click()
         const cards = page.locator('.grid-view .grid-cell[draggable="true"]')
         const from = cards.filter({ hasText: 'Where the plot is' }).first(), to = cards.filter({ hasText: 'What we grow' }).first()
         await from.waitFor(); await from.scrollIntoViewIfNeeded()
@@ -122,14 +126,13 @@ try {
           await page.locator('.grid-view').focus(); await page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
           await waitFor(() => disk().indexOf('### Where the plot is') < disk().indexOf('### What we grow'), 'Undo did not persist')
         }
-        await page.locator('.pane-btn[title="Slides"]').click()
+        await page.getByTestId('outline-toggle').click()
       } else if (scenario === 'browser') {
         await (await app.browserWindow(page)).evaluate(w => w.webContents.send('app:run-command', 'search'))
         await page.locator('.lt').waitFor()
       } else {
         if (scenario === 'autosave') writeFileSync(delay, '1500')
-        await page.locator('.cm-content .cm-line', { hasText: 'Behind the station, through the green gate.' }).first().click()
-        await page.keyboard.press('End'); await page.keyboard.type(marker)
+        await typeAtOutlineLineEnd(page, 'Behind the station, through the green gate.', marker)
         if (scenario === 'autosave') {
           await waitFor(() => saveBegan !== null, 'No autosave began')
           assert.ok(Date.now() - saveBegan < 1400); assert.equal(disk().includes(marker), false)
@@ -163,14 +166,18 @@ try {
         assert.ok(beginning >= 0, 'Native Quit entered before-quit')
         assert.equal(record.lifecycle.slice(beginning + 1).filter(event => event.type === 'window:created').length, 0,
           'No helper may be created after Quit begins')
-        record.milliseconds = terminal.at - start
-        assert.ok(record.milliseconds < 5000)
+        record.terminalMilliseconds = terminal.at - start
+        assert.ok(record.terminalMilliseconds < 5000)
         // Assert persistence before releasing the debugger transport.
         assert.equal(authored(disk()), authored(held))
         detachAfterTerminalQuit(app, proc)
-        void app.close().catch(() => {})
-        await waitFor(() => proc.exitCode !== null || proc.signalCode !== null, 'Debugger did not detach after terminal quit', 5000)
+        await waitFor(() => exitedAt !== null, 'No process exit after the first Quit request', 5000)
         assert.equal(proc.exitCode, 0); assert.equal(proc.signalCode, null)
+        record.milliseconds = exitedAt - start
+        if (['move', 'edit', 'browser'].includes(scenario)) {
+          assert.ok(record.milliseconds < interactiveQuitLimitMs,
+            `First Quit after ${scenario} must reach OS exit within ${interactiveQuitLimitMs} ms, took ${record.milliseconds} ms`)
+        }
       } else record.milliseconds = Date.now() - start
       assert.equal(crashed, false)
       assert.equal(authored(disk()), authored(held), 'Whole authored buffer must be saved')

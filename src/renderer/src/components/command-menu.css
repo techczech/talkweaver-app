@@ -1,0 +1,10 @@
+/* Category rows are navigation, visually distinct from the denser command rows. */
+.command-menu[data-command-menu] { width: min(560px, calc(100vw - 32px)); max-height: min(590px, calc(100vh - 122px)); }
+.command-menu-category { margin: 3px 7px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg-0); }
+.command-menu-category .command-menu-title { font-weight: 600; }
+.command-menu-category-icon { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 5px; color: var(--accent-text); background: var(--panel); flex-shrink: 0; }
+.command-menu-count { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.command-menu-subgroup { padding: 9px 16px 5px; font-size: 11px; font-weight: 600; color: var(--muted); background: var(--bg-0); border-bottom: 1px solid var(--line); }
+.command-menu-breadcrumb { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 12px; color: var(--ink); }
+.command-menu-back { display: inline-flex; align-items: center; gap: 2px; border: 0; padding: 3px 6px 3px 0; background: none; color: var(--accent-text); font: inherit; cursor: pointer; }
+.command-menu-back:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }

@@ -12,7 +12,7 @@ import type {
 import { classifySlide, IMPORT_RULESET_VERSION } from './mapping.ts'
 import { extractPptx, renderOriginalSlides } from './pptx.ts'
 import { createRunStorage, loadRun } from './storage.ts'
-import { writeJsonAtomic, writeTextAtomic } from './atomic.ts'
+import { writeJsonAtomic, writeTextAtomic } from '../atomic-file.ts'
 import { importDestinationFolder, newTalkFolder, talkPlace, IMPORT_DESTINATION_REFUSED } from '../vault-paths.ts'
 
 /** What the person reads when an import stops or will not resume because its talk is no longer where the run began. */
@@ -122,13 +122,13 @@ function copyMediaAssets(talkDir: string, slides: ImportSlideSource[]): Record<s
       const stem = `${shape.kind === 'video' ? 'vid' : 'img'}-${sha256(bytes).slice(0, 16)}`
       const fileName = `${stem}${extension}`
       const destination = join(assetsDir, fileName)
-      if (!existsSync(destination)) writeTextAtomic(destination, bytes)
+      if (!existsSync(destination)) writeTextAtomic(destination, bytes, { sync: false })
       mapped[shape.mediaPath] = `assets/${fileName}`
       if (shape.kind === 'video' && shape.posterPath && existsSync(shape.posterPath)) {
         const posterExtension = extname(shape.posterName || shape.posterPath).toLowerCase() || '.png'
         const posterName = `${stem}${posterExtension}`
         const posterDestination = join(assetsDir, posterName)
-        if (!existsSync(posterDestination)) writeTextAtomic(posterDestination, readFileSync(shape.posterPath))
+        if (!existsSync(posterDestination)) writeTextAtomic(posterDestination, readFileSync(shape.posterPath), { sync: false })
         mapped[shape.posterPath] = `assets/${posterName}`
       }
     }
@@ -146,7 +146,7 @@ function copyOriginalAssets(talkDir: string, sourceHash: string, runDir: string,
     if (!existsSync(source)) continue
     const fileName = `import-${sourceHash.slice(0, 12)}-slide-${label}.png`
     const destination = join(assetsDir, fileName)
-    if (!existsSync(destination)) writeTextAtomic(destination, readFileSync(source))
+    if (!existsSync(destination)) writeTextAtomic(destination, readFileSync(source), { sync: false })
     mapped[slideNumber] = `assets/${fileName}`
   }
   return mapped
@@ -223,7 +223,7 @@ async function executeImport(
     manifest.updatedAt = dependencies.now()
     manifest.progress = { completedOperation: 'extracting', completedSlide: 0, completed: 0, total: 1, note: 'Validating and extracting PowerPoint' }
     delete manifest.error
-    writeJsonAtomic(join(runDir, 'manifest.json'), manifest)
+    writeJsonAtomic(join(runDir, 'manifest.json'), manifest, { sync: false })
     emit(onProgress, runId, 'extracting', 0, 1, manifest.progress.note)
     const extracted = await dependencies.extractPptx(sourcePath, join(runDir, 'extracted'))
     if (!placeHolds()) throw new Error(IMPORT_RUN_PLACE_REFUSED)
@@ -248,7 +248,7 @@ async function executeImport(
     manifest.source = extracted.source
     manifest.updatedAt = dependencies.now()
     manifest.progress = { completedOperation: 'rendering', completedSlide: 0, completed: 0, total: selectedSlides.length, note: 'Rendering original slides' }
-    writeJsonAtomic(join(runDir, 'manifest.json'), manifest)
+    writeJsonAtomic(join(runDir, 'manifest.json'), manifest, { sync: false })
     emit(onProgress, runId, 'rendering', 0, selectedSlides.length, manifest.progress.note)
     const rendered = await dependencies.renderOriginalSlides(sourcePath, runDir, extracted.slides.length)
     if (!placeHolds()) throw new Error(IMPORT_RUN_PLACE_REFUSED)
@@ -305,7 +305,7 @@ async function executeImport(
     }))
   }
     const detail = createRunStorage(runDir, completedManifest, records)
-    writeJsonAtomic(join(runDir, 'manifest.json'), completedManifest)
+    writeJsonAtomic(join(runDir, 'manifest.json'), completedManifest, { sync: false })
     emit(onProgress, runId, 'review', records.length, records.length, 'Ready for import review')
     return detail
   } catch (error) {
@@ -319,7 +319,7 @@ async function executeImport(
     manifest.updatedAt = dependencies.now()
     manifest.error = message
     manifest.progress = { ...manifest.progress, note: message }
-    writeJsonAtomic(join(runDir, 'manifest.json'), manifest)
+    writeJsonAtomic(join(runDir, 'manifest.json'), manifest, { sync: false })
     emit(onProgress, runId, 'failed', manifest.progress.completed, manifest.progress.total, message)
     throw error
   }
@@ -365,9 +365,9 @@ export async function startImport(input: StartImportInput): Promise<ImportRunDet
     slides: []
   }
   mkdirSync(runDir, { recursive: true })
-  writeTextAtomic(outlinePath, placeholderOutline(input.request.options.title, runId, basename(sourcePath)))
-  writeJsonAtomic(join(runDir, 'source.json'), manifest.source)
-  writeJsonAtomic(join(runDir, 'manifest.json'), manifest)
+  writeTextAtomic(outlinePath, placeholderOutline(input.request.options.title, runId, basename(sourcePath)), { sync: false })
+  writeJsonAtomic(join(runDir, 'source.json'), manifest.source, { sync: false })
+  writeJsonAtomic(join(runDir, 'manifest.json'), manifest, { sync: false })
   return executeImport(vaultRoot, runDir, manifest, input.onProgress, dependencies)
 }
 

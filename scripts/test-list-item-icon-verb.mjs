@@ -13,6 +13,7 @@
 // The generated run (fixed seed) assembles documents from labelled fragments and checks every
 // write against the FULL compiler (adaptMarkdownOutlineV2), not against the verb's own reading.
 //   node scripts/test-list-item-icon-verb.mjs [--seed=N] [--documents=N]
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -547,7 +548,7 @@ for (const [r, item, key] of [
 
 // ── The app's route: the editor sends the item's line ────────────────────────
 {
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   const handler = main.slice(main.indexOf("'outline:set-item-icon'"), main.indexOf("'outline:set-heading-icon'"))
   ok(/^,\s*async \(\s*_event,\s*content: string,\s*slideHeading: unknown,\s*iconKey: string \| null,\s*itemLine: unknown\s*\) => \{\s*if \(typeof itemLine !== 'number' \|\| !Number\.isInteger\(itemLine\) \|\| typeof slideHeading !== 'string'\) return null\n/.test(handler.slice("'outline:set-item-icon'".length)), 'main answers null, before anything else, without a whole-number line and a heading line')
   ok(handler.includes('const result = setListItemIcon(content, { heading: slideHeading }, { line: itemLine }, iconKey)'), 'main addresses the item by the line the editor sent, under the heading it sent')

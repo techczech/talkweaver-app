@@ -1,0 +1,82 @@
+import assert from 'node:assert/strict'
+import { listSlideBlocks } from '../compiler/scripts/lib/slide-blocks.mjs'
+const mod = await import('../src/shared/outline-merge.ts').catch(() => ({}))
+assert.equal(typeof mod.mergeOutline, 'function', 'three-way outline merge must exist')
+const { mergeOutline, resolveOutlineMerge } = mod
+const base = '# Talk\n\n## One\n{id=a}\n- alpha\n- beta\n\n## Two\n{id=b}\n- gamma\n'
+const merged = (mine, disk, b = base) => {
+  const result = mergeOutline(b, mine, disk)
+  assert.equal(result.conflicts.length, 0)
+  return resolveOutlineMerge(result, {})
+}
+assert.equal(merged(base.replace('alpha', 'local'), base.replace('gamma', 'external')), base.replace('alpha', 'local').replace('gamma', 'external'))
+assert.equal(merged(base.replace('alpha', 'local'), base.replace('beta', 'external')), base.replace('alpha', 'local').replace('beta', 'external'))
+const conflict = mergeOutline(base, base.replace('alpha', 'local'), base.replace('alpha', 'external'))
+assert.equal(conflict.conflicts.length, 1)
+assert.match(conflict.conflicts[0].mine, /local/)
+assert.match(conflict.conflicts[0].disk, /external/)
+assert.equal(resolveOutlineMerge(conflict, {}), null)
+assert.match(resolveOutlineMerge(conflict, { [conflict.conflicts[0].id]: conflict.conflicts[0].disk }), /external/)
+const added = base + '\n## Three\n{id=c}\n- new\n'
+assert.equal(merged(base.replace('alpha', 'local'), added), added.replace('alpha', 'local'))
+const deleted = base.slice(0, base.indexOf('## Two'))
+assert.equal(merged(deleted, base.replace('alpha', 'external')), deleted.replace('alpha', 'external'))
+const delConflict = mergeOutline(base, deleted, base.replace('gamma', 'edited'))
+assert.equal(delConflict.conflicts.length, 1)
+assert.equal(delConflict.conflicts[0].mine, '')
+assert.equal(delConflict.conflicts[0].mineDeleted, true)
+assert.equal(delConflict.conflicts[0].diskDeleted, undefined)
+assert.match(delConflict.conflicts[0].disk, /edited/)
+assert.equal(merged(base.replace('alpha', 'same'), base.replace('alpha', 'same')), base.replace('alpha', 'same'))
+assert.equal(merged(base, '\ufeff' + base.replaceAll('\n', '\r\n')), base)
+const fenced = base.replace('- alpha', '```md\n## fake\n```\n- alpha')
+assert.equal(merged(fenced.replace('alpha', 'local'), fenced.replace('gamma', 'external'), fenced), fenced.replace('alpha', 'local').replace('gamma', 'external'))
+const duplicate = base.replace('{id=b}', '{id=a}')
+assert.equal(mergeOutline(duplicate, duplicate.replace('alpha', 'local'), duplicate.replace('gamma', 'external')).conflicts.length, 1)
+const three = base + '\n## Three\n{id=c}\n- delta\n'
+const one = three.slice(three.indexOf('## One'), three.indexOf('## Two'))
+const two = three.slice(three.indexOf('## Two'), three.indexOf('## Three'))
+const last = three.slice(three.indexOf('## Three'))
+assert.equal(mergeOutline(three, '# Talk\n\n' + two + one + last, '# Talk\n\n' + one + last + two).conflicts.length, 1)
+const large = '# Talk\n\n## Large\n{id=large}\n' + Array.from({length:1600}, (_,i)=>`- base ${i}\n`).join('')
+assert.equal(mergeOutline(large, large.replaceAll('base','mine'), large.replaceAll('base','disk')).conflicts.length, 1)
+const stripped = base.replace(/\{id=[^}]+\}\n/g, '')
+const identityConflict = mergeOutline(base, base.replace('alpha','my edit'), stripped.replace('gamma','agent edit'))
+assert.equal(identityConflict.conflicts.length, 1, 'ID stripping must not become delete plus add')
+assert.equal(identityConflict.conflicts[0].id, 'outline')
+assert.equal(identityConflict.conflicts[0].mineDeleted, undefined)
+assert.equal(resolveOutlineMerge(identityConflict, {outline: identityConflict.conflicts[0].mine}), base.replace('alpha','my edit'))
+assert.equal(resolveOutlineMerge(identityConflict, {outline: identityConflict.conflicts[0].disk}), stripped.replace('gamma','agent edit'))
+assert.equal(merged(base.replace('alpha','local'), '\ufeff'+base.replace('gamma','external').replaceAll('\n','\r\n')), base.replace('alpha','local').replace('gamma','external'))
+const unstamped = base.replace(/\{id=[^}]+\}\n/g, '')
+assert.equal(merged(unstamped.replace('alpha','local'), '\ufeff'+unstamped.replace('gamma','external').replaceAll('\n','\r\n'), unstamped), unstamped.replace('alpha','local').replace('gamma','external'))
+const rename = mergeOutline(unstamped, unstamped.replace('## One','## Renamed'), unstamped.replace('alpha','body edited'))
+assert.equal(rename.conflicts.length, 1)
+assert.equal(rename.conflicts[0].id, 'outline', 'renaming an unstamped heading requires a whole-talk choice')
+assert.equal(resolveOutlineMerge(rename, {outline: rename.conflicts[0].mine}), unstamped.replace('## One','## Renamed'))
+assert.equal(resolveOutlineMerge(rename, {outline: rename.conflicts[0].disk}), unstamped.replace('alpha','body edited'))
+const appendMine = base + '\n## Local addition\n{id=local-add}\n- local\n'
+const appendDisk = base + '\n## Agent addition\n{id=disk-add}\n- agent\n'
+assert.equal(merged(appendMine, appendDisk), appendMine+'\n## Agent addition\n{id=disk-add}\n- agent\n')
+for (const ending of ['', '\n']) {
+  const typing = base + '\n## Three (typing)\n- my last point' + ending
+  const agent = base + '\n## Four\n{id=d}\n- agent added\n'
+  const joined = merged(typing, agent)
+  assert.equal(listSlideBlocks(joined).length, 4, 'N1: independent append headings must stay separate')
+  assert.match(joined, /- my last point\n\n## Four/, 'N5b: joins require a blank line even when the earlier block has one newline')
+}
+const truncated = mergeOutline(base, base.replace('alpha','local'), base.slice(0,base.indexOf('## Two')))
+assert.equal(truncated.conflicts.length, 1, 'N4: a dirty merge cannot silently accept trailing disk deletions')
+assert.equal(truncated.conflicts[0].diskDeleted, true)
+assert.match(truncated.conflicts[0].mine, /gamma/)
+assert.equal(merged(base,base.slice(0,base.indexOf('## Two'))),base.slice(0,base.indexOf('## Two')),'a clean editor can still reload a stable deletion')
+const cloned = base + '\n' + base.slice(base.indexOf('## One'), base.indexOf('## Two'))
+const conflictBase = '# Talk\n\n## One\n{id=a}\n- alpha'
+const choiceMerge = mergeOutline(conflictBase, conflictBase.replace('alpha','mine'), conflictBase.replace('alpha','disk')+'\n## Two\n{id=b}\n- beta\n')
+const chosenMine = resolveOutlineMerge(choiceMerge, Object.fromEntries(choiceMerge.conflicts.map(item=>[item.id,item.mine])))
+assert.equal(listSlideBlocks(chosenMine).length,2,'a conflict choice without a final newline must not swallow the following slide')
+assert.match(chosenMine,/- mine\n\n## Two/)
+const cloneConflict = mergeOutline(base, base.replace('alpha','local'), cloned)
+assert.equal(cloneConflict.conflicts[0].id, 'outline', 'an agent duplication of a stamped slide must not assign the local edit to a guessed copy')
+assert.equal(resolveOutlineMerge(cloneConflict, {outline: cloneConflict.conflicts[0].disk}), cloned)
+console.log('outline merge: disjoint blocks/lines, overlap resolution, add/edit, delete/edit, equal edits, line endings, fences and ambiguous identity passed')

@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { getImportRun, listImportRuns, originalSlideDataUrl, resumeImport, startImport } from '../src/main/importer/service.ts'
 
-const root = mkdtempSync(join(tmpdir(), 'talkweaver-importer-service-'))
+const root = testScratchDir(join(tmpdir(), 'talkweaver-importer-service-'))
 const vaultRoot = join(root, 'vault')
 const sourcePath = join(root, 'source.pptx')
 mkdirSync(vaultRoot, { recursive: true })

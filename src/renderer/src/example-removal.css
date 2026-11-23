@@ -23,7 +23,7 @@
 .rx-error { margin: 4px 0 0; font-size: 12.5px; line-height: 1.45; color: #b3261e; }
 .rx-foot { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .rx-btn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 6px; padding: 7px 14px; font: 600 13px var(--font-ui); cursor: pointer; white-space: nowrap; }
-.rx-btn:focus-visible { outline: 1.5px solid var(--oxford); outline-offset: 2px; }
+.rx-btn:focus-visible { outline: 1.5px solid var(--focus); outline-offset: 2px; }
 .rx-btn--danger { background: #b3261e; border-color: #b3261e; color: #fff; }
 .rx-btn:disabled { opacity: .55; cursor: default; }
 

@@ -105,6 +105,7 @@ const SCAN_IGNORE = new Map([
   ['metadata', 'The metadata: block of the agent skill\'s own SKILL.md frontmatter (src/main/agent-skill/skill-source.ts), not a deck key'],
   ['http', 'Loopback URL scheme in the Cloudflare inventory API test adapter, not outline metadata'],
   ['tw-candidate', 'Deployment commit-message marker in the Cloudflare inventory response, not outline metadata'],
+  ['cf-pages', 'Validated publication-history site identity prefix (src/main/publish-history.ts), not outline frontmatter'],
   ['url', 'The url: research source prefix (ResearchPanel.tsx) is provenance, not a deck frontmatter key'],
   // 13-slide-ledger.mjs builds a local `const meta = new Map()` of heading functions.
   ['get', 'Map.get on a local variable named meta (13-slide-ledger.mjs), not frontmatter'],

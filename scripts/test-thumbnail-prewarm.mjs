@@ -3,8 +3,9 @@
 // in, the cheap skip of complete talks, giving way to renders somebody is waiting for, pausing under
 // memory pressure and while presenting (letting go of the held talk), the render-window recycle,
 // carrying on after a restart without redoing work, and stopping on quit.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+
 import { createSingleFlight } from '../src/main/single-flight.ts'
 import { createPreparationRoute, createPreparedTalkCache } from '../src/main/prepared-talk-cache.ts'
 import { buildInGate } from '../src/main/shared-talk-build.ts'
@@ -608,7 +609,7 @@ console.log('PASS prewarm: background, variant and share requests release held o
 
 // Guard the main-process wiring: the prewarm must not release itself through the variant lane.
 {
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   const wiring = main.slice(main.indexOf('const thumbnailPrewarm = createThumbnailPrewarm('), main.indexOf('// Test runs leave the prewarm off'))
   assert.match(wiring, /prepareTalk\(talk\.outlinePath, content, undefined, mediaOptions, 'prewarm'\)/, 'main prewarm uses the prewarm preparation lane')
   assert.match(wiring, /foregroundBusy:.*preparePass\.foregroundBusy\(\)/, 'main prewarm observes the counted compile scope')

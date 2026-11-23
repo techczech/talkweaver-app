@@ -922,7 +922,7 @@ try {
           return {
             width: box.width,
             height: box.height,
-            bottom: box.bottom
+            left: box.left
           }
         })
         return {
@@ -931,13 +931,16 @@ try {
           bars
         }
       })
-      const baseline = Math.max(...geometry.bars.map((bar) => bar.bottom))
+      // The default look draws horizontal bars from a common left edge.
+      const baseline = Math.min(...geometry.bars.map((bar) => bar.left))
       const barsPainted = geometry.bars.length === 3
         && geometry.bars.every((bar) =>
           bar.width > 0
           && bar.height > 0
-          && Math.abs(bar.bottom - baseline) < 1.5
+          && Math.abs(bar.left - baseline) < 1.5
         )
+        && geometry.bars[0].width > geometry.bars[2].width
+        && geometry.bars[2].width > geometry.bars[1].width
       const hidden = await app.evaluate(({ BrowserWindow }, id) => {
         return BrowserWindow.fromId(id)?.isVisible() === false
       }, compiledWindowId)

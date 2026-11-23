@@ -1,9 +1,11 @@
 // ADR-0032 §6: the variant thumbnail path (ticket 02). The compile is the REAL compiler (prepareSource
 // + projections); only the Electron offscreen capture is replaced by a stand-in that writes one file
 // per (deck, slide) cache key, so the tests can see what would be rendered and how often.
+import { readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -38,7 +40,7 @@ auto_thanks_slide: false
 - One
 - Two
 `
-const vault = realpathSync(mkdtempSync(join(tmpdir(), 'tw-variant-thumb-')))
+const vault = realpathSync(testScratchDir(join(tmpdir(), 'tw-variant-thumb-')))
 const talkDir = join(vault, 'variants')
 mkdirSync(talkDir, { recursive: true })
 const outlinePath = join(talkDir, 'variants-outline.md')
@@ -301,7 +303,7 @@ console.log('ok: variants render, differ by layout and option, cache, and say wh
   assert.equal(received.length, 3, 'no render for the repeat')
   assert.equal(prepares, 3, 'no compile for the repeat')
   // The gate: an outline outside the vault, or not an outline, is refused before any compile.
-  const outside = realpathSync(mkdtempSync(join(tmpdir(), 'tw-variant-outside-')))
+  const outside = realpathSync(testScratchDir(join(tmpdir(), 'tw-variant-outside-')))
   const outsidePath = join(outside, 'x-outline.md')
   writeFileSync(outsidePath, outline)
   const refused = await handler(event, outsidePath, outline, 'vi9k8', 'cards')
@@ -320,10 +322,10 @@ console.log('ok: variants render, differ by layout and option, cache, and say wh
 //    ("preparation route"). index.ts is Electron-bound and cannot be imported here, so what is left is
 //    that main asks for that route and registers the handler tested above: two call sites, nothing more.
 {
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   const wiring = main.slice(main.indexOf('const renderVariantThumbnail = createVariantThumbnailRenderer('), main.indexOf("ipcMain.handle('layout:variant-thumbnail'"))
   assert(wiring.includes("'variant')"), 'the variant renderer compiles on the variant route')
-  assert(main.includes('return routePreparation(lane, key, group, load, supersedeKey)'), 'prepareTalk goes through the tested route')
+  assert.match(main, /(?:return|await) routePreparation\(lane, key, group, load, supersedeKey\)/, 'prepareTalk goes through the tested route')
   assert(main.includes("ipcMain.handle('layout:variant-thumbnail', createVariantThumbnailHandler(outlineRefused, renderVariantThumbnail))"),
     'main registers the handler tested above')
   console.log('ok: variant compiles stay out of the live prepared-talk cache')

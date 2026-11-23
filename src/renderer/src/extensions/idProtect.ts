@@ -442,7 +442,7 @@ const chipTheme = EditorView.baseTheme({
     fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
     fontSize: '0.82em',
     background: 'rgba(11, 58, 107, 0.09)',
-    color: '#5d6875',
+    color: 'var(--muted)',
     borderRadius: '4px',
     padding: '0 4px',
     border: '1px solid rgba(11, 58, 107, 0.14)',
@@ -452,7 +452,7 @@ const chipTheme = EditorView.baseTheme({
     fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
     fontSize: '0.82em',
     background: 'rgba(11, 58, 107, 0.05)',
-    color: '#6b7684',
+    color: 'var(--faint)',
     borderRadius: '4px',
     padding: '0 4px',
     border: '1px solid rgba(11, 58, 107, 0.10)',
@@ -463,7 +463,7 @@ const chipTheme = EditorView.baseTheme({
   },
   '.cm-trigger-chip.cm-inline-conflict-token': {
     background: 'rgba(165, 42, 42, 0.10)',
-    color: '#9a3c3c',
+    color: 'var(--crimson)',
     borderColor: 'rgba(165, 42, 42, 0.24)'
   },
   '.cm-inline-conflict-dot': {
@@ -472,7 +472,7 @@ const chipTheme = EditorView.baseTheme({
     height: '5px',
     marginLeft: '6px',
     borderRadius: '50%',
-    backgroundColor: '#b54a4a',
+    backgroundColor: 'var(--crimson)',
     verticalAlign: 'middle'
   }
 })

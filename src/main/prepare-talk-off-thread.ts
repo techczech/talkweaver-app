@@ -9,8 +9,8 @@
 // ended on purpose (the idle end) fails nothing when its exit arrives late, so a compile that started a
 // new child in the meantime is never failed by the old one.
 //
-// A child that answers nothing for the deadline (3 minutes) is retired the same way: killed, its jobs
-// failed, replaced on the next compile, so the preparation gate never stays occupied.
+// A child that gives a compile no answer for 3 minutes is retired the same way, so the preparation
+// gate never stays occupied. A focused preview has its own deadline and cancels only its own job.
 //
 // A child that dies (out of memory, a crash, killed) fails the jobs it held and is replaced on the next
 // compile: one bad deck cannot leave compiles hanging, and, the child being a process of its own, it
@@ -19,19 +19,28 @@
 // How a child is started is passed in (spawn): the app passes Electron's utilityProcess
 // (prepare-talk-utility-process.ts); tests pass a fake, or a plain Node child process. This file
 // imports nothing of Electron, so plain-Node tests load it as it is.
-import type { PrepareTalkJob, PrepareTalkReply } from './prepare-talk-worker'
+import type { MarkedPreview, MarkPreviewRequest, PrepareTalkJob, PrepareTalkMessage, PrepareTalkReply } from './prepare-talk-worker'
 import type { PreviewVariant } from './preview-variant'
 
 export type PrepareTalkRequest = Omit<PrepareTalkJob, 'id'>
-export type PrepareTalkAnswer = { model: Record<string, unknown>; rows: Array<Record<string, unknown>> | null; previewKey?: string; preview?: PreviewVariant }
+export type PrepareTalkAnswer = {
+  model: Record<string, unknown>
+  rows: Array<Record<string, unknown>> | null
+  previewKey?: string
+  previewReady?: Promise<PreviewVariant | undefined>
+}
+type WithoutId<T> = T extends { id: number } ? Omit<T, 'id'> : never
+type Message = WithoutId<PrepareTalkMessage>
+type Artwork = (url: string, signal: AbortSignal) => Promise<string | null>
 
 const IDLE_MS = 60_000
 const DEADLINE_MS = 180_000
+const VARIANT_DEADLINE_MS = 15_000
 
 /** The part of a child process used here: Electron's UtilityProcess has this shape. */
 export interface CompileChild {
   /** Throws when the job cannot be copied to the child. */
-  postMessage(message: PrepareTalkJob): void
+  postMessage(message: PrepareTalkMessage): void
   on(event: 'message', listener: (reply: PrepareTalkReply) => void): unknown
   on(event: 'exit', listener: (code: number) => void): unknown
   /** A fatal error the child reports as it ends (Electron: type, location). Its exit follows. */
@@ -41,7 +50,18 @@ export interface CompileChild {
 /** Starts a child running the compile script at `path`. */
 export type SpawnCompileChild = (path: string) => CompileChild
 
-type Waiting = { resolve: (answer: PrepareTalkAnswer) => void; reject: (error: Error) => void }
+type Waiting = {
+  reply: (answer: PrepareTalkReply) => void
+  fail: (error: Error) => void
+  timeout?: () => void
+}
+type Job<T> = {
+  resolve: (answer: T) => void
+  reject: (error: Error) => void
+  send: (message: Message) => void
+  finish: () => void
+  variantDeadline: () => void
+}
 type Slot = { child: CompileChild; jobs: Map<number, Waiting>; retired: boolean }
 
 function formatLimit(ms: number): string {
@@ -56,7 +76,7 @@ export function createPrepareTalkOffThread(childPath: string, spawn: SpawnCompil
   function failAll(slot: Slot, error: Error): void {
     const jobs = [...slot.jobs.values()]
     slot.jobs.clear()
-    for (const job of jobs) job.reject(error)
+    for (const job of jobs) job.fail(error)
   }
   /** A job that gets no answer in time: the child is retired and killed, every job it held fails. */
   function expire(slot: Slot): void {
@@ -73,12 +93,7 @@ export function createPrepareTalkOffThread(childPath: string, spawn: SpawnCompil
   function start(): Slot {
     const slot: Slot = { child: spawn(childPath), jobs: new Map(), retired: false }
     slot.child.on('message', (reply: PrepareTalkReply) => {
-      const job = slot.jobs.get(reply.id)
-      if (!job) return
-      slot.jobs.delete(reply.id)
-      if (reply.ok) job.resolve({ model: reply.model, rows: reply.rows, previewKey: reply.previewKey, preview: reply.preview })
-      else job.reject(new Error(reply.error))
-      armIdle()
+      slot.jobs.get(reply.id)?.reply(reply)
     })
     slot.child.on('error', (type: string, location?: string) => {
       // The child is ending (its exit follows): no new job goes to it.
@@ -109,34 +124,109 @@ export function createPrepareTalkOffThread(childPath: string, spawn: SpawnCompil
     idleTimer.unref?.()
   }
 
-  return function prepareTalkOffThread(request: PrepareTalkRequest): Promise<PrepareTalkAnswer> {
+  function submit<T>(request: Message, listen: (job: Job<T>) => Waiting): Promise<T> {
     if (idleTimer) { clearTimeout(idleTimer); idleTimer = null }
-    return new Promise<PrepareTalkAnswer>((resolve, reject) => {
+    return new Promise<T>((resolve, reject) => {
       let slot: Slot
       try {
         slot = (current ??= start())
       } catch (error) {
-        // The child could not be started: this compile fails, the next one tries again.
         reject(error instanceof Error ? error : new Error(String(error)))
         return
       }
       const id = nextId++
-      const job: PrepareTalkJob = { id, ...request }
-      // The deadline ends with the job: whichever way it settles, its timer goes.
-      const timer: NodeJS.Timeout = setTimeout(() => expire(slot), deadlineMs)
-      slot.jobs.set(id, {
-        resolve: (answer) => { clearTimeout(timer); resolve(answer) },
-        reject: (error) => { clearTimeout(timer); reject(error) },
-      })
-      try {
-        slot.child.postMessage(job)
-      } catch (error) {
-        // Options that cannot be copied to the child: this compile fails, the child stays.
-        slot.jobs.delete(id)
+      let timer: ReturnType<typeof setTimeout>
+      const finish = (): void => {
         clearTimeout(timer)
+        slot.jobs.delete(id)
         armIdle()
-        reject(error instanceof Error ? error : new Error(String(error)))
+      }
+      const send = (message: Message): void => slot.child.postMessage({ ...message, id })
+      const waiting = listen({
+        resolve, reject, finish, send,
+        variantDeadline: () => {
+          clearTimeout(timer)
+          timer = setTimeout(() => expire(slot), Math.min(VARIANT_DEADLINE_MS, deadlineMs))
+        }
+      })
+      timer = setTimeout(() => {
+        if (waiting.timeout) waiting.timeout()
+        else expire(slot)
+      }, deadlineMs)
+      slot.jobs.set(id, waiting)
+      try { send(request) } catch (error) {
+        waiting.fail(error instanceof Error ? error : new Error(String(error)))
       }
     })
   }
+
+  function prepareTalkOffThread(request: PrepareTalkRequest): Promise<PrepareTalkAnswer> {
+    return submit<PrepareTalkAnswer>(request, ({ resolve, reject, finish, variantDeadline }) => {
+      let resolveVariant: ((preview?: PreviewVariant) => void) | undefined
+      const fail = (error: Error): void => {
+        finish()
+        if (resolveVariant) resolveVariant()
+        else reject(error)
+      }
+      return {
+        fail,
+        reply: (answer) => {
+          if (answer.kind === 'variant' && resolveVariant) {
+            finish()
+            resolveVariant(answer.preview)
+          }
+          if (answer.kind !== undefined || resolveVariant) return
+          if (!answer.ok) { fail(new Error(answer.error)); return }
+          let previewReady: PrepareTalkAnswer['previewReady']
+          if (answer.pendingPreview) {
+            previewReady = new Promise((ready) => { resolveVariant = ready })
+            variantDeadline()
+          } else {
+            finish()
+          }
+          resolve({ model: answer.model, rows: answer.rows, previewKey: answer.previewKey, previewReady })
+        }
+      }
+    })
+  }
+
+  function markPreview(request: MarkPreviewRequest, artwork: Artwork, signal: AbortSignal): Promise<MarkedPreview> {
+    if (signal.aborted) return Promise.reject(new Error('Preview cancelled'))
+    return submit<MarkedPreview>({ kind: 'mark-preview', ...request }, ({ resolve, reject, finish, send }) => {
+      const capture = new AbortController()
+      const done = (): void => {
+        signal.removeEventListener('abort', cancel)
+        capture.abort()
+        finish()
+      }
+      const fail = (error: Error): void => { done(); reject(error) }
+      const abandon = (message: string): void => {
+        try { send({ kind: 'cancel-preview' }) } catch { /* the compile process has already ended */ }
+        fail(new Error(message))
+      }
+      const cancel = (): void => abandon('Preview cancelled')
+      signal.addEventListener('abort', cancel, { once: true })
+      return {
+        fail,
+        timeout: () => abandon(`The slide preview took longer than ${formatLimit(deadlineMs)}.`),
+        reply: (answer) => {
+          if (answer.kind === 'artwork') {
+            void artwork(answer.url, capture.signal).catch(() => null).then((image) => {
+              if (capture.signal.aborted) return
+              try { send({ kind: 'artwork-answer', image }) } catch (error) {
+                fail(error instanceof Error ? error : new Error(String(error)))
+              }
+            })
+          } else if (answer.kind === 'marked-preview') {
+            done()
+            resolve(answer.document)
+          } else if (answer.kind === undefined && !answer.ok) {
+            fail(new Error(answer.error))
+          }
+        }
+      }
+    })
+  }
+
+  return Object.assign(prepareTalkOffThread, { markPreview })
 }

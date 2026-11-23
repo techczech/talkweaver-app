@@ -4,6 +4,7 @@
 // and rendering, an editor window's buffer, and each swap, which stands for another local process acting at a fixed
 // moment. A swap is snapshotted as it happens, so "the disk did not change" means nothing was written after it.
 // Every fixture lives under one per-run folder in the checkout, ignored by Git and removed in finally.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
@@ -21,7 +22,7 @@ import { configureTalkWriter, withTalkFileLock, writeTalkOutline as actualWriter
 import * as importerService from '../src/main/importer/service.ts'
 
 const { resumeImport, startImport, IMPORT_RUN_PLACE_REFUSED } = importerService
-const source = fs.readFileSync('src/main/index.ts', 'utf8')
+const source = readMainSource()
 const run = fs.mkdtempSync(path.resolve('.tw-write-windows-'))
 
 const code = (text) => transformSync(text, { loader: 'ts' }).code

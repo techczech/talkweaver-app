@@ -13,7 +13,7 @@ let app, checks=0
 const pass=message=>{checks++;console.log('PASS '+message)}
 try {
  mkdirSync(userData,{recursive:true});cpSync(join(repo,'e2e/fixtures/slide-set-aside'),talkDir,{recursive:true})
- writeFileSync(join(userData,'config.json'),JSON.stringify({vaultRoot:vault,editorViewMode:'markdown'}))
+ writeFileSync(join(userData,'config.json'),JSON.stringify({vaultRoot:vault,openInView:'markdown'}))
  await ensureFreshBuild(repo)
  const env={...process.env,TW_E2E:'1',TW_REC_TEST:'1'};delete env.ELECTRON_RUN_AS_NODE
  app=await electron.launch({args:['.',`--user-data-dir=${userData}`,'--use-mock-keychain'],cwd:repo,env})
@@ -26,7 +26,7 @@ try {
  const original=saved();const ref=heading=>({line:original.split('\n').indexOf(heading)+1,headingText:heading})
  const refs=['## First section','### Alpha','### Beta'].map(ref)
  const cut=cutBlocks(original,refs);assert(!('refused'in cut))
- await page.locator('.pane-btn[title="Grid"]').click();await page.locator('.grid-cell[draggable="true"]').first().waitFor()
+ await page.getByTestId('grid-toggle').click();await page.locator('.grid-cell[draggable="true"]').first().waitFor()
  for(const title of ['First section','Alpha','Beta'])await page.getByLabel(`Select ${title}`,{exact:true}).check()
  // Drives the actual workspace capture handler and rebindable command, with three cards selected.
  await page.locator('.grid-view').focus();await page.keyboard.press('Meta+Alt+s');await waitSaved(cut.text)

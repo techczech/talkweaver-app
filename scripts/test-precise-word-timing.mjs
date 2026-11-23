@@ -1,3 +1,4 @@
+import { readMainSource } from './lib/read-source.mjs'
 import { verifiedModelBytes } from '../src/main/alignment-model-bytes.ts'
 import assert from 'node:assert/strict'
 import { mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync, readdirSync, symlinkSync } from 'node:fs'
@@ -123,7 +124,7 @@ await check('a midpoint across two segments is unmeasured; silence still applies
  assert.equal(alignedCutEdge(120,'end',[],validated.words,validated.alignment,{segments:touching}).quality,'tight','a zero-duration word at a segment end belongs to the next segment')
 })
 await check('alignment events have explicit receiving windows and Windows is disabled',()=>{
- const source=readFileSync('src/main/index.ts','utf8')
+ const source=readMainSource()
  const block=source.slice(source.indexOf('let preciseModels:'),source.indexOf('async function alignAfterTranscription'))
  assert.doesNotMatch(block,/getAllWindows/)
  assert.match(block,/host.settingsWindow\(\)/);assert.match(block,/const w=toolsWindow/)

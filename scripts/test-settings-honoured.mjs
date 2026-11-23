@@ -203,8 +203,8 @@ const EFFECTS = {
   font: {
     effect: 'the deck container carries the chosen face',
     probe: ({ document }) => deckMain(document)?.getAttribute('data-deck-font') ?? '',
-    // Trebuchet is the locked default face: it stamps no attribute, and must not warn.
-    expect: { '': '', trebuchet: '', 'gill-sans': 'gill-sans', verdana: 'verdana' },
+    // Explicit legacy and bundled faces are carried through extraction.
+    expect: { '': '', trebuchet: 'trebuchet', inter: 'inter', serif: 'serif', geist: 'geist', 'gill-sans': 'gill-sans', verdana: 'verdana' },
     unknown: { value: 'papyrus', warning: 'font-unknown' }
   },
   narrow_columns: {

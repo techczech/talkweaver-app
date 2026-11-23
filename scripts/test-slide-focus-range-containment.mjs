@@ -56,13 +56,12 @@
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
-import { chromium } from 'playwright'
+import { launchEditorTestBrowser, reportMissingEditorTestBrowser } from './lib/editor-test-browser.mjs'
 import { stampMissingIds } from '../compiler/scripts/lib/12-outline-edit.mjs'
 
-const SHELL = join(homedir(), '.cache/puppeteer/chrome-headless-shell/mac_arm-146.0.7680.66/chrome-headless-shell-mac-arm64/chrome-headless-shell')
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'talk-weaver-slide-focus-range-'))
 const outfile = join(dir, 'bundle.js')
@@ -214,11 +213,12 @@ const seeded = (seed) => () => {
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296
 }
 
-const browser = await chromium.launch({ executablePath: SHELL, headless: true })
+let browser
 const failures = []
 let ran = 0
 let summary = ''
 try {
+  browser = await launchEditorTestBrowser()
   const page = await browser.newPage()
   const errors = []
   page.on('pageerror', (error) => errors.push(String(error)))
@@ -658,7 +658,9 @@ try {
     if (summary) console.log(summary)
     console.log(`slide focus range containment ok: ${ran} cases; a change that is not the user's brings no other slide into the focused slide, a caret it leaves outside is put back before any key acts, a letter being composed is written once, and every column drawn can be written to`)
   }
+} catch (error) {
+  reportMissingEditorTestBrowser(error)
 } finally {
-  await browser.close()
+  await browser?.close()
   rmSync(dir, { recursive: true, force: true })
 }

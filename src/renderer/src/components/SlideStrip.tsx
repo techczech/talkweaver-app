@@ -1,5 +1,12 @@
+import { isEmptyAuthoringSlide } from '../../../shared/redesign-window-source'
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { Bookmark, ChevronDown, ChevronRight, Ellipsis } from 'lucide-react'
+import { structureDrop, type DropSide, type structureOf } from '../../../shared/talk-structure'
+import { slideRows } from '../extensions/slideOutline'
+import type { SlideSelection } from '../lib/useSlideSelection'
+import type { SlideBlockOps } from './Editor'
+import SlideRowMenus, { type SlideMenuRequest, type StructureRowItems } from './SlideRowMenus'
+import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { TalkInfo, ProjectionRow } from '../../../preload/index'
 import { layoutDisplayName } from '../../../shared/layout-registry/options'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
@@ -9,11 +16,20 @@ import type { GhostRow, SlideMarker, SlideMarkers } from '../../../shared/feedba
 import type { SlideRef } from '../../../shared/slide-handling/blocks'
 import { placeAtHeading, type SlidePlace } from '../../../shared/slide-handling/place'
 import { sectionDropBoundary } from '../lib/sectionDrop'
+import { getOutlineMarks, subscribeStripNumbers } from '../lib/stripNumbers'
 import { createFocusReporter, thumbnailFocusOrder, visibleCardIndices } from '../lib/thumbnailFocus'
 
 export type SurfaceWarningBadge = ReturnType<typeof warningBadgesForSurface>[number]
 
 interface Props {
+  structure?: ReturnType<typeof structureOf>
+  selection?: SlideSelection
+  onPickStructure?: (index: number, event: React.MouseEvent) => void
+  renderAddLine?: (index: number) => React.ReactNode
+  rowStructureItems?: StructureRowItems
+  onStructureMove?: (lines: readonly number[], target: number, side: DropSide) => void
+  onSubslideSelect?: (line: number, opts?: { takeFocus?: boolean }) => void
+  slideOps?: SlideBlockOps | null
   talk: TalkInfo
   compiledSlides: ProjectionRow[] | null
   outlineContent: string
@@ -92,7 +108,7 @@ function parseSlides(content: string): SlidePreview[] {
     slides.push({
       index: slides.length,
       blockIndex: null,
-      title: c.title,
+      title: c.title || 'New slide',
       excerpt: c.lines.slice(0, 3).join(' ').slice(0, 160),
       layout: c.layout,
       role: '',
@@ -132,7 +148,7 @@ function compiledToPreviews(rows: ProjectionRow[]): SlidePreview[] {
     const preview: SlidePreview = {
       index: i,
       blockIndex: isBlock ? block : null,
-      title: plainInlineText(p.nav_title || p.title) || '(untitled)',
+      title: isEmptyAuthoringSlide(p.source_markdown ?? '') ? 'New slide' : plainInlineText(p.nav_title || p.title) || '(untitled)',
       excerpt: p.text_excerpt ?? '',
       layout: layoutBadge,
       role: p.role ?? '',
@@ -259,7 +275,7 @@ function ThumbnailContent({ layout, title, excerpt }: ThumbnailProps) {
   if (layout === 'quote') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '3px' }}>
-        <span style={{ fontSize: '18px', color: 'var(--oxford)', opacity: 0.3, lineHeight: 1, fontFamily: 'Georgia,serif' }}>&ldquo;</span>
+        <span style={{ fontSize: '18px', color: 'var(--accent-text)', opacity: 0.3, lineHeight: 1, fontFamily: 'Georgia,serif' }}>&ldquo;</span>
         <p style={{ fontSize: '9px', fontStyle: 'italic', textAlign: 'center', color: 'var(--ink)', margin: 0, lineHeight: 1.3 }}>{excerpt?.slice(0, 60)}</p>
         <div style={{ height: '1px', background: 'var(--line)', width: '40%', marginTop: '2px' }}></div>
       </div>
@@ -300,7 +316,7 @@ function ThumbnailContent({ layout, title, excerpt }: ThumbnailProps) {
   if (layout === 'big-number') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%' }}>
-        <span style={{ fontSize: '36px', fontWeight: 900, color: 'var(--oxford)', lineHeight: 1, opacity: 0.5 }}>42</span>
+        <span style={{ fontSize: '36px', fontWeight: 900, color: 'var(--accent-text)', lineHeight: 1, opacity: 0.5 }}>42</span>
         <p style={{ fontSize: '9px', textAlign: 'center', color: 'var(--muted)', margin: '4px 0 0' }}>{title}</p>
       </div>
     )
@@ -308,7 +324,7 @@ function ThumbnailContent({ layout, title, excerpt }: ThumbnailProps) {
 
   if (layout.includes('image')) {
     return (
-      <div style={{ height: '100%', background: 'linear-gradient(135deg,#d9d0c1,#c0b8a8)', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-start', padding: '6px' }}>
+      <div style={{ height: '100%', background: 'linear-gradient(135deg, var(--line-strong), var(--active))', display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-start', padding: '6px' }}>
         <p style={{ fontSize: '9px', color: 'rgba(23,32,42,0.8)', margin: 0, fontWeight: 500 }}>{title}</p>
       </div>
     )
@@ -327,7 +343,7 @@ function ThumbnailContent({ layout, title, excerpt }: ThumbnailProps) {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100%', gap: '6px' }}>
         <div style={{ height: '1px', background: 'var(--line)', width: '80%' }}></div>
-        <p style={{ fontSize: '11px', fontWeight: 600, textAlign: 'center', color: 'var(--oxford)', margin: 0 }}>{title}</p>
+        <p style={{ fontSize: '11px', fontWeight: 600, textAlign: 'center', color: 'var(--accent-text)', margin: 0 }}>{title}</p>
         <div style={{ height: '1px', background: 'var(--line)', width: '80%' }}></div>
       </div>
     )
@@ -359,10 +375,12 @@ interface SlideCardProps {
   warnings: SurfaceWarningBadge[]
   isActive: boolean
   isDragging: boolean
+  selected?: boolean
+  dropLabel?: string
   thumbnailUrl: string | null
   draggable: boolean
   dropEdge: DropEdge
-  onClick: () => void
+  onClick: (e: React.MouseEvent) => void
   onDoubleClick?: () => void
   onDragStart: (e: React.DragEvent) => void
   onDragEnter: () => void
@@ -422,6 +440,8 @@ function SlideCard({
   warnings,
   isActive,
   isDragging,
+  selected,
+  dropLabel,
   thumbnailUrl,
   draggable,
   dropEdge,
@@ -438,6 +458,7 @@ function SlideCard({
 }: SlideCardProps) {
   const layout = slide.layout.toLowerCase() || 'default'
   const title = slide.title || 'Slide'
+  const generatedClosing = slide.row?.slide_id === 'deck-thanks'
   const excerpt = slide.excerpt || undefined
   // Insertion bar that floats over the card's top or bottom edge. Sits in the
   // 4px margin gutter so it never shifts layout (no reflow → no flicker).
@@ -463,7 +484,9 @@ function SlideCard({
     <div
       className="tw-slide-card"
       data-slide-index={slide.index}
+      data-generated-closing={generatedClosing || undefined}
       data-block-index={slide.blockIndex ?? ''}
+      data-selected={selected || undefined}
       data-active={isActive ? 'true' : 'false'}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
@@ -489,8 +512,9 @@ function SlideCard({
     >
       {dropEdge === 'above' && dropBar('above')}
       {dropEdge === 'below' && dropBar('below')}
+      {dropLabel && <span className="tw-structure-drop" data-drop-side={dropEdge === 'below' ? 'after' : 'before'}>{dropLabel}</span>}
       {/* 16:9 thumbnail */}
-      <div style={{ position: 'relative' as const, paddingTop: '56.25%', background: 'var(--paper)' }}>
+      <div className="tw-strip-thumbnail" style={{ position: 'relative' as const, paddingTop: '56.25%', background: 'var(--paper)' }}>
         {marker && <FeedbackBadge marker={marker} onClick={onMarker} />}
         {warnings.length > 0 && (
           <span
@@ -527,11 +551,15 @@ function SlideCard({
         )}
       </div>
       {/* Caption below thumbnail */}
-      <div style={{ padding: '4px 6px', borderTop: '1px solid var(--line)', display: 'flex', gap: '6px', alignItems: 'center' }}>
+      <div className="tw-strip-caption" style={{ padding: '4px 6px', borderTop: '1px solid var(--line)', display: 'flex', gap: '6px', alignItems: 'center' }}>
         <span style={{ fontSize: '9px', color: 'var(--faint)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>{String(slide.index + 1).padStart(2, '0')}</span>
         <span style={{ fontSize: '10px', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{title}</span>
         {layout !== 'default' && (
-          <span style={{ fontSize: '8px', color: 'var(--oxford)', background: 'rgba(11,58,107,0.1)', borderRadius: '2px', padding: '1px 3px', flexShrink: 0, marginLeft: 'auto' }} title={`Layout: ${layoutDisplayName(layout)} (${layout})`}>{layoutDisplayName(layout)}</span>
+          <span
+            className="tw-strip-layout"
+            style={{ fontSize: '8px', color: 'var(--accent-text)', background: 'rgba(11,58,107,0.1)', borderRadius: '2px', padding: '1px 3px', flexShrink: 0, marginLeft: 'auto' }}
+            title={generatedClosing ? 'Generated closing slide' : `Layout: ${layoutDisplayName(layout)} (${layout})`}
+          >{layoutDisplayName(layout)}</span>
         )}
       </div>
       {marker?.deletion && <div className="tw-fb-del-note">Proposed deletion</div>}
@@ -552,7 +580,7 @@ const MemoSlideCard = React.memo(
   (prev, next) =>
     prev.slide === next.slide &&
     prev.warnings === next.warnings &&
-    prev.isActive === next.isActive &&
+    prev.isActive === next.isActive && prev.selected === next.selected && prev.dropLabel === next.dropLabel &&
     prev.isDragging === next.isDragging &&
     prev.thumbnailUrl === next.thumbnailUrl &&
     prev.draggable === next.draggable &&
@@ -636,6 +664,7 @@ function SectionHeader({ title, count, collapsed, onToggle }: SectionHeaderProps
 }
 
 export default function SlideStrip({
+  structure, selection, onPickStructure, renderAddLine, rowStructureItems, onStructureMove, onSubslideSelect, slideOps,
   talk,
   compiledSlides,
   outlineContent,
@@ -651,6 +680,77 @@ export default function SlideStrip({
   onMarker,
   onGhost
 }: Props) {
+  const [rowMenu, setRowMenu] = useState<SlideMenuRequest | null>(null)
+  const [namedDrop, setNamedDrop] = useState<{ line: number; side: DropSide; label: string } | null>(null)
+  const outlineMarks = useSyncExternalStore(subscribeStripNumbers, getOutlineMarks)
+  const outlineRows = useMemo(() => slideRows(outlineContent), [outlineContent])
+  const sourceAt = useMemo(() => new Map(structure?.nodes.map(node => [node.line + 1, node])), [structure])
+  const sourceLineById = useMemo(() => {
+    const lines = new Map<string, number | null>()
+    for (const node of structure?.nodes ?? []) {
+      if (node.id) lines.set(node.id, lines.has(node.id) ? null : node.line + 1)
+    }
+    return lines
+  }, [structure])
+  const structureRef = useRef({ structure, sourceAt, sourceLineById, selection, onPickStructure, onStructureMove, outlineContent, compiledSlides })
+  structureRef.current = { structure, sourceAt, sourceLineById, selection, onPickStructure, onStructureMove, outlineContent, compiledSlides }
+  const menuSource = useRef<string | null>(null)
+  const menuOutline = menuSource.current
+  function headingForCard(slide: SlidePreview): number | null {
+    const current = structureRef.current
+    if (!current.structure) return slideRefOfRef.current?.(slide.index)?.line ?? slide.row?.source_line ?? null
+    // Compiled rows and memoised handlers can outlive the outline they were drawn from.
+    const line = current.sourceLineById.get(slide.row?.slide_id ?? '')
+    if (line != null) return line
+    // The host can still verify an unstamped or repeated ID against its current compiled snapshot.
+    return slide.row && current.compiledSlides?.[slide.index] === slide.row
+      ? slideRefOfRef.current?.(slide.index)?.line ?? null : null
+  }
+  const dragLines = useRef<number[]>([])
+  const dragSource = useRef<string | null>(null)
+  function chooseDrop(e: React.DragEvent, line: number, node?: { section: boolean; level: number }) {
+    const source = structureRef.current.structure
+    if (!source || !dragLines.current.length) return null
+    const box = e.currentTarget.getBoundingClientRect()
+    const side: DropSide = node?.section && e.clientX > box.left + 32 + (node.level - 2) * 14 ? 'inside'
+      : e.clientY < box.top + box.height / 2 ? 'before' : 'after'
+    const drop = structureDrop(source, line, side)
+    return drop ? { line, side, label: drop.label } : null
+  }
+  function startStructureDrag(e: React.DragEvent, line: number, slide?: SlidePreview): boolean {
+    const current = structureRef.current
+    const index = slide?.row ? current.compiledSlides?.findIndex(row => row === slide.row || row.slide_id === slide.row?.slide_id) : undefined
+    const selected = current.selection
+    const lines = index != null && index >= 0 && selected?.isSelected(index)
+      ? selected.indices.map(i => slideRefOfRef.current?.(i)?.line ?? null) : [line]
+    if (lines.some(line => line === null)) { e.preventDefault(); resetDrag(); return false }
+    dragLines.current = lines.filter((line): line is number => line !== null)
+    dragSource.current = current.structure?.lines.join('\n') ?? null
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('application/x-tw-structure', String(line))
+    return true
+  }
+  function landStructureDrag(e: React.DragEvent, line: number, node?: { section: boolean; level: number }): void {
+    const dest = chooseDrop(e, line, node)
+    if (!dest) return
+    e.preventDefault()
+    e.stopPropagation()
+    const lines = dragLines.current
+    const current = structureRef.current
+    const currentText = current.structure?.lines.join('\n')
+    resetDrag()
+    if (currentText === dragSource.current) current.onStructureMove?.(lines, line, dest.side)
+    dragSource.current = null
+  }
+  function menuAt(e: React.MouseEvent, line: number | null) {
+    e.preventDefault()
+    e.stopPropagation()
+    const box = e.currentTarget.getBoundingClientRect()
+    menuSource.current = structureRef.current.outlineContent
+    setRowMenu({ line, mode: 'menu', x: e.clientX || box.right, y: e.clientY || box.top,
+      startAtFirst: e.detail === 0, editable: line !== null })
+  }
+
   const [slides, setSlides] = useState<SlidePreview[]>([])
   const [usingCompiler, setUsingCompiler] = useState(false)
   // Drag state lives in BOTH state (drives the visual indicator on re-render) and
@@ -717,6 +817,8 @@ export default function SlideStrip({
   }
 
   function resetDrag() {
+    dragLines.current = []
+    setNamedDrop(null)
     dragFromRef.current = null
     dragRefRef.current = null
     setDragFromIndex(null)
@@ -921,6 +1023,14 @@ export default function SlideStrip({
   // behaviour is identical whether or not sections are collapsed.
   function renderCard(slide: SlidePreview) {
     const key = thumbKey(slide.row)
+    const line = headingForCard(slide)
+    const node = line == null ? undefined : sourceAt.get(line)
+    const sourceSubslides = node?.container ? structure?.nodes.filter(child =>
+      child.folded && child.ancestors.includes(structure.nodes.indexOf(node))) ?? [] : []
+    const sectionRow = node?.section && (slide.role === 'section-title' || slide.role === 'subsection-title')
+    const sectionNumber = sectionRow && line !== null ? outlineMarks.get(line)?.sectionNumber : undefined
+    const sourceTitle = node?.title || (node?.level === 2 ? 'New section' : 'New subsection')
+    const sectionFolded = node?.id ? collapsedSections.has(node.id) : false
     const slideId = slide.row?.slide_id ?? null
     const thumbnailUrl = key && thumbnails ? thumbnails[key] ?? null : null
     const warnings = stripWarnings.get(slide.index) ?? slide.warnings
@@ -938,31 +1048,57 @@ export default function SlideStrip({
     // Only cards with a heading of their own can move; synthesized slides
     // (cover/section/closing) have no outline block to move.
     const isBlock = slide.blockIndex !== null
-    const cardDraggable = canReorder && isBlock
+    const cardDraggable = canReorder && isBlock && (!structure || line !== null)
     const isValidTarget = isBlock && dragFromIndex !== null && dragFromIndex !== slide.index
     const isHoverTarget = isValidTarget && dropTargetIndex === slide.index
     // Direction-aware insertion line, matching the writeback contract: dragging
     // DOWN lands the block AFTER the hovered card (bar below); dragging UP lands
     // it BEFORE (bar above).
     let dropEdge: DropEdge = null
-    if (isHoverTarget && dragFromIndex !== null) {
+    if (namedDrop && namedDrop.line === line) dropEdge = namedDrop.side === 'after' ? 'below' : 'above'
+    else if (isHoverTarget && dragFromIndex !== null && !onStructureMove) {
       dropEdge = slide.index > dragFromIndex ? 'below' : 'above'
     }
     return (
       <React.Fragment key={slide.index}>
-      <div ref={(el) => { cardRefs.current[slide.index] = el }}>
-        <MemoSlideCard
+      <div className="tw-structure-row-wrap" ref={(el) => { cardRefs.current[slide.index] = el }}>
+        {sectionRow && line !== null ? <div className="tw-structure-section-band" data-slide-index={slide.index}
+          data-active={activeIndex === slide.index} data-selected={selection?.isSelected(slide.index) || undefined}
+          data-subsection={node.level > 2 || undefined} draggable={cardDraggable}
+          onDragStart={e => startStructureDrag(e, line, slide)}
+          onDragOver={e => { const target = chooseDrop(e, line, node); if (target) { e.preventDefault(); setNamedDrop(target) } }}
+          onDrop={e => landStructureDrag(e, line, node)} onDragEnd={resetDrag}
+          onContextMenu={e => menuAt(e, line)}>
+          <span className="tw-structure-row-number">{slide.index + 1}</span>
+          <button type="button" aria-label={sectionFolded ? 'Expand section' : 'Collapse section'} aria-expanded={!sectionFolded}
+            onClick={() => toggleSection(node.id || String(line))}>{sectionFolded ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</button>
+          <Bookmark size={13} />
+          <button type="button" className="tw-structure-section-name" aria-label={sourceTitle} title={sourceTitle}
+            onClick={e => onPickStructure ? onPickStructure(slide.index, e) : selectByClick(slide.index)}>
+            <span className="tw-structure-section-title">{sourceTitle}</span>
+            <span className="tw-structure-section-mark" aria-hidden>§{sectionNumber}</span>
+          </button>
+          <small>{structure?.nodes.filter(child => !child.section && !child.folded && child.ancestors.includes(structure.nodes.indexOf(node))).length ?? 0}</small>
+          {namedDrop?.line === line && <span className="tw-structure-drop" data-drop-side={namedDrop.side}>{namedDrop.label}</span>}
+        </div> : <MemoSlideCard
           slide={slide}
           warnings={warnings}
           isActive={activeIndex === slide.index}
           isDragging={dragFromIndex === slide.index}
+          selected={selection?.isSelected(slide.index)}
+          dropLabel={namedDrop?.line === line ? namedDrop?.label : undefined}
           thumbnailUrl={thumbnailUrl}
           draggable={cardDraggable}
           dropEdge={dropEdge}
-          onClick={() => selectByClick(slide.index)}
+          onClick={(event) => structureRef.current.onPickStructure ? structureRef.current.onPickStructure(slide.index, event) : selectByClick(slide.index)}
           onDoubleClick={onEdit ? () => onEditRef.current?.(slide.index) : undefined}
-          onContextMenu={onExplain ? (e) => { e.preventDefault(); onExplainRef.current?.(slide.index) } : undefined}
+          onContextMenu={rowStructureItems ? (e) => menuAt(e, headingForCard(slide)) : onExplain ? (e) => { e.preventDefault(); onExplainRef.current?.(slide.index) } : undefined}
           onDragStart={(e) => {
+            const currentLine = headingForCard(slide)
+            if (structureRef.current.onStructureMove) {
+              if (currentLine === null) { e.preventDefault(); return }
+              if (!startStructureDrag(e, currentLine, slide)) return
+            }
             dragFromRef.current = slide.index
             dragRefRef.current = isBlock ? slideRefOfRef.current?.(slide.index) ?? null : null
             setDragFromIndex(slide.index)
@@ -980,6 +1116,13 @@ export default function SlideStrip({
           onDragOver={(e) => {
             // Only a real block is a valid drop target. preventDefault is
             // REQUIRED on dragover or the drop event never fires.
+            if (structureRef.current.onStructureMove) {
+              const currentLine = headingForCard(slide)
+              if (currentLine === null) return
+              const target = chooseDrop(e, currentLine, structureRef.current.sourceAt.get(currentLine))
+              if (target) { e.preventDefault(); setNamedDrop(target) }
+              return
+            }
             if (dragFromRef.current === null || !isBlock) return
             e.preventDefault()
             if (e.dataTransfer) e.dataTransfer.dropEffect = 'move'
@@ -989,6 +1132,11 @@ export default function SlideStrip({
             setDropTargetIndex((current) => (current === at ? current : at))
           }}
           onDrop={(e) => {
+            if (structureRef.current.onStructureMove) {
+              const currentLine = headingForCard(slide)
+              if (currentLine !== null) landStructureDrag(e, currentLine, structureRef.current.sourceAt.get(currentLine))
+              return
+            }
             e.preventDefault()
             const dragged = dragRefRef.current
             const fromDisplay = dragFromRef.current
@@ -1016,45 +1164,37 @@ export default function SlideStrip({
           onDragEnd={resetDrag}
           marker={slideId ? markers?.bySlide[slideId] ?? null : null}
           onMarker={onMarker ? () => onMarkerRef.current?.(slide.index) : undefined}
-        />
+        />}
+        {rowStructureItems && <button type="button" className="tw-structure-row-more" aria-label="More for this row" onClick={e => menuAt(e, headingForCard(slide))}><Ellipsis size={14} /></button>}
       </div>
       {slideId && ghostsAfter(slideId).map((ghost) => (
         <GhostCard key={`ghost-${ghost.itemId}`} ghost={ghost} onClick={onGhost ? () => onGhost(ghost.itemId) : undefined} />
       ))}
-      {/* Carousel sub-slides: each stepped full-bleed sub-slide of a carousel, nested under it. */}
-      {subUrls.map((u, i) => (
-        <div
-          key={`sub-${slide.index}-${i}`}
-          className="tw-subslide-card"
-          data-subslide
-          title={`${slide.title} — step ${i + 1}`}
-          onClick={() => selectByClick(slide.index)}
-          style={{
-            margin: '2px 8px 2px 24px',
-            border: '1px dashed var(--line)',
-            borderRadius: '4px',
-            background: 'var(--panel)',
-            cursor: 'pointer',
-            overflow: 'hidden',
-            userSelect: 'none' as const
-          }}
-        >
-          <div style={{ position: 'relative' as const, paddingTop: '56.25%', background: 'var(--paper)' }}>
-            <div style={{ position: 'absolute' as const, inset: 0, overflow: 'hidden' }}>
-              <img src={u} alt="" style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }} />
-            </div>
-          </div>
-          <div style={{ padding: '3px 6px', borderTop: '1px dashed var(--line)', display: 'flex', gap: '6px', alignItems: 'center' }}>
-            <span style={{ fontSize: '9px', color: 'var(--oxford)', fontFamily: 'var(--font-mono)' }}>↳ {slide.index + 1}.{i + 1}</span>
-            <span style={{ fontSize: '9px', color: 'var(--muted)' }}>step</span>
-          </div>
-        </div>
-      ))}
+      {sourceSubslides.length ? sourceSubslides.map((child, index) => <div key={child.id || child.line} className="tw-structure-row-wrap tw-structure-subslide"
+        data-subslide draggable={!!onStructureMove}
+        onDragStart={event => startStructureDrag(event, child.line + 1)}
+        onDragOver={event => { const target = chooseDrop(event, child.line + 1); if (target) { event.preventDefault(); setNamedDrop(target) } }}
+        onDrop={event => landStructureDrag(event, child.line + 1)} onDragEnd={resetDrag}>
+        <button type="button" aria-label={child.title || 'New subslide'} title={child.title || 'New subslide'}
+          onClick={() => onSubslideSelect?.(child.line + 1, { takeFocus: false })}>
+          {subUrls[index] ? <img className="tw-structure-subslide-picture" src={subUrls[index]} alt="" draggable={false} />
+            : <span className="tw-structure-subslide-picture tw-structure-subslide-waiting" aria-hidden />}
+          <span className="tw-structure-subslide-text">{child.title || 'New subslide'}<small>Subslide</small></span>
+        </button>
+        {namedDrop?.line === child.line + 1 && <span className="tw-structure-drop" data-drop-side={namedDrop.side}>{namedDrop.label}</span>}
+        {rowStructureItems && <button type="button" className="tw-structure-row-more" aria-label="More for this row" onClick={e => menuAt(e, child.line + 1)}><Ellipsis size={14} /></button>}
+      </div>) : subUrls.map((url, index) => <div key={index} className="tw-structure-subslide">
+        <button type="button" data-subslide aria-label={`Subslide ${index + 1}`} title={`Subslide ${index + 1}`} onClick={() => selectByClick(slide.index)}>
+          <img className="tw-structure-subslide-picture" src={url} alt="" draggable={false} />
+          <span className="tw-structure-subslide-text">Subslide {index + 1}</span>
+        </button>
+      </div>)}
+      {renderAddLine && slide.row?.slide_id !== 'deck-thanks' && renderAddLine(slide.index)}
       </React.Fragment>
     )
   }
 
-  return (
+  return (<>
     <div
       tabIndex={0}
       onKeyDown={handleKeyDown}
@@ -1070,7 +1210,7 @@ export default function SlideStrip({
       }}
     >
       {/* Header */}
-      <div
+      {!structure && <div className="tw-strip-header"
         style={{
           padding: '6px 8px 4px',
           display: 'flex',
@@ -1088,7 +1228,7 @@ export default function SlideStrip({
             title="Compiler output"
             style={{
               fontSize: '9px',
-              color: 'var(--oxford)',
+              color: 'var(--accent-text)',
               background: 'rgba(11,58,107,0.1)',
               borderRadius: '2px',
               padding: '1px 4px',
@@ -1098,7 +1238,7 @@ export default function SlideStrip({
             ✓
           </span>
         )}
-      </div>
+      </div>}
       {/* Scrollable slide list */}
       <div
         ref={listRef}
@@ -1109,22 +1249,28 @@ export default function SlideStrip({
           // it crosses between two cards inside it.
           if (!e.currentTarget.contains(e.relatedTarget as Node | null)) {
             setDropTargetIndex(null)
+            setNamedDrop(null)
           }
         }}
       >
         {ghostsAfter('start').map((ghost) => (
           <GhostCard key={`ghost-${ghost.itemId}`} ghost={ghost} onClick={onGhost ? () => onGhost(ghost.itemId) : undefined} />
         ))}
-        {groups.map((group) => {
-          const collapsed = collapsedSections.has(group.key)
+        {structure ? slides.filter(slide => {
+          const line = headingForCard(slide)
+          const node = line === null ? null : sourceAt.get(line)
+          return !node?.ancestors.some(i => collapsedSections.has(structure.nodes[i].id || String(structure.nodes[i].line + 1)))
+        }).map(renderCard) : groups.map((group) => {
+          const titled = !!group.rawSection || group.slides.some(slide => slide.role === 'section-title')
+          const collapsed = titled && collapsedSections.has(group.key)
           return (
             <div key={group.key} className="strip-section" data-section-key={group.key}>
-              <SectionHeader
+              {titled && <SectionHeader
                 title={group.title}
                 count={group.slides.length}
                 collapsed={collapsed}
                 onToggle={() => toggleSection(group.key)}
-              />
+              />}
               {/* Collapsed runs keep the header but drop their cards from the DOM, so
                   the global slide index (data-slide-index) stays correct on the cards
                   that remain. */}
@@ -1134,5 +1280,11 @@ export default function SlideStrip({
         })}
       </div>
     </div>
+    <SlideRowMenus request={rowMenu} rows={outlineRows} ops={slideOps ?? null}
+      isCurrent={() => menuOutline === structureRef.current.outlineContent}
+      structureItems={rowMenu?.line != null ? rowStructureItems : undefined} onClose={() => setRowMenu(null)}
+      onExplain={rowMenu && onExplain ? () => { const i = slides.findIndex(s => headingForCard(s) === rowMenu.line); if (i >= 0) onExplain(i) } : undefined}
+    />
+    </>
   )
 }

@@ -17,6 +17,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
+import { readMainSource } from './lib/read-source.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const COUNTED = {
@@ -125,7 +126,7 @@ const source = (path) => readFileSync(join(root, path), 'utf8')
 assert.match(source('src/renderer/src/extensions/idProtect.ts'), /return scanOutlineTriggers\(text\)\n/, 'idProtect.ts scans without options')
 assert.doesNotMatch(source('src/renderer/src/extensions/idProtect.ts'), /strandedTitleIcons|title-icon-restore|compilerFactsOf/)
 for (const path of ['src/renderer/src/components/LayoutDoctorPanel.tsx', 'src/renderer/src/components/WorkspaceLayout.tsx', 'src/main/index.ts']) {
-  assert.match(source(path), /scanOutlineTriggers\([^\n]*\{ strandedTitleIcons: true \}\)/, `${path} asks for the stranded-icon scan`)
+  assert.match(path === 'src/main/index.ts' ? readMainSource() : source(path), /scanOutlineTriggers\([^\n]*\{ strandedTitleIcons: true \}\)/, `${path} asks for the stranded-icon scan`)
 }
 
 console.log(`PASS test-layout-doctor-stranded-icon-scan-callers (${SLIDES} slides: the Doctor's scan reads the compiler's facts once; ${KEYSTROKES} editor changes never do)`)

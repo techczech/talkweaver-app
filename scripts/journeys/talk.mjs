@@ -20,7 +20,7 @@ export function outline({ sectionColours = true, line } = {}) {
 title: ${TITLE}
 subtitle: A guide for the volunteer walking group
 author: Sample presenter
-handout_url: https://walks.example.org/handouts/planning-a-river-walk-for-volunteers
+handout_url: https://handouts.walks.example.org/handouts/planning-a-river-walk-for-volunteers
 ${line ? `section-colours: ${line}\n` : ''}---
 
 ## Before the walk

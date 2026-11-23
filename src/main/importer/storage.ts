@@ -8,7 +8,7 @@ import type {
   ImportSlideRecord
 } from '../../shared/importer.ts'
 import { buildImportOutline, effectiveSlideMarkdown } from './mapping.ts'
-import { writeJsonAtomic, writeTextAtomic } from './atomic.ts'
+import { writeJsonAtomic, writeTextAtomic } from '../atomic-file.ts'
 
 function slideDir(runDir: string, slideNumber: number): string {
   return join(runDir, 'slides', String(slideNumber).padStart(3, '0'))
@@ -20,14 +20,14 @@ function readJson<T>(filePath: string): T {
 
 function writeSlide(runDir: string, record: ImportSlideRecord): void {
   const dir = slideDir(runDir, record.slideNumber)
-  writeJsonAtomic(join(dir, 'source.json'), record.source)
-  writeJsonAtomic(join(dir, 'decision.json'), record.decision)
-  writeTextAtomic(join(dir, 'current.md'), `${effectiveSlideMarkdown(record.decision)}\n`)
+  writeJsonAtomic(join(dir, 'source.json'), record.source, { sync: false })
+  writeJsonAtomic(join(dir, 'decision.json'), record.decision, { sync: false })
+  writeTextAtomic(join(dir, 'current.md'), `${effectiveSlideMarkdown(record.decision)}\n`, { sync: false })
 }
 
 function writeOutline(manifest: ImportRunManifest, records: ImportSlideRecord[]): string {
   const content = buildImportOutline(manifest, records)
-  writeTextAtomic(manifest.talk.outlinePath, content)
+  writeTextAtomic(manifest.talk.outlinePath, content, { sync: false })
   return content
 }
 
@@ -36,9 +36,9 @@ export function createRunStorage(
   manifest: ImportRunManifest,
   records: ImportSlideRecord[]
 ): ImportRunDetail {
-  writeJsonAtomic(join(runDir, 'source.json'), manifest.source)
+  writeJsonAtomic(join(runDir, 'source.json'), manifest.source, { sync: false })
   for (const record of records) writeSlide(runDir, record)
-  writeJsonAtomic(join(runDir, 'manifest.json'), manifest)
+  writeJsonAtomic(join(runDir, 'manifest.json'), manifest, { sync: false })
   return { manifest, slides: records, outlineContent: writeOutline(manifest, records) }
 }
 
@@ -81,7 +81,7 @@ function updateRun(
   record.title = record.decision.manualOverride?.title ?? record.decision.title
   writeSlide(runDir, record)
   loaded.manifest.updatedAt = changedAt
-  writeJsonAtomic(join(runDir, 'manifest.json'), loaded.manifest)
+  writeJsonAtomic(join(runDir, 'manifest.json'), loaded.manifest, { sync: false })
   loaded.outlineContent = writeOutline(loaded.manifest, loaded.slides)
   return loaded
 }
@@ -116,5 +116,5 @@ export function resetSlideDecision(
 }
 
 export function updateRunManifest(runDir: string, manifest: ImportRunManifest): void {
-  writeJsonAtomic(join(runDir, 'manifest.json'), manifest)
+  writeJsonAtomic(join(runDir, 'manifest.json'), manifest, { sync: false })
 }

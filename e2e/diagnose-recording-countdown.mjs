@@ -9,8 +9,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
 const repo = resolve(import.meta.dirname, '..')
-const shots = process.env.SHOTS ? resolve(process.env.SHOTS) : join(repo, 'evidence/docs-found-fixes')
-mkdirSync(shots, { recursive: true })
+const shots = process.env.SHOTS ? resolve(process.env.SHOTS) : null
+if (shots) mkdirSync(shots, { recursive: true })
 const WAIT = { timeout: 15000 }
 const log = (line) => console.log(`[countdown ${new Date().toISOString().slice(11, 19)}] ${line}`)
 let app = null
@@ -74,8 +74,10 @@ async function one(name, colour) {
   assert.equal(view.colour, 'rgb(247, 243, 234)')
   assert.equal(view.width, 128); assert.equal(view.height, 128)
   assert.equal(view.animation, 'none'); assert.equal(view.transition, '0s'); assert.equal(view.pointer, 'none')
-  await presenter.screenshot({ path: join(shots, `countdown-${name}.png`), timeout: 10000 })
-  log(`${name}: picture saved`)
+  if (shots) {
+    await presenter.screenshot({ path: join(shots, `countdown-${name}.png`), timeout: 10000 })
+    log(`${name}: picture saved`)
+  }
   await presenter.waitForFunction(() => document.querySelector('#twrec-countdown')?.textContent === '2', null, WAIT)
   await presenter.waitForFunction(() => document.querySelector('#twrec-countdown')?.textContent === '1', null, WAIT)
   await presenter.waitForFunction(() => !document.querySelector('#twrec-countdown'), null, WAIT)

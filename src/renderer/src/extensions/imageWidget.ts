@@ -145,7 +145,7 @@ export class ImageWidget extends WidgetType {
       'align-items: flex-start',
       'gap: 4px',
       'padding: 4px',
-      'border: 1px solid var(--line-color, #d9d0c1)',
+      'border: 1px solid var(--line-color, var(--line))',
       'border-radius: 4px',
       'background: transparent',
       'vertical-align: middle',
@@ -209,7 +209,7 @@ export class ImageWidget extends WidgetType {
       cap.textContent = this.caption
       cap.style.cssText = [
         'font-size: 11px',
-        'color: var(--caption-color, #8a9099)',
+        'color: var(--caption-color, var(--faint))',
         'max-width: 220px',
         'overflow: hidden',
         'text-overflow: ellipsis',

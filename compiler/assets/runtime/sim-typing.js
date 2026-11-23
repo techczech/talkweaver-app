@@ -95,7 +95,7 @@ export function simTypingUnits(slide, move) {
       const parent = node.parentElement;
       if (!parent || !node.data) continue;
       if (parent.closest('.sim-toggle, [aria-hidden="true"], .sim-typing-rest, .is-closed .sim-body')) continue;
-      if (!terminal && !parent.closest('.sim-answer-text > p, .sim-reasoning-text')) continue;
+      if (!terminal && !parent.closest('.sim-answer-text > p, .sim-reasoning-text, .sim-row-body.sim-row-answer')) continue;
       nodes.push(node);
     }
     return { el, nodes, length: nodes.reduce((sum, node) => sum + node.data.length, 0) };

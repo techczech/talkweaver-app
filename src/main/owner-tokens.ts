@@ -50,7 +50,7 @@
 import { readdirSync, readFileSync, rmSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { isShareId } from '../shared/share-id.ts'
-import { writeTextAtomic } from './importer/atomic.ts'
+import { writeTextAtomic } from './atomic-file.ts'
 import { SecretsError, type SecretsStore } from './secrets-store.ts'
 import { trackWrite } from './write-queues.ts'
 
@@ -407,10 +407,16 @@ export function openOwnerTokenRegistry(
     files.writeAtomic(path, `${JSON.stringify({ version: spec.version, [spec.collection]: rows }, null, 2)}\n`)
   }
 
-  /** Temporary files a crashed write left beside the registry (earlier versions' held plain tokens). */
+  /** Temporary files a crashed write left beside the registry (earlier versions' held plain tokens). The
+   *  atomic write's own name (.tw-<16 hex>.tmp, atomic-file.ts) does not say which file it was for, so every
+   *  one in this folder goes: a temporary file is never read, and none is open while this runs. */
   function sweepTemporaryFiles(): void {
     const base = escapeRegExp(basename(path))
-    const left = [new RegExp(`^${base}\\.\\d+\\.[0-9a-z]+\\.tmp$`), new RegExp(`^\\.${base}\\.[0-9a-f-]{36}\\.tmp$`)]
+    const left = [
+      new RegExp(`^${base}\\.\\d+\\.[0-9a-z]+\\.tmp$`),
+      new RegExp(`^\\.${base}\\.[0-9a-f-]{36}\\.tmp$`),
+      /^\.tw-[0-9a-f]{16}\.tmp$/,
+    ]
     for (const file of files.list(dirname(path))) {
       if (left.some((pattern) => pattern.test(file))) {
         try { files.remove(join(dirname(path), file)) } catch { /* swept at the next start */ }

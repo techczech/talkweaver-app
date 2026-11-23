@@ -85,6 +85,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1000, height: 700 } })
   page.on('pageerror', (e) => errors.push(String(e)))
   await page.setContent('<div id="host" style="width:900px;height:600px"></div>')
+  await page.addStyleTag({ path: join(root, 'src/renderer/src/app-theme.css') })
   await page.addScriptTag({ path: outfile })
   const ev = (fn, arg) => page.evaluate(fn, arg)
   const open = (mode = 'plain') => ev((m) => { window.mount(window.__doc, m) }, mode)
@@ -145,9 +146,9 @@ try {
   a = await ev(() => window.buttons())
   assert.deepEqual(a.filter((x) => x.active).map((x) => x.line), [5], 'the label follows the caret')
   const on = await ev(() => window.wordColour(5)), off = await ev(() => window.wordColour(10))
-  assert.equal(on.color, 'rgb(11, 58, 115)', 'active label is dark blue')
+  assert.equal(on.color, 'rgb(29, 78, 216)', 'active label is dark blue')
   assert.ok(Number(on.weight) >= 700, 'and bold: ' + on.weight)
-  assert.equal(off.color, 'rgb(138, 144, 153)', 'others stay grey')
+  assert.equal(off.color, 'rgb(95, 107, 122)', 'others stay grey')
   assert.ok(Number(off.weight) < Number(on.weight), 'and lighter')
 
   // Putting the caret on a heading: end of the visible text, before hidden tokens.

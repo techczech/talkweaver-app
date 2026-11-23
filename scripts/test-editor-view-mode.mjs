@@ -32,12 +32,18 @@ try {
   rmSync(dir, { recursive: true, force: true })
 }
 
-// The two commands exist with their palette names and no default shortcut.
-for (const [id, label] of [['view-plain', 'Show the plain view'], ['view-markdown', 'Show the Markdown view']]) {
+// ADR-0045 promotes the editor modes into the four named workspace views.
+for (const [id, label, shortcutId] of [
+  ['view-slides', 'View: Slide', 'app.view-slides'],
+  ['view-grid', 'View: Grid', 'app.view-grid'],
+  ['view-plain', 'View: Outline', 'app.view-plain'],
+  ['view-markdown', 'View: Markdown', 'app.view-markdown']
+]) {
   const c = COMMAND_REGISTRY.find((x) => x.id === id)
   assert.ok(c, id + ' is registered')
   assert.equal(c.label, label)
-  assert.equal(c.shortcutId, undefined)
+  assert.equal(c.shortcutId, shortcutId)
   assert.ok(c.palette.visible)
 }
+assert.equal(COMMAND_REGISTRY.find(c => c.id === 'view-strip').shortcutId, undefined)
 console.log('editor view mode: ok')

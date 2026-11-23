@@ -1,6 +1,6 @@
 import { createHash } from 'crypto'
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
+import { existsSync, readFileSync } from 'fs'
+import { writeTextAtomic } from './atomic-file.ts'
 
 export interface PrerenderLedgerEntry {
   contentHash: string
@@ -34,10 +34,7 @@ export function loadPrerenderLedger(filePath: string): PrerenderLedger {
 }
 
 export function savePrerenderLedger(filePath: string, ledger: PrerenderLedger): void {
-  mkdirSync(dirname(filePath), { recursive: true })
-  const temporaryPath = `${filePath}.tmp`
-  writeFileSync(temporaryPath, JSON.stringify(ledger, null, 2), 'utf8')
-  renameSync(temporaryPath, filePath)
+  writeTextAtomic(filePath, JSON.stringify(ledger, null, 2), { createParent: true })
 }
 
 export function shouldPrerenderTalk(

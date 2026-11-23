@@ -120,6 +120,8 @@ try {
   record('the handout is built beside the second vault talk from its own text',
     !!handout?.success && handout.path.startsWith(dirname(B_PATH)) && handoutHtml.includes('Beta slide') && !handoutHtml.includes('Alpha slide'), JSON.stringify(handout))
   await ensureTalksMode(page) // the first edit moved the sidebar to the slide outline
+  const recentToggle = page.locator('.tl-recent-head')
+  if (await recentToggle.getAttribute('aria-expanded') === 'false') await recentToggle.click()
   await page.waitForTimeout(600)
   const names = await recentNames()
   record('Recent lists talks across both vaults, each with a vault badge', names.includes('Alpha Talk') && names.includes('Beta Talk') && await page.locator('.tl-recent-row .tl-vb').count() >= 2, JSON.stringify(names))

@@ -1,0 +1,85 @@
+/* A visual-only body always fits its title-to-footer band, whichever semantic layout led to it.
+   In particular an image-claim without claims used to keep the image's intrinsic height and
+   centre it through the kicker. Titles remain outside this bounded box. */
+.slide[data-title-layout="top"] > .slide-content.media-stage {
+  height: calc(100cqh - var(--slide-pad-y) * 2) !important;
+  min-height: 0 !important; max-height: none !important;
+  display: flex !important; flex-direction: column; gap: 0; padding-top: 0 !important;
+}
+.slide[data-title-layout="top"][data-title-look] > .slide-content.media-stage {
+  height: calc(100cqh - var(--titlelook-top) - var(--titlelook-height) - var(--titlelook-clear) - var(--slide-pad-y)) !important;
+}
+.slide .slide-content.media-stage > :is(.slide-figure, .slide-embed) {
+  position: relative; inset: auto; display: grid !important;
+  grid-template-rows: minmax(0, 1fr) auto; flex: 1 1 0;
+  width: 100%; height: 100%; min-height: 0; max-height: 100%;
+  margin: 0 !important; align-self: stretch; overflow: hidden;
+}
+.slide .slide-content.media-stage > :is(.slide-figure, .slide-embed) > :is(img, video, iframe) {
+  width: 100%; height: 100%; max-width: 100%; max-height: 100%; min-height: 0;
+  object-fit: contain; object-position: center;
+  align-self: center; justify-self: center;
+}
+/* No painted title: the visual keeps the full stage. The same applies to an explicit overlay. */
+.slide:has(> .media-stage[data-media-title="none"]),
+.slide:has(> .media-stage[data-media-title="overlay"]) { padding: 0 !important; }
+.slide > .slide-content.media-stage[data-media-title="none"],
+.slide .slide-content.media-stage[data-media-title="overlay"] {
+  width: 100% !important; height: 100cqh !important; min-height: 0 !important;
+  padding: 0 !important; margin: 0 !important;
+}
+.slide .slide-content.media-stage[data-media-title="overlay"] > .slide-head:not(.slide-head-quiet) {
+  position: static !important; height: 0 !important; min-height: 0; margin: 0 !important; padding: 0 !important;
+}
+/* An opaque ground guarantees 16+:1 independently of the image, palette or section colour. */
+.slide[data-title-layout="top"][data-title-look] > .slide-content.media-stage[data-media-title="overlay"] > .slide-head:not(.slide-head-quiet) > h1,
+.slide:not([data-title-look]) > .slide-content.media-stage[data-media-title="overlay"] > .slide-head:not(.slide-head-quiet) > h1,
+.slide .card.carousel-subslide > .slide-content.media-stage[data-media-title="overlay"] > .slide-head:not(.slide-head-quiet) > h1 {
+  --look-deep: #fff; --titlelook-ink: #fff; --titlelook-fill: #15202b;
+  position: absolute !important; top: 0 !important; left: 0 !important; z-index: 3;
+  box-sizing: border-box; width: 100% !important; max-width: none !important;
+  margin: 0 !important; padding: 2cqh 3cqw !important; border: 0 !important;
+  background: #15202b !important; color: #fff !important; box-shadow: none !important; filter: none !important;
+  font-size: 2.4cqw !important; line-height: 1.2 !important; font-weight: 700 !important;
+  height: auto !important; clip-path: none !important; overflow: visible !important;
+  white-space: normal !important; overflow-wrap: anywhere; isolation: auto;
+}
+.slide .slide-content.media-stage[data-media-title="overlay"] > .slide-head > h1 *,
+.slide .slide-content.media-stage[data-media-title="overlay"] > .slide-head > .kicker { color: #fff !important; }
+.slide .slide-content.media-stage[data-media-title="overlay"] > .slide-head > .kicker,
+.slide .slide-content.media-stage[data-media-title="overlay"] > .slide-head > .title-strip { display: none !important; }
+.slide[data-title-layout="top"][data-title-look] > .slide-content.media-stage[data-media-title="overlay"] > .slide-head:not(.slide-head-quiet) > h1::after,
+.slide .slide-content.media-stage[data-media-title="overlay"] > .slide-head > h1::before,
+.slide .slide-content.media-stage[data-media-title="overlay"] > .slide-head > h1::after { content: none !important; display: none !important; }
+
+/* Still images retain the shared never-upscale contract inside their definite grid area. */
+.slide .slide-content.media-stage > .slide-figure > img { width: auto; height: auto; }
+
+/* A carousel's picture uses its card's band, with the child's own title in normal flow. */
+.slide .card.carousel-subslide > .slide-content.media-stage {
+  display: flex !important; flex-direction: column;
+  height: 100% !important; min-height: 0 !important; gap: 1.8cqh;
+}
+.slide .card.carousel-subslide > .slide-content.media-stage > :is(.slide-figure, .slide-embed) { height: auto; }
+
+.slide .card.carousel-subslide > .slide-content.media-stage[data-media-title="overlay"] { position: relative; height: 100% !important; }
+/* The legacy gallery's 56cqh cap is larger than some child-title bands; use the actual grid area. */
+.slide .card.carousel-subslide > .slide-content.media-stage > .slide-figure { max-height: 100%; }
+.slide .card.carousel-subslide > .slide-content.media-stage > .slide-figure > :is(img, video) {
+  max-height: 100%; max-width: 100%; width: auto; height: auto;
+}
+
+/* Untitled and explicit overlay images retain the established full-stage fit, including
+   very small source images; object-fit preserves the whole image and its proportions. */
+.slide .slide-content.media-stage:is([data-media-title="none"], [data-media-title="overlay"]) > .slide-figure > img {
+  width: 100%; height: 100%; object-fit: contain;
+}
+.slide .card.carousel-subslide > .slide-content.media-stage:is([data-media-title="none"], [data-media-title="overlay"]) > .slide-figure > img {
+  width: 100%; height: 100%; object-fit: contain;
+}
+
+/* Legacy looks retain their yellow marker sweep over the opaque band; its ink must stay dark.
+   Ocean titles already draw their distinct marker as an underline on the heading's ground. */
+.slide:not([data-look="ocean"]):not([data-look="ocean-safe"]) .slide-content.media-stage[data-media-title="overlay"] > .slide-head > h1 :is(mark.ink-marker, mark.ink-marker *) {
+  color: #15202b !important;
+}

@@ -2,7 +2,8 @@ import { audioChipTitle } from "./audio-chip-title.mjs";
 import { referenceFileName, shownReference } from "./shown-reference.mjs";
 import { imageAspect, takesScreenshotRow } from "./screenshot-row.mjs";
 import { highlightCode } from "../highlight.mjs";
-import { slugify, chooseBalancedColumns, escapeHtml, makeQrSvg, cleanQrUrl } from "./01-cli-utils.mjs";
+import { slugify, chooseBalancedColumns, escapeHtml, makeQrSvg } from "./01-cli-utils.mjs";
+import { displayWebAddress } from "./address-display.mjs";
 import { parseConceptRelations, spineFontScale, timelineDateOf, timelineBlockFields, timelineStopsFromGroups, timelineGroupsForRender, timelineEntriesFromStops, autoTimelineMode, renderInline, TRACE_ROLES, autoSpeakerClass } from "./02-triggers-layout.mjs";
 import { withoutScripts } from "./04-html-extraction.mjs";
 import { resolveIconOverrides, decideFeatureListStyle, iconSvg } from "./05-icons.mjs";
@@ -247,7 +248,7 @@ function savedViewDate(iso) {
 function renderImageFigure(block) {
   // SD-4: figure.fig gives the centred-caption flex column; slide-figure is kept for the
   // lightbox selector (figure.slide-figure img) and all existing CSS that targets it.
-  return `<figure class="slide-figure fig"${mediaAspectAttrs(block)}><img src="${escapeHtml(block.src)}"${imageSizeAttrs(block)} alt="${escapeHtml(block.alt)}">${block.caption ? `<figcaption>${renderInline(block.caption)}</figcaption>` : ""}</figure>`;
+  return `<figure class="slide-figure fig"${mediaAspectAttrs(block)}><img src="${escapeHtml(block.src)}"${imageSizeAttrs(block)} alt="${escapeHtml(block.alt)}">${block.caption ? `<figcaption>${shortenAddressLinks(renderInline(block.caption))}</figcaption>` : ""}</figure>`;
 }
 
 // G5: collapse each run of 2+ consecutive image blocks into one synthetic `image-row` block so
@@ -336,38 +337,23 @@ function renderActionRow(actions) {
 
 function renderQr(block, className = "slide-figure slide-qr slide-qr-corner") {
   const url = String(block.url || "");
-  // the whole address, never shortened: an address the audience cannot read in full defeats its purpose
-  const cleaned = cleanQrUrl(url, 0);
+  const cleaned = displayWebAddress(url, { qr: true });
   const svg = makeQrSvg(url);
   const safe = /^(https?|mailto):/i.test(url) ? url : null;
   if (!svg) {
     // too long for a code at all: a plain link, drawn as before
-    const shortened = cleanQrUrl(url);
-    return `<figure class="${className} qr-too-long">${safe ? `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener">${escapeHtml(shortened)}</a>` : escapeHtml(shortened)}</figure>`;
+    const shortened = displayWebAddress(url, { linked: Boolean(safe), maxLength: 56 });
+    return `<figure class="${className} qr-too-long">${safe ? `<a href="${escapeHtml(safe)}" title="${escapeHtml(url)}" aria-label="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(shortened)}</a>` : escapeHtml(shortened)}</figure>`;
   }
-  // An address breaks after a slash, never inside a name: "handouts.fyi/" then "k8wf", not "k8" then "wf". Each part
-  // between slashes is one span that does not wrap (.qr-part); inside it the places a part may break when it alone is
-  // wider than its caption (after "-", "_", ".", "?", "&", "=") are marked, and the fitter (slide-fit.js
-  // fitQrCaptions) opens them only for such a part (data-qr-long). The text is the address, character for character.
+  // The caption is the domain alone. Existing part fitting allows a very long domain to
+  // wrap at its dots or hyphens without losing any characters.
   const shown = cleaned.split(/(?<=\/)(?=[^/])/).map((part) => `<span class="qr-part">${escapeHtml(part).replace(/([-_.?=]|&amp;)(?=.)/g, "$1<wbr>")}</span>`).join("<wbr>");
   const caption = safe
-    ? `<figcaption class="qr-caption"><a href="${escapeHtml(safe)}" target="_blank" rel="noopener">${shown}</a></figcaption>`
-    : `<figcaption class="qr-caption">${shown}</figcaption>`;
+    ? `<figcaption class="qr-caption"><a href="${escapeHtml(safe)}" title="${escapeHtml(url)}" aria-label="${escapeHtml(url)}" target="_blank" rel="noopener">${shown}</a></figcaption>`
+    : `<figcaption class="qr-caption" title="${escapeHtml(url)}" aria-label="${escapeHtml(url)}">${shown}</figcaption>`;
   return `<figure class="${className}">`
-    + `<button type="button" class="qr-code" data-qr-url="${escapeHtml(url)}" aria-label="Show QR code for ${escapeHtml(url)} full screen">${svg}</button>`
+    + `<button type="button" class="qr-code" data-qr-url="${escapeHtml(url)}" title="${escapeHtml(url)}" aria-label="Show QR code for ${escapeHtml(url)} full screen">${svg}</button>`
     + caption + `</figure>`;
-}
-
-// Outside the Ocean look a QR caption keeps the drawing it had before the whole-address rule (07-assembly applies this to
-// a deck that is not in the look): the address shortened to QR_URL_MAX_LEN, breaking after a slash. The parts' text is
-// the address as shown, so shortening it again gives the same text cleanQrUrl gave from the url.
-const QR_PARTS = /<span class="qr-part">[\s\S]*?<\/span>(?:<wbr><span class="qr-part">[\s\S]*?<\/span>)*/g;
-export function legacyQrCaptions(html) {
-  if (!String(html).includes('class="qr-part"')) return html;
-  return String(html).replace(QR_PARTS, (run) => {
-    const shown = run.replace(/<[^>]*>/g, "").replace(/&quot;/g, '"').replace(/&gt;/g, ">").replace(/&lt;/g, "<").replace(/&amp;/g, "&");
-    return escapeHtml(cleanQrUrl(shown)).replace(/\/(?=[^/])/g, "/<wbr>");
-  });
 }
 
 // Collapse consecutive `action` blocks into a single `actions` block so a run of action
@@ -545,7 +531,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const videoRef = typeof block.videoRef === "string" && block.videoRef ? ` data-video-ref="${escapeHtml(block.videoRef)}"` : "";
     const poster = block.poster ? ` poster="${escapeHtml(block.poster)}"` : "";
     const assetOnly = block.assetOnly ? ` data-video-asset-only data-video-name="${escapeHtml(block.videoName || referenceFileName(block.src))}"` : "";
-    const caption = block.caption ? `<figcaption>${renderInline(block.caption)}</figcaption>` : "";
+    const caption = block.caption ? `<figcaption>${shortenAddressLinks(renderInline(block.caption))}</figcaption>` : "";
     // Ticket 24 (Dominik 2026-09-13, orm-slot-stacked): every slide video carries ONE enlarge
     // affordance. The deck runtime opens the lightbox on it — the same seam images use — moving
     // this very <video> element to the stage (playback position and state ride along). Hidden in
@@ -1428,7 +1414,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // ADR-0023 §9: the image-quote keeps its own column at the one constant type; no width ramp.
     const sizing = ` data-quote-chars="${paras.join(" ").length}"`;
     const body = paras.map((p) => `<p>${renderInline(p)}</p>`).join("");
-    const cap = img && img.caption ? `<figcaption>${renderInline(img.caption)}</figcaption>` : "";
+    const cap = img && img.caption ? `<figcaption>${shortenAddressLinks(renderInline(img.caption))}</figcaption>` : "";
     const contain = img && img.width && img.height && img.width / img.height > 4 / 3 ? " iq-contain" : "";
     const figure = img ? `<figure class="iq-figure${contain}"><img src="${escapeHtml(img.src)}"${imageSizeAttrs(img)} alt="${escapeHtml(img.alt || "")}">${cap}</figure>` : "";
     const citeBar = q.cite ? `<p class="iq-cite">${renderInline(q.cite)}</p>` : "";
@@ -1485,7 +1471,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // buttons. Each screenshot is a .cta-shot figure (image + optional caption). With 0/1
     // images the strip simply holds what it has; the grid stays robust.
     const shots = (block.images ?? []).map((img) => {
-      const cap = img.caption ? `<figcaption>${renderInline(img.caption)}</figcaption>` : "";
+      const cap = img.caption ? `<figcaption>${shortenAddressLinks(renderInline(img.caption))}</figcaption>` : "";
       return `<figure class="cta-shot"><img src="${escapeHtml(img.src)}"${imageSizeAttrs(img)} alt="${escapeHtml(img.alt || "")}">${cap}</figure>`;
     }).join("");
     const callouts = (block.callouts ?? []).length

@@ -12,7 +12,7 @@
 // New versions card, and the command answers "Updates come from the Microsoft Store" with no request.
 import { _electron as electron } from 'playwright'
 import { createServer } from 'node:http'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -23,6 +23,7 @@ import { testProfileEnv } from './lib/test-profile.mjs'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CURRENT_VERSION = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version
+const expectsShippedNotes = !CURRENT_VERSION.includes('-') || existsSync(join(REPO, 'resources', 'whats-new', `${CURRENT_VERSION}.md`))
 const [major, minor] = CURRENT_VERSION.split('.').map(Number)
 const NEXT_VERSION = `${major}.${minor + 1}.0`
 const CURRENT_PATTERN = CURRENT_VERSION.replaceAll('.', '\\.')
@@ -89,14 +90,18 @@ try {
   await ensureFreshBuild(REPO)
   // ── A website copy that has just been updated from 0.40.0 ─────────────────────────────────────
   let { app, page, out } = await launch('website', { lastVersionRun: '0.40.0' })
-  const updated = await visible(page, '[data-whats-new-mark]')
-  const text = updated ? (await page.locator('[data-whats-new-mark]').innerText()).replace(/\s+/g, ' ').trim() : ''
-  record('after an update the status bar reads "Updated to <version> · What\'s new"', updated && new RegExp("^Updated to " + CURRENT_PATTERN + " \u00b7 What.s new$").test(text), `text=${JSON.stringify(text)}`)
   record('nothing opened by itself: no What\'s new tab, no note, no popover', (await page.locator('[data-whats-new-pane], [data-update-note], [data-update-popover]').count()) === 0)
   record('no request was made at launch', requests.length === 0, `requests=${requests.length}`)
-  await page.locator('[data-whats-new-mark]').click()
-  record('clicking the mark opens the What\'s new tab in the right-hand column with the shipped notes', await visible(page, '[data-whats-new-pane]') && new RegExp("What.s new in " + CURRENT_PATTERN).test(await page.locator('[data-whats-new-pane]').innerText()))
-  record('the Updated mark goes when clicked', await gone(page, '[data-whats-new-mark]'))
+  if (expectsShippedNotes) {
+    const updated = await visible(page, '[data-whats-new-mark]')
+    const text = updated ? (await page.locator('[data-whats-new-mark]').innerText()).replace(/\s+/g, ' ').trim() : ''
+    record('after an update the status bar reads "Updated to <version> · What\'s new"', updated && new RegExp("^Updated to " + CURRENT_PATTERN + " \u00b7 What.s new$").test(text), `text=${JSON.stringify(text)}`)
+    await page.locator('[data-whats-new-mark]').click()
+    record('clicking the mark opens the What\'s new tab in the right-hand column with the shipped notes', await visible(page, '[data-whats-new-pane]') && new RegExp("What.s new in " + CURRENT_PATTERN).test(await page.locator('[data-whats-new-pane]').innerText()))
+    record('the Updated mark goes when clicked', await gone(page, '[data-whats-new-mark]'))
+  } else {
+    record('an alpha without shipped notes has no Updated mark', !(await visible(page, '[data-whats-new-mark]')))
+  }
 
   await checkFromPalette(page)
   const note = await visible(page, '[data-update-note][data-update-note-tone="new"]')

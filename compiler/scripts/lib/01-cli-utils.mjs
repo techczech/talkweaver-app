@@ -214,24 +214,5 @@ export function makeQrSvg(text) {
   return buildTimeMakeQrSvg(String(text == null ? "" : text));
 }
 
-// QR caption URL cleaning (refinement 6, 2026-06-09). The QR slide shows the linked URL in small
-// type beneath the code, CLEANED for reading: strip the scheme (`http://`, `https://`, also
-// scheme-relative `//`) and a leading `www.`, and drop a trailing slash. If the cleaned string is
-// longer than `maxLen`, truncate and append an ellipsis `…` (the ellipsis counts toward maxLen, so
-// the result never exceeds maxLen). A non-URL caption (an author-supplied label) is returned as-is
-// apart from the same length cap — labels read cleaner short too. Pure + deterministic.
-export const QR_URL_MAX_LEN = 42;
-export function cleanQrUrl(raw, maxLen = QR_URL_MAX_LEN) {
-  let s = String(raw == null ? "" : raw).trim();
-  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, ""); // strip scheme://
-  s = s.replace(/^\/\//, "");                    // strip scheme-relative //
-  s = s.replace(/^www\./i, "");                  // strip leading www.
-  s = s.replace(/\/+$/, "");                     // drop trailing slash(es)
-  if (maxLen > 0 && s.length > maxLen) {
-    s = s.slice(0, Math.max(0, maxLen - 1)).replace(/\s+$/, "") + "…";
-  }
-  return s;
-}
-
 export const pollExtendedSource = extendedPollRuntimeSource() + '\n' + quickPollRuntimeSource();
 export const pollExtendedStyles = readFileSync(resolve(scriptDir, '../assets/styles/poll-extended.css'), 'utf8');

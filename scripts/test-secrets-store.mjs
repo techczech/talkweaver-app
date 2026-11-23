@@ -22,7 +22,7 @@ import {
 } from '../src/main/secrets-store.ts'
 import { createLiveSessionStore } from '../src/main/live-session-store.ts'
 import { memoryFiles, memorySecrets, testCipher } from './lib/memory-secrets.mjs'
-import { readSource } from './lib/read-source.mjs'
+import { readMainSource, readSource } from './lib/read-source.mjs'
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)))
 const posix = process.platform !== 'win32'
@@ -348,10 +348,10 @@ const errorText = (error) => [String(error), error?.message, error?.stack, JSON.
   assert.ok(sources.length > 100, 'the scan saw the source tree')
   const name = (path) => relative(repo, path).split(sep).join('/')
   /** Identifiers and string literals in a file's code (comments are not code). */
-  const tokensOf = (path) => {
+  const tokensOf = (path, text = readSource(path)) => {
     const identifiers = new Set()
     const strings = []
-    const file = ts.createSourceFile(path, readSource(path), ts.ScriptTarget.Latest, true, path.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
+    const file = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, path.endsWith('x') ? ts.ScriptKind.TSX : ts.ScriptKind.TS)
     const visit = (node) => {
       if (ts.isIdentifier(node)) identifiers.add(node.text)
       else if (ts.isStringLiteralLike(node) || ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) strings.push(node.text)
@@ -375,7 +375,7 @@ const errorText = (error) => [String(error), error?.message, error?.stack, JSON.
   assert.match(electronSide, /import \{ safeStorage \} from 'electron'/)
   assert.match(electronSide, /getSelectedStorageBackend/, 'the Linux backend is asked for')
   // The main process opens the store once and builds nothing of its own beside it.
-  const main = tokensOf(join(repo, 'src/main/index.ts'))
+  const main = tokensOf('main-source.ts', readMainSource())
   assert.ok(main.identifiers.has('openSecretsStore'))
   for (const gone of ['tokenBlobPath', 'r2CredsBlobPath', 'liveCredentialsBlobPath']) assert.equal(main.identifiers.has(gone), false, `${gone} is gone from the main process`)
   console.log('PASS 7: safeStorage is touched by one file; slot files are named by one file')

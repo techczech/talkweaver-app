@@ -10,7 +10,7 @@ import { GUIDE_TEXT, rightColumnTabs, type RightColumnTab } from '../../../share
 // tooltip. The row measures itself, so the switch happens where the words really stop fitting, not at a guessed width.
 
 const LABELS: Record<RightColumnTab, string> = {
-  inspector: 'Inspector', slides: 'Strip', talk: 'Talk', guide: GUIDE_TEXT.button, research: 'Research', images: 'Images', feedback: 'Feedback', 'whats-new': 'What’s new'
+  inspector: 'Slide', slides: 'Strip', talk: 'Talk', guide: GUIDE_TEXT.button, research: 'Research', images: 'Images', feedback: 'Feedback', 'whats-new': 'What’s new'
 }
 const ICONS: Record<RightColumnTab, LucideIcon> = {
   inspector: SlidersHorizontal, slides: Rows3, talk: FileText, guide: GraduationCap, research: BookOpen, images: ImageIcon, feedback: Inbox, 'whats-new': Sparkles
@@ -55,11 +55,12 @@ export default function RightColumnTabs({ guideUp, whatsNewUp = false, hasTalk, 
         const Glyph = ICONS[tab]
         return (
           <div key={tab} className={`rc-tab${active === tab ? ' rc-tab--on' : ''}`} data-rc-tab={tab}>
-            <button type="button" role="tab" aria-selected={active === tab} aria-label={LABELS[tab]} title={LABELS[tab]} className="rc-tab-btn" onClick={() => onSelect(tab)}>
+            <button type="button" role={hasTalk && ['guide', 'research', 'images'].includes(tab) ? 'button' : 'tab'} aria-selected={hasTalk && ['guide', 'research', 'images'].includes(tab) ? undefined : active === tab}
+              aria-pressed={hasTalk && ['guide', 'research', 'images'].includes(tab) ? active === tab : undefined} aria-label={LABELS[tab]} title={LABELS[tab]} className="rc-tab-btn" onClick={() => onSelect(tab)}>
               <Glyph size={13} strokeWidth={2} aria-hidden />
               <span className="rc-tab-label">{LABELS[tab]}</span>
             </button>
-            {tab === 'guide' && (
+            {tab === 'guide' && guideUp && (
               <button type="button" className="rc-tab-close" aria-label="Close the Guide" title="Close the Guide" data-guide-close onClick={onCloseGuide}>
                 <X size={11} strokeWidth={2.5} aria-hidden />
               </button>

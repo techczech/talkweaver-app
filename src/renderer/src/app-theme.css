@@ -1,0 +1,92 @@
+/* Daylight app chrome, locked in ADR-0045 §1. */
+:root {
+  color-scheme: light;
+  --paper: #f1f3f6;
+  --panel: #ffffff;
+  --surface-2: #f7f8fa;
+  --hover: #eef1f5;
+  --active: #e3e7ed;
+  --line: #e2e5ea;
+  --line-strong: #cfd5dd;
+  --ink: #111827;
+  --muted: #4a5464;
+  --faint: #5f6b7a;
+  --accent: #2563eb;
+  --accent-soft: #e8f0fe;
+  --accent-text: #1d4ed8;
+  --on-accent: #ffffff;
+  --green: #137a3a;
+  --green-bg: #e7f6ec;
+  --amber: #a04a06;
+  --amber-bg: #fdf0cf;
+  --warn-line: #f1d38a;
+  --crimson: #b91c1c;
+  --crimson-bg: #fde8e8;
+  --on-danger: #ffffff;
+  --on-warning: #ffffff;
+  --focus: #2563eb;
+  --selection: #cfe0ff;
+  --veil: #0f172a55;
+  --shadow: 0 1px 2px #0f172a14;
+  --popover-shadow: 0 12px 36px #0f172a33, 0 2px 6px #0f172a1f;
+  --slide-shadow: 0 2px 4px #0f172a1a, 0 14px 34px #0f172a1f;
+
+  --bg-0: var(--paper);
+  --bg-1: var(--panel);
+  --bg-2: var(--hover);
+  --bg-3: var(--active);
+  --border: var(--line);
+  --text-0: var(--ink);
+  --text-1: var(--muted);
+  --text-2: var(--faint);
+  --oxford: var(--accent);
+  --accent-hover: color-mix(in srgb, var(--accent) 88%, black);
+  --tint: var(--panel);
+  --hairline: var(--line);
+
+  --toolbar-height: 46px;
+  --toolbar-button: 32px;
+  --toolbar-icon: 17px;
+  --toolbar-stroke: 1.75;
+  --status-height: 28px;
+  --radius: 8px;
+  --radius-sm: 6px;
+  --radius-lg: 12px;
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #0e1116;
+  --panel: #171b22;
+  --surface-2: #1d222b;
+  --hover: #232934;
+  --active: #2b3240;
+  --line: #2a313c;
+  --line-strong: #3b4452;
+  --ink: #e9ecf1;
+  --muted: #aab2bf;
+  --faint: #8791a0;
+  --accent: #2f6bed;
+  --accent-soft: #1a2b4d;
+  --accent-text: #8fb7ff;
+  --on-accent: #ffffff;
+  --green: #5fcf8b;
+  --green-bg: #11301f;
+  --amber: #f0b45c;
+  --amber-bg: #38290c;
+  --warn-line: #6b4d12;
+  --crimson: #ff8a8a;
+  --crimson-bg: #3a1517;
+  --on-danger: var(--paper);
+  --on-warning: var(--paper);
+  --focus: #8fb7ff;
+  --selection: #27437a;
+  --veil: #00000088;
+  --shadow: 0 1px 2px #0006;
+  --popover-shadow: 0 14px 40px #000a, 0 2px 6px #0008;
+  --slide-shadow: 0 2px 4px #0008, 0 14px 34px #0009;
+}
+
+::selection { background: var(--selection); color: var(--ink); }

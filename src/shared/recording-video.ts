@@ -2,7 +2,7 @@
 // is what the export produces). Pure: the same functions give the camera rectangle, the kept spans on
 // the frame grid, chapters and captions to the renderer and to main.
 import { DEFAULT_FACE, faceOf, normaliseRanges, type FacePlacement, type RecordingFaces, type TimeRange } from './recording-edits.ts'
-import { rangesToVideoClock, toVideoClock, type TakeClock } from './recording-takes.ts'
+import { rangesToVideoClock, type TakeClock } from './recording-takes.ts'
 
 /** The exported picture. A capture with another size or rate keeps these: the slides layer is always 1920×1080 at 30 fps. */
 export const VIDEO_FRAME = { width: 1920, height: 1080, fps: 30 } as const
@@ -81,15 +81,16 @@ export function faceTrack(rows: ReadonlyArray<{ change: number; start: number }>
 }
 /**
  * The face track on the video clock (Record this slide again): each stretch moved as the Run's time is,
- * and each take shown with its slide's placement.
+ * and each take shown with its own slide's placement, chosen by its slide change from `faces` (a slide whose
+ * row has no length of its own is not in the Run's track, but its take is in the video).
  */
-export function faceTrackOnClock(track: readonly FaceSegment[], clock: TakeClock): FaceSegment[] {
+export function faceTrackOnClock(track: readonly FaceSegment[], clock: TakeClock, faces: RecordingFaces): FaceSegment[] {
   if (!clock.inserts.length) return [...track]
   const out: FaceSegment[] = []
   for (const seg of track) for (const r of rangesToVideoClock(clock, [seg])) out.push({ ...r, face: seg.face })
   for (const i of clock.inserts) {
-    const at = toVideoClock(clock, i.at)
-    out.push({ start: at, end: at + i.length, face: (track.find((s) => i.at >= s.start && i.at < s.end) ?? track.at(-1))?.face ?? DEFAULT_FACE })
+    const at = i.outAt
+    out.push({ start: at, end: at + i.length, face: faceOf(faces, i.change) })
   }
   return out.sort((a, b) => a.start - b.start)
 }

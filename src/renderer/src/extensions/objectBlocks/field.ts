@@ -304,7 +304,9 @@ function blockIsInsideFocus(block: ObjectBlock, state: EditorState): boolean {
   if (!focus) return true
   // The focus field describes the visible band. Any object that crosses into either hidden band
   // is omitted so its block replacement never overlaps Slide Focus's own hiding replacements.
-  return block.from >= focus.from && block.to <= focus.to
+  // The replacement stops before the final line break, which the object source may include.
+  const visibleEnd = state.doc.lineAt(Math.max(block.from, block.to - 1)).to
+  return block.from >= focus.from && visibleEnd <= focus.to
 }
 
 export class ObjectEditorWidget extends WidgetType {
@@ -324,6 +326,7 @@ export class ObjectEditorWidget extends WidgetType {
       && other.block.from === this.block.from
       && other.block.to === this.block.to
       && other.block.source === this.block.source
+      && other.block.simulationVersion === this.block.simulationVersion
       && other.cheatSheet === this.cheatSheet
   }
 

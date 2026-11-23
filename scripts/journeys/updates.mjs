@@ -9,7 +9,7 @@ import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { launch, closeApp, runFolders, ledger, shooter, size, pause, hardLimit, tempDir, REPO } from './lib.mjs'
+import { launch, closeApp, runFolders, ledger, shooter, size, pause, hardLimit, openPresenter, tempDir, REPO } from './lib.mjs'
 import { makeVault, TITLE } from './talk.mjs'
 import { openTalkByTitle } from '../../e2e/lib/talklist.mjs'
 import { testProfileEnv } from '../../e2e/lib/test-profile.mjs'
@@ -94,10 +94,9 @@ try {
   // Update: the download starts and stops half-way (held); a presenter window opens; then the rest arrives.
   await main.locator('[data-update-popover] [data-update-update]').click()
   const progress = await waitFor(async () => /^Downloading .* · \d+%$/.test(await markText(main)) && await markText(main))
-  const known = new Set(app.windows())
   await main.keyboard.press('Escape')
-  await main.locator('[data-command="present-presenter"]').first().click()
-  const presenter = await waitFor(async () => app.windows().find((w) => !known.has(w) && !w.isClosed()) ?? null, 40000)
+  const known = new Set(app.windows())
+  const presenter = await openPresenter(app, main, 40000)
   await pause(1500)
   release()
   const waiting = await waitFor(async () => { const s = await snap(); return s.install.phase === 'waiting' ? s : null }, 30000)

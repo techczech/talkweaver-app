@@ -9,7 +9,8 @@
 // Compiles real decks (prepareSource -> buildDeckHtmlFromModel) with a Run carrying one extra slide.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-run-extra-title-escape.mjs
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
+import { statSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { JSDOM } from 'jsdom'
@@ -19,7 +20,7 @@ import { sectionStrip } from '../compiler/scripts/lib/title-look.mjs'
 
 const RAW = '<b>x</b> [l](javascript:x)'
 const ESCAPED = '&lt;b&gt;x&lt;/b&gt; [l](javascript:x)'
-const dir = mkdtempSync(join(tmpdir(), 'tw-run-extra-title-'))
+const dir = testScratchDir(join(tmpdir(), 'tw-run-extra-title-'))
 let n = 0
 
 async function compile(lookLine, top = true) {

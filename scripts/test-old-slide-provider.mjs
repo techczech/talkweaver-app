@@ -3,7 +3,8 @@
 // folder; every name in them is invented.
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import fsPromises from 'node:fs/promises'
 import { syncBuiltinESMExports } from 'node:module'
 import { tmpdir } from 'node:os'
@@ -16,7 +17,7 @@ import { pathFromThumbUrl } from '../src/main/image-search/thumb-url.ts'
 
 const sqlite3 = detectSqlite3()
 assert.ok(sqlite3, 'sqlite3 must be on this machine')
-const root = realpathSync(mkdtempSync(join(tmpdir(), 'tw-old-slides-')))
+const root = realpathSync(testScratchDir(join(tmpdir(), 'tw-old-slides-')))
 const dir = (...p) => { const d = join(root, ...p); mkdirSync(d, { recursive: true }); return d }
 const sql = (db, script) => execFileSync(sqlite3, [db], { input: script })
 const PNG = Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('fixture')])
@@ -80,7 +81,7 @@ assert.deepEqual(await bare.slideHits('literacy'), [])
 
 // --- the render manifest and the renders stay inside the archive (fix round 1, defect 2)
 // Everything here is in one presentation folder each; `outside` is a sibling of the archive root.
-const outside = realpathSync(mkdtempSync(join(tmpdir(), 'tw-old-slides-outside-')))
+const outside = realpathSync(testScratchDir(join(tmpdir(), 'tw-old-slides-outside-')))
 mkdirSync(join(outside, 'renders'), { recursive: true })
 writeFileSync(join(outside, 'renders', 'slide_0001.png'), PNG)
 writeFileSync(join(outside, 'renders', 'secret.png'), PNG)
@@ -176,7 +177,7 @@ if (process.platform !== 'win32') {
   const honest = render('Swapped folder', 'honest.png')
   render('Swapped folder', 'named-by-the-outside-manifest.png')
   render('Swapped folder', 'slide_0001.png')
-  const outsideFolder = realpathSync(mkdtempSync(join(tmpdir(), 'tw-old-slides-swap-')))
+  const outsideFolder = realpathSync(testScratchDir(join(tmpdir(), 'tw-old-slides-swap-')))
   writeFileSync(join(outsideFolder, 'renders.json'), JSON.stringify({ renders: [{ slide_order: 0, render: 'renders/named-by-the-outside-manifest.png' }] }))
   assert.equal(await renderOf('Swapped folder'), honest, 'fixture: untouched, the manifest picks its own render')
   const realOpen = fsPromises.open

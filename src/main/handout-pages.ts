@@ -25,6 +25,7 @@
 //
 // No Electron import and erasable TypeScript only: scripts/test-handout-from-buffer.mjs and
 // test-prework-publish.mjs run `buildHandoutPages` in their own process, as the worker does.
+import type { PublicationFileCheck } from '../shared/publication-files.ts'
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -85,7 +86,9 @@ export type HandoutPage = { fileName: string; html: string; lazy?: boolean }
 /** What buildVenuePageHtml takes, beyond the slides: the job's own fields fill the rest. */
 export type VenueSource = { title: string; slides: unknown[]; styles: unknown; license?: unknown; liveTalkSlug?: string }
 
-export type HandoutPagesJob = {
+export type HandoutPreflightJob = { kind: 'preflight'; compilerDir: string; outlinePath: string; text: string; assetRoots: string[]; run?: RunCompileOption }
+
+export type HandoutPagesJob = HandoutPreflightJob | ({
   compilerDir: string
   /** The handout's folder in the site (already checked by writableSiteFolder). */
   talkOutDir: string
@@ -140,7 +143,7 @@ export type HandoutPagesJob = {
       pages: HandoutPage[]
       venue: VenueSource
     }
-)
+))
 
 /** A Run's compiled deck, as the main process makes it (index.ts runHandoutSource). */
 export type RunHandoutSource = {
@@ -199,6 +202,7 @@ export function runHandoutSourceFrom(
 }
 
 export type HandoutPagesResult = {
+  publicationFiles?: PublicationFileCheck
   warnings: string[]
   /** A Run's job: the slides its handout shows, and the pathway's slides that are no longer in the talk. */
   slideIds?: string[]
@@ -236,15 +240,25 @@ export async function buildRunHandoutHtml(
 
 /** Build (for a talk or a Run) and write a handout's pages. Runs in the worker; tests run it in their own process. */
 export async function buildHandoutPages(job: HandoutPagesJob, slim: Slim): Promise<HandoutPagesResult> {
+  if (job.kind === 'preflight') {
+    const { prepareSource } = await load<{ prepareSource: (...args: unknown[]) => Promise<{ publicationFiles: PublicationFileCheck }> }>(job.compilerDir, 'lib/08-source-adapters.mjs')
+    const model = await prepareSource(job.outlinePath, job.text, basename(job.outlinePath), statSync(job.outlinePath), undefined,
+      { allowedAssetRoots: requireAllowedAssetRoots(job.assetRoots, 'Publication file check'), publicationPreflight: true, ...(job.run ? { run: job.run } : {}) })
+    if (!model.publicationFiles) throw new Error('This compiler cannot check publication files before building.')
+    return { warnings: [], publicationFiles: model.publicationFiles }
+  }
   const { compilerDir, talkOutDir, siteDir, slug, live, url, qr, downloadFile, handoutFile } = job
   let pages: HandoutPage[]
   let venue: VenueSource
   let slideIds: string[] | undefined
   let missing: string[] | undefined
+  // Keep publication dependency failures; editorial hints are not publish/phase warnings.
+  let sourceWarnings: string[] = []
   if (job.kind === 'talk') {
     // Build the handout HTML exactly like talk:export-handout (share-no-notes).
     const { prepareSource } = await load<{ prepareSource: (...args: unknown[]) => Promise<Record<string, unknown>> }>(compilerDir, 'lib/08-source-adapters.mjs')
     const model = await prepareSource(job.outlinePath, job.text, slug, statSync(job.outlinePath), undefined, { allowedAssetRoots: requireAllowedAssetRoots(job.assetRoots, 'The handout build') })
+    sourceWarnings = Array.isArray(model.warnings) ? model.warnings.filter((warning): warning is string => typeof warning === 'string' && /^(?:missing-asset|missing-image|asset-outside-vault):/.test(warning)) : []
     // Title for the handout <title> + viewer page: prefer the outline's frontmatter `title:`
     // (the canonical deck title), like the old publisher did — model.title falls back to the slug
     // for plain-markdown decks the v1 adapter routes, which would show the slug instead of the title.
@@ -282,6 +296,7 @@ export async function buildHandoutPages(job: HandoutPagesJob, slim: Slim): Promi
     const { buildPerSlideProjections } = await load<{ buildPerSlideProjections: (model: unknown, slug: string) => PathwaySlideRow[] | null }>(compilerDir, 'lib/10-projections.mjs')
     const run = runCompileOption(job.run)
     const model = await prepareSource(job.outlinePath, job.text, talkFileSlug, statSync(job.outlinePath), job.defaults, { allowedAssetRoots: requireAllowedAssetRoots(job.assetRoots, 'The handout build'), ...(run ? { run } : {}) })
+    sourceWarnings = Array.isArray(model.warnings) ? model.warnings.filter((warning): warning is string => typeof warning === 'string' && /^(?:missing-asset|missing-image|asset-outside-vault):/.test(warning)) : []
     const from = runHandoutSourceFrom(model, buildPerSlideProjections(model, talkFileSlug) ?? null, job.run, talkFileSlug, job.talkSlug)
     slideIds = from.slideIds
     missing = from.missing
@@ -323,5 +338,5 @@ export async function buildHandoutPages(job: HandoutPagesJob, slim: Slim): Promi
     ...venue, slug, workerBaseUrl: live, qr, handoutUrl: url,
   })), 'utf8')
   writeFileSync(join(siteDir, '404.html'), buildUnavailableVenuePageHtml(), 'utf8')
-  return { warnings: written.warnings, ...(slideIds ? { slideIds, missing: missing ?? [] } : {}) }
+  return { warnings: [...sourceWarnings, ...written.warnings], ...(slideIds ? { slideIds, missing: missing ?? [] } : {}) }
 }

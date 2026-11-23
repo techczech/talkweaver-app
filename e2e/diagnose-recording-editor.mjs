@@ -4,19 +4,23 @@
 // files are replaced by generated ones as long as a generated talk (scripts/fixtures/
 // recording-editor-fixture.mjs) whose transcript, with words, measured pauses and precise word timing, is
 // written beside it. Needs `npm run build` first.
-//   node e2e/diagnose-recording-editor.mjs            # the journey, screenshots in built/slice-3b/shots/
+//   node e2e/diagnose-recording-editor.mjs            # the journey, screenshots in artefacts/diagnose-recording-editor/shots/
 //   node e2e/diagnose-recording-editor.mjs --long     # also measure an hour-long Run (80 slides)
 import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { _electron as electron } from 'playwright'
 import assert from 'node:assert/strict'
-import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, statSync, unlinkSync, existsSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { chmodSync, mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, unlinkSync, existsSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { lockPathFor, processStarted } from '../src/main/edits-lock.ts'
 import { boundaryTargets, cutWordsOp, editorWords, resolveRecording, slideRows } from '../src/shared/recording-editor.ts'
 import { makeEditorFixture } from '../scripts/fixtures/recording-editor-fixture.mjs'
 
 const LONG = process.argv.includes('--long')
-const repo = resolve(import.meta.dirname, '..'), built = join(repo, 'docs/design/2026-11-10-record-and-edit-video/built/slice-3b'), shots = join(built, 'shots')
+const SAVE_RETRY = process.argv.includes('--save-retry')
+const repo = resolve(import.meta.dirname, '..')
+const recordEvidence = process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE === '1'
+const built = join(repo, recordEvidence ? 'docs/design/2026-11-10-record-and-edit-video/built/slice-3b' : 'artefacts/diagnose-recording-editor'), shots = join(built, 'shots')
 const root = mkdtempSync(join(repo, '.slice3b-e2e-')), vault = join(root, 'vault'), userData = join(root, 'userData'), talk = join(vault, 'fixture'), out = join(root, 'exports')
 for (const dir of [talk, userData, shots, out]) mkdirSync(dir, { recursive: true })
 const TITLES = ['A single strong claim', 'A plain list, with icons', 'A process, left to right', 'Statement beside a list', 'Big numbers', 'Steps that build', 'Before and after', 'A quote']
@@ -39,7 +43,7 @@ const hardStop = setTimeout(() => { console.error('HARD TIMEOUT: the journey did
 hardStop.unref()
 
 try {
-  app = await electron.launch({ timeout: 30000, cwd: repo, args: ['.', '--user-data-dir=' + userData, '--use-fake-device-for-media-stream'], env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' } })
+  app = await electron.launch({ timeout: 30000, cwd: repo, args: ['.', '--user-data-dir=' + userData, '--use-fake-device-for-media-stream', '--mute-audio'], env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' } })
   const main = await app.firstWindow(); await main.waitForLoadState('domcontentloaded')
   const opened = app.waitForEvent('window')
   await main.evaluate(({ outline, content }) => window.tw.talk.present(outline, content, 'presenter'), { outline, content })
@@ -99,7 +103,8 @@ try {
   const pictureReady = (page) => page.waitForFunction(() => [...document.querySelectorAll('.twrp-frame video')].length >= 1 && [...document.querySelectorAll('.twrp-frame video')].every((v) => !v.seeking && v.readyState >= 2), {}, { timeout: 600000 })
   const openEditor = async (tools) => {
     await tools.locator('[data-edit-video]').click()
-    await tools.waitForSelector('[data-recording-editor] [data-row]', { timeout: 30000 })
+    // Transcript rows can render while the editor is still loading its saved edits.
+    await tools.waitForSelector('[data-recording-editor]:not([data-edits-revision="-1"]) [data-row]', { timeout: 30000 })
   }
   const editsRevision = async (tools) => Number(await tools.locator('[data-recording-editor]').getAttribute('data-edits-revision'))
   /** Wait until main has written what the editor shows (its revision equals the file's). */
@@ -123,7 +128,98 @@ try {
   // ---- Run view entry ------------------------------------------------------------------------------
   let tools = await openTools()
   await pictureReady(tools)
-  if (LONG) {
+  if (SAVE_RETRY) {
+    await openEditor(tools)
+    const from = await freePair(tools, rows.at(-1).firstWord)
+    assert.ok(from >= 0)
+    const target = join(realpathSync(runsDir), `${run.id}.edits.json`)
+    const lock = lockPathFor(target)
+    mkdirSync(dirname(lock), { recursive: true, mode: 0o700 })
+    const owner = JSON.stringify({ pid: process.pid, started: processStarted(process.pid) })
+    const holdLock = () => writeFileSync(lock, owner, { flag: 'wx', mode: 0o600 })
+    const releaseLock = () => {
+      if (existsSync(lock) && readFileSync(lock, 'utf8') === owner) unlinkSync(lock)
+    }
+    const warning = tools.getByRole('alert').filter({ hasText: 'Unsaved recording edits.' })
+    const cut = tools.locator(`[data-w="${from}"].tre-cut`)
+    const window = await app.browserWindow(tools)
+    let closeChoice = 0
+    const browserDialogReplies = []
+    tools.on('dialog', (dialog) => {
+      // Electron answers beforeunload through will-prevent-unload. DevTools can still
+      // report the same event after Electron has answered it.
+      assert.equal(dialog.type(), 'beforeunload')
+      const reply = closeChoice === 1 ? dialog.accept() : dialog.dismiss()
+      browserDialogReplies.push(reply.then(
+        () => null,
+        error => error.message.includes('No dialog is showing') || tools.isClosed() ? null : error
+      ))
+    })
+    await app.evaluate(({ dialog }) => {
+      globalThis.recordingCloseChoices = { original: dialog.showMessageBoxSync, calls: [], answer: 0 }
+      dialog.showMessageBoxSync = (_win, options) => {
+        const test = globalThis.recordingCloseChoices
+        test.calls.push({ message: options.message, buttons: options.buttons, defaultId: options.defaultId, cancelId: options.cancelId })
+        return test.answer
+      }
+    })
+    const closeTools = () => window.evaluate(win => { win.close() })
+    holdLock()
+    try {
+      await dragWords(tools, from, from + 1)
+      await tools.keyboard.press('Backspace')
+      await cut.waitFor()
+      await warning.waitFor({ timeout: 20000 })
+      assert.equal(await cut.count(), 1, 'the refused cut is still shown')
+      assert.equal(existsSync(editsFile), false, 'the lock holder kept the edits file unwritten')
+      const box = await warning.boundingBox()
+      assert.ok(box && box.y >= 0 && box.y + box.height <= tools.viewportSize().height, 'the Retry banner stays in view')
+      assert.equal(await tools.getByRole('button', { name: 'Export…', exact: true }).isEnabled(), false)
+      await tools.locator('[data-tools-rail="runs"]').click()
+      assert.equal(await tools.locator('[data-tools-rail="studio"]').getAttribute('aria-current'), 'page', 'the Tools rail cannot discard the cut')
+      await closeTools()
+      const choices = () => app.evaluate(() => globalThis.recordingCloseChoices.calls)
+      for (let i = 0; i < 50 && !(await choices()).length; i++) await sleep(50)
+      assert.deepEqual(await choices(), [{
+        message: 'Close with unsaved recording edits?',
+        buttons: ['Stay', 'Discard and close'], defaultId: 0, cancelId: 0,
+      }])
+      assert.equal(tools.isClosed(), false, 'Stay preserves the window')
+      assert.equal(await cut.count(), 1, 'Stay preserves the unsaved cut')
+    } finally {
+      releaseLock()
+    }
+    await warning.getByRole('button', { name: 'Retry', exact: true }).click()
+    await warning.waitFor({ state: 'hidden' })
+    assert.ok((await saved(tools)).cuts.some(c => c.start <= ctx.words[from].start && c.end >= ctx.words[from].end))
+    assert.equal(await tools.getByRole('button', { name: 'Export…', exact: true }).isEnabled(), true)
+    await tools.locator('[data-tools-rail="runs"]').click()
+    await tools.waitForSelector('[data-tools-rail="runs"][aria-current="page"]')
+    pass('real persistent lock: the cut stays visible with export blocked; Retry writes it after the holder releases')
+
+    // Reopen the editor and refuse a different cut. The second dialog's explicit Discard closes Tools.
+    await tools.locator('[data-tools-rail="studio"]').click()
+    await openEditor(tools)
+    const savedBytes = readFileSync(editsFile)
+    const unsavedFrom = await freePair(tools, rows[1].firstWord)
+    assert.ok(unsavedFrom >= 0)
+    holdLock()
+    try {
+      await dragWords(tools, unsavedFrom, unsavedFrom + 1)
+      await tools.keyboard.press('Backspace')
+      await warning.waitFor({ timeout: 20000 })
+      closeChoice = 1
+      await app.evaluate(() => { globalThis.recordingCloseChoices.answer = 1 })
+      await Promise.all([tools.waitForEvent('close'), closeTools()])
+      assert.equal(await app.evaluate(() => globalThis.recordingCloseChoices.calls.length), 2)
+      assert.deepEqual(readFileSync(editsFile), savedBytes, 'Discard and close preserves the confirmed bytes')
+    } finally {
+      releaseLock()
+      await app.evaluate(({ dialog }) => { dialog.showMessageBoxSync = globalThis.recordingCloseChoices.original })
+    }
+    assert.deepEqual((await Promise.all(browserDialogReplies)).filter(Boolean), [])
+    pass('native Tools close: Stay keeps the unsaved edit and Discard and close preserves the saved bytes')
+  } else if (LONG) {
     // An hour-long Run: copies prepared on the first open; measure a reopen.
     await tools.close()
     tools = await openTools()
@@ -265,8 +361,12 @@ try {
     pass('Leave this slide out folds the row and is saved as its own fact; Put this slide back removes it')
 
     // ---- Keys wait while the export sheet is open; Escape closes it first; focus comes back --------------
-    await dragWords(tools, rows[4].firstWord + 1, rows[4].firstWord + 2)
+    const firstSelected = rows[4].firstWord + 1
+    await tools.locator(`[data-w="${firstSelected}"]`).click()
+    await tools.locator(`[data-w="${firstSelected + 1}"]`).click({ modifiers: ['Shift'] })
     await tools.waitForSelector('.tre-pop')
+    const selectedWords = () => tools.locator('.tre-sel').evaluateAll(words => words.map(word => Number(word.dataset.w)))
+    assert.deepEqual(await selectedWords(), [firstSelected, firstSelected + 1], 'both words are selected before opening Export')
     const revBefore = sidecar().revision
     const exportButton = tools.locator('.tre-bar').getByRole('button', { name: /^Export…$/ })
     await exportButton.click()
@@ -274,7 +374,7 @@ try {
     for (const key of ['Backspace', 'Delete', 'Meta+z', 'i', 'o', 'ArrowRight']) await tools.keyboard.press(key)
     await tools.waitForTimeout(300)
     assert.equal(sidecar().revision, revBefore, 'no editor key acted behind the sheet')
-    assert.equal(await tools.locator('.tre-sel').count(), 2, 'the selection is untouched')
+    assert.deepEqual(await selectedWords(), [firstSelected, firstSelected + 1], 'the selection is untouched')
     await tools.keyboard.press('Escape')
     assert.equal(await tools.locator('.twrp-sheet').count(), 0, 'Escape closes the sheet first')
     assert.equal(await tools.locator('[data-recording-editor]').count(), 1, 'and not the editor')
@@ -366,6 +466,7 @@ try {
     await tools.close()
     tools = await openTools()
     await openEditor(tools)
+    assert.equal(await editsRevision(tools), s.revision)
     assert.equal(await tools.locator('.tre-len b').textContent(), shownLen)
     assert.equal(await tools.locator('.tre-cut').count(), struck)
     assert.equal(await tools.locator('.tre-moved').count(), 1)
@@ -378,19 +479,19 @@ try {
     const onDisk = sidecar()
     const struckSaved = await tools.locator('.tre-cut').count()
     chmodSync(runsDir, 0o555)
+    const unsaved = tools.getByRole('alert').filter({ hasText: 'Unsaved recording edits.' })
     try {
       const p2 = await freePair(tools, p1 + 3)
       await dragWords(tools, p2, p2 + 1); await tools.keyboard.press('Backspace')
-      await tools.locator('.tre-bar').getByRole('button', { name: /^Export…$/ }).click()
-      await tools.getByText(/An edit could not be saved, so nothing was exported/).waitFor({ timeout: 10000 })
+      await unsaved.waitFor({ timeout: 10000 })
       assert.deepEqual(sidecar().cuts, onDisk.cuts, 'the disk holds only the first cut')
-      assert.equal(await tools.locator('.twrp-sheet').getByRole('button', { name: 'Choose another place…' }).count(), 0)
-      await tools.locator('.twrp-sheet').getByRole('button', { name: 'Close' }).click()
+      assert.ok(await tools.locator('.tre-cut').count() > struckSaved, 'the second cut remains visible as unsaved')
+      assert.equal(await tools.locator('.tre-bar').getByRole('button', { name: /^Export…$/ }).isEnabled(), false)
     } finally { chmodSync(runsDir, 0o755) }
-    assert.equal(await tools.locator('.tre-cut').count(), struckSaved, 'the screen shows what is saved')
-    await tools.locator('.tre-note [aria-label="Dismiss"]').click()
+    await unsaved.getByRole('button', { name: 'Discard unsaved edits' }).click()
+    assert.equal(await tools.locator('.tre-cut').count(), struckSaved, 'discard returns the screen to what is saved')
     s = sidecar()
-    pass('a queued save that fails, then Export: nothing is exported, the sheet says an edit failed, the screen goes back to what is saved')
+    pass('a queued save that fails stays visible and blocks export until explicitly discarded')
 
     // ---- Export: the exported length is the edited length ---------------------------------------------------
     const editedShown = Number(await tools.locator('.tre-len').getAttribute('data-edited-ms'))
@@ -498,7 +599,7 @@ try {
     await shot(tools, 'writing')
     pass('while words are written (and while macOS prepares its speech model) the rows wait and slide actions work')
   }
-  if (!LONG) writeFileSync(join(built, 'journey-result.json'), JSON.stringify({ at: new Date().toISOString(), passed: count, measured }, null, 1) + '\n')
+  if (!LONG && !SAVE_RETRY) writeFileSync(join(built, 'journey-result.json'), JSON.stringify({ at: new Date().toISOString(), passed: count, measured }, null, 1) + '\n')
   console.log(`\n${count} passed`)
 } finally {
   await app?.close().catch(() => {})

@@ -1,8 +1,8 @@
 /* @order 0001 */
   :root {
     /* ADR-0005 design language (locked 2026-07-09): light Swiss, warm white, section-coloured.
-       Fonts: SYSTEM STACKS ONLY (amended by Dominik 2026-07-10) — no @font-face, no CDN, no
-       downloads; the mockups' Familjen Grotesk/Fragment Mono are reference feel only. */
+       The default uses the original system stack. Explicit modern font choices use the bundled faces
+       in skin/zz-x-ocean-05-type.css. */
     --paper: #fdfdfb;        /* page — warm white */
     --ink: #101418;          /* text */
     --muted: #5c6570;        /* secondary text */

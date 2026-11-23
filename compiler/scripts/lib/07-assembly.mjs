@@ -1,3 +1,4 @@
+import { selectBundledTypefaces } from "./deck-typefaces.mjs";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -9,7 +10,7 @@ import { accentForSectionIndex, accentForSectionName, accentForDeckColour, extra
 import { findSlideSections, updateDeckTitle, withoutScripts } from "./04-html-extraction.mjs";
 import { createIconVocabulary, buildDeckIconMap, applySlideMonochrome } from "./05-icons.mjs";
 import { withScreenshotStyle, sizeScreenshotRows, screenshotBand, isLoneScreenshot } from "./screenshot-row.mjs";
-import { groupImageRows, groupQrRows, groupActionBlocks, legacyQrCaptions, loadCompilerSvgSanitiser, renderBlock, renderBlocks, renderMediaBlocks, withTitleIcon } from "./06-block-renderers.mjs";
+import { groupImageRows, groupQrRows, groupActionBlocks, loadCompilerSvgSanitiser, renderBlock, renderBlocks, renderMediaBlocks, withTitleIcon } from "./06-block-renderers.mjs";
 import { renderLicenseBody } from "./08-source-adapters.mjs";
 import { withColumnWidth } from "./narrow-columns.mjs";
 import { pollFrameEligible, renderPollFrame } from "./poll-frame.mjs";
@@ -21,12 +22,15 @@ import { pointerOverlayRuntimeSource } from '../../assets/runtime/pointer-overla
 import { simTypingRuntimeSource } from '../../assets/runtime/sim-typing.js';
 import { penInkRuntimeSource } from '../../assets/runtime/pen-ink.js';
 import { liveFreezeRuntimeSource } from '../../assets/runtime/live-page-freeze.js';
+import { presenterPanesRuntimeSource } from '../../assets/runtime/presenter-panes.js';
 import { audioChipRuntimeSource } from '../../assets/runtime/audio-chip.js';
 import { imageStepsRuntimeSource } from '../../assets/runtime/image-steps.js';
 import { emphasisStepsRuntimeSource } from '../../assets/runtime/emphasis-steps.js';
 import { traceWindowRuntimeSource } from '../../assets/runtime/trace-window.js';
 import { markEmphasisSteps } from './emphasis-steps.mjs';
 import { mediaStepsRuntimeSource } from '../../assets/runtime/media-steps.js';
+import { shortenAddressLinks } from "./quote-forms.mjs";
+import { displayWebAddress } from './address-display.mjs';
 import { embedChannelSource } from '../../assets/runtime/embed-channel.js';
 import { EMBED_DOC_ATTRIBUTE } from './embed-frame.mjs';
 import { hasMediaSteps } from './media-steps.mjs';
@@ -144,7 +148,7 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
       const sourceBlocks = slide.blocks.filter((b) => b && b.type === "paragraph");
       if (sourceBlocks.length) {
         bodyBlocks = slide.blocks.filter((b) => !(b && b.type === "paragraph"));
-        sourceHtml = `\n<p class="slide-source">${sourceBlocks.map((b) => renderInline(b.text ?? "")).join("<br>")}</p>`;
+        sourceHtml = `\n<p class="slide-source">${sourceBlocks.map((b) => shortenAddressLinks(renderInline(b.text ?? ""))).join("<br>")}</p>`;
       }
     }
     // ADR-0033 §4: mark the blocks a two-or-three screenshot row applies to with the slide's
@@ -413,7 +417,13 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
     const statementVariantClass = statementHooks.length ? ` ${statementHooks.join(" ")}` : "";
     // ADR-0028 §10: no statement ends on one word alone (the compile-time half; CSS carries the rest).
     if (layout === "statement") bodyHtml = keepStatementLastWordsTogether(bodyHtml);
-    const contentHtml = `<div class="slide-content layout-${escapeHtml(layout)}${statementVariantClass}">
+    // A visual-only body owns one bounded band, including an image-only fallback from another
+    // layout. Keep the semantic layout; give images, videos, embeds and their rows the same fit.
+    const visualBlocks = (bodyBlocks || []).filter(b => b && b.type !== "qr");
+    const mediaTitle = !showTitle || hideTitleByLayout || lookHidesTitle ? "none" : slide.mediaTitle === "overlay" ? "overlay" : "below";
+    const mediaStage = (titlePlacement.mode !== "left" || mediaTitle === "none") && !usesHtmlBody && visualBlocks.length > 0 && visualBlocks.every(b => ["image", "video", "embed", "media-row", "image-row"].includes(b.type));
+    const mediaAttrs = mediaStage ? ` data-media-title="${mediaTitle}"` : "";
+    const contentHtml = `<div class="slide-content layout-${escapeHtml(layout)}${statementVariantClass}${mediaStage ? " media-stage" : ""}"${mediaAttrs}>
 ${headHtml}${bodyHtml}
   </div>`;
     return { contentHtml, cornerQrHtml, cornerSectionHtml, layout, titlePlacement, effectiveTitleStyle };
@@ -445,7 +455,7 @@ function renderLinksBlock(deckLinks) {
   const items = deckLinks.map(({ text, url }) => {
     const safeUrl = escapeHtml(url);
     const safeText = escapeHtml(text);
-    return `<li><span class="fl-text"><a href="${safeUrl}" target="_blank" rel="noopener">${safeText}</a> — <span class="link-url">${safeUrl}</span></span></li>`;
+    return `<li><span class="fl-text"><a href="${safeUrl}" target="_blank" rel="noopener">${safeText}</a> — <a class="link-url" href="${safeUrl}" target="_blank" rel="noopener" title="${safeUrl}" aria-label="${safeUrl}">${escapeHtml(displayWebAddress(url, { linked: true, maxLength: 64 }))}</a></span></li>`;
   }).join("\n");
   return `<ul class="feature-list fl-plain fl-wide">\n${items}\n</ul>`;
 }
@@ -458,7 +468,9 @@ const isVsBlock = (b) => Boolean(b) && (b.type === "contrast" || b.type === "com
 const OCEAN_LONG_LABEL = 22;
 const OCEAN_LONG_DETAIL = 44;
 const OCEAN_LONG_ROW = 30;
-const plainLength = (html) => String(html).replace(/<[^>]*>/g, "").replace(/&[a-z#0-9]+;/gi, " ").trim().length;
+// Visible characters of rendered HTML: tags dropped, outer whitespace trimmed, then each entity counted as
+// the one character it shows (so a title ending in an escaped apostrophe, &#39;, keeps its last character).
+const plainLength = (html) => String(html).replace(/<[^>]*>/g, "").replace(/&nbsp;/gi, " ").trim().replace(/&[a-z#0-9]+;/gi, "x").length;
 function stampOceanFit(contentHtml) {
   const longest = (re) => Math.max(0, ...[...contentHtml.matchAll(re)].map((m) => plainLength(m[1])));
   const long = longest(/class="(?:fl-text|ir-label)">([\s\S]*?)<\/span>/g) > OCEAN_LONG_LABEL
@@ -635,7 +647,7 @@ function oceanTakesTopTitle(slide, rendered) {
   return false;
 }
 
-function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = null, brandLogoColour = "unified") {
+function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = null, brandLogoColour = "unified", deckFont = "") {
   // Assign a cycling accent per section (in first-seen order) so each section
   // reads as a distinct movement; every accent-driven CSS device keys off --accent.
   // The deck `palette` ({palette:green}) selects which section-accent cycle to use.
@@ -656,13 +668,14 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
   // The 0.44 look rides on every slide <section> (not only the deck container), so the slide keeps it
   // wherever it is drawn on its own: thumbnails, the handout, exports.
   const oceanLook = deckLookForPalette(palette) === "ocean";
+  const faceAttrs = deckFont ? ` data-deck-font="${escapeHtml(deckFont)}"` : "";
   const deckLookAttrs = oceanLook ? ` data-look="ocean" data-companion="${companionLevelForPalette(palette)}"` : "";
   // A section divider in the Ocean look shows its section's number, large (handoff 0.44: "large section number").
   const sectionNumbers = new Map(sectionOrder.filter(Boolean).map((key, at) => [key, at + 1]));
   const sectionsHtml = slides.map((slide, index) => {
     // The section's lead colour (section-leads.mjs, resolved by the source adapter), on the slide itself so every
     // place that draws the slide alone (thumbnails, handout, export, audience view) shows the same colour.
-    const lookAttrs = oceanLook ? `${deckLookAttrs} data-lead="${escapeHtml(slide.sectionLead || "blue")}"` : "";
+    const lookAttrs = faceAttrs + (oceanLook ? `${deckLookAttrs} data-lead="${escapeHtml(slide.sectionLead || "blue")}"` : "");
     const sectionNumber = oceanLook && slide.role === "section-title" ? sectionNumbers.get(slide.section || "") : undefined;
     const id = slide.id || `slide-${index + 1}`;
     // Per-section skin (ADR-0005): accentForSectionIndex now returns { accent, tint }. Stamp
@@ -778,7 +791,7 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
         ? slide.blocks.filter((b) => b && b.type === "paragraph")
         : [];
       const sourceHtml = sourceBlocks.length
-        ? `\n<p class="slide-source">${sourceBlocks.map((b) => renderInline(b.text ?? "")).join("<br>")}</p>`
+        ? `\n<p class="slide-source">${sourceBlocks.map((b) => shortenAddressLinks(renderInline(b.text ?? ""))).join("<br>")}</p>`
         : "";
       // 0.38 ticket 02: the cards' emphasis becomes steps. The runtimes step a carousel inside the
       // card on show, so only the cards are marked: the title (headHtml) and the shared source line
@@ -866,9 +879,7 @@ ${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
 ${cornerQrHtml ? `  ${cornerQrHtml}\n` : ""}${cornerSectionHtml ? `  ${cornerSectionHtml}\n` : ""}  ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
   });
-  // the whole-address QR caption is the look's (zz-x-ocean-45-title.css, slide-fit.js fitQrCaptions); elsewhere the
-  // caption is drawn as before
-  return oceanLook ? sectionsHtml : sectionsHtml.map(legacyQrCaptions);
+  return sectionsHtml;
 }
 
 function replaceSlideSections(templateHtml, slideMarkup) {
@@ -891,14 +902,16 @@ export function talkQrTemplateTag(handoutUrl) {
 // disk. The outline verb setHeadingIcon reads the target slide's own section from it
 // (`data-title-layout`, the title-icon span) instead of keeping a copy of the title rules.
 export function renderSlideSections(model) {
-  return renderModelSlides(model.slides, model.palette || "", model.icons || null, model.deckLinks || null, model.brandLogoColour || "unified");
+  return renderModelSlides(model.slides, model.palette || "", model.icons || null, model.deckLinks || null, model.brandLogoColour || "unified", model.deckFont || "");
 }
 
 export async function buildDeckHtmlFromModel(model) {
-  const templateHtml = await readFile(resolve(scriptDir, "..", "assets/templates/presenter-popup-single-html.html"), "utf8");
+  const template = await readFile(resolve(scriptDir, "..", "assets/templates/presenter-popup-single-html.html"), "utf8");
+  const face = model.deckFont || "";
   if (modelHasCodeBlock(model.slides, "svg")) await loadCompilerSvgSanitiser();
   const slideMarkup = renderSlideSections(model);
   const allSlides = slideMarkup.join("\n\n");
+  const templateHtml = selectBundledTypefaces(template, face, true);
   let html = updateDeckTitle(replaceSlideSections(templateHtml, allSlides), model.title);
   // Inline the pure presenter timer core (fmtClock / bigTimerState) verbatim — single source of truth.
   html = html.replace("<!--TIMER_RUNTIME-->", timerRuntimeSource);
@@ -936,6 +949,8 @@ export async function buildDeckHtmlFromModel(model) {
   html = html.replace("<!--SLIDE_FIT_RUNTIME-->", () => slideFitRuntimeSource);
   // The fixed slide canvas, scaled to the window (runtime/stage-fit.js; ADR-0030).
   html = html.replace("<!--STAGE_FIT_RUNTIME-->", () => stageFitRuntimeSource);
+  // The presenter's Current, Next and Then pictures (runtime/presenter-panes.js).
+  html = html.replace("<!--PRESENTER_PANES_RUNTIME-->", () => presenterPanesRuntimeSource());
   html = html.replace("<!--POLL_EXTENDED_RUNTIME-->", () => pollExtendedSource);
   html = html.replace("<!--POLL_DISPLAY_RUNTIME-->", () => pollDisplayRuntimeSource);
   // ADR-0032 ticket 05: the presenter's board panel (its pure model, the controller and the panel).

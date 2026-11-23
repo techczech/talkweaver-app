@@ -37,6 +37,7 @@ export function createDirectoryWatcherRegistry(createWatcher: DirectoryWatchFact
 
     const entry: WatchEntry = { watcher: null as unknown as DirectoryWatcher, owners: new Map([[owner, onChange]]), onErrors: new Map(onError ? [[owner, onError]] : []), timer: null }
     const watcher = createWatcher(directory, () => {
+      if (entries.get(directory) !== entry) return
       if (entry.timer) clearTimeout(entry.timer)
       entry.timer = setTimeout(() => {
         entry.timer = null
@@ -45,6 +46,7 @@ export function createDirectoryWatcherRegistry(createWatcher: DirectoryWatchFact
     })
     entry.watcher = watcher
     watcher.on('error', () => {
+      if (entries.get(directory) !== entry) return
       closeEntry(directory, entry)
       for (const notify of entry.onErrors.values()) { try { notify() } catch { /* an owner never breaks the others */ } }
     })

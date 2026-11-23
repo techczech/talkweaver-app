@@ -5,8 +5,7 @@
 // Nothing is added that the author did not pick: no preset is attached unless named, no step unless asked.
 // Where a step's answer goes (`{local}`) is written the same way into an existing file (2026-10-19 prework-responses design).
 // No Electron import: the IPC channels (`work-files:create`, `work-files:add-step`, `work-files:set-step-local`) are registered in index.ts.
-import { existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
-import { randomBytes } from 'crypto'
+import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { WORK_FILES_FOLDER } from '../shared/work-files-view.ts'
 import { readWorkFile } from '../shared/work-file.ts'
@@ -15,6 +14,7 @@ import {
 } from '../shared/work-file-write.ts'
 import { MAX_WORK_FILE_BYTES, readWorkFileSources } from './work-files.ts'
 import { pathStaysInside } from './path-containment.ts'
+import { writeTextAtomic } from './atomic-file.ts'
 
 export type WorkFileWriteResult = { ok: true; fileName: string; relPath: string; id?: string } | { ok: false; error: string }
 
@@ -71,18 +71,14 @@ function rewriteWorkFile(vaultRoot: string, fileName: unknown, change: (text: st
     const stat = lstatSync(path)
     if (!stat.isFile() || stat.size > MAX_WORK_FILE_BYTES) return { ok: false, error: 'That is not a work file.' }
   } catch { return { ok: false, error: 'That work file is not there any more.' } }
-  // A random part in the temp name, and 'wx': a link or file already at the name is never followed or replaced.
-  const temp = `${path}.tmp-${process.pid}-${randomBytes(6).toString('hex')}`
   try {
     const before = readFileSync(path, 'utf8')
     const result = change(before)
     if ('error' in result) return { ok: false, error: result.error }
     if (result.text === before) return { ok: true, fileName, relPath: `${WORK_FILES_FOLDER}/${fileName}`, ...(result.id ? { id: result.id } : {}) }
-    writeFileSync(temp, result.text, { encoding: 'utf8', flag: 'wx' })
-    renameSync(temp, path)
+    writeTextAtomic(path, result.text, { createParent: false })
     return { ok: true, fileName, relPath: `${WORK_FILES_FOLDER}/${fileName}`, ...(result.id ? { id: result.id } : {}) }
   } catch {
-    try { rmSync(temp, { force: true }) } catch { /* the error result below stands */ }
     return { ok: false, error: failed }
   }
 }

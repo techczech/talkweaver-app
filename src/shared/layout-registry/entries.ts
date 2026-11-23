@@ -904,6 +904,15 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
  * (section 1.3 and "Decisions after lock"). `model=` and `window-title=` are open text, declared in
  * OPEN_PATTERN_TOKENS; `reveal=steps` is the existing arrival-mode alias, `reveal=all` is new.
  */
+const SIM_VERSION_GROUP: OptionGroup = {
+  key: 'sim-version',
+  label: 'Turn format',
+  preview: 'segmented',
+  values: [
+    { token: '', label: 'Legacy labels', description: 'The existing user:, bot: and activity labels' },
+    { token: 'sim-version=2', label: 'Activity rows', description: 'Enable turn kind "Label": body, with optional detail; legacy rows keep their behaviour' }
+  ]
+}
 const SIM_REVEAL_GROUP: OptionGroup = {
   key: 'sim-reveal',
   label: 'Reveal',
@@ -1252,11 +1261,18 @@ The registry is the product contract.`,
 {media}
 
 ![](assets/sample-image.png)`,
-    description: 'Full-bleed image, video or embed with title on top',
+    description: 'A whole image, video or embed fitted below its title, or a full-stage picture with the title on a solid band',
     category: 'everyday',
     purpose: 'Everyday',
     whenItFits: 'One image, video or embed that carries the slide on its own.',
-    cssModule: 'media'
+    cssModule: 'media',
+    options: [{
+      key: 'media-title', label: 'Title and picture', preview: 'thumbs', appliesTo: { titlePanel: false },
+      values: [
+        { token: '', label: 'Title above', description: 'Fit the whole picture below the title' },
+        { token: 'media-title=overlay', label: 'Title over picture', description: 'Keep the picture full-stage and put the title on a solid, readable band' }
+      ]
+    }]
   },
   {
     name: 'contrast',
@@ -1846,7 +1862,7 @@ bot: The refund window shrank from 30 to 14 days.
     purpose: 'Specialised',
     whenItFits: 'An AI conversation with the hidden work shown as rows between question and answer.',
     cssModule: 'simulation',
-    options: [SIM_SIDEBAR_GROUP, SIM_OPEN_GROUP, SIM_REVEAL_GROUP, SIM_STREAM_GROUP, SIM_SIZE_GROUP]
+    options: [SIM_VERSION_GROUP, SIM_SIDEBAR_GROUP, SIM_OPEN_GROUP, SIM_REVEAL_GROUP, SIM_STREAM_GROUP, SIM_SIZE_GROUP]
   },
   {
     name: 'chat-lanes',

@@ -9,7 +9,8 @@
 // TW_SHOTS_DIR saves one screenshot per drawn state.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from '../scripts/lib/test-scratch.mjs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -44,7 +45,7 @@ function seed(root, runs) {
 }
 
 async function launch(runs) {
-  const root = mkdtempSync(join(tmpdir(), 'tw-sessions-e2e-'))
+  const root = testScratchDir(join(tmpdir(), 'tw-sessions-e2e-'))
   const ud = seed(root, runs)
   const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
   for (let attempt = 1; attempt <= 3; attempt += 1) {

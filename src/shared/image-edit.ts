@@ -2,6 +2,7 @@
 import MarkdownIt from 'markdown-it'
 // @ts-expect-error Use the installed parser's image rule to capture its source boundaries.
 import imageRule from 'markdown-it/lib/rules_inline/image.mjs'
+import { escapeHtml as escape } from './html-escape.ts'
 
 /** Editable recipe uses oriented original pixels; derived PNGs are disposable renderings. */
 export type ImageRect = { x: number; y: number; width: number; height: number }
@@ -20,7 +21,6 @@ export function validateImageRecipe(value: unknown, width: number, height: numbe
   }
   return { version: 1, crop: {...r.crop}, marks: r.marks.map(m => ({...m})) }
 }
-const escape = (s: string): string => s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&apos;'}[c]!))
 /** Only validated geometry/colour and escaped labels enter SVG. Same rendering in preview and saved copy. */
 export function imageMarksSvg(recipe: ImageEditRecipe, width: number, height: number): string {
   const parts = recipe.marks.map((m, i) => {

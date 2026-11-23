@@ -32,8 +32,8 @@ export function modelPaletteFor(choice) {
   if (choice === "bold") return "ocean-bold";
   return "ocean";
 }
-/** Deck faces. `trebuchet` is the locked house face — a real choice that stamps no attribute. */
-export const DECK_FONTS = ["trebuchet", "gill-sans", "verdana"];
+/** Bundled modern and original ADR-0005 system faces. Absence is resolved by look in CSS. */
+export const DECK_FONTS = ["trebuchet", "gill-sans", "verdana", "inter", "serif", "geist"];
 /** How a mixed logo row is painted. */
 export const DECK_LOGO_COLOURS = ["unified", "brand"];
 

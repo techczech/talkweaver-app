@@ -22,6 +22,7 @@
 //    no attestation (a prepackaged app), a wrong hash, a broken seal, a forged attestation, a binary
 //    for another architecture, an Apple Development or another team's signature (codesign's account
 //    handed in), a second app anywhere in a zip or disk image and a link out of the package refused.
+import { readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
@@ -122,7 +123,7 @@ try {
     // Settings never disagree.)
     const bridge = readFileSync(join(repo, 'src', 'main', 'transcription.ts'), 'utf8')
     assert.match(bridge, /transcriptionActionMessage\(ready\.row\)/, 'transcript:run refuses with the row\'s sentence')
-    const readers = ['src/main/index.ts', 'src/preload/index.ts'].map((file) => readFileSync(join(repo, file), 'utf8'))
+    const readers = [readMainSource(), readFileSync(join(repo, 'src/preload/index.ts'), 'utf8')]
     const uses = readers[0].split(/\r?\n/).filter((line) => line.includes('transcriptionSetup()'))
     // ...the Guide's connections row (reads the Settings status) and the `setup transcription` command (ticket 07), which sets the paths through the same operations as Settings.
     assert.ok(uses.length >= 3 && uses.every((line) => /function transcriptionSetup\(\)|ipcMain\.handle\('transcription:|^\s*(config|readiness): \(\) => transcriptionSetup\(\)|^\s*transcription: \(\) => transcriptionSetup\(\)\.status\(\),$|^\s*transcription: transcriptionSetup\(\),$/.test(line)), `the main process uses the row only for Settings, the transcription bridge, the Guide's connections and the setup command:\n${uses.join('\n')}`)

@@ -1,0 +1,46 @@
+/* Owner, 17 Nov 2026: sentences read at paragraph weight; the author chooses the bold words.
+   Design rule/table: docs/design/2026-11-10-native-slide-redesign/reading-weight.md.
+   Shared by Ocean, its safe fallback and classic, including panes, exports, handouts and print.
+   Ocean's high-specificity font shorthands read the same tokens in their owning modules. */
+.slide .slide-content :is(
+  p:not([class]), .content-p, p.lead,
+  blockquote, .qf-words,
+  .fl-sublist > li, .fl-ann, .fl-subtext,
+  .ir-desc > li, .ir-li-text,
+  .vs-text, .vs-children, .contrast-pair span,
+  .ct-left, .ct-right, .ct-old, .ct-new,
+  .tl-body, .tl-entries li, .tl-event-text, .tl-dyn-w, .tl-detail-big,
+  .proc-label, .proc-detail, .step-label, .step-detail,
+  .slide-table tbody td, .lblgrp .val,
+  .callouts li, .cpanel-list li, .stat-label, .stat-cap
+) {
+  font-weight: var(--weight-reading) !important;
+}
+
+/* A lone card/icon item is a sentence. Titles above detail points keep their existing weight. */
+.slide .slide-content .feature-list > li:not(:has(> .fl-sublist)) > .fl-text,
+.slide .slide-content .icon-row > .ir-item:not(:has(> .ir-desc)) > .ir-label,
+.slide .slide-content .card.card-claim > h4 {
+  font-weight: var(--weight-reading) !important;
+}
+.slide[data-look="ocean"] .fl-text:has(+ .fl-sublist),
+.slide[data-look="ocean"] .ir-item:has(> .ir-desc) > .ir-label {
+  --weight-item: 700;
+}
+
+/* ++underline++ keeps its tag/reveal identity; bold carries its emphasis now.
+   Do not reach mark, em, strike-through, links or link underlines. */
+.slide .slide-content :is(strong:not([aria-hidden="true"]), u, ins) {
+  font-weight: var(--weight-emphasis) !important;
+  text-decoration: none !important;
+}
+/* Strong used to borrow mark's accent chip. Bold now stands on the surrounding text's ground. */
+.slide .slide-content :is(p, li, blockquote, .vs-text, .ir-label, .fl-text) :is(strong, u, ins) {
+  display: inline;
+  margin: 0;
+  background: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  border-radius: 0;
+  color: inherit;
+}

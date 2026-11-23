@@ -29,7 +29,7 @@ jobs:
     # Required check (branch protection): keep the job name `unit`.
     # Plain-Node tier of `npm test` (scripts/test-tiers.json), typecheck and the
     # Worker's bun tests, on the self-hosted Mac Studio (ubuntu-latest when `hosted`).
-    # The runner also fails if a script chained in `npm test` is missing from the tier file.
+    # The runner validates the tier file against the available npm scripts.
     # Scripts listed in MACOS_ONLY_TESTS assert macOS file-system behaviour and run
     # in `unit-macos` instead (kept skipped here so the hosted Linux fallback passes):
     #   test:vault-paths  needs APFS Unicode normalisation (NFC/NFD folder names);
@@ -46,6 +46,12 @@ jobs:
     env:
       MACOS_ONLY_TESTS: test:vault-paths test:html-page-import test:live-page-capture test:live-page-capture-window test:live-page-capture-markup ${{ inputs.hosted && 'test:vault-gallery:write-windows' || '' }}
     steps:
+      - name: Create job scratch
+        shell: bash
+        run: |
+          job_tmp="$(cd "$RUNNER_TEMP" && pwd -P)"
+          job_tmp="$(mktemp -d "$job_tmp/tw-job.XXXXXX")"
+          printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$job_tmp" "$job_tmp" "$job_tmp" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -62,11 +68,18 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: ${{ inputs.hosted }}
+        with:
+          python-version: '3.12'
+      - name: Prepare font coverage dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/talkweaver-font-venv"
+          "$RUNNER_TEMP/talkweaver-font-venv/bin/python" -m pip install -r scripts/font-test-requirements.txt
+          echo "$RUNNER_TEMP/talkweaver-font-venv/bin" >> "$GITHUB_PATH"
       - run: bun install --frozen-lockfile
       - name: Prepare native Gallery tests
-        run: |
-          node -e 'console.log("TMPDIR=" + require("node:fs").realpathSync(require("node:os").tmpdir()))' >> "$GITHUB_ENV"
-          npm run build:gallery-native:host
+        run: npm run build:gallery-native:host
       - run: npm run typecheck
       - name: Unit tier (minus macOS-only scripts)
         run: |
@@ -88,6 +101,12 @@ jobs:
     runs-on: ${{ inputs.hosted && 'macos-15' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 20
     steps:
+      - name: Create job scratch
+        shell: bash
+        run: |
+          job_tmp="$(cd "$RUNNER_TEMP" && pwd -P)"
+          job_tmp="$(mktemp -d "$job_tmp/tw-job.XXXXXX")"
+          printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$job_tmp" "$job_tmp" "$job_tmp" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
@@ -103,11 +122,18 @@ jobs:
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-bun-${{ hashFiles('bun.lock') }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        if: ${{ inputs.hosted }}
+        with:
+          python-version: '3.12'
+      - name: Prepare font coverage dependencies
+        run: |
+          python3 -m venv "$RUNNER_TEMP/talkweaver-font-venv"
+          "$RUNNER_TEMP/talkweaver-font-venv/bin/python" -m pip install -r scripts/font-test-requirements.txt
+          echo "$RUNNER_TEMP/talkweaver-font-venv/bin" >> "$GITHUB_PATH"
       - run: bun install --frozen-lockfile
       - name: Prepare native Gallery tests
-        run: |
-          node -e 'console.log("TMPDIR=" + require("node:fs").realpathSync(require("node:os").tmpdir()))' >> "$GITHUB_ENV"
-          npm run build:gallery-native:host
+        run: npm run build:gallery-native:host
       - run: npm run test:unit
 
   browser-tiers:
@@ -123,6 +149,12 @@ jobs:
       matrix:
         tier: [dom, e2e]
     steps:
+      - name: Create job scratch
+        shell: bash
+        run: |
+          job_tmp="$(cd "$RUNNER_TEMP" && pwd -P)"
+          job_tmp="$(mktemp -d "$job_tmp/tw-job.XXXXXX")"
+          printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$job_tmp" "$job_tmp" "$job_tmp" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false

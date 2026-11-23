@@ -29,7 +29,7 @@
 import { EditorView, type ViewUpdate } from '@codemirror/view'
 import { Annotation, EditorSelection, Prec, Transaction, type Extension } from '@codemirror/state'
 import { protectedRegionsOf } from './guardKeys'
-import { caretBeforeEnter } from './hiddenLines'
+import { caretBeforeEnter, keepsTypedTitleSpace } from './hiddenLines'
 import { inZone, walkedPart, type ProtectedRegion } from './protectedRegion'
 
 /** Marks the listener's own transaction. */
@@ -69,6 +69,7 @@ const settle = Prec.lowest(EditorView.updateListener.of((update) => {
   // (A hidden layout line: only where Undo or Redo put the caret; see the head of the file.)
   const region = protectedRegionsOf(state).find((r) => (r.kind !== 'run' || history) && inZone(r, head))
   if (!region) return
+  if (region.kind === 'tail' && trs.some(tr => keepsTypedTitleSpace(tr, head, region.parts[0]?.from))) return
   // Nowhere to rest (front matter with nothing after it).
   if (region.rest < 0 || region.rest > state.doc.length || inZone(region, region.rest)) return
   if (region.kind === 'run') {

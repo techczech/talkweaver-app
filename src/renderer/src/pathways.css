@@ -13,16 +13,16 @@
 .pathway-actions span { flex:1; color:var(--muted); }
 .pathway-list, .pathway-matrix-scroll { flex:1; min-height:0; overflow:auto; padding:10px; }
 .pathway-row { display:flex; gap:7px; align-items:center; min-height:58px; border:1px solid var(--line); border-radius:6px; margin-bottom:6px; padding:7px; cursor:grab; background:var(--panel); }
-.pathway-row--focused { border-color:var(--oxford); background:#edf3ff; }
-.pathway-row:focus-visible { outline:2px solid var(--oxford); }
+.pathway-row--focused { border-color:var(--oxford); background:var(--accent-soft); }
+.pathway-row:focus-visible { outline:2px solid var(--focus); }
 .pathway-row img { width:56px; height:36px; object-fit:contain; }
 .pathway-grip { color:var(--muted); }
-.pathway-number { color:var(--oxford); font-weight:700; min-width:16px; }
+.pathway-number { color:var(--accent-text); font-weight:700; min-width:16px; }
 .pathway-row-title { flex:1; min-width:0; overflow-wrap:anywhere; }
 .pathway-row-title small { display:block; color:#a34b22; }
 .pathway-dock footer { padding:12px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:12px; }
 .pathway-dock footer small { color:var(--muted); font-size:11px; line-height:1.5; }
-.pathway-dock footer button { background:var(--oxford); color:white; padding:9px; }
+.pathway-dock footer button { background:var(--oxford); color:var(--on-accent); padding:9px; }
 .pathway-dock p { padding:10px; line-height:1.5; }
 .pathway-insertion-marker { height:4px; background:var(--oxford); border-radius:2px; margin:3px 0; pointer-events:none; }
 .pathway-drop-end { min-height:65px; }
@@ -33,4 +33,4 @@
 .pathway-dialog { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:20px; min-width:280px; display:flex; flex-direction:column; gap:12px; max-height:80vh; overflow:auto; }
 .pathway-dialog label { display:flex; flex-direction:column; gap:6px; }
 .pathway-dialog input { font:inherit; padding:8px; }
-.grid-pathway-badge { position:absolute; right:8px; top:8px; z-index:2; min-width:24px; height:24px; display:grid; place-items:center; background:var(--oxford); color:#fff; font-weight:700; border-radius:50%; box-shadow:0 1px 4px #0003; pointer-events:none; }
+.grid-pathway-badge { position:absolute; right:8px; top:8px; z-index:2; min-width:24px; height:24px; display:grid; place-items:center; background:var(--oxford); color:var(--on-accent); font-weight:700; border-radius:50%; box-shadow:0 1px 4px #0003; pointer-events:none; }

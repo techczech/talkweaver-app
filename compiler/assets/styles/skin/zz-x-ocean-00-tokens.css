@@ -44,7 +44,6 @@
   --look-on-lead: var(--look-on-main);
   --look-tab-on-lead: var(--look-deep);          /* the title tab on a lead-coloured slide, white type on it */
   --look-keyword: var(--look-main);              /* key words of a light statement: Ocean on white, 4.91:1 */
-  --look-keyword-mark: transparent;              /* an underline under those key words (Bold: amber), clear of the text */
   --look-current: var(--look-companion);         /* a marker: the current loop stop, a highlighted bar or slice, a timeline dot */
   --look-on-marker: var(--look-on-companion);    /* type on that marker: near-black on amber (8.65:1) */
   /* the current item of a list, row or tile in a reveal or {focus}: a full Ocean fill with white label and white icon
@@ -78,12 +77,11 @@
 }
 
 /* Bold: amber leads the statement and divider slides; the detail slides stay blue. Key words on a light
-   statement keep the Ocean text colour (amber type on white is 2.05:1); the amber is an underline under them. */
+   statement keep Ocean text in bold (amber type on white is 2.05:1). */
 .slide:is([data-look="ocean"], [data-look="ocean-safe"])[data-companion="bold"] {
   --look-lead: var(--look-companion);
   --look-on-lead: var(--look-on-companion);
   --look-tab-on-lead: var(--look-main);
-  --look-keyword-mark: var(--look-companion);
 }
 
 /* the size tokens re-resolve where a layout sets its own text step (--fs-body on .slide-content) */

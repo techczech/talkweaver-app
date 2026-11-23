@@ -1,3 +1,4 @@
+import { readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -5,9 +6,9 @@ import { join } from 'node:path'
 import ts from 'typescript'
 import { grantedPublishing } from './lib/publishing-fakes.mjs'
 
-const sourceText = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+const sourceText = readMainSource()
 const sourceFile = ts.createSourceFile(
-  'src/main/index.ts',
+  'main-source.ts',
   sourceText,
   ts.ScriptTarget.Latest,
   true,

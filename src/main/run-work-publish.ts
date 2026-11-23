@@ -20,8 +20,9 @@
 // refuses a right answer); the Worker address in a page is never on this computer (liveAddressForPages);
 // a page is written only inside the Run's site folder the caller has checked (writableSiteFolder), through
 // a temporary file and a rename, and a link at a page's folder name is unlinked, never followed.
-import { lstatSync, mkdirSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { lstatSync, mkdirSync, rmSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
+import { writeTextAtomic } from './atomic-file.ts'
 import { compileWorkFile, type CompiledWorkFile, type CompiledWorkFinding } from './work-file-compile.ts'
 import { buildParticipantWorkPage } from './work-page.ts'
 import { decodeUtf8, pinRunWork, readPinnedWork, readWorkFileBytes, runFolder, workFilePath, type PinError } from './run-work-pin.ts'
@@ -220,17 +221,6 @@ function clearAt(path: string): void {
   else rmSync(path, { recursive: true, force: true })
 }
 
-function writeAtomically(path: string, text: string): void {
-  const temp = `${path}.${process.pid}.${Date.now()}.tmp`
-  try {
-    writeFileSync(temp, text, { encoding: 'utf8', flag: 'wx' })
-    renameSync(temp, path)
-  } catch (error) {
-    try { rmSync(temp, { force: true }) } catch { /* nothing to clean */ }
-    throw error
-  }
-}
-
 export interface WriteRunWorkPagesInput {
   compilerDir: string
   /** The Run's folder in the site, as writableSiteFolder gave it. */
@@ -266,7 +256,7 @@ export async function writeRunWorkPages(input: WriteRunWorkPagesInput): Promise<
       if (stat.isSymbolicLink() || !stat.isDirectory()) clearAt(at)
     }
     if (!lexists(at)) mkdirSync(at)
-    writeAtomically(join(at, 'index.html'), html)
+    writeTextAtomic(join(at, 'index.html'), html, { createParent: false })
   }
 }
 
@@ -312,6 +302,6 @@ export async function buildRunWorkPreview(input: { vaultRoot: string; run: RunRe
     const stat = lstatSync(path)
     if (stat.isSymbolicLink() || !stat.isFile()) return { ok: false, error: pinErrorText('run-folder-unsafe', phase, work.fileId) }
   }
-  writeAtomically(path, page.html)
+  writeTextAtomic(path, page.html, { createParent: false })
   return { ok: true, path, phase }
 }

@@ -201,6 +201,10 @@ const mockPlaceChip = { visible: true, listeners: new Set<(state: { visible: boo
 
 export function installMock() {
   ;(window as any).tw = {
+    app: {
+      onEditorAction: (_callback: unknown) => () => undefined,
+      onRunCommand: (_callback: (id: string) => void) => () => undefined,
+    },
     vault: {
       getRoot: async () => MOCK_VAULT_ROOT,
       setRoot: async (_path: string) => ({ success: true }),
@@ -210,6 +214,12 @@ export function installMock() {
       setOpen: async () => ({ ok: false, reason: 'last-open', message: 'Keep at least one vault open.' }),
       recheck: async () => false,
       onVaultsChanged: (_cb: unknown) => () => {},
+      onTalksBatch: (_callback: unknown) => () => undefined,
+      onTalkConflicts: (_callback: unknown) => () => undefined,
+      talkDefaults: async () => null,
+      talkActivity: async () => [],
+      onTalkActivityChanged: (_callback: unknown) => () => undefined,
+      onTalkMetaUpdated: (_callback: unknown) => () => undefined,
       // Remove the example vault (onboarding ticket 12): nothing to remove in the dev preview.
       exampleState: async () => ({ removed: false }),
       exampleRemovalPreview: async () => ({ ok: false, message: 'The example vault is not in your vaults, so there is nothing to remove.' }),
@@ -217,6 +227,7 @@ export function installMock() {
       restoreExample: async () => ({ ok: false, message: 'The example vault could not be brought back.' }),
       onExampleChanged: (_cb: unknown) => () => {},
       listTalks: async () => MOCK_TALKS,
+      listFolders: async () => ['ai-topics'],
       createTalk: async (opts: { title: string; slug: string; topicFolder?: string }) => {
         const slug = opts.slug
         return {
@@ -241,6 +252,9 @@ export function installMock() {
       closeKept: async () => true,
       ackCloseRequest: async () => true,
       compile: async (outlinePath: string, content: string) => mockCompile(outlinePath, content),
+      thumbnails: async (outlinePath: string, content: string) =>
+        Object.fromEntries(mockCompile(outlinePath, content).map((row, i) =>
+          [row.content_hash, mockThumbDataUri(`Slide ${i + 1}`)])),
       checkEmbeds: async (_outlinePath: string, _content: string) => [],
       present: async (_outlinePath: string, _content: string) => {
         alert('Present mode: not available in browser mock — run in Electron')
@@ -301,9 +315,21 @@ export function installMock() {
       // No freshness stamp in the mock: the Browser always asks again when the search is cleared.
       indexStamp: async () => null,
     },
-    // The workspace reads the action-bar setting on mount (ADR-0025); the browser mock keeps the
-    // flag in memory so the plain-browser dev preview still boots. Other settings sections are
-    // Electron-only surfaces and stay unmocked.
+    // The shell subscribes to notices on mount. The browser has no service or recording notices.
+    cloudflare: { onShowSettings: (_callback: () => void) => () => undefined },
+    liveService: { onNotice: (_callback: (message: string) => void) => () => undefined },
+    recording: {
+      recoveredNotice: async () => 0,
+      takeSetupNotice: async () => null,
+    },
+    livePage: { closeCapture: async () => false },
+    windows: { recoverMovedTalk: async () => ({ kind: 'no-receipt' as const }) },
+    scratchpad: {
+      subscribe: async () => ({ ok: true, snapshot: { groups: [], items: [], notices: [] } }),
+      unsubscribe: async () => ({ ok: true }),
+      onChanged: (_callback: unknown) => () => undefined,
+    },
+    // The workspace reads the action-bar setting on mount (ADR-0025).
     settings: {
       getActionBar: async () => ({ visible: mockActionBar.visible, items: null }),
       setActionBarVisible: async (visible: boolean) => {

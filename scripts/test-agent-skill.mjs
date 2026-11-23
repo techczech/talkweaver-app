@@ -25,6 +25,10 @@ import { nodeProbe } from '../src/main/agent-skill/probe.ts'
 import { EMPTY_STATE } from '../src/shared/agent-skill/types.ts'
 import { skillWording } from '../src/shared/agent-skill/wording.ts'
 
+const lookGuide = readFileSync(new URL('../resources/agent-skill/talkweaver/references/layout-and-object-chooser.md', import.meta.url), 'utf8')
+assert.ok(lookGuide.includes('Ocean (blue) fill with a white label and icon for the current reveal item'))
+assert.ok(!lookGuide.includes('amber only for the current item of a reveal'))
+
 const roots = []
 const tmp = (label) => { const d = realpathSync(mkdtempSync(join(tmpdir(), `agent-skill-${label}-`))); roots.push(d); return d }
 process.on('exit', () => { for (const r of roots) try { chmodSync(join(r, 'home', '.agents'), 0o755) } catch {} ; for (const r of roots) rmSync(r, { recursive: true, force: true }) })

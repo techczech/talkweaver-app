@@ -60,8 +60,9 @@ const sessionsDir = join(tempVault, '_PRESENTATIONS', slug)
 const recordingsDir = join(userDataDir, 'recordings')
 const mockPath = join(userDataDir, 'recording-r2-mock.jsonl')
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
-const countSessions = () => (existsSync(sessionsDir) ? readdirSync(sessionsDir).filter((f) => f.endsWith('.json')).length : 0)
-const listSessionFiles = () => (existsSync(sessionsDir) ? readdirSync(sessionsDir).filter((f) => f.endsWith('.json')) : [])
+// Transcripts and transcription attempts are JSON sidecars, not saved Runs.
+const listSessionFiles = () => (existsSync(sessionsDir) ? readdirSync(sessionsDir).filter((f) => /^[^.]+\.json$/.test(f)) : [])
+const countSessions = () => listSessionFiles().length
 const listWebms = () => (existsSync(recordingsDir) ? readdirSync(recordingsDir).filter((f) => f.endsWith('.webm')) : [])
 const readSessionFile = (f) => JSON.parse(readFileSync(join(sessionsDir, f), 'utf8'))
 const readSessions = () => listSessionFiles().map(readSessionFile)
@@ -80,7 +81,7 @@ async function waitFor(pred, timeoutMs, stepMs = 150) {
 
 await ensureFreshBuild(REPO)
 const app = await electron.launch({
-  args: ['.', '--user-data-dir=' + userDataDir],
+  args: ['.', '--user-data-dir=' + userDataDir, '--use-fake-device-for-media-stream', '--use-mock-keychain', '--mute-audio'],
   cwd: REPO,
   env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 })
@@ -103,14 +104,14 @@ async function appWindow() {
 
 async function openPresenter() {
   const main = await appWindow()
-  const winPromise = app.waitForEvent('window')
-  const presenting = main.evaluate(
-    ({ p, c }) => window.tw.talk.present(p, c, 'presenter'),
-    { p: outlinePath, c: FIX }
-  )
-  const pres = await winPromise
+  const [pres] = await Promise.all([
+    app.waitForEvent('window', { predicate: async candidate => {
+      try { await candidate.waitForURL(/-present\.html(?:[?#].*)?$/, { timeout: 8000 }); return true }
+      catch { return false }
+    } }),
+    main.evaluate(({ p, c }) => window.tw.talk.present(p, c, 'presenter'), { p: outlinePath, c: FIX })
+  ])
   await pres.waitForLoadState('domcontentloaded')
-  await presenting
   await pres.bringToFront()
   await pres.waitForSelector('#twrec-module', { timeout: 8000 })
   await pres.waitForTimeout(350)
@@ -193,7 +194,8 @@ try {
   // Core recorded-run path, retained as a smoke test for audio capture and upload.
   const expectedIds = []
   await pres.keyboard.press('Shift+R')
-  await pres.waitForTimeout(350)
+  await pres.locator('.twrec-device-check [data-continue]').click()
+  await pres.locator('#twrec-module[data-rec="recording"]').waitFor({ timeout: 15000 })
   expectedIds.push(await hashOf(pres))
   const recState = await pres.locator('#twrec-module').getAttribute('data-rec')
   record('⇧R starts audio recording', recState === 'recording', `data-rec=${recState}`)
@@ -211,12 +213,12 @@ try {
   await advance(pres, 1, 450)
   expectedIds.push(await hashOf(pres))
 
-  const beforeRecorded = countSessions()
+  const beforeRecorded = new Set(listSessionFiles())
   await pres.keyboard.press('Shift+R')
-  const recordedSaved = await waitFor(() => countSessions() > beforeRecorded, 6000)
-  const recordedFile = listSessionFiles().sort()[listSessionFiles().length - 1]
+  const recordedSaved = await waitFor(() => newSessionSince(beforeRecorded) !== null, 6000)
+  const recordedFile = newSessionSince(beforeRecorded)
   const recordedSession = recordedSaved ? readSessionFile(recordedFile) : null
-  record('⇧R stops and saves an audio-attached session.json', recordedSaved && recordedSession?.audio !== null, `file=${recordedFile}`)
+  record('⇧R stops and saves an audio-attached session.json', recordedSaved && !!recordedSession?.audio, `file=${recordedFile}`)
   record('audio .webm is written locally before upload', listWebms().length >= 1, `webms=${JSON.stringify(listWebms())}`)
 
   if (recordedSession) {
@@ -247,6 +249,9 @@ try {
     }
   })
   record('on-request upload flips uploaded=true and logs the intended R2 key', !!uploadRes?.ok && uploaded && mockHasKey, `res=${JSON.stringify(uploadRes)} uploaded=${uploaded}`)
+  const recordedClosed = pres.waitForEvent('close', { timeout: 5000 })
+  await requestClose(pres)
+  await recordedClosed
 
   // (a) L at start commits immediately, then later marks finalise the same run.
   {

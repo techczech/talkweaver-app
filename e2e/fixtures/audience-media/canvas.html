@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Canvas widget</title>
+  <style>
+    body { margin: 0; font: 24px monospace; background: #ece9df; }
+    canvas { display: block; }
+    @media (min-width: 400px) { body { font-size: 32px; } }
+  </style>
+</head>
+<body>
+  <canvas aria-label="Solid blue panel"></canvas>
+  <script>
+    const canvas = document.querySelector('canvas');
+    canvas.width = innerWidth;
+    canvas.height = innerHeight;
+    const context = canvas.getContext('2d');
+    context.fillStyle = '#396480';
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    window.widgetSizeAtStart = [innerWidth, innerHeight];
+  </script>
+</body>
+</html>

@@ -4,7 +4,10 @@
 // bridge publishes to the venue screen, and Esc / U returning to the slide it left.
 import assert from 'node:assert/strict'
 import { JSDOM, VirtualConsole } from 'jsdom'
-import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+const compilerRoot = process.argv.find(arg => arg.startsWith('--compiler='))?.slice('--compiler='.length)
+const { buildDeckHtmlFromModel } = await import(compilerRoot ? pathToFileURL(resolve(compilerRoot, 'compiler/scripts/lib/07-assembly.mjs')) : '../compiler/scripts/lib/07-assembly.mjs')
 import { presenterLiveSlideState, stampPublishedLink } from '../src/preload/present-live-state.ts'
 
 const slides = [
@@ -40,15 +43,17 @@ function open(markup, role, bridge) {
   return { dom, window: dom.window, document: dom.window.document, errors, broadcasts, listeners }
 }
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20))
-const key = (window, value, extra = {}) => window.dispatchEvent(new window.KeyboardEvent('keydown', { key: value, bubbles: true, ...extra }))
+const key = (window, value, extra = {}) => window.dispatchEvent(new window.KeyboardEvent('keydown', { key: value, bubbles: true, cancelable: true, ...extra }))
 const activeId = (document) => document.querySelector('.slide.active')?.dataset.id
 const overlay = (document) => document.querySelector('.qr-fullscreen.talk-qr')
 
 let onStatus = () => {}
 let onJoin = () => {}
+let onInstant = () => {}
+const instantActions = []
 const presenter = open(html, 'presenter', {
-  action: async () => ({ success: true, status: 'pending' }),
-  onInstant() {}, onState() {}, onOperation() {},
+  action: async action => { instantActions.push(action); return { success: true, status: 'pending' } },
+  onInstant: callback => { onInstant = callback }, onState() {}, onOperation() {},
   onStatus: (callback) => { onStatus = callback },
   onJoin: (callback) => { onJoin = callback },
 })
@@ -72,8 +77,8 @@ relay()
 for (const side of [presenter, projector]) {
   const shown = overlay(side.document)
   assert.ok(shown, 'the overlay is up')
-  assert.equal(shown.querySelector('.qr-fs-url').textContent, 'handouts.fyi/k7m2', 'not live: the published handout link')
-  assert.equal(shown.querySelector('.qr-fs-url strong').textContent, '/k7m2', 'the talk id is bold')
+  assert.equal(shown.querySelector('.qr-fs-url').textContent, 'https://handouts.fyi/k7m2', 'not live: the published handout link')
+  assert(shown.querySelector('.qr-fs-url wbr'), 'the full address wraps at slashes')
   assert.ok(shown.querySelector('.qr-fs-code svg'), 'the QR code is drawn')
 }
 assert.equal(presenter.document.documentElement.dataset.twLiveTalkQr, '1', 'the live bridge sees the overlay')
@@ -110,14 +115,14 @@ onStatus('live')
 onJoin({ shortUrl: 'https://handouts.fyi/live9', qrSvg: '<svg xmlns="http://www.w3.org/2000/svg" data-live="1"></svg>' })
 key(presenter.window, 'u')
 relay()
-assert.equal(overlay(projector.document).querySelector('.qr-fs-url').textContent, 'handouts.fyi/live9', 'live: the audience link')
+assert.equal(overlay(projector.document).querySelector('.qr-fs-url').textContent, 'https://handouts.fyi/live9', 'live: the audience link')
 assert.ok(overlay(projector.document).querySelector('svg[data-live="1"]'))
 
 const publishedStamp = { url: 'https://handouts.fyi/k7m2', qrSvg: presenter.document.getElementById('twTalkQr').innerHTML }
 stampPublishedLink(presenter.document, null)
 await settle()
 relay()
-assert.equal(overlay(projector.document).querySelector('.qr-fs-url').textContent, 'handouts.fyi/live9', 'withdrawing a handout leaves the active live-session QR alone')
+assert.equal(overlay(projector.document).querySelector('.qr-fs-url').textContent, 'https://handouts.fyi/live9', 'withdrawing a handout leaves the active live-session QR alone')
 stampPublishedLink(presenter.document, publishedStamp)
 await settle()
 relay()
@@ -127,7 +132,7 @@ relay()
 onStatus('ended')
 key(presenter.window, 'u')
 relay()
-assert.equal(overlay(projector.document).querySelector('.qr-fs-url').textContent, 'handouts.fyi/k7m2', 'after End live it falls back to the handout')
+assert.equal(overlay(projector.document).querySelector('.qr-fs-url').textContent, 'https://handouts.fyi/k7m2', 'after End live it falls back to the handout')
 key(presenter.window, 'u')
 relay()
 
@@ -153,7 +158,7 @@ stampPublishedLink(presenter.document, { url: 'https://handouts.fyi/current-talk
 await settle()
 relay()
 for (const side of [presenter, projector]) {
-  assert.equal(overlay(side.document).querySelector('.qr-fs-url').textContent, 'handouts.fyi/current-talk', 'an open overlay updates without another key press')
+  assert.equal(overlay(side.document).querySelector('.qr-fs-url').textContent, 'https://handouts.fyi/current-talk', 'an open overlay updates without another key press')
   assert.equal(activeId(side.document), 'slide-b')
 }
 stampPublishedLink(presenter.document, null)
@@ -182,6 +187,41 @@ assert.equal(overlay(presenter.document), null)
 assert.equal(overlay(projector.document), null)
 assert.deepEqual(presenter.errors, [])
 assert.deepEqual(projector.errors, [])
+// A quick-slide QR uses the shared picture gallery, so the room sees what the presenter enlarged.
+const commandsSeen = []
+presenter.window.addEventListener('tw-guide-command-ran', event => commandsSeen.push(event.detail))
+const quickUrl = 'https://handouts.example.test/walks/a-clear-route?view=full#map'
+const quickSvg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><path d="M0 0h1v1H0z"/></svg>'
+const quickSlide = { kind: 'link', url: quickUrl, qrSvg: quickSvg, shownAt: Date.now() }
+onInstant(quickSlide)
+relay()
+presenter.document.querySelector('#currentPreview .instant-qr-enlarge').click()
+relay()
+for (const side of [presenter, projector]) {
+  const zoom = side.document.querySelector('.lightbox.qr-focus.open')
+  assert.ok(zoom, 'quick QR enlargement reaches both the presenter and the projector')
+  assert.equal(zoom.querySelector('.lightbox-caption').textContent, quickUrl)
+  assert(zoom.querySelector('.lightbox-img').getAttribute('src').startsWith('data:image/svg+xml'), 'the quick SVG remains in image context')
+  assert.equal(zoom.querySelector('svg'), null, 'quick SVG does not enter executable DOM')
+}
+onInstant({ ...quickSlide }); relay()
+for (const side of [presenter, projector]) assert(side.document.querySelector('.lightbox.qr-focus.open'), 'an echo of the same quick slide keeps shared zoom open')
+const clearRequests = instantActions.filter(action => action.type === 'instant.clear').length
+key(presenter.window, 'ArrowRight'); relay()
+assert.equal(instantActions.filter(action => action.type === 'instant.clear').length, clearRequests, 'gallery arrows do not send a quick-slide clear request')
+assert(!commandsSeen.includes('presenter.instant-return'), 'the guide does not record an instant-return command for gallery arrows')
+assert.equal(presenter.document.getElementById('presenterInstantStrip').hidden, false, 'gallery arrows do not clear the quick slide underneath')
+key(presenter.window, 'Escape'); relay()
+for (const side of [presenter, projector]) assert.equal(side.document.querySelector('.lightbox.open'), null, 'Escape closes shared QR zoom')
+assert.equal(presenter.document.getElementById('presenterInstantStrip').hidden, false, 'closing the QR keeps the quick slide')
+key(presenter.window, 'z'); relay()
+assert(projector.document.querySelector('.lightbox.qr-focus.open'), 'Z can reopen the quick QR in the room')
+onInstant(null); relay()
+for (const side of [presenter, projector]) assert.equal(side.document.querySelector('.lightbox.open'), null, 'clearing the quick slide dismisses its QR zoom on both screens')
+assert.equal(presenter.document.getElementById('presenterInstantStrip').hidden, true, 'the quick slide is cleared after its zoom closes')
+assert.deepEqual(presenter.errors, [])
+assert.deepEqual(projector.errors, [])
+
 presenter.window.close()
 projector.window.close()
 await settle()

@@ -32,7 +32,7 @@ const ADDRESSES = {
   long: 'https://walks.example.org/h/abcdefghijklmnopqrstuvwxyzabcdefghijklmn',
   query: 'https://walks.example.org/handouts/map?route=river-meadows&season=spring_2027&lang=en-GB',
 }
-const shownOf = (url) => url.replace(/^[a-z][a-z0-9+.-]*:\/\//i, '').replace(/^www\./i, '').replace(/\/+$/, '')
+const shownOf = url => new URL(url).host.replace(/^www\./i, '')
 
 function qrOutline(url, palette = '') {
   const out = ['---', 'title: Planning a river walk', 'subtitle: A guide for the volunteer walking group', 'author: Sample presenter',
@@ -315,4 +315,4 @@ if (failures.length) {
   console.error(`test:qr-address-and-mind-map: ${failures.length} failure(s)\n  ${failures.slice(0, 50).join('\n  ')}`)
   process.exit(1)
 }
-console.log('test:qr-address-and-mind-map: QR addresses shown whole on the title, closing and corner slides in every section colour, on screen and on paper; mind maps fill their area on first show, after a resize, drawn ahead and visited, on paper and in the handout')
+console.log('test:qr-address-and-mind-map: QR captions show their domains on the title, closing and corner slides in every section colour, on screen and on paper; mind maps fill their area on first show, after a resize, drawn ahead and visited, on paper and in the handout')

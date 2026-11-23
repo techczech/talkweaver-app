@@ -63,7 +63,11 @@ await test('How it works: fifteen topics, one to three plain sentences each, in 
   assert.equal(TEXT.tryIt, TOPIC_TRY_LABEL)
   // Menu routes named in the sentences exist in the Share menu.
   const layout = readFileSync(join(REPO, 'src/renderer/src/components/WorkspaceLayout.tsx'), 'utf8')
-  for (const label of ["'HTML presentation (reveal in Finder)'", "'Share for comments…'", "'Handout (reveal in Finder)'", "'Publish to Cloudflare'"]) assert.ok(layout.includes(`label: ${label}`) || layout.includes(label), label)
+  for (const label of ["'HTML presentation (reveal in Finder)'", "'Share for comments…'"]) assert.ok(layout.includes(label), label)
+  for (const [id, label] of [['handout', 'Handout (reveal in Finder)'], ['publish-handout', 'Publish to Cloudflare']]) {
+    assert.equal(COMMAND_REGISTRY.find(command => command.id === id)?.toolbar?.menuLabel, label)
+    assert.ok(layout.includes(`command.id === '${id}')!.toolbar!.menuLabel`), 'Share uses the registry label for ' + id)
+  }
   for (const route of ['Share › HTML presentation', 'Share › Share for comments', 'Share › Handout', 'Share › Publish to Cloudflare']) assert.ok(HOW_TOPICS.some((t) => t.sentences.join(' ').includes(route)), route)
 })
 

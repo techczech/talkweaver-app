@@ -1,3 +1,4 @@
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import {chmodSync,readFileSync,writeFileSync,mkdirSync,mkdtempSync,rmSync,existsSync,readdirSync} from 'node:fs'
 import {join} from 'node:path'
@@ -50,6 +51,125 @@ try {
  }
  const unavailable=createTranscription({...deps,config:()=>({...deps.config(),engine:'native'}),nativeHelper:()=>null});assert.equal((await unavailable.run('fixture',sid,null)).ok,false)
  assert.equal(spawnSpy.mock.callCount(),0);spawnSpy.mock.restore();syncBuiltinESMExports();assert.equal(defaultWordsEngine(false,false),null);check('unavailable native and Parakeet-only automatic calls spawn nothing and emit nothing')
+ const autoDeps = {
+   ...deps,
+   selection: () => ({ engine: 'native', locale: 'cs_CZ', allowInstalledFallback: true }),
+   nativeAvailable: async () => false
+ }
+ const modelScript = (name, model, detectedLocale) => exe(name, `const fs=require('fs')
+if (process.argv.includes('--help')) {
+  console.log('--words FILE\\nDefault Parakeet model: ${model}')
+} else {
+  fs.writeFileSync(process.argv[process.argv.indexOf('-o')+1], '1\\n00:00:00,100 --> 00:00:01,500\\nHello.\\n')
+  fs.writeFileSync(process.argv[process.argv.indexOf('--words')+1], JSON.stringify({words:[{text:'Hello.',start:.1,end:1.5}],locale:${JSON.stringify(detectedLocale)}}))
+}`)
+ const englishScript = modelScript('parakeet-en', 'mlx-community/parakeet-tdt-0.6b-v2')
+ const oldTranscript = readFileSync(target, 'utf8')
+ const englishDeps = { ...autoDeps, config: () => ({ ...deps.config(), script: englishScript }) }
+ const blocked = createTranscription(englishDeps)
+ const blockedSpawn = mock.method(childProcess, 'spawn')
+ syncBuiltinESMExports()
+ try {
+   const result = await blocked.run('fixture', sid, null)
+   assert.deepEqual(result, { ok: false, error: 'This Mac cannot transcribe Czech, and the installed Parakeet model is English only.' })
+   assert.deepEqual(blockedSpawn.mock.calls.map(({ arguments: [, args] }) => args), [[englishScript, '--help']])
+   assert.equal(readFileSync(target, 'utf8'), oldTranscript, 'a refused fallback preserves the previous transcript')
+ } finally {
+   blockedSpawn.mock.restore()
+   syncBuiltinESMExports()
+ }
+ const noMacEngine = createTranscription({
+   ...englishDeps, nativeHelper: () => null,
+   selection: () => ({ ...autoDeps.selection(), engine: 'parakeet' })
+ })
+ assert.deepEqual(await noMacEngine.run('fixture', sid, null), {
+   ok: false, error: 'This Mac cannot transcribe Czech, and the installed Parakeet model is English only.'
+ })
+ assert.equal(readFileSync(target, 'utf8'), oldTranscript)
+ check('Automatic refuses English-only Parakeet for Czech with and without a Mac speech helper')
+ const englishAnnotator = exe('annotate-english', `
+if (process.argv[2] !== '--annotate' || process.argv[4] !== 'en-US') process.exit(1)
+console.log(JSON.stringify({silence:[],sentenceEnds:[0]}))`)
+ const englishEngine = createTranscription({
+   ...englishDeps, selection: () => ({ ...autoDeps.selection(), locale: 'en_GB' }),
+   nativeHelper: () => englishAnnotator, annotationTimeoutMs: 2000
+ })
+ assert.equal((await englishEngine.run('fixture', sid, null)).ok, true)
+ const englishWords = await englishEngine.get('fixture', sid)
+ assert.equal(englishWords.locale, 'en-US')
+ assert.equal(englishWords.acousticMeasurement, 'available')
+ check('English-only fallback stores en-US and passes that locale to the Mac annotation helper')
+ const unknownEngine = createTranscription(autoDeps)
+ assert.equal((await unknownEngine.run('fixture', sid, null)).ok, true)
+ const unknownWords = await unknownEngine.get('fixture', sid)
+ assert.equal(unknownWords.words[0].text, 'Hello.')
+ assert.equal(unknownWords.locale, undefined)
+ check('A legacy script without a declared default model still runs and leaves locale unset')
+ const multilingualScript = modelScript('parakeet-multi', 'mlx-community/parakeet-tdt-0.6b-v3', 'sk')
+ autoDeps.config = () => ({ ...deps.config(), script: multilingualScript })
+ const automaticEngine = createTranscription(autoDeps)
+ const fallbackNotes = []
+ const fallback = await automaticEngine.run('fixture', sid, note => fallbackNotes.push(note))
+ assert.equal(fallback.ok, true, fallback.error)
+ assert.equal((await automaticEngine.get('fixture', sid)).engine, 'parakeet')
+ assert.equal((await automaticEngine.get('fixture', sid)).locale, 'sk', 'the engine reported Slovak despite the Czech request')
+ assert.ok(fallbackNotes.some(note => note.includes('Czech') && note.includes('Parakeet')))
+ check('Transcribe uses installed Parakeet when automatic Mac speech is unavailable for Czech')
+ const unlabeledScript = modelScript('parakeet-unlabelled', 'mlx-community/parakeet-tdt-0.6b-v3')
+ for (const locale of ['en-US', 'cs-CZ']) {
+   const unlabeled = createTranscription({
+     ...autoDeps, config: () => ({ ...deps.config(), script: unlabeledScript }),
+     selection: () => ({ ...autoDeps.selection(), locale })
+   })
+   assert.equal((await unlabeled.run('fixture', sid, null)).ok, true)
+   assert.equal((await unlabeled.get('fixture', sid)).locale, locale)
+   check(`Multilingual fallback without detected language keeps the supported ${locale} locale for alignment`)
+ }
+ const beforeRefusal = readFileSync(target, 'utf8')
+ const noInstalledEngine = createTranscription({
+   ...autoDeps, readiness: () => ({ ...deps.readiness(), row: { state: 'not-set-up' } })
+ })
+ for (const [service, choice] of [[automaticEngine, 'native'], [noInstalledEngine, undefined]]) {
+   const result = await service.run('fixture', sid, null, undefined, choice)
+   assert.equal(result.ok, false)
+   assert.match(result.error, /speech recognition is unavailable for Czech/)
+   assert.equal(readFileSync(target, 'utf8'), beforeRefusal)
+ }
+ check('explicit Mac speech and automatic mode without a fallback give a language-specific refusal')
+ const cancelledRoute = new AbortController()
+ const cancelledFallback = createTranscription({
+   ...autoDeps, nativeAvailable: async () => { cancelledRoute.abort(); return false }
+ })
+ assert.deepEqual(await cancelledFallback.run('fixture', sid, null, cancelledRoute.signal), { ok: false, error: 'cancelled' })
+ assert.equal(readFileSync(target, 'utf8'), beforeRefusal)
+ check('cancellation during the Mac speech route check does not start Parakeet')
+ const otherVault = join(root, 'other-vault')
+ const otherRun = join(otherVault, '_PRESENTATIONS', 'fixture')
+ mkdirSync(otherRun, { recursive: true })
+ const otherAudio = `${sid}.seg-2.webm`
+ writeFileSync(join(data, 'recordings', otherAudio), 'different fixture audio')
+ writeFileSync(join(otherRun, `${sid}.json`), JSON.stringify({
+   id: sid, talkSlug: 'fixture', audio: { segments: [{ file: otherAudio, startMs: 0, endMs: 2000 }] }
+ }))
+ let openVault = vault
+ const revokedFallback = createTranscription({
+   ...autoDeps,
+   vaultRoot: () => openVault,
+   nativeAvailable: async () => { openVault = otherVault; return false }
+ })
+ const revokedSpawn = mock.method(childProcess, 'spawn')
+ syncBuiltinESMExports()
+ try {
+   const result = await revokedFallback.run('fixture', sid, null)
+   assert.equal(revokedSpawn.mock.callCount(), 0, 'the new vault cannot supply audio to this request')
+   assert.equal(result.ok, false)
+   assert.match(result.error, /The recording changed/)
+   assert.equal(readFileSync(target, 'utf8'), beforeRefusal)
+ } finally {
+   revokedSpawn.mock.restore()
+   syncBuiltinESMExports()
+ }
+ check('a vault revoked during the Mac speech route check does not start Parakeet')
  const old=readFileSync(target,'utf8')
  const native={engine:'apple-speech-transcriber',locale:'en-US',words:[{text:' Hello.',startMs:0,endMs:1500},{text:' ',startMs:1500,endMs:1600}],segments:[{text:'Hello.',startMs:0,endMs:1500}],sentenceEnds:[0,1],silence:[]}
  const nativeDeps={...deps,config:()=>({...deps.config(),engine:'native'}),annotationTimeoutMs:2000}
@@ -139,7 +259,7 @@ try {
  const start=performance.now();assert.equal(segmentWordEnds(words,segments).length,wordCount);mapSentences(words,[],silence);assert.ok(performance.now()-start<2000);check('60-minute probe sizes complete within generous 2-second bound')
  const studio=readFileSync('src/renderer/src/components/Studio.tsx','utf8');assert.ok(studio.indexOf("event.note.includes('Words could not be written out: busy')") < studio.indexOf('setTranscriptNote(event.note)'));check('Studio ignores busy event before changing busy state')
  await regression('main wires quit barrier and nonblocking startup sweep',()=>{
- const main=readFileSync('src/main/index.ts','utf8');assert.match(main,/app.on\('before-quit', \(\) => \{ stopActiveTranscription\(\)/);assert.match(main,/sweepTranscriptionTemps\(\)/);assert.equal(/app.whenReady\(\).then\(async \(\) => \{\s+sweepTranscriptionTemps\(\)/.test(main),false)})
+ const main=readMainSource();assert.match(main,/quitSequence\.add\(\{[^}]*stage: 'before-quit'[^}]*run: stopActiveTranscription\b/);assert.match(main,/sweepTranscriptionTemps\(\)/);assert.equal(/app.whenReady\(\).then\(async \(\) => \{\s+sweepTranscriptionTemps\(\)/.test(main),false)})
  assert.deepEqual(secondFailures,[])
 } finally {rmSync(root,{recursive:true,force:true})}
 console.log(`${count} passed`)

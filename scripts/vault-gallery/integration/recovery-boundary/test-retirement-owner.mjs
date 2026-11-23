@@ -1,8 +1,9 @@
+import { readMainSource } from '../../../lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import vm from 'node:vm'
 import {transformSync} from 'esbuild'
-const source=fs.readFileSync(process.env.TW_RECOVERY_MAIN_SOURCE || 'src/main/index.ts','utf8')
+const source=(process.env.TW_RECOVERY_MAIN_SOURCE ? fs.readFileSync(process.env.TW_RECOVERY_MAIN_SOURCE, 'utf8') : readMainSource())
 for(const change of ['adoption','owner','receipt']) {
  const handlers=new Map(), receipt={from:'old',to:'destination',settled:false},entry={outlinePath:'destination',win:{isDestroyed:()=>false}};let release
  const env={ipcMain:{handle:(k,v)=>handlers.set(k,v)},movedEditorReceipts:new Map([[1,receipt]]),editorWindows:new Map([[1,entry]]),retiredMovePaths:new Map(),outlineRecovery:{save:()=>new Promise(r=>release=r)},validMoveReceipt:()=>receipt}

@@ -30,13 +30,13 @@ import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempDisposableSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
-const SHOTS = join(REPO, 'docs', 'design', '2026-09-29-multi-vault', 'build-shots')
-mkdirSync(SHOTS, { recursive: true })
+const SHOTS = process.env.SHOTS
+if (SHOTS) mkdirSync(SHOTS, { recursive: true })
 
 const results = []
 function record(name, pass, detail) {
@@ -46,7 +46,8 @@ function record(name, pass, detail) {
 const outline = (title, slide) => ['---', `title: ${title}`, 'outline_version: 2', '---', '', '## Section', '',
   `### ${slide} {id=${slide.toLowerCase().replace(/\W+/g, '')}}`, '', 'Body one.', ''].join('\n')
 
-const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), 'tw-e2e-vault-menu-')))
+using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-vault-menu-'))
+const tempRoot = realpathSync(fixture.path)
 const personal = join(tempRoot, 'Personal')
 const wsLocal = join(tempRoot, 'local', 'Workshops')
 const wsGit = join(tempRoot, 'git', 'Workshops')
@@ -65,7 +66,7 @@ mkdirSync(userData, { recursive: true })
 writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: personal }, null, 2))
 
 await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userData], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
+await using app = await electron.launch({ args: ['.', '--use-mock-keychain', '--user-data-dir=' + userData], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 let page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
@@ -73,7 +74,7 @@ await page.waitForTimeout(1200)
 
 const header = (name) => page.locator(`[data-vault-header][data-vault-name="${name}"]`)
 const hasTalk = async (title) => (await page.locator(`.tl-tree [data-talk-title="${title}"]`).count()) > 0
-const shot = (name) => page.screenshot({ path: join(SHOTS, `07-${name}.png`) })
+const shot = async (name) => SHOTS && page.screenshot({ path: join(SHOTS, `07-${name}.png`) })
 const focusWindow = async () => { await page.evaluate(() => window.dispatchEvent(new Event('focus'))); await page.waitForTimeout(700) }
 const showBtn = () => page.locator('[data-show-filter] .tl-show')
 const vaultList = () => page.evaluate(() => window.tw.vault.list())
@@ -343,6 +344,5 @@ try {
 } finally {
   const failed = results.filter((r) => !r.pass)
   console.log(`\n=== VAULT-MENU SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
-  await app.close()
-  process.exit(failed.length ? 1 : 0)
+  process.exitCode = failed.length ? 1 : 0
 }

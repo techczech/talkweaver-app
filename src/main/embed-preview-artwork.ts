@@ -75,6 +75,7 @@ async function artwork(url: string, signal?: AbortSignal): Promise<string | null
   while (cache.size > 24) cache.delete(cache.keys().next().value!)
   return image
 }
+export { artwork }
 
 /** Remote artwork entry point shared by the focused preview and thumbnail renderer. */
 export const withRemoteEmbedArtwork = (html: string, signal?: AbortSignal, shouldCancel?: () => boolean): Promise<string> =>

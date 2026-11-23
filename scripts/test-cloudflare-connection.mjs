@@ -10,6 +10,7 @@
 // 5. an existing install: the saved publishing token is the one token, with nothing to do;
 // 6. no token and no text of a Cloudflare reply in any status, reply, error or line of output;
 // 7. where requests may go, and that no other source of a Cloudflare token is left in the app.
+import { readMainSource } from './lib/read-source.mjs'
 import { acceptingLive, instantClock, singleKeyPort } from './lib/live-worker-double.mjs'
 import { strict as assert } from 'node:assert'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
@@ -687,7 +688,7 @@ const label = (t) => connectionLabel(t.connection.status().connection, NINE_FOUR
   assert.deepEqual(await world({ stored: BOTH_ACCOUNTS }).connection.authoriseLiveDeploy(), { ok: false, error: DEPLOY_NOT_CONNECTED_ERROR })
 
   // The main process is a thin caller of the deploy sequence tested below: it reads neither the token nor the account.
-  const main = readFileSync(join(repo, 'src/main/index.ts'), 'utf8')
+  const main = readMainSource()
   const body = main.slice(main.indexOf('function deployLiveWorker('), main.indexOf('async function startLocalLiveWorker('))
   assert.ok(body.includes('return deployLiveService({') && !/readToken\(|getConfig\('cfAccountId'|await /.test(body), 'deployLiveWorker only hands ports to deployLiveService')
   console.log('PASS 4.6: a live deploy is authorised per generation; Replace, Disconnect or a change of account stops the next launch')
@@ -1193,6 +1194,7 @@ const label = (t) => connectionLabel(t.connection.status().connection, NINE_FOUR
   assert.deepEqual(found, [], 'under src nothing reads a Cloudflare token from Bitwarden, the Keychain command or an environment variable')
   // The slot is read in two places only: this module, and the main process handing it to the bundled tool.
   const readers = sources(join(repo, 'src')).filter((file) => /['"`]cloudflare-token['"`]/.test(readFileSync(file, 'utf8'))).map((file) => relative(repo, file).split('\\').join('/')).sort()
+  // Exact authorised readers in the source-wide scan. A new reader requires a policy decision.
   assert.deepEqual(readers, ['src/main/cloudflare-connection.ts', 'src/main/index.ts', 'src/main/secrets-store.ts'])
   console.log('PASS 7: requests go to Cloudflare or, in an unpackaged test harness only, to loopback; the token has one source')
 }

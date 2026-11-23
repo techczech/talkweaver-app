@@ -101,11 +101,12 @@ try {
   await page.waitForLoadState('domcontentloaded')
   await page.getByText('Feedback probe', { exact: true }).first().click()
   await page.waitForSelector('.workspace')
-  await page.waitForSelector('.cm-content')
+  await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Outline', exact: true }).click()
+  await page.waitForSelector('[data-view="outline"] .cm-content')
 
   // ── Share (ticket 03's path); the Feedback button appears ─────────────────────────────────────
   assert.equal(await page.getByTestId('toolbar-feedback').count(), 0, 'no Feedback button before the talk is shared')
-  await page.locator('button[title="Export, build, or publish this talk"]').click()
+  await page.getByTitle('Export, build, or publish this talk', { exact: true }).click()
   await page.getByRole('menuitem', { name: 'Share for comments…' }).click()
   await page.waitForSelector('[data-testid="share-sheet"][data-phase="ready"]')
   const link = (await page.getByTestId('share-link').textContent()).trim()
@@ -296,27 +297,47 @@ try {
   log('Use theirs replaces his changed lines with theirs; the comment keeps its place and the notes stay')
 
   // ── The external-change guard holds Accept ─────────────────────────────────────────────────────────
-  const outside = readOutline() + '\n<!-- changed outside TalkWeaver -->\n'
+  const editedLine = '- Markers read structure first'
+  const beforeOutside = readOutline()
+  assert.ok(beforeOutside.includes(`${editedLine}\n`), 'the saved rubric line is the base for both edits')
+  await page.locator('.cm-content .cm-line', { hasText: 'Markers read structure first' }).first().click()
+  await page.keyboard.press('End')
+  await page.keyboard.insertText(' — note from this editor')
+  const outside = beforeOutside.replace(editedLine, `${editedLine} — changed outside TalkWeaver`)
   writeFileSync(outlinePath, outside)
-  await page.waitForSelector('[data-testid="outline-disk-change-bar"]', { timeout: 15_000 })
+  const diskBar = page.getByTestId('outline-disk-change-bar')
+  const mergeSheet = page.getByTestId('outline-merge-sheet')
+  // Both edits touch the same line, so the automatic review keeps the guard up.
+  await mergeSheet.getByRole('button', { name: 'Stay here', exact: true }).click({ timeout: 15_000 })
+  await mergeSheet.waitFor({ state: 'detached' })
+  await diskBar.waitFor()
   await insert.getByTestId('feedback-accept').click()
   await until(async () => /changed on disk/.test(await page.getByTestId('feedback-rail').locator('.fr-error').textContent().catch(() => '')), 'Accept refused while the bar is up')
   await wait(800)
   assert.equal(readOutline(), outside, 'nothing written over the changed file')
   assert.equal(await insert.getAttribute('data-handled'), 'false', 'the item stays new')
-  await page.locator('[data-testid="outline-disk-change-bar"]').getByRole('button', { name: 'Reload' }).click()
-  await page.waitForSelector('[data-testid="outline-disk-change-bar"]', { state: 'detached' })
+  await diskBar.getByRole('button', { name: 'Review merge', exact: true }).click()
+  await mergeSheet.getByRole('button', { name: 'Use on disk', exact: true }).click()
+  await mergeSheet.getByRole('button', { name: 'Apply merge', exact: true }).click()
+  await mergeSheet.waitFor({ state: 'detached' })
+  await diskBar.waitFor({ state: 'detached' })
+  assert.equal(readOutline(), outside, 'the merge keeps the exact outside version on disk')
   await until(async () => (await page.getByTestId('feedback-rail').locator('.fr-error').count()) === 0, 'the refusal clears once the bar is answered')
-  log('an outside change to the file holds Accept: refused, nothing written, the item stays new')
+  log('an outside change holds Accept with the item still new; Review merge keeps the outside version')
 
   // ── Markers on the slide pane ───────────────────────────────────────────────────────────────────
-  await page.getByTestId('toolbar-feedback').click() // the rail closes; the slide pane is back
-  await page.getByTestId('feedback-rail').waitFor({ state: 'detached' })
+  const sidebar = page.locator('[data-right-column]')
+  const rail = sidebar.getByTestId('feedback-rail')
+  await rail.getByRole('button', { name: 'Close feedback', exact: true }).click()
+  await rail.waitFor({ state: 'detached' })
+  await page.getByRole('tab', { name: 'Slides', exact: true }).click()
+  await page.getByRole('button', { name: 'Show slides as previews' }).click()
+  const previews = page.locator('[data-slides-mode="previews"]')
   // A card by its caption's exact title (the thumbnail text may quote other slides' words).
-  const card = (title) => page.locator('.tw-slide-card').filter({ has: page.locator('span', { hasText: new RegExp(`^${title}$`) }) }).first()
+  const card = (title) => previews.locator('.tw-slide-card').filter({ has: page.locator('span', { hasText: new RegExp(`^${title}$`) }) }).first()
   const badge = (title) => card(title).getByTestId('slide-feedback-badge')
   await until(async () => (await badge('What we tried').count()) === 1 && (await badge('Close').count()) === 1, 'badges on the slide pane', 20_000,
-    async () => page.locator('.pane--strip').innerText().catch((e) => e.message))
+    async () => previews.innerText().catch((e) => e.message))
   assert.deepEqual([await badge('The rubric problem').getAttribute('data-handled'), await badge('The rubric problem').textContent()], ['true', '✓'], 'all handled on the rubric slide: a tick')
   assert.equal(await badge('What we tried').getAttribute('data-handled'), 'true', 'the dismissed deletion: a tick')
   assert.deepEqual([await badge('Close').getAttribute('data-count'), await badge('Close').textContent()], ['1', '1'], 'one new note on the closing slide')
@@ -331,7 +352,7 @@ try {
   assert.match(ghostFollowsRubric, /The rubric problem/, 'the ghost row sits right after the slide it follows')
   log('markers: a tick on handled slides, a count on the slide with a new note, a ghost row after the named slide')
 
-  // A marker opens the rail on its slide, beside the pane.
+  // A marker opens the Feedback tab on its slide, beside the outline.
   await badge('Close').click()
   // The rail opens on the marker's slide from its first frame (its scope is the marker's slide, not
   // the editor's active slide, which the click moves a moment later).
@@ -339,10 +360,10 @@ try {
   assert.match(await page.getByTestId('feedback-rail-count').textContent(), /^Slide \d+ · 1 new$/)
   assert.match(await page.getByTestId('feedback-rail').textContent(), /Opened from the marker on slide \d+ · 1 more new elsewhere/)
   assert.deepEqual(await items.evaluateAll((els) => els.map((el) => el.dataset.itemId)), ['e2e-late'], 'only that slide\'s items')
-  // The slide pane re-mounts beside the rail and builds its cards a moment later.
-  await page.waitForSelector('.pane--strip-rail .tw-slide-card', { timeout: 10_000 })
+  assert.equal(await sidebar.getByRole('tab', { name: 'Feedback', exact: true }).getAttribute('aria-selected'), 'true')
+  assert.equal(await page.locator('.cm-content').isVisible(), true, 'the outline stays beside Feedback')
   await shot(page, 'feedback-markers-frame2')
-  log('a marker opens the rail filtered to its slide, beside the slide pane')
+  log('a marker opens Feedback filtered to its slide, beside the outline')
 
   // The ghost opens the rail at its item; Accept inserts the section and slide right after the named slide.
   await ghost.click()
@@ -361,13 +382,13 @@ try {
   assert.deepEqual([...al.slice(0, p), ...al.slice(p + added.length)], bl, 'one insertion, nothing else changed')
   assert.match(added.join('\n'), /^### What students told us\n(\{id=[\w-]+\}\n)?\n#### Students asked for the rules in writing\n(\{id=[\w-]+\}\n)?- A one-page policy settled most questions\n$/, 'section one depth shallower, the slide its first child')
   assert.ok(afterInsert.indexOf('### What students told us') > afterInsert.indexOf(':::notes') && afterInsert.indexOf('### What students told us') < afterInsert.indexOf('### What we tried'), 'right after the named slide')
+  // ── Close the rail, then check the rendered previews ───────────────────────────────────────────
+  await rail.getByRole('button', { name: 'Close feedback', exact: true }).click()
+  await rail.waitFor({ state: 'detached' })
+  assert.equal(await sidebar.getByRole('tab', { name: 'Slide', exact: true }).getAttribute('aria-selected'), 'true')
+  await card('Students asked for the rules in writing').waitFor()
   await ghost.waitFor({ state: 'detached' })
   log('the ghost row opens its item; Accept inserts the section and slide right after the named slide, and the ghost goes')
-
-  // ── Close the rail: the Inspector's slot goes back to the strip ────────────────────────────────
-  await page.getByRole('button', { name: 'Close feedback' }).first().click()
-  await page.getByTestId('feedback-rail').waitFor({ state: 'detached' })
-  assert.equal(await page.locator('.pane--strip-rail').count(), 0)
   assert.ok(existsSync(feedbackFile))
   assert.deepEqual(errors, [], 'no renderer errors')
   log('rail closes; no renderer errors')

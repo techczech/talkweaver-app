@@ -217,9 +217,12 @@ const editorKeys: Travel = {
 
 /** Every setting that travels, with its kind and the rule that writes (or refuses) its value. Nothing else travels. */
 export const TRAVELLING: Readonly<Record<string, Travel>> = {
+  'general.theme': choice,
   'general.placeChip': toggle,
   'general.guideButton': toggle,
   'general.imageText': toggle,
+  'writing.openInView': choice,
+  'writing.slidesPanelView': choice,
   'writing.plainFont': choice,
   'writing.plainTextSize': number,
   'writing.editorKeys': editorKeys,

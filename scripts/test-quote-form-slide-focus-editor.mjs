@@ -67,14 +67,13 @@
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
-import { chromium } from 'playwright'
+import { launchEditorTestBrowser, reportMissingEditorTestBrowser } from './lib/editor-test-browser.mjs'
 import { stampMissingIds } from '../compiler/scripts/lib/12-outline-edit.mjs'
 import { WEB, compiledWords, compilerIn, drawnForm } from './lib/quote-drawn-form-slides.mjs'
 
-const SHELL = join(homedir(), '.cache/puppeteer/chrome-headless-shell/mac_arm-146.0.7680.66/chrome-headless-shell-mac-arm64/chrome-headless-shell')
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'talk-weaver-quote-form-slide-focus-'))
 const outfile = join(dir, 'bundle.js')
@@ -243,12 +242,13 @@ const endOf = (text, line) => text.split('\n').slice(0, lineOf(text, line)).join
 const withForm = (text, form = 'web') => { assert(text.includes('{id=fq}'), 'the text has {id=fq}'); return text.replace('{id=fq}', `{id=fq} {form=${form}}`) }
 
 const compile = compilerIn(dir)
-const browser = await chromium.launch({ executablePath: SHELL, headless: true })
+let browser
 const failures = []
 /** What is recorded without being asserted (case C): printed with the result. */
 const observed = []
 let ran = 0
 try {
+  browser = await launchEditorTestBrowser()
   const page = await browser.newPage()
   const errors = []
   page.on('pageerror', (error) => errors.push(String(error)))
@@ -961,7 +961,9 @@ try {
     for (const line of observed) console.log(line)
     console.log(`quote form slide focus editor ok: ${ran} cases; in Slide Focus the form of a typed link is written as out of it (a source line left by Enter, Enter at the end of the focused slide too), a line begun under the focused slide's last line is a line of the slide, any edit of the user's that leaves a quotation with a source link writes the form, and nothing is written for a change a program made`)
   }
+} catch (error) {
+  reportMissingEditorTestBrowser(error)
 } finally {
-  await browser.close()
+  await browser?.close()
   rmSync(dir, { recursive: true, force: true })
 }

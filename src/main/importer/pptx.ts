@@ -18,7 +18,7 @@ import type {
   ImportUnsupportedShape,
   ImportVideoShape
 } from '../../shared/importer.ts'
-import { writeTextAtomic } from './atomic.ts'
+import { writeTextAtomic } from '../atomic-file.ts'
 
 const REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 
@@ -572,7 +572,7 @@ export async function renderOriginalSlides(
     const target = join(slideDir, 'original.png')
     const source = join(renderDir, pages[index])
     const bytes = readFileSync(source)
-    writeTextAtomic(target, bytes)
+    writeTextAtomic(target, bytes, { sync: false })
     files.push(target)
   }
   if (files.length !== slideCount) {

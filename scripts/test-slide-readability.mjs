@@ -1,3 +1,5 @@
+import { clippingProbe } from './lib/ocean-clip-walk.mjs'
+import { waitForSlidePaint } from './lib/settled-paint.mjs'
 // The readability probe (scripts/lib/slide-readability.mjs) must never certify text a person cannot read:
 //   1. white type on a black fill under a white gradient image is reported as unresolved (not a pass);
 //   2. near-black type on white inside an ancestor at opacity .05 is a contrast fault (every ancestor's opacity counts,
@@ -124,12 +126,37 @@ try {
   const side = (got) => ({ states: [state(got)], coverage: { complete: true, issues: [], neverShown: [] } })
   const gate = (b, a) => gateOf(compareTalk(side(b), side(a)))
   assert.equal(gate(qrBefore, qrAfter), 0, 'the neutral QR before/after pair gates 0')
+  const address = 'https://example.test/a-long-route?view=full#details'
+  const captionLink = (shown, size = 12, href = address) => `<cite><a href="${href}" style="font-size:${size}px;color:#16181D">${shown}</a></cite>`
+  const addressBefore = await probe(captionLink('example.test'))
+  const addressAfter = await probe(captionLink('example.test/a-long-route'))
+  assert.equal(addressBefore.floor[0].link, address, 'the original caption records its full destination')
+  assert.equal(addressAfter.floor[0].link, address, 'a shortened display keeps the same source identity')
+  assert.equal(gate(addressBefore, addressAfter), 0, 'a caption-only text change at the same size is not a new floor fault')
+  assert.equal(gate(addressBefore, await probe(captionLink('example.test', 8))), 1, 'the same destination at a smaller size still gates')
+  assert.equal(gate(addressBefore, await probe(captionLink('other.test', 12, 'https://other.test'))), 1, 'a different destination is a different run')
+
   assert.equal(gate(whole, broken), 0, 'an address that only gained break opportunities gates 0')
   const shrunk = await probe('<p style="font-size:8px">handouts.fyi/<wbr>neutral/<wbr>k8wf</p>')
   assert.equal(gate(whole, shrunk), 1, 'a broken address that really shrinks still gates')
   const fainter = await probe('<p style="font-size:12px;color:#ccc">handouts.fyi/<wbr>neutral/<wbr>k8wf</p>')
   assert.equal(gate(whole, fainter), 1, 'and one that loses contrast still gates')
   assert.equal(gate(qrBefore, qrFaint), 1, 'and so does a QR caption that loses contrast')
+  const paintPage = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  await paintPage.setContent('<style>body{margin:0}.slide{width:1600px;height:900px;background:white;color:black}p{font-size:40px;opacity:.1;transition:opacity 1s linear}</style><div class="stage"><section class="slide active"><p>Words after a fade</p></section></div>')
+  await paintPage.evaluate(() => { const p = document.querySelector('p'); getComputedStyle(p).opacity; p.style.opacity = '1' })
+  assert((await paintPage.evaluate(readabilityProbe)).contrast.length > 0, 'the transient fade frame fails contrast')
+  await waitForSlidePaint(paintPage)
+  assert.equal((await paintPage.evaluate(readabilityProbe)).contrast.length, 0, 'the auditor waits for the actual final transition frame')
+  const clipCaption = async (tag, shown, href = 'https://example.test/notes') => {
+    await paintPage.setContent(`<style>body{margin:0}.slide{width:1600px;height:900px;position:relative}.row{position:absolute;left:1590px;width:200px}.link-url{display:block;width:200px}</style><div class="stage"><section class="slide active"><div class="row"><p>Route notes — <${tag} class="link-url" ${tag === 'a' ? `href="${href}"` : ''}>${shown}</${tag}></p></div></section></div>`)
+    return (await paintPage.evaluate(clippingProbe)).clips
+  }
+  const originalCaptionClips = await clipCaption('span', 'https://example.test/notes')
+  assert(originalCaptionClips.length > 0, 'the fixture really clips')
+  assert.deepEqual(await clipCaption('a', 'example.test/notes'), originalCaptionClips, 'a shorter collected caption keeps the full destination as the historical clip identity')
+  assert.notDeepEqual(await clipCaption('a', 'other.test/notes', 'https://other.test/notes'), originalCaptionClips, 'a different destination is not excused by that identity')
+  await paintPage.close()
   console.log('PASS slide readability probe: gradients unresolved, ancestor opacity counted, passed items at 3:1, chips caught, covered runs caught, <wbr>-broken text one run')
 } finally {
   await browser.close()

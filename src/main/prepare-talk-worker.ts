@@ -15,8 +15,9 @@ import { galleryAcquiredAssets } from './vault-gallery-assets.ts'
 //
 // One long-lived process, started on the first compile and ended after a quiet minute: each job is
 // { id, compilerDir, outlinePath, text, slug, defaults, options }; the answer is
-// { id, ok: true, model, rows, previewKey, preview } or { id, ok: false, error }. A rowsOnly job (the search
-// index) is answered with its rows and an empty model. Jobs arrive and answers leave
+// { id, ok: true, model, rows, previewKey, pendingPreview } or { id, ok: false, error }. When a
+// preview is pending, its descriptor follows in a second reply after the atomic write. A rowsOnly
+// job (the search index) is answered with its rows and an empty model. Jobs arrive and answers leave
 // through process.parentPort. The compiler's modules are loaded here from the compiler folder the job
 // names, as the main process loaded them.
 //
@@ -33,9 +34,16 @@ import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
 import { markSlidePreviewHtml } from '../shared/slide-preview.ts'
 import { requireCompileOptionsWithRoots } from './compile-roots.ts'
+import { hasRemoteEmbedFrames, replaceRemoteEmbedFrames } from './embed-preview-policy.ts'
 import { writePreviewVariant, type PreviewVariant, type VariantFolder } from './preview-variant.ts'
 
+export type MarkPreviewRequest = { outlinePath: string; content: string; fullHtml: string }
+type MarkPreviewJob = MarkPreviewRequest & { kind: 'mark-preview'; id: number }
+type ArtworkAnswer = { kind: 'artwork-answer'; id: number; image: string | null }
+type CancelPreview = { kind: 'cancel-preview'; id: number }
+
 export type PrepareTalkJob = {
+  kind?: never
   id: number
   compilerDir: string
   outlinePath: string
@@ -53,8 +61,7 @@ export type PrepareTalkJob = {
   previewDir?: VariantFolder
 }
 
-
-export type PrepareTalkReply =
+type CompileReply =
   | {
       id: number
       ok: true
@@ -64,9 +71,17 @@ export type PrepareTalkReply =
        *  thumbnails' document id and the render window's deck key, worked out here rather than on the
        *  main process's thread (each took 70-90 ms there on a deck of large photographs). */
       previewKey?: string
-      preview?: PreviewVariant
+      pendingPreview?: true
     }
   | { id: number; ok: false; error: string }
+
+export type MarkedPreview = { key: string; html: string }
+export type PrepareTalkMessage = PrepareTalkJob | MarkPreviewJob | ArtworkAnswer | CancelPreview
+export type PrepareTalkReply =
+  | (CompileReply & { kind?: never })
+  | { kind: 'variant'; id: number; preview?: PreviewVariant }
+  | { kind: 'artwork'; id: number; url: string }
+  | { kind: 'marked-preview'; id: number; document: MarkedPreview }
 
 type Compiler = {
   prepareSource: (...args: unknown[]) => Promise<Record<string, unknown>>
@@ -87,7 +102,7 @@ function compiler(dir: string): Promise<Compiler> {
   return found
 }
 
-async function prepare(job: PrepareTalkJob): Promise<PrepareTalkReply> {
+async function prepare(job: PrepareTalkJob): Promise<CompileReply> {
   // Checked before anything is loaded or read: no roots, no compile.
   const compileOptions = requireCompileOptionsWithRoots(job.options, 'The compile')
   const { prepareSource, buildPerSlideProjections } = await compiler(job.compilerDir)
@@ -103,28 +118,72 @@ async function prepare(job: PrepareTalkJob): Promise<PrepareTalkReply> {
   const previewKey = fullHtml !== undefined
     ? createHash('sha256').update(markSlidePreviewHtml(fullHtml)).digest('hex')
     : undefined
-  // A variant that cannot be written is no failure of the compile: its consumers mark fullHtml instead.
-  const preview = fullHtml && job.previewDir ? await writePreviewVariant(fullHtml, job.previewDir).catch(() => undefined) : undefined
-  return { id: job.id, ok: true, model, rows, previewKey, ...(preview ? { preview } : {}) }
+  return { id: job.id, ok: true, model, rows, previewKey,
+    ...(fullHtml && job.previewDir && !hasRemoteEmbedFrames(fullHtml) ? { pendingPreview: true } : {}) }
 }
 
 // A utility process's port (process.parentPort): jobs arrive as message events carrying the job as
 // their data; answers are posted back the same way.
 const port = process.parentPort
-port.on('message', (event: { data: PrepareTalkJob }) => {
+
+// Frame discovery, replacement, marking and hashing stay in this process. The existing replacement
+// policy requests artwork sequentially, so each job can have at most one request waiting on main.
+type Marking = { controller: AbortController; artwork?: (image: string | null) => void }
+const marking = new Map<number, Marking>()
+async function markPreview(job: MarkPreviewJob): Promise<MarkedPreview> {
+  const slot: Marking = { controller: new AbortController() }
+  marking.set(job.id, slot)
+  try {
+    const withArt = await replaceRemoteEmbedFrames(job.fullHtml, (url, signal) => new Promise((resolve) => {
+      if (signal?.aborted) { resolve(null); return }
+      const cancelled = (): void => slot.artwork?.(null)
+      slot.artwork = (image) => {
+        signal?.removeEventListener('abort', cancelled)
+        slot.artwork = undefined
+        resolve(image)
+      }
+      signal?.addEventListener('abort', cancelled, { once: true })
+      port.postMessage({ id: job.id, kind: 'artwork', url })
+    }), slot.controller.signal)
+    slot.controller.signal.throwIfAborted()
+    const html = markSlidePreviewHtml(withArt, { localPages: true })
+    const key = createHash('sha256').update(job.outlinePath).update('\0').update(job.content).update('\0').update(html).digest('hex').slice(0, 24)
+    return { key, html }
+  } finally {
+    marking.delete(job.id)
+  }
+}
+
+function reportError(id: number, error: unknown): void {
+  port.postMessage({ id, ok: false, error: error instanceof Error ? error.message : String(error) })
+}
+
+port.on('message', (event: { data: PrepareTalkMessage }) => {
   const job = event.data
-  prepare(job).then(
-    (reply) => {
+  if (job.kind === 'artwork-answer') {
+    marking.get(job.id)?.artwork?.(job.image)
+  } else if (job.kind === 'cancel-preview') {
+    marking.get(job.id)?.controller.abort()
+  } else if (job.kind === 'mark-preview') {
+    void markPreview(job).then(
+      (document) => port.postMessage({ id: job.id, kind: 'marked-preview', document }),
+      (error) => reportError(job.id, error)
+    )
+  } else {
+    void prepare(job).then(async (reply) => {
       try {
         port.postMessage(reply)
       } catch (error) {
-        // A model that cannot be copied to the main process (a function in it) is a failed compile.
-        port.postMessage({ id: job.id, ok: false, error: `The compiled talk could not be handed back: ${error instanceof Error ? error.message : String(error)}` })
+        reportError(job.id, `The compiled talk could not be handed back: ${error instanceof Error ? error.message : String(error)}`)
+        return
       }
-    },
-    (error: unknown) => {
+      if (reply.ok && reply.pendingPreview && job.previewDir) {
+        const preview = await writePreviewVariant(reply.model.fullHtml as string, job.previewDir).catch(() => undefined)
+        port.postMessage({ id: job.id, kind: 'variant', preview })
+      }
+    }, (error: unknown) => {
       console.error('[prepare-talk]', error)
-      port.postMessage({ id: job.id, ok: false, error: error instanceof Error ? error.message : String(error) })
-    },
-  )
+      reportError(job.id, error)
+    })
+  }
 })

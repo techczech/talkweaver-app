@@ -47,7 +47,7 @@ const plugin = ViewPlugin.fromClass(class {
 }, { decorations: (v) => v.decorations })
 
 const theme = EditorView.theme({
-  '.cm-plain-bullet': { display: 'inline-block', width: '1.1em', textAlign: 'left', color: '#17202a' }
+  '.cm-plain-bullet': { display: 'inline-block', width: '1.1em', textAlign: 'left', color: 'var(--ink)' }
 })
 
 export function listMarksExtension(): Extension { return [plugin, theme] }

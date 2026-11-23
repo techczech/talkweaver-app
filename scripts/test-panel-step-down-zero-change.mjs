@@ -4,11 +4,10 @@
 // Rule (slide-fit.js fitOceanPanelDetails): among the panel arrangements that fit, the one whose smallest text is
 // largest. Steps past today's last step (2.4cqw, PANEL_DETAIL_STEPS_PAST) are taken only where nothing on today's
 // ladder fits. This test walks every slide at every Next step, at 1600x900, twice: with this checkout's runtime and with
-// the "base", main's own slide-fit.js before the step-down (origin/main at the step-down's merge base, d6f9c4895),
-// pinned in scripts/fixtures/panel-step-down/slide-fit-main.js with its git blob hash checked here, so the base is never
-// derived from the runtime under test. Each compiled deck is drawn twice, the only difference the inlined slide-fit.js.
-// The pin is a gate for the step-down against the runtime it replaced: a later change to slide-fit.js that draws any
-// state differently fails here until the pin is moved to that change's merge base (git show <base>:<path>, new hash).
+// the "base", main's slide-fit.js before the step-down (d6f9c4895), with the later chat print and deck font changes
+// from d6c18ebf3 and 687719315 applied. The current deck needs the font API to start and uses it to measure both sides
+// with the same typeface. scripts/fixtures/panel-step-down/slide-fit-main.js pins that reference independently of
+// the fitter under test. The compiled deck is identical on both sides except for the inlined slide-fit.js.
 // FIT_BASE_RUNTIME=<slide-fit.js> uses another file as the base by hand.
 //
 // Decks: the layout sampler, the Ocean look fixtures, the example talks, and a family of synthetic icon rows written
@@ -49,15 +48,19 @@ const hardStop = setTimeout(() => { console.error(`test:panel-step-down-zero-cha
 const runtimePath = join(repo, 'compiler/assets/runtime/slide-fit.js')
 const runtime = readFileSync(runtimePath, 'utf8')
 const PAST_CQW = [2.2, 2, 1.9375]
-// main's slide-fit.js at the step-down's merge base (d6f9c4895), as git stores it
-const MAIN_PIN = { path: join(repo, 'scripts/fixtures/panel-step-down/slide-fit-main.js'), blob: '1ed148ac9bbb363071e90ca59666e6fe7f357e11', commit: 'd6f9c4895504e3c31965b1d9fc9e1a5e6d103be4' }
+const MAIN_PIN = {
+  path: join(repo, 'scripts/fixtures/panel-step-down/slide-fit-main.js'),
+  blob: '237392898ef8c3e1dc5a92c4eedba914fe83cef7',
+  originalBlob: '1ed148ac9bbb363071e90ca59666e6fe7f357e11',
+  commit: 'd6f9c4895504e3c31965b1d9fc9e1a5e6d103be4',
+}
 const gitBlob = (buffer) => createHash('sha1').update(Buffer.concat([Buffer.from(`blob ${buffer.length}\0`), buffer])).digest('hex')
 const pinned = readFileSync(MAIN_PIN.path)
-assert.equal(gitBlob(pinned), MAIN_PIN.blob, `the pinned base is main's slide-fit.js at ${MAIN_PIN.commit.slice(0, 9)} (blob ${MAIN_PIN.blob.slice(0, 9)})`)
+assert.equal(gitBlob(pinned), MAIN_PIN.blob, 'the compatibility-updated fitter still matches its pinned blob')
 // where the history is there (not in a shallow checkout), the pin is also read back from git
 try {
   const fromGit = execFileSync('git', ['-C', repo, 'rev-parse', `${MAIN_PIN.commit}:compiler/assets/runtime/slide-fit.js`], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim()
-  assert.equal(fromGit, MAIN_PIN.blob, 'git agrees on the pinned blob')
+  assert.equal(fromGit, MAIN_PIN.originalBlob, 'git agrees on the original pre-step-down blob')
 } catch (error) { if (error instanceof assert.AssertionError) throw error }
 const baseRuntime = process.env.FIT_BASE_RUNTIME ? readFileSync(process.env.FIT_BASE_RUNTIME, 'utf8') : pinned.toString('utf8')
 assert.notEqual(baseRuntime, runtime, 'the base is not the runtime under test')
@@ -167,6 +170,25 @@ function drawingProbe() {
   }
 }
 
+// The deck coalesces a fit over two frames after a slide or reveal changes.
+async function waitForFit(page) {
+  await page.evaluate(async () => {
+    await document.fonts.ready
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+  })
+}
+
+async function loadDeck(page, path) {
+  const pageErrors = []
+  page.on('pageerror', (error) => pageErrors.push(error.message))
+  await page.route('**/*', (route) => (/^(file|data|blob):/.test(route.request().url()) ? route.fallback() : route.abort()))
+  await page.goto(pathToFileURL(path).href, { waitUntil: 'load' })
+  assert.ok(
+    await page.evaluate(() => typeof window.__autofitForTest === 'function'),
+    `${path}: deck runtime did not start (${pageErrors.join('; ') || 'fit hook missing'})`,
+  )
+}
+
 // Every slide, shown by its address, then every reveal step (Next until the slide changes): the same walk for both
 // runtimes, so a state is compared with the same state.
 async function walk(browser, html, name) {
@@ -174,23 +196,21 @@ async function walk(browser, html, name) {
   writeFileSync(path, html, 'utf8')
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, reducedMotion: 'reduce' })
   try {
-    await page.route('**/*', (route) => (/^(file|data|blob):/.test(route.request().url()) ? route.fallback() : route.abort()))
-    await page.goto(pathToFileURL(path).href, { waitUntil: 'load' })
-    await page.evaluate(() => document.fonts.ready)
+    await loadDeck(page, path)
+    await waitForFit(page)
     const ids = await page.evaluate(() => [...document.querySelectorAll('.stage > .slide')].map((s) => s.dataset.id).filter(Boolean))
     const states = new Map()
     for (const id of ids) {
       await page.evaluate((target) => { location.hash = target }, id)
       const shown = await page.waitForFunction((target) => document.querySelector('.stage > .slide.active')?.dataset.id === target, id, { timeout: 8000 }).then(() => true, () => false)
       if (!shown) continue
-      await page.evaluate(() => document.fonts.ready)
-      await page.waitForTimeout(220)
+      await waitForFit(page)
       const steps = await page.evaluate(() => document.querySelector('.stage > .slide.active').querySelectorAll('.mode-el').length)
       states.set(`${id}#0`, await page.evaluate(drawingProbe))
       for (let step = 1; step <= steps; step += 1) {
         await page.evaluate(() => { document.activeElement?.blur?.(); window.focus() })
         await page.keyboard.press('ArrowRight')
-        await page.waitForTimeout(160)
+        await waitForFit(page)
         if (await page.evaluate((target) => document.querySelector('.stage > .slide.active')?.dataset.id !== target, id)) break
         states.set(`${id}#${step}`, await page.evaluate(drawingProbe))
       }
@@ -235,17 +255,11 @@ async function probeState(browser, html, name, id, mutation) {
   writeFileSync(path, html, 'utf8')
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 }, reducedMotion: 'reduce' })
   try {
-    await page.route('**/*', (route) => (/^(file|data|blob):/.test(route.request().url()) ? route.fallback() : route.abort()))
-    await page.goto(pathToFileURL(path).href, { waitUntil: 'load' })
-    await page.evaluate(() => document.fonts.ready)
+    await loadDeck(page, path)
     await page.evaluate((target) => { location.hash = target }, id)
     await page.waitForFunction((target) => document.querySelector('.stage > .slide.active')?.dataset.id === target, id, { timeout: 8000 })
-    await page.evaluate(() => document.fonts.ready)
-    await page.waitForTimeout(220)
-    if (mutation) {
-      await page.evaluate(MUTATIONS[mutation])
-      await page.waitForTimeout(60)
-    }
+    await waitForFit(page)
+    if (mutation) await page.evaluate(MUTATIONS[mutation])
     return await page.evaluate(drawingProbe)
   } finally {
     await page.close()
@@ -280,6 +294,7 @@ try {
   // DECKS=<name,…> walks only those decks (for a quick look; the family assertions need panel-family)
   const only = process.env.DECKS ? process.env.DECKS.split(',') : null
   for (const { name, html } of decks.filter((d) => !only || only.includes(d.name))) {
+    console.log(`test:panel-step-down-zero-change: comparing ${name}`)
     const [branch, base] = await Promise.all([walk(browser, html, `${name}-branch`), walk(browser, baseDeck(html), `${name}-base`)])
     assert.deepEqual([...branch.keys()], [...base.keys()], `${name}: the two runtimes reach different states`)
     for (const [at, b] of branch) {
@@ -333,7 +348,7 @@ try {
     assert.ok(found.length > 0, `${gateState.id}: the comparison missed a ${mutation} change`)
     caught[mutation] = found.map((line) => line.split(' ')[0])
   }
-  console.log(JSON.stringify({ base: process.env.FIT_BASE_RUNTIME ? 'FIT_BASE_RUNTIME' : `pinned main ${MAIN_PIN.commit.slice(0, 9)}`, gate: { state: gateState.id, caught } }))
+  console.log(JSON.stringify({ base: process.env.FIT_BASE_RUNTIME ? 'FIT_BASE_RUNTIME' : `pinned ${MAIN_PIN.commit.slice(0, 9)} with font and print compatibility`, gate: { state: gateState.id, caught } }))
   console.log(JSON.stringify({ totals, family }))
   console.log(`test:panel-step-down-zero-change: ${totals.states} states in ${decks.length} decks; ${totals.same} drawn exactly as main (geometry, type, classes, attributes, inline styles), ${totals.stepped} stepped past today's ladder (each one the base did not fit, at or above the floor)`)
 } finally {

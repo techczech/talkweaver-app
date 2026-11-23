@@ -1,3 +1,4 @@
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { selectedThumbnailSlide } from '../src/shared/slide-preview.ts'
@@ -17,7 +18,7 @@ assert.deepEqual(selectedThumbnailSlide(rows, 'pptx-source-003', 'document'), {
 assert.equal(selectedThumbnailSlide(rows, 'missing', 'document'), null)
 
 const thumbnails = readFileSync(new URL('../src/main/thumbnails.ts', import.meta.url), 'utf8')
-const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+const main = readMainSource()
 assert.match(thumbnails, /slide\.index \?\? arrayIndex/)
 assert.match(main, /talk:selected-thumbnail/)
 assert.match(main, /slides: \[selected\]/)

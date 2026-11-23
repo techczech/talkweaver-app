@@ -549,12 +549,12 @@
   .qr-fullscreen {
     position: fixed; inset: 0; z-index: 9999;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px;
-    background: #17202aee; cursor: zoom-out; padding: 5vh 5vw;
+    background: #17202a; cursor: zoom-out; padding: 4vh 4vw; box-sizing: border-box; overflow: auto;
   }/* @order 0305 */
-  .qr-fullscreen .qr-fs-code { width: min(60vh, 70vw); background: #fff; padding: clamp(16px, 2.4vw, 32px); border-radius: 14px; }/* @order 0306 */
-  .qr-fullscreen .qr-fs-code svg { display: block; width: 100%; height: auto; }/* @order 0307 */
-  .qr-fullscreen .qr-fs-url { color: #e8eef5; font-weight: 400; font-size: max(34px, 5cqw); line-height: 1.15; word-break: break-all; max-width: 92vw; text-align: center; }/* @order 0308 */
-  .qr-fullscreen .qr-fs-url strong { font-weight: 800; color: #ffffff; }/* @order 0310 */
+  .qr-fullscreen .qr-fs-code { width: min(48vh, 65vw); flex: 0 0 auto; background: #fff; padding: clamp(16px, 2.4vw, 32px); border-radius: 14px; box-sizing: border-box; }/* @order 0306 */
+  .qr-fullscreen .qr-fs-code :is(svg, img) { display: block; width: 100%; height: auto; }/* @order 0307 */
+  .qr-fullscreen .qr-fs-url { color: #fff; font-weight: 400; font-size: clamp(28px, 3vw, 64px); line-height: 1.2; overflow-wrap: anywhere; word-break: normal; max-width: 92vw; text-align: center; }/* @order 0308 */
+  .qr-fullscreen .qr-fs-url strong { font-weight: 400; color: inherit; }/* @order 0310 */
   .callouts {
     align-self: stretch;
     display: grid;
@@ -1253,10 +1253,10 @@
   .lightbox-video-placeholder { display: none; }
   /* QR entry in the lightbox (Z-zoom): the URL IS the payload — the audience writes it down.
      The code + URL cluster in the CENTRE of the screen (grid stops stretching the stage), the
-     URL is display-sized and bright, and the path (the short id) is the boldest thing on it. *//* @order 0919 */
+     full URL is display-sized and bright, wrapping at slashes and hyphens. *//* @order 0919 */
   .lightbox.qr-focus.open { grid-template-rows: auto auto; align-content: center; }/* @order 0920 */
   .lightbox.qr-focus .lightbox-stage { padding-bottom: 0; }/* @order 0921 */
-  .lightbox.qr-focus .lightbox-img { max-height: 60vh; }/* @order 0922 */
+  .lightbox.qr-focus .lightbox-img { max-height: 48vh; }/* @order 0922 */
   .lightbox.qr-focus .lightbox-bar {
     flex-direction: column;
     justify-content: center;
@@ -1264,15 +1264,15 @@
     padding-top: clamp(18px, 3.2vh, 36px);
   }/* @order 0923 */
   .lightbox.qr-focus .lightbox-caption {
-    font-size: max(34px, 5cqw);
+    font-size: clamp(28px, 3vw, 64px);
     font-weight: 400;
-    color: #e8eef5;
-    max-width: none;
+    color: #fff;
+    max-width: 92vw;
     text-align: center;
-    line-height: 1.15;
-    word-break: break-all;
+    line-height: 1.2;
+    word-break: normal; overflow-wrap: anywhere;
   }/* @order 0924 */
-  .lightbox.qr-focus .lightbox-caption strong { font-weight: 800; color: #ffffff; }/* @order 0925 */
+  .lightbox.qr-focus .lightbox-caption strong { font-weight: 400; color: inherit; }/* @order 0925 */
   .lightbox.qr-focus .lightbox-counter { font-size: 13px; color: #7d8c9c; }/* @order 0926 */
   /* Presenter "Gallery" button on the media control row — shown only when the slide has images. *//* @order 0927 */
   .presenter-gallery[hidden] { display: none; }/* @order 0928 */

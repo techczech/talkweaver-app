@@ -42,6 +42,7 @@ import { constants as FS, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { homedir } from 'node:os'
+import { writeTextAtomic } from './atomic-file.ts'
 import { EXPORT_FORMAT, EXPORT_VERSION, chordOf, valueOf, type CommandsAdapter, type ImportPreview, type Schema, type SettingValue, type SettingsState } from '@app-patterns/settings'
 import {
   EARLIEST_AT, HEARTBEAT_MS, OFFER_KINDS, SETUP_FILE_FORMAT, SETUP_FILE_MAX_BYTES, SETUP_FILE_VERSION, SKIP_WORDS, SUGGESTIONS, SUGGESTION_LABEL, VAULT_FIELDS, VAULT_FIELD_LABEL,
@@ -385,12 +386,9 @@ export function createSetupFolderEngine(ports: SetupFolderPorts): SetupFolderEng
     }
   }
 
-  /** This Mac's record: written in app data by temporary file and rename (the default file system, never the set-up folder's). */
+  /** This Mac's private record in app data, separate from the synced folder's ownership protocol. */
   async function saveRecord(): Promise<void> {
-    await fsp.mkdir(ports.dir, { recursive: true })
-    const tmp = join(ports.dir, `.${STATE_FILE}.${process.pid}-${newId()}.tmp`)
-    await nodeSetupFs.writeNew(tmp, JSON.stringify(record, null, 2))
-    await fsp.rename(tmp, statePath)
+    writeTextAtomic(statePath, JSON.stringify(record, null, 2), { mode: 0o600, createParent: true })
     await nodeSetupFs.syncDir(ports.dir)
   }
   // Written once at creation so the id (and a new one for a copy) is stable from the first launch.
@@ -822,6 +820,7 @@ export function createSetupFolderEngine(ports: SetupFolderPorts): SetupFolderEng
     // Checked again right before the replace: still this Mac's folder, and the file there still this computer's.
     if (!alive()) return null
     if (there !== 'absent' && there !== 'mine') { await dropTemp(); return { kind: 'foreign', text: SETUP_WORDS.foreign } }
+    // Promote this Mac's ownership-tagged stage; after Stop only a later cycle may reap it.
     try { await fs.rename(tmp, target) } catch (error) { if (alive()) await dropTemp(); throw error }
     passed('renamed')
     await fs.syncDir(folder)

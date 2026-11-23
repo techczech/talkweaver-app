@@ -22,6 +22,12 @@ jobs:
     runs-on: ${{ inputs.hosted && 'macos-15' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 15
     steps:
+      - name: Create job scratch
+        shell: bash
+        run: |
+          job_tmp="$(cd "$RUNNER_TEMP" && pwd -P)"
+          job_tmp="$(mktemp -d "$job_tmp/tw-job.XXXXXX")"
+          printf 'TMPDIR=%s\nTMP=%s\nTEMP=%s\n' "$job_tmp" "$job_tmp" "$job_tmp" >> "$GITHUB_ENV"
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false

@@ -2,12 +2,12 @@
 import assert from 'node:assert/strict'
 import { _electron as electron } from 'playwright'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 const repo=resolve('.')
 for(const mode of (process.env.TW_TEST_EDITOR_MODE?[process.env.TW_TEST_EDITOR_MODE]:['markdown','plain'])){
-mkdirSync(new URL('../research/', import.meta.url), { recursive: true })
-const scratch=mkdtempSync(join(repo,'research/.tmp-editor-outline-follow-'))
+const scratch = mkdtempSync(join(tmpdir(), 'tw-editor-outline-follow-'))
 const userData=join(scratch,'userData'),vault=join(scratch,'vault'),talkDir=join(vault,'outline-follow')
 mkdirSync(userData,{recursive:true});mkdirSync(talkDir,{recursive:true})
 const source='---\noutline_version: 2\ntitle: Editor follow fixture\nauto_title_slide: false\nauto_thanks_slide: false\n---\n\n### First slide\n{id=first}\n\nFirst slide body.\n\n### Second slide\n{id=second}\n\nSecond slide body.\n\n### Third slide\n{id=third}\n\nThird slide body.\n'
@@ -58,6 +58,6 @@ try{
  assert.deepEqual(errors,[])
  if(process.env.SHOTS)await page.screenshot({path:join(resolve(process.env.SHOTS),`talkweaver-editor-outline-follow-${mode}.png`)})
  console.log('PASS real App editor clicks follow the active slide; one-shot sidebar-switch distinction recorded')
-}finally{await app?.close();rmSync(scratch,{recursive:true,force:true})}
+}finally{try{await app?.close()}finally{rmSync(scratch,{recursive:true,force:true})}}
 
 }

@@ -299,6 +299,7 @@ try {
   page.on('pageerror', (e) => errors.push(String(e)))
   await page.route(`${ORIGIN}/**`, (route) => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><body style="margin:0"><div id="stage" style="padding:20px 0 0 20px"></div></body></html>' }))
   await page.goto(`${ORIGIN}/`)
+  await page.addStyleTag({ path: join(root, 'src/renderer/src/app-theme.css') })
   await page.addStyleTag({ content: readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8') })
   // The preload's picture-text calls, which the search asks for after a short pause (lib/slideSearch.ts,
   // usePictureText). This talk has no pictures, so every answer is empty; without the stub a late call threw

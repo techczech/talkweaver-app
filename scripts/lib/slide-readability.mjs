@@ -224,7 +224,16 @@ export function readabilityProbe({ floorPx = 30, smallFloorPx = 24 } = {}) {
     if (qrCaption) exclusions.qrCaptionFloor += 1
     const siblingsBefore = [...e.childNodes].slice(0, [...e.childNodes].indexOf(t)).filter((c) => !isBreak(c) && !(c.nodeType === 3 && continues(c)))
     const key = `${e.tagName}|${[...slide.querySelectorAll(e.tagName)].indexOf(e)}|${siblingsBefore.length}|${joined.trim()}`
-    if (!chrome && !qrCaption && px < (isSmall ? smallFloorPx : floorPx) - 0.5) floor.push({ key, text, px: Math.round(px * 10) / 10, small: isSmall })
+    // A formatter changes the caption's paint text, not its full destination. Keep that
+    // source identity for comparisons; sizes and contrast still use the actual painted run.
+    const linkElement = e.closest('a[href]')
+    const captionElement = e.closest('.link-url')
+    const destination = linkElement?.closest('cite, figcaption, .qr-caption, .slide-source, .link-url')
+      ? linkElement.getAttribute('href')
+      : captionElement?.getAttribute('href') || captionElement?.getAttribute('title') || captionElement?.textContent?.trim()
+    const origin = /^https?:\/\//i.test(destination || '') ? { link: destination } : {}
+
+    if (!chrome && !qrCaption && px < (isSmall ? smallFloorPx : floorPx) - 0.5) floor.push({ key, text, ...origin, px: Math.round(px * 10) / 10, small: isSmall })
     const ink = parse(cs.color)
     if (!ink) continue
     const fragments = nodes.flatMap((n) => { const range = document.createRange(); range.selectNodeContents(n); return [...range.getClientRects()] })
@@ -257,9 +266,9 @@ export function readabilityProbe({ floorPx = 30, smallFloorPx = 24 } = {}) {
       const need = px >= 32 || (px >= 24 && weight >= 700) || passed(e) ? 3 : 4.5
       unknown ||= unresolved || overImage
       // the lowest ratio over the run's samples is its ratio
-      if ((value < need - 0.01 || overImage) && (!fault || value < fault.ratio)) fault = { key, text, ratio: Math.round(value * 100) / 100, need, overImage, ink: cs.color, behind: `rgb(${colour.r | 0}, ${colour.g | 0}, ${colour.b | 0})` }
+      if ((value < need - 0.01 || overImage) && (!fault || value < fault.ratio)) fault = { key, text, ...origin, ratio: Math.round(value * 100) / 100, need, overImage, ink: cs.color, behind: `rgb(${colour.r | 0}, ${colour.g | 0}, ${colour.b | 0})` }
     }
-    if (unknown) unresolvedRuns.push({ key, text })
+    if (unknown) unresolvedRuns.push({ key, text, ...origin })
     else if (fault) contrast.push(fault)
   }
   forceHits.remove()

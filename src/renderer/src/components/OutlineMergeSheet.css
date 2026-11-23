@@ -1,0 +1,24 @@
+.outline-merge-root > .disk-change-sheet__scrim { z-index: 3000; }
+.outline-merge-sheet {
+  position: fixed; z-index: 3001; inset: 5vh max(1rem, calc((100vw - 68rem) / 2));
+  display: flex; flex-direction: column; gap: .65rem; padding: 1.2rem;
+  background: var(--panel, Canvas); color: var(--ink, CanvasText); border: 1px solid var(--line, GrayText);
+  border-radius: .5rem; box-shadow: 0 1rem 4rem #0004; font: .875rem var(--font-ui, system-ui, sans-serif);
+}
+.outline-merge-sheet h2, .outline-merge-sheet h3, .outline-merge-sheet p { margin: 0; }
+.outline-merge-sheet h2 { font-size: 1.2rem; }
+.outline-merge-sheet h3 { font-size: 1rem; margin-bottom: .5rem; }
+.outline-merge-conflicts { overflow: auto; min-height: 0; }
+.outline-merge-conflicts section { border-top: 1px solid var(--line, GrayText); padding: 1rem 0; }
+.outline-merge-versions { display: grid; grid-template-columns: 1fr 1fr; gap: .8rem; }
+.outline-merge-sheet label { display: block; min-width: 0; }
+.outline-merge-sheet textarea {
+  display: block; box-sizing: border-box; width: 100%; min-height: 8rem; margin: .35rem 0;
+  padding: .5rem; resize: vertical; font: .8rem/1.5 monospace;
+  background: var(--panel, Canvas); color: inherit; border: 1px solid var(--line, GrayText);
+}
+.outline-merge-sheet button { align-self: flex-start; padding: .4rem .75rem; cursor: pointer; border: 1px solid var(--line, GrayText); border-radius: .3rem; color: inherit; background: var(--paper, Canvas); }
+.outline-merge-sheet button:disabled { opacity: .55; cursor: default; }
+.outline-merge-sheet :focus-visible { outline: 2px solid Highlight; outline-offset: 2px; }
+.outline-merge-actions { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+@media (max-width: 600px) { .outline-merge-versions { grid-template-columns: 1fr; } }

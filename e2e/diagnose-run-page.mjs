@@ -12,7 +12,8 @@
 // TW_SHOTS_DIR saves one screenshot per drawn state.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from '../scripts/lib/test-scratch.mjs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
@@ -40,7 +41,7 @@ const T2 = 'Generative AI in teaching'
 const WORK_FILE = ['---', 'id: research-teams-intake', 'title: Research teams intake', 'revision: 1', '---', '', '### Watch', '{id=watch}{video}', '', '### Try', '{id=try}{task}', ''].join('\n')
 
 function seed(runs) {
-  const root = mkdtempSync(join(tmpdir(), 'tw-run-page-e2e-'))
+  const root = testScratchDir(join(tmpdir(), 'tw-run-page-e2e-'))
   const vault = join(root, 'vault'); const ud = join(root, 'userData')
   mkdirSync(ud, { recursive: true })
   for (const [slug, title] of [['ai-research', T1], ['ai-teaching', T2]]) {
@@ -224,6 +225,20 @@ const FOUR = [
   } finally { await app.close().catch(() => {}) }
 }
 
+// Browse every populated task category; collect the same command inventory the flat palette exposed.
+async function browsePaletteCommands(tools) {
+  const groups = await tools.locator('[data-task-group]:not([aria-disabled="true"])').evaluateAll(rows => rows.map(row => row.dataset.taskGroup))
+  const commands = []
+  for (const group of groups) {
+    await tools.locator(`[data-task-group="${group}"]`).click()
+    commands.push(...await tools.locator('[data-command-menu] [data-command]').evaluateAll(rows => rows.map(row => ({
+      id: row.dataset.command, disabled: row.hasAttribute('aria-disabled'), hint: row.querySelector('.command-menu-hint')?.textContent ?? ''
+    }))))
+    await tools.keyboard.press('Escape')
+  }
+  return commands
+}
+
 // ---- (g0) no Run to show (the only time none is selected since the Runs view opens on its first Run): the
 // palette offers the Run commands disabled, and Open run and New work file too
 {
@@ -232,7 +247,7 @@ const FOUR = [
     const { tools } = await openSessions(app, { empty: true })
     await tools.keyboard.press('Meta+Shift+p')
     await tools.locator('[data-command-menu]').waitFor({ timeout: 5000 }).catch(() => {})
-    const offered = await tools.locator('[data-command-menu] [data-command]').evaluateAll((els) => els.filter((el) => el.getAttribute('aria-disabled')).map((el) => el.getAttribute('data-command')).sort().join(' '))
+    const offered = (await browsePaletteCommands(tools)).filter(row => row.disabled).map(row => row.id).sort().join(' ')
     rec('with no Run selected the Run commands are disabled (and so are Open run and New work file)', offered === 'tools-animated-video tools-copy-invitation tools-copy-link tools-edit-plan tools-go-live tools-open-run tools-plan-like-this tools-publish tools-unpublish tools-new-work-file'.split(' ').sort().join(' '), offered)
     await tools.keyboard.press('Escape')
   } finally { await app.close().catch(() => {}) }
@@ -264,9 +279,10 @@ const FOUR = [
 
     await press('Meta+Shift+p')
     rec('⌘⇧P opens the Tools window\'s palette', await tools.locator('[data-command-menu]').count() === 1)
-    const listed = await tools.locator('[data-command-menu] [data-command]').evaluateAll((els) => els.map((el) => `${el.getAttribute('data-command')}${el.getAttribute('aria-disabled') ? '!' : ''}`))
+    const paletteRows = await browsePaletteCommands(tools)
+    const listed = paletteRows.map(row => `${row.id}${row.disabled ? '!' : ''}`)
     rec('the palette lists every Tools command; on a published Run, Publish (no button) and Open run (Published pages only) are disabled', listed.length === 14 && ['tools-edit-plan', 'tools-unpublish', 'tools-go-live', 'tools-copy-link', 'tools-copy-invitation'].every((id) => listed.includes(id)) && listed.includes('tools-publish!') && listed.includes('tools-open-run!'), listed.join(' '))
-    rec('the palette shows the keys', (await tools.locator('[data-command-menu] [data-command="tools-go-live"] .command-menu-hint').innerText()) === '⌘⌥L')
+    rec('the palette shows the keys', paletteRows.find(row => row.id === 'tools-go-live')?.hint === '⌘⌥L')
     await tools.locator('[data-command-menu] input').fill('invitation')
     rec('palette keywords find a command', await tools.locator('[data-command-menu] [data-command="tools-copy-invitation"]').count() === 1)
     await tools.keyboard.press('Escape')

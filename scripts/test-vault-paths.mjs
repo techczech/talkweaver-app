@@ -3,9 +3,10 @@
 // function each handler calls (src/main/vault-paths.ts, resolveThumbFile) with hostile and
 // legitimate input, act on every answer the way the handler does, and prove that nothing outside
 // the scratch vault / userData changes — the "outside" sibling is listed before and after.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { readFileSync } from 'node:fs'
+
 import { tmpdir } from 'node:os'
 import vm from 'node:vm'
 import ts from 'typescript'
@@ -523,7 +524,7 @@ for (const [slug, topic, expected] of [
 {
   // The registered handler, lifted from src/main/index.ts and run with spies for the registry
   // adoption (the only way a root is written) and for any direct config write (never).
-  const source = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const source = readMainSource()
   const start = source.indexOf("ipcMain.handle('vault:set-root'")
   const code = ts.transpileModule(source.slice(start, source.indexOf('\n})', start) + 3), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
   const setRootWith = (testMode) => {

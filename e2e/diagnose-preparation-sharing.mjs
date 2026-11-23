@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { _electron as electron } from 'playwright'
-import {mkdtempSync,mkdirSync,writeFileSync} from 'node:fs'
+import {mkdirSync,writeFileSync} from 'node:fs'
 import {join} from 'node:path'
-import {tmpdir} from 'node:os'
-const root=mkdtempSync(join(tmpdir(),'tw-compile-probe-')),ud=join(root,'ud'),vault=join(root,'vault'),dir=join(vault,'large')
+import { scratchVault } from './lib/scratch-vault.mjs'
+using fixture = scratchVault('tw-compile-probe-')
+const root=fixture.root,ud=join(root,'ud'),vault=join(root,'vault'),dir=join(vault,'large')
 mkdirSync(ud,{recursive:true});mkdirSync(dir,{recursive:true})
 const path=join(dir,'large-outline.md'),source='---\noutline_version: 2\ntitle: Large\n---\n\n'+Array.from({length:500},(_,i)=>`### Slide ${i} {#s-${i}}\n\nBody ${i}\n`).join('\n')
 writeFileSync(path,source);writeFileSync(join(ud,'config.json'),JSON.stringify({vaultRoot:vault}))

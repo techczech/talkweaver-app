@@ -31,11 +31,13 @@
 }
 .slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] > .slide-content > :not(.slide-head) :is(strong, b, mark) {
   color: inherit !important; background: none !important; padding: 0 !important; box-shadow: none !important;
-  /* the underline clears the descenders (handoff: no decoration may touch text, descenders included) */
+}
+/* A distinct mark keeps its existing underline; strong uses bold on regular text. */
+.slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] > .slide-content > :not(.slide-head) mark {
   text-decoration: underline; text-decoration-thickness: .07em; text-underline-offset: .3em; text-decoration-skip-ink: auto;
 }
 /* Everything written on the field takes the type colour of the field: a quote, its attribution and source line,
-   a caption, a list. Key words (bold, highlighted) keep that colour and are marked by the underline above, never
+   a caption, a list. Key words keep that colour: strong uses bold; a distinct mark keeps its underline, never
    by a fill: the 0.43 highlight (a box in the accent with paper-coloured type) would be white on white here.
    Contrast: white on Ocean 4.91:1 (AA at every size); near-black on amber (Bold) 8.65:1. */
 .slide[data-look="ocean"][data-ground="lead"][data-layout="statement"] > .slide-content > :not(.slide-head):not(.slide-actions),
@@ -58,8 +60,8 @@
   margin: 1.6cqw 0 0 !important;
 }
 .slide[data-look="ocean"][data-layout="statement"] > .slide-content > p:nth-child(1 of p:not(.kicker):not(.slide-source)) {
-  font: 700 var(--look-size-statement)/1.12 var(--look-face-display) !important;
-  letter-spacing: -.02em !important;
+  font: var(--weight-reading) var(--look-size-statement)/1.12 var(--look-face-text) !important;
+  letter-spacing: var(--look-tracking-statement, -.02em) !important;
   margin: 0 !important;
 }
 .slide[data-look="ocean"][data-layout="statement"][data-title-layout="top"] > .slide-content {
@@ -79,9 +81,8 @@
 }
 .slide[data-look="ocean"][data-layout="statement"] > .slide-content.layout-statement:is(.statement-bg-rule, .statement-bg-lower-third) > :is(p, .content-p) :is(strong, b) {
   color: var(--look-keyword) !important; background: none !important; padding: 0 !important; box-shadow: none !important;
-  /* The mark sits just under the baseline, inside its own line, and breaks around descenders (skip-ink),
-     so it touches neither its own words nor the line below when a key phrase wraps. */
-  text-decoration: underline var(--look-keyword-mark); text-decoration-thickness: .07em; text-underline-offset: .14em; text-decoration-skip-ink: auto;
+  font-weight: var(--weight-emphasis);
+  text-decoration: none;
 }
 
 /* ---------- section divider: the whole slide in the lead colour, the title at the lower left ---------- */
@@ -97,7 +98,7 @@
 }
 .slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title > .slide-head::before { display: none !important; content: none !important; }
 .slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title h1 {
-  font: 700 8.4cqw/1.04 var(--look-face-display) !important; letter-spacing: -.025em !important;
+  font: var(--look-weight-display, 700) 8.4cqw/1.04 var(--look-face-display) !important; letter-spacing: -.025em !important;
   color: var(--look-on-lead) !important; max-width: 11em !important; margin: 0 !important;
 }
 .slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title :is(.kicker, p) { color: var(--look-on-lead) !important; opacity: 1; }
@@ -113,7 +114,7 @@
 /* the section number, large, above the title at the lower left (07-assembly stamps it on the divider's content) */
 .slide[data-look="ocean"][data-ground="lead"] > .slide-content.layout-section-title[data-section-number]::before {
   content: attr(data-section-number); display: block;
-  font: 700 12cqw/1 var(--look-face-display); letter-spacing: -.03em; color: var(--look-on-lead); margin: 0 0 1cqw;
+  font: var(--look-weight-display, 700) 12cqw/1 var(--look-face-display); letter-spacing: -.03em; color: var(--look-on-lead); margin: 0 0 1cqw;
 }
 /* The section timer floats over the page, outside the slide: on a full-colour slide it takes the type colour.
    (:has() cannot nest, so the two full-colour cases are two selectors.) */

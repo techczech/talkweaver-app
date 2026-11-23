@@ -8,7 +8,7 @@
 // before its next change; `stop` resolves once it has.
 //
 // No Electron import; the engine it drives is tested on its own (scripts/test-setup-folder.mjs).
-import { watch as fsWatch, type FSWatcher } from 'node:fs'
+import { watchDirectory } from './directory-watch.ts'
 import type { SetupFolderEngine, SyncReason } from './setup-folder.ts'
 import type { SetupFolderStatus } from '../shared/setup-folder.ts'
 
@@ -37,8 +37,12 @@ export function startSetupFolderHost(opts: {
 }): SetupFolderHost {
   const retryMs = opts.retryMs ?? RETRY_MS
   const log = opts.log ?? (() => {})
-  const watchFolder = opts.watch ?? ((folder: string, listener: () => void): FSWatcher | null => {
-    try { return fsWatch(folder, { persistent: false }, () => listener()) } catch { return null }
+  const watchFolder = opts.watch ?? ((folder: string, listener: () => void) => {
+    try {
+      const watcher = watchDirectory(folder, { persistent: false }, listener)
+      watcher.on('error', () => { if (folder === watched) watcher.close() })
+      return watcher
+    } catch { return null }
   })
   let watcher: { close(): void } | null = null
   let watched = ''

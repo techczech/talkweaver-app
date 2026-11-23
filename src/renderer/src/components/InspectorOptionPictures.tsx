@@ -19,6 +19,7 @@ interface Props {
   groupLabel: string
   set: OptionPictureSet
   selectedToken: string
+  showDescriptions?: boolean
   /** The token a click on this value WRITES (the deck-marked value clears the group, etc.). */
   commitToken: (value: OptionValue) => string
   onSelect: (value: OptionValue) => void
@@ -36,7 +37,7 @@ interface GroupRequest { outlinePath: string; outline: string; slide: SlideRef; 
  * still works as a button; one the render says cannot take the slide is greyed with the reason.
  */
 export default function InspectorOptionPictures({
-  outlinePath, outline, slide, groupKey, groupLabel, set, selectedToken, commitToken, onSelect
+  outlinePath, outline, slide, groupKey, groupLabel, set, selectedToken, showDescriptions = false, commitToken, onSelect
 }: Props): React.JSX.Element {
   const [marks, setMarks] = useState<VariantPictureMarks>({})
   const [onScreen, setOnScreen] = useState(false)
@@ -151,6 +152,7 @@ export default function InspectorOptionPictures({
           >
             {url && !cannot ? <img alt="" src={url} draggable={false} /> : <span className="opt-pic-blank" aria-hidden />}
             <span>{value.label}</span>
+            {showDescriptions && value.description && <small>{value.description}</small>}
           </button>
         )
       })}

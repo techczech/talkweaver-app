@@ -26,6 +26,8 @@ export interface OutlineDiskChange {
   /** The person chose (Keep mine, Save it again, Save again) but the save then failed: why. The
    *  difference stays until a save lands; the editor's text is in the recovery copy meanwhile. */
   saveError?: string
+  /** Renderer-only leave warning: keeping the unsaved text failed. */
+  recoveryFailed?: boolean
 }
 
 /** A save refused because the file changed on disk since the app last read or wrote it. */
@@ -46,7 +48,7 @@ export interface OutlineRecoveryCopy {
 }
 
 export const CHANGED_ON_DISK_MESSAGE =
-  'This talk changed on disk since TalkWeaver read it. Nothing was saved: choose Reload or Keep mine.'
+  'This talk changed on disk since TalkWeaver read it. Nothing was saved: review the merge in the editor.'
 export const REMOVED_ON_DISK_MESSAGE =
   'This talk was removed on disk. Nothing was saved: choose Save it again or Discard.'
 export const PARTIAL_WRITE_MESSAGE =

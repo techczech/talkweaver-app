@@ -1,9 +1,8 @@
 // test:plain-view-editor — plain editing view ticket 01 (spec T1, T2).
 //
 // The real extensions, bundled for chrome-headless-shell, over a sample outline:
-//   - viewMode 'markdown' (through the view compartment) renders exactly what the editor did before
-//     the Plain view existed: the same line DOM (decorations and highlight classes) and the same
-//     computed look, compared with an editor built from the old flat extension list, not a snapshot;
+//   - viewMode 'markdown' (through the view compartment) has the same line DOM, decorations,
+//     highlighting and computed look as an editor with the Daylight Markdown look installed directly;
 //   - viewMode 'plain' uses the sans, 16px, the heading sizes by depth, and keeps code in the code font;
 //   - plain -> markdown -> plain leaves the document, selection and undo depth identical and does
 //     not create a new view (same view object, same DOM node).
@@ -23,9 +22,8 @@ import { EditorView, highlightActiveLine, keymap } from '@codemirror/view'
 import { EditorState, EditorSelection, Compartment } from '@codemirror/state'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
 import { history, undoDepth, historyKeymap } from '@codemirror/commands'
-import { syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { languages } from '@codemirror/language-data'
-import { twTheme } from './src/renderer/src/extensions/editorLook.ts'
+import { markdownLookExtension } from './src/renderer/src/extensions/editorLook.ts'
 import { viewModeExtension } from './src/renderer/src/extensions/plainView/index.ts'
 import { inlineMarkExtension } from './src/renderer/src/extensions/inlineMark.ts'
 import { keyCapExtension } from './src/renderer/src/extensions/keyCap.ts'
@@ -33,17 +31,17 @@ import { tokenProtectExtension } from './src/renderer/src/extensions/idProtect.t
 import { slideNumberGutterExtension, setSlideNumberLines } from './src/renderer/src/extensions/slideNumberGutter.ts'
 
 const common = () => [slideNumberGutterExtension, tokenProtectExtension(), history(), highlightActiveLine(), markdown({ base: markdownLanguage, codeLanguages: languages }), inlineMarkExtension, keyCapExtension, keymap.of(historyKeymap)]
-// Today's list, before the Plain view: highlight and theme as flat extensions.
-window.mountOld = (doc, host) => {
-  const view = new EditorView({ parent: host, state: EditorState.create({ doc, extensions: [syntaxHighlighting(defaultHighlightStyle), ...common(), twTheme] }) })
-  return window.__old = view
+// The reference installs the Markdown look directly, without the view compartment.
+window.mountMarkdown = (doc, host) => {
+  const view = new EditorView({ parent: host, state: EditorState.create({ doc, extensions: [...common(), markdownLookExtension()] }) })
+  return window.__markdown = view
 }
 const compartment = new Compartment()
 window.mountNew = (doc, host, mode) => {
   const view = new EditorView({ parent: host, state: EditorState.create({ doc, extensions: [...common(), compartment.of(viewModeExtension(mode))] }) })
   return window.__new = view
 }
-window.numberBoth = (lines) => { setSlideNumberLines(window.__old, lines); setSlideNumberLines(window.__new, lines) }
+window.numberBoth = (lines) => { setSlideNumberLines(window.__markdown, lines); setSlideNumberLines(window.__new, lines) }
 window.setMode = (mode) => window.__new.dispatch({ effects: compartment.reconfigure(viewModeExtension(mode)) })
 window.snapshot = (view) => {
   const content = view.contentDOM
@@ -80,21 +78,22 @@ const browser = await chromium.launch()
 try {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 } })
   await page.setContent('<div id="a" style="width:800px;height:400px"></div><div id="b" style="width:800px;height:400px"></div>')
+  await page.addStyleTag({ path: join(root, 'src/renderer/src/app-theme.css') })
   await page.addScriptTag({ path: outfile })
 
   // (a) Markdown mode equals today's editor.
-  await page.evaluate((d) => { window.mountOld(d, document.getElementById('a')); window.mountNew(d, document.getElementById('b'), 'markdown') }, doc)
-  const [oldSnap, newSnap] = await page.evaluate(() => [window.snapshot(window.__old), window.snapshot(window.__new)])
+  await page.evaluate((d) => { window.mountMarkdown(d, document.getElementById('a')); window.mountNew(d, document.getElementById('b'), 'markdown') }, doc)
+  const [oldSnap, newSnap] = await page.evaluate(() => [window.snapshot(window.__markdown), window.snapshot(window.__new)])
   assert.ok(oldSnap.lines.length > 10, 'sample rendered')
-  assert.equal(newSnap.html, oldSnap.html, 'Markdown mode: same line DOM (decorations and highlight classes) as the old editor')
+  assert.equal(newSnap.html, oldSnap.html, 'Markdown mode: same line DOM (decorations and highlight classes) as the direct Markdown editor')
   assert.deepEqual(newSnap.lines, oldSnap.lines, 'Markdown mode: same computed look per line')
   assert.equal(newSnap.editor, oldSnap.editor, 'Markdown mode: same editor look')
   assert.equal(newSnap.content, oldSnap.content, 'Markdown mode: same content look')
   assert.match(oldSnap.editor, /JetBrains Mono/)
   // The slide-number gutter, the chips and the layout lines are today's in Markdown mode.
   await page.evaluate(() => window.numberBoth([1, 3, 6, 11]))
-  const [oldNum, newNum] = await page.evaluate(() => [window.snapshot(window.__old), window.snapshot(window.__new)])
-  assert.equal(newNum.gutters, oldNum.gutters, 'Markdown mode: same gutters (slide numbers) as the old editor')
+  const [oldNum, newNum] = await page.evaluate(() => [window.snapshot(window.__markdown), window.snapshot(window.__new)])
+  assert.equal(newNum.gutters, oldNum.gutters, 'Markdown mode: same gutters (slide numbers) as the direct Markdown editor')
   assert.match(newNum.gutters, />3</, 'the slide-number gutter shows its numbers')
   assert.doesNotMatch(newNum.gutters, /cm-plain-margin/, 'Markdown mode has no margin gutter')
   assert.equal(newNum.html, oldNum.html, 'Markdown mode: same line DOM after the numbers arrive')

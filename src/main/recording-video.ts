@@ -16,8 +16,8 @@ import { recordingAudioTimeline } from './recording-audio-timeline.ts'
 import { isSafeRunId } from './runs.ts'
 import { shownFrom, chapterListText, chaptersFor, captionCues, editedDurationMs, ffmetadata, frameOf, keptSpans, layerClips, placementRects, toSrt, toWebVtt, VIDEO_FRAME, withoutCamera, type FaceSegment, type Rect, type CaptionWord, type CaptureLike, type ChapterSlide, type KeptSpan, type LayerClip, type LayerName } from '../shared/recording-video.ts'
 import type { TimeRange } from '../shared/recording-edits.ts'
-import { createVoiceSplicer, dissolveWindows, JOIN_DISSOLVE_FRAMES, splicedLength, voiceSplicePlan } from '../shared/recording-joins.ts'
-import { clipsOnVideoClock, toVideoClock, type TakeClock } from '../shared/recording-takes.ts'
+import { createVoiceSplicer, dissolveWindows, JOIN_DISSOLVE_FRAMES, splicedLength, splitAtEdges, voiceSplicePlan } from '../shared/recording-joins.ts'
+import { clipsOnVideoClock, type TakeClock } from '../shared/recording-takes.ts'
 
 /** `offsetMs`: where in its file the segment starts (0 when absent). */
 export type VoiceSegment = { path: string; startMs: number; endMs: number; offsetMs?: number }
@@ -203,6 +203,8 @@ export type ExportPlanInput = {
   cuts: TimeRange[]
   /** Smooth joins: the sound crossfades and the picture dissolves at every join an edit made. */
   smooth?: boolean
+  /** New takes' edges on this clock (takeEdges): joins too, where the picture dissolves (smooth joins) and the sound fades out and in. */
+  edges?: number[]
   /** Where the face appears over the Run (faceTrack); absent: 0.44's corner throughout. */
   faces?: FaceSegment[]
   slides: Array<{ path: string; startMs: number; endMs: number; offsetMs?: number; shownFromMs?: number }>
@@ -283,7 +285,7 @@ export function exportGraph(input: ExportPlanInput): { inputs: string[]; graph: 
     const slidePlaces = group('slides'), cameraPlaces = group('camera')
     input.slides.forEach((clip, i) => place(clip, clip.shownFromMs ?? shownFrom({ layer: 'slides', startMs: clip.startMs }, i === 0), slidePlaces, (r) => `scale=${r.width}:${r.height}:force_original_aspect_ratio=decrease,pad=${r.width}:${r.height}:(ow-iw)/2:(oh-ih)/2`))
     for (const clip of input.camera) place(clip, clip.shownFromMs ?? clip.startMs, cameraPlaces, (r) => `scale=${r.width}:${r.height}:force_original_aspect_ratio=increase,crop=${r.width}:${r.height}`)
-    const windows = input.smooth ? dissolveWindows(spans) : []
+    const windows = input.smooth ? dissolveWindows(splitAtEdges(spans, input.edges ?? [])) : []
     if (!windows.length) filters.push(`[${base}]select='${keep}',setpts=N/${fps}/TB,format=yuv420p[vout]`)
     else {
       // The dissolve: a running average of the last frames, shown only just after each join.
@@ -305,7 +307,7 @@ export function exportGraph(input: ExportPlanInput): { inputs: string[]; graph: 
  */
 export function editedVoice(ffmpeg: string, input: ExportPlanInput, signal: AbortSignal | null): { stream: Readable; done: Promise<void> } {
   const spans = keptSpans(input.cuts, input.durationMs)
-  const plan = voiceSplicePlan(spans, frameOf(input.durationMs), !!input.smooth)
+  const plan = voiceSplicePlan(splitAtEdges(spans, input.edges ?? []), frameOf(input.durationMs), !!input.smooth)
   if (!input.voice.length) {
     let left = splicedLength(spans) * 2
     const stream = new Readable({ read() { const n = Math.min(left, 1 << 16); left -= n; this.push(n ? Buffer.alloc(n) : null) } })
@@ -404,7 +406,7 @@ export function layersOnVideoClock(layers: Pick<ResolvedLayers, 'slides' | 'came
       const points = [v.startMs, ...clock.inserts.map((x) => x.at).filter((at) => at > v.startMs && at < v.endMs), v.endMs]
       return points.slice(0, -1).map((a, k) => { const m = movedAt(a); return { path: v.path, startMs: a + m, endMs: points[k + 1] + m, offsetMs: (v.offsetMs ?? 0) + a - v.startMs } })
     }),
-    ...clock.inserts.flatMap((i) => (takeLayers.get(i.run)?.voice ?? []).flatMap((v) => { const at = toVideoClock(clock, i.at), end = Math.min(v.endMs, i.length); return end > v.startMs ? [{ path: v.path, startMs: at + v.startMs, endMs: at + end, offsetMs: v.offsetMs ?? 0 }] : [] }))
+    ...clock.inserts.flatMap((i) => (takeLayers.get(i.run)?.voice ?? []).flatMap((v) => { const at = i.outAt, end = Math.min(v.endMs, i.length); return end > v.startMs ? [{ path: v.path, startMs: at + v.startMs, endMs: at + end, offsetMs: v.offsetMs ?? 0 }] : [] }))
   ]
   return { durationMs: clockMs, slides, camera, voice, missing: [...layers.missing, ...[...takeLayers.values()].flatMap((t) => t.missing)] }
 }
@@ -614,6 +616,8 @@ export type ExportRequest = {
   evenVolume?: boolean
   /** Smooth joins: crossfade the sound and dissolve the picture at every join an edit made. */
   smoothJoins?: boolean
+  /** New takes' edges on the video clock (takeEdges): joins as well (Record this slide again). */
+  edges?: number[]
   /** Where the face appears over the Run (faceTrack of the resolved rows); absent: 0.44's corner. */
   faces?: FaceSegment[]
   extras: ExportExtras
@@ -858,7 +862,7 @@ export function createVideoExporter(deps: { ffmpeg: () => string | null; now?: (
       const measure = request.evenVolume && request.layers.voice.length ? await even.measure(request.layers.voice, request.layers.durationMs, signal) : false
       if (signal.aborted) cancelled()
       const plan: ExportPlanInput = {
-        durationMs: request.layers.durationMs, cuts: request.cuts, audioOnly, metadataFile, even: measure, smooth: !!request.smoothJoins, faces: request.faces,
+        durationMs: request.layers.durationMs, cuts: request.cuts, audioOnly, metadataFile, even: measure, smooth: !!request.smoothJoins, edges: request.edges, faces: request.faces,
         slides: request.layers.slides, camera: request.camera ? request.layers.camera : [], voice: request.layers.voice
       }
       const { args, editedMs } = exportArgs(plan, output)

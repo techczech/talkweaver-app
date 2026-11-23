@@ -7,13 +7,14 @@
 // Run: npm run test:run-feedback:e2e
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from '../scripts/lib/test-scratch.mjs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const repo = process.cwd()
 const shots = process.env.TW_SHOTS || join(tmpdir(), 'tw-r06-shots')
-const tempRoot = mkdtempSync(join(tmpdir(), 'talkweaver-run-feedback-'))
+const tempRoot = testScratchDir(join(tmpdir(), 'talkweaver-run-feedback-'))
 const vault = join(tempRoot, 'vault')
 const userData = join(tempRoot, 'userData')
 const talkSlug = 'feedback-probe'

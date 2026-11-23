@@ -1,3 +1,6 @@
+import { readMainSource } from './lib/read-source.mjs'
+import { hasGitConflictMarkers } from '../src/main/conflict-copies.mjs'
+import { publicationMediaReview, publicationBuildWarnings } from '../src/shared/publication-files.ts'
 import { preservationMessage } from '../src/main/publication-preservation.ts'
 // Handout built from the buffer (roadmap idea handout-built-from-the-buffer, 2026-09-28).
 // Invariant: what is published equals the editor's buffer at the moment Publish was pressed, and no
@@ -37,11 +40,11 @@ import { runPublicationFixture } from './lib/run-publication-fixture.mjs'
 import { persistRunForTalk, readRunForTalk, requireRunForTalk, runFileProblem, normaliseRun, stampRunWork } from '../src/main/runs.ts'
 import { WORK_PAGE_FOLDER } from '../src/shared/run-work.ts'
 // The pages are built and written as the main process's worker thread does it, here in this process.
-import { buildHandoutPages } from '../src/main/handout-pages.ts'
+import { buildHandoutPages, runCompileOption } from '../src/main/handout-pages.ts'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
-const sourceText = readFileSync(join(REPO, 'src/main/index.ts'), 'utf8')
-const sourceFile = ts.createSourceFile('src/main/index.ts', sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+const sourceText = readMainSource()
+const sourceFile = ts.createSourceFile('main-source.ts', sourceText, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
 
 function loadHandler(channel, dependencies) {
   let callback = null
@@ -161,7 +164,7 @@ function publishDeps(siteDir, trace) {
     ? { readHandoutUrl, recoverIdFromUrl, readHandoutRegistry: () => ({ ...trace.registry.kept }), writeHandoutRegistry: (next) => { trace.registry.kept = { ...next } }, pickShortId, generateShortId, randomBytes, buildRedirects }
     : null
   return {
-    unresolvedOutboundFailure,
+    unresolvedOutboundFailure, hasGitConflictMarkers, publicationMediaReview, publicationBuildWarnings,
     // The real outline guard, with the temp root as the vault (every talk here lives inside it).
     outlineRefused: (p) => outlineRefusal(root, p),
     getCompilerPath: () => join(REPO, 'compiler/scripts'),
@@ -461,7 +464,7 @@ function runDeps(path, built, extra = {}) {
   persistRunForTalk(root,talk.slug,'run-1',normaliseRun({id:'run-1',talkSlug:talk.slug,talkTitle:'Buffer Talk',status:'delivered',eventTitle:'Event',plannedDate:'2026-09-28',startedAt:'2026-09-28T10:00:00Z',sourceOutline:relative(root,path)}))
   return {
     ...authority,
-    unresolvedOutboundFailure,
+    unresolvedOutboundFailure, hasGitConflictMarkers, publicationMediaReview, publicationBuildWarnings,
     getConfig: (key, fallback) => ({ vaultRoot: root, cfPagesProject: 'talks', liveWorkerBaseUrl: 'http://127.0.0.1:8787' }[key] ?? fallback),
     currentVaultRoot: () => root,
     writableVaultRoot: () => root, // a write resolves the vault only while its folder is there (vaults 07)
@@ -479,6 +482,7 @@ function runDeps(path, built, extra = {}) {
       return { path: join(dirname(path), 'dist', 'run.html'), slideIds: [], missing: [] }
     },
     // Publish handout for this Run compiles and builds its pages off the main thread: the text it is handed is what is built.
+    runCompileOption,
     runForHandout: (_talk, run) => ({ eventTitle: run.eventTitle, talkTitle: run.talkTitle, plannedDate: run.plannedDate, startedAt: run.startedAt }),
     resolvePooledRefs: (text) => text,
     // What the Run's publish reads before it hands the build over (its link, its QR code, where its copy goes).
@@ -489,6 +493,7 @@ function runDeps(path, built, extra = {}) {
     assetRootsFor: () => [root],
     presenterPublications: { ticket: () => 1, published: () => [] },
     buildHandoutPagesOffThread: async (job) => {
+      if (job.kind === 'preflight') return buildHandoutPages(job, html => html)
       built.push(job.text)
       if (extra.stopAfterBuild) throw new Error('stop after build')
       return { warnings: [], slideIds: [], missing: [] }
@@ -661,6 +666,48 @@ for (const channel of ['run:build-handout', 'run:publish-handout']) {
   }
   closeAll()
   assert.deepEqual(tally, { committed: 120, other: [] }, 'every flush returned exactly the committed text')
+}
+
+// Publishing checks dependencies before authorisation, live setup, short-id allocation or build.
+{
+  const path = talkFile()
+  const ed = editorWindow(path, OUTLINE + '\n## Interactive example {id=ab12}\n\n[Simulation: widgets/absent.html]\n')
+  const trace = { liveWorker: 0, deploys: 0, sealed: [] }
+  try {
+    const publish = loadHandler('talk:publish-handout', publishDeps(join(root, 'missing-widget-site'), trace))
+    const result = await publish(null, path, ed.doc)
+    assert.equal(result.success, false, 'a missing widget is caught before publishing')
+    assert.match(result.notReady?.detail ?? '', /widgets\/absent\.html/)
+    assert.equal(trace.liveWorker, 0, 'no live-service setup')
+    assert.equal(trace.deploys, 0, 'no deployment')
+    assert.equal(trace.publishing.api.requests.some(request => request.path.includes('/upload-token')), false, 'no upload authorisation needed')
+    assert.equal(result.notReady.kind, 'media-warning')
+    const recheck = await publish(null, path, ed.doc, 'recheck-media')
+    assert.equal(recheck.notReady.kind, 'media-warning')
+    assert.equal(trace.deploys, 0, 'Get files and recheck never authorises a publish')
+    const accepted = await publish(null, path, ed.doc, 'with-placeholders')
+    assert.equal(accepted.success, true, JSON.stringify(accepted))
+    assert.match(accepted.warning, /widgets\/absent\.html/)
+    assert.equal(trace.deploys, 1, 'Publish anyway deploys the handout')
+  } finally { closeAll() }
+}
+
+// Files disappearing between preflight and build become a publication warning.
+{
+  const path = talkFile()
+  const widget = join(dirname(path), 'late-widget.html')
+  writeFileSync(widget, '<!doctype html><p>Widget</p>')
+  const ed = editorWindow(path, OUTLINE + '\n## Widget {id=ab12}\n\n[Simulation: late-widget.html]\n')
+  const trace = { liveWorker: 0, deploys: 0, sealed: [] }
+  const dependencies = publishDeps(join(root, 'late-missing-site'), trace)
+  const realBuild = dependencies.buildHandoutPagesOffThread
+  dependencies.buildHandoutPagesOffThread = job => { if (job.kind === 'talk') rmSync(widget); return realBuild(job) }
+  try {
+    const result = await loadHandler('talk:publish-handout', dependencies)(null, path, ed.doc)
+    assert.equal(result.success, true, JSON.stringify(result))
+    assert.match(result.warning ?? '', /late-widget\.html/)
+    assert.equal(trace.deploys, 1)
+  } finally { closeAll() }
 }
 
 console.log('handout from the buffer: talk handout, ledger seal and stamp are exactly the text the flush committed (a racing in-place autosave never tears it); publishing\'s own refusals (save failed, unsaved over read-only, empty talk; never ⌘Z); unresolved buffer refuses; Run build and publish from the committed buffer; a buffer equal to its file is used with no write; closed read-only talk read, not rewritten; race probe ×120 passed')

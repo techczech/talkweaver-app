@@ -6,12 +6,13 @@
 // block modal when the driver next runs Electron.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from '../scripts/lib/test-scratch.mjs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 
 const repo = process.cwd()
-const root = mkdtempSync(join(tmpdir(), 'talkweaver-unresolved-trigger-'))
+const root = testScratchDir(join(tmpdir(), 'talkweaver-unresolved-trigger-'))
 const vault = join(root, 'vault')
 const userData = join(root, 'userData')
 const talkDir = join(vault, 'unresolved-probe')

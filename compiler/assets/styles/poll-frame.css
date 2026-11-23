@@ -86,12 +86,13 @@
    slide-content keeps its compiled proportions. */
 .poll-frame-options { list-style: none; margin: 0; padding: 0; display: grid; gap: calc(clamp(6px, 1.1cqh, 16px) * var(--list-gap, 1)); }
 .poll-frame-option {
+  --poll-option-padding-bottom: calc(clamp(6px, 1.1cqh, 16px) * var(--list-gap, 1));
   display: grid;
   grid-template-columns: max(24px, 2.4cqw) minmax(0, 1fr);
   gap: clamp(8px, 1cqw, 18px);
   align-items: baseline;
   margin: 0;
-  padding-bottom: calc(clamp(6px, 1.1cqh, 16px) * var(--list-gap, 1));
+  padding-bottom: var(--poll-option-padding-bottom);
   border-bottom: 1px solid var(--hairline);
   /* Type comes from the deck's own list scale (.slide-content ol li) so poll options read at the
      same size as every other list on the stage, riding --fs-body and --list-lh when the autofit
@@ -352,7 +353,7 @@
   position: absolute;
   left: 0;
   top: 0;
-  bottom: clamp(6px, 1.1cqh, 16px);
+  bottom: var(--poll-option-padding-bottom);
   width: var(--poll-fill, 0%);
   max-width: 100%;
   background: color-mix(in srgb, var(--accent) 22%, transparent);

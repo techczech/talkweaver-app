@@ -21,11 +21,13 @@
 //      selected Run's vault, Open results names that vault and History refuses a vault it does not list, and
 //      Open live view asks for the session of the named vault only.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-run-page.mjs
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { mock, test } from 'node:test'
 import ts from 'typescript'
 import { registerRunBoardIpc } from '../src/main/run-board-ipc.ts'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -75,7 +77,7 @@ const bundled = await build({
   stdin: { contents: "export { RunPage } from './src/renderer/src/components/RunPage.tsx'; export { UnpublishRunConfirm } from './src/renderer/src/components/UnpublishRunConfirm.tsx'; export { createElement } from 'react'; export { renderToStaticMarkup } from 'react-dom/server'", resolveDir: repo, loader: 'tsx' },
   bundle: true, write: false, format: 'cjs', platform: 'node', jsx: 'automatic', logLevel: 'silent', loader: { '.css': 'empty' }, define: { 'process.env.NODE_ENV': '"production"' }
 })
-const dir = mkdtempSync(join(tmpdir(), 'tw-run-page-'))
+const dir = testScratchDir(join(tmpdir(), 'tw-run-page-'))
 writeFileSync(join(dir, 'page.cjs'), bundled.outputFiles[0].text)
 const { RunPage, UnpublishRunConfirm, createElement, renderToStaticMarkup } = createRequire(join(dir, 'x.cjs'))('./page.cjs')
 const page = (source, now, options = {}) => {
@@ -626,8 +628,8 @@ const actionsIn = (html, id) => {
 
 // ---- 4. main
 {
-  const root = mkdtempSync(join(tmpdir(), 'tw-run-page-vault-'))
-  const outside = mkdtempSync(join(tmpdir(), 'tw-run-page-outside-'))
+  const root = testScratchDir(join(tmpdir(), 'tw-run-page-vault-'))
+  const outside = testScratchDir(join(tmpdir(), 'tw-run-page-outside-'))
   mkdirSync(join(root, '_PRESENTATIONS', 'ai-research'), { recursive: true })
   mkdirSync(join(root, 'Work files'), { recursive: true })
   const runFile = (slug, id) => join(root, '_PRESENTATIONS', slug, `${id}.json`)
@@ -790,7 +792,7 @@ const actionsIn = (html, id) => {
   }
 
   // Open file in a second open vault: the answer carries that vault, and the file is read from that vault's Work files folder.
-  const root2 = mkdtempSync(join(tmpdir(), 'tw-run-page-vault2-'))
+  const root2 = testScratchDir(join(tmpdir(), 'tw-run-page-vault2-'))
   mkdirSync(join(root2, '_PRESENTATIONS', 'prework-test'), { recursive: true })
   mkdirSync(join(root2, 'Work files'), { recursive: true })
   writeFileSync(join(root2, 'Work files', 'second-only.md'), ['---', 'id: second-only', 'title: Second only', 'revision: 1', '---', '', '### Watch', '{id=watch}{video}', ''].join('\n'))
@@ -866,7 +868,7 @@ const actionsIn = (html, id) => {
   assert.match(view, /openResultsFromSessions\(ref, /)
   assert.doesNotMatch(view, /window\.tw\.history\.listRuns\(source\.talkSlug\)/, 'no call to the first vault\'s Runs is left')
   assert.match(view, /live\.has\(sessionLiveKey\(source\.vaultId, source\)\)/, 'Live now on the Run page names the vault')
-  assert.match(read('src/main/index.ts'), /const refused = historyResultsRefusal\(runRef, \(id\) => rootOfVault\(id\) !== undefined\)/)
+  assert.match(readMainSource(), /const refused = historyResultsRefusal\(runRef, \(id\) => rootOfVault\(id\) !== undefined\)/)
   assert.match(read('src/renderer/src/App.tsx'), /showRuns\(run \?\? null\)/, 'App shows the Run the request names, with its vault, in the one Runs view')
   const ledger = read('src/renderer/src/components/RunLedger.tsx')
   assert.match(ledger, /const vaultArg = kept \? undefined : source\.vaultId/, 'the ledger reads the selected Run\'s own vault (a kept Run has none)')
@@ -877,7 +879,7 @@ const actionsIn = (html, id) => {
 // Vault-only main handlers must refuse a kept target before resolving its same-id vault Run.
 // Compile the real top-level IPC registrations without booting Electron or opening a window.
 {
-  const source = readFileSync(join(repo, 'src/main/index.ts'), 'utf8')
+  const source = readMainSource()
   const ast = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true)
   const channels = ['history:instant-anchors', 'history:feedback-slides', 'history:add-instant-slide', 'tools:open']
   for (const channel of channels) await test(`${channel} refuses a kept Run before touching the vault`, async () => {
@@ -949,9 +951,9 @@ const actionsIn = (html, id) => {
   const { JSDOM } = await import('jsdom')
   const dom = new JSDOM('<!doctype html><body><div id="host"></div></body>', { pretendToBeVisual: true })
   const previousGlobals = new Map()
-  for (const name of ['window', 'document', 'navigator', 'HTMLElement', 'HTMLButtonElement', 'KeyboardEvent', 'MouseEvent', 'Event', 'CustomEvent', 'Node', 'Element']) {
+  for (const name of ['window', 'document', 'navigator', 'HTMLElement', 'HTMLButtonElement', 'KeyboardEvent', 'MouseEvent', 'Event', 'CustomEvent', 'Node', 'Element', 'requestAnimationFrame', 'cancelAnimationFrame']) {
     previousGlobals.set(name, Object.getOwnPropertyDescriptor(globalThis, name))
-    Object.defineProperty(globalThis, name, { value: name === 'window' ? dom.window : dom.window[name], configurable: true, writable: true })
+    Object.defineProperty(globalThis, name, { value: name === 'window' ? dom.window : ['requestAnimationFrame', 'cancelAnimationFrame'].includes(name) ? dom.window[name].bind(dom.window) : dom.window[name], configurable: true, writable: true })
   }
   const previousChannel = globalThis.MessageChannel
   globalThis.MessageChannel = class { constructor() { const p = { onmessage: null }; this.port1 = p; this.port2 = { postMessage: () => setImmediate(() => p.onmessage?.({})) } } }
@@ -1011,6 +1013,46 @@ const actionsIn = (html, id) => {
       const badge = document.querySelector('[data-run-media-place]')?.textContent.trim() ?? [...document.querySelectorAll('.rl-actions')].map((e) => e.textContent).join(' ')
       keptChecks.push([`the Run page's audio badge reads "${text}" for a recording ${place.state}`, badge.includes(text) && (place.state !== 'here') === !!document.querySelector('[data-run-media-place]') && (place.state === 'here') === !!document.querySelector('[data-run-upload]')])
     }
+    // A Run must retain the actionable publishing response, including its qualified source.
+    const recoveredSources = []
+    window.tw.liveService = { onStatus: () => () => {}, status: async () => ({ state: 'not-set-up' }) }
+    window.tw.sessions.extraSlides = async () => ({ ok: true, slides: [], extraSlides: [] })
+    window.tw.sessions.runAnswers = async () => ({ ok: true, writable: false })
+    window.tw.sessions.runFiles = async () => ({ ok: true, files: {} })
+    const mediaChoices = []
+    window.tw.history.publishRunHandout = async (slug, id, vaultId, choice) => {
+      mediaChoices.push({ slug, id, vaultId, choice })
+      if (choice === 'with-placeholders') return { success: true, url: 'https://handouts.test/one-run/' }
+      return { success: false, recoveryOutlinePath: '/synthetic/other-vault/qualified-outline.md',
+        notReady: { kind: 'media-warning', title: 'Some media may be unavailable', detail: 'widgets/absent.html — missing',
+          fix: { action: 'get-library-files', label: 'Get files and recheck' } } }
+    }
+    window.tw.publish = { getLibraryFiles: async path => { recoveredSources.push(path); return { ok: true } } }
+    window.tw.shell.showInFolder = async () => {}
+    await showRuns({ talkSlug: 'talk', runId: 'vault-run', vaultId: 'v1' })
+    await R.act(async () => { document.querySelector('[data-run-action="publish"]').click() }); await settle()
+    assert.match(document.querySelector('[data-testid="publish-not-ready"]').textContent, /widgets\/absent.html/)
+    await R.act(async () => { document.querySelector('[data-testid="publish-fix"]').click() }); await settle()
+    assert.deepEqual(recoveredSources, ['/synthetic/other-vault/qualified-outline.md'], 'Run recovery uses main’s qualified failed source, not a talk selected later')
+    assert.deepEqual(mediaChoices.map(request => request.choice), [undefined, 'recheck-media'])
+    const publishAnyway = document.querySelector('[data-testid="publish-anyway"]')
+    assert.match(publishAnyway.textContent, /Publish anyway/)
+    await R.act(async () => { publishAnyway.click() }); await settle()
+    assert.deepEqual(mediaChoices.at(-1), { slug: 'talk', id: 'vault-run', vaultId: 'v1', choice: 'with-placeholders' })
+    // Recovery on a Run must remain available, and an asynchronous import cannot retry another Run.
+    let finishImport, publishCalls = 0
+
+    window.tw.history.publishRunHandout = async () => { publishCalls++; return { success: false,
+      notReady: { kind: 'not-ready', title: 'Add the shared site record', detail: 'Use a trusted recovery record.', fix: { action: 'import-site-recovery', label: 'Import site recovery record' } } } }
+    window.tw.publish = { importSiteRecovery: () => new Promise(resolve => { finishImport = resolve }) }
+    await showRuns({ talkSlug: 'talk', runId: 'vault-run', vaultId: 'v1' })
+    await R.act(async () => { document.querySelector('[data-run-action="publish"]').click() }); await settle()
+    assert.ok(document.querySelector('[data-testid="publish-not-ready"]'), 'Run failures expose the recovery sheet')
+    await R.act(async () => { document.querySelector('[data-testid="publish-fix"]').click() })
+    await showRuns({ talkSlug: 'talk', runId: 'kept-run', vaultId: 'app-data' })
+    await R.act(async () => { finishImport({ ok: true }) }); await settle()
+    assert.equal(publishCalls, 1, 'changing the selected Run while importing never publishes a different Run')
+
     // App's showStudio forwards this string as initialSessionId. Exercise the actual receiving Studio
     // with the key the Runs view emitted, including switching between two homes while Studio stays mounted.
     const requests = []

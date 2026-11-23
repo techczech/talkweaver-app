@@ -1,6 +1,7 @@
 /// <reference lib="dom" />
 import { ipcRenderer } from 'electron'
 import type { CaptureChoice } from '../shared/recording-devices'
+import { openCheckedCamera } from './presenter-device-check'
 
 export function createPresenterVideo(clock: () => number, changed: () => void, testMode = false) {
   let abandonedId = ''
@@ -80,11 +81,10 @@ export function createPresenterVideo(clock: () => number, changed: () => void, t
       if (cancelled()) return
       if (choice === 'camera') {
         try {
-        const cameras = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput' && d.label === cameraName)
+        const media = navigator.mediaDevices
+        const devices = await media.enumerateDevices()
         if (cancelled()) return
-        const device = cameras.find(d => d.deviceId === cameraDeviceId) ?? (cameras.length === 1 ? cameras[0] : null)
-        if (!device) throw Error('The checked camera is missing or ambiguous; check the devices again')
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: false, video: { deviceId: { exact: device.deviceId } } })
+        const stream = await openCheckedCamera(media, devices, cameraName, cameraDeviceId)
         if (cancelled()) { stream.getTracks().forEach(track => track.stop()); return }
         camera = stream
         const track = camera.getVideoTracks()[0]

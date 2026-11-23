@@ -5,6 +5,7 @@
 // (twthumb is registered standard + secure in main/index.ts: its host is read as a domain name).
 // The handler's containment guards still run on the decoded values: traversal, raw or encoded, and
 // absolute paths are refused.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -86,7 +87,7 @@ for (const raw of traversal) {
 console.log('Every producer goes through the one helper:')
 check('no twthumb:// address is concatenated by hand in src/', () => {
   for (const rel of ['src/main/index.ts', 'src/main/thumb-cache-dirs.ts', 'src/renderer/src/lib/thumbUrl.ts', 'src/renderer/src/components/slide-browser/browserHelpers.ts']) {
-    const src = readFileSync(join(root, rel), 'utf8')
+    const src = rel === 'src/main/index.ts' ? readMainSource() : readFileSync(join(root, rel), 'utf8')
     assert.doesNotMatch(src, /'twthumb:\/\/' *\+|`twthumb:\/\/\$\{/, rel)
   }
 })

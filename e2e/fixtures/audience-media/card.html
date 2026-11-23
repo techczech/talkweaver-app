@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Card widget</title>
+  <style>
+    body { margin: 0; font: 22px Georgia, serif; background: #fed; }
+    output { display: block; color: #72417c; }
+  </style>
+</head>
+<body>
+  <button type="button">Increment</button>
+  <output></output>
+  <script>
+    const output = document.querySelector('output');
+    output.value = 0;
+    document.querySelector('button').onclick = () => output.value = Number(output.value) + 1;
+    window.widgetSizeAtStart = [innerWidth, innerHeight];
+  </script>
+</body>
+</html>

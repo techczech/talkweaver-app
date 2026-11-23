@@ -174,9 +174,9 @@ const concealPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: (v) => v.decorations })
 
-const PAPER_RULE = '#cfc6b4'
-const LINK = '#1a5fb4'
-const GREY = '#8a9099'
+const PAPER_RULE = 'var(--line-strong)'
+const LINK = 'var(--accent-text)'
+const GREY = 'var(--faint)'
 
 /**
  * The heading mark's size by depth, as a share of the body text. 0.85 for `#` to `####`. The two
@@ -188,7 +188,7 @@ const MARK_SIZE = [0.85, 0.85, 0.85, 0.85, 0.74, 0.64]
 const concealTheme = EditorView.theme({
   '.cm-plain-link': { color: LINK, textDecoration: 'underline', textUnderlineOffset: '0.18em' },
   '.cm-plain-mark-shown': { color: GREY, fontWeight: '400', fontStyle: 'normal' },
-  '.cm-plain-link-address': { color: GREY, fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace", fontSize: '0.88em', textDecoration: 'none' },
+  '.cm-plain-link-address': { color: GREY, fontFamily: 'var(--font-mono)', fontSize: '0.88em', textDecoration: 'none' },
   // Heading marks: grey, not heading size (the drawing's faint ### before the title).
   // The mark's wrapper sits outside the highlight spans that carry the heading size, so its own
   // size is the body size divided by the heading step: wrapper x step = 0.85 of the body text
@@ -216,7 +216,7 @@ const concealTheme = EditorView.theme({
   '.cm-line.cm-plain-quote': {
     borderLeft: `3px solid ${PAPER_RULE}`,
     paddingLeft: '18px',
-    color: '#5d6875',
+    color: 'var(--muted)',
     fontStyle: 'italic'
   },
   '.cm-line.cm-plain-quote-cite, .cm-line.cm-plain-quote-cite *': {

@@ -79,7 +79,7 @@
 }
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li > .fl-text {
   display: block; align-self: stretch !important; margin: 0 !important; padding: 0 !important; grid-column: auto !important;
-  font: 700 var(--oc-label)/1.08 var(--look-face-display) !important; letter-spacing: -.01em; text-transform: none !important;
+  font: var(--weight-item, var(--weight-reading)) var(--oc-label)/1.08 var(--look-face-display) !important; letter-spacing: -.01em; text-transform: none !important;
   color: inherit !important; text-align: inherit !important;
   white-space: normal !important; overflow-wrap: break-word !important; hyphens: manual;
 }
@@ -134,7 +134,7 @@
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))) > li > .fl-text,
 .slide[data-look="ocean"] .slide-content > .icon-row:not(.ir-rows) > .ir-item > .ir-label {
   display: block; align-self: stretch !important; margin: 0 !important; padding: 0 !important;
-  font: 700 var(--oc-label)/1.06 var(--look-face-display) !important; letter-spacing: -.01em !important; text-transform: none !important;
+  font: var(--weight-item, var(--weight-reading)) var(--oc-label)/1.06 var(--look-face-display) !important; letter-spacing: -.01em !important; text-transform: none !important;
   color: inherit !important; text-align: center !important; white-space: normal !important; overflow-wrap: break-word !important;
 }
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))) > li > .fl-sublist { align-items: center; }
@@ -244,7 +244,7 @@
 }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-head.L { color: var(--look-ink) !important; }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-head-text {
-  font: 700 5.5cqw/1.05 var(--look-face-display) !important; color: inherit !important; text-transform: none !important; letter-spacing: -.015em !important;
+  font: var(--look-weight-display, 700) 5.5cqw/1.05 var(--look-face-display) !important; color: inherit !important; text-transform: none !important; letter-spacing: -.015em !important;
 }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-head-ico {
   flex: 0 0 auto; width: 5.5cqw !important; height: 5.5cqw !important; color: var(--c) !important; margin: 0 !important;
@@ -258,7 +258,7 @@
   border: 0 !important; border-top: .125cqw solid color-mix(in srgb, currentColor 28%, transparent) !important;
 }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-row .vs-text {
-  font: 600 2.5cqw/1.2 var(--look-face-text) !important; color: inherit !important; min-width: 0; overflow-wrap: break-word;
+  font: var(--weight-reading) 2.5cqw/1.2 var(--look-face-text) !important; color: inherit !important; min-width: 0; overflow-wrap: break-word;
 }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-row .vs-ico { flex: 0 0 auto; width: 2.5cqw !important; height: 2.5cqw !important; color: var(--c) !important; margin: 0 !important; }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-row .vs-children { font: 400 max(var(--type-floor), 2cqw)/1.25 var(--look-face-text) !important; color: inherit !important; }
@@ -283,7 +283,7 @@
 }
 .slide[data-look="ocean"] .slide-content > .icon-row.ir-rows > .ir-item > .ir-label {
   display: block; margin: 0 !important; padding: 0 !important; border: 0 !important;
-  font: 700 var(--oc-label)/1.06 var(--look-face-display) !important; letter-spacing: -.01em !important; text-transform: none !important;
+  font: var(--weight-item, var(--weight-reading)) var(--oc-label)/1.06 var(--look-face-display) !important; letter-spacing: -.01em !important; text-transform: none !important;
   color: var(--look-ink) !important; white-space: normal !important; overflow-wrap: break-word !important; text-align: left !important;
 }
 .slide[data-look="ocean"] .slide-content > .icon-row.ir-rows > .ir-item .ir-desc > li {
@@ -330,7 +330,7 @@
 /* a numbered box or panel: the number takes the icon's place at display size (bold, at least 24px, so Ocean on the light
    panel reads at large-text contrast) */
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-cards > li > .fl-icon.fl-num {
-  font: 700 calc(var(--oc-icon) * .72)/1 var(--look-face-display) !important; color: var(--c) !important; display: flex; align-items: center;
+  font: var(--look-weight-display, 700) calc(var(--oc-icon) * .72)/1 var(--look-face-display) !important; color: var(--c) !important; display: flex; align-items: center;
 }
 /* detail lines on a filled panel (Ocean or Deeper Ocean) take the panel's white type, whatever density the list
    fitter chose (a dense list kept near-black detail on Ocean, 3.62:1) */
@@ -343,7 +343,7 @@
 /* a numbered icon row: the number takes the icon's place at display size (bold, so Ocean on the light panel reads at
    large-text contrast); the detail list itself, not only its items, takes the panel's colour */
 .slide[data-look="ocean"] .slide-content > .icon-row > .ir-item > .ir-icon.ir-num {
-  font: 700 calc(var(--oc-icon, 8.5cqw) * .72)/1 var(--look-face-display) !important; color: var(--c) !important;
+  font: var(--look-weight-display, 700) calc(var(--oc-icon, 8.5cqw) * .72)/1 var(--look-face-display) !important; color: var(--c) !important;
   display: flex; align-items: center; justify-content: center;
 }
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-cards:not(:has(> li:nth-child(4))):not(:has(> li:nth-child(2):last-child)) > li:not(:nth-child(3n + 3)) > .fl-sublist,

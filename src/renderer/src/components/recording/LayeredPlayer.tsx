@@ -13,6 +13,9 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { faceAt, JOIN_FADE_MS, placementRects, shownFrom, spanFor, toPercent, VIDEO_FRAME, withoutCamera, type FaceSegment, type KeptSpan } from '../../../../shared/recording-video'
 import { JOIN_DISSOLVE_FRAMES } from '../../../../shared/recording-joins'
+import { edgeVolume } from '../../../../shared/recording-positions'
+
+const NO_EDGES: readonly number[] = []
 import { fromVideoClock, NO_TAKES, toVideoClock, type TakeClock } from '../../../../shared/recording-takes'
 
 /** A picture file on the clock: media time `offsetMs` (default 0) at `startMs`; its first frame held from `shownFromMs` when given. */
@@ -39,6 +42,8 @@ export const LayeredPlayer = forwardRef<LayeredPlayerHandle, {
   camera: boolean
   /** Smooth joins: the picture fades through from the last frame before each join, as the export dissolves. */
   dissolve?: boolean
+  /** New takes' edges on the video clock (takeEdges): the voice fades out and in there, and with `dissolve` the picture fades through, as the export does. */
+  edges?: readonly number[]
   /** Where the face appears over the Run (faceTrack); absent: 0.44's corner throughout. */
   faces?: FaceSegment[]
   notice?: string | null
@@ -47,7 +52,7 @@ export const LayeredPlayer = forwardRef<LayeredPlayerHandle, {
   /** Run time, and the video clock's time. */
   onTime: (runMs: number, videoMs: number) => void
   onPlaying: (playing: boolean) => void
-}>(function LayeredPlayer({ source, spans, durationMs, camera, dissolve = false, faces, clock = NO_TAKES, notice, onTime, onPlaying }, ref) {
+}>(function LayeredPlayer({ source, spans, durationMs, camera, dissolve = false, edges = NO_EDGES, faces, clock = NO_TAKES, notice, onTime, onPlaying }, ref) {
   const clockRef = useRef(clock); clockRef.current = clock
   const rootRef = useRef<HTMLDivElement>(null)
   // The voice: one element per piece; the active one is the piece the clock is in.
@@ -72,6 +77,7 @@ export const LayeredPlayer = forwardRef<LayeredPlayerHandle, {
   const cameraRefs = useRef<Array<HTMLVideoElement | null>>([])
   const fadeRef = useRef<HTMLCanvasElement>(null)
   const dissolveRef = useRef(dissolve); dissolveRef.current = dissolve
+  const edgesRef = useRef(edges); edgesRef.current = edges
   /**
    * A still of the picture as it is now, laid over the frame and faded out over the dissolve's length, so
    * the next kept moment comes in through it. The export averages the last frames; to the eye the same.
@@ -228,7 +234,7 @@ export const LayeredPlayer = forwardRef<LayeredPlayerHandle, {
   }, [now, halt, placePictures, onPlaying, report])
 
   /** Sound at Run time `t`: full inside a span, ramped over JOIN_FADE_MS at the joins an edit made. */
-  const volumeAt = (span: KeptSpan, t: number): number => Math.max(0, Math.min(1, span.fadeIn ? (t - span.startMs) / JOIN_FADE_MS : 1, span.fadeOut ? (span.endMs - t) / JOIN_FADE_MS : 1))
+  const volumeAt = (span: KeptSpan, t: number): number => Math.min(edgeVolume(edgesRef.current, t), Math.max(0, Math.min(1, span.fadeIn ? (t - span.startMs) / JOIN_FADE_MS : 1, span.fadeOut ? (span.endMs - t) / JOIN_FADE_MS : 1)))
 
   // The fine clock: volume and joins, every 4 ms while playing.
   const watchJoins = useCallback((): void => {
@@ -243,6 +249,8 @@ export const LayeredPlayer = forwardRef<LayeredPlayerHandle, {
     const want = hasVoice ? pieceAt(t) : -1
     if (want >= 0 && want !== activeVoice.current && t < span.endMs - 2) {
       s.jumping = true
+      // A new take's edge: the picture fades through as at a join.
+      if (dissolveRef.current && edgesRef.current.some((e) => Math.abs(e - t) < 40)) fadeFromHere()
       const next = selectVoice(t)
       if (next) { next.volume = volumeAt(span, t); void next.play().catch(() => setVoiceFailed(true)) }
       const at = t

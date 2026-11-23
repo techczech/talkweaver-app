@@ -8,7 +8,7 @@ import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempDisposableSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -20,7 +20,8 @@ function record(name, pass, detail) {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`)
 }
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-thr-' + String(Date.now()) + '-'))
+using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-thr-'))
+const tempRoot = fixture.path
 const vault = join(tempRoot, 'vault')
 const ud = join(tempRoot, 'userData')
 const td = join(vault, 'thr')
@@ -30,7 +31,7 @@ writeFileSync(outlinePath, '---\ntitle: T\n---\n\n## S\n\n### Why maps?\n{list}\
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
 
 await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
+await using app = await electron.launch({ args: ['.', '--use-mock-keychain', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
@@ -65,6 +66,5 @@ try {
 } finally {
   const failed = results.filter((r) => !r.pass)
   console.log(`\n=== THUMBNAIL-REFRESH SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
-  await app.close()
-  process.exit(failed.length === 0 ? 0 : 1)
+  process.exitCode = failed.length === 0 ? 0 : 1
 }

@@ -69,8 +69,9 @@
 //
 // No Electron import and erasable TypeScript only: scripts/test-handout-publishing.mjs runs this job in the
 // real publishing sequence against the fake Cloudflare API.
-import { existsSync, lstatSync, mkdirSync, readdirSync, renameSync, rmdirSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, rmdirSync, rmSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
+import { writeTextAtomic } from './atomic-file.ts'
 import { REGISTRY_ORIGIN_UNAVAILABLE, publishedFolders, removeSiteFolder, writableSiteFolder, type PublishBegin, type PublishBuild, type PublishJob } from './handout-publishing.ts'
 import { buildRedirects, siteFolder } from './publishing-logic.ts'
 import type { RunWorkWithdraw } from './run-prework.ts'
@@ -185,17 +186,6 @@ function lexists(path: string): boolean {
   try { lstatSync(path); return true } catch { return false }
 }
 
-function writeAtomically(path: string, text: string): void {
-  const temp = `${path}.${process.pid}.${Date.now()}.tmp`
-  try {
-    writeFileSync(temp, text, { encoding: 'utf8', flag: 'wx' })
-    renameSync(temp, path)
-  } catch (error) {
-    try { rmSync(temp, { force: true }) } catch { /* nothing to clean */ }
-    throw error
-  }
-}
-
 const isPage = (name: string): boolean => /\.html?$/i.test(name)
 
 export type ReplacedFolder = { kind: 'replaced'; pages: string[] } | { kind: 'unlinked' } | { kind: 'absent' }
@@ -238,7 +228,7 @@ export function replaceRunPages(siteDir: string, name: string, html: string, pha
     if (!lexists(parent)) mkdirSync(parent)
     pages.push(must)
   }
-  for (const page of pages) writeAtomically(join(folder, ...page.split('/')), html)
+  for (const page of pages) writeTextAtomic(join(folder, ...page.split('/')), html, { createParent: false })
   return { kind: 'replaced', pages: pages.sort() }
 }
 

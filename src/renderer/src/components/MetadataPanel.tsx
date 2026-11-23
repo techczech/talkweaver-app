@@ -43,7 +43,7 @@ function parsePairs(text: string): Array<{ key: string; value: string }> {
 /** The value an entry currently holds in the outline, under any accepted spelling. */
 function valueFor(entry: MetadataEntry, pairs: Array<{ key: string; value: string }>): string {
   const spellings = [entry.key, ...(entry.aliases ?? [])]
-  const hit = pairs.find((p) => spellings.includes(p.key))
+  const hit = spellings.map(key => pairs.find(p => p.key === key)).find(Boolean)
   return hit ? hit.value : ''
 }
 

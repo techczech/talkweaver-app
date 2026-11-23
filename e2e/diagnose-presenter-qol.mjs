@@ -10,7 +10,7 @@ import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
-import { mkdtempSync, mkdirSync, writeFileSync, statSync } from 'fs'
+import { mkdtempDisposableSync, mkdirSync, writeFileSync, statSync } from 'fs'
 import { tmpdir } from 'os'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
@@ -27,7 +27,8 @@ const record = (name, pass, detail) => {
 const { prepareSource } = await import(
   pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href
 )
-const root = mkdtempSync(join(tmpdir(), 'tw-e2e-qol-'))
+using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-qol-'))
+const root = fixture.path
 const ud = join(root, 'ud')
 mkdirSync(ud, { recursive: true })
 const outlinePath = join(root, 'qol-outline.md')
@@ -80,7 +81,7 @@ console.log('present file: ' + presentPath)
 
 // ── Launch Electron and drive its window straight to the compiled present HTML ──
 await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
+await using app = await electron.launch({ args: ['.', '--user-data-dir=' + ud, '--use-mock-keychain'], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 const consoleErrors = []
 page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()) })
@@ -543,6 +544,5 @@ try {
   }
   const failed = results.filter((r) => !r.pass)
   console.log(`\n=== PRESENTER QoL SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
-  await app.close()
-  process.exit(failed.length === 0 ? 0 : 1)
+  process.exitCode = failed.length === 0 ? 0 : 1
 }

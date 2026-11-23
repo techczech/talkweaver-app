@@ -157,6 +157,11 @@ try {
   const active = () => ev(() => document.querySelector('[data-plain-icon-picker] [data-active="true"]')?.dataset.iconKey ?? (document.querySelector('[data-plain-icon-remove][data-active="true"]') ? 'REMOVE' : null))
   const footer = () => ev(() => document.querySelector('[data-plain-icon-footer]').textContent)
   const labels = () => ev(() => [...document.querySelectorAll('.pv-icon-label')].map((l) => l.textContent))
+  // A shorter query can have the same number of hits. Wait for the requested query before Enter.
+  const waitForResults = (query, count) => picker.getByText(
+    `${count} ${count === 1 ? 'icon matches' : 'icons match'} “${query}”`,
+    { exact: true },
+  ).waitFor()
   /** A picker a check left open is closed first (Command-I on an open picker closes it). */
   const fresh = async () => {
     if (await picker.count()) { await search.press('Escape'); await picker.waitFor({ state: 'detached' }) }
@@ -168,7 +173,7 @@ try {
     await page.keyboard.press(`${mod}+i`)
   }
   const check = async (label, fn) => {
-    try { await fn() } catch (e) { failed.push(`${label}: ${String(e.message).split('\n')[0]}${e.actual !== undefined ? ' | got ' + JSON.stringify(e.actual) + ' | wanted ' + JSON.stringify(e.expected) : ''}`) }
+    try { await fn() } catch (e) { failed.push(`${label}: ${e.message}${e.actual !== undefined ? ' | got ' + JSON.stringify(e.actual) + ' | wanted ' + JSON.stringify(e.expected) : ''}`) }
   }
   await ev(() => window.localStorage.clear())
 
@@ -197,7 +202,7 @@ try {
     await picker.waitFor()
     const before = await sel()
     await page.keyboard.type('sta')
-    await page.waitForFunction(() => document.querySelector('.pv-icon-label')?.textContent.includes('match “sta”'))
+    await waitForResults('sta', 4)
     assert.deepEqual(await cells(), ['lucide:star', 'lucide:star-half', 'lucide:star-off', 'lucide:stamp'])
     assert.deepEqual(await labels(), ['4 icons match “sta”'])
     assert.equal(await active(), 'lucide:star')
@@ -216,7 +221,7 @@ try {
     assert.equal(await active(), 'lucide:bike')
     assert.equal(await text(), DOC, 'nothing is written while the picker is open')
     await page.keyboard.type('sta')
-    await page.waitForFunction(() => document.querySelectorAll('[data-plain-icon-picker] [data-icon-key]').length === 4)
+    await waitForResults('sta', 4)
     await page.keyboard.press('Enter')
     await picker.waitFor({ state: 'detached' })
     assert.equal(await text(), DOC.replace('- Bikes that are there when I arrive', '- Bikes that are there when I arrive {icon=lucide:star}'))
@@ -234,7 +239,7 @@ try {
     await open(end)
     await picker.waitFor()
     await page.keyboard.type('zap')
-    await page.waitForFunction(() => document.querySelectorAll('[data-plain-icon-picker] [data-icon-key]').length === 1)
+    await waitForResults('zap', 1)
     await page.keyboard.press('Enter')
     await picker.waitFor({ state: 'detached' })
     assert.equal((await text()).split('\n')[5], '- Bikes that are there when I arrive {icon=lucide:zap}')
@@ -295,7 +300,7 @@ try {
     assert.equal(await ev(() => document.querySelector('[data-icon-key="lucide:route"]').classList.contains('pv-icon-cell--current')), true, 'the line\'s icon is marked in the grid')
     assert.notEqual(await active(), 'REMOVE', 'Enter does not remove by default')
     await page.keyboard.type('sun')
-    await page.waitForFunction(() => document.querySelectorAll('[data-plain-icon-picker] [data-icon-key]').length === 1)
+    await waitForResults('sun', 1)
     await page.keyboard.press('Enter')
     await picker.waitFor({ state: 'detached' })
     assert.equal(await text(), DOC.replace('{icon=lucide:route}', '{icon=lucide:sun}'), 'replaced in place')
@@ -317,14 +322,14 @@ try {
     await open(at('### What riders', 8))
     await picker.waitFor()
     await page.keyboard.type('lightb')
-    await page.waitForFunction(() => document.querySelectorAll('[data-plain-icon-picker] [data-icon-key]').length === 1)
+    await waitForResults('lightb', 1)
     await page.keyboard.press('Enter')
     await picker.waitFor({ state: 'detached' })
     assert.equal((await text()).split('\n')[4], '### What riders ask for {icon=lucide:lightbulb} {reveal}')
     await open(at('A paragraph that', 3))
     await picker.waitFor()
     await page.keyboard.type('moon')
-    await page.waitForFunction(() => document.querySelectorAll('[data-plain-icon-picker] [data-icon-key]').length === 1)
+    await waitForResults('moon', 1)
     await page.keyboard.press('Enter')
     await picker.waitFor({ state: 'detached' })
     assert.equal(await text(), DOC.replace('and ends here.', 'and ends here. {icon=lucide:moon}'), 'the token ends the paragraph')
@@ -338,7 +343,7 @@ try {
     await open(at('### What riders', 8))
     await picker.waitFor()
     await page.keyboard.type('lightb')
-    await page.waitForFunction(() => document.querySelectorAll('[data-plain-icon-picker] [data-icon-key]').length === 1)
+    await waitForResults('lightb', 1)
     await page.keyboard.press('Enter')
     await picker.waitFor({ state: 'detached' })
     await page.waitForFunction(() => window.titlePictures('What riders ask for')[0] === 1)
@@ -415,12 +420,12 @@ try {
     await open(at('- Bikes', 4))
     await picker.waitFor()
     await page.keyboard.type('sta')
-    await page.waitForFunction(() => document.querySelectorAll('[data-plain-icon-picker] [data-icon-key]').length === 4)
+    await waitForResults('sta', 4)
     await search.fill('sun')
     await page.keyboard.press('Enter')
     assert.equal(await text(), DOC, 'Enter on the results of “sta” inserts nothing while “sun” is searched')
     assert.equal(await picker.count(), 1, 'the panel stays open')
-    await page.waitForFunction(() => document.querySelectorAll('[data-plain-icon-picker] [data-icon-key]').length === 1)
+    await waitForResults('sun', 1)
     assert.deepEqual(await cells(), ['lucide:sun'])
     await page.keyboard.press('Enter')
     await picker.waitFor({ state: 'detached' })

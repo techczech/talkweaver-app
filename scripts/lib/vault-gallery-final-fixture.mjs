@@ -91,7 +91,7 @@ window.tw.vault.renameFolder=async(t,n,v)=>{const to=await realRename(t,n,v);ctl
 `
 
 export const harnessSource = srcDir => `
-import React,{useState} from 'react';import {createRoot} from 'react-dom/client';import Gallery from '${srcDir}/renderer/src/components/vault-gallery/VaultGallery';
+import React,{useState} from 'react';import {createRoot} from 'react-dom/client';import './src/renderer/src/app-theme.css';import Gallery from '${srcDir}/renderer/src/components/vault-gallery/VaultGallery';
 ${fixtureSource}
 ${overlay}
 const management=window.managementFixture();window.__mgmt=management;
@@ -100,7 +100,7 @@ createRoot(document.getElementById('root')).render(<H/>)`
 
 /** The same gallery on the real selectGuardedTalk. Main refuses a stale root at galleryTalk, galleryClaim and the commit at gallerySettle (ctl.refuseCommit), as src/main/index.ts does: a refused commit or a rollback puts the reserved claim back (window.__owner). calls.order records the open's steps. */
 export const guardedHarnessSource = srcDir => `
-import React,{useState} from 'react';import {createRoot} from 'react-dom/client';import Gallery from '${srcDir}/renderer/src/components/vault-gallery/VaultGallery';import {selectGuardedTalk} from '${srcDir}/renderer/src/lib/talkSelection';
+import React,{useState} from 'react';import {createRoot} from 'react-dom/client';import './src/renderer/src/app-theme.css';import Gallery from '${srcDir}/renderer/src/components/vault-gallery/VaultGallery';import {selectGuardedTalk} from '${srcDir}/renderer/src/lib/talkSelection';
 ${fixtureSource}
 ${overlay}
 const order=calls.order=[];

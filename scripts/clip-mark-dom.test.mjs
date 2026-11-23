@@ -112,21 +112,23 @@ try {
   const clipMarks = async () => (await presenter.evaluate(() => window.calls.filter(([c]) => c === 'recording:save').map(([, p]) => p.rawMarks)))[0]?.filter((m) => m.event === 'clip') ?? []
 
   await check('a play in the projector while not recording logs nothing', async () => {
+    const previousPlay = await lastClipPlay()
     await playInAudience(0.1)
+    await nextClipPlay(previousPlay)
     await pauseInAudience()
-    await presenter.waitForTimeout(400)
     assert.equal(await presenter.evaluate(() => window.calls.filter(([c]) => c === 'recording:save').length), 0)
   })
 
   await check('while recording, a play in the projector is exactly one clip mark with slide, reference and position', async () => {
     await presenter.locator('#twrec-primary').click()
     await presenter.waitForFunction(() => window.calls.some(([c]) => c === 'recording:stream-append'))
+    let prev = await lastClipPlay()
     const at = await playInAudience(0.2)
-    await presenter.waitForFunction(() => !!document.documentElement.dataset.twClipPlay)
+    await nextClipPlay(prev)
     await presenter.waitForTimeout(500) // both peer paths have delivered by now
     await pauseInAudience()
     await presenter.locator('#twrec-pause').click()
-    let prev = await lastClipPlay()
+    prev = await lastClipPlay()
     await playInAudience() // paused: not logged
     await nextClipPlay(prev) // it reached the recorder while paused
     await pauseInAudience()

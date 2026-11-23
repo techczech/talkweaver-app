@@ -91,9 +91,10 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.help', '⌘/ / ⌃/', ['Mod-/', 'Ctrl-/'], 'Keyboard shortcuts', 'Opens or closes the generated keyboard shortcut sheet.', 'App'],
     ['app.check-for-updates', '— · ⌘⇧P', [], 'Check for Updates', 'Reads talkweaver.app now and says whether a newer version exists. No default key; rebindable.', 'App', true],
     ['app.whats-new', '— · ⌘⇧P', [], 'What\u2019s new in TalkWeaver', 'Opens the notes for the version you are running in the right-hand column. No default key; rebindable.', 'App', true],
-    ['app.view-slides', '⌘1', ['Mod-1'], 'Slides', 'Switches the workspace to the Slides view: the editor, with the right sidebar on or off as it was.', 'View'],
+    ['app.view-slides', '⌘1', ['Mod-1'], 'Slide', 'Shows the current slide large, with its text below.', 'View'],
     ['app.view-grid', '⌘2', ['Mod-2'], 'Grid', 'Switches the workspace to the slide grid view.', 'View'],
-    ['app.view-strip', '⌘3', ['Mod-3'], 'Strip', 'Switches the workspace to the Strip view: the slide strip at full width.', 'View'],
+    ['app.view-plain', '⌘3', ['Mod-3'], 'Outline', 'Shows the talk as a clean text outline.', 'View'],
+    ['app.view-markdown', '⌘4', ['Mod-4'], 'Markdown', 'Shows the whole Markdown source.', 'View'],
     ['app.present', 'F5', ['F5'], 'Present from the top', 'Opens presenter view at the first slide.', 'Present'],
     ['app.present-current', '⇧F5', ['Shift-F5'], 'Present from current slide', 'Opens presenter view at the selected slide.', 'Present'],
     ['app.add-to-pathway', '⌘⌥A', ['Mod-Alt-a'], 'Add to pathway…', 'Adds the selected grid slides to a chosen pathway in talk order.', 'Slides'],
@@ -103,13 +104,15 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
   ...entries('editor', [
     ['editor.undo', '⌘Z', ['Mod-z'], 'Undo', 'Reverses the last outline editor change.', 'Editing'],
     ['editor.redo', '⇧⌘Z', ['Mod-Shift-z'], 'Redo', 'Reapplies the last outline editor change.', 'Editing'],
-    ['editor.new-slide', '— · ⌘K', [], 'New slide', 'Inserts an empty slide after the current slide.', 'Headings', true],
+    ['editor.new-slide', '⌃⌘N', ['Ctrl-Mod-n'], 'New slide', 'Inserts an empty slide after the current slide.', 'Headings'],
+    ['editor.new-section', '⌃⌘S', ['Ctrl-Mod-s'], 'New section', 'Starts a section after this slide.', 'Headings'],
+    ['editor.new-subsection', '⌃⇧⌘S', ['Ctrl-Mod-Shift-s'], 'New subsection', 'Starts a subsection inside the current section.', 'Headings'],
     ['editor.bulleted-list', '— · ⌘K', [], 'Bulleted list', 'Toggles bullets on the selected lines.', 'Lists', true],
     ['editor.numbered-list', '— · ⌘K', [], 'Numbered list', 'Toggles numbered items on the selected lines.', 'Lists', true],
     ['editor.move-up', '⌘⇧↑', ['Mod-Shift-ArrowUp'], 'Move slide or item up', 'Moves the current outline node before its previous sibling.', 'Reorder'],
     ['editor.move-down', '⌘⇧↓', ['Mod-Shift-ArrowDown'], 'Move slide or item down', 'Moves the current outline node after its next sibling.', 'Reorder'],
-    ['editor.promote', '⌘⇧←', ['Mod-Shift-ArrowLeft'], 'Promote heading or outdent', 'Moves the current line one outline level towards the root.', 'Change level'],
-    ['editor.demote', '⌘⇧→', ['Mod-Shift-ArrowRight'], 'Demote heading or indent', 'Moves the current line one outline level deeper.', 'Change level'],
+    ['editor.promote', '⌘⇧←', ['Mod-Shift-ArrowLeft'], 'One level up', 'Moves the current line one outline level towards the root.', 'Change level'],
+    ['editor.demote', '⌘⇧→', ['Mod-Shift-ArrowRight'], 'One level down', 'Moves the current line one outline level deeper.', 'Change level'],
     ['editor.promote-subtree', '⌘⌥⇧←', ['Mod-Alt-Shift-ArrowLeft'], 'Promote line and subtree', 'Promotes the current line together with every descendant.', 'Change level'],
     ['editor.demote-subtree', '⌘⌥⇧→', ['Mod-Alt-Shift-ArrowRight'], 'Demote line and subtree', 'Demotes the current line together with every descendant.', 'Change level'],
     ['editor.heading-same', '⌘⌥↑', ['Mod-Alt-ArrowUp'], 'Make heading at same level', 'Turns the line into a heading matching the preceding heading level.', 'Headings'],
@@ -129,7 +132,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['editor.highlight', '— · ⌘K', [], 'Highlight selection', 'Sweeps the warm yellow marker (==mark==) over the selection.', 'Format', true],
     ['editor.strikethrough', '— · ⌘K', [], 'Strikethrough selection', 'Draws a line through the selection (~~strike~~). Exceptional use — no default key; rebindable.', 'Format', true],
     ['editor.underline', '— · ⌘K', [], 'Underline selection', 'Underlines the selection in the accent colour (++underline++). Exceptional use — no default key; rebindable.', 'Format', true],
-    ['editor.link', '⌘⇧L', ['Mod-Shift-l'], 'Insert link (clipboard-aware)', 'Wraps the selection as a Markdown link; a URL in the clipboard becomes the target. WriteFlex’s ⌘⇧K is not carried — the universal keymap reserves it.', 'Format'],
+    ['editor.link', '⌥⌘K', ['Mod-Alt-k'], 'Insert link (clipboard-aware)', 'Wraps the selection as a Markdown link; a URL in the clipboard becomes the target. WriteFlex’s ⌘⇧K is not carried — the universal keymap reserves it.', 'Format'],
     ['editor.rollback-trigger', 'Esc', ['Escape'], 'Cancel trigger completion', 'Restores the exact text that preceded a provisional trigger completion.', 'Editing'],
     ['editor.protect-heading-delete', '⌘⌫ / ⌫', ['Mod-Backspace', 'Backspace'], 'Protect slide identity', 'Prevents partial deletion from corrupting a slide heading and trigger identity.', 'Editing'],
     ['editor.object-edit', '↵', ['Enter'], 'Edit object at caret', 'Opens the selected object block for in-place editing; inside an open object, Enter is a plain newline.', 'Objects'],
@@ -316,7 +319,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['tools.edit-plan', '⌘⌥E', ['Mod-Alt-e'], 'Edit plan', 'Edits the plan of the Run on show. E for edit, with ⌥ because ⌘E is Edit in the presenter.', 'Plan'],
     ['tools.plan-like-this', '⌘⇧D', ['Mod-Shift-d'], 'Plan the next Run like this', 'Opens the plan sheet filled in from the Run on show. D for duplicate, with ⇧ because ⌘D is Duplicate talk and ⌘⌥D is the macOS Dock shortcut.', 'Plan'],
     ['tools.publish', '⌘⌥U', ['Mod-Alt-u'], 'Publish for this run', 'Publishes the Run on show (U for upload). ⌘⇧P is the command palette, so Publish takes ⌥ and a letter nothing else holds.', 'Publish'],
-    ['tools.go-live', '⌘⌥L', ['Mod-Alt-l'], 'Go live', 'Starts the Run on show live. L for live, with ⌥ because ⌘⇧L is Insert link in the editor and ⌘L is the layout picker.', 'Publish'],
+    ['tools.go-live', '⌘⌥L', ['Mod-Alt-l'], 'Go live', 'Starts the Run on show live. L for live, with ⌥ to keep ⌘L for the layout picker.', 'Publish'],
     ['tools.open-run', '⌘⌥O', ['Mod-Alt-o'], 'Open run', 'Opens the Run of the selected page in Published pages. O for open, with ⌥ because ⌘O is Open talk in the Talks panel and ⌘⇧R opens Research.', 'Views'],
     ['tools.copy-link', '⌘⇧C', ['Mod-Shift-c'], 'Copy link', 'Copies the link of the Run on show, the one its Published step shows with the QR code. C for copy; nothing else holds ⌘⇧C.', 'Publish'],
     ['tools.copy-invitation', '⌘⌥C', ['Mod-Alt-c'], 'Copy invitation text', 'Copies the invitation text of the Run on show (C for copy, ⌥ to tell it from Copy link).', 'Publish'],
@@ -360,7 +363,7 @@ function eventMatchesCode(event: KeyboardEvent, code: string): boolean {
   const alt = modifiers.has('Alt')
   if (mod ? !(event.metaKey || event.ctrlKey) : event.metaKey) return false
   if (!mod && event.ctrlKey !== ctrl) return false
-  if (mod && ctrl && !event.ctrlKey) return false
+  if (mod && ctrl && !(event.metaKey && event.ctrlKey)) return false
   if (event.shiftKey !== shift || event.altKey !== alt) return false
   return normalisedEventKey(event) === (base.length === 1 ? base.toLowerCase() : base)
 }

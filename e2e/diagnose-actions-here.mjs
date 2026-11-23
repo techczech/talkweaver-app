@@ -94,6 +94,7 @@ try {
   record('Return opens the palette with “publish” kept', kept === 'publish', JSON.stringify(kept))
   await page.keyboard.press('Escape')
   await page.waitForSelector('[data-command-menu]', { state: 'detached', timeout: 3000 }).catch(() => {})
+  record('Escape after All commands returns focus to the editor', await page.evaluate(() => Boolean(document.activeElement?.closest('.cm-content'))))
 
   // 4. Running a row runs the command, from the keyboard alone: filter, arrow, Return.
   await line('Bread and cakes').click()
@@ -140,12 +141,20 @@ try {
   // 8. A talk row: ⌘K offers what the old row menu offered.
   await ensureTalksMode(page)
   const row = page.locator('aside.talk-list.tl-panel .tl-tree [data-talk-title="Actions Fixture"]').first()
+  await page.locator('aside.talk-list.tl-panel').focus()
+  await page.evaluate(() => { window.__paletteReturnTarget = document.activeElement })
   await row.click({ button: 'right' })
   let talkOpened = false
   try { await panel.waitFor({ timeout: 3000 }); talkOpened = true } catch { /* not opened */ }
   const talkRows = talkOpened ? await rowKeys() : []
   const OLD = ['browser.open-talk', 'open-in-new-window', 'browser.rename', 'browser.move-talk', 'browser.duplicate', 'talk.metadata', 'talk.reveal', 'talk.open-file', 'talk.copy-path', 'browser.delete-talk']
   record('a talk row opens Actions here with every row the old row menu had', talkOpened && OLD.every((key) => talkRows.includes(key)), `rows=${talkRows.join(',')}`)
+  await page.locator('[data-actions-here-all]').click()
+  await page.locator('[data-command-menu]').waitFor()
+  await page.keyboard.press('Escape')
+  record('Escape after a talk row hands over to All commands restores the original row-panel focus', await page.evaluate(() => document.activeElement === window.__paletteReturnTarget))
+  await row.click({ button: 'right' })
+  await panel.waitFor()
   await page.keyboard.press('Escape')
   await gone()
   await page.locator('aside.talk-list.tl-panel').first().focus()

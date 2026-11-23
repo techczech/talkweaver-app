@@ -1,3 +1,5 @@
+import { Bookmark, CornerDownRight, Ellipsis, Image, LayoutTemplate, StickyNote } from 'lucide-react'
+import { structureDrop, type DropSide, type structureOf } from '../../../shared/talk-structure'
 import { slideKeys, useSlideSelection } from '../lib/useSlideSelection'
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ClipboardEvent as ReactClipboardEvent, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { slideRows, talkTitleLine } from '../extensions/slideOutline'
@@ -15,11 +17,21 @@ import { registerSearchSurface, useSlideQuery, usePictureText, useSlideThumbs } 
 import { releaseSelectionOutside, setOutlineSelection } from '../lib/outlineSelection'
 import { rowAfterEdit } from '../lib/activeOutlineLine'
 import { getOutlineMarks, getStripNumbers, numbersAreCurrent, outlineNumbers, subscribeStripNumbers, type OutlineMark } from '../lib/stripNumbers'
-import SlideRowMenus, { type SlideMenuRequest } from './SlideRowMenus'
+import SlideRowMenus, { type SlideMenuRequest, type StructureRowItems } from './SlideRowMenus'
 import type { OutlineOps } from './WorkspaceLayout'
 
 interface Props {
   content: string
+  structureRows?: ReturnType<typeof structureOf>['nodes']
+  dropStructure?: ReturnType<typeof structureOf>
+  rowStructureItems?: StructureRowItems
+  selectedLines?: readonly number[]
+  onPickStructure?: (line: number, event: ReactMouseEvent) => void
+  renderAddLine?: (line: number | null) => ReactNode
+  onStructureMove?: (lines: readonly number[], target: number, side: DropSide) => void
+  cover?: string
+  closing?: string
+  onGenerated?: (kind: 'cover' | 'closing') => void
   onJump: (line: number, opts?: { takeFocus?: boolean }) => void
   ops: OutlineOps | null
   /** Source line of the slide the editor cursor is in (item 1: outline follows cursor). The row
@@ -39,8 +51,11 @@ type DropTarget = { kind: 'before' | 'into'; line: number } | { kind: 'end' }
 /** How long a drag must rest on a collapsed section row before the section opens (ms). */
 export const DRAG_EXPAND_DELAY_MS = 700
 
-export default function SlidesOrganizer({ content, onJump, ops, currentLine, talkKey, talkTitle: talkTitleProp }: Props) {
+export default function SlidesOrganizer({ content, onJump, ops, currentLine, talkKey, talkTitle: talkTitleProp, structureRows, dropStructure, rowStructureItems, selectedLines, onPickStructure, renderAddLine, onStructureMove, cover, closing, onGenerated }: Props) {
   const rows = useMemo(() => slideRows(content), [content])
+  const structureAt = useMemo(() => new Map(structureRows?.map(row => [row.line + 1, row])), [structureRows])
+  const [structureTarget, setStructureTarget] = useState<{ line: number; side: DropSide; label: string } | null>(null)
+  const dragSource = useRef<string | null>(null)
   const tk = talkKey ?? ''
   // Which sections are collapsed lives in the per-talk store (outlineCollapseStore.ts), by section
   // identity rather than line number, so it survives edits, moves, this panel unmounting, and the
@@ -54,11 +69,12 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
   // slide. This replaces the old `level <= 2` hardcode so nesting collapses uniformly.
   const sectionLines = useMemo(() => {
     const set = new Set<number>()
+    if (structureRows) return new Set(structureRows.filter(row => row.section || row.container).map(row => row.line + 1))
     for (let k = 0; k < rows.length - 1; k += 1) {
       if (rows[k + 1].level > rows[k].level) set.add(rows[k].line)
     }
     return set
-  }, [rows])
+  }, [rows, structureRows])
   // Collapse keys count same-titled occurrences; selection must follow the authored block
   // when those occurrences swap. Use the exact source (including descendants), never a title hash.
   const selectionKeys = useMemo(() => {
@@ -236,7 +252,13 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
   // Leaving the Slides tab mid-drag must not leave the scroll loop running.
   useEffect(() => () => { stopAutoScrollRef.current?.() }, [])
 
-  function select(line: number): void {
+  function select(line: number, event?: ReactMouseEvent): void {
+    if (event && onPickStructure && !structureAt.get(line)?.folded) {
+      onPickStructure(line, event)
+      setHighlightedLine(line)
+      if (searching && run.isHit.has(line)) setHitLine(line)
+      return
+    }
     // Choosing a search result shows it in its tree: the sections around it open and it is scrolled to.
     if (searching) revealLine(tk, line, content)
     setSelectedLine(line)
@@ -547,21 +569,43 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     closeSprung(droppedAtLine)
     dragLineRef.current = null
     setDropAt(null)
+    setStructureTarget(null)
     stopAutoScrollRef.current?.()
     stopAutoScrollRef.current = null
   }
   function beginDrag(e: ReactDragEvent<HTMLElement>, line: number, level: number): void {
+    dragSource.current = content
     dragLineRef.current = line
     dragLevelRef.current = level
     draggedKeyRef.current = selectionKeys[rows.findIndex(row => row.line === line)] ?? null
     e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('application/x-tw-structure', String(line))
     stopAutoScrollRef.current?.()
     if (panelRef.current) {
       stopAutoScrollRef.current = startDragAutoScroll(panelRef.current, { sticky: '.so-search', onScroll: (p) => dropAtPointRef.current(p.x, p.y) })
     }
   }
+  function structureTargetFor(e: ReactDragEvent<HTMLElement>) {
+    const row = (e.target as Element).closest<HTMLElement>('[data-line]')
+    if (!row || !dropStructure) return null
+    const line = Number(row.dataset.line)
+    const box = row.getBoundingClientRect()
+    const node = structureAt.get(line)
+    const indent = Number.parseFloat(row.style.paddingLeft) || 0
+    const side: DropSide = node?.section && e.clientX >= box.left + Math.max(34, indent + 23) ? 'inside'
+      : e.clientY < box.top + box.height / 2 ? 'before' : 'after'
+    const target = structureDrop(dropStructure, line, side)
+    return target ? { line, side, label: target.label } : null
+  }
+
   function handleDragOver(e: ReactDragEvent<HTMLElement>): void {
     if (dragLineRef.current == null) return
+    if (onStructureMove) {
+      const target = structureTargetFor(e)
+      if (target) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }
+      setStructureTarget(target)
+      return
+    }
     const at = dropAtElement(e.target as Element, e.clientY)
     if (at != null) { e.preventDefault(); e.dataTransfer.dropEffect = 'move' }
     setDropAt((prev) => (prev === at ? prev : at))
@@ -570,6 +614,15 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     const from = dragLineRef.current
     if (from == null) return
     e.preventDefault()
+    if (onStructureMove) {
+      const target = structureTargetFor(e)
+      endDrag(target?.line ?? null)
+      if (target && dragSource.current === content) {
+        onStructureMove(selectedLines?.includes(from) ? selectedLines : [from], target.line, target.side)
+      }
+      dragSource.current = null
+      return
+    }
     const target = targetFor(dropAtElement(e.target as Element, e.clientY))
     endDrag(target && target.kind !== 'end' ? target.line : null)
     if (!target || !ops) return
@@ -584,10 +637,23 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
       ? dropTarget.kind === 'into' ? 'so-row--dropinto' : 'so-row--dragover'
       : ''
 
-  if (rows.length === 0) {
+  if (rows.length === 0 && !cover) {
     return <div className="pres-nav-empty">{content ? 'No headings yet.' : 'Select a talk to see its slides.'}</div>
   }
 
+  const dropLabel = (line: number) => structureTarget?.line === line
+    ? <span className="tw-structure-drop" data-drop-side={structureTarget.side}>{structureTarget.label}</span> : null
+  const more = (line: number) => rowStructureItems && <button type="button" className="tw-structure-row-more" aria-label="More for this row"
+    onClick={e => { e.stopPropagation(); const box = e.currentTarget.getBoundingClientRect(); openMenu(line, box.right, box.top, e.detail === 0) }}><Ellipsis size={14} /></button>
+  const outlineMark = (row: typeof rows[number]) => {
+    if (!structureRows) return markChips(markOf(row))
+    const source = structureAt.get(row.line)
+    return <>
+      {source?.folded ? <CornerDownRight size={12} aria-label="Subslide" /> : <LayoutTemplate size={13} aria-label={markOf(row).layout ?? 'Slide'} />}
+      {source?.notes && <StickyNote size={11} aria-label="Has speaker notes" />}
+      {source?.content.includes('![') && <Image size={11} aria-label="Has a picture" />}
+    </>
+  }
   return (
     <>
     <div
@@ -630,9 +696,12 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
       {searching && matchCount === 0 && (
         <div className="pres-nav-empty">No slides match “{query.trim()}”.</div>
       )}
-      {rows.map((r) => {
+      {cover && !rows.some(row => row.level === 1) && <><button type="button" className="so-slide tw-structure-generated" onClick={() => onGenerated?.('cover')}><span className="so-slide-no">1</span>{cover}</button>{renderAddLine?.(null)}</>}
+      {rows.map((r, index) => {
         if (hidden.has(r.line)) return null
-        const isSel = selectedLine === r.line
+        const source = structureAt.get(r.line)
+        const isSel = selectedLines ? selectedLines.includes(r.line) : selectedLine === r.line
+        const add = index < rows.length - 1 && !source?.folded ? renderAddLine?.(r.level === 1 ? null : r.line) : null
         const isHighlighted = highlightedLine === r.line
         // Indent by heading depth (##/# flush left) so nesting reads as a tree at any level.
         const indent = { paddingLeft: `${6 + Math.max(0, r.level - 2) * 14}px` }
@@ -641,31 +710,37 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
           const isCollapsed = collapsed.has(rowKey)
           const heldSlides = isCollapsed ? slideCount(keyed, rowKey) : 0
           return (
+            <div key={r.line} className="tw-structure-row-wrap">
             <div
               key={r.line}
               ref={(el) => {
                 if (el) rowRefs.current.set(r.line, el)
                 else rowRefs.current.delete(r.line)
               }}
-              className={`so-section ${isSel ? 'so-row--sel' : ''} ${isHighlighted ? 'so-row--kbd' : ''} ${shownCurrentLine === r.line ? 'so-row--current' : ''} ${dimmed(r.line, true) ? 'so-row--dim' : ''} ${dropClass(r.line)}`}
+              className={`so-section ${source?.container ? 'so-as-slide' : ''} ${isSel ? 'so-row--sel' : ''} ${isHighlighted ? 'so-row--kbd' : ''} ${shownCurrentLine === r.line ? 'so-row--current' : ''} ${dimmed(r.line, true) ? 'so-row--dim' : ''} ${dropClass(r.line)}`}
               style={indent}
               data-line={r.line}
               draggable
               onDragStart={(e) => beginDrag(e, r.line, r.level)}
             >
+              {dropLabel(r.line)}
               <span className="so-slide-no" data-so-no>{rowNumber(r)}</span>
               <button type="button" className="so-caret" onClick={(e) => { e.stopPropagation(); toggle(r.line, e.altKey) }} aria-expanded={!isCollapsed} title="Option-click: this section and all inside it">
                 {isCollapsed ? '▸' : '▾'}
               </button>
-              {markOf(r).sectionNumber && <span className="so-section-no" data-so-section-no title={`Section ${markOf(r).sectionNumber}`}>§{markOf(r).sectionNumber}</span>}
-              <button type="button" className="so-section-label" onClick={() => select(r.line)}>{renderText(r.text)}</button>
-              {markChips(markOf(r))}
+              {(!structureRows || source?.section) && markOf(r).sectionNumber && <span className="so-section-no" data-so-section-no title={`Section ${markOf(r).sectionNumber}`}>§{markOf(r).sectionNumber}</span>}
+              <button type="button" className="so-section-label" onClick={e => select(r.line, e)}>{renderText(r.text === '(untitled)' ? source?.level === 2 ? 'New section' : 'New subsection' : r.text)}</button>
+              {structureRows && source?.section ? <Bookmark size={13} /> : outlineMark(r)}
+              {more(r.line)}
               {searching && (sectionHits.get(r.line) ?? 0) > 0 && <span className="so-hits" data-so-hits title="Hits inside this section">{sectionHits.get(r.line)} hit{sectionHits.get(r.line) === 1 ? '' : 's'}</span>}
               {heldSlides > 0 && <span className="so-count" data-so-count title={`${heldSlides} slide${heldSlides === 1 ? '' : 's'} inside`}>{heldSlides}</span>}
+            </div>
+            {add}
             </div>
           )
         }
         return (
+          <div key={r.line} className="tw-structure-row-wrap">
           <button
             key={r.line}
             type="button"
@@ -676,26 +751,33 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
             className={`so-slide ${isSel ? 'so-row--sel' : ''} ${isHighlighted ? 'so-row--kbd' : ''} ${shownCurrentLine === r.line ? 'so-row--current' : ''} ${dimmed(r.line, false) ? 'so-row--dim' : ''} ${run.isHit.has(r.line) && searching && hitLine === r.line ? 'so-row--hit' : ''} ${dropClass(r.line)}`}
             style={indent}
             data-line={r.line}
-            onClick={() => select(r.line)}
-            draggable
+            onClick={e => select(r.line, e)}
+            data-subslide={source?.folded || undefined}
+            draggable={r.level !== 1}
             onDragStart={(e) => beginDrag(e, r.line, r.level)}
           >
-            <span className="so-slide-no">{rowNumber(r)}</span>
+            {dropLabel(r.line)}
+            <span className="so-slide-no">{source?.folded ? "" : rowNumber(r)}</span>
             <span className="so-slide-text">
               <span className="so-slide-title">{renderText(r.text)}</span>
               {snippetOf(r.line)}
               {thumbOf(r.line)}
             </span>
-            {markChips(markOf(r))}
+            {outlineMark(r)}
           </button>
+          {more(r.line)}
+          {add}
+          </div>
         )
       })}
+      {closing && <button type="button" className="so-slide tw-structure-generated" onClick={() => onGenerated?.('closing')}>{closing}</button>}
       {/* Always in the tree (adding it at drag start would shift the list under the pointer): the
           drop zone after the last row, which moves the dragged slide to the end of the talk. */}
       <div className={`so-drop-end ${dropTarget?.kind === 'end' ? 'so-drop-end--active' : ''}`} data-drop-end aria-hidden />
     </div>
     <SlideRowMenus
       request={menu}
+      structureItems={rowStructureItems}
       rows={rows}
       ops={slideOps}
       onClose={() => setMenu(null)}

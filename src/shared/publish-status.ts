@@ -20,13 +20,16 @@ export const SAVE_AS_FILE = 'Save as a file instead'
  * fixes it.
  */
 export type PublishNotReady = {
-  kind: 'not-connected' | 'not-ready'
+  kind: 'not-connected' | 'not-ready' | 'media-warning' | 'media-ready'
   /** The missing thing, named. */
   title: string
   detail: string | null
   /** Every fix is in Settings → Cloudflare: making the site there too (it saves the account and site, Settings configuration). */
-  fix: { action: 'open-settings'; label: string }
+  fix: { action: 'open-settings' | 'import-site-recovery' | 'get-library-files' | 'show-source'; label: string }
 }
+
+/** An explicit choice after the handout media check. */
+export type MediaPublishChoice = 'with-placeholders' | 'recheck-media'
 
 const inSettings = { action: 'open-settings', label: OPEN_SETTINGS } as const
 const notReady = (title: string, detail: string | null): PublishNotReady => ({ kind: 'not-ready', title, detail, fix: inSettings })

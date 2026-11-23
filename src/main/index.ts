@@ -1,3 +1,4 @@
+import { parseSiteRecord, SITE_RECORD_PATH } from './site-record'
 import './security-startup'
 // Second: the test-only network overrides are decided here, before the instance lock and any profile read.
 import { testNetworkOverride } from './test-network-startup'
@@ -10,11 +11,16 @@ import { isGitConflictError } from '../shared/git-conflict'
 import { AlignmentModels, readAlignmentManifests } from './alignment-models'
 import { cancelRecordingRefresh, prepareRecordingRefresh, registerPresenterRefresh } from './presenter-refresh'
 import { ImageEditRecipeSizeError, readImageEdit, saveImageEdit } from './image-edit'
-import { withRemoteEmbedArtwork } from './embed-preview-artwork'
+import { artwork as embedPreviewArtwork } from './embed-preview-artwork'
 import { saveOfflinePage } from './offline-page'
 import { captureOfflinePage, offlineSource } from './offline-page-capture'
 import { scratchSnapshotUrl, scratchSnapshotFileFor } from './scratchpad-disk'
 import { preservationMessage, type PreservationReason } from './publication-preservation'
+import type { MediaPublishChoice } from '../shared/publish-status'
+import { publicationMediaReview, publicationBuildWarnings } from '../shared/publication-files'
+import { getLibraryFiles } from './publishing-library-sync'
+import { createPublishHistory } from './publish-history'
+import type { PublishSiteCheck } from '../shared/publish-history'
 import { readPublishingInventory } from './publishing-inventory'
 import { relative } from 'node:path'
 import { acquireGallerySite, gallerySiteScope } from './gallery-site'
@@ -33,9 +39,8 @@ import { researchDestinations } from './research-writer'
 import { researchWriteHandler } from './agent-verbs'
 import { RESEARCH_INSERT_VERB, RESEARCH_MAKE_SLIDE_VERB } from './agent-verbs'
 import { revealResearchSource } from './research-reader'
-import { INK_LIMITS, parseInkMessage, parsePointerMessage } from '../../worker/protocol'
 import { createLatestThumbnailRequestHandler } from './thumbnail-queue'
-import { app, BrowserWindow, clipboard, ipcMain, dialog, Menu, net, protocol, shell, session, screen, powerMonitor, WebContentsView, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, dialog, Menu, net, protocol, shell, session, screen, powerMonitor, nativeTheme, WebContentsView, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron'
 import { join, basename, dirname, extname } from 'path'
 
 // EPIPE guard: when the packaged binary is launched with stdout/stderr piped and the pipe
@@ -51,7 +56,7 @@ const E2E = process.env.TW_E2E === '1'
   const standIn = liveServiceStandIn({ packaged: app.isPackaged, e2e: E2E, override: testNetworkOverride('TW_E2E_LIVE_SERVICE_URL') })
   if (standIn) globalThis.fetch = fetchWithLiveStandIn(standIn, globalThis.fetch.bind(globalThis))
 }
-// Record one slide again: off in release builds; a development build started with TW_RECORD_AGAIN=1 turns it on.
+// Record one slide again: available in packaged builds; development builds opt in with TW_RECORD_AGAIN=1.
 const TAKES_ENABLED = takesEnabled({ packaged: app.isPackaged, flag: process.env[RECORD_AGAIN_ENV] })
 
 // `TalkWeaver setup …` (ticket 07, spec D14): the set-up command for an agent. Found here, before
@@ -128,6 +133,11 @@ app.commandLine.appendSwitch('js-flags', '--max-old-space-size=8192')
 // SIGTRAP on delete whose symbolicated stack was unusable).
 // Bounded (1 MB, trimmed to its last 512 KB) so a crash loop cannot fill the user's disk.
 const appendMainError = createErrorLog(() => join(app.getPath('userData'), 'tw-main-errors.log'))
+const directoryWatchService = createDirectoryWatchService(() =>
+  forkUtilityChild(join(__dirname, 'directory-watch-worker.js'), 'TalkWeaver directory watches') as DirectoryWatcherChild,
+)
+configureDirectoryWatch(directoryWatchService.watch)
+const quitSequence = createQuitSequence(app, (name, error) => appendMainError(`quit step: ${name}`, error), captureQuitVeto)
 function logMainError(kind: string, err: unknown): void {
   try { console.error(`[main] ${kind}:`, err) } catch {}
   appendMainError(kind, err)
@@ -190,7 +200,7 @@ import { createEditorRevisions } from './editor-revisions'
 import { createRestartWindows } from './restart-windows'
 import { updateTestSaveDelay, updateTestSettingsDelay } from './update-test-hooks'
 import { createPressLedger, installPressLedger } from './recent-press'
-import { liveReadClipboardHandler } from './live-read-clipboard'
+import { registerLiveIpc } from './live-ipc'
 import { appLocalHostOf, installLocalAddressFilter } from './local-address-filter'
 import { createOpenRequests, refuseOpenTarget } from './open-requests'
 import { decideOpenInNewWindow, parseOpenInNewWindowTarget, type OpenInNewWindowTarget } from '../shared/open-in-new-window'
@@ -211,7 +221,7 @@ import { createOutlineRecovery } from './outline-recovery'
 import { createDirectoryWatcherRegistry } from './talkTextWatchers'
 import type { PresenterShareLinkUpdate } from '../preload/index'
 import type { OutlineDiskChange } from '../shared/outline-disk-change'
-import { type Dirent, linkSync, fstatSync, existsSync, lstatSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, constants as fsConstants, mkdtempSync, openSync, readSync, closeSync, appendFileSync, watch, writeSync } from 'fs'
+import { type Dirent, linkSync, fstatSync, existsSync, lstatSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, constants as fsConstants, mkdtempSync, openSync, readSync, closeSync, appendFileSync, writeSync } from 'fs'
 import { createHash, randomBytes, randomUUID } from 'crypto'
 import { execFile, execFileSync, spawn, type ChildProcessByStdio } from 'child_process'
 import type { Readable } from 'stream'
@@ -269,6 +279,8 @@ import {
   waitForHeap
 } from './thumbnail-media-policy'
 import { createAppendLog, createErrorLog } from './main-log'
+import { createQuitSequence } from './quit-sequence'
+import { configureDirectoryWatch, createDirectoryWatchService, watchDirectory, type DirectoryWatcherChild } from './directory-watch'
 import {
   contentHashForPrerender,
   loadPrerenderLedger,
@@ -284,7 +296,7 @@ import {
   AUTO_ENROL_LIMIT, SAVE_DEBOUNCE_MS, type BackupScopeState
 } from './backup-scope.mjs'
 import { pickOutlineName, scanTalkFoldersSync } from './talk-scan.mjs'
-import { createConflictScanner, resolveByRealRoot } from './conflict-copies.mjs'
+import { createConflictScanner, resolveByRealRoot, hasGitConflictMarkers } from './conflict-copies.mjs'
 import { createVaultMachines } from './vault-machines'
 import { createTalkActivity } from './talk-activity'
 import { createConflictCompare } from './conflict-compare'
@@ -315,7 +327,7 @@ import { createSecretSlots, recordedKeyChange } from './settings-secret-slots'
 import { createSettingsKeymap, legacyOverridesArg, overridesArg, type SettingsKeymap } from './settings-keymap'
 import { openSettings, runWithSettings } from './settings-open'
 import { RECORDING_SETTINGS_ONLY, settingsWindowOnly } from './settings-window-channels'
-import { SECRET_KEYS, schema as settingsSchema } from '../shared/settings-schema'
+import { SECRET_KEYS, THEME_SETTING, schema as settingsSchema } from '../shared/settings-schema'
 import { KEYMAP_SETTING } from '../shared/keymap-overrides'
 import { bridleIdOfKeymapId, keymapIdOf, registry as commandRegistry } from '../shared/bridle-commands'
 import {
@@ -371,6 +383,8 @@ import {
   normaliseMetadataDefaults,
   type MetadataDefaults
 } from '../shared/metadata-surfaces'
+import { WORKSPACE_VIEWS, type SlidesPanelView, type WorkspaceView } from '../shared/workspace-view'
+import { newTalkSource } from '../shared/redesign-window-source'
 import { editFrontmatterText, parseFrontmatterPairs } from '../shared/frontmatter-editor'
 import { extractSection, type SectionLocation } from '../shared/insert-section'
 import { commandElectronAccelerator, menuCommands } from '../shared/command-registry'
@@ -462,15 +476,16 @@ import type { ChannelUpdateState } from '../shared/update-checker'
 import { fetchWithLiveStandIn, liveServiceStandIn } from './live-service-stand-in'
 import { loopbackOrigin } from './test-network-guard'
 import { cloudflareApiBase, createCloudflareConnection, standInApiBase, type CloudflareConnectionService, type ConnectionReply as CloudflareReply } from './cloudflare-connection'
-import { LIVE_ACCESS_REMOVED, LIVE_NOT_SET_UP, LiveServiceError, deployLiveService, lookUpLiveService, surveyLiveService, type DeployPhase, type LiveDeployResult } from './live-service-deploy'
-import { KeyStoreUnreadable, computerNameOrNull, createComputerKeyStore, defaultComputerName, keyKind, keyToPresent, sendWithHeldKeys, type ComputerKeyStore, type KeyKind, type StoredKey } from './live-service-key'
+import { LIVE_NOT_SET_UP, LiveServiceError, deployLiveService, lookUpLiveService, surveyLiveService, type DeployPhase, type LiveDeployResult } from './live-service-deploy'
+import { KeyStoreUnreadable, computerNameOrNull, createComputerKeyStore, defaultComputerName, keyKind, keyToPresent, type ComputerKeyStore, type KeyKind, type StoredKey } from './live-service-key'
 import { changeShareAddress, shareDomainEntries, shareLinkBase, type ShareDomainEntry, type ShareDomainPorts, type ShareDomainRecords, type ShareDomainResult } from './live-service-share-domain'
 import type { AdminEndpoint } from './live-admin-request'
 import { createLiveService, type LiveService } from './live-service'
 import { LIVE_WORKER_NAME, type GoingLiveRow, type LiveSetupPrompt } from '../shared/live-service-status'
 import { WORKER_DIST_DIR, readShippedFiles, type ShippedFiles } from './live-service-upload'
+import { parseSiteRecoveryProof, siteRecoveryRecord } from './site-adoption'
 import { REGISTRY_ORIGIN_UNAVAILABLE, addressKind, createHandoutPublishing, liveAddressForPages, localLiveAllowed, publishedFolders, writableSiteFolder, type HandoutPublishing } from './handout-publishing'
-import { loadWranglerBlake3, loadWranglerMime, type Blake3 } from './pages-direct-upload'
+import { loadWranglerBlake3, loadWranglerMime, readLiveAsset, siteAssetAddresses, type Blake3 } from './pages-direct-upload'
 import { readRegistryStrict, registryOrigin, type RegistryOrigin } from './registry-origin'
 import { slimHandoutHtml } from './handout-slimming'
 import { buildRunHandoutHtml, placedRunExtras, runCompileOption, runForHandoutOf, runHandoutSourceFrom, withRunExtraIds, type HandoutPagesJob, type HandoutPagesResult, type RunExtrasModel, type RunCompileOption, type RunForHandout, type RunHandoutSource } from './handout-pages'
@@ -503,8 +518,8 @@ import { openVaults, registerPublishedPagesIpc, siteClaims, type PublishedPagesD
 import { TALK_NOT_FOUND, talkByOutline, talkLinkNotCleared, talkUnpublishJob } from './talk-unpublish'
 import { registerRunPageIpc, runVaultRoot } from './run-page'
 import { createRunResultsShares } from './run-results-share'
-import { seedPollForRun, withoutSeed } from './run-prework-seed'
-import { answerPreworkTrayForLiveSession, isPreworkQuestionId, preworkTrayForLiveSession } from './prework-tray'
+import { seedPollForRun } from './run-prework-seed'
+import { preworkTrayForLiveSession } from './prework-tray'
 import type { PollDefinition } from '../../worker/protocol'
 import type { PreworkFeed } from '../../compiler/scripts/lib/prework.mjs'
 import { createRunPrework, registerRunPreworkIpc, startRunPreworkTimer, type RunPreworkService } from './run-prework'
@@ -513,8 +528,7 @@ import { buildRunWorkPreview, planRunWork, runLineFor, sendRunWork, writeRunWork
 import { RUN_FOLDER_UNCLEAR, RUN_FOLDER_UNPROVEN, legacyRunUnproven, runPublishFolder, runSiteFolder, runUnpublishJob, sentPhases } from './run-unpublish'
 import { createPostWorkOpener, startPostWorkOpenTimer, type PostWorkOpener } from './post-work-open'
 import { buildNotAvailablePage } from './work-page'
-import { LIVE_WORKER_BUILD, supportsCurrentLiveWorker } from '../../worker/recovery-protocol'
-import { fitInstantImage } from './instant-image'
+import { LIVE_WORKER_BUILD } from '../../worker/recovery-protocol'
 import { decodeToWebp, storePastedImage } from './pasted-image-asset'
 import { prepareCrossVaultInsert, type CrossVaultTools, type SlideOrigin } from './cross-vault-insert'
 import { createProvenanceStore, originHintsFor } from './provenance-store'
@@ -534,10 +548,10 @@ import { buildInGate, buildSharedTalkPayload, ownerNameFrom } from './shared-tal
 import { isSharedTalkStopped, isValidShareDomain } from '../shared/shared-talk'
 import { deckWindowKeyAction, deckWindowMode, OPEN_AUDIENCE_SCRIPT } from './deck-window-keys'
 import { appWindowOpenHandler, guardDeckWindowTree, isAppAudienceUrl } from './present-window-open'
+import { presentWindowPreferences } from './present-window-prefs'
 import { followRemotePages } from './remote-page-follow'
 import { createLivePageHost, disposeAllLivePageHosts, isLivePageContents, pairLivePageHosts, type DeckWindow, type LivePageHost, type LivePageRole, type LivePageSession, type LiveView } from './live-page-host'
 import { testLoopbackAllowance } from './live-page-policy'
-import { isPresenterBoardMessage, parsePresenterMessage, parseSlideLightbox } from '../../worker/protocol'
 import { handoutHomeDetails, handoutHomePostwork, handoutHomePrework } from '../shared/handout-home'
 import { canonicalToolsView, historyResultsRefusal, isOpenableToolsView, parseToolsRunRef, type ToolsRunRef, type ToolsView } from '../shared/tools-views'
 
@@ -558,6 +572,8 @@ type Config = {
   // The name and service each vault had when it was last reachable (ticket 07), so a vault that is
   // unavailable at launch keeps its name. Local to this Mac, never written into a vault.
   vaultLastSeen?: Record<string, LastGood>
+  openInView?: WorkspaceView
+  slidesPanelView?: SlidesPanelView
   windowBounds?: { x?: number; y?: number; width: number; height: number }
   toolsWindowBounds?: { x?: number; y?: number; width: number; height: number }
   archiveRoot?: string
@@ -1088,111 +1104,6 @@ function attachLiveWindow(wcId: number) {
   return liveSessions?.record(wcId) ?? null
 }
 
-ipcMain.handle('live:go', async (event) => {
-  const wcId = event.sender.id
-  const context = livePresenterContexts.get(wcId)
-  if (!context) return { success: false, error: 'Live sessions are available in the presenter window only.' }
-  try {
-    if (!liveSessions || !liveRecoveryStore) throw new Error('Secure live session recovery is unavailable. Restart TalkWeaver to retry.')
-    if(context.sourceOutline && context.vaultRoot) {
-      const outline=join(context.vaultRoot,context.sourceOutline)
-      if(await verifiedRunSource(outline,context.talkSlug)!==context.sourceOutline)throw Error('run-source-unavailable')
-    }
-    liveRecoveryStore.check()
-    const existing = attachLiveWindow(wcId)
-    if (existing && !isTerminalLiveStatus(existing.status)) return { success: true, ...liveSessions.snapshot(wcId) }
-    if (liveSessions.inUse(context.talkSlug, context.vaultRoot, wcId)) throw new Error('This talk is already live in another presenter window. Close that presentation and keep it live before reopening it here.')
-    if (!context.shortUrl) throw new Error('Publish or export this handout before going live.')
-    const endpoint = await ensureLiveWorker()
-    const capabilityResponse = await fetch(`${endpoint.baseUrl}/capabilities`, { signal: AbortSignal.timeout(10_000) })
-    const capabilities = capabilityResponse.ok ? await capabilityResponse.json() as { protocol?: number; build?: string } : null
-    if (!supportsCurrentLiveWorker(capabilities)) throw new Error('The live service needs updating before you can go live.')
-    const joinUrl = await ensureLiveJoinUrl(context)
-    const compilerDir = getCompilerPath()
-    if (!compilerDir) throw new Error('Compiler not found.')
-    const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
-    const qrSvg = String(makeQrSvg(joinUrl) || '')
-    // With two keys held for this live service (this computer's own and the 0.38.2 one), a 401 for the
-    // one presented is followed by one more try with the other (live-service-key.ts `sendWithHeldKeys`).
-    const { response, refused } = await sendWithHeldKeys(recordedLiveService(), liveKeysHeldFor(endpoint.baseUrl), endpoint.adminSecret, (secret) => fetch(`${endpoint.baseUrl}/sessions`, {
-      method: 'POST',
-      headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ talkSlug: context.talkSlug }),
-      signal: AbortSignal.timeout(15_000),
-    }))
-    // The live service refuses every key this computer holds for it (its access was removed from another
-    // computer): the same fixed sentence as the Settings row's, with Open Settings, never the reply's own text.
-    if (refused) throw new LiveServiceError('failed', LIVE_ACCESS_REMOVED, null, 'open-settings')
-    if (!response.ok) throw new Error(await liveHttpError(response, 'Could not create a live session.'))
-    const created = await response.json() as { sessionId: string; presenterToken: string; shortId: string; expiresAt: number }
-    if (!created.sessionId || !created.presenterToken || !created.shortId || !Number.isFinite(created.expiresAt)) throw new Error('The live service returned an incomplete session.')
-    const record: SessionRecoveryRecord = {
-      ...created, baseUrl: endpoint.baseUrl, shortUrl: joinUrl, qrSvg,
-      talkSlug: context.talkSlug, vaultRoot: context.vaultRoot,
-      status: 'connecting', startedAtMs: Date.now(), endRequested: false,
-      latest: null, pending: [], polls: [], voteRecords: [], cursor: 0,
-    }
-    liveSessions.detach(wcId)
-    liveSessions.create(record, wcId)
-    liveSessions.bindRun(wcId, recordingRunReference(wcId))
-    return { success: true, ...liveSessions.snapshot(wcId) }
-  } catch (cause) {
-    // A live service that is not set up or failed its set-up: the sorted sentence; what the tool printed only as `details`;
-    // and what Go live offers for it (Open Settings, or Set up going live now). Presenting goes on either way.
-    if (cause instanceof LiveServiceError) return { success: false, error: cause.message, ...(cause.details ? { details: cause.details } : {}), ...(cause.prompt ? { setup: cause.prompt } : {}) }
-    return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
-  }
-})
-
-// Feedback-boards ticket 06 (D20): the boards still open in this window's session, so End live can
-// ask whether to close them or keep them open for late cards.
-ipcMain.handle('live:open-boards', (event) => {
-  attachLiveWindow(event.sender.id)
-  return liveSessions?.openBoards(event.sender.id) ?? []
-})
-ipcMain.handle('live:end', async (event, options: unknown) => {
-  try {
-    attachLiveWindow(event.sender.id)
-    const keepBoardsOpen = !!options && typeof options === 'object' && (options as { keepBoardsOpen?: unknown }).keepBoardsOpen === true
-    return await liveSessions?.end(event.sender.id, { keepBoardsOpen }) ?? { success: true, status: 'ended' }
-  } catch (cause) {
-    return { success: false, error: cause instanceof Error ? cause.message : String(cause) }
-  }
-})
-ipcMain.handle('live:snapshot', (event) => {
-  const record = attachLiveWindow(event.sender.id)
-  const snapshot = liveSessions?.snapshot(event.sender.id) ?? null
-  // The Run's pre-work questions put in the talk's questions ride beside the phones' (never sent to the Worker).
-  // Read from the session's own vault (record.vaultRoot) only while it is open and there; never the current vault.
-  return snapshot ? { ...snapshot, preworkQuestions: preworkTrayForLiveSession(record, liveVaultReadable) } : null
-})
-ipcMain.handle('live:status', (event): LiveStatus => attachLiveWindow(event.sender.id)?.status ?? 'ended')
-ipcMain.handle('live:share-link', (event) => presenterShareLink(livePresenterContexts.get(event.sender.id)?.shortUrl ?? null))
-ipcMain.on('live:embed', (event, value: unknown) => {
-  liveSessions?.embed(event.sender.id, value)
-})
-ipcMain.on('live:pointer', (event, value: unknown) => {
-  const message = parsePointerMessage(value)
-  if (message) liveSessions?.pointer(event.sender.id, message)
-})
-// The Pen's ink (ticket 08): relayed to the worker, held nowhere in main.
-ipcMain.on('live:ink', (event, value: unknown) => {
-  const message = parseInkMessage(value)
-  if (message && new TextEncoder().encode(JSON.stringify(message)).length <= INK_LIMITS.bytes) liveSessions?.ink(event.sender.id, message)
-})
-ipcMain.on('live:publish-slide', (event, state: { slideId?: string; reveal?: number; focus?: unknown; lightbox?: unknown; talkQr?: unknown }) => {
-  if (!state || typeof state.slideId !== 'string' || !Number.isInteger(state.reveal) || Number(state.reveal) < 0) return
-  const focus = state.focus == null ? null : state.focus as { kind: 'reveal' | 'focus'; step: number }
-  if (focus && ((focus.kind !== 'reveal' && focus.kind !== 'focus') || !Number.isInteger(focus.step) || focus.step < 0)) return
-  const lightbox = state.lightbox === undefined ? undefined : parseSlideLightbox(state.lightbox)
-  if (state.lightbox !== undefined && !lightbox) return
-  if (state.talkQr !== undefined && typeof state.talkQr !== 'boolean') return
-  try {
-    attachLiveWindow(event.sender.id)
-    liveSessions?.publish(event.sender.id, { slideId: state.slideId, reveal: Number(state.reveal), focus,
-      ...(lightbox ? { lightbox } : {}), ...(state.talkQr ? { talkQr: true } : {}) })
-  } catch { event.sender.send('live:status', 'paused-reconnecting') }
-})
 // A board slide fed by a pre-work step opens with the Run's picked answers (feedback-boards ticket 11);
 // the glue is seedPollForRun. Only main adds a seed: a window's own is dropped in the live:poll-open handler.
 /** The board slides fed by a step (`model.resultsFeeds`, which also holds the work-file ones), or null when there is no model. */
@@ -1217,137 +1128,40 @@ function seedFromRunPrework(wcId: number, poll: PollDefinition): Promise<PollDef
     pull: (talkSlug, runId, phase, vaultRoot) => runPrework().pull(talkSlug, runId, phase, vaultRoot),
   })
 }
-type LivePollMessage = NonNullable<ReturnType<typeof parsePresenterMessage>>
-function parseLivePoll(wcId: number, value: unknown): { message: LivePollMessage } | { error: string } {
-  attachLiveWindow(wcId)
-  const message = parsePresenterMessage(JSON.stringify(value))
-  // Board operations (message.type 'board.*') reach the worker through the presenter's board panel, not this route.
-  if (!message || message.type === 'slide.publish' || message.type === 'question.answer' || message.type === 'switches.set'
-    || isPresenterBoardMessage(message)) {
-    return { error: 'Invalid poll control.' }
-  }
-  if (message.type === 'poll.open' && !message.poll.slideId) message.poll.slideId = liveSessions?.record(wcId)?.latest?.slideId
-  return { message }
-}
-function queueLivePoll(wcId: number, value: unknown) {
-  try {
-    const parsed = parseLivePoll(wcId, value)
-    if ('error' in parsed) return { success: false, error: parsed.error }
-    return liveSessions?.poll(wcId, parsed.message as never) ?? { success: false, error: 'No live session.' }
-  } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
-}
-// Opening a poll: a board slide fed by a pre-work step opens with the Run's answers. A window may not put
-// cards on a board, so any `seed` it sends is dropped first; only main adds one.
-ipcMain.handle('live:poll-open', async (event, poll: unknown) => {
-  try {
-    const parsed = parseLivePoll(event.sender.id, { type: 'poll.open', poll })
-    if ('error' in parsed) return { success: false, error: parsed.error }
-    const message = parsed.message
-    if (message.type === 'poll.open') message.poll = await seedFromRunPrework(event.sender.id, withoutSeed(message.poll))
-    return liveSessions?.poll(event.sender.id, message as never) ?? { success: false, error: 'No live session.' }
-  } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
-})
-ipcMain.handle('live:poll-close', (event, pollId: unknown) => queueLivePoll(event.sender.id, { type: 'poll.close', pollId }))
-ipcMain.handle('live:poll-reveal', (event, pollId: unknown) => queueLivePoll(event.sender.id, { type: 'poll.reveal', pollId }))
-ipcMain.handle('live:poll-hide', (event, pollId: unknown, responseId: unknown, hidden: unknown) => queueLivePoll(event.sender.id, { type: 'poll.hide', pollId, responseId, hidden }))
-// The presenter's board panel (feedback-boards ticket 05): one board operation, checked with the
-// worker's own parser, through the same acknowledged operation queue as the poll controls. Only a
-// presenter window may send one.
-ipcMain.handle('live:board-action', (event, value: unknown) => {
-  try {
-    attachLiveWindow(event.sender.id)
-    if (!livePresenterContexts.has(event.sender.id)) return { success: false, error: 'The board is sorted in the presenter window only.' }
-    const message = parsePresenterMessage(JSON.stringify(value))
-    if (!message || !isPresenterBoardMessage(message)) return { success: false, error: 'Invalid board operation.' }
-    return liveSessions?.poll(event.sender.id, message) ?? { success: false, error: 'No live session.' }
-  } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
-})
-ipcMain.handle('live:question-answer', (event, questionId: unknown, answered: unknown) => {
-  try {
-    attachLiveWindow(event.sender.id)
-    if (!livePresenterContexts.has(event.sender.id)) return { success: false, error: 'Questions are answered in the presenter window only.' }
-    // A pre-work question in the tray belongs to the Run: the mark is written there and never reaches the Worker.
-    if (isPreworkQuestionId(questionId)) {
-      // Written to the session's own vault only (open, there and writable), never the current primary vault.
-      const result = answerPreworkTrayForLiveSession(liveSessions?.record(event.sender.id) ?? null, liveVaultReadable,
-        (root) => writableRoot(root, rootFs) ?? null, questionId, answered !== false)
-      if (result.success) event.sender.send('live:prework-questions', result.questions)
-      return result.success ? { success: true, status: 'confirmed' as const } : { success: false, status: 'rejected' as const, error: result.error }
-    }
-    const message = parsePresenterMessage(JSON.stringify({ type: 'question.answer', questionId, answered }))
-    if (!message || message.type !== 'question.answer') return { success: false, error: 'Invalid question.' }
-    return liveSessions?.poll(event.sender.id, message) ?? { success: false, error: 'No live session.' }
-  } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
-})
-ipcMain.handle('live:switches', (event, patch: unknown) => {
-  try {
-    attachLiveWindow(event.sender.id)
-    if (!livePresenterContexts.has(event.sender.id)) return { success: false, error: 'The phone switches belong to the presenter window.' }
-    const { questionsAllowed, reactionsAllowed } = (patch && typeof patch === 'object' ? patch : {}) as { questionsAllowed?: unknown; reactionsAllowed?: unknown }
-    const message = parsePresenterMessage(JSON.stringify({ type: 'switches.set',
-      ...(typeof questionsAllowed === 'boolean' ? { questionsAllowed } : {}), ...(typeof reactionsAllowed === 'boolean' ? { reactionsAllowed } : {}) }))
-    if (!message || message.type !== 'switches.set') return { success: false, error: 'Invalid switch.' }
-    return liveSessions?.poll(event.sender.id, message) ?? { success: false, error: 'No live session.' }
-  } catch (cause) { return { success: false, error: cause instanceof Error ? cause.message : String(cause) } }
-})
+
 async function instantLinkQrSvg(url: string): Promise<string> {
   const compilerDir = getCompilerPath()
   if (!compilerDir) throw new Error('Compiler not found.')
   const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
   return String(makeQrSvg(url) || '') // '' when the link is longer than a QR code can hold: the slide then shows the link without one
 }
-ipcMain.handle('live:instant-qr', async (event, url: unknown) => {
-  if (!livePresenterContexts.has(event.sender.id) || typeof url !== 'string' || !/^https?:\/\/[^\s]+$/i.test(url) || url.length > 2048) return { success: false }
-  try { const svg = await instantLinkQrSvg(url); return { success: Boolean(svg), svg } } catch { return { success: false } }
-})
-ipcMain.handle('live:instant-action', async (event, action: unknown) => {
-  const wcId = event.sender.id
-  if (!livePresenterContexts.has(wcId)) return { success: false, error: 'Instant slides are available in the presenter window only.' }
-  const candidate = action && typeof action === 'object' ? { ...(action as Record<string, unknown>) } : {}
-  if (candidate.type === 'instant.show' && candidate.slide && typeof candidate.slide === 'object') {
-    const slide = { ...(candidate.slide as Record<string, unknown>) }
-    if (slide.kind === 'link' && typeof slide.url === 'string') {
-      try {
-        const url = new URL(slide.url)
-        if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Only web links can be shown.')
-        const compilerDir = getCompilerPath()
-        if (!compilerDir) throw new Error('Compiler not found.')
-        const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
-        slide.qrSvg = String(makeQrSvg(slide.url) || '')
-      } catch (error) { return { success: false, error: error instanceof Error ? error.message : 'Invalid link.' } }
-    }
-    // A text or countdown slide may carry a web link; its QR code is made here, from the link, never taken from the window.
-    if ((slide.kind === 'text' || slide.kind === 'countdown') && typeof slide.link === 'string') {
-      try {
-        if (!['http:', 'https:'].includes(new URL(slide.link).protocol)) throw new Error('Only web links can be shown.')
-        const svg = await instantLinkQrSvg(slide.link)
-        if (svg) slide.linkQrSvg = svg; else delete slide.linkQrSvg
-      } catch (error) { return { success: false, error: error instanceof Error ? error.message : 'Invalid link.' } }
-    }
-    candidate.slide = slide
-  }
-  const message = parsePresenterMessage(JSON.stringify(candidate))
-  if (!message || (message.type !== 'instant.show' && message.type !== 'instant.clear')) return { success: false, error: 'Invalid instant slide.' }
-  const result = liveSessions?.poll(wcId, message) ?? { success: false, error: 'No live session.' }
-  return !result.success && message.type === 'instant.show' ? { ...result, slide: message.slide } : result
-})
-ipcMain.handle('live:fit-instant-image', async (event, bytes: Uint8Array) => {
-  if (!livePresenterContexts.has(event.sender.id)) return { success: false, error: 'Open the presenter window to show an image.' }
-  if (!(bytes instanceof Uint8Array) || bytes.byteLength > 50_000_000) return { success: false, error: 'This image is too large to process. Try a smaller screenshot.' }
-  return fitInstantImage(bytes)
-})
-// The Live menu's "Instant slide from clipboard": the clipboard is read here, never in the preload,
-// and only for a focused presenter window that had a real press in the last five seconds
-// (live-read-clipboard.ts). ⌘V is another path: the page's own paste event.
-ipcMain.handle('live:read-clipboard', liveReadClipboardHandler({
-  isPresenter: (wcId) => livePresenterContexts.has(wcId),
+
+registerLiveIpc({
+  ipcMain,
+  get livePresenterContexts() { return livePresenterContexts },
+  get liveSessions() { return liveSessions },
+  get liveRecoveryStore() { return liveRecoveryStore },
+  attachLiveWindow,
+  verifiedRunSource,
+  ensureLiveWorker,
+  ensureLiveJoinUrl,
+  getCompilerPath,
+  recordedLiveService,
+  liveKeysHeldFor,
+  liveHttpError,
+  recordingRunReference,
+  liveVaultReadable,
+  writableLiveRoot: (root) => writableRoot(root, rootFs) ?? null,
+  presenterShareLink,
+  seedFromRunPrework,
+  instantLinkQrSvg,
   isFocused: (sender) => {
     const win = BrowserWindow.fromWebContents(sender as Electron.WebContents)
     return !!win && !win.isDestroyed() && win.isFocused()
   },
   pressedRecently: (wcId) => pressLedger.pressedRecently(wcId),
   clipboard,
-}))
+})
 
 // ── Recording storage (Settings → Recording) — R2 destination + access keys ──
 // Mirrors the publishing-config pattern: non-secret config in config.json; the R2 access keys go
@@ -1453,6 +1267,8 @@ function transcriptionSettings() {
   const script = getConfig('transcriptionScript', undefined) ?? DEFAULT_TRANSCRIPTION_SCRIPT
   return {
     engine: defaultWordsEngine(!!nativeSpeechHelper(),!!python && !!script,choice === 'native' || choice === 'parakeet' ? choice : undefined),
+    // In Automatic mode, locale support is checked when the Run is transcribed.
+    allowInstalledFallback: choice !== 'native' && choice !== 'parakeet',
     locale: getConfig('transcriptionLocale', undefined) ?? 'en-US',
     python: getConfig('transcriptionPython', undefined) ?? DEFAULT_TRANSCRIPTION_PYTHON,
     script: getConfig('transcriptionScript', undefined) ?? DEFAULT_TRANSCRIPTION_SCRIPT,
@@ -1551,6 +1367,7 @@ function createWindow(): BrowserWindow {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       ...(E2E ? { backgroundThrottling: false } : {})
     }
   })
@@ -1641,8 +1458,7 @@ function createWindow(): BrowserWindow {
     try { win.webContents.send('outline:close-requested', { quit, update }) } catch { /* destroyed: the timer closes it */ }
   })
   win.on('closed', () => {
-    slidePreviewRequests.get(wcId)?.abort()
-    slidePreviewRequests.delete(wcId)
+    abortSlidePreviews(wcId)
     cancelEditorThumbnails(String(wcId))
     clearTimeout(closeHolds.get(wcId))
     closeHolds.delete(wcId)
@@ -1789,7 +1605,7 @@ function installFallbackMenu(): void {
 
 // Live deck windows opened by talk:present, so ⌘R (refresh-in-place) can recompile the right talk
 // and reload the deck at its current slide. wcId → { outlinePath, mode }.
-const presentWindows = new Map<number, { outlinePath: string; mode: string; pathwayId?: string; runId?: string }>()
+const presentWindows = new Map<number, { outlinePath: string; mode: string; pathwayId?: string; runId?: string; retake?: boolean }>()
 const livePresenterContexts = new Map<number, LivePresenterContext>()
 // A publication that succeeds reaches the presenter windows of that Talk or Run that are open by then
 // (presenter-publication.ts). Their link changes, and nothing else about them does.
@@ -1951,6 +1767,7 @@ function createToolsWindow(view: ToolsView, sessionId?: string, run?: ToolsRunRe
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: true,
       ...(E2E ? { backgroundThrottling: false } : {})
     }
   })
@@ -1963,6 +1780,20 @@ function createToolsWindow(view: ToolsView, sessionId?: string, run?: ToolsRunRe
   win.on('closed', () => {
     talkTextIpcController?.releaseAllWatchers()
     if (toolsWindow === win) toolsWindow = null
+  })
+  win.webContents.on('will-prevent-unload', (event) => {
+    const attempt = quitAttempt
+    const choice = dialog.showMessageBoxSync(win, {
+      type: 'warning',
+      message: 'Close with unsaved recording edits?',
+      detail: 'Stay to retry saving. Discard and close leaves the saved edits as they are.',
+      buttons: ['Stay', 'Discard and close'],
+      defaultId: 0,
+      cancelId: 0,
+    })
+    // Electron uses preventDefault here to override the renderer's veto and allow the close.
+    if (choice === 1) event.preventDefault()
+    else cancelQuitAttempt(attempt)
   })
 
   toolsWindow = win
@@ -2043,6 +1874,23 @@ ipcMain.handle('vault:set-root', (_event, path: string) => {
   invalidateTalkCache()
   scheduleVaultWarm()
   return { success: true }
+})
+
+ipcMain.handle('vault:use-default-root', () => {
+  const configured = vaultRegistry.primary()
+  if (configured) return writableVaultRoot() ?? null
+  try {
+    const documents = realpathSync(app.getPath('documents'))
+    const candidate = join(documents, 'TalkWeaver')
+    if (!pathStaysInside(documents, candidate)) return null
+    mkdirInVault(documents, candidate)
+    const root = writableRoot(candidate, rootFs)
+    if (!root) return null
+    vaultRegistry.adoptRoot(root)
+    invalidateTalkCache()
+    scheduleVaultWarm()
+    return root
+  } catch { return null }
 })
 
 ipcMain.handle('vault:choose-root', async () => {
@@ -2441,18 +2289,11 @@ function talkAssetsBytes(outlinePath: string): number {
 }
 // Build a Talk's full self-contained HTML from its on-disk outline (same pipeline as present/build,
 // but under the backup media budget — see BACKUP_EXPORT_MEDIA_OPTIONS).
-async function buildTalkFullHtml(
-  outlinePath: string,
-  prepareSource: (...a: unknown[]) => Promise<{ [k: string]: unknown }>,
-  mediaOptions: Record<string, unknown>
-): Promise<string> {
-  const stat = statSync(outlinePath)
-  const slug = backupSlugFor(outlinePath)
-  const content = readFileSync(outlinePath, 'utf8')
-  const vaultRoot = vaultRootFor(outlinePath)
-  const resolved = resolvePooledRefs(content, outlinePath)
-  const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { ...mediaOptions, allowedAssetRoots: assetRootsFor(outlinePath) }))
-  return String(model.fullHtml ?? '')
+async function buildTalkFullHtml(outlinePath: string, mediaOptions: Record<string, unknown>): Promise<string> {
+  const content = await readFileAsync(outlinePath, 'utf8')
+  const prepared = await prepareTalk(outlinePath, content, timerSettings(), mediaOptions, 'variant')
+  if (!prepared) throw new Error('No compiler')
+  return String(prepared.model.fullHtml ?? '')
 }
 
 // Export exactly the talks handed in — never a vault scan (ADR-0024). The caller has already
@@ -2470,14 +2311,14 @@ async function runBackupExports(talks: Array<{ slug: string; outlinePath: string
   if (overlap) return (lastBackup = { ...empty, error: overlap })
   if (!compilerDir) return (lastBackup = { ...empty, error: 'No compiler' })
   if (!talks.length) return (lastBackup = { ...empty, ok: true, folder })
-  const { prepareSource, BACKUP_EXPORT_MEDIA_OPTIONS } = await import(
+  const { BACKUP_EXPORT_MEDIA_OPTIONS } = await import(
     pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href
   )
   const state = loadBackupScope()
   backupSweep = createBackupSweep({
     assetBytesOf: talkAssetsBytes,
     buildHtml: (outlinePath: string) =>
-      buildTalkFullHtml(outlinePath, prepareSource as never, BACKUP_EXPORT_MEDIA_OPTIONS),
+      buildTalkFullHtml(outlinePath, BACKUP_EXPORT_MEDIA_OPTIONS),
     writeFile: (dest: string, html: string) => writeFileSync(dest, html, 'utf8'),
     destFor: (folderPath: string, slug: string) => join(folderPath, slug + '-backup.html'),
     ensureDir: (folderPath: string) => { if (!existsSync(folderPath)) mkdirSync(folderPath, { recursive: true }) },
@@ -2614,6 +2455,20 @@ ipcMain.handle('preferences:set-action-bar-visible', (_event, visible: boolean) 
 })
 
 // ── Editor view (plain editing view): Plain or Markdown, one app-wide setting, broadcast to every window ──
+function workspaceViewPreferences(): { openIn: WorkspaceView; slidesPanel: SlidesPanelView } {
+  const view = getConfig('openInView', 'slide') ?? 'slide'
+  return {
+    openIn: WORKSPACE_VIEWS.includes(view) ? view : 'slide',
+    slidesPanel: getConfig('slidesPanelView', 'previews') === 'outline' ? 'outline' : 'previews'
+  }
+}
+ipcMain.handle('preferences:get-workspace-views', workspaceViewPreferences)
+ipcMain.handle('preferences:set-slides-panel', (_event, view: unknown) => {
+  if (view !== 'previews' && view !== 'outline') return
+  writeConfig({ slidesPanelView: view })
+  broadcastToWindows('workspace-views:changed', workspaceViewPreferences())
+})
+
 function editorViewMode(): EditorViewMode {
   return editorViewModeFrom(readConfig()[EDITOR_VIEW_MODE_KEY])
 }
@@ -3692,8 +3547,6 @@ ipcMain.handle('layout:preview-thumbnails', async () => {
     const { fixtures } = await import(pathToFileURL(join(refDir, 'fixtures.mjs')).href)
     const { buildReferenceOutline } = await import(pathToFileURL(join(refDir, 'reference-outline.mjs')).href)
     const { layoutFixtureMap } = await import(pathToFileURL(join(refDir, 'layout-fixture-map.mjs')).href)
-    const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const { buildPerSlideProjections } = await import(pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href)
 
     const slug = 'reference-deck'
     const outline = buildReferenceOutline() as string
@@ -3709,10 +3562,10 @@ ipcMain.handle('layout:preview-thumbnails', async () => {
     }
     const outlinePath = join(refWork, `${slug}-outline.md`)
     writeFileSync(outlinePath, outline, 'utf8')
-    const stat = statSync(outlinePath)
-    // The reference deck is the app's own: its media is the fixtures folder copied into this temp folder.
-    const model = await withPrewarmYield(() => prepareSource(outlinePath, outline, slug, stat, undefined, { allowedAssetRoots: [refWork] }))
-    const rows = (buildPerSlideProjections(model, slug) ?? []) as Array<{
+    // The reference deck reads media from the app's fixtures copied to this temp folder.
+    const prepared = await prepareTalk(outlinePath, outline, undefined, undefined, 'variant', undefined, { allowedAssetRoots: [refWork] })
+    if (!prepared) return null
+    const rows = (prepared.rows ?? []) as Array<{
       slide_id?: string
       render_hash?: string
       content_hash?: string
@@ -3737,7 +3590,7 @@ ipcMain.handle('layout:preview-thumbnails', async () => {
       .map((r) => ({ key: r.render_hash || r.content_hash || r.slide_id || '', layout: r.triggers?.layout ?? r.layout }))
       .filter((s) => s.key)
     const cacheDir = join(app.getPath('userData'), thumbCacheRoot(), cacheSlug)
-    await renderThumbnails({ fullHtml: model.fullHtml as string, slides, cacheDir })
+    await renderThumbnails({ fullHtml: prepared.model.fullHtml as string, preview: prepared.preview, slides, cacheDir })
 
     // fixture id → its slide's render_hash (the cache key). Structural section/subsection dividers
     // render to `<id>-title`, so accept that fallback exactly like the Reference Deck builder.
@@ -3839,6 +3692,8 @@ interface PreparedTalk {
    *  named here by a small descriptor, so the cache never holds a second deck-sized copy. Absent for a
    *  deck with a remote page on a slide. */
   preview?: PreviewVariant
+  /** The file may still be in flight when the editor receives its projection rows. */
+  previewReady?: Promise<PreviewVariant | undefined>
 }
 const preparedTalkCache = createPreparedTalkCache<PreparedTalk>({
   maxEntries: 6,
@@ -3846,9 +3701,8 @@ const preparedTalkCache = createPreparedTalkCache<PreparedTalk>({
   sizeOf: (entry) => typeof entry.model.fullHtml === 'string' ? entry.model.fullHtml.length * 2 : 0
 })
 
-// Live, variant and share preparations are serialised by preparePass. Direct compiles (builds,
-// exports, diagnostics, previews and publishing workers) use its counted withPrewarmYield scope;
-// they keep their existing concurrency and do not wait in either queue. Every non-prewarm gate
+// Live, variant and share preparations are serialised by preparePass. Separate publishing workers
+// use its counted withPrewarmYield scope without waiting in either queue. Every non-prewarm gate
 // request and direct scope releases the prewarm's held talk synchronously. Queued work and direct
 // scopes block prewarm starts, including a prewarm job queued before a direct compile began. This bounds prewarm overlap;
 // it does not promise that other callers retain only one deck after their compile has settled.
@@ -3881,7 +3735,8 @@ async function prepareTalk(
   lane: PreparationLane = 'live',
   /** The editor's live-preview compile only (talk:compile): owner window + talk path. A newer request
    *  with the same key drops this one if it is still queued (single-flight.ts). Nothing else passes it. */
-  supersedeKey?: string
+  supersedeKey?: string,
+  settings?: { preview?: false; allowedAssetRoots?: string[] }
 ): Promise<PreparedTalk | null> {
   const compilerDir = getCompilerPath()
   if (!compilerDir) return null
@@ -3890,7 +3745,7 @@ async function prepareTalk(
   const vaultRoot = vaultRootFor(outlinePath)
   const resolved = resolvePooledRefs(content, outlinePath)
   // The allowed media folders are part of what was compiled, so they are part of the cache group.
-  const compileOptions = { ...(options ?? {}), allowedAssetRoots: assetRootsFor(outlinePath) }
+  const compileOptions = { ...(options ?? {}), allowedAssetRoots: settings?.allowedAssetRoots ?? assetRootsFor(outlinePath) }
   const group = preparedTalkGroup(outlinePath, defaults, compileOptions)
   const key = group + '\0' + createHash('sha256').update(resolved).digest('hex')
   const load = async (gated: <R>(task: () => Promise<R>) => Promise<R>): Promise<PreparedTalk> => {
@@ -3900,18 +3755,32 @@ async function prepareTalk(
     }
     // The compile and the per-slide rows run in the compile's own process (prepare-talk-worker.ts),
     // still inside the gate: one heavy compile at a time, as before.
-    // The preview variant only for decks compiled without timer defaults: the live deck, its thumbnails
-    // and variants. The presenter's and exports' compiles (timer defaults) are never previewed.
+    // The live deck and thumbnail compiles get a preview variant. Presenter compiles pass timer
+    // defaults, and handout export opts out explicitly because it uses the compiler defaults.
     // A folder that is not trusted (preview-variant.ts) turns variants off: no folder is given.
-    const variants = defaults === undefined ? previewVariantFiles() : undefined
+    const variants = defaults === undefined && settings?.preview !== false ? previewVariantFiles() : undefined
     // The validated folder and its identity (re-checked now); the worker checks it again before writing.
     const previewDir = variants && await variants.ready ? variants.folder() ?? undefined : undefined
-    const { model, rows, previewKey, preview } = await gated(() => prepareTalkOffThread({ compilerDir, outlinePath, text: resolved, slug, defaults, options: compileOptions, previewDir }))
-    const variant = variants && previewDir ? usablePreviewVariant(preview, previewDir) : undefined
-    if (variant) variants?.note(variant)
-    return { slug, model: model as PreparedTalk['model'], rows, previewKey, preview: variant }
+    return new Promise<PreparedTalk>((resolve, reject) => {
+      void gated(async () => {
+        const { model, rows, previewKey, previewReady } = await prepareTalkOffThread({ compilerDir, outlinePath, text: resolved, slug, defaults, options: compileOptions, previewDir })
+        const ready = previewReady?.then((preview) => {
+          const variant = variants && previewDir ? usablePreviewVariant(preview, previewDir) : undefined
+          if (variant) variants?.note(variant)
+          return variant
+        })
+        resolve({ slug, model: model as PreparedTalk['model'], rows, previewKey, previewReady: ready })
+        // Keep one preparation in the worker at a time, including its deck-sized write.
+        await ready
+      }).catch(reject)
+    })
   }
-  return routePreparation(lane, key, group, load, supersedeKey)
+  const prepared = await routePreparation(lane, key, group, load, supersedeKey)
+  // Only talk:compile needs the rows before the variant. Consumers of HTML await the descriptor
+  // from that exact preparation and can fall back to the same model if it failed or timed out.
+  return supersedeKey === undefined && prepared.previewReady
+    ? { ...prepared, preview: await prepared.previewReady }
+    : prepared
 }
 
 // The background thumbnail lane decides things on its own — defer, skip, evict — and the packaged
@@ -4039,11 +3908,17 @@ ipcMain.handle('pathways:set-slide-ids', async (_event, outlinePath: string, con
   }
 })
 
-const slidePreviewRequests = new Map<number, AbortController>()
+const slidePreviewRequests = new Map<number, Map<'workspace' | 'detail', AbortController>>()
+
+function abortSlidePreviews(owner: number): void {
+  const previews = slidePreviewRequests.get(owner)
+  slidePreviewRequests.delete(owner)
+  for (const controller of previews?.values() ?? []) controller.abort()
+}
 
 async function previewDocument(outlinePath: string, content: string, fullHtml: string, signal: AbortSignal, preview?: PreviewVariant): Promise<{ id: string }> {
   // The compile's process already marked, encoded, hashed and wrote this deck (no remote page on it):
-  // serve that file under its hash, with no whole-deck work or copy here. Otherwise mark it here, as before.
+  // serve that file under its hash, with no whole-deck work or copy here.
   // A held descriptor of an earlier write of the same key recovers through the newest one noted.
   const live = preview && previewVariantFiles().check()
     ? (regularVariantFile(preview) ? preview : previewVariantFiles().current(preview.key))
@@ -4054,8 +3929,8 @@ async function previewDocument(outlinePath: string, content: string, fullHtml: s
     slidePreviewStore.set(id, { file: live.path, variant: live })
     return { id }
   }
-  const html = markSlidePreviewHtml(await withRemoteEmbedArtwork(fullHtml, signal), { localPages: true })
-  const id = createHash('sha256').update(outlinePath).update('\0').update(content).update('\0').update(html).digest('hex').slice(0, 24)
+  const { key: id, html } = await prepareTalkOffThread.markPreview({ outlinePath, content, fullHtml }, embedPreviewArtwork, signal)
+  signal.throwIfAborted()
   slidePreviewStore.set(id, html)
   return { id }
 }
@@ -4154,11 +4029,16 @@ ipcMain.handle('conflict:pictures', async (_event, token: unknown, side: unknown
 
 // Inspector + Slide Focus compile the SAME full live outline as Present and thumbnails. The
 // content-addressed URL is stable across slide navigation; the renderer changes only its hash.
-ipcMain.handle('slide:render-preview', async (_event, outlinePath: string, outlineContent: string) => {
+ipcMain.handle('slide:render-preview', async (_event, outlinePath: string, outlineContent: string, surface?: unknown) => {
   const owner = _event.sender.id
-  slidePreviewRequests.get(owner)?.abort()
+  // Slide view and the inspector can both be visible. A newer request replaces
+  // the previous one from its own surface.
+  const scope = surface === 'workspace' ? 'workspace' : 'detail'
+  const requests = slidePreviewRequests.get(owner) ?? new Map()
+  slidePreviewRequests.set(owner, requests)
+  requests.get(scope)?.abort()
   const controller = new AbortController()
-  slidePreviewRequests.set(owner, controller)
+  requests.set(scope, controller)
   try {
     const prepared = await prepareTalk(outlinePath, outlineContent)
     const fullHtml = prepared?.model.fullHtml
@@ -4168,7 +4048,8 @@ ipcMain.handle('slide:render-preview', async (_event, outlinePath: string, outli
     if (!controller.signal.aborted) console.error('[slide:render-preview]', e)
     return null
   } finally {
-    if (slidePreviewRequests.get(owner) === controller) slidePreviewRequests.delete(owner)
+    if (requests.get(scope) === controller) requests.delete(scope)
+    if (!requests.size && slidePreviewRequests.get(owner) === requests) slidePreviewRequests.delete(owner)
   }
 })
 
@@ -4280,14 +4161,10 @@ ipcMain.handle('talk:check-embeds', async (_event, outlinePath: string, content:
   const compilerDir = getCompilerPath()
   if (!compilerDir) return []
   try {
-    const stat = statSync(outlinePath)
-    const slug = basename(outlinePath).replace('-outline.md', '')
-    const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
     const { parseVideoEmbed } = await import(pathToFileURL(join(compilerDir, 'lib/02-triggers-layout.mjs')).href)
-    const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = resolvePooledRefs(content, outlinePath)
-    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) }))
-    const embeds = extractDeckEmbeds(model.fullHtml || '')
+    const prepared = await prepareTalk(outlinePath, content, undefined, undefined, 'variant', undefined, { preview: false })
+    if (!prepared) return []
+    const embeds = extractDeckEmbeds(String(prepared.model.fullHtml ?? ''))
     if (!embeds.length) return []
     // Check each unique URL once, then map the result back to every slide that uses it.
     const uniqueUrls = Array.from(new Set(embeds.map((e) => e.url)))
@@ -4311,18 +4188,11 @@ ipcMain.handle('talk:check-embeds', async (_event, outlinePath: string, content:
 // "why did this slide look like this" on right-click. Index = the slide's position in the deck
 // (same order as compile()'s projection rows).
 ipcMain.handle('talk:explain-slide', async (_event, outlinePath: string, content: string, index: number) => {
-  const compilerDir = getCompilerPath()
-  if (!compilerDir) return null
   try {
-    const stat = statSync(outlinePath)
-    const slug = basename(outlinePath).replace('-outline.md', '')
-    const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = resolvePooledRefs(content, outlinePath)
-    const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const { buildPerSlideProjections } = await import(pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href)
-    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath) }))
-    const rows = (buildPerSlideProjections(model, slug) ?? []) as ProjectionRowMain[]
-    const fullHtml = String(model.fullHtml ?? '')
+    const prepared = await prepareTalk(outlinePath, content, undefined, undefined, 'variant', undefined, { preview: false })
+    if (!prepared) return null
+    const rows = (prepared.rows ?? []) as ProjectionRowMain[]
+    const fullHtml = String(prepared.model.fullHtml ?? '')
     // The Nth `<section class="slide" …>` opening tag is this slide's render decisions.
     const tags = fullHtml.match(/<section class="slide"[^>]*>/g) ?? []
     if (index < 0 || index >= tags.length) return null
@@ -4646,8 +4516,8 @@ if (E2E && PREWARM_ENABLED) (globalThis as typeof globalThis & { __twPrewarm?: t
 
 // Pre-generate per-slide thumbnails for changed/new talks (ADR-0019: cross-Talk search is "backed
 // by pre-generated thumbnails"). A persisted outline-content ledger prevents the expensive
-// synchronous compiler pass from running for an unchanged talk whose cache directory still exists.
-// Changed talks are staggered so input can run between main-process compiler passes.
+// background compiler pass from running for an unchanged talk whose cache directory still exists.
+// Stagger changed talks so the live editor can prepare its current deck between passes.
 let prerendering = false
 async function prerenderAllThumbnails(): Promise<void> {
   if (prerendering) return
@@ -4656,8 +4526,6 @@ async function prerenderAllThumbnails(): Promise<void> {
   if (!vaultRoot || !compilerDir) return
   prerendering = true
   try {
-    const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const { buildPerSlideProjections } = await import(pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href)
     const talks = findTalks(vaultRoot)
     const ledgerPath = join(app.getPath('userData'), 'prerender-ledger.json')
     const ledger = loadPrerenderLedger(ledgerPath)
@@ -4673,10 +4541,9 @@ async function prerenderAllThumbnails(): Promise<void> {
         if (compiled > 0) await new Promise<void>((resolve) => setTimeout(resolve, 250))
         await new Promise<void>((resolve) => setImmediate(resolve))
         compiled += 1
-        const stat = statSync(talk.outlinePath)
-        const resolved = resolveImageRefs(content, vaultRoot, talk.outlinePath)
-        const model = await withPrewarmYield(() => prepareSource(talk.outlinePath, resolved, talk.slug, stat, undefined, { allowedAssetRoots: assetRootsFor(talk.outlinePath) }))
-        const rows = (buildPerSlideProjections(model, talk.slug) ?? []) as Array<{
+        const prepared = await withPrewarmYield(() => prepareTalk(talk.outlinePath, content, undefined, undefined, 'variant'))
+        if (!prepared) continue
+        const rows = (prepared.rows ?? []) as Array<{
           content_hash?: string
           render_hash?: string
           thumbnail_hash?: string
@@ -4687,11 +4554,11 @@ async function prerenderAllThumbnails(): Promise<void> {
         // SAME key precedence as the live `talk:thumbnails` handler (render_hash first) —
         // the prerender used to key on content_hash only, so any slide with a layout/trigger
         // (render_hash ≠ content_hash) missed the warm cache and re-rendered on first open.
-        const fullHtml = model.fullHtml as string
-        const documentId = thumbnailDocumentId(fullHtml)
+        const fullHtml = prepared.model.fullHtml as string
+        const documentId = thumbnailDocumentId(fullHtml, prepared.previewKey)
         const slides = thumbnailSlides(rows, documentId)
         const rendered = slides.length
-          ? await renderThumbnails({ fullHtml, slides, cacheDir })
+          ? await renderThumbnails({ fullHtml, preview: prepared.preview, slides, cacheDir })
           : (mkdirSync(cacheDir, { recursive: true }), {})
         if (!slides.every((slide) => rendered[slide.key])) continue
         recordSuccessfulPrerender(ledger, talk.outlinePath, contentHash, documentId)
@@ -5128,19 +4995,59 @@ ipcMain.handle('talk:read-outline', async (event, outlinePath: string, opts?: { 
 // Every request must come from the window that has the talk open (the guard's owner for that file).
 ipcMain.handle('talk:outline-disk-version', async (event, outlinePath: unknown) => {
   if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return null
-  try { return await outlineDiskGuard.diskVersion(outlinePath) } catch { return null }
+  try { return await outlineDiskGuard.diskVersion(outlinePath) } catch (error) {
+    // Electron decorates thrown IPC errors with a remote-method prefix; keep UI wording as data.
+    return { error: error instanceof Error ? error.message : String(error) }
+  }
 })
-ipcMain.handle('talk:outline-accept-disk', async (event, outlinePath: unknown, hash: unknown, opts?: { keepPending?: boolean }) => {
+ipcMain.handle('talk:outline-accept-disk', async (event, outlinePath: unknown, hash: unknown, opts?: { keepPending?: boolean; revision?: unknown }) => {
   if (typeof outlinePath !== 'string' || !outlinePath || typeof hash !== 'string') return { ok: false, change: null, error: 'Nothing to accept.' }
-  if (!outlineDiskGuard.owns(String(event.sender.id), outlinePath)) {
+  const owner = String(event.sender.id), session = outlineDiskGuard.session(owner, outlinePath)
+  if (!session) {
     return { ok: false, change: null, error: 'This window does not have that talk open, so nothing was accepted.' }
   }
-  try { return await outlineDiskGuard.accept(outlinePath, hash, { keepPending: opts?.keepPending === true }) } catch (e) {
+  try {
+    const accepted = await outlineDiskGuard.accept(owner, outlinePath, hash, { keepPending: opts?.keepPending === true })
+    // Reopening the same talk is a new session too; owns() alone cannot fence its save state.
+    if (outlineDiskGuard.session(owner, outlinePath) !== session) {
+      return { ok: false, change: null, error: 'The talk was closed or reloaded before acceptance finished, so nothing was acknowledged.' }
+    }
+    const revision = opts?.revision
+    if (accepted.ok && opts?.keepPending !== true && typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 0) {
+      editorRevisions.loaded(event.sender.id, revision)
+      lastSaveFailed.delete(event.sender.id)
+      lastUnsavedText.delete(canonicalOutlinePath(outlinePath))
+    }
+    return accepted
+  } catch (e) {
     return { ok: false, change: null, error: e instanceof Error ? e.message : String(e) }
   }
 })
 // Recovery copies (outline-recovery.ts): the text a refused save kept, for the talk this window has
 // open (the bar's "Restore my unsaved text"), and dropping it (restored and saved, or Discard).
+// Merge inputs are durable before the renderer accepts a disk version or replaces dirty text.
+ipcMain.handle('talk:outline-preserve-merge', async (event, outlinePath: unknown, snapshot: unknown) => {
+  if (typeof outlinePath !== 'string' || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return null
+  if (!snapshot || typeof snapshot !== 'object') return null
+  const value = snapshot as Record<string, unknown>
+  if (typeof value.base !== 'string' || typeof value.mine !== 'string' || typeof value.disk !== 'string' ||
+      (value.draft !== undefined && typeof value.draft !== 'string')) return null
+  try {
+    const real = canonicalOutlinePath(outlinePath)
+    const file = await outlineRecovery.preserveMerge(real, {
+      base: value.base, mine: value.mine, disk: value.disk, ...(typeof value.draft === 'string' ? { draft: value.draft } : {}),
+    })
+    // A crash before autosave first refuses still offers the local text on the next open.
+    if (value.draft === undefined && value.mine !== value.base) {
+      const previous = await outlineRecovery.read(real)
+      if (previous && previous.text !== value.mine && previous.text !== value.base) {
+        await outlineRecovery.preserveMerge(real, { base: value.base, mine: previous.text, disk: value.disk })
+      }
+      await outlineRecovery.save(real, value.mine)
+    }
+    return file
+  } catch { return null }
+})
 ipcMain.handle('talk:outline-recovery', async (event, outlinePath: unknown) => {
   if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return null
   try { return await outlineRecovery.read(canonicalOutlinePath(outlinePath)) } catch { return null }
@@ -5196,7 +5103,9 @@ function beginQuitAttempt(): void { quitAttempt ??= { release: holdRenderHelpers
 /** The single end point for a quit/restart that leaves the app running. No clock guesses whether
  *  saving is finished: the close routes report their outcome, including the renderer's 10 s ceiling. */
 function cancelQuitAttempt(expected = quitAttempt): void {
-  if (!expected || quitAttempt !== expected) return
+  if (quitAttempt !== expected) return
+  quitSequence.cancel()
+  if (!expected) return
   quitAttempt = null
   quitting = false
   expected.release()
@@ -5291,11 +5200,12 @@ ipcMain.handle('talk:extract-section', async (_event, sourceOutlinePath: string,
 // talk-writer.ts, which applies the same backstop to every other origin's writes.
 // Each editor window's last save: failed or not (an update's restart counts an editor as saved only if it did not).
 // Each save carries the revision of the text it sent (editor-revisions.ts): what a close confirms against.
-ipcMain.handle('talk:write-outline', async (event, outlinePath: string, content: string, opts?: { revision?: unknown }) => {
+ipcMain.handle('talk:write-outline', async (event, outlinePath: string, content: string, opts?: { revision?: unknown; expectedDiskHash?: unknown }) => {
   const finished = editorRevisions.writeStarted(event.sender.id, opts?.revision)
   try {
     await updateTestSaveDelay() // the update-test flavour's slow save, and a test run's from source; nothing in a release
-    const result = await writeOutlineFromEditor(event, outlinePath, content)
+    if (opts?.expectedDiskHash !== undefined && (typeof opts.expectedDiskHash !== 'string' || !/^[a-f0-9]{64}$/.test(opts.expectedDiskHash))) { lastSaveFailed.add(event.sender.id); finished(false); return { ok: false as const, refused: 'ownership' as const } }
+    const result = await writeOutlineFromEditor(event, outlinePath, content, opts?.expectedDiskHash as string | undefined)
     const ok = !!result && typeof result === 'object' && result.ok === true
     if (ok) lastSaveFailed.delete(event.sender.id)
     else lastSaveFailed.add(event.sender.id)
@@ -5303,7 +5213,7 @@ ipcMain.handle('talk:write-outline', async (event, outlinePath: string, content:
     return result
   } catch (error) { lastSaveFailed.add(event.sender.id); finished(false); throw error }
 })
-async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string) {
+async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string, expectedDiskHash?: string) {
   renewEstablishedGalleryClaims()
   const saveEpoch = galleryEpoch
   const saveOwner = editorWindows.get(_event.sender.id)
@@ -5375,8 +5285,8 @@ async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outli
       }
     }
   } catch { /* stamping must never block a save */ }
-  // The editor's own queued save: written to disk (atomically, under the file's lock), never routed.
-  const written = await writeTalkOutline(outlinePath, toWrite, 'editor', {authorize})
+  // The editor's own queued save: written by the guarded writer under the file's lock, never routed.
+  const written = await writeTalkOutline(outlinePath, toWrite, 'editor', {authorize, expectedDiskHash})
   if (!written.ok && written.changedOnDisk) {
     // External-change guard: the file differs from what the editor holds. Nothing was written; the
     // renderer shows the bar (the change is named by the path this window uses). The editor's text is
@@ -5877,8 +5787,7 @@ ipcMain.handle(
 )
 
 // Version thumbnails for one slide id: a real compiled render of EVERY recorded version,
-// following the layout:preview-thumbnails pattern — synthetic outline → prepareSource →
-// buildPerSlideProjections → renderThumbnails. All versions ride in ONE synthetic outline
+// follows layout:preview-thumbnails: prepare the synthetic outline, then render its rows. All versions ride in ONE synthetic outline
 // (newest first, listVersions order), so the whole id renders in a single hidden-window
 // pass; navigateToSlide toggles .active by INDEX, so versions sharing the same {id=…}
 // cannot mis-navigate. Content-addressed under cacheSlug '__ledger__' by
@@ -5893,9 +5802,6 @@ ipcMain.handle('ledger:version-thumbnails', async (_event, id: string) => {
     if (!vaultRoot || !lib) return null
     const versions = (lib.listVersions(vaultRoot, id) ?? []) as Array<{ file: string; markdown: string }>
     if (!versions.length) return {}
-
-    const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const { buildPerSlideProjections } = await import(pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href)
 
     const keyFor = (v: { file: string; markdown: string }): string =>
       createHash('sha1').update(v.file + v.markdown).digest('hex').slice(0, 16)
@@ -5912,10 +5818,12 @@ ipcMain.handle('ledger:version-thumbnails', async (_event, id: string) => {
     mkdirSync(work, { recursive: true })
     const outlinePath = join(work, `${cacheSlug}-outline.md`)
     writeFileSync(outlinePath, resolved, 'utf8')
-    const stat = statSync(outlinePath)
-    // The versions are this vault's slides, staged in a temp folder: their pooled media is in the vault.
-    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, cacheSlug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath, [vaultRoot]) }))
-    const rows = (buildPerSlideProjections(model, cacheSlug) ?? []) as Array<{
+    // Staged versions can read pooled assets from their vault as well as the staging folder.
+    const prepared = await prepareTalk(outlinePath, resolved, undefined, undefined, 'variant', undefined, {
+      allowedAssetRoots: assetRootsFor(outlinePath, [vaultRoot])
+    })
+    if (!prepared) return null
+    const rows = (prepared.rows ?? []) as Array<{
       source_line?: number | null
       render_hash?: string
       content_hash?: string
@@ -5935,7 +5843,7 @@ ipcMain.handle('ledger:version-thumbnails', async (_event, id: string) => {
     const slides = rows.map((r, i) => ({
       key: keyByRowIndex.get(i) ?? r.render_hash ?? r.content_hash ?? `row-${i}`
     }))
-    const rendered = await renderThumbnails({ fullHtml: model.fullHtml as string, slides, cacheDir })
+    const rendered = await renderThumbnails({ fullHtml: prepared.model.fullHtml as string, preview: prepared.preview, slides, cacheDir })
 
     const out: Record<string, string> = {}
     versions.forEach((v, vi) => {
@@ -6117,7 +6025,8 @@ function attachLivePageHost(win: BrowserWindow, role: LivePageRole, outlinePath:
   win.once('closed', () => { livePageHosts.delete(id); livePageTalks.delete(id) })
   return host
 }
-app.on('before-quit', () => { stopActiveTranscription(); disposeAllLivePageHosts() })
+quitSequence.add({ name: 'Stop transcription', stage: 'before-quit', timeoutMs: 0, run: stopActiveTranscription })
+quitSequence.add({ name: 'Dispose live page hosts', stage: 'before-quit', timeoutMs: 0, run: disposeAllLivePageHosts })
 
 // Capture embed… (live-page-capture-window.ts): one window at a time, for one slide's web page, opened
 // by an editor window for the talk it has open. It closes when that editor closes or asks (another
@@ -6191,7 +6100,7 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
   // Record one slide again (the recording editor): a presenter view of its own, at that slide, recording a take.
   const asked = retakeRequest !== undefined && retakeRequest !== null
   const requested = asked ? parseRetake(retakeRequest) : null
-  // Record one slide again is off in this release unless a development build is started with TW_RECORD_AGAIN=1.
+  // Refuse a retake in a development build with the feature switched off.
   if (asked && !TAKES_ENABLED) return { success: false, error: TAKES_OFF_ERROR }
   // Only Studio (the Tools window) asks for a retake.
   if (asked && !isToolsWindowSender(event.sender, toolsWindow)) return { success: false, error: 'Invalid retake' }
@@ -6243,7 +6152,7 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
     // window that never comes through this handler.
     if ((mode === 'presenter' || mode === 'window' || mode === 'audience') && !retake) {
       for (const [wcId, info] of presentWindows) {
-        if (info.outlinePath !== outlinePath || info.mode !== mode || info.pathwayId !== pathwayId) continue
+        if (info.outlinePath !== outlinePath || info.mode !== mode || info.pathwayId !== pathwayId || info.retake) continue
         const existing = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === wcId)
         if (!existing) continue
         let hash = startSlideId || ''
@@ -6285,16 +6194,13 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
         return { success: true }
       }
     }
-    // Recording lives in the presenter view only: attach the opt-in recorder bridge preload there
-    // (sandbox off so it can hand the audio buffer back). The recorder bridge ALSO mounts the ⌘E
-    // "edit this slide" bridge. A plain presentation window gets the edit-only bridge; the audience
-    // view stays preload-less + portable. (These windows are opened BY TalkWeaver, so a preload here
-    // never touches the exported portable artifact.)
+    // Recording lives in the presenter view only: attach the opt-in recorder bridge preload there.
+    // The recorder bridge ALSO mounts the ⌘E "edit this slide" bridge. A plain presentation window
+    // gets the edit-only bridge; the audience view stays preload-less + portable. (These windows are
+    // opened BY TalkWeaver, so a preload here never touches the exported portable artifact.)
+    // Preload and sandbox per mode: present-window-prefs.ts (only the recorder's window is unsandboxed).
     const recording = mode === 'presenter'
-    const bridgePreload =
-      mode === 'presenter' ? join(__dirname, '../preload/presentRecorder.js')
-      : mode === 'audience' ? null
-      : join(__dirname, '../preload/presentEdit.js')
+    const deckPrefs = presentWindowPreferences(mode, join(__dirname, '../preload'))
     const win = new BrowserWindow({
       width: 1440, height: 900, fullscreen: false,
       ...(E2E ? { show: false } : {}),
@@ -6305,7 +6211,7 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
         contextIsolation: true,
         // macOS treats covered audience windows as hidden; keep slide updates drawing.
         backgroundThrottling: false,
-        ...(bridgePreload ? { preload: bridgePreload, sandbox: false } : {})
+        ...deckPrefs
       }
     })
     registerWindowKind(win, 'deck')
@@ -6338,6 +6244,7 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
     // ⇧F5 present-from-here: the runtime reads location.hash on init and starts on the slide whose
     // dataset.id matches the id (09-output-builders.mjs). An unknown/empty id falls back to slide 0.
     const loadOpts: { query?: Record<string, string>; hash?: string } = {}
+    if (retake) query.retake = '1'
     if (query) loadOpts.query = query
     if (startSlideId) loadOpts.hash = startSlideId
     attachLivePageHost(win, mode === 'presenter' ? 'presenter' : mode === 'audience' ? 'audience' : 'window', outlinePath)
@@ -6345,7 +6252,7 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
     // Track this deck for ⌘R refresh-in-place, and OWN ⌘R here: before-input-event preempts the
     // default menu's Reload accelerator (which would reload to slide 0 without recompiling).
     const deckWcId = win.webContents.id
-    presentWindows.set(deckWcId, { outlinePath, mode: mode ?? 'window', pathwayId, ...(typeof plannedRunId === 'string' && plannedRunId ? { runId: plannedRunId } : {}) })
+    presentWindows.set(deckWcId, { outlinePath, mode: mode ?? 'window', pathwayId, ...(retake ? { retake: true } : {}), ...(typeof plannedRunId === 'string' && plannedRunId ? { runId: plannedRunId } : {}) })
     updateChecker?.busyChanged()
     if (mode === 'presenter') livePresenterContexts.set(deckWcId, presenterContext())
     win.on('close', (event) => {
@@ -6532,7 +6439,7 @@ function claimTalkForWindow(senderId:number, outlinePath:string|null) {
     // The outgoing talk is no longer watched for outside changes (its baseline is kept for a grace
     // period, so its last flush save is still checked); the editor's load of the new talk tracks it.
     if (entry.outlinePath !== outlinePath) {
-      slidePreviewRequests.get(senderId)?.abort()
+      abortSlidePreviews(senderId)
       cancelEditorThumbnails(String(senderId))
     }
     if (entry.outlinePath && entry.outlinePath !== outlinePath) outlineDiskGuard.release(String(senderId))
@@ -6634,6 +6541,7 @@ ipcMain.handle('present:rebuild', async (_event, deckWcId: number, outlinePath: 
     // Cache-bust (_r) so this is a REAL navigation, not a same-URL no-op that skips the fresh file.
     const query: Record<string, string> = mode === 'presenter' ? { presenter: '1', session: randomUUID() } : mode === 'audience' ? { audience: '1' } : {}
     query.livepage = '1'
+    if (info?.retake) query.retake = '1'
     query._r = String(++presentReloadNonce)
     const loadOpts: { query: Record<string, string>; hash?: string } = { query }
     if (slideId) loadOpts.hash = slideId
@@ -6866,7 +6774,7 @@ ipcMain.handle('alignment:run',(event,slug:unknown,sid:unknown,home:unknown)=>{i
 ipcMain.handle('alignment:status',(event,slug:unknown,sid:unknown,home:unknown)=>{if(event.sender!==toolsWindow?.webContents || home!==undefined && home!==null && typeof home!=='string')return null;return wordAlignment.status(slug,sid,home as string|null|undefined)})
 ipcMain.handle('alignment:get',(event,slug:unknown,sid:unknown,home:unknown)=>{if(event.sender!==toolsWindow?.webContents || home!==undefined && home!==null && typeof home!=='string')return null;return wordAlignment.read(slug,sid,home as string|null|undefined)})
 ipcMain.handle('alignment:cancel',(event,slug:unknown,sid:unknown,home:unknown)=>{if(event.sender!==toolsWindow?.webContents)return{ok:false,error:'Open Studio to cancel alignment.'};if(typeof slug!=='string' || typeof sid!=='string' || home!==undefined && home!==null && typeof home!=='string')return{ok:false,error:'Invalid Run.'};return wordAlignment.cancel(slug,sid,home as string|null|undefined)?{ok:true}:{ok:false,error:'The Run’s vault is unavailable.'}})
-app.on('before-quit',()=>wordAlignment.quit())
+quitSequence.add({ name: 'Stop word alignment', stage: 'before-quit', timeoutMs: 0, run: () => wordAlignment.quit() })
 ipcMain.handle('alignment:models',()=>alignmentModels().status())
 handleFromSettingsWindow('alignment:download',()=>({ok:false,error:'Use Settings to download a model.'}),async (_event,language:unknown)=>{
   try{await alignmentModels().change(language,'download');return{ok:true}}catch{return{ok:false,error:'The download failed or was cancelled. Retry when connected.'}}
@@ -6882,7 +6790,7 @@ handleFromSettingsWindow('alignment:remove',()=>({ok:false,error:'Use Settings t
   try{await alignmentModels().change(language,'remove');return{ok:true}}catch{return{ok:false,error:'Cancel the model operation before removing it.'}}
 })
 handleFromSettingsWindow('alignment:cancel-download',()=>({ok:false,error:'Use Settings to cancel a download.'}),(_event,language:unknown)=>{alignmentModels().cancel(language);return{ok:true}})
-app.on('before-quit',()=>preciseModels?.store.cancelAll())
+quitSequence.add({ name: 'Cancel precise model downloads', stage: 'before-quit', timeoutMs: 0, run: () => preciseModels?.store.cancelAll() })
 
 function transcriptVaultForHome(home:unknown):string|null|undefined {
   if(home===null)return null
@@ -6966,12 +6874,10 @@ const recordingVideo = registerRecordingVideoIpc({
 })
 // Quitting stops a running export and waits (at most four seconds) for ffmpeg to end and its temporary
 // files to go; anything left is removed at the next start from the export's own record.
-let recordingVideoQuitting = false
-app.on('before-quit', (event) => {
-  if (recordingVideoQuitting || !recordingVideo.busy()) return
-  event.preventDefault()
-  recordingVideoQuitting = true
-  void recordingVideo.shutdown(4000).finally(() => app.quit())
+quitSequence.add({
+  name: 'Stop video export', stage: 'before-quit', timeoutMs: 4000,
+  when: () => recordingVideo.busy(),
+  run: () => recordingVideo.shutdown(4000),
 })
 
 registerVideoPackageIpc({
@@ -7014,21 +6920,19 @@ ipcMain.handle('talk:build', async (_event, outlinePath: string, content: string
   if (refusal) return { success: false, error: refusal }
   const blocked = unresolvedOutboundFailure(content)
   if (blocked) return blocked
-  const compilerDir = getCompilerPath()
-  if (!compilerDir) return { success: false, error: 'Compiler not found' }
+  if (!getCompilerPath()) return { success: false, error: 'Compiler not found' }
   try {
-    const stat = statSync(outlinePath)
-    const slug = basename(outlinePath).replace('-outline.md', '')
-    const talkDir = dirname(outlinePath)
-    const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = resolvePooledRefs(content, outlinePath)
-    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { allowedAssetRoots: assetRootsFor(outlinePath), pictureText: pictureTextForCompile(outlinePath, content) }))
+    const prepared = await prepareTalk(outlinePath, content, timerSettings(), {
+      pictureText: pictureTextForCompile(outlinePath, content)
+    }, 'variant')
+    if (!prepared) return { success: false, error: 'Compiler not found' }
+    const { slug, model } = prepared
     const html = model.fullHtml as string
+    const talkDir = dirname(outlinePath)
     const distDir = join(talkDir, 'dist')
     if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
     const outPath = join(distDir, slug + '.html')
-    writeFileSync(outPath, html, 'utf8')
+    await writeGeneratedFile(outPath, html)
     return { success: true, outPath }
   } catch (e) {
     console.error('[build]', e)
@@ -7045,14 +6949,10 @@ ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, conten
   const compilerDir = getCompilerPath()
   if (!compilerDir) return { success: false, error: 'Compiler not found' }
   try {
-    const stat = statSync(outlinePath)
-    const slug = basename(outlinePath).replace('-outline.md', '')
+    const prepared = await prepareTalk(outlinePath, content, timerSettings(), undefined, 'variant')
+    if (!prepared) return { success: false, error: 'Compiler not found' }
+    const { slug, model, rows } = prepared
     const talkDir = dirname(outlinePath)
-    const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = resolvePooledRefs(content, outlinePath)
-
-    const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, timerSettings(), { allowedAssetRoots: assetRootsFor(outlinePath) }))
 
     const distDir = join(talkDir, 'dist')
     if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
@@ -7062,7 +6962,7 @@ ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, conten
     const outPaths: string[] = []
 
     const fullPath = join(distDir, slug + '-full.html')
-    writeFileSync(fullPath, fullHtml, 'utf8')
+    await writeGeneratedFile(fullPath, fullHtml)
     outPaths.push(fullPath)
 
     // Prefer the real lib builders so share variants match the CLI exactly.
@@ -7081,8 +6981,8 @@ ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, conten
       const shareNoNotes = buildShareHtml({ title, slides, styles, includeNotes: false, slug, license })
       const notesPath = join(distDir, slug + '-share-notes.html')
       const noNotesPath = join(distDir, slug + '-share-no-notes.html')
-      writeFileSync(notesPath, shareNotes, 'utf8')
-      writeFileSync(noNotesPath, shareNoNotes, 'utf8')
+      await writeGeneratedFile(notesPath, shareNotes)
+      await writeGeneratedFile(noNotesPath, shareNoNotes)
       outPaths.push(notesPath, noNotesPath)
     } catch (builderErr) {
       // Fallback: full as both, notes crudely stripped. Logged loudly per spec.
@@ -7093,21 +6993,17 @@ ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, conten
       )
       const notesPath = join(distDir, slug + '-share-notes.html')
       const noNotesPath = join(distDir, slug + '-share-no-notes.html')
-      writeFileSync(notesPath, fullHtml, 'utf8')
-      writeFileSync(noNotesPath, stripped, 'utf8')
+      await writeGeneratedFile(notesPath, fullHtml)
+      await writeGeneratedFile(noNotesPath, stripped)
       outPaths.push(notesPath, noNotesPath)
     }
 
     // Per-slide projections JSONL alongside the variants.
     try {
-      const { buildPerSlideProjections } = await import(
-        pathToFileURL(join(compilerDir, 'lib/10-projections.mjs')).href
-      )
-      const rows = buildPerSlideProjections(model, slug)
       if (rows && rows.length) {
         const jsonl = rows.map((r: unknown) => JSON.stringify(r)).join('\n') + '\n'
         const jsonlPath = join(distDir, slug + '-projections.jsonl')
-        writeFileSync(jsonlPath, jsonl, 'utf8')
+        await writeGeneratedFile(jsonlPath, jsonl)
         outPaths.push(jsonlPath)
       }
     } catch (projErr) {
@@ -7195,14 +7091,12 @@ ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, conten
   const compilerDir = getCompilerPath()
   if (!compilerDir) return { success: false, error: 'Compiler not found' }
   try {
-    const stat = statSync(outlinePath)
-    const slug = basename(outlinePath).replace('-outline.md', '')
+    const prepared = await prepareTalk(outlinePath, content, undefined, {
+      pictureText: pictureTextForCompile(outlinePath, content)
+    }, 'variant', undefined, { preview: false })
+    if (!prepared) return { success: false, error: 'Compiler not found' }
+    const { slug, model } = prepared
     const talkDir = dirname(outlinePath)
-    const vaultRoot = vaultRootFor(outlinePath)
-    const resolved = resolvePooledRefs(content, outlinePath)
-
-    const { prepareSource } = await import(pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href)
-    const model = await withPrewarmYield(() => prepareSource(outlinePath, resolved, slug, stat, undefined, { allowedAssetRoots: assetRootsFor(outlinePath), pictureText: pictureTextForCompile(outlinePath, content) }))
     const title = (model.title as string) ?? slug
     const fullHtml = model.fullHtml as string
 
@@ -7222,7 +7116,7 @@ ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, conten
     const distDir = join(talkDir, 'dist')
     if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
     const handoutPath = join(distDir, slug + '-handout.html')
-    writeFileSync(handoutPath, handoutHtml, 'utf8')
+    await writeGeneratedFile(handoutPath, handoutHtml)
     void ledgerSeal(outlinePath, content, 'export')
     return { success: true, path: handoutPath }
   } catch (e) {
@@ -7329,6 +7223,65 @@ function buildHandoutPagesOffThread(job: HandoutPagesJob): Promise<HandoutPagesR
 // no copy of the site needed here). The handlers below supply the pages; they read no token and send
 // nothing themselves. The short-link registry and `publishing.shortLinks` on this computer are caches
 // of the site's own record (site-record.ts), and what a site with no record yet starts from.
+ipcMain.handle('publish:import-site-recovery', async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win) return { ok: false, error: 'Open an editor window to import a recovery record.' }
+  const picked = await dialog.showOpenDialog(win, { title: 'Import site recovery record', properties: ['openFile'], filters: [{ name: 'TalkWeaver site recovery', extensions: ['json'] }] })
+  if (picked.canceled || picked.filePaths.length !== 1) return { ok: false }
+  try {
+    const path = picked.filePaths[0]
+    const proofStat = await statAsync(path)
+    if (!proofStat.isFile() || proofStat.size > 1024 * 1024) return { ok: false, error: 'The site recovery record is too large or is not a file.' }
+    const proof = parseSiteRecoveryProof(await readFileAsync(path, { encoding: 'utf8', signal: AbortSignal.timeout(15_000) }))
+    if (!proof) return { ok: false, error: 'This is not a valid TalkWeaver site recovery record.' }
+    const granted = await cloudflareConnection().authorisePublish()
+    if (!granted.ok) return { ok: false, error: granted.error }
+    const inventory = await readPublishingInventory(granted.authorisation, standInApiBase(cloudflareTestContext()))
+    if (!inventory || !siteRecoveryRecord(proof, inventory)) return { ok: false, error: 'This recovery record does not match the current site, deployment or control files. Nothing changed.' }
+    const preview = await dialog.showMessageBox(win, { type: 'info', title: 'Add the shared site record',
+      message: `Keep the existing site and add its shared publishing record?`,
+      detail: `Account: ${granted.authorisation.accountId}\nSite: ${granted.authorisation.project}\nDeployment: ${inventory.revision}\nExisting file hashes kept: ${inventory.files?.length ?? 0}\nPages rebuilt or withdrawn: 0\nExisting short-link ids changed: 0\nRedirects and headers: preserved from the recovery record you selected.\n\nOnly import a record exported from a trusted copy of your publishing data. The next publish checks this deployment again.`,
+      buttons: ['Cancel', 'Use this recovery record'], defaultId: 0, cancelId: 0 })
+    if (preview.response !== 1 || !granted.authorisation.current()) return { ok: false }
+    const migrated = await handoutPublishing().publish({ entry: 'site-adoption', siteRecovery: proof, prepare: async () => granted.authorisation.current()
+      ? { ok: true, built: null } : { ok: false, error: 'The publishing connection changed. Review the site again.' } })
+    return migrated.ok ? { ok: true } : { ok: false, error: migrated.error }
+
+  } catch { return { ok: false, error: 'Site recovery could not be confirmed. Check the published site before trying again.' } }
+})
+ipcMain.handle('publish:get-library-files', async (_event, outlinePath: unknown) => {
+  if (typeof outlinePath !== 'string' || outlineRefused(outlinePath)) return { ok: false, error: 'Open a talk in a registered library first.' }
+  const root = vaultRootFor(outlinePath)
+  if (!root) return { ok: false, error: 'This talk has no registered library. Reveal its source to get the missing files.' }
+  return getLibraryFiles(root)
+})
+function publishingHistory() { return createPublishHistory(join(app.getPath('userData'), 'publishing-history.json')) }
+ipcMain.handle('publish:history', () => {
+  try { return { ok: true, attempts: publishingHistory().list() } }
+  catch { return { ok: false, error: 'Publishing history could not be read. The existing file was kept.' } }
+})
+ipcMain.handle('publish:check-site', async (): Promise<PublishSiteCheck> => {
+  const checkedAt = new Date().toISOString()
+  try {
+    const granted = await cloudflareConnection().authorisePublish()
+    if (!granted.ok) return { state: 'unknown', checkedAt }
+    const inventory = await readPublishingInventory(granted.authorisation, standInApiBase(cloudflareTestContext()))
+    if (!inventory || !granted.authorisation.current()) return { state: 'unknown', checkedAt }
+    const last = publishingHistory().list().find(row => row.site === inventory.site && (row.outcome === 'published' || row.outcome === 'unchanged'))
+    const confirmed = last?.events.find(event => event.stage === 'confirmed')?.revision
+    const hash = inventory.files?.find(([path]) => path === SITE_RECORD_PATH)?.[1]
+    let publisher: { publishedBy?: string; publishedAt?: string; publisherVersion?: string } = {}
+    if (hash) {
+      const transport = { fetch, apiBase: cloudflareApiBase(cloudflareTestContext()), allowLoopbackForTests: standInApiBase(cloudflareTestContext()) !== null,
+        publicBase: resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined), project: granted.authorisation.project }), contentType: () => 'application/json' }
+      const bytes = await readLiveAsset(transport, wranglerBlake3 ??= loadWranglerBlake3(app.getAppPath()), siteAssetAddresses(transport, { id: inventory.revision, url: inventory.deploymentUrl }, SITE_RECORD_PATH), SITE_RECORD_PATH, hash)
+      const parsed = bytes ? parseSiteRecord(bytes) : null
+      if (parsed?.ok) publisher = { publishedBy: parsed.record.publishedBy, publishedAt: parsed.record.publishedAt, publisherVersion: parsed.record.publisherVersion }
+    }
+    if (!granted.authorisation.current()) return { state: 'unknown', checkedAt }
+    return { state: confirmed ? confirmed === inventory.revision ? 'in-step' : 'changed' : 'unknown', checkedAt, revision: inventory.revision, ...publisher }
+  } catch { return { state: 'unknown', checkedAt } }
+})
 let handoutPublishingService: HandoutPublishing | null = null
 let wranglerBlake3: Blake3 | null = null
 let wranglerContentType: ((path: string) => string) | null = null
@@ -7352,6 +7305,8 @@ function handoutPublishing(): HandoutPublishing {
     shortLinks: { read: () => getConfig('publishUseShortIds', false) ?? false, write: (value) => writeConfig({ publishUseShortIds: value }) },
     headers: () => { try { return readFileSync(join(publishSiteDir(), '_headers'), 'utf8') } catch { return '' } },
     computerName: () => computerName(),
+    appVersion: () => app.getVersion(),
+    observe: event => publishingHistory().record(event),
     log: (line) => console.log(line),
     rehearsal: () => publishRehearsal(),
     stagingRoot: () => join(app.getPath('userData'), 'publish-staging'),
@@ -7367,7 +7322,7 @@ function publishRehearsal(): { project: string } | null {
   return { project: getConfig('cfPagesProject', undefined) ?? 'talkweaver-test' }
 }
 
-ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, content: string) => {
+ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, content: string, mediaChoice?: MediaPublishChoice) => {
   const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
   if (refusal) return { success: false, error: refusal }
   // `content` is the renderer's copy of the buffer, which can trail the last keystrokes: it gates the
@@ -7388,6 +7343,7 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     const published = flushed.text
     const blockedNow = unresolvedOutboundFailure(published)
     if (blockedNow) return blockedNow
+    const mediaNotices: string[] = []
     const presenterTicket = presenterPublications.ticket()
 
     // The sequence (leave to publish, the live service or its absence, the one upload, what a
@@ -7395,6 +7351,20 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
     // the only live address they may carry, and it is '' when the live service is not ready.
     const outcome = await handoutPublishing().publish({
       entry: 'talk',
+      begin: async (report) => {
+        if (hasGitConflictMarkers(published)) return { fail: { error: 'The talk has unresolved Git conflict markers. Resolve them before publishing.', reply: { success: false, error: 'The talk has competing edits from syncing', notReady: { kind: 'not-ready', title: 'The talk has competing edits from syncing', detail: 'Keep both versions and resolve the Git conflict before publishing.', fix: { action: 'show-source', label: 'Reveal talk source' } } } } }
+        if (mediaChoice === 'with-placeholders') return null
+        const fileCheck = await buildHandoutPagesOffThread({ kind: 'preflight', compilerDir, outlinePath, text: resolvePooledRefs(published, outlinePath), assetRoots: assetRootsFor(outlinePath) })
+          .catch(() => ({ warnings: ['The media check could not finish.'], publicationFiles: undefined }))
+        if (fileCheck.publicationFiles) {
+          const { checked, findings } = fileCheck.publicationFiles
+          report?.({ checked, missing: new Set(findings.map(finding => finding.file)).size })
+        }
+        const media = publicationMediaReview(fileCheck.publicationFiles, fileCheck.warnings, mediaChoice)
+        if (media.prompt) return { fail: { error: media.prompt.title, reply: { success: false, notReady: media.prompt } } }
+        if (media.notices) mediaNotices.push(...media.notices)
+        return null
+      },
       // The flushed string below is the compiler's selected input; no mutable-source recheck is claimed.
       prepare: async ({ dir: siteDir, project, live, link, redirects, makeFolder, writeSiteFile, claimFile }) => {
         const baseUrl = getConfig('publishBaseUrl', undefined)
@@ -7446,12 +7416,14 @@ ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, conte
           homeDetails: handoutHomeDetails({ outline: published }),
         })
 
+
         // The redirect file, as it was checked before the build began.
         if (redirectsText !== null) writeSiteFile(join(siteDir, '_redirects'), redirectsText)
-        return { ok: true, built: { url, warnings: pagesWritten.warnings } }
+        return { ok: true, built: { url, warnings: [...mediaNotices, ...publicationBuildWarnings(pagesWritten.warnings)] } }
       },
     })
     // A publish that did not go up, or that the connection changed under, records nothing below.
+    if (!outcome.ok && outcome.reply) return outcome.reply as { success: false; error: string }
     if (!outcome.ok) {
       return {
         success: false, error: outcome.error.startsWith('PUBLISH_') ? ((outcome.details?.includes('cannot be compared safely') || outcome.details?.startsWith('Publishing stopped because the local file ')) ? outcome.details : preservationMessage(outcome.error as PreservationReason)) : outcome.error,
@@ -8257,7 +8229,7 @@ ipcMain.handle('run:build-handout', async (_event, payload: { talkSlug: string; 
   }
 })
 
-ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string; runId: string; vaultId?: string }) => {
+ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string; runId: string; vaultId?: string; mediaChoice?: MediaPublishChoice }) => {
   try {
     // The selected Run's own vault when the caller names it (the Sessions view does), refused when it is not
     // open; never the first writable vault in its place. Its talk is read from that vault too.
@@ -8294,13 +8266,14 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
     let content = ''
     let workPhases: Phase[] = []
     let workWarning: string | undefined
+    const mediaNotices: string[] = []
     const presenterTicket = presenterPublications.ticket()
     const outcome = await handoutPublishing().publish({
       entry: 'run',
       // Bind the same in-memory source snapshot consumed by prepare, excluding later pin/stamp writes.
       revision: () => JSON.stringify([content, run]),
       removalRoots: (built: { url: string; folder: string; artifact: Pick<RunHandoutArtifact, 'path' | 'slideIds' | 'missing'>; preworkWarning?: string; phases: Phase[] }) => (['pre', 'post'] as const).filter(phase => !built.phases.includes(phase)).map(phase => '/' + built.folder + '/' + WORK_PAGE_FOLDER[phase]),
-      begin: async () => {
+      begin: async (report) => {
         reread()
         // As run:build-handout: the open editor's buffer, flushed through the one writer, is what is published.
         if(asked.sourceOutline && !(await qualifiedRunTalk(vault,asked)))return {fail:{error:'run-source-unavailable'}}
@@ -8309,6 +8282,20 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
         content = flushed.text
         const blocked = unresolvedOutboundFailure(content)
         if (blocked) return { fail: { error: blocked.error, reply: blocked } }
+        const compilerDir = getCompilerPath()
+        if (!compilerDir) return { fail: { error: 'Compiler not found. Update TalkWeaver and try again.' } }
+        if (hasGitConflictMarkers(content)) return { fail: { error: 'The talk has unresolved Git conflict markers. Resolve them before publishing.', reply: { success: false, error: 'The talk has competing edits from syncing', notReady: { kind: 'not-ready', title: 'The talk has competing edits from syncing', detail: 'Keep both versions and resolve the Git conflict before publishing.', fix: { action: 'show-source', label: 'Reveal talk source' } } } } }
+        if (payload.mediaChoice !== 'with-placeholders') {
+          const fileCheck = await buildHandoutPagesOffThread({ kind: 'preflight', compilerDir, outlinePath: talk.outlinePath, text: resolvePooledRefs(content, talk.outlinePath), assetRoots: assetRootsFor(talk.outlinePath), run: runCompileOption(runForHandout(talk, reread())) })
+            .catch(() => ({ warnings: ['The media check could not finish.'], publicationFiles: undefined }))
+          if (fileCheck.publicationFiles) {
+            const { checked, findings } = fileCheck.publicationFiles
+            report?.({ checked, missing: new Set(findings.map(finding => finding.file)).size })
+          }
+          const media = publicationMediaReview(fileCheck.publicationFiles, fileCheck.warnings, payload.mediaChoice)
+          if (media.prompt) return { fail: { error: media.prompt.title, reply: { success: false, notReady: media.prompt } } }
+          if (media.notices) mediaNotices.push(...media.notices)
+        }
         const current = reread()
         if(current.sourceOutline!==asked.sourceOutline)throw Error('run-source-conflict')
         const plan = planRunWork(vault, current, (phase) => runPrework().status(talk.slug, current.id, phase, vault))
@@ -8407,7 +8394,7 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
           // Extras for this run (ticket 24): the intro note and links, as the Run reads now; escaped by the compiler.
           homeExtras: run.extras ?? null,
         })
-        if (pagesWritten.warnings.length) preworkWarning = [preworkWarning, ...pagesWritten.warnings].filter(Boolean).join(' ')
+        preworkWarning = [preworkWarning, ...mediaNotices, ...publicationBuildWarnings(pagesWritten.warnings)].filter(Boolean).join(' ')
         // The work pages, in the Run's own folder of the site (a phase the Run no longer has loses its page).
         await writeRunWorkPages({ compilerDir, folder: outDir, sent: sentWork, talkTitle: run.talkTitle || talk.slug, runLine: runLineFor(run), handoutUrl: url })
         if (redirectsText !== null) writeSiteFile(join(siteDir, '_redirects'), redirectsText)
@@ -8424,19 +8411,24 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
       },
     })
     // A refusal of its first step (an unresolved trigger) is answered exactly as before.
-    if (!outcome.ok && outcome.reply) return outcome.reply as { success: false; error: string }
+    if (!outcome.ok && outcome.reply) return typeof outcome.reply === 'object' && 'notReady' in outcome.reply
+      ? { ...outcome.reply, recoveryOutlinePath: talk.outlinePath } : outcome.reply as { success: false; error: string }
     if (!outcome.ok) {
       return {
         success: false, error: outcome.error.startsWith('PUBLISH_') ? ((outcome.details?.includes('cannot be compared safely') || outcome.details?.startsWith('Publishing stopped because the local file ')) ? outcome.details : preservationMessage(outcome.error as PreservationReason)) : outcome.error,
-        ...(outcome.details ? { details: outcome.details } : {}), ...(outcome.notReady ? { notReady: outcome.notReady } : {}),
+        ...(outcome.details ? { details: outcome.details } : {}), ...(outcome.notReady ? { notReady: outcome.notReady, recoveryOutlinePath: talk.outlinePath } : {}),
       }
     }
     const { url, folder, artifact, preworkWarning } = outcome.built
     presenterPublications.published(presenterTicket, { kind: 'run', outlinePath: talk.outlinePath, runId: asked.id, url, folder })
     // A Run published after its session (or published again): its post-work opens now if it is owed (ticket 19).
-    openPostWorkFor(asked.talkSlug, asked.id, vault)
+    if (!outcome.localRecordFailed) openPostWorkFor(asked.talkSlug, asked.id, vault)
+    const warning = [
+      outcome.localRecordFailed ? `The Run handout is live at ${url}. TalkWeaver could not save its link on this Mac.` : null,
+      preworkWarning,
+    ].filter(Boolean).join(' ')
     return {
-      success: true, url, path: artifact.path, slideIds: artifact.slideIds, missing: artifact.missing, ...(preworkWarning ? { warning: preworkWarning } : {}),
+      success: true, url, path: artifact.path, slideIds: artifact.slideIds, missing: artifact.missing, ...(warning ? { warning } : {}),
       // Published without live features (spec D7): the sentence, and what lies behind it for "Details".
       ...(outcome.notice ? { liveNotice: outcome.notice, ...(outcome.noticeDetails ? { liveDetails: outcome.noticeDetails } : {}) } : {}),
       // Handouts an earlier version left with a dead live address: how many, and their names for "Details".
@@ -9418,7 +9410,6 @@ const scratchpadIpc = registerScratchpadIpc({
     return { outlinePath: source, root: hit && hit.vault.open && vaultAvailable(hit.vault) ? hit.vault.root : null }
   }
 })
-app.on('before-quit', () => scratchpadIpc.closeAll())
 
 // ── Per-item icon override (ADR-0021 icon picker) ────────────────────────────
 // Pin (or clear, iconKey=null) the icon on ONE top-level list item of a slide, by writing the
@@ -9557,6 +9548,44 @@ ipcMain.handle('asset:paste-image', async (_event, bytes: ArrayBuffer | Uint8Arr
   }
 })
 
+// PA1: the ordinary four-view workspace keeps pasted still images with the talk.
+ipcMain.handle('asset:paste-talk-pictures', async (_event, outlinePath: string, pictures?: ArrayBuffer[]) => {
+  if (outlineRefused(outlinePath) || !insideVault(outlinePath) || !existsSync(outlinePath)) return null
+  const root = writableRootFor(outlinePath)
+  if (!root) return null
+  try {
+    const inputs = pictures === undefined ? [clipboard.readImage().toPNG()] : pictures.map(bytes => Buffer.from(bytes))
+    if (!inputs.length || inputs.some(input => !input.length)) return null
+    // Decode the whole selection before creating anything in the talk.
+    const converted = await Promise.all(inputs.map(normaliseToWebp))
+    const talkDir = pathStaysInside(root, dirname(outlinePath))
+    if (!talkDir) return null
+    const media = join(talkDir, 'assets')
+    if (pathStaysInside(talkDir, media) !== media) return null
+    mkdirInVault(talkDir, media)
+    const refs: string[] = []
+    for (const webp of converted) {
+      const hash = createHash('sha256').update(webp).digest('hex').slice(0, 12)
+      let suffix = 0
+      for (;;) {
+        const name = `pasted-${hash}${suffix ? '-' + suffix : ''}.webp`
+        try {
+          await writeNewFile(join(media, name), webp)
+          refs.push('assets/' + name)
+          break
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+          if (++suffix === 100) throw error
+        }
+      }
+    }
+    return refs
+  } catch (error) {
+    console.warn('[asset:paste-talk-pictures]', error)
+  }
+  return null
+})
+
 // ── Instant slides after the talk (live-presenting ticket 07, frame L6) ─────────────────────
 // "Add to talk" writes the talk's source outline. If an editor window has the talk open, the
 // insertion is planned against that window's BUFFER and applied there (apply-only-if-unchanged,
@@ -9616,7 +9645,7 @@ function editorWindowForOutline(outlinePath: string): { win: BrowserWindow; outl
 // goes through that window's buffer, by the same read / apply messages as "Add to talk".
 // External-change guard (shared-talk ticket 01, outline-disk-guard.ts): watches each open talk's folder
 // (the same watcher registry as TalkText) and tells the window when its outline changed behind it.
-const outlineDiskWatchers = createDirectoryWatcherRegistry((directory, onChange) => watch(directory, onChange))
+const outlineDiskWatchers = createDirectoryWatcherRegistry((directory, onChange) => watchDirectory(directory, {}, onChange))
 const outlineRecovery = createOutlineRecovery(join(app.getPath('userData'), 'recovery'))
 // Windows whose close the person confirmed (the close sheet), and whether ⌘Q is under way.
 const closeConfirmed = new Set<number>()
@@ -9635,14 +9664,17 @@ const editorRevisions = createEditorRevisions()
 // app on some later close.
 let quitting = false
 let quitCycle = 0
-app.on('before-quit', (event) => {
+function recordQuitAttempt(): void {
   beginQuitAttempt()
-  const attempt = quitAttempt
-  const cycle = ++quitCycle
+  quitCycle++
   quitting = true
-  // Observe the final verdict after ALL before-quit listeners, including listeners added later.
-  setImmediate(() => { if (quitCycle === cycle && event.defaultPrevented) cancelQuitAttempt(attempt) })
-})
+}
+function captureQuitVeto(): () => void {
+  const attempt = quitAttempt
+  const cycle = quitCycle
+  return () => { if (quitCycle === cycle) cancelQuitAttempt(attempt) }
+}
+quitSequence.add({ name: 'Record quit attempt', stage: 'before-quit', timeoutMs: 0, run: recordQuitAttempt })
 const outlineDiskGuard = createOutlineDiskGuard({
   canonical: canonicalOutlinePath,
   async readText(realPath) {
@@ -9669,7 +9701,9 @@ const outlineDiskGuard = createOutlineDiskGuard({
     if (win && !win.isDestroyed()) win.webContents.send('outline:changed-on-disk', { outlinePath, change })
   },
 })
-app.on('will-quit', () => { outlineDiskGuard.dispose(); outlineDiskWatchers.releaseAll() })
+quitSequence.add({ name: 'Release scratchpad subscriptions', stage: 'will-quit', timeoutMs: 0, run: scratchpadIpc.closeAll })
+quitSequence.add({ name: 'Dispose outline disk guard', stage: 'will-quit', timeoutMs: 0, run: () => outlineDiskGuard.dispose() })
+quitSequence.add({ name: 'Release outline disk watchers', stage: 'will-quit', timeoutMs: 0, run: () => outlineDiskWatchers.releaseAll() })
 configureTalkWriter({
   diskGuard: outlineDiskGuard,
   editorBufferFor(outlinePath) {
@@ -9893,6 +9927,7 @@ ipcMain.handle('vault:create-talk', async (event, opts: { title: string; slug: s
   if (!vaultRoot) return null
   try {
     const { title, slug, topicFolder } = opts
+    if (typeof title !== 'string' || !title.trim() || /[\r\n]/.test(title)) return null
     // slug / topicFolder come from the renderer: the new talk folder must land inside the vault.
     const target = newTalkFolder(vaultRoot, slug, topicFolder)
     if (!target.ok) { console.error('[vault:create-talk] refused', target.error); return null }
@@ -9900,25 +9935,12 @@ ipcMain.handle('vault:create-talk', async (event, opts: { title: string; slug: s
     const releaseMutation = reserveManagementMutation(event.sender.id, [talkDir])
     if (!releaseMutation) return null
     try {
-    mkdirInVault(vaultRoot, talkDir)
     const outlinePath = join(talkDir, slug + '-outline.md')
-    if (!existsSync(outlinePath)) {
-      const initialContent = [
-        '---',
-        'title: ' + title,
-        // Stamp new talks as outline-v2 at birth — without this, every freshly created
-        // talk fails outlineHasV2Stamp and gets the migration prompt + a pointless .bak
-        // on first open.
-        'outline_version: 2',
-        '---',
-        '',
-        '## Introduction',
-        '',
-        '### Opening slide',
-        '',
-        'Your content here.',
-        '',
-      ].join('\n')
+    if (existsSync(talkDir) || !pathStaysInside(vaultRoot, talkDir)) return null
+    mkdirInVault(vaultRoot, dirname(talkDir))
+    mkdirSync(talkDir)
+    {
+      const initialContent = newTalkSource(title, randomBytes(5).toString('hex'))
       // Pre-fill the presenter's identity and house style: the vault file's affiliation, style and
       // logo, then this person's author for the vault, then Settings → Presenter identity and deck
       // defaults (several-vaults ticket 04). fill-missing only: nothing already in the template is
@@ -10400,7 +10422,12 @@ ipcMain.handle('shell:open-path', async (_event, path: string): Promise<boolean>
 // Reveal a file in Finder (select it in its folder) — for "I want to copy the file, not view it".
 ipcMain.handle('shell:show-item-in-folder', async (_event, path: string): Promise<boolean> => {
   try {
-    const target = decideShellPath('reveal', path, openVaultRoots())
+    const userData = app.getPath('userData'), merges = join(userData, 'recovery', 'merges')
+    const roots = openVaultRoots()
+    // Reveal only: app-owned merge archives are outside vaults. Do not authorise a
+    // recovery directory redirected outside userData, nor broaden shell:open-path.
+    if (pathStaysInside(userData, merges)) roots.push(merges)
+    const target = decideShellPath('reveal', path, roots)
     if (!target.ok) { console.error('[shell:show-item-in-folder] refused', target.reason, String(path).slice(0, 300)); return false }
     shell.showItemInFolder(target.path)
     return true
@@ -10631,6 +10658,7 @@ function preferencesChanged(keys: string[], shortcutKeys: Readonly<Record<string
   const has = (...wanted: string[]): boolean => wanted.some((k) => keys.includes(k))
   if (has('updates.checkForNewVersions', 'updates.alphaVersions')) updateChecker?.settingChanged()
   if (has('writing.actionBar')) broadcastActionBar()
+  if (has('writing.openInView', 'writing.slidesPanelView')) broadcastToWindows('workspace-views:changed', workspaceViewPreferences())
   if (has('general.placeChip')) broadcastToWindows('place-chip:changed', { visible: placeChipVisible() })
   if (has('general.guideButton')) { broadcastToWindows('guide-button:changed', { visible: guideButtonVisible() }); pushPresentChapter() }
   if (has('writing.plainFont', 'writing.plainTextSize')) broadcastToWindows('plain-look:changed', plainLook())
@@ -10657,6 +10685,10 @@ function preferencesChanged(keys: string[], shortcutKeys: Readonly<Record<string
   // The set-up folder (0.45): a new folder chosen starts a cycle now; any other change here, after a pause.
   if (has(SETUP_FOLDER_SETTING)) setupFolderHost?.folderChosen()
   else setupFolderHost?.localChanged()
+}
+
+function applyThemePreference(theme: unknown): void {
+  nativeTheme.themeSource = theme === 'light' || theme === 'dark' ? theme : 'system'
 }
 
 async function startSharedSettings(): Promise<void> {
@@ -10698,8 +10730,12 @@ async function startSharedSettings(): Promise<void> {
       guideLearn.commandRan('new-window', { inExample: false })
       return true
     },
-    changed: (keys, state) => preferencesChanged(keys, state.keys)
+    changed: (keys, state) => {
+      if (keys.includes(THEME_SETTING)) applyThemePreference(state.settings[THEME_SETTING])
+      preferencesChanged(keys, state.keys)
+    }
   })
+  applyThemePreference(sharedSettings.store.view().settings[THEME_SETTING])
   settingsOverlay = sharedSettings.overlay
   settingsKeymap = createSettingsKeymap(sharedSettings.store, { bridleIdOfKeymapId, keymapIdOf })
   lastShortcutKeys = JSON.stringify(sharedSettings.store.view().keys)
@@ -11365,37 +11401,34 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
+// Wait for preference writes from the overlay and the store before exiting.
+quitSequence.add({
+  name: 'Drain preference writes', stage: 'will-quit', timeoutMs: 3000,
+  run: () => sharedSettings?.dispose(),
+})
+
 // A share's create on the service under way at quit: up to 5 s for its reply, so its owner token is
 // kept (ticket 12 round 2). What does not finish in time keeps its note: reported at the next start,
 // and replaced on the service when the talk is next shared.
-let sharedTalkCreatesDrained = false
-// Preference writes the store has not answered yet are waited for (the overlay queues them), then the store is closed.
-let sharedSettingsClosed = false
-app.on('will-quit', (event) => {
-  if (sharedSettings && !sharedSettingsClosed) {
-    sharedSettingsClosed = true
-    event.preventDefault()
-    const closing = sharedSettings
-    // Electron ignores a re-entrant quit while this will-quit callback is still unwinding.
-    // Disposal can settle in a microtask; resume on the next turn so the quit is honoured.
-    void Promise.race([closing.dispose(), new Promise((done) => setTimeout(done, 3000))]).catch(() => {}).finally(() => setImmediate(() => app.quit()))
-    return
-  }
-  if (!sharedTalkCreatesDrained && sharedTalkService?.createsPending()) {
-    sharedTalkCreatesDrained = true
-    event.preventDefault()
-    void sharedTalkService.drainCreates(5000).catch(() => {}).finally(() => app.quit())
-    return
-  }
-  void thumbnailPrewarm.stop()
-  liveSessions?.shutdown()
-  sharedTalkFeedbackService?.stopAll()
-  try { localLiveWorker?.process.kill('SIGTERM') } catch { /* already stopped */ }
-  localLiveWorker = null
-  // A publish or a live-service set-up under way: its tool runs in a process group of its own and
-  // would go on after the app has gone. Ended here, at once (wrangler-launcher.ts).
-  endAllWranglerRuns()
+quitSequence.add({
+  name: 'Drain share creates', stage: 'will-quit', timeoutMs: 5000,
+  when: () => sharedTalkService?.createsPending() ?? false,
+  run: () => sharedTalkService?.drainCreates(5000),
 })
+
+quitSequence.add({ name: 'Stop thumbnail prewarm', stage: 'will-quit', timeoutMs: 0, run: () => { void thumbnailPrewarm.stop() } })
+quitSequence.add({ name: 'Stop live sessions', stage: 'will-quit', timeoutMs: 0, run: () => liveSessions?.shutdown() })
+quitSequence.add({ name: 'Stop live feedback', stage: 'will-quit', timeoutMs: 0, run: () => sharedTalkFeedbackService?.stopAll() })
+quitSequence.add({
+  name: 'Stop local live worker', stage: 'will-quit', timeoutMs: 0,
+  run: () => {
+    try { localLiveWorker?.process.kill('SIGTERM') } catch { /* already stopped */ }
+    localLiveWorker = null
+  },
+})
+// An in-flight publish or live-service setup runs in a process group that would outlive the app.
+quitSequence.add({ name: 'Stop publish and setup tools', stage: 'will-quit', timeoutMs: 0, run: () => { endAllWranglerRuns() } })
+quitSequence.add({ name: 'Stop directory watch process', stage: 'will-quit', timeoutMs: 0, run: directoryWatchService.stop })
 
 app.on('activate', () => {
   // The setup command never opens a window, whatever macOS asks of it.

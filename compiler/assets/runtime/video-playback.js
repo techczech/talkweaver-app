@@ -1,8 +1,10 @@
 // Presenter-owned local video transport. Inlined into the portable deck; no Electron API.
 export function createVideoPlayback(options) {
   const now = options.now || Date.now;
-  const bound = 0.25;
+  const driftTolerance = 0.25;
+  const seekTolerance = 0.01;
   const applied = new WeakMap();
+  const appliedSeeks = new WeakMap();
   const seen = new Set();
   let revision = 0;
   let latest = null;
@@ -30,6 +32,7 @@ export function createVideoPlayback(options) {
     return s && typeof s.presenterId === 'string' && s.presenterId.length > 0 && s.presenterId.length <= 100 && Number.isSafeInteger(s.revision) && s.revision > 0 && Number.isSafeInteger(s.navSeq)
       && Number.isInteger(s.slide) && Number.isInteger(s.video) && s.video >= 0
       && typeof s.slideId === 'string' && validTime(s.time) && validRate(s.rate)
+      && (s.seek === undefined || typeof s.seek === 'boolean')
       && typeof s.paused === 'boolean' && typeof s.ended === 'boolean' && typeof s.loop === 'boolean'
       && typeof s.at === 'number' && Number.isFinite(s.at) && Math.abs(now() - s.at) < 5000
       && options.known(s);
@@ -41,11 +44,12 @@ export function createVideoPlayback(options) {
   function decision(s, player) {
     let time = target(s);
     if (Number.isFinite(player.duration) && player.duration > 0) time = s.loop && !s.paused && !s.ended ? time % player.duration : Math.min(time, player.duration);
-    return { time, seek: s.ended || Math.abs(player.currentTime - time) > bound, rate: s.rate, paused: s.paused || s.ended };
+    const tolerance = s.seek || s.paused || s.ended ? seekTolerance : driftTolerance;
+    return { time, seek: (s.ended && !player.ended) || Math.abs(player.currentTime - time) > tolerance, rate: s.rate, paused: s.paused || s.ended };
   }
-  function snapshot(player, identity) {
+  function snapshot(player, identity, seek = false) {
     const s = { ...identity, presenterId, revision: ++revision, time: player.currentTime, rate: player.playbackRate,
-      paused: player.paused, ended: player.ended, loop: player.loop, at: now() };
+      paused: player.paused, ended: player.ended, loop: player.loop, at: now(), ...(seek ? { seek: true } : {}) };
     return valid(s) ? s : null;
   }
   function apply(s, player, muted) {
@@ -55,14 +59,30 @@ export function createVideoPlayback(options) {
     if (muted) { player.defaultMuted = true; player.muted = true; }
     player.loop = s.loop;
     if (player.playbackRate !== d.rate) player.playbackRate = d.rate;
-    if (d.seek) { try { player.currentTime = d.time; } catch {} }
+    // A user seek changes currentTime before the browser dispatches its seeking event.
+    // A snapshot already in flight must not put the player back before that event is handled.
+    const pendingSeek = appliedSeeks.get(player);
+    const userSeekPending = player.seeking && (pendingSeek === undefined || Math.abs(player.currentTime - pendingSeek) > seekTolerance);
+    if (d.seek && !userSeekPending) {
+      try {
+        player.currentTime = d.time;
+        appliedSeeks.set(player, d.time);
+      } catch {}
+    }
     if (d.paused) player.pause();
     else if (player.paused && !player.ended) { try { player.play()?.catch(() => {}); } catch {} }
     return true;
   }
-  function echo(player) {
+  function echo(player, action) {
+    if (action === 'seek') {
+      // A browser seek is an echo only if we actually moved that player to this time.
+      // The wider drift tolerance would also swallow small seeks made with the controls.
+      const time = appliedSeeks.get(player);
+      appliedSeeks.delete(player);
+      return time !== undefined && Math.abs(player.currentTime - time) <= seekTolerance;
+    }
     const s = applied.get(player);
-    return !!s && Math.abs(player.currentTime - s.time) <= bound && player.playbackRate === s.rate && player.paused === s.paused;
+    return !!s && Math.abs(player.currentTime - s.time) <= driftTolerance && player.playbackRate === s.rate && player.paused === s.paused;
   }
   function accept(s) {
     if (!valid(s) || !observeOwner(s) || (latest && s.revision <= latest.revision)) return false;

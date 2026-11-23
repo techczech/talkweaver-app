@@ -70,7 +70,12 @@ function renderInlinePre05(text) {
       return `<a href="${safe}"${titleAttr} target="_blank" rel="noopener">${label}</a>`
     })
     out = out.replace(/(^|[\s(])(https?:\/\/[^\s<]+?)([.,;:)\]]*)(?=\s|$|<)/g,
-      (_, lead, url, trail) => `${lead}<a href="${url}" target="_blank" rel="noopener">${url}</a>${trail}`)
+      (_, lead, url, trail) => {
+        // Ticket 11 (HTML escaping in one place): a ; that closes an entity stays with the URL, in the
+        // renderer and so in this copy of it. Before, `https://e/<kbd>a</kbd>` ended `&gt</a>;`.
+        if (trail[0] === ';' && /&#?[a-z0-9]+$/i.test(url)) { url += ';'; trail = trail.slice(1) }
+        return `${lead}<a href="${url}" target="_blank" rel="noopener">${url}</a>${trail}`
+      })
     return out
   }
   const escaped = escapeHtml(text)
@@ -78,7 +83,7 @@ function renderInlinePre05(text) {
   const { masked, restore } = protectInlineSegments(escaped, (segment) =>
     segment.kind === 'code'
       ? `<code>${renderLegacyEscaped(segment.content)}</code>`
-      : renderLegacyEscaped(segment.source))
+      : renderLegacyEscaped(segment.source), { escaped: true })
   return restore(renderLegacyEscaped(replaceInlineMarks(masked)))
 }
 

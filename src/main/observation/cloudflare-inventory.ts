@@ -62,6 +62,8 @@ export interface InventoryQuery {
   accountId: string
   projectName: string
   clock: () => number
+  /** Publishing may validate deployment times against the authenticated Pages response. */
+  useResponseTimeForPublishing?: boolean
   signal?: AbortSignal
   /** Epoch ms; the whole query ends at min(start + 45 s, deadlineAt). */
   deadlineAt: number
@@ -220,7 +222,7 @@ export async function queryProductionInventory(query: InventoryQuery): Promise<I
       return url.href
     }
 
-    const get = async (url: string, cap: number, notFound: WorkerFailureReason): Promise<Record<string, unknown>> => {
+    const get = async (url: string, cap: number, notFound: WorkerFailureReason): Promise<{ result: Record<string, unknown>; responseTime: number | null }> => {
       if (requests >= MAX_INVENTORY_REQUESTS) failed('request-refused')
       if (signal?.aborted) failed('cancelled')
       const remaining = deadline - clock()
@@ -250,7 +252,11 @@ export async function queryProductionInventory(query: InventoryQuery): Promise<I
             const codes = apiErrorCodes(envelope)
             return malformed('envelope', codes ? { apiErrorCodes: codes } : {})
           }
-          return envelope.result
+          const date = query.useResponseTimeForPublishing ? response.headers.get('date') : null
+          const time = date ? Date.parse(date) : NaN
+          // HTTP Date has one-second resolution. Use the end of that second for the future-time check.
+          const responseTime = Number.isFinite(time) && new Date(time).toUTCString() === date ? time + 999 : null
+          return { result: envelope.result, responseTime }
         }, Math.min(limits.requestTimeoutMs, remaining), signal)
       } catch (error) {
         if (error instanceof InventoryStop) throw error
@@ -260,7 +266,7 @@ export async function queryProductionInventory(query: InventoryQuery): Promise<I
       }
     }
 
-    const production = (value: unknown): ProductionDeployment => {
+    const production = (value: unknown, observedAt: number): ProductionDeployment => {
       // An explicit `null` in the answer for this project (its name was checked just before) is Cloudflare saying there is no
       // production deployment; an absent field is not that and stays an unproven answer.
       if (value === null) throw new InventoryStop({ outcome: 'incomplete', reason: 'no-production-deployment', noProductionDeployment: true })
@@ -270,7 +276,7 @@ export async function queryProductionInventory(query: InventoryQuery): Promise<I
       if (value.is_skipped === true || !isRecord(value.latest_stage) || value.latest_stage.status !== 'success') incomplete('production-not-settled')
       const createdOn = normaliseApiTime(value.created_on)
       if (createdOn === null || Date.parse(createdOn) < EARLIEST_DEPLOYMENT) return malformed('time')
-      if (Date.parse(createdOn) > clock()) failed('clock-skew')
+      if (Date.parse(createdOn) > observedAt) failed('clock-skew')
       const trigger = isRecord(value.deployment_trigger) ? value.deployment_trigger : {}
       const metadata = isRecord(trigger.metadata) ? trigger.metadata : {}
       const marker = typeof metadata.commit_message === 'string' ? /^tw-candidate:([0-9a-f]{64})$/u.exec(metadata.commit_message) : null
@@ -280,14 +286,14 @@ export async function queryProductionInventory(query: InventoryQuery): Promise<I
       return { deploymentId: value.id, createdOn, ...(marker ? { candidateDigest: marker[1] } : {}), ...(typeof value.short_id === 'string' && SHORT_ID.test(value.short_id) ? { shortId: value.short_id } : {}), ...url }
     }
 
-    const project = async (): Promise<ProductionDeployment> => {
-      const result = await get(address([accountId, projectName]), limits.projectBytes, 'project-not-found')
+    const project = async () => {
+      const { result, responseTime } = await get(address([accountId, projectName]), limits.projectBytes, 'project-not-found')
       if (result.name !== projectName) malformed('identity-mismatch')
-      return production(result.canonical_deployment)
+      return { deployment: production(result.canonical_deployment, responseTime ?? clock()), responseTime }
     }
 
     const inventory = async (prod: ProductionDeployment): Promise<Array<[string, string]>> => {
-      const result = await get(address([accountId, projectName, prod.deploymentId]), limits.deploymentBytes, 'deployment-not-found')
+      const { result } = await get(address([accountId, projectName, prod.deploymentId]), limits.deploymentBytes, 'deployment-not-found')
       if (result.id !== prod.deploymentId || result.environment !== 'production') malformed('shape')
       if (result.project_name !== undefined && result.project_name !== projectName) malformed('identity-mismatch')
       if (normaliseApiTime(result.created_on) !== prod.createdOn) malformed('time')
@@ -313,18 +319,18 @@ export async function queryProductionInventory(query: InventoryQuery): Promise<I
       return entries.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)
     }
 
-    const prod1 = await project()
+    const { deployment: prod1 } = await project()
     let files = await inventory(prod1)
     let confirmed = prod1
-    const prod2 = await project()
-    if (prod2.deploymentId !== prod1.deploymentId) {
+    let check = await project()
+    if (check.deployment.deploymentId !== prod1.deploymentId) {
       retried = true
-      files = await inventory(prod2)
-      const prod3 = await project()
-      if (prod3.deploymentId !== prod2.deploymentId) incomplete('production-changed-during-check')
-      confirmed = prod2
+      confirmed = check.deployment
+      files = await inventory(confirmed)
+      check = await project()
+      if (check.deployment.deploymentId !== confirmed.deploymentId) incomplete('production-changed-during-check')
     }
-    const confirmedAt = toISO(clock())
+    const confirmedAt = toISO(check.responseTime ?? clock())
     if (Date.parse(confirmed.createdOn) > Date.parse(confirmedAt)) failed('clock-skew')
     return { outcome: 'complete', requests, retried, production: confirmed, confirmedAt, explicitEmpty: files.length === 0, files }
   } catch (error) {

@@ -88,6 +88,7 @@ const browser = await chromium.launch()
 try {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 } })
   await page.setContent('<div id="host" style="width:800px;height:700px"></div>')
+  await page.addStyleTag({ path: join(root, 'src/renderer/src/app-theme.css') })
   await page.addScriptTag({ path: outfile })
   const ev = (fn, arg) => page.evaluate(fn, arg)
   const open = (d, mode = 'plain') => ev(([d, m]) => { window.mount(d, m); }, [d, mode])
@@ -162,7 +163,7 @@ try {
   })
   assert.equal(hm.text.trim(), '##', 'faint marks are the heading marks')
   assert.ok(hm.size <= hm.body + 0.01 && hm.size >= hm.body * 0.7 && hm.text === '##', 'mark size ' + hm.size + ' is at most body size ' + hm.body)
-  assert.equal(hm.color, 'rgb(138, 144, 153)', 'grey')
+  assert.equal(hm.color, 'rgb(95, 107, 122)', 'grey')
   assert.equal(hm.count, 1, 'only the caret heading shows marks')
   await ev(() => window.caret(window.at('Ten years', 2)))
   const h1 = await ev(() => { const s = getComputedStyle([...window.lineEl(1).querySelectorAll('.cm-plain-hmark *')].find((x) => x.textContent === '#')); return parseFloat(s.fontSize) })
@@ -182,7 +183,7 @@ try {
   // Links: underlined, in the link colour, when concealed.
   await ev(() => window.caret(window.at('Plain text', 3)))
   const link = await ev(() => { const s = getComputedStyle(window.lineEl(7).querySelector('.cm-plain-link')); return { deco: s.textDecorationLine, color: s.color, text: window.lineEl(7).querySelector('.cm-plain-link').textContent } })
-  assert.equal(link.text, 'the council'); assert.equal(link.deco, 'underline'); assert.equal(link.color, 'rgb(26, 95, 180)')
+  assert.equal(link.text, 'the council'); assert.equal(link.deco, 'underline'); assert.equal(link.color, 'rgb(29, 78, 216)')
 
   // Typed Markdown, one key press at a time, then the caret leaves.
   const typeAtEnd = async (text) => {

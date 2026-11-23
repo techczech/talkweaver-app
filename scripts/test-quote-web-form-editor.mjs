@@ -14,12 +14,11 @@
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
-import { chromium } from 'playwright'
+import { launchEditorTestBrowser, reportMissingEditorTestBrowser } from './lib/editor-test-browser.mjs'
 
-const SHELL = join(homedir(), '.cache/puppeteer/chrome-headless-shell/mac_arm-146.0.7680.66/chrome-headless-shell-mac-arm64/chrome-headless-shell')
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'talk-weaver-quote-web-form-editor-'))
 const outfile = join(dir, 'bundle.js')
@@ -68,8 +67,9 @@ const WEB = 'https://www.samplesite.example/posts/a-sample-post'
 const slide = (trigger, body) => `# T\n\n## S\n\n### Quote {id=q1}\n${trigger}\n\n${body}\n\n### Other {id=q2}\n{quote}\n\n> Other words.\n\n- Other Name ${WEB}\n`
 const SOURCE_LINE = 10  // the source line of the first slide in `slide()`
 
-const browser = await chromium.launch({ executablePath: SHELL, headless: true })
+let browser
 try {
+  browser = await launchEditorTestBrowser()
   const page = await browser.newPage()
   await page.setContent('<div id="host"></div>')
   await page.addScriptTag({ path: outfile })
@@ -224,7 +224,9 @@ try {
     }
   }
   console.log('quote web form editor ok: typing, paste and blur set form=web (a DOI: form=paper) in one undo step; nothing else is set')
+} catch (error) {
+  reportMissingEditorTestBrowser(error)
 } finally {
-  await browser.close()
+  await browser?.close()
   rmSync(dir, { recursive: true, force: true })
 }

@@ -66,15 +66,14 @@
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
-import { chromium } from 'playwright'
+import { launchEditorTestBrowser, reportMissingEditorTestBrowser } from './lib/editor-test-browser.mjs'
 import { stampMissingIds } from '../compiler/scripts/lib/12-outline-edit.mjs'
 import { DOI, WEB, compiledWords, compilerIn, drawnForm } from './lib/quote-drawn-form-slides.mjs'
 import { WRITE_CASES_PAGE, writeCases } from './lib/quote-form-typed-slide-write-cases.mjs'
 
-const SHELL = join(homedir(), '.cache/puppeteer/chrome-headless-shell/mac_arm-146.0.7680.66/chrome-headless-shell-mac-arm64/chrome-headless-shell')
 const root = fileURLToPath(new URL('..', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'talk-weaver-quote-form-typed-slide-'))
 const outfile = join(dir, 'bundle.js')
@@ -187,10 +186,11 @@ const talk = (ids, second = 'quote') => [
 const lineNumber = (text, line) => { const index = text.split('\n').indexOf(line); assert(index >= 0, `the text has the line "${line}"`); return index + 1 }
 
 const compile = compilerIn(dir)
-const browser = await chromium.launch({ executablePath: SHELL, headless: true })
+let browser
 const failures = []
 let ran = 0
 try {
+  browser = await launchEditorTestBrowser()
   const page = await browser.newPage()
   await page.setContent('<div id="host"></div>')
   await page.addScriptTag({ path: outfile })
@@ -699,7 +699,9 @@ try {
     console.log(`quote form typed slide editor ok: ${ran} cases; a quote slide typed top to bottom takes its form (one run, a save before or during the link's line, pasted), every form is decided on the text it is written to, and nothing else is written`)
     for (const timing of timings) console.log(timing)
   }
+} catch (error) {
+  reportMissingEditorTestBrowser(error)
 } finally {
-  await browser.close()
+  await browser?.close()
   rmSync(dir, { recursive: true, force: true })
 }

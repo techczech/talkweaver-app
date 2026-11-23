@@ -46,8 +46,9 @@ import {
   NOT_CONNECTED_TITLE, OPEN_SETTINGS, PUBLISHED_WITHOUT_LIVE, SAVE_AS_FILE, publishNotReady, publishedWithoutLiveText,
 } from '../src/shared/publish-status.ts'
 import { REPLY_TEXT_MARK, createFakeCloudflare, fakeCloudflareFetch } from './lib/cloudflare-api-stub.mjs'
-import { seedLiveFromFolder, wranglerContentType } from './lib/publishing-fakes.mjs'
+import { seedLiveFromFolder, wranglerContentType, writePublicationRecord } from './lib/publishing-fakes.mjs'
 import { loadWranglerBlake3 } from '../src/main/pages-direct-upload.ts'
+import { SITE_RECORD_PATH } from '../src/main/site-record.ts'
 import { NO_PRODUCTION_REVISION } from '../src/main/publishing-inventory.ts'
 import { TALK_FOLDER_UNCLEAR, TALK_NAME_SHARED, TALK_NOT_FOUND, TALK_UNPUBLISH_CLAIMS_UNREAD, talkByOutline, TALK_UNPUBLISH_FOLDER_CHANGED, TALK_UNPUBLISH_NOT_A_FOLDER, TALK_UNPUBLISH_SITE_MISSING, folderContained, siteEntry, talkSiteFolder, talkUnpublishJob } from '../src/main/talk-unpublish.ts'
 import { editFrontmatterText } from '../src/shared/frontmatter-editor.ts'
@@ -63,7 +64,7 @@ import { workKeyMissing, workOwnerUnknown } from '../src/shared/run-work.ts'
 import { buildNotAvailablePage } from '../compiler/scripts/lib/work-page.mjs'
 import { memorySecrets } from './lib/memory-secrets.mjs'
 import { workerDistFiles } from './lib/worker-dist.mjs'
-import { readSource } from './lib/read-source.mjs'
+import { functionBody, readMainSource, readSource } from './lib/read-source.mjs'
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)))
 const scratch = mkdtempSync(join(tmpdir(), 'tw-handout-publishing-'))
@@ -150,7 +151,7 @@ function world(overrides = {}) {
     /** This computer's short-link registry (the cache of the site's record). */
     registry: {},
   }
-  let seeded = false
+  const seeded = new WeakSet()
   let launch = null
   const send = fakeCloudflareFetch(api, { honourAbort: true })
   const pagesFetch = async (address, init = {}) => {
@@ -170,14 +171,18 @@ function world(overrides = {}) {
     preservationRoot: join(dir, '..', `coordination-${sites}`),
     stagingRoot: () => join(dir, '..', `staging-${sites}`),
     inventory: async (a) => {
-      if (!seeded) { seedLiveFromFolder(api, a.accountId, a.project, dir, ports.preservationRoot); seeded = true }
+      // Seed at the start of each authorised attempt. A refused overlapping attempt cannot
+      // reset the already-published fake site during another attempt's readback.
+      if (!seeded.has(a)) {
+        seedLiveFromFolder(api, a.accountId, a.project, dir, ports.preservationRoot)
+        seeded.add(a)
+      }
       const production = api.production(a.accountId, a.project)
       const files = Object.entries(production?.files ?? {})
       const marker = /^tw-candidate:([0-9a-f]{64})$/u.exec(production?.deployment_trigger?.metadata?.commit_message ?? '')
       return { complete: true, site: `cf-pages:${a.accountId}:${a.project}`, revision: production?.id ?? NO_PRODUCTION_REVISION, ...(marker ? { candidateDigest: marker[1] } : {}), paths: files.map(([path]) => path), files }
     },
     authorise: async () => {
-      seeded = false
       const granted = await connection.authorisePublish()
       if (!granted.ok) return granted
       const real = granted.authorisation
@@ -210,8 +215,26 @@ function world(overrides = {}) {
   /** A job for an entry point, building what the app's own handler for it builds, in small. */
   w.job = (entry, options = {}) => {
     const name = options.name ?? (entry === 'talk' ? 'talk-a' : 'run-a')
+    const account = config.accountId || ADA.id
+    const project = config.project
+    let siteRecovery
+    if (entry === 'site-adoption' && api.model.sites.get(account)?.has(project)) {
+      // Rehearse a reviewed legacy revision in every common entry-point case, even after a
+      // previous fixture has published. Keep the current content; remove only the shared record.
+      seedLiveFromFolder(api, account, project, dir, ports.preservationRoot)
+      const files = { ...api.production(account, project)?.files }
+      delete files[SITE_RECORD_PATH]
+      const legacy = api.seed(account, project, { files, branch: config.productionBranch })
+      const site = `cf-pages:${account}:${project}`
+      // This fixture models the Mac that wrote the legacy deployment. If a recovery attempt
+      // is refused, the next ordinary publish can still bootstrap from its matching receipt.
+      writePublicationRecord(ports.preservationRoot, site, legacy.id)
+      siteRecovery = { format: 'talkweaver-site-recovery', version: 1, site, revision: legacy.id,
+        record: { registry: {}, shortLinks: false, headers: '' }, controls: {} }
+    }
     return {
       entry,
+      ...(siteRecovery ? { siteRecovery } : {}),
       ...(entry === 'run-unpublish' || entry === 'talk-unpublish' ? { removalRoots: () => [`/${name}`] } : {}),
       prepare: async ({ dir: siteDir, project, live, link, redirects, makeFolder, writeSiteFile }) => {
         log.push(`prepare:${entry}:${name}`)
@@ -261,19 +284,21 @@ async function connected(overrides = {}, token = TOKEN) {
   const w = await connected()
   const job = w.job('run')
   job.record = () => { throw Error('run-source-unavailable') }
-  await assert.rejects(w.publishing.publish(job), /run-source-unavailable/)
+  const outcome = await w.publishing.publish(job)
+  assert.equal(outcome.ok, true, JSON.stringify(outcome))
+  assert.equal(outcome.localRecordFailed, true, 'the local authority refusal is surfaced separately')
   assert.equal(w.uploads.length, 1)
   assert.equal(w.recorded.length, 0)
   assert.ok(existsSync(join(w.dir, 'run-a', 'index.html')))
-  console.log('PASS: post-upload record refusal rejects; uploaded pages remain; no recorded success')
+  console.log('PASS: the confirmed upload succeeds with a local record warning; no Run link is recorded')
 }
 
 // ── 1. The entry points ─────────────────────────────────────────────────────────────────────────
 {
-  assert.deepEqual(ENTRIES, ['talk', 'run', 'run-unpublish', 'talk-unpublish', 'live-short-link'])
+  assert.deepEqual(ENTRIES, ['talk', 'run', 'run-unpublish', 'talk-unpublish', 'live-short-link', 'site-adoption'])
   assert.deepEqual(WITH_LIVE, ['talk', 'run'], 'the two that write pages may carry the live address')
   // (Read with LF line endings on every platform: a Windows checkout has CRLF.)
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   const between = (from, to) => { const start = main.indexOf(from); assert.ok(start >= 0, `${from} is in the main process`); return main.slice(start, main.indexOf(to, start + from.length)) }
   const BODIES = {
     talk: between("ipcMain.handle('talk:publish-handout'", '\n})\n'),
@@ -281,24 +306,28 @@ async function connected(overrides = {}, token = TOKEN) {
     'run-unpublish': between("ipcMain.handle('run:unpublish-handout'", '\n})\n'),
     'talk-unpublish': between("ipcMain.handle('published:unpublish-talk'", '\n})\n'),
     'live-short-link': between('async function ensureLiveJoinUrl(', '\n}\n'),
+    'site-adoption': between("ipcMain.handle('publish:import-site-recovery'", '\n})\n'),
   }
   for (const entry of ENTRIES) {
     const body = BODIES[entry]
     assert.ok(new RegExp(`handoutPublishing\\(\\)\\.publish\\(\\{\\s*entry: '${entry}'`).test(body), `${entry}: goes through the one publishing sequence, as entry '${entry}'`)
     assert.ok(!/readToken\(|runBundledWrangler\(|ensureLiveWorker\(|CLOUDFLARE_API_TOKEN|tokenExists\(/.test(body), `${entry}: its handler reads no token, starts no tool and asks the live service nothing itself`)
   }
-  assert.ok(main.includes(`ipcMain.handle('live:go'`) && between("ipcMain.handle('live:go'", '\n})\n').includes('ensureLiveJoinUrl(context)'), 'Go live reaches the short-link upload')
+  assert.ok(between("ipcMain.handle('live:go'", '\n  })\n').includes('host.ensureLiveJoinUrl(context)'), 'Go live reaches the short-link upload')
   assert.equal(main.split('handoutPublishing().publish(').length - 1, ENTRIES.length, 'there are exactly as many uploads of the site as rows in the table')
   assert.ok(!main.includes("'pages', 'deploy'") && !/deployPublishedSite/.test(main), 'the main process has no upload of its own left')
   // No publishing tool runs: handouts go up with Cloudflare's API (per-talk publishing, pages-direct-upload.ts), and the
   // live service is set up without it too (ticket 11). The main process runs wrangler for nothing it publishes.
-  assert.ok(!main.includes('runBundledWrangler') && !/\brunWrangler\(/.test(main), 'the main process runs no wrangler command to publish')
+  const calls = readMainSource((code, file) => file === 'src/main/wrangler-launcher.ts'
+    ? code.replace('export function runWrangler(', '')
+    : code)
+  assert.ok(!main.includes('runBundledWrangler') && !/\brunWrangler\(/.test(calls), 'the main process runs no wrangler command to publish')
   assert.ok(main.includes('blake3: () => (wranglerBlake3 ??= loadWranglerBlake3(app.getAppPath()))'), "the Pages hash is wrangler's own blake3, from the app's own node_modules")
   // Nothing publishes by itself: no command line, no timer, no save hook reaches the sequence.
   for (const file of ['src/main/setup-cli.ts', 'src/main/talk-writer.ts']) {
     if (existsSync(join(repo, file))) assert.ok(!readSource(join(repo, file)).includes('handoutPublishing'), `${file} does not publish`)
   }
-  console.log('PASS 1: five entry points, each through the one sequence; the main process uploads the site nowhere else')
+  console.log('PASS 1: six entry points, each through the one sequence; the main process uploads the site nowhere else')
 }
 
 // ── 2. PUBLISHED OUTPUT ─────────────────────────────────────────────────────────────────────────
@@ -324,11 +353,22 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
   for (const address of [...ON_THIS_COMPUTER, ...NOT_AN_ADDRESS, 'wss://live.example.test/socket', '//talks.test/x', 'ftp://files.example.test/']) assert.equal(liveAddressForPages(address), '', `never put in a page: ${String(address)}`)
   assert.deepEqual([liveAddressForPages(`${LIVE}//`), liveAddressForPages(' https://talks.test/a/ ')], [LIVE, 'https://talks.test/a'])
   // The whole app has that one function: no second test of "localhost" or "127." anywhere in what publishes or goes live.
-  for (const file of ['src/main/index.ts', 'src/main/handout-publishing.ts', 'src/main/live-service-deploy.ts']) {
-    const code = readSource(join(repo, file)).split('\n').filter((line) => !/^\s*(?:\/\/|\*|\/\*)/.test(line)).join('\n')
-    const own = file.endsWith('handout-publishing.ts') ? code.slice(0, code.indexOf('function hostOnThisComputer')) + code.slice(code.indexOf('export function addressKind')) : code
+  readMainSource((text, file) => {
+    const code = text.split('\n').filter((line) => !/^\s*(?:\/\/|\*|\/\*)/.test(line)).join('\n')
+    // The compiler-facing address classifier and the key transport's test-only URL allowance each own their comparison.
+    const separateRules = {
+      'src/main/handout-publishing.ts': 'hostOnThisComputer',
+      'src/main/live-service-key.ts': 'liveAddressOrNull',
+      'src/main/cloudflare-connection.ts': 'loopbackApiBase',
+      'src/main/local-address-filter.ts': 'classifyHost',
+      'src/main/test-network-guard.ts': 'loopbackOrigin',
+      'src/main/update-notices.ts': 'loopbackFeed',
+    }
+    const symbol = separateRules[file]
+    const own = symbol ? code.replace(functionBody(code, symbol), '') : code
     assert.deepEqual(own.match(/hostname\s*[!=]==\s*['"](?:127|localhost|0\.0|\[::)|(?:startsWith|includes|endsWith)\(['"](?:127\.|localhost|\.localhost)/g) ?? [], [], `${file} compares a host with this computer's nowhere else`)
-  }
+    return text
+  })
 
   // ── What the author wrote, and what TalkWeaver wrote ──
   const AUTHOR_LINES = [
@@ -450,7 +490,7 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
       buildHandoutHomePageHtml({ ...args, home: { url: 'https://talks.test/x/', qr: '', downloadHref: `${name}-download.html` } }), `${name}: the whole home page is identical to the one built before this change`)
   }
   // The pages are built off the main thread (src/main/handout-pages.ts), for the talk and the Run alike.
-  const main = readSource(join(repo, 'src/main/index.ts')) + readSource(join(repo, 'src/main/handout-pages.ts'))
+  const main = readMainSource()
   assert.equal(main.split('home: { url, qr, downloadFile,').length - 1, 2, 'both publish handlers hand the Download target over as a file name')
   assert.ok(!/downloadHref/.test(main), 'and neither builds a link from a name itself')
 
@@ -539,7 +579,7 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
     const w = await connected()
     assert.equal((await w.publish('talk')).ok, true)
     assert.equal((await w.publish(entry, { failBuild: 'Compiler not found', half: true })).error, 'Compiler not found')
-    await assert.rejects(w.publishing.publish({ entry, prepare: async ({ dir }) => { writeFileSync(join(dir, 'half.html'), 'half'); throw new Error('the compiler threw') } }), /the compiler threw/)
+    await assert.rejects(w.publishing.publish({ ...w.job(entry), prepare: async ({ dir }) => { writeFileSync(join(dir, 'half.html'), 'half'); throw new Error('the compiler threw') } }), /the compiler threw/)
     assert.equal((await w.publish('talk')).ok, true, `${entry}: a failed build holds nothing up`)
   }
   {
@@ -591,7 +631,23 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
     assert.deepEqual([readdirSync(site).sort(), whole()], [['a-file', 'no-home'], before])
     assert.equal(removeSiteFolder(join(site, 'missing'), 'real'), 'absent')
     // Every path under the site folder that the main process builds from a NAME goes through these.
-    const main = readSource(join(repo, 'src/main/index.ts'))
+    const main = readMainSource((code, file) => {
+      // The file probes for a Pages build and the delegated listing/removal calls each have their own checks.
+      if (file === 'src/main/publishing-logic.ts') {
+        return code.replace("path.join(siteDir, '_worker.js'), path.join(siteDir, 'functions')", '')
+      }
+      if (file === 'src/main/handout-publishing.ts') {
+        return code.replace('export function removeSiteFolder(', '').replace("if (found === 'folder') removeSiteFolder(dir, folder)", '')
+      }
+      if (file === 'src/main/run-unpublish.ts') {
+        return code.replace('const published = publishedFolders(siteDir)', '').replace('if (folder) removeSiteFolder(siteDir, folder)', '')
+      }
+      if (file === 'src/main/talk-unpublish.ts') {
+        return code.replace('const published = publishedFolders(siteDir)', '').replace("folder !== null && removeSiteFolder(siteDir, folder) !== 'removed'", '')
+      }
+      if (file === 'src/main/published-pages.ts') return code.replace('names = publishedFolders(siteDir)', '')
+      return code
+    })
     assert.deepEqual([...main.matchAll(/join\((?:siteDir|publishSiteDir\(\)), ([^)]*)\)/g)].map((found) => found[1]).filter((rest) => !/^'(?:404\.html|_redirects|_headers)'$/.test(rest)), [], 'the only paths joined straight onto the site folder are its fixed files (the 404 page, the redirect file, the headers file read for a site with no record yet)')
     assert.ok(!/rmSync\(join\(siteDir|existsSync\(join\(siteDir, (?!')/.test(main), 'and nothing is looked for or removed there by a joined name')
     assert.deepEqual([main.split('writableSiteFolder(siteDir, slug)').length - 1, main.split('removeSiteFolder(').length - 1, main.split('siteFolder(siteDir, linkFolder)').length - 1, main.split('publishedFolders(siteDir)').length - 1], [2, 0, 1, 3])
@@ -1033,7 +1089,7 @@ console.log('PASS 7: publishes of one site run one at a time, in order; a thrown
     assert.equal(liveAddressForPages(address), '', `never put in a page as the live address: ${String(address)}`)
   }
   // (Read with LF line endings on every platform: a Windows checkout has CRLF.)
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   const ensure = main.slice(main.indexOf('async function ensureLiveWorker('), main.indexOf('// ── Pre-work for a planned Run'))
   const starts = [...ensure.matchAll(/startLocalLiveWorker\(/g)].map((found) => found.index)
   assert.equal(starts.length, 2, 'the local service is started from two places in ensureLiveWorker')
@@ -1043,7 +1099,10 @@ console.log('PASS 7: publishes of one site run one at a time, in order; a thrown
   assert.ok(!/!readToken\(\) \|\| process\.env\.TW_LIVE_LOCAL/.test(main), 'a missing token no longer starts, or names, a service on this computer')
   const saved = main.slice(main.indexOf('function localHandoutWorkerBaseUrl('), main.indexOf('async function ensureLiveJoinUrl('))
   assert.ok(/if \(liveLocalAllowed\(\)\) return configured \|\| 'http:\/\/127\.0\.0\.1:8787'\s+return liveAddressForPages\(configured\)/.test(saved), 'a handout saved as a file carries the local address only where local live is allowed')
-  assert.equal(main.split('127.0.0.1:8787').length - 1, 2, 'the local address is written in two places: that one and the local service\'s own default')
+  const addresses = readMainSource((code, file) => file === 'src/main/handout-publishing.ts'
+    ? code.replace('//   publishes unchanged. (Earlier versions published `http://127.0.0.1:8787` as the live address,', '')
+    : code)
+  assert.equal(addresses.split('127.0.0.1:8787').length - 1, 2, 'the local address is written in two places: that one and the local service\'s own default')
 
   // The app's test mode (TW_REC_TEST=1): nothing is asked of Cloudflare or uploaded, and the pages are still read.
   const w = world()

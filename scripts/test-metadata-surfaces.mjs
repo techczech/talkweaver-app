@@ -197,3 +197,8 @@ console.log(
   `metadata surfaces: ${userEntries.length} user + ${systemEntries.length} system frontmatter keys reach both surfaces; ` +
   `${active.filter((entry) => entry.vocabulary.kind === 'closed').length} closed vocabularies render as pickers with every choice explained`
 )
+
+for (const spelling of [[{key:'font',value:'inter'},{key:'typeface',value:'geist'}],[{key:'typeface',value:'geist'},{key:'font',value:'inter'}]]) {
+ const field=deckSettingsViewModel(METADATA_REGISTRY,spelling).groups.flatMap(g=>g.fields).find(f=>f.key==='font');
+ assert.equal(field.value,'inter','canonical font wins independently of file order');
+}

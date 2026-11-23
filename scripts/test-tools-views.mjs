@@ -1,5 +1,6 @@
 // The Tools window's one view list (src/shared/tools-views.ts): every surface accepts exactly the
 // listed views, the rail always shows its five items, and a Run reference is checked.
+import { readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { TOOLS_VIEWS, canonicalToolsView, isToolsView, isOpenableToolsView, isShowableToolsView, railItemFor, toolsRail, parseToolsRunRef } from '../src/shared/tools-views.ts'
@@ -41,7 +42,7 @@ for (const bad of [null, 'x', {}, { talkSlug: 'a' }, { talkSlug: '', runId: 'r' 
 
 // Main, preload and renderer take their view type and checks from the shared module, not their own lists.
 for (const file of ['src/main/index.ts', 'src/preload/index.ts', 'src/renderer/src/App.tsx']) {
-  const text = readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
+  const text = file === 'src/main/index.ts' ? readMainSource() : readFileSync(new URL(`../${file}`, import.meta.url), 'utf8')
   assert(text.includes('shared/tools-views'), `${file} imports the shared list`)
   assert.equal(/'studio' \| 'history' \| 'pathways'/.test(text), false, `${file} has no private view list`)
 }

@@ -10,6 +10,7 @@
   --app-updates-amber: var(--amber);
   --app-updates-faint: var(--faint);
 }
+.apu-update-btn--primary { color: var(--on-accent); }
 /* Update notices (ADR-0041; frames 01, 02, 07, 08, 09, 11 of docs/design/2026-10-20-update-notices). */
 .tw-update-note { position: fixed; right: 16px; bottom: 36px; z-index: 2000; width: 330px; max-width: 90vw; padding: 10px 12px 10px 14px; border: 1px solid var(--line); border-left: 4px solid var(--amber); border-radius: 8px; background: var(--panel); box-shadow: 0 8px 30px #17202a33; color: var(--ink); font-size: 12.5px; line-height: 1.45; }
 .tw-update-note--good { border-left-color: var(--green); }

@@ -2,8 +2,8 @@
 // `userData/provenance.json`, keyed by `<targetVaultId>/<slideId>`. It holds the source talk's title
 // and outline path, which must never be written into a vault (architecture.md invariant 1); the vault
 // itself records only the source vault's id and name and the source slide id.
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
-import { dirname } from 'path'
+import { existsSync, readFileSync } from 'fs'
+import { writeJsonAtomic } from './atomic-file.ts'
 import type { PrivateProvenance, SlideOrigin } from './cross-vault-insert.ts'
 
 export type ProvenanceFile = { schema: 1; entries: Record<string, PrivateProvenance> }
@@ -33,10 +33,7 @@ export function createProvenanceStore(filePath: string) {
     record(targetVaultId: string, slideId: string, entry: PrivateProvenance): void {
       const file = read()
       file.entries[provenanceKey(targetVaultId, slideId)] = entry
-      mkdirSync(dirname(filePath), { recursive: true })
-      const tmp = filePath + '.tmp'
-      writeFileSync(tmp, JSON.stringify(file, null, 2) + '\n', 'utf8')
-      renameSync(tmp, filePath)
+      writeJsonAtomic(filePath, file, { createParent: true })
     }
   }
 }

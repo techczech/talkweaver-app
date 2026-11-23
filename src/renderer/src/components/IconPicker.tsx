@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { sanitiseIconSvg } from '../../../shared/objects/sanitise-icon-svg'
 
 /**
  * Palette to search the icon vocabulary (Lucide names/tags + SVGL brands + the full Tabler
@@ -215,7 +216,7 @@ function IconCard({ hit, active, onHover, onSelect }: CardProps) {
   const label = hit.key.replace(/^(lucide|svgl|tabler):/, '')
 
   // Fetch the rendered glyph for this key. The engine returns sanitized SVG markup
-  // (no <script>); we inject it via dangerouslySetInnerHTML into a sized box.
+  // (no <script>) and we sanitise it again; we inject it via dangerouslySetInnerHTML into a sized box.
   useEffect(() => {
     let cancelled = false
     const api = iconsApi()
@@ -223,7 +224,9 @@ function IconCard({ hit, active, onHover, onSelect }: CardProps) {
     api
       .svg(hit.key)
       .then((markup) => {
-        if (!cancelled) setSvg(markup)
+        // Sanitised here, at the point of use, whatever the engine claims about its markup.
+        const clean = markup ? sanitiseIconSvg(markup) : null
+        if (!cancelled) setSvg(clean && 'svg' in clean ? clean.svg : null)
       })
       .catch(() => {
         if (!cancelled) setSvg(null)
@@ -329,7 +332,7 @@ const glyphWrapStyle: React.CSSProperties = {
   display: 'flex',
   alignItems: 'center',
   justifyContent: 'center',
-  color: 'var(--oxford)'
+  color: 'var(--accent-text)'
 }
 
 // The injected SVG inherits color via currentColor; size it to the wrap box.

@@ -22,6 +22,8 @@ import {
   normalizeTriggersCommand,
   setQuoteFormAtCursor,
   deleteSlideAtCursor,
+  goToSectionChild,
+  startBodyWithBullet,
   type CursorListItemContext
 } from '../extensions/outliner'
 import {
@@ -48,7 +50,7 @@ import {
   setOpenObjectBlock
 } from '../extensions/objectBlocks/field'
 import { EditorView, keymap, highlightActiveLine, showPanel } from '@codemirror/view'
-import { EditorState, EditorSelection, Prec, Compartment, Annotation } from '@codemirror/state'
+import { EditorState, EditorSelection, Prec, Compartment, Annotation, Transaction } from '@codemirror/state'
 import { history } from '@codemirror/commands'
 import { editorBaseKeymap } from '../extensions/editorBaseKeymap'
 import { search, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
@@ -73,11 +75,13 @@ import { notify } from '../lib/notify'
 import { queueOutlineWrite } from '../lib/saveQueue'
 import { lookForRecovery, noteOutlineSaveReply, outlineDiskChanges } from '../lib/outlineDiskChange'
 import { replaceDocTransaction } from '../lib/replaceDocTransaction'
-import { adoptSavedText, redoWithSave, savedTextAdopted, savedTextAdoption, undoWithSave } from '../extensions/savedTextAdoption'
+import { clipboardHasText, htmlClipboardText } from '../lib/clipboardText'
+import { adoptSavedText, isSaveStep, redoWithSave, savedTextAdopted, savedTextAdoption, undoWithSave } from '../extensions/savedTextAdoption'
 import { editorRevision } from '../lib/editorRevision'
 import { CLOSE_FREEZE_EVENT, closeFreezeText, type CloseFreezeDetail } from '../lib/closeFreezeEvent'
 import { saveTidyUp, textForSave } from '../extensions/saveTidyUp'
 import { triggerCompleteExtension } from '../extensions/triggerComplete'
+import { closeCompletion } from '@codemirror/autocomplete'
 import { tokenProtectExtension } from '../extensions/idProtect'
 import {
   copySlideAt, cutSlideAt, deleteSlideAt, moveSlideTo, pasteSlideTextAtCaret, pasteSlidesAfter, slideCutCopyExtension, wouldPasteAsSlides
@@ -187,7 +191,7 @@ interface Props {
   vaultRoot?: string | null
   /** Jump target. takeFocus=true moves keyboard focus into the editor (sidebar/⌘E jumps);
    *  false only aims the viewport/caret (strip card clicks keep their own keyboard nav). */
-  focusLine?: { line: number; takeFocus: boolean } | null
+  focusLine?: { line: number; takeFocus: boolean; editTitle?: boolean } | null
   // Slide Focus (ADR-0032, Task 8): when set, the editor shows/edits ONLY this slide's line range
   // (absolute doc offsets [from, to)); every other line is hidden and edit-guarded — a scoped view
   // onto the SAME outline doc, never a copy. null / undefined = normal full-outline editing (today's
@@ -202,6 +206,9 @@ interface Props {
   /** Compiled slide rows: each carries the compiler's image placements for the editor's image labels. */
   placementRows?: readonly PlacementRow[] | null
   onCursorLine?: (line: number) => void
+  onSectionChild?: (line: number) => void
+  onHistoryLine?: (line: number, outline: string) => void
+  startWithBullet?: boolean
   /** Onboarding ticket 02: the place of the caret's line (shared/place.ts), reported when it changes. */
   onPlace?: (place: Place) => void
   /** Whether the caret's line commands (lists, heading levels) have nothing to act on: a closed object
@@ -292,12 +299,13 @@ interface Props {
   // With `savedFrom` the text is what a save wrote for that sent text (tidied, ids stamped): it is
   // adopted as the save's own undo step (extensions/savedTextAdoption.ts), and only while the buffer is
   // still the text the save was made from. `fromDisk` adopts Reload text as the clean baseline
-  // without autosave; undoing that adoption is an ordinary edit.
-  registerReplaceDoc?: (fn: (text: string, opts?: { save?: boolean; savedFrom?: string; ownUndoStep?: boolean; fromDisk?: boolean }) => string | null) => void
+  // without autosave; `diskBase` keeps a merged buffer dirty until saved. Adoption maps existing
+  // undo steps through its changes without making the external edits themselves undoable.
+  registerReplaceDoc?: (fn: (text: string, opts?: { save?: boolean; savedFrom?: string; ownUndoStep?: boolean; fromDisk?: boolean; diskBase?: string; diskHash?: string }) => string | null) => void
   // The buffer's live text, the talk it belongs to and the caret (selection head offset), or null
   // while that talk's text is not loaded (one-writer spec D1: a mutation of the open talk reads THIS,
   // never the React mirror of it; the section insert places itself from the caret).
-  registerReadDoc?: (fn: () => { path: string; text: string; caret: number } | null) => void
+  registerReadDoc?: (fn: ReadEditorDoc) => void
   // ⌘L layout picker: places a bare layout trigger on the CURRENT slide's Trigger line (no slash to
   // clean up). The parent opens the picker and calls this with the chosen trigger.
   registerLayoutContext?: (fn: () => LayoutPickerContext | null) => void
@@ -344,10 +352,20 @@ const keymapCompartment = new Compartment()
 // What the Plain view needs from the app: where icon pictures come from (the same bridge the icon picker uses).
 function plainViewOptions(menus: MarginMenuHandlers): PlainViewOptions {
   const icons = (window as unknown as { tw?: { icons?: { svg?: (key: string) => Promise<string | null> } } }).tw?.icons
-  return { ...menus, ...(icons?.svg ? { iconSvg: (key: string) => icons.svg!(key) } : {}) }
+  return { ...menus, hideLayoutCodes: true, ...(icons?.svg ? { iconSvg: (key: string) => icons.svg!(key) } : {}) }
 }
 
 export type { PlainIconTools }
+
+export type ReadEditorDoc = (options?: { discardProvisionalTrigger?: boolean }) => {
+  path: string
+  text: string
+  caret: number
+  base: string | null
+  dirty: boolean
+  epoch: object
+  diskHash?: string
+} | null
 
 /** The editor's handle on a heading, for the margin menus: where the caret's heading is, and putting the caret back on one. */
 export interface HeadingTools {
@@ -376,6 +394,7 @@ const plainTypeCompartment = new Compartment()
 
 /** A transaction allowed through a close's freeze (Reload's text, chosen on the close's own sheet). */
 const closeFreezeExempt = Annotation.define<boolean>()
+const provisionalRollback = Annotation.define<boolean>()
 
 /** While closing: not editable, read-only for every command, and a line at the top saying why (ADR-0044 §6). */
 function closeFreezeExtension(update: boolean) {
@@ -408,6 +427,9 @@ export default function Editor({
   marginLabels,
   placementRows,
   onCursorLine,
+  onHistoryLine,
+  onSectionChild,
+  startWithBullet = false,
   onPlace,
   onLineCommandsUnavailable,
   onImageWidgetClick,
@@ -496,7 +518,7 @@ export default function Editor({
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // A debounce is only scheduled work, not evidence that a write succeeded. Keep the last
   // acknowledged text independently; replace this object on load/Reload to invalidate old replies.
-  const cleanDocumentRef = useRef<{ text: string | null; dirty: boolean; pending?: Promise<boolean> & { text: string } }>({ text: null, dirty: false })
+  const cleanDocumentRef = useRef<{ text: string | null; dirty: boolean; diskHash?: string; pending?: Promise<boolean> & { text: string } }>({ text: null, dirty: false })
   const adoptingDiskRef = useRef(false)
   // The replace seam's last save (`save: true`): the text it returned to be written, and the editor's
   // text it was tidied from, so the adoption of what was written (`savedFrom`) replaces the latter.
@@ -504,8 +526,7 @@ export default function Editor({
   // Every outline write this editor sends goes through the outline's shared queue (lib/saveQueue):
   // one write in flight at a time per file, in the order made, shared with the workspace's writes
   // (ticket 07 — a stale autosave or workspace write can never land after a newer save).
-  const provisionalTriggerRef = useRef<{ before: string; from: number; to: number } | null>(null)
-  const rollingBackProvisionalRef = useRef(false)
+  const provisionalTriggerRef = useRef<{ before: string; from: number; to: number; epoch: object } | null>(null)
   const applyLayoutRef = useRef<(
     (
       initial: LayoutDef[],
@@ -526,6 +547,10 @@ export default function Editor({
   // written to disk. Set null when a load starts; set to the path only AFTER its content is dispatched.
   const loadedPathRef = useRef<string | null>(null)
   const onCursorLineRef = useRef(onCursorLine)
+  const onSectionChildRef = useRef(onSectionChild)
+  onSectionChildRef.current = onSectionChild
+  const onHistoryLineRef = useRef(onHistoryLine)
+  useEffect(() => { onHistoryLineRef.current = onHistoryLine }, [onHistoryLine])
   useEffect(() => { onCursorLineRef.current = onCursorLine }, [onCursorLine])
   const onPlaceRef = useRef(onPlace)
   useEffect(() => { onPlaceRef.current = onPlace }, [onPlace])
@@ -592,7 +617,9 @@ export default function Editor({
     const pending = Object.assign((async () => {
       // The person discarded this talk (removed on disk): it is never saved again from this editor.
       if (outlineDiskChanges.isDiscarded(outlinePath)) return false
-      const res = await queueOutlineWrite(outlinePath, () => window.tw.talk.writeOutline(outlinePath, text, { revision }))
+      // Adoption invalidates any pre-merge flush that waited behind disk acceptance.
+      const res = await queueOutlineWrite(outlinePath, () => cleanDocumentRef.current === baseline ? window.tw.talk.writeOutline(outlinePath, text, { revision, expectedDiskHash: baseline.diskHash }) : Promise.resolve(false as const))
+      if (cleanDocumentRef.current !== baseline) return !!res && res.ok === true
       // Save-indicator honesty (2026-07-05): only stamp "saved" on a REAL write. If the main-process
       // backstop refused (structurally-empty over a non-empty file), the disk is unchanged — say so
       // instead of a false "saved just now". `res === false` is an IO failure (also not a save).
@@ -604,6 +631,7 @@ export default function Editor({
         if (cleanDocumentRef.current === baseline && loadedPathRef.current === outlinePath) {
           adoptStampedContent(source, text, res)
           const saved = typeof res.content === 'string' ? res.content : text
+          delete baseline.diskHash
           baseline.text = viewRef.current?.state.toText(saved).toString() ?? saved
           // Undo may deliberately decline stamped-id adoption to preserve redo. A successful write
           // acknowledges that unchanged source too; only an edit made during the write needs saving again.
@@ -664,25 +692,27 @@ export default function Editor({
     [writeQueued]
   )
 
+  const rollbackProvisionalTrigger = useCallback((view: EditorView): boolean => {
+    const provisional = provisionalTriggerRef.current
+    if (!provisional) return false
+    if (moveFrozenRef.current || loadFrozenRef.current || closeFrozenRef.current) return false
+    provisionalTriggerRef.current = null
+    // A picker snapshot belongs to the document it opened in, never a later disk adoption/load.
+    if (provisional.epoch !== cleanDocumentRef.current) return false
+    const current = view.state.doc.toString()
+    const change = minimalChange(current, provisional.before)
+    view.dispatch({
+      changes: { from: change.from, to: change.to, insert: change.insert },
+      selection: EditorSelection.cursor(Math.min(provisional.from, provisional.before.length)),
+      // The text as it was before the provisional trigger, byte for byte.
+      annotations: [exactTextWrite.of(true), provisionalRollback.of(true)]
+    })
+    return true
+  }, [])
+
   // Mount editor once
   useEffect(() => {
     if (!containerRef.current) return
-
-    const rollbackProvisionalTrigger = (view: EditorView): boolean => {
-      const provisional = provisionalTriggerRef.current
-      if (!provisional) return false
-      provisionalTriggerRef.current = null
-      rollingBackProvisionalRef.current = true
-      const current = view.state.doc.toString()
-      const change = minimalChange(current, provisional.before)
-      view.dispatch({
-        changes: { from: change.from, to: change.to, insert: change.insert },
-        selection: EditorSelection.cursor(Math.min(provisional.from, provisional.before.length)),
-        // The text as it was before the provisional trigger, byte for byte.
-        annotations: exactTextWrite.of(true)
-      })
-      return true
-    }
 
     const view = new EditorView({
       parent: containerRef.current,
@@ -702,9 +732,12 @@ export default function Editor({
               return false
             },
             paste(event: ClipboardEvent) {
-              const items = event.clipboardData?.items
-              if (!items) return false
-              for (const item of Array.from(items)) {
+              const clipboard = event.clipboardData
+              if (!clipboard) return false
+              const items = Array.from(clipboard.items)
+              const mixedImage = clipboardHasText(clipboard) && items.some(item => item.kind === 'file' && item.type.startsWith('image/'))
+              // A workspace paste delegated to CodeMirror still passes through this older media handler.
+              for (const item of mixedImage ? [] : items) {
                 const isGif = item.type === 'image/gif'
                 const isVideo = item.type.startsWith('video/')
                 // Video + animated-GIF route to the media pipeline (ADR-0028); GIFs must NOT go
@@ -741,7 +774,8 @@ export default function Editor({
                   return true
                 }
               }
-              const text = event.clipboardData?.getData('text/plain') ?? ''
+              const plain = clipboard.getData('text/plain')
+              const text = plain || (mixedImage ? htmlClipboardText(clipboard) : '')
               // Whole slides going in as slides are not read as an SVG or a table to convert.
               const asSlides = Boolean(text && viewRef.current && wouldPasteAsSlides(viewRef.current, text))
               if (text && !asSlides && isSvgText(text)) {
@@ -774,7 +808,7 @@ export default function Editor({
               // SOURCE talk and would go grey here. Materialise them into the vault pool (img-<hash>)
               // by filename so a pasted SEQUENCE's images resolve (the picker does this per-slide;
               // text paste didn't). Only intercept when the text actually carries such refs.
-              const pastedText = event.clipboardData?.getData('text/plain')
+              const pastedText = text
               if (pastedText && carriesPastedAssets) {
                 event.preventDefault()
                 // Whole slides pasted on a heading line or between slides go in as whole slides
@@ -805,6 +839,11 @@ export default function Editor({
               // quotation. Anything else is CodeMirror's own paste.
               if (pastedText && viewRef.current && pasteAtHeadingEnd(viewRef.current, pastedText)) {
                 event.preventDefault()
+                return true
+              }
+              if (!plain && text && viewRef.current) {
+                event.preventDefault()
+                pasteTextAtSelection(viewRef.current, text)
                 return true
               }
               return false
@@ -1000,7 +1039,8 @@ export default function Editor({
           // One list (extensions/editorBaseKeymap.ts): the Plain view's guard is built from the same one.
           keymap.of([...editorBaseKeymap]),
           outlinerKeymapExtension(),
-          viewCompartment.of(viewModeExtension(viewModeRef.current, plainViewOptions(marginMenuHandlers))),
+          goToSectionChild.of(line => onSectionChildRef.current?.(line)),
+          viewCompartment.of([startBodyWithBullet.of(startWithBullet), viewModeExtension(viewModeRef.current, plainViewOptions(marginMenuHandlers))]),
           plainTypeCompartment.of(viewModeRef.current === 'plain' ? plainTypeExtension(plainLookRef.current) : []),
           EditorView.updateListener.of((update) => {
             if (update.docChanged) {
@@ -1011,18 +1051,17 @@ export default function Editor({
               if (update.transactions.some((tr) => tr.isUserEvent('input'))) onEditorEngagedRef.current?.()
               const content = update.state.doc.toString()
               if (adoptingDiskRef.current) { onContentChange(content); return }
-              if (rollingBackProvisionalRef.current) {
-                rollingBackProvisionalRef.current = false
-                return
-              }
+              if (update.transactions.some(tr => tr.annotation(provisionalRollback))) return
               const head = update.state.selection.main.head
               const provisional = provisionalTriggerAtCursor(content, head)
               if (provisional) {
-                const existing = provisionalTriggerRef.current
+                const pending = provisionalTriggerRef.current
+                const existing = pending?.epoch === cleanDocumentRef.current ? pending : null
                 provisionalTriggerRef.current = {
                   before: existing?.before ?? update.startState.doc.toString(),
                   from: existing?.from ?? provisional.from,
-                  to: provisional.to
+                  to: provisional.to,
+                  epoch: cleanDocumentRef.current
                 }
                 return
               }
@@ -1076,6 +1115,30 @@ export default function Editor({
               const head = update.state.selection.main.head
               const lineNumber = update.state.doc.lineAt(head).number
               onCursorLineRef.current(lineNumber)
+            }
+
+            // The scoped editor clamps a history transaction's selection to its current slide.
+            // Follow the actual authored change, leaving any accompanying save-stamp step out.
+            if (update.docChanged && onHistoryLineRef.current) {
+              const index = update.transactions.findIndex(tr =>
+                tr.docChanged && (tr.isUserEvent('undo') || tr.isUserEvent('redo')) && !isSaveStep(tr))
+              if (index >= 0) {
+                let position: number | null = null
+                update.transactions[index].changes.iterChangedRanges((_from, _to, fromAfter) => {
+                  position ??= fromAfter
+                })
+                if (position !== null) {
+                  for (const tr of update.transactions.slice(index + 1)) position = tr.changes.mapPos(position)
+                  const { doc } = update.state
+                  const changedLine = doc.lineAt(position).number
+                  // Slide Focus can dispatch a final caret clamp inside this update.
+                  // Follow the changed slide after that last report from the old scope.
+                  queueMicrotask(() => {
+                    if (viewRef.current !== update.view || update.view.state.doc !== doc) return
+                    onHistoryLineRef.current?.(changedLine, doc.toString())
+                  })
+                }
+              }
             }
 
             // The caret's place (onboarding ticket 02), read from the caret's line only: no parse.
@@ -1183,11 +1246,15 @@ export default function Editor({
   // history are untouched (reconfigure changes extensions only).
   useEffect(() => {
     viewModeRef.current = viewMode
-    viewRef.current?.dispatch({ effects: [
-      viewCompartment.reconfigure(viewModeExtension(viewMode, plainViewOptions(marginMenuHandlers))),
+    const view = viewRef.current
+    if (!view) return
+    view.dispatch({ effects: [
+      viewCompartment.reconfigure([startBodyWithBullet.of(startWithBullet), viewModeExtension(viewMode, plainViewOptions(marginMenuHandlers))]),
       plainTypeCompartment.reconfigure(viewMode === 'plain' ? plainTypeExtension(plainLookRef.current) : [])
     ] })
-  }, [viewMode])
+    // On returning from Markdown the caret may have been on a line that Outline hides.
+    if (viewMode === 'plain') view.dispatch({ selection: view.state.selection, userEvent: 'select' })
+  }, [viewMode, startWithBullet])
 
   // A change of font or size in Settings: only the type compartment is swapped; the caret stays.
   useEffect(() => {
@@ -1725,12 +1792,20 @@ export default function Editor({
       if (opts?.fromDisk) {
         if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
         seamSaveRef.current = null
-        const spec = replaceDocTransaction(view.state.doc.toString(), text, { ownUndoStep: true })
+        // Cancel the old picker without replaying its pre-adoption document. Queued rollback
+        // callbacks lose their snapshot identity too, and completion cannot apply an old range.
+        provisionalTriggerRef.current = null
+        closeCompletion(view)
+        // Normalize before finding the minimal span: splitting a CRLF at a common LF suffix
+        // would otherwise insert an extra newline when CodeMirror decodes the inserted CR.
+        const normalized = view.state.toText(text.replace(/^\uFEFF/, '')).toString()
+        const spec = replaceDocTransaction(view.state.doc.toString(), normalized, { ownUndoStep: true })
         adoptingDiskRef.current = true
         // Reload's text passes a close's freeze: the person chose it on the close's own sheet.
-        try { if (spec) view.dispatch(spec, { annotations: closeFreezeExempt.of(true) }) } finally { adoptingDiskRef.current = false }
-        cleanDocumentRef.current = { text: view.state.doc.toString(), dirty: false }
-        onDirtyRef.current?.(false)
+        try { if (spec) view.dispatch(spec, { annotations: [closeFreezeExempt.of(true), Transaction.addToHistory.of(false)] }) } finally { adoptingDiskRef.current = false }
+        const diskBase = view.state.toText((opts.diskBase ?? text).replace(/^\uFEFF/, '')).toString()
+        cleanDocumentRef.current = { text: diskBase, diskHash: opts.diskHash, dirty: view.state.doc.toString() !== diskBase }
+        onDirtyRef.current?.(cleanDocumentRef.current.dirty)
         return view.state.doc.toString()
       }
       // The text a save wrote for `savedFrom`: adopted as the save's undo step, and only while the
@@ -1741,6 +1816,7 @@ export default function Editor({
         const source = pending && pending.sent === opts.savedFrom ? pending.source : opts.savedFrom
         if (pending && pending.sent === opts.savedFrom) seamSaveRef.current = null
         adoptSavedText(view, source, text)
+        delete cleanDocumentRef.current.diskHash
         cleanDocumentRef.current.text = view.state.toText(text).toString()
         cleanDocumentRef.current.dirty = view.state.doc.toString() !== cleanDocumentRef.current.text
         onDirtyRef.current?.(cleanDocumentRef.current.dirty)
@@ -1777,12 +1853,19 @@ export default function Editor({
 
   useEffect(() => {
     if (!registerReadDoc) return
-    registerReadDoc(() => {
+    registerReadDoc(options => {
       const view = viewRef.current
       if (!view || !loadedPathRef.current || loadedPathRef.current !== currentTalkRef.current) return null
-      return { path: currentTalkRef.current, text: view.state.doc.toString(), caret: view.state.selection.main.head }
+      if (options?.discardProvisionalTrigger && provisionalTriggerRef.current) {
+        // A notes input can dispatch before the deferred blur rollback. Plan the edit against
+        // the authored buffer so that rollback can only remove the unfinished layout code.
+        rollbackProvisionalTrigger(view)
+        if (provisionalTriggerRef.current) return null
+        closeCompletion(view)
+      }
+      return { path: currentTalkRef.current, text: view.state.doc.toString(), caret: view.state.selection.main.head, base: cleanDocumentRef.current.text, dirty: cleanDocumentRef.current.dirty, epoch: cleanDocumentRef.current, diskHash: cleanDocumentRef.current.diskHash }
     })
-  }, [registerReadDoc])
+  }, [registerReadDoc, rollbackProvisionalTrigger])
 
   // Scroll to + place the cursor at focusLine (1-based) whenever it changes.
   useEffect(() => {
@@ -1791,12 +1874,15 @@ export default function Editor({
     if (!view) return
     const clamped = Math.max(1, Math.min(focusLine.line, view.state.doc.lines))
     const line = view.state.doc.line(clamped)
+    const prefix = focusLine.editTitle ? line.text.match(/^#{1,6}[ 	]+/)?.[0].length ?? 0 : 0
+    // An untitled divider reserves its second space to separate the name from its ID while typing.
+    const reservedSpace = focusLine.editTitle && /^#{2,6} {2}\{id=[\w-]+\}$/.test(line.text) ? 1 : 0
     view.dispatch({
-      selection: { anchor: line.from },
+      selection: { anchor: line.from + prefix - reservedSpace },
       // 'start' parks the target line at the TOP of the editor viewport — matching the slide
       // strip/preview, which already scrolls the selected card to the top. 'center' left the
       // jumped-to slide mid-screen, which read as inconsistent with the previews.
-      effects: EditorView.scrollIntoView(line.from, { y: 'start' })
+      effects: focusRange && startWithBullet ? undefined : EditorView.scrollIntoView(line.from, { y: 'start' })
     })
     if (focusLine.takeFocus) view.focus()
   }, [focusLine])

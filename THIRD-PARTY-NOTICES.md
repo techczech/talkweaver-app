@@ -24,8 +24,10 @@ linked into TalkWeaver. It ships in the app's resources folder as `ffmpeg/ffmpeg
 
 ## Fonts
 
-Fraunces, Alegreya Sans and JetBrains Mono, under the SIL Open Font License 1.1. Details:
-`src/renderer/src/assets/fonts/LICENCE-NOTE.md`.
+Inter, Geist, Fraunces, Alegreya Sans and JetBrains Mono, under the SIL Open Font License 1.1. Details:
+`src/renderer/src/assets/fonts/LICENCE-NOTE.md` (interface) and
+`compiler/assets/fonts/LICENCE-NOTE.md` (slides: unmodified Fontsource 5.3.0 files, with package, version and
+SHA-256 per file), with full slide font OFL notices beside the fonts.
 
 ## Transcription script
 

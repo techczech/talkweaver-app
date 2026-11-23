@@ -123,7 +123,7 @@ function rig({ platform = 'darwin', gate = () => null, autoVerify = true, holdHa
       check: () => { r.checks += 1; r.d.check = deferred(); return r.d.check.promise },
       retrieve: (token, progress) => { r.fetches += 1; r.tokens.push(token); r.progress = progress; r.d.fetch = deferred(); return r.d.fetch.promise },
     }),
-    verify: () => { r.verifies += 1; if (autoVerify) return Promise.resolve(null); r.d.verify = deferred(); return r.d.verify.promise },
+    verify: (_file, _offer, token) => { r.verifies += 1; r.verifyToken = token; if (autoVerify) return Promise.resolve(null); r.d.verify = deferred(); return r.d.verify.promise },
     // electron-updater's hand-over: its local address, then Squirrel.Mac's feed address.
     handOver: (file) => {
       r.handOvers += 1; r.order.push('handOver'); r.handedFile = file
@@ -278,7 +278,7 @@ for (const point of D1_POINTS) {
     if (point !== 'verifying') assert.equal(r.releases, 0, 'files are released once the download has settled, not under it')
     if (point === 'checking') r.d.check.resolve(true)
     if (point === 'downloading' || point === 'bytes-in') { assert.equal(r.tokens[0].cancelled, true, 'the download is cancelled'); r.d.fetch.resolve('/cache/late.zip') }
-    if (point === 'verifying') r.d.verify.resolve(null)
+    if (point === 'verifying') { assert.equal(r.verifyToken?.cancelled, true, 'the checks are told to stop (ADR-0044 §7)'); r.d.verify.resolve(null) }
     await settle()
     await r.started
     assert.equal(r.phase(), 'idle')
@@ -1048,6 +1048,27 @@ await test('a download that is not the version offered: failed "wrong-version", 
 })
 
 // ── Refused before anything happens ─────────────────────────────────────────────────────────────
+
+await test('a gate that answers later (the running copy\'s identity, ADR-0044 §7): a second click meanwhile starts nothing; a refusal starts nothing; a failure is shown', async () => {
+  let answer
+  const r = rig({ gate: () => new Promise((resolve) => { answer = resolve }) })
+  const first = r.engine.start(OFFER)
+  assert.equal(r.phase(), 'idle', 'nothing starts before the gate answers')
+  const second = await r.engine.start(OFFER)
+  assert.equal(second.phase, 'idle')
+  answer({ failed: 'unverified', why: 'the running copy\'s developer identity could not be checked' })
+  const s = await first
+  assert.deepEqual(s, { phase: 'failed', version: '0.46.0', reason: 'unverified' })
+  assert.equal(r.checks + r.fetches + r.handOvers, 0)
+  r.untouched('a gate that failed')
+  const r2 = rig({ gate: () => Promise.resolve('this copy is not signed by TalkWeaver\'s developer') })
+  assert.equal((await r2.engine.start(OFFER)).phase, 'idle')
+  assert.equal(r2.checks + r2.fetches, 0)
+  const r3 = rig({ gate: () => Promise.resolve(null) })
+  r3.started = r3.engine.start(OFFER)
+  await settle()
+  assert.equal(r3.phase(), 'downloading', 'a gate that answers null later lets the click go on')
+})
 
 await test('Windows: no in-place update in this release; refused before any download, whatever the gate says', async () => {
   const r = rig({ platform: 'win32' })

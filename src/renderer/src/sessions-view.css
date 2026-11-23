@@ -1,7 +1,7 @@
 /* The Runs list and the Run page (locked mockups S3 and S7, retinted to the writing window's tokens by consistency
    batch 3). Buttons and badges are the one set in ui-kit.css. */
 .tw-sess-sp { flex: 1; }
-.tw-sess-row:focus-visible { outline: 1.5px solid var(--oxford); outline-offset: -1.5px; }
+.tw-sess-row:focus-visible { outline: 1.5px solid var(--focus); outline-offset: -1.5px; }
 
 .tw-sess-body { flex: 1; min-height: 0; overflow: auto; }
 .tw-sess-none { margin: 0; padding: 22px 16px; color: var(--faint); font-size: 12px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 10px; }
@@ -18,7 +18,7 @@
 .tw-tools-view .tw-sess-row .l3 { display: flex; align-items: center; gap: 6px; margin-top: 1px; font-size: 12px; color: var(--faint); white-space: nowrap; min-width: 0; }
 .tw-tools-view .tw-sess-row .l3 .tk { overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .tw-tools-view .tw-sess-row .l3 .kd { flex: none; padding: 0 6px; border-radius: 8px; background: var(--hover); color: var(--muted); font-size: 11px; font-weight: 600; }
-.tw-tools-view .tw-sess-row .l3 .rec { width: 13px; height: 13px; flex: none; margin-left: auto; color: var(--oxford); stroke-width: 1.9; }
+.tw-tools-view .tw-sess-row .l3 .rec { width: 13px; height: 13px; flex: none; margin-left: auto; color: var(--accent-text); stroke-width: 1.9; }
 .tw-run-note-list { flex: none; border-bottom: 1px solid var(--line); }
 .tw-run-note { padding: 7px 14px; background: var(--tw-notset-bg); color: var(--tw-notset-fg); font-size: 12px; font-weight: 600; }
 
@@ -47,11 +47,11 @@
 .tw-run-step .body { min-width: 0; }
 .tw-run-step .node { width: 24px; height: 24px; box-sizing: border-box; border-radius: 50%; border: 2px solid #cbbfa6; background: var(--panel); display: flex; align-items: center; justify-content: center; color: #a99d86; position: relative; z-index: 1; }
 .tw-run-step .node svg { width: 14px; height: 14px; stroke-width: 2.4; }
-.tw-run-step:not(:last-child)::before { content: ""; position: absolute; left: 21px; top: 34px; bottom: -11px; width: 2px; background: #ddd3c0; }
+.tw-run-step:not(:last-child)::before { content: ""; position: absolute; left: 21px; top: 34px; bottom: -11px; width: 2px; background: var(--line-strong); }
 .tw-run-step.done:not(:last-child)::before { background: #9cbca2; }
 .tw-run-step.done .node { background: var(--lt-green); border-color: var(--lt-green); color: var(--panel); }
 .tw-run-step.cur { background: var(--tw-delivered-bg); }
-.tw-run-step.cur .node { border-color: var(--lt-oxford); color: var(--lt-oxford); box-shadow: 0 0 0 3px var(--tw-delivered-bg); }
+.tw-run-step.cur .node { border-color: var(--lt-oxford); color: var(--accent-text); box-shadow: 0 0 0 3px var(--tw-delivered-bg); }
 .tw-run-step.warn .node { border-color: var(--lt-amber); background: var(--lt-amber-soft); color: var(--lt-amber); }
 .tw-run-step.live { background: var(--tw-live-bg); }
 .tw-run-step.live .node { border-color: var(--lt-red); color: var(--lt-red); box-shadow: 0 0 0 3px var(--tw-live-bg); }
@@ -63,7 +63,7 @@
 .tw-run-step .linkrow + .linkrow { margin-top: 5px; }
 .tw-run-step .linkrow .lt { flex: 1; min-width: 0; }
 .tw-run-step .linkrow .lk { display: block; font-size: 12px; font-weight: 800; color: var(--lt-ink-soft); letter-spacing: .02em; }
-.tw-run-step .linkrow .url { color: var(--lt-oxford); font: 500 11.5px var(--lt-mono); word-break: normal; overflow-wrap: anywhere; }
+.tw-run-step .linkrow .url { color: var(--accent-text); font: 500 11.5px var(--lt-mono); word-break: normal; overflow-wrap: anywhere; }
 .tw-run-step .linkrow .cp { width: 26px; height: 24px; flex: none; border: 1px solid transparent; border-radius: 5px; background: none; display: inline-flex; align-items: center; justify-content: center; color: var(--lt-ink-soft); cursor: pointer; }
 .tw-run-step .linkrow .cp:hover { background: var(--hover); border-color: var(--lt-hair); }
 .tw-run-step .linkrow .cp svg { width: 14px; height: 14px; stroke-width: 1.9; }
@@ -123,7 +123,7 @@
 .tw-extra-edit select:focus { border-color: var(--lt-oxford); box-shadow: 0 0 0 3px var(--tw-delivered-bg); }
 .tw-run-extras .tw-extra-note { padding: 6px 12px; border-top: 1px solid var(--lt-hair-soft); color: var(--lt-ink-soft); font-size: 12.5px; }
 /* New responses on a Run (2026-10-19 prework-responses, mockup 05): "12 new" at the row's right. */
-.tw-tools-view .tw-sess-row .tw-sess-new { margin-left: auto; flex: none; padding: 1px 8px; border-radius: 10px; background: var(--lt-oxford); color: var(--panel); font: 700 12px var(--lt-sans); }
+.tw-tools-view .tw-sess-row .tw-sess-new { margin-left: auto; flex: none; padding: 1px 8px; border-radius: 10px; background: var(--lt-oxford); color: var(--on-accent); font: 700 12px var(--lt-sans); }
 
 /* R17: in a narrow window the Run page's two columns stack (the ledger and answers above, the checklist below) and the
    page scrolls as one, rather than squeezing the ledger into a strip beside a fixed-width checklist. */

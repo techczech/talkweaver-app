@@ -214,7 +214,7 @@ export async function installShim(o: ShimOptions): Promise<CliRow> {
           outcome = row(o, 'kept', `${path} appeared while the command-line tool was being installed, so it was left alone.`, onPath)
         }
       } else if (!outcome) {
-        // Never a replacing rename: move the old one aside, check what actually moved, then link the new one in.
+        // Not a whole-file replacement: move the old shim aside and check it before linking into a free name.
         const aside = join(dir, `.${o.spec.command}.old-${process.pid}-${randomBytes(4).toString('hex')}`)
         await rename(path, aside)
         const moved = await readExisting(aside)

@@ -18,7 +18,7 @@
 .twi-batch-list {
   max-height: 145px;
   overflow: auto;
-  border: 1px solid #d8d5cd;
+  border: 1px solid var(--line-strong);
   border-top: 0;
 }
 
@@ -28,7 +28,7 @@
   align-items: center;
   gap: 8px;
   padding: 7px 11px;
-  border-top: 1px solid #e6e3dc;
+  border-top: 1px solid var(--line);
 }
 
 .twi-batch-row:first-child {
@@ -81,7 +81,7 @@
 
 .twi-form-grid input:disabled {
   color: #777;
-  background: #efeee9;
+  background: var(--active);
 }
 
 .twi-folder-input {
@@ -95,7 +95,7 @@
   gap: 6px;
   border: 1px solid #c9c6bd;
   border-left: 0;
-  background: #f4f3ee;
+  background: var(--hover);
   padding: 0 10px;
   white-space: nowrap;
 }

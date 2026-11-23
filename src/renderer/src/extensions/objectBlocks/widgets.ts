@@ -200,6 +200,7 @@ export abstract class ObjectWidget extends WidgetType {
       && other.block.to === this.block.to
       && other.block.source === this.block.source
       && other.block.triggerToken === this.block.triggerToken
+      && other.block.simulationVersion === this.block.simulationVersion
       && other.selected === this.selected
       && other.raw === this.raw
       && other.onZoom === this.onZoom

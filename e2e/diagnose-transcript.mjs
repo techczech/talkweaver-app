@@ -101,12 +101,10 @@ await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
 
 async function openStudioWindow() {
-  await page.bringToFront()
   const winPromise = app.waitForEvent('window')
   await page.evaluate(() => window.dispatchEvent(new Event('tw-open-studio')))
   const tools = await winPromise
   await tools.waitForLoadState('domcontentloaded')
-  await tools.bringToFront()
   return tools
 }
 

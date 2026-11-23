@@ -117,15 +117,16 @@ assert(deck.includes('id="twQuoteSources"'), 'the compile stamps the side payloa
   assert(panel.indexOf('qf-source-where') < panel.indexOf('qf-source-link'), 'web panel: after the where lines')
   assert(!handout.share('web-plain-link').includes('qf-static'), 'an ordinary link on a plain quote stays a plain quote in the handout')
   assert(!handout.share('doi-plain').includes('qf-static') && !handout.share('doi-plain').includes('qf-paper'), 'a DOI on a plain quote stays a plain quote in the handout')
-  // Plain quotes: the visible text of an address link is the site; the href is the full address; a titled link is left alone.
+  // Plain quote addresses show a bounded host/path; full href, title and accessible name remain. Named links keep their text.
   const bare = handout.share('plain-bare')
-  assert(bare.includes(`href="${CH.replace('&', '&amp;')}" target="_blank" rel="noopener">youtube.com</a>`), 'plain quote: a bare address shows the site, the href is the full address')
+  const captionLink = (href, shown) => { const full = href.replace(/&/g, '&amp;'); return `href="${full}" title="${full}" aria-label="${full}" target="_blank" rel="noopener">${shown}</a>` }
+  assert(bare.includes(captionLink(CH, 'youtube.com/channel/abc')), 'plain quote: a short path is shown whole and the target stays complete')
   const titled = handout.share('plain-titled')
   assert(titled.includes(`href="${CH.replace('&', '&amp;')}" target="_blank" rel="noopener">A channel title</a>`), 'plain quote: a link with a title keeps its title')
-  assert(titled.includes(`href="${WEB}" target="_blank" rel="noopener">samplesite.example</a>`), 'plain quote: a Markdown link whose text is its own address shows the site')
+  assert(titled.includes(captionLink(WEB, 'samplesite.example/posts/a-sample-post')), 'plain quote: an address label keeps its short path')
   assert(!/>https?:\/\//.test(bare + titled), 'no address is shown as text')
-  assert(handout.phone('plain-bare').some((block) => block.type === 'attrib' && block.html.includes('>youtube.com</a>') && !/>https?:/.test(block.html)), 'the phone text of a plain quote shows the site too')
-  assert(byId(stage, 'plain-bare').html.includes('>youtube.com</a>'), 'plain quote on stage: the text is the site too (nothing is styled as a link there)')
+  assert(handout.phone('plain-bare').some((block) => block.type === 'attrib' && block.html.includes('>youtube.com/channel/abc</a>') && !/>https?:/.test(block.html)), 'the phone text of a plain quote shows the same bounded address')
+  assert(byId(stage, 'plain-bare').html.includes('>youtube.com/channel/abc</a>'), 'the stage uses the same address label')
 }
 
 // ── 3. The href rules ─────────────────────────────────────────────────────────────────────────

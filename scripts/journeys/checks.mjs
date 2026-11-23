@@ -4,7 +4,7 @@
 // itself broke). COULD-NOT is allowed only for ids in could-not-allowed.mjs, under that file's conditions.
 
 const printChecks = (route, label) => ({
-  [`print.${route}.qr-address`]: `${label}: the title and closing pages carry the whole QR address`,
+  [`print.${route}.qr-address`]: `${label}: the title and closing pages carry the QR domain caption`,
   [`print.${route}.own-text`]: `${label}: no printed page carries text that is not the talk's own`,
   [`print.${route}.video-page`]: `${label}: the video page prints its picture (not blank)`,
 })
@@ -57,8 +57,8 @@ export const CHECKS = {
     'present.no-page-errors': 'no page errors in the presenter or audience window',
     'present.section-leads': 'section colours: each of the five sections has its lead (rotation, overrides as written)',
     'present.status-bar-1280': 'presenter at 1280 px: the status bar keeps its items',
-    'present.qr-title': 'the title slide shows every character of the long QR address on screen',
-    'present.qr-closing': 'the closing slide shows every character of the long QR address on screen',
+    'present.qr-title': 'the title slide shows the QR domain and retains the full destination in its link and enlarged view',
+    'present.qr-closing': 'the closing slide shows the QR domain and retains the full destination in its link and enlarged view',
     'present.mindmap-size': 'the mind map\'s drawn box uses most of its content area',
     'present.widget-visible': 'the embedded widget is visible in the audience window without full screen',
     'print.sim-restored': 'print with a simulation part-way and scrolled: same slide, step and scroll position after printing',

@@ -6,7 +6,7 @@
 import { readFileSync, writeFileSync, readdirSync, statSync, existsSync, mkdirSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { launch, closeApp, runFolders, ledger, shooter, size, pause, hardLimit, winCall, writeJson, commit, recordAgainOn, REPO, FFMPEG, OUT_ROOT as OUT_ROOT_B } from './lib.mjs'
+import { launch, closeApp, runFolders, ledger, shooter, size, pause, hardLimit, openPresenter, winCall, writeJson, commit, recordAgainOn, REPO, FFMPEG, OUT_ROOT as OUT_ROOT_B } from './lib.mjs'
 import { makeVault, TITLE, SLUG } from './talk.mjs'
 import { standInTranscript, joinChange, JOIN_SLIDE } from './stand-in.mjs'
 import { keptOnFrames, parseSrt, parseVtt, expectedChaptersOf, captionWordsMatch } from './video-checks.mjs'
@@ -111,9 +111,7 @@ try {
 
   // ── 4. Record ──────────────────────────────────────────────────────────────────────────────────
   if (PHASE === 'record') await step('4 record', async () => {
-    const known = new Set(app.windows())
-    await main.locator('[data-command="present-presenter"]').first().click()
-    const presenter = await newWindow(known, 40000)
+    const presenter = await openPresenter(app, main, 40000)
     if (!presenter) throw new Error('no presenter window')
     await presenter.waitForSelector('#twrec-primary', { timeout: 30000 })
     await size(presenter)
@@ -216,16 +214,20 @@ try {
     await pause(1500)
     const body = await main.locator('body').innerText()
     const known2 = new Set(app.windows())
-    await main.locator('button.toolbar-btn', { hasText: 'Tools' }).first().click(); await pause(700)
+    await main.getByRole('button', { name: 'Tools', exact: true }).click()
+    const sessions = main.getByRole('menuitem', { name: /^Sessions with an audience\b/ })
+    await sessions.waitFor()
     await dumpControls(main, 'tools-menu.txt')
     await shot(main, 'tools-menu')
-    await main.keyboard.press('Escape')
-    await main.evaluate(() => window.tw.tools.open('runs'))
+    await sessions.click()
     const toolsWin = await newWindow(known2, 30000)
     if (toolsWin) {
-      await size(toolsWin); await pause(3000)
-      const tb = await toolsWin.locator('body').innerText()
-      record('record.runs-view', /river.walk/i.test(tb) && /Runs\s*1\b/.test(tb.replace(/\s+/g, ' ')), tb.slice(0, 300).replace(/\s+/g, ' '), await shot(toolsWin, 'runs-view'))
+      await size(toolsWin)
+      const runs = toolsWin.locator('[data-tools-view="runs"]')
+      const found = !!r && await runs.locator(`[data-sessions-row="${SLUG}/${r.run.id}"]`)
+        .waitFor({ timeout: 10000 }).then(() => true, () => false)
+      const count = await runs.locator('[data-runs-count]').innerText({ timeout: 1000 }).catch(() => '?')
+      record('record.runs-view', found && count === '1', `Runs shows ${count}; talk row visible: ${found}`, await shot(toolsWin, 'runs-view'))
       await dumpControls(toolsWin, 'runs-view-controls.txt')
     } else record('record.runs-view', false, 'no Tools window opened')
     record('record.delivered-today', /Delivered today/.test(body), body.match(/[^\n]*Delivered today[^\n]*/)?.[0] ?? 'no "Delivered today"')

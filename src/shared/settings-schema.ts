@@ -1,3 +1,4 @@
+import { WORKSPACE_VIEWS, WORKSPACE_VIEW_LABELS } from './workspace-view.ts'
 // The one settings schema (shared settings, @app-patterns/settings) and the map between it and the
 // userData/config.json keys the app read its preferences from before 0.40.
 //
@@ -27,6 +28,8 @@ export { APP_ID, APP_NAME } from './bridle-commands.ts'
 
 /** The settings that are keys: kept in the operating system's encrypted store, never in a file. */
 export const SECRET_KEYS = { cloudflare: 'accounts.cloudflare', recording: 'accounts.recording' } as const
+
+export const THEME_SETTING = 'general.theme'
 
 const TALK_DEFAULT_PREFIX = 'talkDefaults.'
 
@@ -85,11 +88,14 @@ export const schema = defineSchema({
   ],
   settings: withImportRules([
     // General
+    { key: THEME_SETTING, label: 'Theme', section: 'general', group: 'Appearance', type: 'choice', default: 'system', options: [{ value: 'system', label: 'System' }, { value: 'light', label: 'Light' }, { value: 'dark', label: 'Dark' }], help: 'Follows your Mac unless you choose.' },
     { key: 'general.placeChip', label: 'Show where I am in the status bar', section: 'general', group: 'Help while you work', type: 'toggle', default: true, help: 'The status bar names the place the caret is in and what you can do there.' },
     { key: 'general.guideButton', label: GUIDE_TEXT.settings.switchTitle, section: 'general', group: 'Help while you work', type: 'toggle', default: GUIDE_BUTTON_VISIBLE_DEFAULT, help: GUIDE_TEXT.settings.switchSub },
     { key: 'general.imageArchive', label: 'Image archive folder', section: 'general', group: 'Images', type: 'path', default: '', help: 'Where images recovered from earlier PowerPoint files are kept. Empty: found automatically.' },
     { key: 'general.imageText', label: 'Search the text inside images', section: 'general', group: 'Images', type: 'toggle', default: true, help: 'Reads the text in vault images in the background so image search finds it.' },
     // Writing
+    { key: 'writing.openInView', label: 'A talk opens in', section: 'writing', group: 'Views', type: 'choice', default: 'slide', options: WORKSPACE_VIEWS.map(value => ({ value, label: WORKSPACE_VIEW_LABELS[value] })), help: 'Choose the view that opens when you select a talk.' },
+    { key: 'writing.slidesPanelView', label: 'The slides panel shows', section: 'writing', group: 'Views', type: 'choice', default: 'previews', options: [{ value: 'previews', label: 'Previews' }, { value: 'outline', label: 'An outline' }], help: 'The switch at the top of the slides panel changes this too. Pasted pictures are saved in the talk’s assets folder.' },
     { key: 'writing.plainFont', label: 'Plain view font', section: 'writing', group: 'Plain view', type: 'choice', default: PLAIN_FONT_DEFAULT, options: PLAIN_FONTS.map((f) => ({ value: f.id, label: f.label })), help: 'The typeface of the Plain view of the outline.' },
     { key: 'writing.plainTextSize', label: 'Plain view text size', section: 'writing', group: 'Plain view', type: 'number', default: PLAIN_TEXT_SIZE_DEFAULT, min: PLAIN_TEXT_SIZE_MIN, max: PLAIN_TEXT_SIZE_MAX, unit: 'px', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'The text size of the Plain view of the outline.' },
     { key: KEYMAP_SETTING, label: 'Keys changed inside the editor', section: 'writing', group: 'Editor', type: 'text', default: '', validate: appKeysError, help: 'Keys you changed that are not shortcuts of the menu bar: Enter, Tab and single letters inside the outline, and Undo and Redo. Each command with its key; a command with no key has had its key removed. Reset puts every one back to its default.' },
@@ -152,6 +158,8 @@ const SCALARS: readonly ScalarMap[] = [
   { config: 'guideButtonVisible', key: 'general.guideButton' },
   { config: 'archiveRoot', key: 'general.imageArchive' },
   { config: 'ocrEnabled', key: 'general.imageText' },
+  { config: 'openInView', key: 'writing.openInView' },
+  { config: 'slidesPanelView', key: 'writing.slidesPanelView' },
   { config: 'plainViewFont', key: 'writing.plainFont' },
   { config: 'plainViewTextSize', key: 'writing.plainTextSize' },
   { config: 'actionBarVisible', key: 'writing.actionBar' },

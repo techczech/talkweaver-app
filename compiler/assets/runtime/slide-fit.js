@@ -5,7 +5,8 @@
 // 01-cli-utils.slideFitRuntimeSource; scripts/slide-fit-dom.test.mjs tests it at this seam.
 //
 // Interface: createSlideFit({ refit? }) → { fitContent(content, { refresh }?), canvasScale(el),
-//   preparePrint(root), restorePrint(), managePrint(prepare, restoreSteps), endPrint(), leavePrint(), print() }.
+//   preparePrint(root), restorePrint(), managePrint(prepare, restoreSteps), endPrint(), leavePrint(), print(),
+//   afterFonts(root, run), watchFonts(refit), fontFamily(root, role?) }.
 // A hidden/zero-sized slide returns null: no fit decision. preparePrint runs in beforeprint and puts
 // each slide into its print layout itself (see "Print" below); restorePrint returns the screen state.
 // options.refit(content) is how the fitter asks its caller for a fit when an asset wait ends.
@@ -39,6 +40,68 @@ function createSlideFit(options = {}) {
     // offsetWidth is rounded to a whole px; within that rounding the canvas is not scaled.
     if (!(layoutWidth > 0) || !(paintedWidth > 0) || Math.abs(paintedWidth - layoutWidth) <= 0.5) return 1;
     return paintedWidth / layoutWidth;
+  }
+
+  function usesBundledTypeface(slide) {
+    return !!slide && ["inter", "serif", "geist"].includes(slide.dataset.deckFont);
+  }
+  function typefaceSlide(root) {
+    const nearest = root?.closest?.(".slide");
+    if (nearest) return usesBundledTypeface(nearest) ? nearest : null;
+    return root?.querySelector?.('.slide[data-deck-font="inter"], .slide[data-deck-font="serif"], .slide[data-deck-font="geist"]') || null;
+  }
+  function fontFamily(root, role = "text") {
+    const slide = typefaceSlide(root);
+    if (!slide) return "";
+    const name = getComputedStyle(slide).getPropertyValue(role === "display" ? "--look-face-display" : "--look-face-text")
+      .split(",")[0].replace(/["']/g, "").trim();
+    return ["Inter", "Geist", "Fraunces", "Alegreya Sans"].includes(name) ? name : "";
+  }
+  // Decode the selected bundle before text is measured (fitting, Mermaid, mind maps). The faces are embedded data and
+  // decode in milliseconds; still, the wait is bounded: one shared wait per document, settled when the faces load or
+  // after FONT_WAIT_MS, whichever comes first. After that nothing waits again; a face that arrives later triggers a
+  // refit through watchFonts. Live output retains extended declarations for text arriving later.
+  const FONT_WAIT_MS = 2000;
+  let fontWait = null;
+  let fontWaitSettled = false;
+  function readyFonts(root = document) {
+    if (fontWaitSettled || typeof document === "undefined" || !document.fonts) return null;
+    const slide = typefaceSlide(root);
+    if (!slide) return null;
+    if (fontWait) return fontWait;
+    const style = getComputedStyle(slide);
+    const families = new Set(["--look-face-display", "--look-face-text"]
+      .map(prop => style.getPropertyValue(prop).split(",")[0].replace(/["']/g, "").trim())
+      .filter(name => ["Inter", "Geist", "Fraunces", "Alegreya Sans"].includes(name)));
+    const pending = [...document.fonts].filter(face => families.has(face.family.replace(/["']/g, ""))
+      && (face.status === "unloaded" || face.status === "loading"));
+    if (!pending.length) return null;
+    fontWait = Promise.race([
+      Promise.all(pending.map(face => face.load().catch(() => null))),
+      new Promise(resolve => setTimeout(resolve, FONT_WAIT_MS)),
+    ]).then(() => { fontWaitSettled = true; fontWait = null; });
+    return fontWait;
+  }
+  // Run `run(root)` once the face is ready; returns false when nothing is pending (the caller goes ahead now).
+  // Several requests for the same function while waiting share one continuation, each root once.
+  const deferredRuns = new Map();
+  function afterFonts(root, run) {
+    const wait = readyFonts(root);
+    if (!wait) return false;
+    let roots = deferredRuns.get(run);
+    if (!roots) {
+      roots = new Set();
+      deferredRuns.set(run, roots);
+      wait.then(() => { deferredRuns.delete(run); roots.forEach((r) => run(r)); });
+    }
+    roots.add(root);
+    return true;
+  }
+  function watchFonts(refit) {
+    if (typeof document === "undefined" || !document.fonts) return;
+    const pending = readyFonts(document);
+    if (pending) pending.then(refit);
+    document.fonts.addEventListener("loadingdone", refit);
   }
 
   // Title-fit: a slide title must never overrun its column. Most titles wrap on whitespace,
@@ -1507,10 +1570,6 @@ function createSlideFit(options = {}) {
   const ASSET_WAIT_MS = 1200;
   const assetWaits = new WeakMap();
   const refit = typeof options.refit === "function" ? options.refit : (content) => { fitContent(content); };
-  // Font readiness lives here alone (the typeface work replaces it with its font watcher).
-  function fontsSettling() {
-    return Boolean(document.fonts && document.fonts.status === "loading");
-  }
   function imageSettling(img) {
     if (img.complete) return false;
     // A reserved width and height: the picture's arrival cannot move the layout.
@@ -1523,7 +1582,8 @@ function createSlideFit(options = {}) {
   }
   function waitForAssets(content, slide) {
     if (fittingPrint) return false;
-    const settling = fontsSettling() || [...content.querySelectorAll("img")].some(imageSettling);
+    const otherFontsLoading = !usesBundledTypeface(slide) && document.fonts?.status === "loading";
+    const settling = otherFontsLoading || [...content.querySelectorAll("img")].some(imageSettling);
     let wait = assetWaits.get(slide);
     if (!settling) {
       if (wait) { clearTimeout(wait.timer); assetWaits.delete(slide); }
@@ -1771,11 +1831,19 @@ function createSlideFit(options = {}) {
       canvas.className = "tw-print-canvas";
       slide.before(canvas);
       moveSlide(canvas, slide, null);
-      canvases.push([canvas, slide]);
+      const source = slide.querySelector('template.sim-transcript-source');
+      const transcript = source ? document.createElement('section') : null;
+      if (transcript) {
+        transcript.className = 'sim-print-transcript';
+        transcript.append(source.content.cloneNode(true));
+        canvas.after(transcript);
+      }
+      canvases.push([canvas, slide, transcript]);
     });
-    return () => runEach(canvases.map(([canvas, slide]) => () => {
+    return () => runEach(canvases.map(([canvas, slide, transcript]) => () => {
       if (canvas.isConnected && canvas.parentNode) moveSlide(canvas.parentNode, slide, canvas);
       canvas.remove();
+      transcript?.remove();
     }));
   }
   // A video on paper (deck, presenter window, handout): its poster, else its current frame, else the
@@ -1940,6 +2008,7 @@ function createSlideFit(options = {}) {
     const slide = content.closest(".slide");
     const box = slide?.getBoundingClientRect();
     if (!box || !(box.width > 0 && box.height > 0)) return null;
+    if (!fittingPrint && afterFonts(content, refit)) return null;
     if (!authoredFits.has(slide)) authoredFits.set(slide, saveFit(slide, true));
     const authored = authoredFits.get(slide);
     const before = authored.beforeFitStyles();
@@ -2063,5 +2132,5 @@ function createSlideFit(options = {}) {
     });
   }
 
-  return { fitContent, canvasScale, preparePrint, restorePrint, managePrint, endPrint, leavePrint, print, oceanCompare: { lessThan, sameFaults, safeIsBetter }, panelChoice: { choosePanelArrangement, PANEL_FALL_BACK, PANEL_DETAIL_STEPS, PANEL_DETAIL_STEPS_PAST } };
+  return { fitContent, canvasScale, afterFonts, watchFonts, fontFamily, preparePrint, restorePrint, managePrint, endPrint, leavePrint, print, oceanCompare: { lessThan, sameFaults, safeIsBetter }, panelChoice: { choosePanelArrangement, PANEL_FALL_BACK, PANEL_DETAIL_STEPS, PANEL_DETAIL_STEPS_PAST } };
 }

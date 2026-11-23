@@ -9,6 +9,7 @@
 // while GEOMETRY (clipPath/mask, which many real svgl marks rely on for their actual silhouette) is
 // preserved. Figma proves the clipPath case; a gradient-only mark proves paint still goes.
 import { mkdtempSync, writeFileSync, statSync, readFileSync } from "node:fs";
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { iconSvg, slideNeedsMonochrome, applySlideMonochrome } from "../compiler/scripts/lib/05-icons.mjs";
@@ -232,7 +233,7 @@ ck(!/Sketch|<defs>/i.test(hfMono), "swapped hugging-face drops the svgl Sketch/d
 // currentColor. `logo-colour: brand`: the svgl mark KEEPS its real hex/gradient; the silhouette-only
 // mark still renders flat. The American alias `logo-color` is proven to switch identically.
 const compileLogolistMarks = async (frontmatterExtra) => {
-  const d = mkdtempSync(join(tmpdir(), "tw-logocol-"));
+  const d = testScratchDir(join(tmpdir(), "tw-logocol-"));
   const p = join(d, "deck.md");
   const c = [
     "---",

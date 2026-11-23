@@ -24,7 +24,7 @@
 .tl-vhead:hover { background: color-mix(in srgb, var(--vc) 14%, var(--panel)); }
 .tl-vhead--flash { box-shadow: inset 4px 0 0 var(--vc), inset 0 0 0 2px var(--vc); }
 .tl-vhead--kfocus { box-shadow: inset 4px 0 0 var(--vc), inset 0 0 0 1.5px var(--oxford); }
-.tl-vhead.is-closed { --vc: #b9b4a8; background: var(--paper); box-shadow: inset 4px 0 0 #cfcabd; }
+.tl-vhead.is-closed { --vc: var(--muted); background: var(--paper); box-shadow: inset 4px 0 0 var(--line-strong); }
 .tl-vhead.is-closed .tl-vname { color: var(--muted); }
 .tl-vchev { display: inline-flex; width: 10px; flex: none; color: var(--muted); transition: transform 120ms ease; }
 .tl-vtext { display: flex; flex-direction: column; min-width: 0; gap: 1px; flex: 1 1 auto; }
@@ -36,7 +36,7 @@
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 22px; height: 22px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); cursor: pointer;
 }
-.tl-vmore:hover, .tl-vmore:focus-visible { background: color-mix(in srgb, var(--vc) 16%, transparent); color: var(--ink, #17202a); }
+.tl-vmore:hover, .tl-vmore:focus-visible { background: color-mix(in srgb, var(--vc) 16%, transparent); color: var(--ink); }
 
 /* colour rail down the left edge of every row in a vault's section */
 .tl-window-group--vault { position: relative; }
@@ -55,7 +55,7 @@
 .tl-vempty--kfocus { box-shadow: inset 0 0 0 1.5px var(--oxford); border-radius: 4px; }
 .tl-vnew {
   display: inline-flex; align-items: center; gap: 5px; padding: 3px 0; border: 0; background: none;
-  font-size: 11.5px; font-weight: 700; color: var(--oxford); cursor: pointer;
+  font-size: 11.5px; font-weight: 700; color: var(--accent-text); cursor: pointer;
 }
 .tl-vnew:hover { text-decoration: underline; }
 
@@ -65,7 +65,7 @@
   padding: 7px 12px; border: 0; border-top: 1px solid var(--line); background: var(--paper);
   font-size: 11.5px; font-weight: 600; color: var(--muted); text-align: left; cursor: pointer;
 }
-.tl-addvault:hover { color: var(--oxford); background: var(--panel); }
+.tl-addvault:hover { color: var(--accent-text); background: var(--panel); }
 
 /* the vault badge in Recent */
 .tl-recent-ficon .tl-vb { border-radius: 4px; }
@@ -85,7 +85,7 @@
 .tl-show-x:hover { background: var(--hover); color: var(--ink); }
 .tl-show-menu { position: absolute; left: 8px; right: 8px; top: 26px; z-index: 30; padding: 4px; }
 .tl-show-item { display: flex; align-items: center; gap: 7px; width: 100%; }
-.tl-show-tick { width: 10px; flex: none; font-size: 11px; color: var(--oxford); }
+.tl-show-tick { width: 10px; flex: none; font-size: 11px; color: var(--accent-text); }
 .tl-show-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tl-show-hint { flex: none; font-size: 10px; color: var(--faint); }
 .tl-show-item.is-disabled { opacity: 0.55; cursor: default; }
@@ -99,15 +99,15 @@
 .tl-vcname { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tl-vchidden { flex: none; font-size: 10.5px; color: var(--faint); }
 
-.tl-vhead.is-unavailable { --vc: #b9b4a8; background: var(--paper); box-shadow: inset 4px 0 0 #b9964a; }
+.tl-vhead.is-unavailable { --vc: var(--muted); background: var(--paper); box-shadow: inset 4px 0 0 #b9964a; }
 .tl-vhead.is-unavailable .tl-vname { color: var(--muted); }
 .tl-vwarn { color: #a16207; }
 .tl-vunavail { box-sizing: border-box; height: 196px; padding: 8px 10px 0 14px; overflow: hidden; }
-.tl-vunote { padding: 8px 10px 10px; border-radius: 6px; background: #f6ecd2; border: 1px solid #e4d19a; font-size: 11px; line-height: 1.35; color: #4a3a12; }
+.tl-vunote { padding: 8px 10px 10px; border-radius: 6px; background: var(--amber-bg); border: 1px solid var(--line-strong); font-size: 11px; line-height: 1.35; color: #4a3a12; }
 .tl-vunote b { display: block; margin-bottom: 3px; font-size: 11.5px; }
 .tl-vunote p { margin: 0 0 7px; }
 .tl-vuact { padding: 4px 10px; border: 1px solid #c9b16a; border-radius: 5px; background: var(--paper); font-size: 11px; font-weight: 700; color: var(--ink); cursor: pointer; }
-.tl-vuact:hover { border-color: var(--oxford); color: var(--oxford); }
+.tl-vuact:hover { border-color: var(--oxford); color: var(--accent-text); }
 .tl-vunlisted { display: block; margin-top: 6px; font-size: 10.5px; color: var(--faint); }
 
 /* The example vault (onboarding ticket 06, locked drawing states 02 and 03): the Example pill */
@@ -115,5 +115,5 @@
 .tl-vhead[data-vault-example] .tl-vsub { white-space: normal; }
 .tl-vexample {
   flex: none; font: 600 9.5px var(--font-ui); white-space: nowrap;
-  background: #d9efe9; color: #0f5f58; border: 1px solid #9fd2c8; border-radius: 8px; padding: 2px 6px;
+  background: var(--green-bg); color: var(--green); border: 1px solid var(--line-strong); border-radius: 8px; padding: 2px 6px;
 }

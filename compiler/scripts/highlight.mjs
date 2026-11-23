@@ -22,13 +22,7 @@
 // run of source text is HTML-escaped; spans only wrap escaped content. Unknown lang → escapeHtml
 // (degrades gracefully, identical to the old plain panel).
 
-function escapeHtml(value) {
-  return String(value)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
+import { escapeHtml } from "./lib/00-html.mjs";
 
 function span(cls, escapedText) {
   return `<span class="${cls}">${escapedText}</span>`;

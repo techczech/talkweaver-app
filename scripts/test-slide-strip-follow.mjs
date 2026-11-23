@@ -12,6 +12,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const entry = `
 import React from 'react'; import {createRoot} from 'react-dom/client'; import {flushSync} from 'react-dom';
 import SlideStrip from './src/renderer/src/components/SlideStrip.tsx';
+import {createSection, reorderStructure, structureOf} from './src/shared/talk-structure.ts';
+import {cutBlocks, refAt} from './src/shared/slide-handling/blocks.ts';
 let app=createRoot(document.getElementById('stage')), p;
 window.draw=(over={})=>{if('activeIndex' in over)window.lastSelectionAt=performance.now();p={...p,...over};flushSync(()=>app.render(React.createElement(SlideStrip,p)))};
 window.mount=()=>{flushSync(()=>app.unmount());app=createRoot(document.getElementById('stage'));
@@ -19,6 +21,33 @@ window.mount=()=>{flushSync(()=>app.unmount());app=createRoot(document.getElemen
  p={talk:{slug:'synthetic',title:'Synthetic sampler',outlinePath:'/synthetic/talk-outline.md'},compiledSlides:rows,outlineContent:'synthetic source',triggerFindings:[],thumbnails:Object.fromEntries(rows.map((r,i)=>[r.render_hash,'https://fixture.test/thumb/'+i+'.png'])),activeIndex:0,onSelectSlide:i=>window.draw({activeIndex:i}),onEdit:i=>window.lastEdit=i};window.draw()};
 window.carousel=()=>window.draw({thumbnails:{...p.thumbnails,r4__0:'https://fixture.test/thumb/4.png'}});
 window.dispose=()=>flushSync(()=>app.unmount());
+window.mountStaleStructure=()=>{
+  app=createRoot(document.getElementById('stage'));
+  const start=['A','B','C','D'].map(title=>'### '+title+' {id='+title.toLowerCase()+'}\\n- '+title+' detail\\n').join('\\n');
+  const rows=structureOf(start).nodes.map(node=>({
+    slide_id:node.id,title:node.title,nav_title:node.title,source_line:node.line+1,
+    source_markdown:'### '+node.title,layout:'list',role:'content'
+  }));
+  const added=createSection(start,{kind:'section',after:rows[0].source_line,id:'new'});
+  if(!added.ok) throw new Error(added.error);
+  const source=added.text;
+  const current=structureOf(source);
+  p={talk:{slug:'stale',title:'Stale compile',outlinePath:'/synthetic/stale-outline.md'},
+    compiledSlides:rows,outlineContent:source,structure:current,triggerFindings:[],
+    activeIndex:0,onSelectSlide:()=>{},onMoveSlides:()=>{},
+    slideRefOf:index=>refAt(source,(current.nodes.find(node=>node.id===rows[index]?.slide_id)?.line??-1)+1),
+    onStructureMove:(lines,target,side)=>{
+      const result=reorderStructure(source,lines,target,side);
+      window.dropResult=result.text?structureOf(result.text).nodes.map(node=>node.id):result.error;
+    },
+    rowStructureItems:()=>[],
+    slideOps:{delete:line=>{
+      const result=cutBlocks(source,[refAt(source,line)]);
+      window.deleteResult=result.text?structureOf(result.text).nodes.map(node=>node.id):result.refused;
+    }}
+  };
+  window.draw();
+};
 window.position=()=>{const l=document.querySelector('[data-place-region="strip"]').lastElementChild,c=document.querySelector('[data-active="true"]');return {at:performance.now(),sinceSelectionMs:performance.now()-window.lastSelectionAt,top:l.scrollTop,offset:c?.parentElement.getBoundingClientRect().top-l.getBoundingClientRect().top,active:Number(c?.dataset.slideIndex)}};
 `
 const bundled = await build({ stdin: { contents: entry, resolveDir: root, loader: 'tsx' }, bundle: true, write: false, format: 'iife', platform: 'browser', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' }, logLevel: 'error' })
@@ -114,6 +143,21 @@ try {
   await page.evaluate(() => { window.oldList = document.querySelector('[data-place-region="strip"]').lastElementChild; window.dispose(); window.oldTop = window.oldList.scrollTop })
   await page.waitForTimeout(150)
   assert.equal(await page.evaluate(() => window.oldList.scrollTop), await page.evaluate(() => window.oldTop), 'unmount cancels follow work')
+  await page.evaluate(() => window.mountStaleStructure())
+  const card = index => page.locator(`[data-slide-index="${index}"]`)
+  assert.equal(await card(3).getAttribute('draggable'), 'true', 'fixture slide can be dragged')
+  const dest = await card(2).boundingBox()
+  assert.ok(dest)
+  const transfer = await page.evaluateHandle(() => new DataTransfer())
+  await card(3).dispatchEvent('dragstart', { dataTransfer: transfer })
+  const drop = { dataTransfer: transfer, clientX: dest.x + 5, clientY: dest.y + 3 }
+  await card(2).dispatchEvent('dragover', drop)
+  await card(2).dispatchEvent('drop', drop)
+  assert.deepEqual(await page.evaluate(() => window.dropResult), ['a', 'new', 'b', 'd', 'c'], 'drag uses the headings moved by the edit above')
+  await card(2).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: /Delete slide/ }).click()
+  assert.deepEqual(await page.evaluate(() => window.deleteResult), ['a', 'new', 'b', 'd'], 'row menu deletes the named card during the compile lag')
+  await page.evaluate(() => window.dispose())
   assert.deepEqual(result.errors, [])
   console.log('PASS sidebar follow: actual frame settling, click animation, cancellation, collapse, carousel, focus and current callbacks')
 } finally {

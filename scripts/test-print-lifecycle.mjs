@@ -14,6 +14,10 @@ import { chromium } from 'playwright';
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs';
 import { extractSlides, extractStyles } from '../compiler/scripts/lib/04-html-extraction.mjs';
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs';
+import { missingPopplerTools, reportMissingPoppler } from './lib/test-poppler.mjs';
+
+const missing = missingPopplerTools('pdfinfo', 'pdftotext', 'pdftoppm');
+reportMissingPoppler('Print lifecycle PDF comparison and content checks', missing);
 
 const keep = process.env.FIT_LIFECYCLE_OUT;
 const dir = keep ? resolve(keep) : mkdtempSync(resolve('.tw-print-lifecycle-'));
@@ -247,35 +251,37 @@ try {
 
     // 4. A real print after an abandoned one (beforeprint, a key press, then page.pdf()) gives the pages
     // of a first print.
-    const pdfs = {};
-    for (const history of ['first', 'after-abandoned']) {
-      page = await open(file);
-      try {
-        // Both prints after the idle preparation has laid out the video's slide (its frame then prints).
-        await page.waitForTimeout(3000);
-        if (history === 'after-abandoned') {
-          await page.evaluate(() => dispatchEvent(new Event('beforeprint')));
-          await page.keyboard.press('Shift');
-          await settle(page);
-        }
-        const pdf = resolve(dir, `lifecycle-${kind}-${history}.pdf`);
-        await page.pdf({ path: pdf, preferCSSPageSize: true, printBackground: true });
-        const pages = pageCount(pdf);
-        const prefix = resolve(dir, `lifecycle-${kind}-${history}`);
-        execFileSync('pdftoppm', ['-r', '30', '-png', pdf, prefix]);
-        pdfs[history] = { pages, texts: Array.from({ length: pages }, (_, i) => pageText(pdf, i + 1)), prefix };
-      } finally { await page.close(); }
+    if (missing.length === 0) {
+      const pdfs = {};
+      for (const history of ['first', 'after-abandoned']) {
+        page = await open(file);
+        try {
+          // Both prints after the idle preparation has laid out the video's slide (its frame then prints).
+          await page.waitForTimeout(3000);
+          if (history === 'after-abandoned') {
+            await page.evaluate(() => dispatchEvent(new Event('beforeprint')));
+            await page.keyboard.press('Shift');
+            await settle(page);
+          }
+          const pdf = resolve(dir, `lifecycle-${kind}-${history}.pdf`);
+          await page.pdf({ path: pdf, preferCSSPageSize: true, printBackground: true });
+          const pages = pageCount(pdf);
+          const prefix = resolve(dir, `lifecycle-${kind}-${history}`);
+          execFileSync('pdftoppm', ['-r', '30', '-png', pdf, prefix]);
+          pdfs[history] = { pages, texts: Array.from({ length: pages }, (_, i) => pageText(pdf, i + 1)), prefix };
+        } finally { await page.close(); }
+      }
+      const { first, 'after-abandoned': again } = pdfs;
+      check(first.pages === again.pages && JSON.stringify(first.texts) === JSON.stringify(again.texts),
+        `${kind}: a print after an abandoned print has the pages of a first print (${first.pages} vs ${again.pages}; ${JSON.stringify(first.texts.find((t, i) => t !== again.texts[i]) ?? '')} vs ${JSON.stringify(again.texts.find((t, i) => t !== first.texts[i]) ?? '')})`);
+      if (first.pages === again.pages) {
+        const width = String(first.pages).length;
+        const differing = Array.from({ length: first.pages }, (_, i) => String(i + 1).padStart(width, '0'))
+          .filter((n) => !readFileSync(`${first.prefix}-${n}.png`).equals(readFileSync(`${again.prefix}-${n}.png`)));
+        check(differing.length === 0, `${kind}: a print after an abandoned print draws the same pages as a first print (pages differing: ${differing.join(', ')})`);
+      }
+      if (kind === 'deck') check(first.texts.some((t) => /spoken reminder for the first point/.test(t)), `deck: the first print has its notes (${JSON.stringify(first.texts)})`);
     }
-    const { first, 'after-abandoned': again } = pdfs;
-    check(first.pages === again.pages && JSON.stringify(first.texts) === JSON.stringify(again.texts),
-      `${kind}: a print after an abandoned print has the pages of a first print (${first.pages} vs ${again.pages}; ${JSON.stringify(first.texts.find((t, i) => t !== again.texts[i]) ?? '')} vs ${JSON.stringify(again.texts.find((t, i) => t !== first.texts[i]) ?? '')})`);
-    if (first.pages === again.pages) {
-      const width = String(first.pages).length;
-      const differing = Array.from({ length: first.pages }, (_, i) => String(i + 1).padStart(width, '0'))
-        .filter((n) => !readFileSync(`${first.prefix}-${n}.png`).equals(readFileSync(`${again.prefix}-${n}.png`)));
-      check(differing.length === 0, `${kind}: a print after an abandoned print draws the same pages as a first print (pages differing: ${differing.join(', ')})`);
-    }
-    if (kind === 'deck') check(first.texts.some((t) => /spoken reminder for the first point/.test(t)), `deck: the first print has its notes (${JSON.stringify(first.texts)})`);
   }
 
   // 6. Paper shows the slides and nothing else, and the video prints its frame: the saved presentation,
@@ -349,13 +355,15 @@ try {
         await settle(page);
         const pdf = resolve(dir, `paper-${kind}.pdf`);
         await page.pdf({ path: pdf, preferCSSPageSize: true, printBackground: true });
-        const pages = Array.from({ length: pageCount(pdf) }, (_, i) => pageText(pdf, i + 1));
-        const foreign = pages.map((t, i) => [i + 1, (t.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).filter((w) => !vocabulary.has(w) && !/^\d+$/.test(w))]).filter(([, words]) => words.length);
-        check(foreign.length === 0, `${kind}: every printed word is the talk's own, nothing of the window's chrome prints (${JSON.stringify(foreign.slice(0, 4))})`);
-        check(!pages.some((t) => /history/i.test(t)), `${kind}: the last-slide notice does not print`);
-        const clipPage = pages.findIndex((t) => /A clip/.test(t)) + 1;
-        const share = clipPage > 0 ? colourShare(pdf, clipPage) : 0;
-        check(clipPage > 0 && share > 0.03, `${kind}: the video's page prints the video's picture (page ${clipPage}, ${Math.round(share * 1000) / 10}% strongly coloured)`);
+        if (missing.length === 0) {
+          const pages = Array.from({ length: pageCount(pdf) }, (_, i) => pageText(pdf, i + 1));
+          const foreign = pages.map((t, i) => [i + 1, (t.normalize('NFKC').toLowerCase().match(/[\p{L}\p{N}]+/gu) || []).filter((w) => !vocabulary.has(w) && !/^\d+$/.test(w))]).filter(([, words]) => words.length);
+          check(foreign.length === 0, `${kind}: every printed word is the talk's own, nothing of the window's chrome prints (${JSON.stringify(foreign.slice(0, 4))})`);
+          check(!pages.some((t) => /history/i.test(t)), `${kind}: the last-slide notice does not print`);
+          const clipPage = pages.findIndex((t) => /A clip/.test(t)) + 1;
+          const share = clipPage > 0 ? colourShare(pdf, clipPage) : 0;
+          check(clipPage > 0 && share > 0.03, `${kind}: the video's page prints the video's picture (page ${clipPage}, ${Math.round(share * 1000) / 10}% strongly coloured)`);
+        }
         const off = placed.standInBox && placed.videoBox ? Math.max(...placed.standInBox.map((v, i) => Math.abs(v - placed.videoBox[i]))) : 1;
         check(placed.standIn === 'CANVAS' && placed.videoShown === 'none' && off <= 0.01, `${kind}: the video prints as its frame (no player, no controls), laid exactly over the video's picture (${JSON.stringify(placed)})`);
       } finally { await page.close(); }

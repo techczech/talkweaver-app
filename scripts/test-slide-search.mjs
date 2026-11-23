@@ -1,6 +1,7 @@
 // Slide search module (src/main/slide-search.ts): the match rules are the ones the handler had (parity
 // against a verbatim copy of the old per-row logic), prepared strings are reused until a talk's rows
 // are rebuilt, picture text refreshes when the image-text index changes, and a superseded scan stops.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { createSlideSearch, matchHay, normalizeSearchQuery } from '../src/main/slide-search.ts'
 import { createSupersedeTracker } from '../src/main/search-supersede.ts'
@@ -177,7 +178,7 @@ await test('supersede wiring: the renderer keys its searches with a per-load tok
   const hook = readFileSync(new URL('../src/renderer/src/components/slide-browser/useSlideSearch.ts', import.meta.url), 'utf8')
   assert.match(hook, /supersedeKey: `slide-browser:\$\{SEARCH_LOAD_TOKEN\}`/)
   assert.match(hook, /const SEARCH_LOAD_TOKEN = /)
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   assert.match(main, /on\('did-navigate', forget\)/)
   assert.match(main, /once\('destroyed'/)
 })

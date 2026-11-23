@@ -1,25 +1,8 @@
-// Outline external-change guard, renderer side (shared-talk ticket 01). The main process
-// (src/main/outline-disk-guard.ts) notices when the open talk's outline file differs from what the
-// editor holds, refuses every save over it, and reports the difference here: by push (the watcher) and
-// in the refused save's reply. This module holds that state per outline path (the bar at the top of the
-// talk reads it) and carries out the person's answers:
-//
-//   changed   Reload     — the disk text goes into the editor as ONE undoable change (⌘Z brings the
-//                          person's version back), then that disk version is accepted.
-//             Keep mine  — the version the person saw is accepted, then the editor's text is saved.
-//   removed   Save it again (Keep mine's mechanics: accept the removal, save, which recreates the file)
-//             Discard    — the talk is let go without saving it again.
-//   partial   Save again (accept the incomplete file, save the editor's text over it). Never Reload.
-//   recovery  Restore my unsaved text — the recovery copy an earlier session kept goes into the editor
-//             as one undoable change and is saved; Discard drops the copy.
-//
-// Every accept names the version the bar showed. If the file changed again since, main refuses with the
-// newer change and the bar shows that instead: nothing newer is ever overwritten unseen. The accept runs
-// through the file's save queue, so a save queued before it can never land after it.
-//
-// Leaving the talk (a switch, closing the window, ⌘Q) goes through `guardLeave`: pending typing is
-// flushed first; while a difference remains, the person must choose (the sheet), and the leave goes
-// ahead only once Reload / Keep mine (or Save it again / Discard) has completed.
+// Per-window disk-change state and the existing removal, partial-write and recovery journeys.
+// Ordinary changes are reconciled by outlineReconcile.ts / useOutlineDiskChange.ts: clean reload,
+// independent edits merged automatically, overlapping slides reviewed before any write.
+// Low-level Reload / Keep mine remain explicit resolver operations; the changed-file UI offers
+// Review merge. Every acceptance names an observed disk version and uses the outline save queue.
 import type { OutlineDiskAccept, OutlineDiskChange, OutlineRecoveryCopy } from '../../../shared/outline-disk-change.ts'
 
 export type { OutlineDiskChange }
@@ -98,11 +81,13 @@ export interface OutlineDiskResolverDeps {
   diskVersion(outlinePath: string): Promise<{ text: string; hash: string } | null>
   /** Accepts version `hash` as the baseline (window.tw.talk.acceptOutlineDiskVersion). `keepPending`:
    *  a save follows, and the difference stays reported until it lands. */
-  accept(outlinePath: string, hash: string, opts?: { keepPending?: boolean }): Promise<OutlineDiskAccept>
+  accept(outlinePath: string, hash: string, opts?: { keepPending?: boolean; revision?: number }): Promise<OutlineDiskAccept>
+  /** Capture immediately after disk adoption, before any asynchronous acknowledgement. */
+  revision?(): number
   /** The editor's live text for the talk, or null when the editor does not hold it. */
   readBuffer(outlinePath: string): string | null
-  /** One undoable change. `fromDisk` establishes a clean baseline with no autosave (Reload only). False when not ready. */
-  replaceBuffer(outlinePath: string, text: string, opts?: { fromDisk?: boolean }): boolean
+  /** Ordinary replacements are undoable. `fromDisk` maps history and adopts a baseline without autosave. False when not ready. */
+  replaceBuffer(outlinePath: string, text: string, opts?: { fromDisk?: boolean; diskBase?: string; diskHash?: string }): boolean
   /** Saves the editor's buffer as it stands through the file's queue (the D1 seam, forced). */
   saveBuffer(outlinePath: string): Promise<boolean>
   /** The recovery copy for the talk (window.tw.talk.outlineRecovery), and dropping it. */
@@ -122,8 +107,8 @@ const CHANGED_AGAIN = 'The talk changed on disk again. Nothing was changed: look
 const NO_RECOVERY = 'The unsaved text is no longer kept. Nothing was changed.'
 const errorOf = (reply: OutlineDiskAccept): string => (!reply.ok && reply.error) || CHANGED_AGAIN
 
-async function acceptInQueue(outlinePath: string, hash: string, deps: OutlineDiskResolverDeps, keepPending = false): Promise<OutlineDiskAccept> {
-  const reply = await deps.queue(outlinePath, () => deps.accept(outlinePath, hash, keepPending ? { keepPending: true } : undefined))
+async function acceptInQueue(outlinePath: string, hash: string, deps: OutlineDiskResolverDeps, keepPending = false, revision?: number): Promise<OutlineDiskAccept> {
+  const reply = await deps.queue(outlinePath, () => deps.accept(outlinePath, hash, keepPending ? { keepPending: true } : revision === undefined ? undefined : { revision }))
   if (reply.ok) { if (!keepPending) deps.store.clear(outlinePath, hash) }
   else if (reply.change) deps.store.report({ ...reply.change, outlinePath })
   return reply
@@ -131,16 +116,17 @@ async function acceptInQueue(outlinePath: string, hash: string, deps: OutlineDis
 const refused = (reply: OutlineDiskAccept): ResolveResult =>
   ({ ok: false, error: errorOf(reply), ...(!reply.ok && reply.change ? { change: reply.change } : {}) })
 
-/** Reload (a `changed` file only): the disk text replaces the editor's as one undoable change, then that
- *  version is accepted. `replacedEdits`: the editor held other text (the caller says ⌘Z restores it). */
+/** Explicit Reload: adopt the disk text without its own undo step, then accept
+ *  its observed version. `replacedEdits` identifies a deliberate discard of other buffer text. */
 export async function reloadFromDisk(outlinePath: string, deps: OutlineDiskResolverDeps): Promise<ResolveResult> {
   await deps.settled(outlinePath)
   const disk = await deps.diskVersion(outlinePath)
   if (!disk) return { ok: false, error: GONE }
   const before = deps.readBuffer(outlinePath)
   if (before === null) return { ok: false, error: NOT_READY }
-  if (!deps.replaceBuffer(outlinePath, disk.text, { fromDisk: true })) return { ok: false, error: NOT_READY }
-  const accepted = await acceptInQueue(outlinePath, disk.hash, deps)
+  if (!deps.replaceBuffer(outlinePath, disk.text, { fromDisk: true, diskHash: disk.hash })) return { ok: false, error: NOT_READY }
+  const revision = deps.revision?.()
+  const accepted = await acceptInQueue(outlinePath, disk.hash, deps, false, revision)
   if (!accepted.ok) return refused(accepted)
   // The person chose the disk's version: text kept from a refused save is dropped with it.
   await deps.discardRecovery?.(outlinePath).catch(() => false)
@@ -205,10 +191,11 @@ export async function discardRecovery(outlinePath: string, deps: OutlineDiskReso
 }
 
 /** The person's answer on the bar or the sheet. */
-export type OutlineDiskChoice = 'reload' | 'keep' | 'discard' | 'restore' | 'stay'
+export type OutlineDiskChoice = 'reload' | 'keep' | 'discard' | 'restore' | 'merge' | 'stay'
 
 /** Carries out a choice for the talk's current difference `change`. */
 export function resolveChoice(outlinePath: string, change: OutlineDiskChange, choice: Exclude<OutlineDiskChoice, 'stay'>, deps: OutlineDiskResolverDeps): Promise<ResolveResult> {
+  if (choice === 'merge') return Promise.resolve({ ok: false, error: 'Review the conflicting slides in the editor before leaving.' })
   if (change.kind === 'recovery') return choice === 'restore' ? restoreRecovery(outlinePath, deps) : discardRecovery(outlinePath, deps)
   if (choice === 'reload' && change.kind === 'changed') return reloadFromDisk(outlinePath, deps)
   if (choice === 'discard' && change.kind === 'removed') return discardRemoved(outlinePath, deps)
@@ -218,6 +205,8 @@ export function resolveChoice(outlinePath: string, change: OutlineDiskChange, ch
 export interface LeaveGuardDeps extends OutlineDiskResolverDeps {
   /** Flushes the editor's pending typing to disk (a refusal records the difference). */
   flush(): Promise<void>
+  /** Reconciles an ordinary disk edit; unresolved conflicts keep the editor open. */
+  reconcile?(): Promise<void>
   /** Shows the sheet for `change` and resolves with the person's choice. */
   ask(change: OutlineDiskChange): Promise<OutlineDiskChoice>
   /** Tells the person why a choice did not complete (the sheet then asks again). */
@@ -234,6 +223,11 @@ export async function guardLeave(outlinePath: string, deps: LeaveGuardDeps): Pro
   for (;;) {
     const change = deps.store.get(outlinePath)
     if (!change || change.kind === 'recovery' || deps.store.isDiscarded(outlinePath)) return true
+    if (change.kind === 'changed' && deps.reconcile) {
+      await deps.reconcile()
+      if (deps.store.get(outlinePath)?.kind === 'changed') return false
+      continue
+    }
     const choice = await deps.ask(change)
     if (choice === 'stay') return false
     const result = await resolveChoice(outlinePath, change, choice, deps)
@@ -253,6 +247,11 @@ export function changedAtLabel(changedAt: number, now: number = Date.now()): str
 
 /** What the bar and the sheet say for a difference, and the choices they offer (in order). */
 export function describeDiskChange(change: OutlineDiskChange): { text: string; sheetTitle: string; actions: Array<{ choice: Exclude<OutlineDiskChoice, 'stay'>; label: string; title: string }> } {
+  if (change.recoveryFailed) return {
+    text: 'A recovery copy could not be written. Leaving with the disk version will discard your unsaved edits and merge draft.',
+    sheetTitle: 'Leave without a recovery copy?',
+    actions: [{ choice: 'reload', label: 'Discard unsaved edits and leave', title: 'Use the current disk version without saving your edits.' }],
+  }
   const base = describeKind(change)
   // A choice was made but its save failed: the bar says so (the choice is offered again).
   return change.saveError
@@ -288,12 +287,9 @@ function describeKind(change: OutlineDiskChange): ReturnType<typeof describeDisk
       }
     default:
       return {
-        text: `This talk changed on disk at ${changedAtLabel(change.changedAt)}`,
-        sheetTitle: 'This talk changed on disk while you were typing',
-        actions: [
-          { choice: 'reload', label: 'Reload', title: 'Show the version on disk. Your text stays one undo (⌘Z) away.' },
-          { choice: 'keep', label: 'Keep mine', title: 'Save your text over the version on disk.' },
-        ],
+        text: `Disk edits are waiting to be merged with your edits`,
+        sheetTitle: 'Review the edits to this talk',
+        actions: [{ choice: 'merge', label: 'Review merge', title: 'Merge independent edits and choose a result for conflicting slides.' }],
       }
   }
 }

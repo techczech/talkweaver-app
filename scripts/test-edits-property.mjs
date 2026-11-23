@@ -17,12 +17,14 @@
 // What a sync does to a version no TalkWeaver has seen is outside the guarantee (it is the sync's loss): the other
 // process replaces the edits file only when its bytes are held (in a Mac's record or a copy beside it).
 //
-//   TW_PROPERTY_RUNS=<n> (default 3000) · TW_PROPERTY_SEED=<seed> runs one seed and prints its steps.
+//   Unit run: 256 scenarios from a fixed starting seed. --extended: 3000 from a fresh starting seed.
+//   TW_PROPERTY_RUNS=<n> overrides the count; TW_PROPERTY_START_SEED=<seed> replays a batch.
+//   TW_PROPERTY_SEED=<seed> runs one seed and prints its steps.
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { createHash, randomInt } from 'node:crypto'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 // Kills here are exceptions in this process, so flushing to disk proves nothing and only costs time: off for this
@@ -37,9 +39,13 @@ const { createRecordingEditsStore, serialiseEditsFile } = await import(process.e
 import { emptyEdits } from '../src/shared/recording-edits.ts'
 
 const D = 600_000, FP = 'talk/run-1@2026-11-10T09:00:00.000Z/600000'
-const RUNS = Number(process.env.TW_PROPERTY_RUNS ?? 3000)
+const EXTENDED = process.argv.includes('--extended')
+const RUNS = Number(process.env.TW_PROPERTY_RUNS ?? (EXTENDED ? 3000 : 256))
 const ONE = process.env.TW_PROPERTY_SEED ? Number(process.env.TW_PROPERTY_SEED) : null
-const SEEDS = ONE !== null ? [ONE] : Array.from({ length: RUNS }, (_, i) => 1000 + i * 7919)
+const START = Number(process.env.TW_PROPERTY_START_SEED ?? (EXTENDED ? randomInt(2 ** 32) : 1000))
+assert.ok(Number.isSafeInteger(RUNS) && RUNS > 0, 'TW_PROPERTY_RUNS must be a positive integer')
+assert.ok(Number.isInteger(START) && START >= 0 && START < 2 ** 32, 'TW_PROPERTY_START_SEED must be a 32-bit unsigned integer')
+const SEEDS = ONE !== null ? [ONE] : Array.from({ length: RUNS }, (_, i) => (START + i * 7919) >>> 0)
 const root = realpathSync(mkdtempSync(join(tmpdir(), 'tw-edits-property-')))
 const KILL = Object.freeze({ killed: true })
 // 'before-check' and 'after-check' come from the store's beforeRename and beforeInstall; after the move from beforeLink (every round).
@@ -191,6 +197,7 @@ function ordinary(N) {
 let versions = 0, total = 0, kills = 0, syncs = 0, rel = 0
 const t0 = Date.now()
 try {
+  if (EXTENDED && ONE === null) console.log(`Extended edits properties: ${RUNS} scenarios (replay with TW_PROPERTY_START_SEED=${START})`)
   for (const seed of SEEDS) {
     try { const r = run(seed); versions += r.versions; total += r.steps; kills += r.kills; syncs += r.syncs; rel += r.released } catch (e) { console.log(`FAIL seed ${seed}`); throw e }
   }

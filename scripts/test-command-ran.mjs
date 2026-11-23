@@ -10,6 +10,7 @@
 //     per session (except commands that delete, which ask every time), passes the talk's path, never throws,
 //     and announces a first tick to listeners;
 //   - the handler wrapper: every handler reports its own id after it ran; one that throws is not a run.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
@@ -67,7 +68,7 @@ const MAIN_BOUND = ['presenter.audience', 'presenter.refresh']
 /** The presenter's route for a presenter command, or null when it has none. */
 function presenterRoute(id) {
   if (PRELOAD_BOUND[id]) return read(PRELOAD_BOUND[id]).includes(`reportGuideCommand('${id}')`) ? `key in ${PRELOAD_BOUND[id].split('/').pop()}` : null
-  if (MAIN_BOUND.includes(id)) return read('src/main/index.ts').includes(`guideLearn.commandRan('${id}'`) ? 'key in main' : null
+  if (MAIN_BOUND.includes(id)) return readMainSource().includes(`guideLearn.commandRan('${id}'`) ? 'key in main' : null
   if (id.startsWith('presenter-palette.')) {
     const entry = PRESENTER_PALETTE_DATA.flatMap(([, entries]) => entries).find((e) => `presenter-palette.${e.id}` === id && !e.shortcut)
     return entry && entry.controls.length ? 'palette + its control' : null
@@ -81,7 +82,7 @@ const SRC = join(REPO, 'src')
 const files = walk(SRC)
 const importsNotifier = (text) => /from '(?:\.\.?\/)+(?:commands\/)?command-ran'/.test(text) || /from '\.\/commands\/command-ran'/.test(text)
 const evidenceFiles = files.filter((f) => importsNotifier(readFileSync(f, 'utf8')) && !f.endsWith(join('commands', 'command-ran.ts')))
-const evidenceText = evidenceFiles.map((f) => readFileSync(f, 'utf8')).join('\n') + '\n' + read('src/main/index.ts')
+const evidenceText = evidenceFiles.map((f) => readFileSync(f, 'utf8')).join('\n') + '\n' + readMainSource()
 const mentions = (id) => evidenceText.includes(`'${id}'`) || evidenceText.includes(`"${id}"`)
 
 const layout = read('src/renderer/src/components/WorkspaceLayout.tsx')

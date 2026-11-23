@@ -293,7 +293,7 @@ try {
         const word = strong.querySelector('.es-w')
         const copy = getComputedStyle(word, '::before')
         const mark = getComputedStyle(slide.querySelector('mark[data-emph-step]'))
-        const u = getComputedStyle(slide.querySelector('u[data-emph-step]'))
+        const u = slide.querySelector('u[data-emph-step]')
         const s = getComputedStyle(slide.querySelector('s[data-emph-step]'))
         const transparent = (value) => /rgba\(\d+, \d+, \d+, 0\)|transparent/.test(value)
         const shownToTheEye = (el) => { const style = getComputedStyle(el); return style.visibility === 'visible' && style.display !== 'none' && Number(style.opacity) > 0 }
@@ -302,7 +302,7 @@ try {
           strongWeight: getComputedStyle(strong).fontWeight, strongColour: getComputedStyle(strong).color,
           boldGlyphsFilled: !transparent(getComputedStyle(word).webkitTextFillColor),
           copyText: copy.content, copyWeight: copy.fontWeight, copyOpacity: copy.opacity, copyColour: copy.color,
-          markSweep: mark.backgroundSize, underlineShown: !transparent(u.textDecorationColor), strikeShown: !transparent(s.textDecorationColor), strikeOpacity: s.opacity,
+          markSweep: mark.backgroundSize, underlineShown: !transparent(getComputedStyle(u.querySelector('.es-w')).webkitTextFillColor), underlineLine: getComputedStyle(u).textDecorationLine, underlineWeight: getComputedStyle(u).fontWeight, strikeShown: !transparent(s.textDecorationColor), strikeOpacity: s.opacity,
           allShown: [...slide.querySelectorAll('[data-emph-step]')].every(shownToTheEye)
         }
       })
@@ -326,6 +326,8 @@ try {
       assert.notEqual(on.strongColour, on.paragraphColour, 'on: bold takes its accent colour, as on any slide')
       assert.match(on.markSweep, /^100% /, 'on: the highlight is full width')
       assert.equal(on.underlineShown, true)
+      assert.equal(on.underlineLine, 'none', 'the underline syntax uses bold without a line')
+      assert.equal(on.underlineWeight, '700')
       assert.equal(on.strikeShown, true)
       assert.notEqual(on.strikeOpacity, '1', 'on: struck text is dimmed, as on any slide')
     })
@@ -667,10 +669,10 @@ try {
       const slide = document.querySelector('.slide[data-id="plain"]')
       const transparent = (value) => /rgba\(\d+, \d+, \d+, 0\)|transparent/.test(value)
       return { boldFilled: !transparent(getComputedStyle(slide.querySelector('.es-w')).webkitTextFillColor), copy: getComputedStyle(slide.querySelector('.es-w'), '::before').content,
-        underline: !transparent(getComputedStyle(slide.querySelector('u[data-emph-step]')).textDecorationColor),
+        underlineAsBold: getComputedStyle(slide.querySelector('u[data-emph-step]')).fontWeight === '700' && getComputedStyle(slide.querySelector('u[data-emph-step]')).textDecorationLine === 'none',
         strike: !transparent(getComputedStyle(slide.querySelector('s[data-emph-step]')).textDecorationColor) }
     })
-    assert.deepEqual(printed, { boldFilled: true, copy: 'none', underline: true, strike: true })
+    assert.deepEqual(printed, { boldFilled: true, copy: 'none', underlineAsBold: true, strike: true })
     await context.close()
   })
 } finally {

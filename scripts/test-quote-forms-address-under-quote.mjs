@@ -601,7 +601,9 @@ try {
     assert(!deck.slide('s').blocks.some((block) => block.quoteForm), `${label}: no form is drawn`)
   }
 
-  // Rule 3: a slide with no form compiles exactly as before the ticket.
+  // Rule 3: a slide with no form keeps its recorded model, section and phone text.
+  // 17 Nov: only f-only-link was re-recorded for the new default media-stage fit hook;
+  // all other historical hashes and the warnings hash remain unchanged.
   const recorded = JSON.parse(readFileSync(join(root, 'scripts/fixtures/quote-forms/address-under-quote-formless-hashes.json'), 'utf8'))
   const live = await formlessHashes(root)
   assert.deepEqual(Object.keys(live).sort(), Object.keys(recorded).sort(), 'the recorded hashes cover the fixture slides')

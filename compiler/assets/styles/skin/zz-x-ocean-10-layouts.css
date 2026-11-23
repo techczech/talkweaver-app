@@ -34,7 +34,7 @@
 }
 .slide[data-look="ocean"] .steps-diagram .step-col:last-of-type { background: var(--look-main) !important; border-top-color: var(--look-deep) !important; color: var(--look-on-main); }
 .slide[data-look="ocean"] .steps-diagram .step-label {
-  font: 700 var(--look-size-label)/1.12 var(--look-face-display) !important; color: inherit !important;
+  font: var(--weight-reading) var(--look-size-label)/1.12 var(--look-face-display) !important; color: inherit !important;
   overflow-wrap: normal; hyphens: manual; text-transform: none !important;
 }
 .slide[data-look="ocean"] .steps-diagram .step-cap { font: 400 var(--look-size-body)/1.25 var(--look-face-text) !important; color: inherit !important; opacity: .9; margin-top: .6cqw; }
@@ -53,7 +53,7 @@
   display: flex !important; align-items: center; justify-content: center; text-align: center;
   padding: 1.6cqw 1.2cqw !important; border-radius: 1.2cqw !important;
   background: var(--look-ground) !important; border: .25cqw solid var(--look-main) !important; box-shadow: none !important;
-  font: 700 2.8cqw/1.15 var(--look-face-display) !important; color: var(--look-ink) !important;
+  font: var(--look-weight-display, 700) 2.8cqw/1.15 var(--look-face-display) !important; color: var(--look-ink) !important;
   overflow-wrap: normal !important; word-break: normal !important; hyphens: manual !important;
 }
 .slide[data-look="ocean"] .equation-row.equation-circle .eq-op {
@@ -73,7 +73,7 @@
    ===================================================================================== */
 .slide[data-look="ocean"] .slide-content > .orgchart { display: flex !important; flex-direction: column; justify-content: center; font-size: var(--look-size-label) !important; }
 .slide[data-look="ocean"] .orgchart .org-box {
-  font: 700 3cqw/1.15 var(--look-face-display) !important; padding: 1.6cqw 2.4cqw !important;
+  font: var(--look-weight-display, 700) 3cqw/1.15 var(--look-face-display) !important; padding: 1.6cqw 2.4cqw !important;
   background: var(--look-ground) !important; border: .19cqw solid var(--look-main) !important; border-radius: .5cqw !important;
   box-shadow: none !important; color: var(--look-ink) !important; min-width: 12cqw; text-align: center;
 }
@@ -111,13 +111,13 @@
   min-height: 14cqw; display: flex; align-items: center; justify-content: center;
   padding: 2cqw !important; margin: 0 !important; border-radius: 1cqw !important;
   background: var(--look-main) !important; color: var(--look-on-main) !important; border: 0 !important;
-  font: 700 3.6cqw/1.1 var(--look-face-display) !important; text-align: center; overflow-wrap: normal;
+  font: var(--look-weight-display, 700) 3.6cqw/1.1 var(--look-face-display) !important; text-align: center; overflow-wrap: normal;
 }
 .slide[data-look="ocean"] .system-map .system-sat {
   grid-column: 1; position: relative; margin: 0 !important; min-width: 0;
   padding: 1.8cqw 2cqw !important; background: var(--look-ground) !important;
   border: .19cqw solid var(--look-hairline) !important; border-radius: .5cqw !important; box-shadow: none !important;
-  font: 700 var(--look-size-label)/1.15 var(--look-face-display) !important; color: var(--look-ink) !important; text-align: left;
+  font: var(--weight-reading) var(--look-size-label)/1.15 var(--look-face-display) !important; color: var(--look-ink) !important; text-align: left;
   border-left: .6cqw solid var(--look-main) !important;
 }
 .slide[data-look="ocean"] .system-map .system-sat:nth-child(even) { grid-column: 5; border-left-width: .19cqw !important; border-left-color: var(--look-hairline) !important; border-right: .6cqw solid var(--look-main) !important; text-align: right; }
@@ -147,7 +147,7 @@
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:has(> li:nth-child(4):last-child) { --an-cols: 2; }
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-ann {
   display: flex; align-items: center; flex: 1 1 auto; padding: 1.4cqw 2cqw 2cqw !important; margin: 0 !important; border: 0 !important;
-  font: 600 max(var(--fs-body, 3.2cqw), 2.8cqw)/1.2 var(--look-face-text) !important; color: var(--look-ink) !important; background: none !important;
+  font: var(--weight-reading) max(var(--fs-body, 3.2cqw), 2.8cqw)/1.2 var(--look-face-text) !important; color: var(--look-ink) !important; background: none !important;
 }
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li {
   display: flex !important; flex-direction: column; gap: 1.2cqw; margin: 0 !important; padding: 0 !important;
@@ -158,11 +158,11 @@
   background: var(--look-main) !important; color: var(--look-on-main) !important; text-align: left;
 }
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li:nth-child(3n + 2) > .fl-lead { background: var(--look-deep) !important; }
-.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-lead .fl-text { font: 700 max(var(--fs-body, 3.2cqw), 2.8cqw)/1.1 var(--look-face-display) !important; color: inherit !important; text-transform: none !important; }
+.slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-lead .fl-text { font: var(--look-weight-display, 700) max(var(--fs-body, 3.2cqw), 2.8cqw)/1.1 var(--look-face-display) !important; color: inherit !important; text-transform: none !important; }
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-sublist { display: flex !important; flex-direction: column; justify-content: space-evenly; flex: 1 1 auto; gap: 1.6cqw; margin: 0 !important; padding: 1cqw 2cqw 2.4cqw !important; list-style: none; }
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-sublist > li {
   margin: 0 !important; padding: 0 0 0 1.4cqw !important; border-left: .35cqw solid var(--look-main) !important; background: none !important;
-  font: 600 max(var(--fs-body, 3.2cqw), 2.8cqw)/1.2 var(--look-face-text) !important; color: var(--look-ink) !important;
+  font: var(--weight-reading) max(var(--fs-body, 3.2cqw), 2.8cqw)/1.2 var(--look-face-text) !important; color: var(--look-ink) !important;
 }
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) > li > .fl-sublist > li::before { content: none !important; }
 .slide[data-look="ocean"] .slide-content > .feature-list.fl-annotated:not([data-oc-fit="dense"]) .fl-subtext { font: inherit !important; color: inherit !important; }
@@ -191,14 +191,14 @@
 }
 .slide[data-look="ocean"] .timeline.timeline-rail > .tl-group::after { content: none !important; display: none !important; }
 .slide[data-look="ocean"] .timeline.timeline-rail .tl-group-head, .slide[data-look="ocean"] .timeline.timeline-rail .tl-date {
-  font: 700 3.6cqw/1.12 var(--look-face-display) !important; color: var(--look-main) !important; margin: 0 !important;
+  font: var(--look-weight-display, 700) 3.6cqw/1.12 var(--look-face-display) !important; color: var(--look-main) !important; margin: 0 !important;
   padding: 0 !important; border: 0 !important; background: none !important; text-transform: none !important; letter-spacing: 0 !important;
 }
 .slide[data-look="ocean"] .timeline.timeline-rail .tl-entries { margin: 0 !important; padding: 0 !important; grid-column: 2; display: flex; flex-direction: column; gap: .2em; }
 .slide[data-look="ocean"] .timeline.timeline-rail > .tl-group:not(:has(> .tl-group-head)) > .tl-entries { grid-column: 1 / -1; }
 .slide[data-look="ocean"] .timeline.timeline-rail .tl-entries > li { margin: 0 !important; padding: 0 !important; border: 0 !important; background: none !important; display: block; }
 .slide[data-look="ocean"] .timeline.timeline-rail .tl-entries > li::before { content: none !important; }
-.slide[data-look="ocean"] .timeline.timeline-rail .tl-body { font: 600 3.2cqw/1.2 var(--look-face-text) !important; color: var(--look-ink) !important; }
+.slide[data-look="ocean"] .timeline.timeline-rail .tl-body { font: var(--weight-reading) 3.2cqw/1.2 var(--look-face-text) !important; color: var(--look-ink) !important; }
 .slide[data-look="ocean"] .timeline.timeline-rail:has(> .tl-group:nth-child(7)) :is(.tl-group-head, .tl-date) { font-size: 2.8cqw !important; }
 .slide[data-look="ocean"] .timeline.timeline-rail:has(> .tl-group:nth-child(7)) .tl-body { font-size: 2.6cqw !important; }
 .slide[data-look="ocean"].mode-reveal .timeline.timeline-rail > .tl-group:is([data-mode-state="current"], :has([data-mode-state="current"]))::before { background: var(--look-current) !important; }
@@ -215,7 +215,7 @@
 .slide[data-look="ocean"] .chart-cols .chart-col { display: contents !important; }
 .slide[data-look="ocean"] .chart-cols .chart-label {
   grid-column: 1; order: 0; align-self: center !important; min-height: 0 !important; text-align: right !important; margin: 0 !important; max-width: 24cqw; border: 0 !important; padding: 0 !important;
-  font: 600 var(--look-size-label)/1.15 var(--look-face-text) !important; color: var(--look-ink) !important; overflow-wrap: normal;
+  font: var(--look-weight-strong, 600) var(--look-size-label)/1.15 var(--look-face-text) !important; color: var(--look-ink) !important; overflow-wrap: normal;
 }
 .slide[data-look="ocean"] .chart-cols .chart-col-plot {
   grid-column: 2; position: relative; height: 100% !important; min-height: 3.2cqw; max-height: 6cqw; width: 100%;
@@ -228,7 +228,7 @@
 }
 .slide[data-look="ocean"] .chart-cols .chart-val {
   order: 1; align-self: center; margin: 0 0 0 1cqw !important; position: static !important; transform: none !important;
-  font: 700 var(--look-size-label)/1 var(--look-face-display) !important; color: var(--look-ink) !important; white-space: nowrap;
+  font: var(--look-weight-display, 700) var(--look-size-label)/1 var(--look-face-display) !important; color: var(--look-ink) !important; white-space: nowrap;
 }
 .slide[data-look="ocean"] .chart-cols .chart-col:has(> .chart-label > strong:only-child) .chart-bar { background: var(--look-current) !important; }
 .slide[data-look="ocean"] .chart-cols .chart-col > .chart-label > strong:only-child { font-weight: inherit; }
@@ -269,14 +269,14 @@
 }
 .slide[data-look="ocean"] .cycle-diagram .cycle-node::before {
   content: counter(cy); position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  font: 700 2.8cqw/1 var(--look-face-display); color: var(--look-on-main);
+  font: var(--look-weight-display, 700) 2.8cqw/1 var(--look-face-display); color: var(--look-on-main);
 }
 /* the labels sit outside the stop, in one box set outward from the ring: zz-x-ocean-60-loop-labels.css */
 .slide[data-look="ocean"] .cycle-diagram .cycle-cap {
-  font: 700 var(--look-size-label)/1.15 var(--look-face-display) !important; color: var(--look-ink) !important;
+  font: var(--weight-reading) var(--look-size-label)/1.15 var(--look-face-display) !important; color: var(--look-ink) !important;
 }
 .slide[data-look="ocean"] .cycle-diagram .cycle-stage {
-  font: 700 var(--look-size-body)/1.15 var(--look-face-text) !important; letter-spacing: 0 !important; text-transform: none !important; color: var(--look-main) !important;
+  font: var(--look-weight-strong, 700) var(--look-size-body)/1.15 var(--look-face-text) !important; letter-spacing: 0 !important; text-transform: none !important; color: var(--look-main) !important;
 }
 .slide[data-look="ocean"].mode-reveal .cycle-diagram .cycle-node[data-mode-state="current"] { background: var(--look-current) !important; }
 .slide[data-look="ocean"].mode-reveal .cycle-diagram .cycle-node[data-mode-state="current"]::before { color: var(--look-on-marker); }
@@ -294,7 +294,7 @@
   background: var(--look-ground) !important; color: var(--look-ink); text-align: left !important; min-width: 0;
 }
 .slide[data-look="ocean"] .stats-row > .stat .stat-value {
-  font: 700 var(--stat-size, 7.2cqw)/1.02 var(--look-face-display) !important; letter-spacing: -.03em; color: var(--look-main) !important;
+  font: var(--look-weight-display, 700) var(--stat-size, 7.2cqw)/1.02 var(--look-face-display) !important; letter-spacing: -.03em; color: var(--look-main) !important;
   white-space: normal; overflow-wrap: normal; border: 0 !important; padding: 0 !important; margin: 0 !important; max-width: 100%;
 }
 .slide[data-look="ocean"] .stats-row > .stat .stat-value::after { content: none !important; display: none !important; }
@@ -323,7 +323,7 @@
 .slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel.R { background: var(--look-two-b) !important; color: var(--look-on-main) !important; opacity: 1 !important; }
 .slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel :is(.vs-head, .vs-row, .vs-head-text, .vs-text, .vs-ico, p, li) { color: inherit !important; opacity: 1 !important; --c: currentColor; }
 .slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel .vs-head { border-bottom-color: currentColor !important; }
-.slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel .vs-head-text { font: 700 3.6cqw/1.1 var(--look-face-display) !important; text-transform: none !important; letter-spacing: -.01em !important; }
+.slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel .vs-head-text { font: var(--look-weight-display, 700) 3.6cqw/1.1 var(--look-face-display) !important; text-transform: none !important; letter-spacing: -.01em !important; }
 .slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel.L .vs-head-text { color: var(--look-main) !important; }
 .slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-panel .vs-text { font: 400 var(--look-size-label)/1.25 var(--look-face-text) !important; }
 .slide[data-look="ocean"][data-layout="compare"] .compare-grid > .vs-disc { display: none !important; }

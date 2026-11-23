@@ -18,7 +18,7 @@ interface Props {
 /** The talk main returned is authoritative; the dialog's vault only fills in an identity it left out. */
 export const createdTalk = (talk: TalkInfo, vaultId: string): TalkInfo => ({ vaultId, ...talk })
 
-function slugify(title: string): string {
+export function newTalkSlug(title: string): string {
   return title
     .toLowerCase()
     .trim()
@@ -47,7 +47,7 @@ export default function NewTalkDialog({ vaultRoot: _vaultRoot, vaultId, folders 
       return
     }
     // The file name is derived silently from the title; it is never shown.
-    const slug = safeTalkSlug(slugify(title))
+    const slug = safeTalkSlug(newTalkSlug(title))
     if (!slug) {
       setError('That title has no letters or numbers to make a file name from. Add some and try again.')
       return

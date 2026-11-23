@@ -5,8 +5,12 @@ import { mkdirSync, existsSync, writeFileSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { deflateSync } from "node:zlib";
 const dest = resolve(process.argv[2] || "");
+const [remoteOption, ...extra] = process.argv.slice(3);
+const remoteEvery = remoteOption?.match(/^--remote-every=([1-9]\d*)$/)?.[1];
+if ((remoteOption && !remoteEvery) || extra.length)
+  throw Error("Expected --remote-every=N with a positive integer");
 if (!process.argv[2] || existsSync(dest))
-  throw Error("Usage: node scripts/perf/make-large-talk-fixture.mjs NEW_VAULT_FOLDER");
+  throw Error("Usage: node scripts/perf/make-large-talk-fixture.mjs NEW_VAULT_FOLDER [--remote-every=N]");
 const talk = join(dest, "synthetic-large-talk");
 for (const sub of ["assets", "widgets"])
   mkdirSync(join(talk, sub), { recursive: true });
@@ -68,6 +72,8 @@ for (let i = 0; i < 150; i++) {
     rows.push("{from=synthetic-large-talk#perf-1}");
   if (kind === "image")
     rows.push(`![Synthetic noise](assets/noise-${i % 4}.png)`);
+  if (remoteEvery && (i + 1) % Number(remoteEvery) === 0)
+    rows.push("", `[Embed: https://talkweaver-perf.invalid/slide-${i + 1}]`);
   rows.push("", ":::notes", "Synthetic speaker notes: check the result and retain uncertainty.", ":::", "");
 }
 writeFileSync(join(talk, "synthetic-large-talk-outline.md"), rows.join("\n"));

@@ -178,18 +178,18 @@ const panelTheme = EditorView.theme({
   // No vertical margin on either box: see toDOM.
   '.cm-talk-details-slot': { boxSizing: 'border-box', margin: '0', padding: '2px 0 14px' },
   '.cm-talk-details': {
-    boxSizing: 'border-box', margin: '0', padding: '10px 16px', border: '1px solid #d9d0c1', borderRadius: '8px',
-    background: '#fffdf8', fontFamily: 'inherit', fontSize: '15px', lineHeight: '1.4', color: '#17202a'
+    boxSizing: 'border-box', margin: '0', padding: '10px 16px', border: '1px solid var(--line)', borderRadius: '8px',
+    background: 'var(--panel)', fontFamily: 'inherit', fontSize: '15px', lineHeight: '1.4', color: 'var(--ink)'
   },
   '.cm-td-head': { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px' },
   '.cm-td-toggle': {
     all: 'unset', cursor: 'pointer', display: 'flex', alignItems: 'baseline', gap: '10px', boxSizing: 'border-box', minWidth: '0', flex: '1 1 auto'
   },
-  '.cm-td-toggle:focus-visible, .cm-td-raw:focus-visible': { outline: '2px solid #0b3a6b', outlineOffset: '2px', borderRadius: '4px' },
+  '.cm-td-toggle:focus-visible, .cm-td-raw:focus-visible': { outline: '2px solid var(--focus)', outlineOffset: '2px', borderRadius: '4px' },
   '.cm-td-title': { fontWeight: '700', flex: '0 0 auto' },
-  '.cm-td-summary': { color: '#5d6875', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: '0' },
-  '.cm-td-go': { color: '#1d5fa8', fontSize: '13px', marginLeft: 'auto', flex: '0 0 auto' },
-  '.cm-td-raw': { all: 'unset', cursor: 'pointer', fontSize: '12px', color: '#5d6875', padding: '2px 6px', flex: '0 0 auto' }
+  '.cm-td-summary': { color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: '0' },
+  '.cm-td-go': { color: 'var(--accent-text)', fontSize: '13px', marginLeft: 'auto', flex: '0 0 auto' },
+  '.cm-td-raw': { all: 'unset', cursor: 'pointer', fontSize: '12px', color: 'var(--muted)', padding: '2px 6px', flex: '0 0 auto' }
 }, { dark: false })
 
 export function talkDetailsExtension(): Extension {

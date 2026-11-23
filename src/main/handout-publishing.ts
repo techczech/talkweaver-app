@@ -36,8 +36,10 @@ import { beginPublication, candidatePath, preservationMessage, publicationPaths,
 //   live-short-link              | Go live, when the talk's short link  | rewrites `_redirects` only           | none: it writes no page
 //                                | is new (`live:go`)                   |                                      |
 //
-//   There is no other: no republish or refresh command, no automatic publish on save, and no
-//   command-line or agent path (the `setup` command of a later ticket does not publish). "Export
+//   site-adoption                | Import site recovery record        | adds only the shared record          | none
+//
+//   There is no other automatic writer: no republish or refresh command, no automatic publish on save, and no
+//   automatic command-line or agent path. The explicit recover-site-record.mjs command uses this sequence with a no-op job. "Export
 //   handout" / "Save as a file instead" and "Build Run handout" write a file on this computer and
 //   upload nothing; the live service's own deploy (live-service-deploy.ts) and Share for comments
 //   (shared-talk.ts) send to the live service, never to the site. They are outside this module.
@@ -150,7 +152,8 @@ import { beginPublication, candidatePath, preservationMessage, publicationPaths,
 //
 // No Electron import and erasable TypeScript only: scripts/test-handout-publishing.mjs imports this
 // file as it is. The main process supplies the connection, the live service, Cloudflare's address and the pages.
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import type { PublishHistoryEvent } from '../shared/publish-history.ts'
 import { type Stats, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join, relative, resolve } from 'node:path'
@@ -161,10 +164,11 @@ import { PAGES_UPLOAD, PagesApiError, UploadSuperseded, pagesAssetHash, pagesSit
 import { NO_PRODUCTION_REVISION } from './publishing-inventory.ts'
 import { PUBLISH_FAILED, PUBLISH_FAILURE_TEXT, buildRedirects, siteFolder } from './publishing-logic.ts'
 import { SITE_RECORD_PATH, manifestFolders, parseSiteRecord, registryClashes, sameSite, serialiseSiteRecord, type SiteRecord } from './site-record.ts'
+import { siteRecoveryRecord, type SiteRecoveryProof } from './site-adoption.ts'
 import { RegistryOriginUnavailable, type RegistryOrigin } from './registry-origin.ts'
 import { publishedWithoutLiveText, type PublishNotReady } from '../shared/publish-status.ts'
 
-export type PublishEntry = 'talk' | 'run' | 'run-unpublish' | 'talk-unpublish' | 'live-short-link'
+export type PublishEntry = 'talk' | 'run' | 'run-unpublish' | 'talk-unpublish' | 'live-short-link' | 'site-adoption'
 
 /** The table at the top, for the code and the tests. `live`: its pages may carry the live address. */
 export const PUBLISH_ENTRY_POINTS: Record<PublishEntry, { ipc: string; what: string; live: boolean }> = {
@@ -173,6 +177,7 @@ export const PUBLISH_ENTRY_POINTS: Record<PublishEntry, { ipc: string; what: str
   'run-unpublish': { ipc: 'run:unpublish-handout', what: 'Unpublish a Run', live: false },
   'talk-unpublish': { ipc: 'published:unpublish-talk', what: 'Unpublish a talk handout', live: false },
   'live-short-link': { ipc: 'live:go', what: 'Go live, when the short link is new', live: false },
+  'site-adoption': { ipc: 'publish:import-site-recovery', what: 'Add the shared site record from a reviewed recovery record', live: false },
 }
 
 export const PUBLISH_LOOPBACK_REFUSED = 'Publishing stopped: a page just built holds an address on this computer, which nobody else can open. Nothing was uploaded.'
@@ -429,6 +434,8 @@ export type PublishFailure = {
 export type PublishSuccess<Built> = {
   ok: true
   built: Built
+  /** The Run handout is confirmed live, but its link could not be written to the local Run. */
+  localRecordFailed?: true
   /** Null for an entry point that writes no page. */
   live: LiveOutcome | null
   /** "Published. Going live is not set up: Settings → Cloudflare" (and the reason), or null. */
@@ -490,6 +497,8 @@ export type PublishBegin<Built> = { done: Built } | { fail: { error: string; det
 
 export interface PublishJob<Built> {
   entry: PublishEntry
+  /** The proof the person approved for this recovery attempt only. */
+  siteRecovery?: SiteRecoveryProof
   /** Source identity/revision read at the job turn and rechecked before upload. */
   revision?(): string
   /** The site folders (`/<name>`) this job changes in place without `makeFolder` (an unpublish). */
@@ -500,13 +509,13 @@ export interface PublishJob<Built> {
    * `{ fail }` ends it as the publish's own failure (the talk could not be saved). What a job must
    * read as it stands at its turn, it reads here or in `prepare`. It has BEGIN_LIMIT_MS.
    */
-  begin?(): PublishBegin<Built> | Promise<PublishBegin<Built>>
+  begin?(report?: (check: { checked: number; missing: number }) => void): PublishBegin<Built> | Promise<PublishBegin<Built>>
   /**
    * Build this entry's pages in the site as this publish sees it (`build.dir`). Called only with leave to publish, at the job's
    * turn. Every link it writes goes through `build.link` FIRST, before it writes anything. A returned failure is the publish's
    * own (a fixed sentence).
    */
-  prepare(build: PublishBuild): Promise<{ ok: true; built: Built } | { ok: false; error: string; details?: string }>
+  prepare(build: PublishBuild): Promise<{ ok: true; built: Built } | { ok: false; error: string; details?: string; notReady?: PublishNotReady }>
   /**
    * Keep the result on this computer (the Run's link). Called once the deployment is up,
    * whatever has happened to the connection since. Local and quick: it runs inside the queue.
@@ -555,6 +564,8 @@ export interface PublishingPorts {
   headers?(): string
   /** This computer's name, kept in the site record. */
   computerName?(): string
+  appVersion?(): string
+  observe?(event: PublishHistoryEvent): void
   /** One line for the app's log (a short link of this computer's that the site's record overrides). Never a token. */
   log?(line: string): void
   /**
@@ -576,7 +587,18 @@ export const SITE_RECORD_NEWER = 'Publishing stopped: the site was last publishe
 export const REGISTRY_ORIGIN_UNWRITABLE = 'Publishing stopped: this Mac could not write down the short links it gave itself, which it must do before it follows the site\'s. Check that TalkWeaver\'s data folder can be written, and publish again. Nothing was uploaded.'
 export const REGISTRY_ORIGIN_UNAVAILABLE = 'Stopped: this Run was published by an older version, before its folder was recorded, and this Mac\'s record of the short links it gave itself cannot be read, so this one Run cannot be changed from this Mac. Republish or unpublish it from the Mac that originally published it. Nothing was withdrawn, written or removed.'
 export const SITE_BOOTSTRAP_CHANGED = 'Publishing stopped: the site has no shared record of its short links yet, and the short-link list or headers on this computer are no longer the ones it last published, so publishing from here could change the site\'s short links. Nothing was uploaded.'
-export const SITE_BOOTSTRAP_REFUSED = 'Publishing stopped: the site has no shared record of its short links yet, and what is live now was not published from this computer, so publishing from here could change its short links. Publish once from the computer that published last; after that any computer can publish. Nothing was uploaded.'
+export const SITE_BOOTSTRAP_REFUSED = 'Publishing stopped: the site has no shared record of its short links yet, and what is live now was not published from this computer, so publishing from here could change its short links. Import a verified site recovery record and review its preview; after the shared record is added, any computer can publish. Nothing was uploaded.'
+const siteRecoveryAction = {
+  kind: 'not-ready',
+  title: 'This site needs its shared publishing record',
+  detail: 'Import a verified site recovery record to keep every existing page, short link and header. Review the preview before continuing.',
+  fix: { action: 'import-site-recovery', label: 'Import site recovery record' },
+} as const
+
+
+const CONCURRENT_PUBLICATION = 'Published, but another Mac published at the same moment — press Publish again'
+type SentPublication = { ok: true } | PublishFailure | { ok: false; error: string; displaced: LiveSite }
+type SiteReadback = 'unknown' | { confirmedRevision: string } | { displaced: LiveSite }
 
 const SUPERSEDED: PublishFailure = { ok: false, error: PUBLISH_SUPERSEDED_ERROR, superseded: true }
 /** Clocks of this computer and Cloudflare may differ by this much: the search reads back that far before the request. */
@@ -622,6 +644,8 @@ interface LiveSite {
 type Placeholder = { dev: number; ino: number; mtimeMs: number; ctimeMs: number }
 /** A file the build wrote, to be sent. */
 type Written = { path: string; full: string; size: number; hash: string }
+
+type PublishObserver = (event: Omit<PublishHistoryEvent, 'attemptId' | 'at' | 'computer' | 'appVersion' | 'entry'>) => void
 
 export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishing {
   const queue = createKeyedQueue()
@@ -700,16 +724,16 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
     const liveIsMine = mine !== null && (mine.revision === revision || (mine.candidateDigest !== undefined && mine.candidateDigest === inventory.candidateDigest))
     if (manifest.size === 0) return { revision, deploymentUrl: inventory.deploymentUrl, manifest, record: localDefaults(), hadRecord: false }
     if (!liveIsMine) {
-      throw new Stop({ ok: false, error: SITE_BOOTSTRAP_REFUSED, details: mine ? `This computer last published the site at deployment ${mine.revision}; the site is now at ${revision}.` : 'This computer has no record of publishing this site.' })
+      throw new Stop({ ok: false, error: SITE_BOOTSTRAP_REFUSED, notReady: siteRecoveryAction, details: mine ? `This computer last published the site at deployment ${mine.revision}; the site is now at ${revision}.` : 'This computer has no record of publishing this site.' })
     }
     // And what it would send now must be what went live then: the redirect file made from today's registry, and today's
     // `_headers`, each the very digest the publication record keeps. A registry that is missing or unreadable proves nothing.
     const registry = ports.registry ? ports.registry.read() : null
-    if (registry === null) throw new Stop({ ok: false, error: SITE_BOOTSTRAP_CHANGED, details: 'This computer\'s short-link list is missing or cannot be read.' })
+    if (registry === null) throw new Stop({ ok: false, error: SITE_BOOTSTRAP_CHANGED, notReady: siteRecoveryAction, details: 'This computer\'s short-link list is missing or cannot be read.' })
     const headers = ports.headers?.() ?? ''
     const changed = [['/_redirects', buildRedirects(registry, manifestFolders(manifest.keys()))], ['/_headers', headers]]
       .filter(([name, text]) => controlDigest(name, text) !== mine.controls[name]).map(([name]) => name)
-    if (changed.length) throw new Stop({ ok: false, error: SITE_BOOTSTRAP_CHANGED, details: `Not as this computer last published them: ${changed.join(', ')}.` })
+    if (changed.length) throw new Stop({ ok: false, error: SITE_BOOTSTRAP_CHANGED, notReady: siteRecoveryAction, details: `Not as this computer last published them: ${changed.join(', ')}.` })
     return { revision, deploymentUrl: inventory.deploymentUrl, manifest, record: { registry: { ...registry }, shortLinks: ports.shortLinks?.read() ?? false, headers }, hadRecord: false }
   }
 
@@ -819,17 +843,17 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
    * Steps 4 to 8, THE one place anything is sent: the bytes Cloudflare lacks, the revision checked again, the deployment, its
    * confirmation. The token reaches Cloudflare only inside `authorisation.run`. The connection is asked again between uploads
    * and immediately before the one deployment request (superseded: nothing further is sent), and the production revision is read
-   * again immediately before it. The request is never repeated: one that may have made a deployment is an unknown outcome, which
-   * the next publish reconciles (`reconcile`) before it sends anything. `outcome`: whether a deployment may exist.
+   * again immediately before it. An uncertain request is never repeated. A settled deployment can be
+   * displaced, in which case the caller can merge into the new production record and submit a new change.
    */
-  async function send(authorisation: PublishAuthorisation, change: { revision: string; manifest: Record<string, string>; staged: StagedAsset[]; redirects: string; headers: string; candidateDigest: string }, context: PublicationLaunch): Promise<{ outcome: 'accepted' | 'failed' | 'unknown'; value: { ok: true } | PublishFailure }> {
+  async function send(authorisation: PublishAuthorisation, change: { revision: string; manifest: Record<string, string>; staged: StagedAsset[]; redirects: string; headers: string; candidateDigest: string }, context: PublicationLaunch, observe: PublishObserver, readback?: (id: string, baseRevision: string, candidateDigest: string) => Promise<SiteReadback>): Promise<{ outcome: 'accepted' | 'failed' | 'unknown'; value: SentPublication }> {
     const sorted = (error: unknown): PublishFailure => {
       const kind = error instanceof PagesApiError ? error.kind : 'failed'
       if (kind === 'permission') authorisation.refusedForPermission()
       const details = authorisation.clean(error instanceof PagesApiError ? error.message : 'Cloudflare: the request could not be made').slice(-DETAILS_CHARS)
       return { ok: false, error: PUBLISH_FAILURE_TEXT[kind], details }
     }
-    type Step = { kind: 'superseded' } | { kind: 'upload-failed'; error: unknown } | { kind: 'revision-changed' } | { kind: 'deploy-failed'; error: unknown } | { kind: 'sent'; confirmed: boolean }
+    type Step = { kind: 'superseded' } | { kind: 'upload-failed'; error: unknown } | { kind: 'revision-changed' } | { kind: 'deploy-failed'; error: unknown } | { kind: 'sent'; observed: SiteReadback }
     /** Set the moment the deployment request is about to go: from then on a deployment may exist. */
     let posted = false
     let launched: { superseded: true } | { superseded: false; result: Step }
@@ -837,7 +861,11 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
       launched = await authorisation.run(async (credentials): Promise<Step> => {
         const api = pagesSiteApi(ports.pages(), { token: credentials.CLOUDFLARE_API_TOKEN, accountId: authorisation.accountId, project: authorisation.project })
         try {
-          await api.uploadAssets(change.staged, Object.values(change.manifest), () => authorisation.current())
+          observe({ stage: 'uploading' })
+          const uploaded = await api.uploadAssets(change.staged, Object.values(change.manifest), () => authorisation.current())
+          const sent = new Set(uploaded.sent)
+          const unique = new Map(change.staged.map(file => [file.hash, file.size]))
+          observe({ stage: 'uploaded', files: sent.size, bytes: [...sent].reduce((total, hash) => total + (unique.get(hash) ?? 0), 0) })
           if (!authorisation.current()) return { kind: 'superseded' }
           // Step 6, immediately before the deployment is created.
           const now = (await api.productionId()) ?? NO_PRODUCTION_REVISION
@@ -853,7 +881,9 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
           id = (await api.createDeployment({ manifest: change.manifest, branch: authorisation.productionBranch, commitMessage: `tw-candidate:${change.candidateDigest}`, redirects: change.redirects, headers: change.headers })).id
         } catch (error) { return { kind: 'deploy-failed', error } }
         context.deployed?.(id)
-        return { kind: 'sent', confirmed: await api.confirm(id, change.manifest) }
+        const confirmed = await api.confirm(id, change.manifest, !readback)
+        const observed = confirmed ? await readback?.(id, change.revision, change.candidateDigest) ?? { confirmedRevision: id } : 'unknown'
+        return { kind: 'sent', observed }
       })
     } catch (error) {
       // The launch itself threw: nothing of it is shown but Details.
@@ -870,7 +900,10 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
       const definite = step.error instanceof PagesApiError && step.error.definite && !step.error.codes.includes(CLOUDFLARE_UNKNOWN_ERROR)
       return { outcome: definite ? 'failed' : 'unknown', value: sorted(step.error) }
     }
-    if (!step.confirmed) return { outcome: 'unknown', value: { ok: false, error: 'PUBLISH_OUTCOME_UNKNOWN' } }
+    const { observed } = step
+    if (observed === 'unknown') return { outcome: 'unknown', value: { ok: false, error: 'PUBLISH_OUTCOME_UNKNOWN' } }
+    if ('displaced' in observed) return { outcome: 'failed', value: { ok: false, error: CONCURRENT_PUBLICATION, displaced: observed.displaced } }
+    observe({ stage: 'confirmed', revision: observed.confirmedRevision })
     return { outcome: 'accepted', value: { ok: true } }
   }
 
@@ -897,12 +930,12 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
     }
   }
 
-  async function run<Built>(job: PublishJob<Built>): Promise<PublishSuccess<Built> | PublishFailure> {
+  async function run<Built>(job: PublishJob<Built>, observe: PublishObserver): Promise<PublishSuccess<Built> | PublishFailure> {
     const nothing = { live: null, notice: null, noticeDetails: null, earlierNotice: null, earlierDetails: null }
     let begun: PublishBegin<Built> = null
     if (job.begin) {
       try {
-        begun = await limited(Promise.resolve().then(() => job.begin?.() ?? null), BEGIN_LIMIT_MS)
+        begun = await limited(Promise.resolve().then(() => job.begin?.(check => observe({ stage: 'files', files: check.checked, missing: check.missing })) ?? null), BEGIN_LIMIT_MS)
       } catch (error) {
         if (error instanceof TimeLimit) return { ok: false, error: PUBLISH_BEGIN_TIMED_OUT }
         throw error
@@ -926,21 +959,21 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
       if (!granted.ok) return { ok: false, error: granted.error, ...(granted.notReady ? { notReady: granted.notReady } : {}), ...(granted.superseded ? { superseded: true as const } : {}) }
       authorisation = granted.authorisation
     }
+    observe({ stage: 'authorised', site: `cf-pages:${authorisation.accountId}:${authorisation.project}` })
     const live = PUBLISH_ENTRY_POINTS[job.entry].live ? await liveForPages(authorisation, rehearsal !== null) : null
     if (!authorisation.current()) return SUPERSEDED
     const dir = ports.siteDir()
+    const siteKey = `cf-pages:${authorisation.accountId}:${authorisation.project}`
+    const revision = (!rehearsal && job.revision?.()) || 'per-talk-merge'
+    const binding = () => publicationBinding([siteKey, authorisation.productionBranch, authorisation.current(), job.revision?.() ?? revision])
+    const approvedBinding = rehearsal ? '' : binding()
+    const beginAttempt = () => beginPublication({ site: siteKey, inventory: () => ports.inventory?.(authorisation) ?? Promise.resolve(null),
+      binding, approvedBinding, candidateDigest: null, storageRoot: ports.preservationRoot,
+      reconcile: (earlier) => reconcile(authorisation, earlier) })
     let attempt: PreservationAttempt | null = null
     try {
-      if (!rehearsal) {
-        const site = `cf-pages:${authorisation.accountId}:${authorisation.project}`
-        const revision = job.revision?.() ?? 'per-talk-merge'
-        const binding = () => publicationBinding([site, authorisation.productionBranch, authorisation.current(), job.revision?.() ?? revision])
-        attempt = await beginPublication({ site, inventory: () => ports.inventory?.(authorisation) ?? Promise.resolve(null),
-          binding, approvedBinding: binding(), candidateDigest: null, storageRoot: ports.preservationRoot,
-          reconcile: (earlier) => reconcile(authorisation, earlier) })
-      }
+      if (!rehearsal) attempt = await beginAttempt()
     } catch (error) {
-      attempt?.close()
       return { ok: false, error: error instanceof PreservationRefusal ? error.reason : 'PUBLISH_CANDIDATE_CHANGED', ...(error instanceof PreservationRefusal ? { details: error.message } : {}) }
     }
     const stagingRoot = ports.stagingRoot?.() ?? tmpdir()
@@ -950,12 +983,23 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
       const blake3 = rehearsal ? null : ports.blake3()
       let site: LiveSite
       try {
-        site = attempt && blake3 ? await readLiveSite(attempt.live, blake3) : rehearsalSite(dir)
+        if (job.entry === 'site-adoption') {
+          const inventory = attempt?.live
+          const record = job.siteRecovery && inventory ? siteRecoveryRecord(job.siteRecovery, inventory) : null
+          if (!record || !inventory?.files || inventory.files.some(([path]) => path === SITE_RECORD_PATH)) {
+            return { ok: false, error: 'The site changed since the recovery preview. Check the current site before trying again.' }
+          }
+          site = { revision: inventory.revision, deploymentUrl: inventory.deploymentUrl, manifest: new Map(inventory.files), record, hadRecord: false }
+        } else {
+          site = attempt && blake3 ? await readLiveSite(attempt.live, blake3) : rehearsalSite(dir)
+        }
       } catch (error) {
         if (error instanceof Stop) return error.failure
         if (error instanceof PreservationRefusal) return { ok: false, error: error.reason, details: error.message }
         throw error
       }
+      observe({ stage: 'inventory', revision: site.revision, files: site.manifest.size })
+      observe({ stage: 'record', recordPresent: site.hadRecord, files: Object.keys(site.record.registry).length })
       // The short links this computer itself gave, recorded before it first follows a site's record (see PublishBuild). When that
       // record cannot be read or kept, nothing is trusted: only what needs it (a Run published before its folder was recorded)
       // is refused, everything else goes on. No record is made from what is synced below (registry-origin.ts).
@@ -976,10 +1020,15 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
         if (ports.registry) {
           const local = ports.registry.read()
           if (local === null) ports.log?.('[publish] short links: this computer\'s list was missing or unreadable; the site\'s is kept')
-          for (const clash of registryClashes(local ?? {}, site.record.registry)) ports.log?.(`[publish] short links: ${clash}`)
+          const clashes = registryClashes(local ?? {}, site.record.registry)
+          for (const clash of clashes) ports.log?.(`[publish] short links: ${clash}`)
           if (local === null || JSON.stringify(Object.entries(local).sort()) !== JSON.stringify(Object.entries(site.record.registry).sort())) ports.registry.write({ ...site.record.registry })
+          if (clashes.length) observe({ stage: 'record', linksReconciled: clashes.length })
         }
-        if (ports.shortLinks && ports.shortLinks.read() !== site.record.shortLinks) ports.shortLinks.write(site.record.shortLinks)
+        if (ports.shortLinks && ports.shortLinks.read() !== site.record.shortLinks) {
+          ports.shortLinks.write(site.record.shortLinks)
+          observe({ stage: 'record', linkStyleChanged: true })
+        }
       }
       mkdirSync(stagingRoot, { recursive: true })
       shadow = mkdtempSync(join(stagingRoot, 'tw-site-'))
@@ -1024,6 +1073,7 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
       }
       let prepared: Awaited<ReturnType<PublishJob<Built>['prepare']>>
       try {
+        observe({ stage: 'building' })
         prepared = await job.prepare({
           dir: root, project: authorisation.project, live: live?.ready ? live.address : '',
           // ENTRY FIRST: refused before the job has written anything.
@@ -1070,7 +1120,7 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
 
       // ── The site record and the site-level files, made from it ─────────────────────────────────────────────────────────
       const registry = rehearsal ? site.record.registry : sanitisedRegistry(ports.registry?.read() ?? site.record.registry)
-      const record: SiteRecord = { registry, shortLinks: site.record.shortLinks, headers: site.record.headers, ...(ports.computerName ? { publishedBy: ports.computerName() } : {}) }
+      const record: SiteRecord = { registry, shortLinks: site.record.shortLinks, headers: site.record.headers, publishedAt: new Date().toISOString(), ...(ports.appVersion ? { publisherVersion: ports.appVersion() } : {}), ...(ports.computerName ? { publishedBy: ports.computerName() } : {}) }
       const redirects = buildRedirects(record.registry, manifestFolders(merged.keys()))
       const badRedirect = redirectsRefusal(redirects)
       if (badRedirect !== null) return { ok: false, error: PUBLISH_REDIRECTS_REFUSED, details: badRedirect.replace(/[^\x20-\x7e]/g, ' ').slice(0, 200) }
@@ -1078,56 +1128,156 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
       if (headersChanged) return { ok: false, error: 'PUBLISH_UNRELATED_REMOVAL', details: `${preservationMessage('PUBLISH_UNRELATED_REMOVAL')}\n/_headers` }
       const hazard = ports.bundlingHazard(root)
       if (hazard) return { ok: false, error: hazard }
+      observe({ stage: 'built', files: written.length, bytes: written.reduce((sum, file) => sum + file.size, 0), removed: removed.length, folders: [...folders].slice(0, 100) })
       const change = { folders: [...folders], written, removed, redirects }
 
-      const succeed = async (): Promise<PublishSuccess<Built>> => {
-        await job.record?.(prepared.built)
+      const succeed = async (confirmed: boolean): Promise<PublishSuccess<Built>> => {
+        let localRecordFailed = false
+        try {
+          await job.record?.(prepared.built)
+        } catch (error) {
+          if (!confirmed || job.entry !== 'run') throw error
+          localRecordFailed = true
+          observe({ stage: 'local-record-failed' })
+        }
         const without = live && !live.ready ? live : null
-        return { ok: true, built: (prepared as { ok: true; built: Built }).built, live,
+        return { ok: true, built: prepared.built, live, ...(localRecordFailed ? { localRecordFailed: true as const } : {}),
           notice: without ? publishedWithoutLiveText(without.reason) : null, noticeDetails: without?.details ?? null, earlierNotice: null, earlierDetails: null }
       }
       if (rehearsal || !attempt || !blake3) {
         mirror(dir, change)
-        return await succeed()
+        return await succeed(false)
       }
 
-      const recordText = serialiseSiteRecord(record)
-      const recordBytes = Buffer.from(recordText, 'utf8')
-      const manifest: Record<string, string> = Object.fromEntries([...merged].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)))
-      manifest[SITE_RECORD_PATH] = pagesAssetHash(blake3, recordBytes, SITE_RECORD_PATH)
-      // Nothing would change (a republish of the same bytes, a short link the site already has): nothing is sent.
+      // Nothing would change: skip deployment only once a shared record already exists.
       const liveWithout = [...site.manifest].filter(([path]) => path !== SITE_RECORD_PATH)
       if (site.hadRecord && sameSite(record, site.record) && liveWithout.length === merged.size && liveWithout.every(([path, hash]) => merged.get(path) === hash)) {
+        observe({ stage: 'confirmed', revision: site.revision, files: 0 })
         mirror(dir, change)
-        return await succeed()
+        return await succeed(true)
       }
-      const staged: StagedAsset[] = [
-        ...written.map((file) => ({ path: file.path, hash: file.hash, size: file.size, read: () => readFileSync(file.full) })),
-        { path: SITE_RECORD_PATH, hash: manifest[SITE_RECORD_PATH], size: recordBytes.byteLength, read: () => recordBytes },
-      ]
-      const controls: Record<string, string> = {
-        ...(redirects ? { '/_redirects': publicationBinding([['/_redirects', sha256(redirects)]]) } : {}),
-        ...(record.headers ? { '/_headers': publicationBinding([['/_headers', sha256(record.headers)]]) } : {}),
+
+      const canRetry = job.entry === 'talk' || job.entry === 'run'
+      const inScope = (path: string) => segmentsOf(path).length > 1 && scopes.has(segmentsOf(path)[0])
+      const ownFiles = written.filter(file => inScope(file.path))
+      const ownLinks = Object.entries(record.registry).filter(([folder, id]) => scopes.has(folder) || site.record.registry[folder] !== id)
+      const hasher = blake3
+      let lastRead: LiveSite | undefined
+      let reconcileCache = false
+      const readback = async (id: string, baseRevision: string, candidateDigest: string): Promise<SiteReadback> => {
+        try {
+          for (let check = 0; check < 2; check++) {
+            const inventory = await ports.inventory?.(authorisation)
+            if (!authorisation.current() || !inventory?.complete || inventory.site !== siteKey) return 'unknown'
+            const possiblyOurs = inventory.revision === id || inventory.revision === baseRevision || inventory.candidateDigest === candidateDigest
+            const current = inventory.files?.some(([path]) => path === SITE_RECORD_PATH)
+              ? await readLiveSite(inventory, hasher).catch(() => null) : null
+            if (!authorisation.current()) return 'unknown'
+            if (current) {
+              const present = ownFiles.every(file => current.manifest.get(file.path) === file.hash)
+                && removed.every(path => !current.manifest.has(path))
+                && (!ownLinks.length || (current.record.shortLinks === record.shortLinks
+                  && ownLinks.every(([folder, shortId]) => current.record.registry[folder] === shortId)))
+              if (present || !possiblyOurs) {
+                lastRead = current
+                reconcileCache ||= current.revision !== id
+                if (!present) return { displaced: current }
+                return { confirmedRevision: current.revision }
+              }
+            }
+            if (!possiblyOurs) return 'unknown'
+            // Deployment status can settle before production or its record has caught up.
+            if (check === 0) {
+              const sleep = ports.pages().sleep ?? ((ms: number) => new Promise<void>(done => setTimeout(done, ms)))
+              await sleep(250)
+            }
+          }
+          return 'unknown'
+        } catch { return 'unknown' }
       }
-      const candidateDigest = publicationBinding([Object.entries(manifest), sha256(redirects), sha256(record.headers)])
-      let uncertain: PublishFailure | null = null
-      let sent: { ok: true } | PublishFailure
-      try {
-        sent = await attempt.deploy({ candidateDigest, paths: Object.keys(manifest), controls }, async (context) => {
-          const result = await send(authorisation, { revision: site.revision, manifest, staged, redirects, headers: record.headers, candidateDigest }, context)
-          uncertain = result.value.ok ? null : result.value
-          return result
-        })
-      } catch (error) {
-        if (!(error instanceof PreservationRefusal)) throw error
-        const known = uncertain as PublishFailure | null
-        return { ...(known ?? {}), ok: false, error: error.reason, ...(error.reason !== 'PUBLISH_OUTCOME_UNKNOWN' ? { details: error.message } : known?.details ? { details: known.details } : {}) }
+
+      async function deploy(attempt: PreservationAttempt, files: Map<string, string>, assets: Written[], next: SiteRecord, rules: string): Promise<SentPublication> {
+        const recordBytes = Buffer.from(serialiseSiteRecord(next), 'utf8')
+        const manifest = Object.fromEntries([...files].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0))
+        manifest[SITE_RECORD_PATH] = pagesAssetHash(hasher, recordBytes, SITE_RECORD_PATH)
+        const staged: StagedAsset[] = [
+          ...assets.map(file => ({ path: file.path, hash: file.hash, size: file.size, read: () => readFileSync(file.full) })),
+          { path: SITE_RECORD_PATH, hash: manifest[SITE_RECORD_PATH], size: recordBytes.byteLength, read: () => recordBytes },
+        ]
+        const controls = {
+          ...(rules ? { '/_redirects': publicationBinding([['/_redirects', sha256(rules)]]) } : {}),
+          ...(next.headers ? { '/_headers': publicationBinding([['/_headers', sha256(next.headers)]]) } : {}),
+        }
+        const candidateDigest = publicationBinding([Object.entries(manifest), sha256(rules), sha256(next.headers)])
+        let failure: PublishFailure | undefined
+        try {
+          return await attempt.deploy({ candidateDigest, paths: Object.keys(manifest), controls }, async context => {
+            const result = await send(authorisation, { revision: attempt.live.revision, manifest, staged, redirects: rules, headers: next.headers, candidateDigest }, context, observe, canRetry ? readback : undefined)
+            failure = !result.value.ok ? result.value : undefined
+            return result
+          })
+        } catch (error) {
+          if (!(error instanceof PreservationRefusal)) throw error
+          const known = failure as PublishFailure | undefined
+          return { ...known, ok: false, error: error.reason, ...(error.reason !== 'PUBLISH_OUTCOME_UNKNOWN' ? { details: error.message } : {}) }
+        }
       }
+
+      let sent = await deploy(attempt, merged, written, record, redirects)
+      if (!sent.ok && 'displaced' in sent) {
+        const current = sent.displaced
+        // Replay only the staged change. A competing version of this talk or a new owner for its
+        // short id requires a fresh publish. Reusing its old bytes would publish the wrong link.
+        const changed = [...new Set([...site.manifest.keys(), ...current.manifest.keys()])].filter(inScope)
+          .some(path => current.manifest.get(path) !== site.manifest.get(path) && current.manifest.get(path) !== merged.get(path))
+        const registry = new Map(Object.entries(current.record.registry))
+        const owners = new Map([...registry].map(([folder, id]) => [id, folder]))
+        const conflict = ownLinks.length > 0 && (current.record.shortLinks !== record.shortLinks
+          || ownLinks.some(([folder, id]) => (registry.has(folder) && registry.get(folder) !== id)
+            || (owners.has(id) && owners.get(id) !== folder)))
+        if (!changed && !conflict && authorisation.current()) {
+          const files = new Map(current.manifest)
+          files.delete(SITE_RECORD_PATH)
+          for (const path of removed) files.delete(path)
+          // A newer writer's different site-wide files (such as the shared 404 page) stay live.
+          const assets = written.filter(file => inScope(file.path) || current.manifest.get(file.path) === site.manifest.get(file.path)
+            || current.manifest.get(file.path) === file.hash)
+          for (const file of assets) files.set(file.path, file.hash)
+          for (const [folder, id] of ownLinks) registry.set(folder, id)
+          const next = { ...record, registry: Object.fromEntries(registry), shortLinks: current.record.shortLinks, headers: current.record.headers }
+          const rules = buildRedirects(next.registry, manifestFolders(files.keys()))
+          if (redirectsRefusal(rules) === null) {
+            attempt.close()
+            attempt = null
+            try {
+              attempt = await beginAttempt()
+            } catch (error) {
+              if (!(error instanceof PreservationRefusal)) throw error
+            }
+            if (attempt?.live.revision === current.revision) {
+              sent = await deploy(attempt, files, assets, next, rules)
+              if (sent.ok) {
+                change.written = assets
+                change.redirects = rules
+              }
+            }
+          }
+        }
+      }
+      // Follow the last verified registry, including the other Mac's short links. A displaced
+      // attempt must not leave an unconfirmed short link in this Mac's cache or record its link.
+      if (reconcileCache && lastRead && authorisation.current()) {
+        try {
+          ports.registry?.write({ ...lastRead.record.registry })
+          ports.shortLinks?.write(lastRead.record.shortLinks)
+        } catch { ports.log?.('[publish] this computer could not refresh its short-link cache') }
+      }
+      if (!sent.ok && reconcileCache && ('displaced' in sent || sent.error === 'PUBLISH_REVISION_CHANGED')) return { ok: false, error: CONCURRENT_PUBLICATION }
       if (!sent.ok) return sent
       // The deployment is up and confirmed: recorded, whatever the connection is now.
       authorisation.published()
       mirror(dir, change)
-      return await succeed()
+      return await succeed(true)
     } catch (error) {
       // A refusal before anything was sent (a live name this computer cannot lay out, a written name Cloudflare could not keep).
       if (error instanceof PreservationRefusal) return { ok: false, error: error.reason, details: error.message }
@@ -1138,6 +1288,30 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
     }
   }
 
+  async function tracked<Built>(job: PublishJob<Built>): Promise<PublishSuccess<Built> | PublishFailure> {
+    const attemptId = randomUUID()
+    const computer = (ports.computerName?.() ?? 'This Mac').replace(/[\x00-\x1f\x7f]/gu, ' ').slice(0, 120)
+    const appVersion = (ports.appVersion?.() ?? 'unknown').slice(0, 80)
+    let site: string | undefined
+    let confirmed = false
+    let sent = false
+    const observe: PublishObserver = event => {
+      if (event.site) site = event.site
+      if (event.stage === 'confirmed') confirmed = true
+      if (event.stage === 'uploading') sent = true
+      try { ports.observe?.({ attemptId, at: new Date().toISOString(), computer, appVersion, entry: job.entry, ...(site ? {site} : {}), ...event }) } catch { /* optional history never changes a publish */ }
+    }
+    observe({ stage: 'started' })
+    try {
+      const result = await run(job, observe)
+      observe({ stage: 'finished', outcome: result.ok ? confirmed ? sent ? 'published' : 'unchanged' : ports.rehearsal?.() ? 'rehearsed' : 'unchanged' : result.error === 'PUBLISH_OUTCOME_UNKNOWN' ? 'unknown' : 'stopped' })
+      return result
+    } catch (error) {
+      observe({ stage: 'finished', outcome: confirmed ? 'published' : 'unexpected-error' })
+      throw error
+    }
+  }
+
   function inQueue<Result>(work: () => Promise<Result>): Promise<Result> {
     const result = queue.run(ports.siteDir(), work)
     tail = result.then(() => {}, () => {})
@@ -1145,10 +1319,10 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
   }
   return {
     publish(job) {
-      if (job.entry !== 'live-short-link') return inQueue(() => run(job))
+      if (job.entry !== 'live-short-link') return inQueue(() => tracked(job))
       // A short-link attempt checks the common site lock immediately. A refused attempt
       // wrote nothing and must not enqueue an unsolicited settling upload.
-      const result = run(job)
+      const result = tracked(job)
       const done = result.then(() => {}, () => {})
       tail = Promise.all([tail, done])
       return result

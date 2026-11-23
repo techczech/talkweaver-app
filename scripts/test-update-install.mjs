@@ -1,6 +1,7 @@
 // Updates in place (ADR-0044): the states of the one click, what holds a restart back, when a copy cannot
 // replace itself, how failures are read, and the work a restart waits for (src/shared/update-install.ts,
 // src/main/restart-holds.ts). Plain Node, no Electron, no network.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import {
   BLOCKER_TEXT, FAIL_TEXT, IDLE, REFUSAL_TEXT, RESTART_BLOCKERS, WINDOW_BLOCKERS, blockersSentence, failReasonOf, inPlaceRefusal, installBusy, installMarkText,
@@ -239,6 +240,7 @@ await test('restart holds on IPC channels: a publish handler counts while it run
   finish()
   assert.equal(await answer, 'published /t.md')
   assert.equal(holds.active('publishing'), false)
+  // This asserts the order of registrations in the app entry point.
   const index = (await import('node:fs')).readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   const call = index.indexOf("holdOnChannels(ipcMain, restartHolds, { 'talk:publish-handout': 'publishing', 'run:publish-handout': 'publishing', 'talk:export-handout': 'exporting' })")
   assert.ok(call > 0, 'the app counts its handout publishes and exports')
@@ -479,7 +481,7 @@ await test('restart windows: a close that throws, or a window list that keeps re
 
 await test('the app wires the restart\'s close through the editor\'s own close route, its fallback, its revision-checked confirmation, its "Stay here" and the release', async () => {
   const fs = await import('node:fs')
-  const index = fs.readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const index = readMainSource()
   assert.match(index, /ipcMain\.handle\('window:close-kept', \(event\) => \{\n[^\n]*\n[^\n]*\n  restartWindows\.kept\(event\.sender\.id\)/)
   assert.match(index, /const verdict = editorRevisions\.verdict\(id, opts\?\.revision, forRestart \? 'restart' : 'close'\)\n  if \(verdict === 'resave' && \(!forRestart \|\| editorWorkSaved\(id\)\)\) return 'resave'/)
   assert.match(index, /if \(restartWindows\.confirm\(id, verdict === 'saved' && editorWorkSaved\(id\)\) === 'keep'\) return keep\(\)\n  closeConfirmed\.add/)
@@ -502,7 +504,7 @@ await test('the app wires the restart\'s close through the editor\'s own close r
   const editor = fs.readFileSync(new URL('../src/renderer/src/components/Editor.tsx', import.meta.url), 'utf8')
   assert.match(editor, /closeFrozenRef\.current && !tr\.annotation\(savedTextAdopted\) && !tr\.annotation\(closeFreezeExempt\)\)\) && tr\.docChanged \? \[\] : tr/, 'the freeze refuses every edit but Reload and a save\'s ids')
   assert.match(editor, /EditorView\.editable\.of\(false\),\n    EditorState\.readOnly\.of\(true\),/)
-  assert.match(editor, /window\.tw\.talk\.writeOutline\(outlinePath, text, \{ revision \}\)/, 'every editor save carries its revision')
+  assert.match(editor, /window\.tw\.talk\.writeOutline\(outlinePath, text, \{ revision, expectedDiskHash: baseline\.diskHash \}\)/, 'every editor save carries its revision and adopted disk version')
 })
 
 console.log(`update install: ${passed} checks passed`)

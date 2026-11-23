@@ -37,7 +37,9 @@ export type InlineSegment =
   | InlineLinkSegment
   | InlineUrlSegment
 
-export function segmentInlineSource(source: string): InlineSegment[]
+/** `escaped`: the source is HTML-escaped, so a bare URL keeps an entity's closing `;`. */
+export type InlineSourceOptions = { escaped?: boolean }
+export function segmentInlineSource(source: string, options?: InlineSourceOptions): InlineSegment[]
 export function replaceMarkSyntax(
   text: string,
   replacement: (inner: string) => string
@@ -50,7 +52,8 @@ export function replaceInlineMarks(
 ): string
 export function protectInlineSegments(
   source: string,
-  renderSegment?: (segment: Exclude<InlineSegment, InlineTextSegment>) => string
+  renderSegment?: (segment: Exclude<InlineSegment, InlineTextSegment>) => string,
+  options?: InlineSourceOptions
 ): { masked: string; restore: (text: string) => string }
 export function transformInlineMarks(
   source: string,

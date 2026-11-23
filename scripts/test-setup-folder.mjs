@@ -6,11 +6,12 @@
 //   node scripts/test-setup-folder.mjs            every table, then the property test (200 runs)
 //   SETUP_FOLDER_SEED=123 node scripts/…          the property test from one seed (printed on failure)
 import assert from 'node:assert/strict'
-import { mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync, rmSync, statSync, copyFileSync, truncateSync, renameSync, openSync, closeSync, chmodSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { constants as fsConstants, mkdtempSync, mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync, statSync, copyFileSync, truncateSync, renameSync, openSync, closeSync, chmodSync } from 'node:fs'
+import { availableParallelism, tmpdir } from 'node:os'
 import { join, basename } from 'node:path'
+import { isMainThread, Worker, workerData } from 'node:worker_threads'
 import { commandsAdapter } from '@app-patterns/settings'
-import { SettingsStore } from '@app-patterns/settings/node'
+import { SETTINGS_FILE_NAME, SettingsStore } from '@app-patterns/settings/node'
 import { registry, APP_ID } from '../src/shared/bridle-commands.ts'
 import { schema } from '../src/shared/settings-schema.ts'
 import { LOCAL_ONLY_KEYS } from '../src/shared/settings-folders.ts'
@@ -30,11 +31,13 @@ const TRAVELLING = shared.TRAVELLING ?? Object.fromEntries(travellingSettingKeys
 const { cleanPersonal } = await import('../src/shared/vault-personal.ts').catch(() => import('../src/main/vault-registry.ts'))
 import { startSetupFolderHost } from '../src/main/setup-folder-host.ts'
 import { runTalkWeaverSettings } from '../src/main/settings-cli.ts'
+import { testScratchDir } from './lib/test-scratch.mjs'
 
 let passed = 0
 const failed = []
 // SETUP_FOLDER_ONLY=<text>: only the tests whose name has it. SETUP_FOLDER_KEEP_GOING=1: report each failure and go on.
 const test = async (name, fn) => {
+  if (!isMainThread) return
   if (process.env.SETUP_FOLDER_ONLY && !name.includes(process.env.SETUP_FOLDER_ONLY)) return
   try { await fn() } catch (error) {
     if (!process.env.SETUP_FOLDER_KEEP_GOING) throw error
@@ -42,12 +45,13 @@ const test = async (name, fn) => {
   }
   passed += 1; console.log(`  ok  ${name}`)
 }
-const tmp = (tag = 'x') => mkdtempSync(join(tmpdir(), `tw-setup-folder-${tag}-`))
+const scratch = isMainThread ? testScratchDir(join(tmpdir(), 'tw-setup-folder-')) : workerData.scratch
+const tmp = (tag = 'x') => mkdtempSync(join(scratch, `${tag}-`))
 const commands = commandsAdapter(registry)
 const DAY = 86_400_000
 const T0 = Date.UTC(2026, 10, 16, 9, 0, 0)
 
-console.log('set-up folder')
+if (isMainThread) console.log('set-up folder')
 
 // ── A simulated Mac ─────────────────────────────────────────────────────────────────────────────
 
@@ -71,6 +75,11 @@ const macs = []
 // One world clock: every simulated Mac reads it, plus its own offset (a Mac whose clock is wrong).
 let worldTick = 0
 let machines = 0
+
+function openStore(dir, now) {
+  return new SettingsStore({ dir, app: APP_ID, schema, registry: commands, appVersion: '0.45.0', watch: false, log: () => {}, now })
+}
+
 async function makeMac(name, opts = {}) {
   const dir = opts.dir ?? tmp(name.replace(/\W/g, ''))
   // Each simulated Mac is its own computer (its own fingerprint) unless told otherwise; null = cannot be told.
@@ -78,7 +87,7 @@ async function makeMac(name, opts = {}) {
   const mac = { name, dir, machine, offset: opts.offset ?? 0, tick: 0, chosen: opts.chosen ?? '', vaults: opts.vaults ?? [], personal: opts.personal ?? {}, suggestionValues: opts.suggestions ?? { handoutAddress: '', shareLinkAddress: '' }, used: [] }
   mac.clock = () => T0 + mac.offset + worldTick
   mac.advance = (ms = 1000) => { worldTick += ms }
-  mac.store = new SettingsStore({ dir, app: APP_ID, schema, registry: commands, appVersion: '0.45.0', watch: false, log: () => {}, now: () => mac.clock() })
+  mac.store = openStore(dir, mac.clock)
   await mac.store.ready
   mac.rec = recordingFs(name, (op, path, to) => mac.refuse?.(op, path, to), (path, text) => (mac.transformRead ? mac.transformRead(path, text) : text))
   mac.engine = createSetupFolderEngine({
@@ -616,8 +625,6 @@ const writtenFiles = (folder, list) => [
   ...(existsSync(resolveSetupFolder(folder, '/')) ? readdirSync(resolveSetupFolder(folder, '/')).map((n) => join(resolveSetupFolder(folder, '/'), n)) : []),
   ...list.map((m) => join(m.dir, STATE_FILE))
 ]
-/** Whether any of those files holds `marker`, byte for byte. */
-const leaked = (folder, list, marker) => writtenFiles(folder, list).filter((f) => readFileSync(f).includes(Buffer.from(marker, 'utf8'))).map((f) => basename(f))
 
 /**
  * Hostile spellings of a value, each carrying `m` (lower-case letters and digits): every path spelling, addresses
@@ -704,7 +711,12 @@ await test('regression 1 and 2 (round 2): through the app, no hostile spelling o
     const sm = `hs${round}q`; a.suggestionValues.handoutAddress = hostileSpellings(sm)[round]; markers.push(sm)
     const nm = `hn${round}q`; a.name = hostileSpellings(nm)[round]; markers.push(nm)
     await a.sync(); await b.sync(); await a.sync()
-    for (const m of markers) assert.deepEqual(leaked(folder, [a, b], m), [], `${m} (${JSON.stringify(hostileSpellings(m)[round]).slice(0, 60)}) reached a file`)
+    // The engines have finished all writes for this round. Check every marker against the same bytes.
+    const files = writtenFiles(folder, [a, b]).map((path) => ({ name: basename(path), bytes: readFileSync(path) }))
+    for (const m of markers) {
+      const leaked = files.filter(({ bytes }) => bytes.includes(m, 'utf8')).map(({ name }) => name)
+      assert.deepEqual(leaked, [], `${m} (${JSON.stringify(hostileSpellings(m)[round]).slice(0, 60)}) reached a file`)
+    }
   }
   a.name = 'A'
   assert.ok(planted >= 200, `planted ${planted} values the store accepted`)
@@ -883,15 +895,21 @@ await test('finding 7: clearing the folder during a read stops the cycle before 
   assert.deepEqual(readFileSync(join(dir, macFileName(b.engine.macId()))), bytes)
   // Stop while a read hangs: Stop resolves once the cycle has stopped, and that cycle changed nothing.
   b.chosen = folder
-  let release
-  const gate = new Promise((r) => { release = r })
-  b.transformRead = async (path, text) => { if (path.endsWith(macFileName(a.engine.macId()))) await gate; return text }
+  const readStarted = Promise.withResolvers()
+  const gate = Promise.withResolvers()
+  b.transformRead = async (path, text) => {
+    if (path.endsWith(macFileName(a.engine.macId()))) {
+      readStarted.resolve()
+      await gate.promise
+    }
+    return text
+  }
   let done = false
   const running = b.engine.sync('demand').then((x) => { done = true; return x })
-  await new Promise((r) => setTimeout(r, 30))
+  await Promise.race([readStarted.promise, running.then(() => assert.fail('the cycle finished before the stalled read'))])
   b.chosen = ''
   const stopped = b.engine.folderChanged()
-  release()
+  gate.resolve()
   await stopped
   assert.equal(done, true, 'Stop waited for the cycle')
   assert.equal((await running).state, 'off')
@@ -1166,17 +1184,42 @@ function hostile(text, pick, now) {
   return JSON.stringify(f)
 }
 
-async function property(seed) {
+const LOCAL_ONLY_PROFILE = {
+  A: { 'recording.microphone': 'Mic A', 'publishing.customDomain': 'https://a.example' },
+  B: { 'recording.microphone': 'Mic B', 'publishing.customDomain': 'https://b.example' }
+}
+
+async function prepareProfiles() {
+  const profiles = {}
+  for (const [name, values] of Object.entries(LOCAL_ONLY_PROFILE)) {
+    const store = openStore(tmp(`profile-${name}`), () => T0 + (name === 'B' ? 7 : 0))
+    try {
+      await store.ready
+      for (const [key, value] of Object.entries(values)) assert.ok((await store.set(key, value)).ok, `${name}: seed ${key}`)
+      profiles[name] = store.path
+    } finally {
+      await store.close()
+    }
+  }
+  return profiles
+}
+
+async function property(seed, profiles) {
   const r = rng(seed)
   const pick = (list) => list[Math.floor(r() * list.length)]
   // Each Mac has its own copy of the folder. The "sync service" keeps every version each Mac ever wrote and
   // delivers any of them, late, out of order, more than once, as conflict copies, and sometimes made hostile.
   const fa = tmp('pa'); const fb = tmp('pb')
-  let A = await makeMac('A', { chosen: fa, offset: 0 })
-  let B = await makeMac('B', { chosen: fb, offset: 7 }) // a different millisecond phase: no exact-time ties between the two
-  const localOnly = { 'recording.microphone': 'Mic A', 'publishing.customDomain': 'https://a.example' }
-  for (const [k, v] of Object.entries(localOnly)) { await A.store.set(k, v); await B.store.set(k, v.replace('A', 'B').replace('a.', 'b.')) }
-  const localBefore = { A: Object.fromEntries(Object.keys(localOnly).map((k) => [k, A.value(k)])), B: Object.fromEntries(Object.keys(localOnly).map((k) => [k, B.value(k)])) }
+  const setup = async (name, chosen, offset) => {
+    const dir = tmp(name)
+    // Copy only the settings. The engine still creates a fresh identity and writes its own records.
+    copyFileSync(profiles[name], join(dir, SETTINGS_FILE_NAME), fsConstants.COPYFILE_FICLONE)
+    const mac = await makeMac(name, { dir, chosen, offset })
+    for (const [key, value] of Object.entries(LOCAL_ONLY_PROFILE[name])) assert.equal(mac.value(key), value, `seed ${seed}: ${name} started with the wrong ${key}`)
+    return mac
+  }
+  let A = await setup('A', fa, 0)
+  let B = await setup('B', fb, 7) // a different millisecond phase: no exact-time ties between the two
   const versions = { A: [], B: [] }
   const ownFile = (m) => join(resolveSetupFolder(m.chosen, '/'), macFileName(m.engine.macId()))
   const keep = (m) => { const p = ownFile(m); if (!existsSync(p)) return; const t = readFileSync(p, 'utf8'); const q = versions[m.name]; if (q[q.length - 1]?.text !== t) q.push({ text: t, id: m.engine.macId() }) }
@@ -1195,8 +1238,11 @@ async function property(seed) {
   /** No Mac ever holds a value the allow-list would not write, and nothing local-only ever changes. */
   const clean = (label) => {
     for (const m of [A, B]) {
-      for (const [k] of KEYS) assert.ok(accepted(k, m.value(k)), `seed ${seed} ${label}: ${m.name} holds ${k}=${String(m.value(k)).slice(0, 60)}\n${trace.join('\n')}`)
-      for (const k of Object.keys(localOnly)) assert.equal(m.value(k), localBefore[m.name][k], `seed ${seed} ${label}: ${k} changed on ${m.name}`)
+      for (const [k] of KEYS) {
+        const value = m.value(k)
+        if (!accepted(k, value)) assert.fail(`seed ${seed} ${label}: ${m.name} holds ${k}=${String(value).slice(0, 60)}\n${trace.join('\n')}`)
+      }
+      for (const [key, value] of Object.entries(LOCAL_ONLY_PROFILE[m.name])) assert.equal(m.value(key), value, `seed ${seed} ${label}: ${key} changed on ${m.name}`)
     }
   }
   const trace = []
@@ -1247,17 +1293,49 @@ async function property(seed) {
   for (const m of [A, B]) for (const f of [...readdirSync(resolveSetupFolder(m.chosen, '/')).filter((n) => classifyName(n).kind === 'mac' && classifyName(n).macId === m.engine.macId()).map((n) => join(resolveSetupFolder(m.chosen, '/'), n)), join(m.dir, STATE_FILE)]) {
     assert.ok(!readFileSync(f, 'utf8').includes('HOSTILEMARK'), `seed ${seed}: ${basename(f)} took something from a hostile file`)
   }
-  await A.store.close(); await B.store.close()
 }
 
-const only = process.env.SETUP_FOLDER_SEED
-const runs = only ? [Number(only)] : Array.from({ length: Number(process.env.SETUP_FOLDER_RUNS ?? 200) }, (_, i) => 1000 + i)
-await test(`property: every travelling key, random changes, syncs, every file version delivered out of order with duplicates, hostile files, restarts and kills on two Macs end in agreement and then stay quiet (${runs.length} runs)`, async () => {
-  for (const seed of runs) {
-    try { await property(seed) } catch (error) { console.error(`  property test failed with seed ${seed} (SETUP_FOLDER_SEED=${seed} to run it alone)`); throw error }
+async function runSeeds(seeds, profiles) {
+  for (const seed of seeds) {
+    const firstMac = macs.length
+    worldTick = 0
+    try {
+      await property(seed, profiles)
+    } catch (error) {
+      console.error(`  property test failed with seed ${seed} (SETUP_FOLDER_SEED=${seed} to run it alone)`)
+      throw error
+    } finally {
+      await Promise.all(macs.splice(firstMac).map((mac) => mac.store.close()))
+    }
   }
-})
+}
 
-for (const m of macs) { try { await m.store.close() } catch { /* closed */ } }
-if (failed.length) { console.log(`${passed} passed, ${failed.length} failed`); process.exit(1) }
-console.log(`${passed} passed`)
+async function runPropertyCases(seeds) {
+  if (seeds.length === 0) return
+  const profiles = await prepareProfiles()
+  // Each worker gets its own clock and fresh folders. Synchronous file writes on one cannot block the other seeds.
+  const count = Math.min(4, availableParallelism(), seeds.length)
+  if (count === 1) return runSeeds(seeds, profiles)
+  const shards = Array.from({ length: count }, (_, shard) => seeds.filter((_, index) => index % count === shard))
+  const results = await Promise.allSettled(shards.map((seeds) => new Promise((resolve, reject) => {
+    const worker = new Worker(new URL(import.meta.url), { workerData: { seeds, profiles, scratch } })
+    worker.once('error', reject)
+    worker.once('exit', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(`Property worker exited with code ${code} (seeds: ${seeds.join(', ')})`))
+    })
+  })))
+  const failure = results.find((result) => result.status === 'rejected')
+  if (failure) throw failure.reason
+}
+
+if (isMainThread) {
+  const only = process.env.SETUP_FOLDER_SEED
+  const runs = only ? [Number(only)] : Array.from({ length: Number(process.env.SETUP_FOLDER_RUNS ?? 200) }, (_, i) => 1000 + i)
+  await test(`property: every travelling key, random changes, syncs, every file version delivered out of order with duplicates, hostile files, restarts and kills on two Macs end in agreement and then stay quiet (${runs.length} runs)`, () => runPropertyCases(runs))
+  for (const m of macs) { try { await m.store.close() } catch { /* closed */ } }
+  if (failed.length) { console.log(`${passed} passed, ${failed.length} failed`); process.exit(1) }
+  console.log(`${passed} passed`)
+} else {
+  await runSeeds(workerData.seeds, workerData.profiles)
+}

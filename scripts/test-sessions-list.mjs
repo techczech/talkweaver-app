@@ -10,7 +10,8 @@
 //   7. (2026-10-19 sessions title markdown) a talk title with **bold** shows as plain text (talkTitleText).
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-sessions-list.mjs
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { responsesBadge, runsWithResponses, selectSessionRow, sessionList, sessionLiveKey } from '../src/shared/sessions-list.ts'
@@ -130,7 +131,7 @@ check('no Runs: empty list', () => {
 })
 
 check('collectSessions reads every vault, skips rehearsals, counts people, and marks live Runs', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'tw-sessions-list-'))
+  const tmp = testScratchDir(join(tmpdir(), 'tw-sessions-list-'))
   const put = (vault, slug, run) => {
     mkdirSync(join(tmp, vault, '_PRESENTATIONS', slug), { recursive: true })
     writeFileSync(join(tmp, vault, '_PRESENTATIONS', slug, `${run.id}.json`), JSON.stringify({ talkTitle: slug, kind: 'delivery', ...run }))
@@ -147,7 +148,7 @@ check('collectSessions reads every vault, skips rehearsals, counts people, and m
 })
 
 check('collectSessions names a Run file with Git conflict markers (0.45), instead of leaving it out silently', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'tw-sessions-conflict-'))
+  const tmp = testScratchDir(join(tmpdir(), 'tw-sessions-conflict-'))
   const folder = join(tmp, 'a', '_PRESENTATIONS', 'talk-a')
   mkdirSync(folder, { recursive: true })
   const run = (extra) => JSON.stringify({ id: 'r1', talkSlug: 'talk-a', talkTitle: 'A', kind: 'delivery', status: 'planned', plannedDate: '2026-10-21', ...extra }, null, 2)
@@ -175,7 +176,7 @@ check('collectSessions names a Run file with Git conflict markers (0.45), instea
 })
 
 check('collectSessions carries the sent set main computes (ticket 17, D1), and a failing one never blanks the list', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'tw-sessions-sent-'))
+  const tmp = testScratchDir(join(tmpdir(), 'tw-sessions-sent-'))
   mkdirSync(join(tmp, 'a', '_PRESENTATIONS', 'talk-a'), { recursive: true })
   for (const id of ['r1', 'r2']) writeFileSync(join(tmp, 'a', '_PRESENTATIONS', 'talk-a', `${id}.json`), JSON.stringify({ id, talkSlug: 'talk-a', talkTitle: 'A', kind: 'delivery', status: 'planned', plannedDate: '2026-10-21' }))
   const out = collectSessions([{ id: 'va', root: join(tmp, 'a') }], [], (run) => { if (run.id === 'r2') throw new Error('unreadable'); return ['pre'] })
@@ -196,7 +197,7 @@ check('responses waiting: the row says "N new", the filter keeps only those Runs
 })
 
 check('collectSessions: new responses are what waits on the live service plus what was pulled and not seen', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'tw-sessions-responses-'))
+  const tmp = testScratchDir(join(tmpdir(), 'tw-sessions-responses-'))
   mkdirSync(join(tmp, 'a', '_PRESENTATIONS', 'talk-a'), { recursive: true })
   const person = (n) => n.toString(16).padStart(16, '0')
   const entry = (n, kind, at) => ({ id: `${person(n)}:${kind === 'question' ? `q:s${n}` : `${kind}:hope`}`, participant: person(n), stepId: 'hope', kind, at, ...(kind === 'answer' || kind === 'question' ? { text: 'x' } : {}) })
@@ -220,7 +221,7 @@ check('a Run reference selects by vault, talk and Run id; never the first of two
 
 // Issue 256, finding 4: two open vaults hold the same talk and Run id; a session live in one marks only that vault's Run.
 check('two vaults with the same talk and Run id: only the vault whose session is live shows Live now', () => {
-  const tmp = mkdtempSync(join(tmpdir(), 'tw-sessions-live-two-'))
+  const tmp = testScratchDir(join(tmpdir(), 'tw-sessions-live-two-'))
   const run = { id: 'r1', talkSlug: 'talk-x', talkTitle: 'X', kind: 'delivery', status: 'planned', plannedDate: '2026-10-21', startTime: '14:00' }
   for (const vault of ['a', 'b']) {
     mkdirSync(join(tmp, vault, '_PRESENTATIONS', 'talk-x'), { recursive: true })

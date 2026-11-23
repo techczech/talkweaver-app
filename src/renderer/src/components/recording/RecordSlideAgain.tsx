@@ -7,7 +7,7 @@ import { Circle, Pause, Play } from 'lucide-react'
 import type { TakeInfo } from '../../../../main/recording-video-ipc'
 import type { ChosenTake } from '../../../../shared/recording-edits'
 import { shownFrom } from '../../../../shared/recording-video'
-import { clipsOnVideoClock, toVideoClock, type TakeClock } from '../../../../shared/recording-takes'
+import { clipsOnVideoClock, type TakeClock } from '../../../../shared/recording-takes'
 import type { PlayerSource, VoicePiece } from './LayeredPlayer'
 
 type Ref = { talkSlug: string; runId: string; home: string | null | undefined }
@@ -99,7 +99,7 @@ export function useTakeSource(ref: Ref, base: PlayerSource | null, takeClock: Ta
       const points = [0, ...takeClock.inserts.map((i) => i.at), durationMs]
       for (let k = 0; k + 1 < points.length; k++) if (points[k + 1] > points[k]) voices.push({ url: base.voice, startMs: points[k] + moved(points[k]), endMs: points[k + 1] + moved(points[k]), offsetMs: points[k] })
     }
-    for (const i of takeClock.inserts) { const v = takes.get(i.run)?.voice; const at = toVideoClock(takeClock, i.at); if (v) voices.push({ url: v, startMs: at, endMs: at + i.length, offsetMs: 0 }) }
+    for (const i of takeClock.inserts) { const v = takes.get(i.run)?.voice; const at = i.outAt; if (v) voices.push({ url: v, startMs: at, endMs: at + i.length, offsetMs: 0 }) }
     voices.sort((a, b) => a.startMs - b.startMs)
     return { source: { voice: base.voice, voices, slides, camera }, pending: false, problem: null }
     // eslint-disable-next-line react-hooks/exhaustive-deps

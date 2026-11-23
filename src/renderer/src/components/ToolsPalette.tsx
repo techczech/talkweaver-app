@@ -92,6 +92,7 @@ export function ToolsPalette({ active }: { active: boolean }): JSX.Element | nul
     title: command.label,
     hint: command.shortcutId ? commandShortcutLabel(command) : '',
     group: command.taskGroup ?? undefined,
+    subgroup: command.subgroup ?? undefined,
     keywords: command.palette.keywords,
     disabled: !toolsActionEnabled(command.id),
     run: () => { runToolsCommand(command.id) }

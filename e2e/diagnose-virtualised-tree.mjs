@@ -4,7 +4,7 @@ import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
+import { mkdirSync, mkdtempDisposableSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -15,7 +15,8 @@ function record(name, pass, detail) {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`)
 }
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-vtree-'))
+using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-vtree-'))
+const tempRoot = fixture.path
 const vault = join(tempRoot, 'vault')
 const ud = join(tempRoot, 'userData')
 mkdirSync(ud, { recursive: true })
@@ -36,7 +37,7 @@ const opened = { 'topic-0': true, 'topic-1': true, 'topic-2': true }
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, talkListFolders: { [vault]: opened } }, null, 2))
 
 await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
+await using app = await electron.launch({ args: ['.', '--use-mock-keychain', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
 const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(3000)
@@ -98,6 +99,5 @@ try {
 } finally {
   const failed = results.filter((r) => !r.pass)
   console.log(`\n=== VTREE SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
-  await app.close()
-  process.exit(failed.length === 0 ? 0 : 1)
+  process.exitCode = failed.length === 0 ? 0 : 1
 }

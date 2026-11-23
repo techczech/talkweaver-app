@@ -15,7 +15,8 @@
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-run-work-pin.mjs
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { execFileSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -42,7 +43,7 @@ function check(name, fn) {
 }
 
 function vault(talks = ['work-talk']) {
-  const root = mkdtempSync(join(tmpdir(), 'talkweaver-pin-'))
+  const root = testScratchDir(join(tmpdir(), 'talkweaver-pin-'))
   mkdirSync(join(root, 'Work files'), { recursive: true })
   writeFileSync(join(root, 'Work files', 'intake.md'), workFile(3))
   const base = { timeZone: 'Europe/London', talkTitle: 'Work talk', plannedDate: '2026-10-06', startTime: '10:00', eventTitle: 'Briefing', audience: '', slideSet: { kind: 'full' } }
@@ -135,7 +136,7 @@ check('a hostile copy path on the Run record is refused, never followed', () => 
   const root2 = vault()
   pinRunWork(root2, 'work-talk', 'r1', 'pre')
   const copyPath = join(root2, '_PRESENTATIONS', 'work-talk', 'r1', 'work-pre.md')
-  const outside = join(mkdtempSync(join(tmpdir(), 'talkweaver-pin-out-')), 'x.md')
+  const outside = join(testScratchDir(join(tmpdir(), 'talkweaver-pin-out-')), 'x.md')
   writeFileSync(outside, readFileSync(copyPath))
   rmSync(copyPath)
   symlinkSync(outside, copyPath)
@@ -144,7 +145,7 @@ check('a hostile copy path on the Run record is refused, never followed', () => 
 
 check('a symlinked Run folder is refused and the Run record is unchanged', () => {
   const root = vault()
-  const elsewhere = mkdtempSync(join(tmpdir(), 'talkweaver-pin-elsewhere-'))
+  const elsewhere = testScratchDir(join(tmpdir(), 'talkweaver-pin-elsewhere-'))
   symlinkSync(elsewhere, join(root, '_PRESENTATIONS', 'work-talk', 'r1'))
   const before = readFileSync(runFile(root), 'utf8')
   assert.throws(() => pinRunWork(root, 'work-talk', 'r1', 'pre'), /^Error: run-folder-unsafe$/)
@@ -186,7 +187,7 @@ check('a file not ready, not UTF-8, with another id, or missing is refused and w
   }
   // A work file that is a link out of the vault is refused.
   const root = vault()
-  const outside = join(mkdtempSync(join(tmpdir(), 'talkweaver-pin-src-')), 'intake.md')
+  const outside = join(testScratchDir(join(tmpdir(), 'talkweaver-pin-src-')), 'intake.md')
   writeFileSync(outside, workFile(3))
   rmSync(join(root, 'Work files', 'intake.md'))
   symlinkSync(outside, join(root, 'Work files', 'intake.md'))
@@ -229,7 +230,7 @@ check('a talk folder linked to another folder inside the vault is accepted; one 
   assert.ok(existsSync(join(real, 'r1', 'work-pre.md')), 'the copy is in the real talk folder\'s Run folder')
   assert.equal(readPinnedWork(root, 'work-talk', 'r1', 'pre').pinned.sha256, pinned.pinned.sha256)
   const root2 = vault()
-  const out = mkdtempSync(join(tmpdir(), 'talkweaver-pin-talk-out-'))
+  const out = testScratchDir(join(tmpdir(), 'talkweaver-pin-talk-out-'))
   writeFileSync(join(out, 'r1.json'), readFileSync(runFile(root2)))
   rmSync(join(root2, '_PRESENTATIONS', 'work-talk'), { recursive: true })
   symlinkSync(out, join(root2, '_PRESENTATIONS', 'work-talk'))

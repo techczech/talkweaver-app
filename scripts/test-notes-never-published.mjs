@@ -34,7 +34,8 @@
  *   HTML-comment text (COMMENTLEAK-*) may appear in no output at all, notes aside included. Every
  *   notes fixture is also compiled with CRLF line endings.
  */
-import { mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseSlideScript, buildSlideScriptPayload } from '../compiler/scripts/lib/slide-script.mjs'
@@ -315,7 +316,7 @@ const LINKS_SLIDE = /<section\b[^>]*data-layout="links"[^>]*>[\s\S]*?<\/section>
 const sentinelsIn = (text) => new Set(String(text).match(SENTINELS) || [])
 
 async function compileAndGuard(label, source, { expectedNotes, visible, links = null }) {
-  const dir = mkdtempSync(join(tmpdir(), 'tw-notes-guard-'))
+  const dir = testScratchDir(join(tmpdir(), 'tw-notes-guard-'))
   const outlinePath = join(dir, `${label}-outline.md`)
   writeFileSync(outlinePath, source, 'utf8')
   const model = await prepareSource(outlinePath, source, label, statSync(outlinePath))
@@ -796,9 +797,16 @@ async function guardFoldedDepth(label, source) {
     `${label}: the deck's link list is exactly the drawn visible links, folded children's included${
       listed === JSON.stringify(foldedDepthLinks) ? '' : ` (got ${listed})`}`)
   const linksSlide = (model.fullHtml.match(LINKS_SLIDE) || []).join('')
-  const hrefs = [...linksSlide.matchAll(/href="([^"]+)"/g)].map((m) => m[1])
-  check(JSON.stringify(hrefs) === JSON.stringify(foldedDepthLinks.map(({ url }) => url)),
+  const anchors = [...linksSlide.matchAll(/<a\b[^>]*\bhref="([^"]+)"[^>]*>/g)]
+  const isCaption = match => /class="link-url"/.test(match[0])
+  const hrefs = anchors.filter(match => !isCaption(match)).map(match => match[1])
+  const captionHrefs = anchors.filter(isCaption).map(match => match[1])
+  const expectedHrefs = foldedDepthLinks.map(({ url }) => url)
+  check(JSON.stringify(hrefs) === JSON.stringify(expectedHrefs),
     `${label}: the Links slide lists exactly the drawn visible links${hrefs.length ? '' : ' (none listed)'}`)
+  check(JSON.stringify(captionHrefs) === JSON.stringify(expectedHrefs) && anchors.filter(isCaption).every(match =>
+    match[0].includes(`title="${match[1]}"`) && match[0].includes(`aria-label="${match[1]}"`)),
+    `${label}: every address caption links to exactly its visible row's full destination, with the full accessible name`)
   // Undrawn text reaches no output: not the phone payload, not the Links slide, not any file.
   const outputs = {
     'deck-full.html': model.fullHtml,

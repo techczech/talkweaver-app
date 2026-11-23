@@ -142,11 +142,11 @@ export const keyCapExtension = [
       letterSpacing: '0.02em',
       padding: '0 5px',
       margin: '0 1px',
-      border: '1px solid var(--line, #d9d0c1)',
+      border: '1px solid var(--line)',
       borderBottomWidth: '2px',
       borderRadius: '4px',
-      background: 'var(--panel, #fffdf8)',
-      color: 'var(--muted, #5d6875)',
+      background: 'var(--panel)',
+      color: 'var(--muted)',
       verticalAlign: '1px',
       whiteSpace: 'nowrap'
     }

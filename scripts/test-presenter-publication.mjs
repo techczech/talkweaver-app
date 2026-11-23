@@ -7,7 +7,7 @@ import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { createPresenterPublications, liveLinkFolder, presenterLink } from '../src/main/presenter-publication.ts'
 import { stampPublishedLink } from '../src/preload/present-live-state.ts'
-import { functionBody, readSource } from './lib/read-source.mjs'
+import { readMainSource, functionBody, readSource } from './lib/read-source.mjs'
 import { transformSync } from 'esbuild'
 import { readHandoutUrl, stampHandoutUrl } from '../src/main/publishing-logic.ts'
 
@@ -180,7 +180,7 @@ await test('a stampable publication is not retained as a fallback after canonica
 })
 
 await test('canonical frontmatter without a link overrides retained success, including after frontmatter is added', () => {
-  const source = transformSync(functionBody(readSource('src/main/index.ts'), 'outlineUrlOnDisk'), { loader: 'ts' }).code
+  const source = transformSync(functionBody(readMainSource(), 'outlineUrlOnDisk'), { loader: 'ts' }).code
   const select = new Function('readFileSync', 'readHandoutUrl', 'stampHandoutUrl', 'presenterPublications', 'outlinePath', `${source}\nreturn outlineUrlOnDisk(outlinePath)`)
   const resolve = (text) => select(() => text, readHandoutUrl, stampHandoutUrl, { talkUrl: () => URL_A }, TALK)
   assert.equal(resolve('---\ntitle: Test\n---\n\n## Slide'), null)
@@ -287,7 +287,7 @@ await test('a delayed initial link cannot restore a Run link after an unpublish 
 })
 
 await test('an old asynchronous QR result cannot reach a replaced context, even with the same URL', async () => {
-  const source = readSource('src/main/index.ts')
+  const source = readMainSource()
   const start = source.indexOf('async function announcePresenterLink(')
   const code = transformSync(source.slice(start, source.indexOf('let liveSessions:', start)), { loader: 'ts', format: 'cjs' }).code
   const contexts = new Map([[1, { shortUrl: URL_RUN }]])
@@ -305,7 +305,7 @@ await test('an old asynchronous QR result cannot reach a replaced context, even 
 })
 
 await test('the wiring: results reach the service only after success, once, and Go live is not started from them', () => {
-  const index = readSource('src/main/index.ts')
+  const index = readMainSource()
   const talk = index.slice(index.indexOf("ipcMain.handle('talk:publish-handout'"), index.indexOf('let localLiveWorker:'))
   assert.ok(talk.indexOf('presenterPublications.ticket()') < talk.indexOf('handoutPublishing().publish('), 'the ticket is taken when the publish is asked for')
   assert.ok(talk.indexOf('if (!outcome.ok)') < talk.indexOf('presenterPublications.published('), 'a failed or superseded publish returns before the service is told')

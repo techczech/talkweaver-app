@@ -7,8 +7,9 @@
 // of a complete line. Two windows or the command line changing different agents touch different files.
 // A missing or damaged file reads as absent; reading never throws and never stops startup.
 // An agent id reaches a path only if it is one of the ids this store was made with.
-import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, readSync, renameSync, rmSync, writeFileSync, writeSync } from 'node:fs'
+import { closeSync, constants, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeSync } from 'node:fs'
 import { join } from 'node:path'
+import { writeTextAtomic } from '../atomic-file.ts'
 import type { AgentSkillState, ChangeNote, LastResult } from '../../shared/agent-skill/types.ts'
 
 export type AgentRecord = AgentSkillState['agents'][string]
@@ -32,18 +33,8 @@ export interface StateStore {
 }
 
 const ID_SHAPE = /^[a-z0-9][a-z0-9-]{0,63}$/
-let counter = 0
-
 function replaceJson(file: string, value: unknown): void {
-  mkdirSync(join(file, '..'), { recursive: true })
-  const tmp = `${file}.${process.pid}.${Date.now().toString(36)}.${counter++}.tmp`
-  try {
-    writeFileSync(tmp, `${JSON.stringify(value)}\n`)
-    renameSync(tmp, file)
-  } catch (e) {
-    rmSync(tmp, { force: true })
-    throw e
-  }
+  writeTextAtomic(file, `${JSON.stringify(value)}\n`, { createParent: true })
 }
 
 function readJson(file: string): unknown {

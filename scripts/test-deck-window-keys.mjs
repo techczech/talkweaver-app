@@ -4,6 +4,7 @@
 // 2026-07-08 (28ed6ca) the deck window's before-input-event refreshed on F5 in every deck window,
 // so the presenter page's F5 (presenter.audience) never ran.
 // Usage: node scripts/test-deck-window-keys.mjs
+import { readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 
@@ -51,11 +52,14 @@ assert.deepEqual(entry('app.present-current')?.codes, ['Shift-F5'], 'the registr
 assert.deepEqual(entry('presenter.refresh')?.codes, ['Mod-r', 'Shift-F5'], 'the registry binds ⌘R, and ⇧F5 in a presenter window, to Refresh with latest edits')
 
 // ── The deck window's before-input-event routes through this module, with no inline F5 rule left.
-const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+const main = readMainSource()
 const handler = /win\.webContents\.on\('before-input-event', \(event, input\) => \{([\s\S]*?)\n    \}\)/.exec(main)
 assert.ok(handler, 'the deck window has a before-input-event handler')
 assert.match(handler[1], /deckWindowKeyAction\(deckWindowMode\(mode\), input\)/, 'the deck window asks deckWindowKeyAction with its mode')
 assert.match(handler[1], /executeJavaScript\(OPEN_AUDIENCE_SCRIPT, true\)/, 'open-audience runs the Audience button with a user gesture')
-assert.doesNotMatch(main, /input\.key === 'F5'/, 'no inline F5 rule in the main process bypasses deckWindowKeyAction')
+const inlineKeys = readMainSource((code, file) => file === 'src/main/deck-window-keys.ts'
+  ? code.replace("if (input.key === 'F5' && !input.meta && !input.control && !input.alt) {", '')
+  : code)
+assert.doesNotMatch(inlineKeys, /input\.key === 'F5'/, 'no inline F5 rule in the main process bypasses deckWindowKeyAction')
 
 console.log('deck window keys: presenter F5 opens the audience view; ⇧F5, audience/plain F5 and ⌘R refresh; registry agrees')

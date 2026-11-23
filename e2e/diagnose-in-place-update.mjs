@@ -75,7 +75,7 @@ const server = createServer(async (req, res) => {
     return
   }
   if (req.url?.startsWith('/releases/download/')) {
-    assetRequests.push({ url: req.url, headers: req.headers })
+    assetRequests.push({ url: req.url, headers: req.headers, mode })
     const body = mode === 'corrupt' ? Buffer.from(BODY) : mode === 'old' ? OLD_BODY : BODY
     if (mode === 'corrupt') body[body.length >> 1] ^= 0xff
     res.writeHead(200, { 'Content-Type': 'application/octet-stream', 'Content-Length': body.length })
@@ -265,7 +265,8 @@ try {
   await waitMark(page, /^Downloading/)
   const known = new Set(app.windows())
   await page.keyboard.press('Escape')
-  await page.locator('[data-command="present-presenter"]').first().click()
+  await page.getByRole('button', { name: 'Other ways to present', exact: true }).click()
+  await page.getByRole('menuitem', { name: /^With my notes and a timer\b/ }).click()
   let presenter = null
   for (let i = 0; i < 120 && !presenter; i++) { presenter = app.windows().find((w) => !known.has(w) && !w.isClosed()) ?? null; if (!presenter) await pause(250) }
   record('a presenter window opens during the download', !!presenter)
@@ -307,7 +308,7 @@ try {
   await page.locator('[data-update-popover] [data-update-restart]').click()
   record('Restart restarts into the new version (a run from source logs it instead of installing)', await waitMark(page, /^Restarting into/) && (await page.locator('[data-update-popover] [data-update-cancel]').count()) === 0 && await (async () => { for (let i = 0; i < 40; i++) { if (out.join('').includes(`restart into ${NEXT} (test run from source): not installed`)) return true; await pause(100) } return false })(), out.join('').split('\n').filter((l) => l.includes('[updates]')).slice(-2).join(' | '))
   record('the write queues were waited for before the restart (rule C: "write queues: every one drained")', out.join('').includes('[update] write queues: every one drained'), out.join('').split('\n').filter((l) => l.includes('write queues')).slice(-1).join(''))
-  record('the file was downloaded only on clicks (six starts: cancelled, cancelled from the note, corrupt, another version, dropped, good)', assetRequests.length === 6, `file requests=${assetRequests.length}`)
+  record('the file was downloaded only on clicks (six starts: cancelled, cancelled from the note, corrupt, another version, dropped, good)', assetRequests.length === 6, `file requests=${assetRequests.length}, responses=${assetRequests.map((request) => request.mode).join(', ')}`)
 
   // ── 6. The alpha switch ───────────────────────────────────────────────────────────────────────────
   const settings = await openSettingsWindow(app, page, 'updates')

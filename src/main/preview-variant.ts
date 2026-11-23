@@ -7,9 +7,8 @@
 // is fixed by the compile alone: the compile's process marks it, encodes it, hashes it and writes it
 // to <previewDir>/<sha256>.html. The main process gets a small descriptor back. It serves the preview
 // from the file and the thumbnail window loads the file, so the main process holds the compiled deck
-// (fullHtml) once and never a second, marked copy of it. A deck that has a remote page gets no
-// variant: the main process turns the pages into pictures first and marks the deck itself, as before,
-// so the policy is the same.
+// (fullHtml) once. A deck with a remote page gets no file variant. For the focused preview, the
+// compile process replaces the remote frames with captured artwork and marks the deck.
 //
 // THREAT MODEL (driver's decision, 2026-11-06). The folder is <userData>/preview-variants, created
 // 0700 and owned by the user. An attacker able to swap or link entries inside it already runs as the
@@ -20,7 +19,7 @@
 //     when validated (a real directory, not a link, owned by this user) and its identity (dev + ino)
 //     recorded. Immediately before every delete, write, rename, serve and thumbnail load it is
 //     lstat'ed again and must be the same directory; if not, variants stop for the run (one log line),
-//     nothing is deleted, and every consumer falls back to marking fullHtml on the main process.
+//     nothing is deleted, and every consumer prepares the preview from the current compiled HTML.
 //   - stray or hard-linked files: only entries that lstat says are regular files and whose names are
 //     exactly a variant name (64 hex digits + .html) or its temporary-file name are ever deleted, one
 //     at a time, never recursively. A variant is used only if it is such a regular file, and served

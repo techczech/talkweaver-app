@@ -7,13 +7,13 @@ import { createHash } from 'node:crypto'
 import { helperWindowsAllowed, markHiddenRenderer } from './window-kinds'
 import { slidePreviewUrl, type SlidePreviewStore } from '../shared/slide-preview.ts'
 import { previewFrame, samePreviewAddress, type ScratchHtmlPreview } from './scratchpad-html.ts'
+import { escapeAttr } from '../shared/html-escape.ts'
 
 const WIDTH = 1280
 const HEIGHT = 800
 const THUMB_WIDTH = 640
 const SETTLE_MS = 700
 
-const escapeAttr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
 
 /** The picture and the words the page rendered (document.body.innerText of the sandboxed frame, capped). */
 export interface HtmlCapture { png: Buffer; text: string }

@@ -23,6 +23,19 @@ export function settingsArguments(argv: readonly string[], defaultApp: boolean):
 }
 
 export async function runTalkWeaverSettings(args: string[], opts: { dir: string; version: string; io: SettingsCliIO; lock?: LockOptions }): Promise<number> {
+  // Normalise the key argument, including global flags before the verb. Values and export paths
+  // are not keys, even when their spelling happens to match the alias.
+  const positions: number[] = []
+  let literal = false
+  for (let at = 0; at < args.length; at++) {
+    if (!literal && args[at] === '--') { literal = true; continue }
+    if (!literal && args[at].startsWith('--')) {
+      if (['--agent', '--section', '--limit'].includes(args[at])) at++
+    } else positions.push(at)
+  }
+  if (['get', 'set', 'reset'].includes(args[positions[0]]) && args[positions[1]] === 'talkDefaults.typeface') {
+    args = args.map((arg, index) => index === positions[1] ? 'talkDefaults.font' : arg)
+  }
   const base = { dir: opts.dir, app: APP_ID, schema, registry: commandsAdapter(registry), migrate: migrateLegacy, ...(opts.lock ? { lock: opts.lock } : {}) }
   try {
     const moved = await runMigration(opts.dir, () => new SettingsStore({ ...base, appVersion: opts.version, watch: false, who: { kind: 'app-update', version: opts.version } as never, log: () => {} }))

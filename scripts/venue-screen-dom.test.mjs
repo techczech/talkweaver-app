@@ -216,7 +216,7 @@ try {
     await page.evaluate(() => window.__sockets[1].emit({ type: 'instant.state',
       slide: { kind: 'countdown', startedAt: Date.now(), durationMs: 1000, label: 'Break', soundAtEnd: true, shownAt: Date.now() } }))
     await page.locator('.instant-slide-surface:visible .instant-slide-corner-qr img').waitFor()
-    assert.equal(await page.locator('.instant-slide-corner-link').textContent(), 'handouts.fyi/k7m2')
+    assert.equal(await page.locator('.instant-slide-corner-link').textContent(), 'handouts.fyi')
     assert.equal(await page.locator('.instant-slide-corner-link a').count(), 0, 'the venue screen shows the handout link as plain text, not an anchor')
     await page.waitForFunction(() => window.__notes === 2)
     await page.waitForTimeout(500)
@@ -245,8 +245,8 @@ try {
     const talkQr = page.locator('#venueTalkQr')
     await talkQr.waitFor({ state: 'visible' })
     assert.equal(await page.locator('.slide.active').getAttribute('data-id'), 'content')
-    assert.equal(await talkQr.locator('.qr-fs-url').textContent(), 'handouts.fyi/k7m2')
-    assert.equal(await talkQr.locator('.qr-fs-url strong').textContent(), '/k7m2')
+    assert.equal(await talkQr.locator('.qr-fs-url').textContent(), 'https://handouts.fyi/k7m2')
+    assert.equal(await talkQr.locator('.qr-fs-url strong').count(), 0, 'the full address uses regular reading weight without an automatically bold path')
     assert.equal(await talkQr.locator('svg').count(), 1)
     assert.deepEqual(await talkQr.boundingBox().then(({ x, y, width, height }) => ({ x, y, width, height })),
       { x: 0, y: 0, width: 1280, height: 720 }, 'the QR overlay fills the venue screen')

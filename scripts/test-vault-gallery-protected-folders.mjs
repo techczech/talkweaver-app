@@ -4,14 +4,17 @@
 // real files; the only stand-ins are the Trash transport, the outline writer (the real one where a case says
 // so) and the window bookkeeping, so Electron and the OS Trash are never touched. A direct call stands for a
 // renderer that offered the action. Every fixture lives under one per-run folder, removed in finally.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as fsp from 'node:fs/promises'
 import * as path from 'node:path'
 import vm from 'node:vm'
 import { transformSync } from 'esbuild'
 import * as vaultPaths from '../src/main/vault-paths.ts'
+import { pathStaysInside } from '../src/main/path-containment.ts'
+import { newTalkSource } from '../src/shared/redesign-window-source.ts'
 import { canonicalOutlinePath } from '../src/main/outline-identity.ts'
 import { pickOutlineName } from '../src/main/talk-scan.mjs'
 import { mkdirBelowRoot, writableRoot } from '../src/main/vault-availability.ts'
@@ -20,7 +23,7 @@ import { writeTalkOutline as actualWriter } from '../src/main/talk-writer.ts'
 import { registerImporterIpc } from '../src/main/importer/ipc.ts'
 import { IMPORT_RUN_PLACE_REFUSED, resumeImport, startImport } from '../src/main/importer/service.ts'
 
-const source = fs.readFileSync('src/main/index.ts', 'utf8')
+const source = readMainSource()
 // In the checkout and ignored by Git (`.tw-*`); never the temp dir, never a committed evidence folder.
 const run = fs.mkdtempSync(path.resolve('.tw-protected-folders-'))
 
@@ -92,7 +95,7 @@ function loadHandlers(fixture, hooks = {}) {
     { id: 'gone', name: 'Gone', root: fixture.root, open: true },
   ]
   const context = {
-    ...fs, ...path, ...vaultPaths, console: { ...console, error() {} },
+    ...fs, ...path, ...vaultPaths, pathStaysInside, newTalkSource, randomBytes, console: { ...console, error() {} },
     ipcMain: { handle: (name, fn) => handlers.set(name, fn) },
     readdirAsync: fsp.readdir, resolvePath: path.resolve, pathSep: path.sep, writableRoot, mkdirBelowRoot, resolveInVaults, canonicalOutlinePath, pickOutlineName,
     vaultAvailability: { isUnavailable: (id) => id === 'gone' },

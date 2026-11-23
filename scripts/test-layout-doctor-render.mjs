@@ -1,5 +1,6 @@
 import { strict as assert } from 'node:assert'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { chromium } from 'playwright'
@@ -31,7 +32,7 @@ for (const id of [
   assert(samplerSource.includes(`{id=${id}}`), `${id}: the sampler carries the rendered-geometry fixture`)
 }
 
-const fixtureRoot = mkdtempSync(join(tmpdir(), 'talkweaver-layout-doctor-'))
+const fixtureRoot = testScratchDir(join(tmpdir(), 'talkweaver-layout-doctor-'))
 const fixturePath = join(fixtureRoot, 'layout-doctor-fixture.html')
 const outputDir = join(fixtureRoot, 'report')
 const vaultRoot = join(fixtureRoot, 'vault')
@@ -287,7 +288,7 @@ const mutatedParcelResult = await doctorDeck(mutatedParcelHtmlPath, {
 for (const viewport of ['1600x900', '1280x720']) {
   const mutatedLinks = mutatedParcelResult.slides.find((candidate) => candidate.id === 'type-floor-links')
   assert(
-    mutatedLinks.viewports[viewport].subFloorText.some((finding) => finding.element === 'span.link-url'),
+    mutatedLinks.viewports[viewport].subFloorText.some((finding) => finding.element === 'a.link-url'),
     `${viewport}: mutating the URL below the floor is caught as sub-floor-text`
   )
 }

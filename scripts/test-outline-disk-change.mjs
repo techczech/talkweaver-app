@@ -83,7 +83,7 @@ function editorFor(outlinePath, text, owner = 'win') {
     settled: (p) => outlineWritesSettled(p),
     queue: (p, work) => queueOutlineWrite(p, work),
     diskVersion: (p) => guard.diskVersion(p),
-    accept: (p, hash, opts) => guard.owns(owner, p) ? guard.accept(p, hash, opts) : Promise.resolve({ ok: false, change: null, error: 'not yours' }),
+    accept: (p, hash, opts) => guard.owns(owner, p) ? guard.accept(owner, p, hash, opts) : Promise.resolve({ ok: false, change: null, error: 'not yours' }),
     readBuffer: (p) => p === outlinePath ? ed.text : null,
     replaceBuffer: (p, next) => { if (p !== outlinePath) return false; ed.undo.push(ed.text); ed.text = next; return true },
     saveBuffer: () => ed.save(),
@@ -121,9 +121,9 @@ try {
     assert.equal(changedAtLabel(at, at + 60_000), '09:12')
     assert.match(changedAtLabel(at, at + 3 * 86_400_000), /^09:12 on 28 Sept?$/)
     const words = (kind, extra = {}) => describeDiskChange({ outlinePath: '/c', kind, hash: 'x', changedAt: at, ...extra })
-    assert.equal(words('changed').text, `This talk changed on disk at ${changedAtLabel(at)}`)
-    assert.deepEqual(words('changed').actions.map((a) => a.label), ['Reload', 'Keep mine'])
-    assert.equal(words('changed').sheetTitle, 'This talk changed on disk while you were typing')
+    assert.equal(words('changed').text, 'Disk edits are waiting to be merged with your edits')
+    assert.deepEqual(words('changed').actions.map((a) => a.label), ['Review merge'])
+    assert.equal(words('changed').sheetTitle, 'Review the edits to this talk')
     assert.deepEqual([words('removed').text, ...words('removed').actions.map((a) => a.label)], ['This talk was removed on disk', 'Save it again', 'Discard'])
     const partial = words('partial', { tempPath: '/c/.t.tw-write' })
     assert.ok(partial.text.startsWith('A save failed halfway; the file on disk may be incomplete') && partial.text.includes('/c/.t.tw-write'), 'names the temp copy')
@@ -312,7 +312,7 @@ try {
     writeFileSync(path, OUTLINE + '\n## Theirs\n')
     await ed.save()
     assert.equal(guard.owns('win-b', path), false)
-    const intruder = { ...ed.deps, accept: (p, hash) => guard.owns('win-b', p) ? guard.accept(p, hash) : Promise.resolve({ ok: false, change: null, error: 'This window does not have that talk open, so nothing was accepted.' }) }
+    const intruder = { ...ed.deps, accept: (p, hash) => guard.owns('win-b', p) ? guard.accept('win-b', p, hash) : Promise.resolve({ ok: false, change: null, error: 'This window does not have that talk open, so nothing was accepted.' }) }
     const result = await keepMine(path, store.get(path), intruder)
     assert.equal(result.ok, false, 'refused')
     assert.equal(readFileSync(path, 'utf8'), OUTLINE + '\n## Theirs\n', 'nothing written')
@@ -331,9 +331,9 @@ try {
     assert.equal(store.get(path)?.kind, 'removed')
     const result = await resolveChoice(path, store.get(path), 'keep', ed.deps)
     assert.equal(result.ok, false, 'Save it again fails')
-    assert.match(result.error, /ENOENT/, `and says why: ${result.error}`)
+    assert.match(result.error, /parent folder is gone/, `and says why: ${result.error}`)
     assert.equal(store.get(path)?.kind, 'removed', 'the bar stays')
-    assert.match(describeDiskChange(store.get(path)).text, /^This talk was removed on disk — saving your text failed \(ENOENT/, 'showing the failure')
+    assert.match(describeDiskChange(store.get(path)).text, /^This talk was removed on disk — saving your text failed \(The talk’s parent folder is gone\./, 'showing the missing-folder failure clearly')
     assert.equal(guard.pendingFor('win')?.kind, 'removed', 'main still holds a close for it')
     assert.equal((await recovery.read(canonicalOutlinePath(path)))?.text, OUTLINE + '\n## Mine\n', 'the text is in the recovery copy')
     mkdirSync(folder)

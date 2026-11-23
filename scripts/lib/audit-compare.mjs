@@ -43,14 +43,15 @@ export function faultsOf(state) {
 }
 
 const loose = (key) => { const parts = String(key ?? '').split('|'); return parts.length >= 4 ? `${parts[0]}|${parts.slice(3).join('|')}` : String(key ?? '') }
-/** Pairs after runs with before runs: by key, then tag and text, then text. Returns [{ after, before | null }]. */
+/** Pairs after runs with before runs: by key, then tag and text, then text, finally a caption's unchanged full destination. Returns [{ after, before | null }]. */
 export function pairRuns(after = [], before = []) {
   const left = before.map((run) => ({ run, used: false }))
   const pairs = after.map((run) => ({ after: run, before: null }))
-  for (const ways of [(r) => r.key ?? r.text, (r) => loose(r.key ?? r.text), (r) => r.text]) {
+  for (const ways of [(r) => r.key ?? r.text, (r) => loose(r.key ?? r.text), (r) => r.text, (r) => r.link]) {
     for (const pair of pairs) {
       if (pair.before) continue
       const want = ways(pair.after)
+      if (want == null) continue
       const hit = left.find((b) => !b.used && ways(b.run) === want)
       if (hit) { hit.used = true; pair.before = hit.run }
     }

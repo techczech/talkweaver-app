@@ -22,7 +22,8 @@
 //      Run page refuses extra slides for it in words.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-run-extra-slides.mjs
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -50,7 +51,7 @@ const record = (id, extra = {}) => ({
   plannedDate: '2026-11-04', eventTitle: 'Medical Sciences', startedAt: '2026-11-04T00:00:00.000Z', endedAt: '', ...extra,
 })
 const newVault = (prefix) => {
-  const root = mkdtempSync(join(tmpdir(), prefix))
+  const root = testScratchDir(join(tmpdir(), prefix))
   const talkDir = join(root, '_PRESENTATIONS', 'agents')
   mkdirSync(talkDir, { recursive: true })
   const outlinePath = join(talkDir, 'agents-outline.md')
@@ -138,7 +139,7 @@ const newVault = (prefix) => {
 console.log('ok  1 the Run record keeps extra slides: junk dropped, limits held, refusals in words, bytes back on removal')
 
 // ── 2–3. the compiler ──────────────────────────────────────────────────────────────────────────
-const dir = mkdtempSync(join(tmpdir(), 'tw-run-extra-compile-'))
+const dir = testScratchDir(join(tmpdir(), 'tw-run-extra-compile-'))
 const outline = join(dir, 'agents-outline.md')
 writeFileSync(outline, TALK)
 const compile = async (run) => prepareSource(outline, TALK, 'agents', statSync(outline), undefined, { allowedAssetRoots: [dir], ...(run ? { run } : {}) })
@@ -594,7 +595,7 @@ console.log('ok  4 the Run page keeps extra slides on the Run; the talk\'s outli
     stdin: { contents: "export { RunExtrasSection } from './src/renderer/src/components/RunExtras.tsx'; export { createElement, act } from 'react'; export { createRoot } from 'react-dom/client'", resolveDir: repo, loader: 'tsx' },
     bundle: true, write: false, format: 'cjs', platform: 'node', jsx: 'automatic', logLevel: 'silent', loader: { '.css': 'empty' }, define: { 'process.env.NODE_ENV': '"development"' },
   })
-  const uiDir = mkdtempSync(join(tmpdir(), 'tw-run-extra-ui-'))
+  const uiDir = testScratchDir(join(tmpdir(), 'tw-run-extra-ui-'))
   writeFileSync(join(uiDir, 'ui.cjs'), bundle.outputFiles[0].text)
   const R = createRequire(join(uiDir, 'x.cjs'))('./ui.cjs')
   const doc = dom.window.document

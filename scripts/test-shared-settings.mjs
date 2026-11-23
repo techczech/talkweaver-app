@@ -1,6 +1,7 @@
 // Shared settings (0.40): the command registry seen by @app-patterns/commands, the settings schema, the
 // map to the config.json keys main reads, the move of the old preferences, the overlay, and the
 // settings command line. Plain Node, temporary folders only.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { stripTypeScriptTypes } from 'node:module'
 import { runInNewContext } from 'node:vm'
@@ -14,7 +15,7 @@ import { COMMAND_REGISTRY } from '../src/shared/command-registry.ts'
 import { SHORTCUT_REGISTRY } from '../src/shared/shortcut-registry.ts'
 import { registry, MENUS, UNMENUED_GROUPS, REBINDABLE, bridleIdOf, appCommandIdOf, keymapIdOf, bridleIdOfKeymapId } from '../src/shared/bridle-commands.ts'
 import { chordFromKeyString, keyStringFromChord } from '../src/shared/bridle-chords.ts'
-import { schema, settingsFromConfig, configWithSettings, splitConfigPatch, migrateLegacy, SECRET_KEYS } from '../src/shared/settings-schema.ts'
+import { schema, settingsFromConfig, configWithSettings, splitConfigPatch, migrateLegacy, SECRET_KEYS, THEME_SETTING } from '../src/shared/settings-schema.ts'
 import { runMigration, STAMP_FILE } from '../src/main/settings-migration.ts'
 import { createConfigOverlay } from '../src/main/settings-overlay.ts'
 import { createSecretSlots, recordedKeyChange, splitRecordingKeys } from '../src/main/settings-secret-slots.ts'
@@ -82,7 +83,8 @@ await test('zero chord collisions, every default the shortcut registry gives a m
 })
 
 await test('menu items show the effective chord, overrides included, and never register it', () => {
-  const rebound = registry.bindingsOf({ 'move-slide-up': '⌘⌥⇧9' })
+  const rebound = registry.bindingsOf({ 'format-bold': '⌘⌥⇧9' })
+  assert.notEqual(rebound['format-bold'], registry.bindingsOf({})['format-bold'])
   const menu = buildMenuTemplate({ appName: 'TalkWeaver', registry, menus: MENUS, bindings: rebound, ctx: undefined, run: () => {} })
   assert.equal(menu.filter(item => item.label === 'View' || item.role === 'viewMenu').length, 1)
   assert.ok(!JSON.stringify(menu).includes('forceReload'))
@@ -128,7 +130,7 @@ await test('chords convert both ways for every key the app writes', () => {
 })
 
 await test('app-owned IPC never claims either shared Settings namespace', () => {
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   for (const match of main.matchAll(/(?:ipcMain\.(?:handle|on)|handleFromSettingsWindow)\(\s*'([^']+)'/g)) {
     assert.ok(!/^(?:settings|bridle-settings):/.test(match[1]), match[1])
   }
@@ -142,7 +144,7 @@ await test('image-text search keeps main’s enabled default and migrates an exp
 })
 
 await test('enabling image-text search from Settings or the CLI starts main’s background pass', () => {
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   const source = main.slice(main.indexOf('function preferencesChanged('), main.indexOf('async function startSharedSettings('))
   let enabled = true
   let queued = 0
@@ -214,6 +216,34 @@ const LEGACY = { ...OLD_CONFIG, ...FAKE_SECRETS }
 const openStore = (dir, who = { kind: 'app-update', version: '0.40.0-alpha.1' }) => new SettingsStore({
   dir, app: schema.app, schema, registry: commandsAdapter(registry), appVersion: '0.40.0-alpha.1', migrate: migrateLegacy, watch: false, who, log: () => {}
 })
+await test('General Theme persists, rejects other values, logs changes and resets to System', async () => {
+  const def = schema.def(THEME_SETTING)
+  assert.equal(def.section, 'general')
+  assert.equal(def.default, 'system')
+  assert.deepEqual(def.options.map((option) => option.value), ['system', 'light', 'dark'])
+  const dir = tmp()
+  let store = openStore(dir, { kind: 'you' })
+  try {
+    await store.ready
+    assert.equal((await store.set(THEME_SETTING, 'sepia')).ok, false)
+    assert.equal((await store.set(THEME_SETTING, 'dark')).ok, true)
+    await store.close()
+    store = openStore(dir, { kind: 'you' })
+    await store.ready
+    assert.equal(store.view().settings[THEME_SETTING], 'dark')
+    assert.equal((await store.set(THEME_SETTING, 'light')).ok, true)
+    assert.equal((await store.reset(THEME_SETTING)).ok, true)
+    const { settings, changes } = store.view()
+    assert.equal(settings[THEME_SETTING] ?? def.default, 'system')
+    assert.deepEqual(changes.filter((change) => change.key === THEME_SETTING).map(({ from, to }) => [from, to]), [
+      ['light', 'system'], ['dark', 'light'], ['system', 'dark']
+    ])
+  } finally {
+    await store.close()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 const noSecretsIn = (dir) => {
   for (const name of readdirSync(dir)) {
     if (name === 'config.json') continue
@@ -458,7 +488,7 @@ await test('separate folders: the backup and site folders are checked when set a
   assert.ok(folderInside('/v/site', '/v') && !folderInside('/v', '/v/site'))
   assert.match(separateFolderProblem('/x/backups', 'Backing up', [{ path: '/x', name: 'the published site folder' }]), /overlaps the published site folder/)
   assert.equal(separateFolderProblem('/x/backups', 'Backing up', [{ path: '/y', name: 'the published site folder' }]), null)
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   assert.match(main, /const overlap = backupFolderOverlap\(folder\)/, 'a backup run checks again')
   assert.match(main, /siteFolderOverlap\(siteDir\) \?\? pagesBundlingHazard/, 'a publish checks again')
 })
@@ -709,7 +739,7 @@ await test('review #9: a keyboard move that could not be written answers retry a
   const renderer = readFileSync(new URL('../src/renderer/src/keymap/store.ts', import.meta.url), 'utf8')
   assert.match(renderer, /if \(legacy !== null && r\?\.outcome === 'consumed'\) \{ try \{ window\.localStorage\.removeItem\(STORAGE_KEY\)/, 'the renderer deletes its copy only on consumed')
   assert.equal((renderer.match(/localStorage\.removeItem/g) ?? []).length, 1)
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   assert.match(main, /if \(!settingsKeymap \|\| !overrides\) return \{ outcome: 'retry'/, 'no store yet: retry')
   rmSync(dir, { recursive: true, force: true })
 })
@@ -734,7 +764,7 @@ await test('review #6: setup opens the shared store after the migration and read
   assert.equal(again.migration.kind, 'none', 'the next launch keeps setup’s value')
   assert.equal(again.overlay.read().recordingR2Endpoint, 'https://setup.example.com')
   await again.close()
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   const setupFn = main.slice(main.indexOf('async function runSetupCommand('), main.indexOf('// ── App lifecycle'))
   assert.ok(setupFn.indexOf('() => openSettings(') > 0 && setupFn.indexOf('() => openSettings(') < setupFn.indexOf('createSetupOperations('), 'the store is opened before setup reads anything')
   assert.match(setupFn, /settingsOverlay = opened\.overlay/)
@@ -748,7 +778,7 @@ await test('review #2: every change the Settings window’s own pages make is re
   const lists = [SETTINGS_WINDOW_ONLY, Object.keys(SHARED_CHANGES), Object.keys(DEVICE_WINDOW_CHANGES), READS]
   for (const ch of invoked) assert.equal(lists.filter((l) => l.includes(ch)).length, 1, `${ch} is classified once`)
   for (const l of lists) for (const ch of l) assert.ok(invoked.includes(ch), `${ch} is a channel of the Settings preload`)
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   assert.match(main, /function fromSettingsWindow\(event: IpcMainInvokeEvent\): boolean \{\s*return sharedSettings\?\.host\.isSettingsWindowSender\(event\) === true/, 'the whole event goes to the host')
   assert.match(main, /ipcMain\.handle\(channel, settingsWindowOnly\(fromSettingsWindow, refused, handler\)\)/)
   for (const ch of SETTINGS_WINDOW_ONLY) {
@@ -773,7 +803,7 @@ await test('review #4: the Cloudflare page’s Save and Disconnect log the token
   assert.equal(told, 2, 'the key list is read again after each change')
   assert.ok(!readFileSync(join(dir, 'settings.json'), 'utf8').includes('FAKE-SECRET'), 'never the value')
   await store.close()
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   assert.match(main, /handleFromSettingsWindow\('cloudflare:save-token', cloudflareSettingsOnly, \(_event, token: unknown\) => recordedCloudflareKeyChange\(/)
   assert.match(main, /handleFromSettingsWindow\('cloudflare:disconnect', cloudflareSettingsOnly, \(\) => recordedCloudflareKeyChange\(/)
   assert.match(main, /sharedSettings\.store\.recordSecret\(SECRET_KEYS\.cloudflare, from, to\)/)
@@ -813,7 +843,7 @@ await test('every Settings-window-only change, the recording storage and transcr
     assert.deepEqual(ran, [[FAKE_KEYS]], `${ch}: the handler got the arguments`)
   }
   assert.deepEqual(RECORDING_SETTINGS_ONLY, { success: false, error: 'This can be changed only in the Settings window.' })
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   for (const ch of ['recording:set-storage', 'recording:set-keys', 'recording:clear-keys']) {
     assert.match(main, new RegExp(`handleFromSettingsWindow\\(\\s*'${ch}',\\s*\\(\\) => RECORDING_SETTINGS_ONLY`), `${ch}: refused with the recording reply`)
   }
@@ -852,7 +882,7 @@ await test('Sol review 4: Create site and setting up going live are Settings-win
   // The settings host's check takes the whole event; a stand-in that knows only the Settings window's own page.
   const fromSettingsWindow = (event) => event.sender?.id === SETTINGS && event.senderFrame === top
   const from = (id, frame = top) => ({ sender: { id, mainFrame: top }, senderFrame: frame })
-  const main = readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+  const main = readMainSource()
   const REFUSED = { ok: false, error: 'refused' }
   for (const ch of ['cloudflare:create-site', 'live-service:set-up']) {
     assert.ok(SETTINGS_WINDOW_ONLY.includes(ch), `${ch} is Settings-window-only`)
@@ -866,10 +896,16 @@ await test('Sol review 4: Create site and setting up going live are Settings-win
     assert.deepEqual(guarded(from(SETTINGS)), { ok: true }, `${ch}: the Settings window is allowed`)
     assert.equal(ran, 1)
     assert.match(main, new RegExp(`handleFromSettingsWindow\\(\\s*'${ch}'`), `${ch} goes through the guard`)
-    assert.equal((main.match(new RegExp(`'${ch}'`, 'g')) ?? []).length, 1, `${ch}: one handler`)
+    const handlers = readMainSource((code, file) => file === 'src/main/settings-window-channels.ts'
+      ? code.replace(`\n  '${ch}',`, '')
+      : code)
+    assert.equal((handlers.match(new RegExp(`'${ch}'`, 'g')) ?? []).length, 1, `${ch}: one handler`)
   }
   assert.deepEqual(Object.keys(SHARED_CHANGES).filter((ch) => !ch.startsWith('updates:') && !ch.startsWith('agent-skill:')), [], 'only update-notice preferences and state are shared with the editor')
-  assert.ok(!/setUpAllowedFrom|sharedChangeAllowed/.test(main), 'no editor exception is left in main')
+  const editorExceptions = readMainSource((code, file) => file === 'src/main/live-service.ts'
+    ? code.replace('export function setUpAllowedFrom(', '')
+    : code)
+  assert.ok(!/setUpAllowedFrom|sharedChangeAllowed/.test(editorExceptions), 'no editor exception is left in main')
   // The editor entry points open Settings → Cloudflare instead of asking main to do it.
   const component = (name) => readFileSync(new URL(`../src/renderer/src/components/${name}`, import.meta.url), 'utf8')
   const sheet = component('PublishNotReadySheet.tsx')

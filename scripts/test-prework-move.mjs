@@ -14,8 +14,10 @@
 //      never touches a replacement; a retry with unchanged content reuses the one file); a results
 //      attribute on a line that also holds a comment is rewritten, the comment kept as written.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-prework-move.mjs
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { planPreworkMove, hasPreworkSection } from '../src/shared/prework-move.ts'
@@ -115,7 +117,7 @@ await t('refusals say why and plan nothing', () => {
 
 // ── The write ────────────────────────────────────────────────────────────────────────────────
 function vaultWith(outline) {
-  const root = mkdtempSync(join(tmpdir(), 'tw-prework-move-'))
+  const root = testScratchDir(join(tmpdir(), 'tw-prework-move-'))
   const talk = join(root, 'agents'); mkdirSync(talk)
   const outlinePath = join(talk, 'agents-outline.md')
   writeFileSync(outlinePath, outline)
@@ -185,7 +187,7 @@ await t('an existing work file of that name is never overwritten: the new file t
 
 await t('when the work file cannot be written the outline writer is not asked to change anything', async () => {
   const { root, outlinePath } = vaultWith(OUTLINE)
-  const elsewhere = mkdtempSync(join(tmpdir(), 'tw-prework-move-out-'))
+  const elsewhere = testScratchDir(join(tmpdir(), 'tw-prework-move-out-'))
   symlinkSync(elsewhere, join(root, 'Work files'))
   const result = await movePreworkToWorkFile(root, outlinePath, diskWriter(), compileSteps)
   assert.equal(result.ok, false)
@@ -205,7 +207,7 @@ await t('a talk with no section changes nothing and says so', async () => {
 })
 
 // ── The compiler's note ─────────────────────────────────────────────────────────────────────
-const scratch = mkdtempSync(join(tmpdir(), 'tw-prework-move-compile-'))
+const scratch = testScratchDir(join(tmpdir(), 'tw-prework-move-compile-'))
 const scratchOutline = join(scratch, 'x-outline.md')
 writeFileSync(scratchOutline, '# x\n')
 const compile = async (text) => prepareSource(scratchOutline, text, 'x', statSync(scratchOutline), undefined, { projectionsOnly: true })
@@ -296,14 +298,14 @@ await t('review 1: an unconfirmed save (no reply from the window) keeps the file
 // 2. The IPC handler takes the outline-writing guard: real-path containment and *-outline.md.
 await t('review 2: an outline that is a link to a file outside the vault is refused by the handler\'s guard', () => {
   const { root } = vaultWith(OUTLINE)
-  const outside = mkdtempSync(join(tmpdir(), 'tw-prework-move-outside-'))
+  const outside = testScratchDir(join(tmpdir(), 'tw-prework-move-outside-'))
   writeFileSync(join(outside, 'target-outline.md'), OUTLINE)
   symlinkSync(join(outside, 'target-outline.md'), join(root, 'linked-outline.md'))
   assert.equal(outlineInVault(root, join(root, 'linked-outline.md')).ok, false, 'a link out of the vault')
   writeFileSync(join(root, 'notes.md'), OUTLINE)
   assert.equal(outlineInVault(root, join(root, 'notes.md')).ok, false, 'not an *-outline.md')
   assert.equal(outlineInVault(root, join(root, 'agents', 'agents-outline.md')).ok, true)
-  const src = readFileSync(join(import.meta.dirname, '..', 'src', 'main', 'index.ts'), 'utf8')
+  const src = readMainSource()
   const from = src.indexOf("ipcMain.handle('work-files:move-prework'")
   const handler = src.slice(from, src.indexOf('\n})', from))
   assert.ok(from > 0 && /outlineRefused\(outlinePath\)/.test(handler), 'the handler calls the outline guard')

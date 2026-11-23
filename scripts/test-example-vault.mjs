@@ -3,6 +3,7 @@
 // registry as index.ts wires it (in-memory config.json, real vault-file store, real realpath), the
 // view's example flag, the bundled talks, and render checks of VaultSetup, the Add vault sheet and the
 // vault header. Each rule A to H in the module header has a case here.
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import {
   chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync,
@@ -134,7 +135,7 @@ try {
     const pkg = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8'))
     assert.ok(pkg.build.extraResources.some((r) => r.from === 'resources/example-vault' && r.to === 'example-vault'))
     assert.equal(pkg.build.asar, false)
-    const index = readFileSync(join(REPO, 'src/main/index.ts'), 'utf8')
+    const index = readMainSource()
     assert.ok(index.includes("join(process.resourcesPath, 'example-vault')"), 'the packaged app reads it from resources')
   })
 

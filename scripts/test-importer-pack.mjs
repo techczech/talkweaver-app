@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs'
+import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createRunStorage, loadRun } from '../src/main/importer/storage.ts'
 import { applyImportSuggestion, readImportSuggestions, writeImportCleanupPack } from '../src/main/importer/pack.ts'
 
-const root = mkdtempSync(join(tmpdir(), 'talkweaver-importer-pack-'))
+const root = testScratchDir(join(tmpdir(), 'talkweaver-importer-pack-'))
 const talkDir = join(root, 'talk')
 const runDir = join(talkDir, 'import-runs', 'run-1')
 const outlinePath = join(talkDir, 'talk-outline.md')
@@ -111,7 +112,7 @@ mkdirSync(unsafePack, { recursive: true })
 symlinkSync(outside, join(unsafePack, 'AGENTS.md'))
 assert.throws(() => writeImportCleanupPack({
   runDir, packId: 'unsafe-pack', slideNumbers: [1], passes: ['structural-parity'], resourcesDir, createdAt: now
-}), /importer-file-symlink-refused/)
+}), /atomic-write-symlink-refused/)
 assert.equal(readFileSync(outside, 'utf8'), 'outside unchanged')
 
 console.log('importer pack: exact agent files, evidence, suggestions and symlink safety passed')

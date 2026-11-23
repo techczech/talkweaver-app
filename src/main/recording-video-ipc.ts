@@ -17,6 +17,7 @@ import { editorWords, planDigest, resolveRecording, type EditorTranscript } from
 import { faceTrack, faceTrackOnClock, hasPictureLayers, type CaptureLike, type CaptionWord, type ChapterSlide } from '../shared/recording-video.ts'
 import { TAKE_STEP_OFF_ERROR, TAKES_OFF_ERROR, takesInUse, type TakeClock } from '../shared/recording-takes.ts'
 import { mediaPlaceOf, recordedOnFor, recordedOnOf, type MediaPlace } from '../shared/recording-place.ts'
+import { takeEdges } from '../shared/recording-positions.ts'
 import { isToolsWindowSender } from './talkTextSender.ts'
 
 export type RecordingRef = { talkSlug: string; runId: string; home?: string | null }
@@ -40,8 +41,12 @@ export type RecordingOpen = {
 /** A new take of one slide: its own Run, kept beside this one. */
 export type TakeInfo = {
   run: string; change: number; slideId: string; durationMs: number; startedAt: string; hasCamera: boolean
-  /** The take's own timed words on its own clock (its transcript, precise word timing where it placed them); null until written out. */
-  words: Array<{ text: string; start: number; end: number }> | null
+  /**
+   * The take's own words on its own clock (its transcript, precise word timing where it placed them), every
+   * one of them: `timed: false` for a word it could not place, which the row shows and captions carry with its
+   * timed neighbour, as for a Run. Null until written out.
+   */
+  words: Array<{ text: string; start: number; end: number; timed: boolean }> | null
   /** Whether its recorded files are all there (`missing`: a picture or voice file is gone or unreadable). */
   media: 'ok' | 'missing'
 }
@@ -164,6 +169,8 @@ export function registerRecordingVideoIpc(host: Host) {
     const here = listed.length > 0 || pictures.slides.length > 0 || pictures.camera.length > 0
     return { runId: ref.runId, durationMs, slides: pictures.slides, camera: pictures.camera, voice, missing, here, runTrims: Array.isArray(record.trims) ? record.trims : [], record, vault }
   }
+  /** Whether a take's recorded files are all there: its voice and its slides picture, nothing missing. */
+  const takeMediaOk = (l: Pick<ResolvedLayers, 'missing' | 'voice' | 'slides'>): boolean => !l.missing.length && l.voice.length > 0 && l.slides.length > 0
   /** The takes recorded for a Run: Runs of the same talk and home that name it in `takeOf`. */
   async function takesOf(ref: RecordingRef): Promise<TakeInfo[]> {
     // Off: no take is discovered, so nothing downstream sees one.
@@ -182,10 +189,10 @@ export function registerRecordingVideoIpc(host: Host) {
       let words: TakeInfo['words'] = null
       try {
         const read = await host.readTranscript(vault, ref.talkSlug, r.id)
-        if (read.state === 'ok') words = editorWords(read.transcript, durationMs).words.filter((w) => w.timed).map((w) => ({ text: w.text, start: w.start, end: w.end }))
+        if (read.state === 'ok') words = editorWords(read.transcript, durationMs).words.map((w) => ({ text: w.text, start: w.start, end: w.end, timed: w.timed }))
       } catch { /* not written out: no captions for this take yet */ }
       let media: TakeInfo['media'] = 'missing'
-      try { const l = await layersOf({ talkSlug: ref.talkSlug, runId: r.id, home: ref.home }); if (!l.missing.length && l.voice.length && l.slides.length) media = 'ok' } catch { /* missing */ }
+      try { if (takeMediaOk(await layersOf({ talkSlug: ref.talkSlug, runId: r.id, home: ref.home }))) media = 'ok' } catch { /* missing */ }
       out.push({ run: r.id, change: Math.round(Number(r.takeOf.change)), slideId: typeof r.takeOf.slideId === 'string' ? r.takeOf.slideId : '', durationMs, startedAt: String(r.startedAt ?? ''), hasCamera: !!r.capture?.layers?.camera?.bytes || !!r.capture?.layers?.camera?.segments?.some((x) => x.bytes > 0), words, media })
     }
     return out.sort((a, b) => a.startedAt.localeCompare(b.startedAt))
@@ -201,12 +208,16 @@ export function registerRecordingVideoIpc(host: Host) {
   /**
    * A Run's layers on the video clock: its own files split where takes go in, each chosen take's files
    * placed where its take starts, and the voice the same way. Without takes, the Run's layers as they are.
+   * `takeMissing`: a chosen take's files, read now, are not all there (never exported as a gap).
    */
-  async function layersOnClock(ref: RecordingRef, layers: Awaited<ReturnType<typeof layersOf>>, clock: TakeClock, clockMs: number): Promise<ResolvedLayers> {
-    if (!clock.inserts.length) return layers
+  async function layersOnClock(ref: RecordingRef, layers: Awaited<ReturnType<typeof layersOf>>, clock: TakeClock, clockMs: number): Promise<{ layers: ResolvedLayers; takeMissing: boolean }> {
+    if (!clock.inserts.length) return { layers, takeMissing: false }
     const takeLayers = new Map<string, Awaited<ReturnType<typeof layersOf>>>()
-    for (const i of clock.inserts) takeLayers.set(i.run, await layersOf({ talkSlug: ref.talkSlug, runId: i.run, home: ref.home }))
-    return { ...layers, ...layersOnVideoClock(layers, takeLayers, clock, clockMs) }
+    let takeMissing = false
+    for (const i of clock.inserts) {
+      try { const l = await layersOf({ talkSlug: ref.talkSlug, runId: i.run, home: ref.home }); takeLayers.set(i.run, l); if (!takeMediaOk(l)) takeMissing = true } catch { takeMissing = true }
+    }
+    return { layers: { ...layers, ...layersOnVideoClock(layers, takeLayers, clock, clockMs) }, takeMissing }
   }
   const sender = (event: IpcMainInvokeEvent): boolean => isToolsWindowSender(event.sender, host.toolsWindow())
   const refuse = { ok: false as const, error: 'Open the Run in Studio first.' }
@@ -307,13 +318,14 @@ export function registerRecordingVideoIpc(host: Host) {
       const ref = parseRef(raw)
       const options = (rawOptions ?? {}) as ExportOptions
       const layers = await layersOf(ref)
-      const takes = await takesOf(ref)
-      // Words, then the sidecar (after the last await), then the plan and its fingerprint. Done before the
-      // save panel and again after it, immediately before the export is scheduled: words or edits that
-      // changed meanwhile refuse the export and write nothing.
+      // Words and the takes (their files and their own words), then the sidecar (after the last await),
+      // then the plan and its fingerprint. Done before the save panel and again after it, after the last
+      // preparation and immediately before the export is scheduled: words, takes or edits that changed
+      // meanwhile refuse the export and write nothing.
       const resolveNow = async (): Promise<{ edits: EditsSnapshot; resolved: ReturnType<typeof resolveRecording>; segments: Array<{ start: number; end: number; text: string }> } | { refuse: Record<string, unknown> }> => {
         let words: WordsRead
         try { words = await host.readTranscript(layers.vault, ref.talkSlug, ref.runId) } catch { words = { state: 'unreadable' } }
+        const takes = await takesOf(ref)
         if (words.state === 'unreadable' && !options.withoutWords) return { refuse: { ok: false, wordsUnreadable: true, error: UNREADABLE } }
         // "Export without captions" is for words that cannot be read. If they can be read again, the
         // wordless plan is stale: refuse and let the window go back to the plan with its words.
@@ -344,11 +356,19 @@ export function registerRecordingVideoIpc(host: Host) {
         buttonLabel: 'Export'
       })
       if (chosen.canceled || !chosen.filePath) return { ok: false, cancelled: true }
-      // The save panel waited on the owner: words or edits may have changed. Resolve again and compare.
+      // The save panel waited on the owner: words, takes or edits may have changed. Resolve again, compose
+      // the layers on the video clock (a chosen take's files must all be there), then resolve once more
+      // after that last preparation and compare with what the save panel was opened for.
+      const mid = await resolveNow()
+      if ('refuse' in mid) return mid.refuse
+      const composed = await layersOnClock(ref, layers, mid.resolved.clock, mid.resolved.clockMs)
+      if (composed.takeMissing) return { ok: false, error: TAKE_MISSING }
       const now = await resolveNow()
       if ('refuse' in now) return now.refuse
-      if (now.edits.edits.revision !== before.edits.edits.revision || planDigest(now.resolved, now.segments) !== planDigest(before.resolved, before.segments)) return { ok: false, stale: true, error: STALE }
-      const { edits, resolved, segments } = now
+      const sameClock = JSON.stringify(now.resolved.clock.inserts) === JSON.stringify(mid.resolved.clock.inserts) && now.resolved.clockMs === mid.resolved.clockMs
+      if (!sameClock || now.edits.edits.revision !== before.edits.edits.revision || planDigest(now.resolved, now.segments) !== planDigest(before.resolved, before.segments)) return { ok: false, stale: true, error: STALE }
+      const { edits, resolved } = now
+      const onClock = composed.layers
       const { destination, replace } = exportDestination(chosen.filePath, audioOnly ? '.m4a' : '.mp4')
       const slides: Record<string, ChapterSlide> = {}
       for (const [id, s] of Object.entries(options.slides ?? {}).slice(0, 5000)) {
@@ -360,10 +380,9 @@ export function registerRecordingVideoIpc(host: Host) {
       const target = event.sender
       const send = (state: ExportState): void => { if (!target.isDestroyed()) target.send('recording-video:export-progress', { jobId, ...state } satisfies ExportProgress) }
       // Started after this reply, so the window knows the job before its first progress report.
-      // On the video clock: the Run's layers with each chosen take where its slide starts.
-      const onClock = await layersOnClock(ref, layers, resolved.clock, resolved.clockMs)
+      // On the video clock (composed above): the Run's layers with each chosen take where its slide starts.
       setImmediate(() => void exporter.run({
-        layers: onClock, cuts: resolved.clockCuts, camera: edits.edits.finish.camera, evenVolume: edits.edits.finish.evenVolume, smoothJoins: edits.edits.finish.smoothJoins, faces: faceTrackOnClock(faceTrack(resolved.rows, edits.edits.faces, layers.durationMs), resolved.clock), replace,
+        layers: onClock, cuts: resolved.clockCuts, camera: edits.edits.finish.camera, evenVolume: edits.edits.finish.evenVolume, smoothJoins: edits.edits.finish.smoothJoins, edges: takeEdges(resolved.clock), faces: faceTrackOnClock(faceTrack(resolved.rows, edits.edits.faces, layers.durationMs), resolved.clock, edits.edits.faces), replace,
         extras: { captions: !!options.captions && !options.withoutWords, chapterList: !!options.chapterList && !audioOnly, sound: !!options.sound && !audioOnly },
         destination, title, enters: resolved.chapterMarks, slides,
         words: resolved.captionSource === 'words' ? resolved.captionWords : [], segments: resolved.captionSegments

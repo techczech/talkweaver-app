@@ -29,6 +29,7 @@ import { strict as assert } from 'node:assert'
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import ts from 'typescript'
 import { computerState } from '../src/main/live-service.ts'
 import {
   LIVE_APP_OLDER, LIVE_KEYS_FAILED, LIVE_KEY_NOT_ADDED, LIVE_KEY_NOT_STORED, LIVE_KEY_UNREADABLE, LIVE_NOT_ACCEPTED_YET, LIVE_OVERWRITTEN, LIVE_SETUP_FAILED, LIVE_UPDATE_PENDING, LIVE_UNREACHABLE,
@@ -44,7 +45,7 @@ import { validComputerId as workerValidComputerId } from '../worker/admin-keys.t
 import { WORKERS_SUBDOMAIN, createFakeCloudflare, fakeCloudflareFetch, workerDomainId } from './lib/cloudflare-api-stub.mjs'
 import { instantClock, keyProfile, liveWorkerDouble } from './lib/live-worker-double.mjs'
 import { workerDistFiles } from './lib/worker-dist.mjs'
-import { readSource } from './lib/read-source.mjs'
+import { functionBody, readMainSource, readSource } from './lib/read-source.mjs'
 
 const {
   ACCEPT_WAIT_MS, KEY_BLOB_FORMAT, KEY_UNREADABLE, KeyStoreUnreadable, acceptedKey, buildNumber, computerNameOrNull, createComputerKeyStore, defaultComputerName, keyBlob, keyIsFor,
@@ -288,9 +289,27 @@ const legacyEntry = { accountId: ACCOUNT, workerName: NAME, computerId: 'legacy'
   const portsSource = readSource(join(repo, 'src/main/live-service-key.ts')).split('export interface ComputerKeyStorePorts')[1].split('\n}\n')[0]
   assert.ok(!/\bcomputerId\b/.test(portsSource) && /settings\?: \{ fields\(\): string\[\]; remove\(field: string\): void \}/.test(portsSource), 'the store has no port that reads an id from Settings')
   // The main process hands the store that port over config.json, and names the field nowhere itself.
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   assert.match(main, /settings: \{ fields: \(\) => Object\.keys\(readConfig\(\)\), remove: \(field\) => writeConfig\(\{ \[field\]: undefined \}/, 'the store is given config.json\'s field names and the removal of one')
-  assert.equal(main.match(/computerId: [^,}\s]+/g), null, 'and the main process writes no id to config.json')
+  const configSource = readMainSource((code, file) => {
+    if (file === 'src/main/live-service-key.ts') {
+      return code
+        .replace('  computerId: string\n', '')
+        .replace('computerId: LEGACY_COMPUTER_ID, key: blob.adminSecret', '')
+        .replace('computerId: LEGACY_COMPUTER_ID, key: blob.adminSecret', '')
+        .replace('computerId: blob.computerId, key: blob.adminSecret', '')
+        .replace('computerId: newComputerId(random), key: random(32)', '')
+    }
+    if (file === 'src/main/live-service-upload.ts') {
+      return code
+        .replace('computerSecretName(computerId: string)', 'computerSecretName()')
+        .replace('scriptName: string, computerId: string): PlannedRequest', 'scriptName: string): PlannedRequest')
+        .replace('addKeyBody(computerId: string, key: string)', 'addKeyBody(key: string)')
+        .replace('type KeyToRemove = { computerId: string }', 'type KeyToRemove = {}')
+    }
+    return code
+  })
+  assert.equal(configSource.match(/computerId: [^,}\s]+/g), null, 'and the main process writes no id to config.json')
 
   // Names: the host name without .local, cut to what the live service takes (worker/computers.ts).
   assert.deepEqual([defaultComputerName('Studio-Mac.local'), defaultComputerName('  pc  '), defaultComputerName(''), [...defaultComputerName('x'.repeat(200))].length], ['Studio-Mac', 'pc', 'This computer', 64])
@@ -1128,7 +1147,11 @@ const ownSecret = (pc, id = ACCOUNT, address = ADDRESS) => `ADMIN_SECRET_${pc.ke
   assert.deepEqual(await acceptedKey({ ...io(), fetch: async () => new Response('Unauthorized', { status: 401 }) }, service(), pc.keys()), { answer: 'unknown', key: null, others: null })
   at.worker().values.set('ADMIN_SECRET', LEGACY_KEY)
   // Go live in the main process sends its request through that function, with the keys held for the recorded live service only.
-  const goLive = readSource(join(repo, 'src/main/index.ts'))
+  const goLive = readMainSource((code, file) => file === 'src/main/live-service-key.ts'
+    ? code.replace('export async function isAdminRefusal(', '')
+      .replace('if (await isAdminRefusal(response))', '')
+      .replace('if (!await isAdminRefusal(response))', '')
+    : code)
   assert.ok(/await sendWithHeldKeys\(recordedLiveService\(\), liveKeysHeldFor\(endpoint\.baseUrl\), endpoint\.adminSecret, \(secret\) => fetch\(`\$\{endpoint\.baseUrl\}\/sessions`/.test(goLive) && /if \(refused\) throw new LiveServiceError\('failed', LIVE_ACCESS_REMOVED/.test(goLive) && !goLive.includes('isAdminRefusal'))
   // Every other request that carries this computer's key (a share, a Run's results link, pre-work) goes
   // through one helper with the same rules (live-admin-request.ts). State here: the 0.38.2 key works,
@@ -1156,36 +1179,120 @@ const ownSecret = (pc, id = ACCOUNT, address = ADDRESS) => `ADMIN_SECRET_${pc.ke
   // `Bearer` header written in src/main, by file: an owner's or a presenter's token, the Cloudflare
   // token, the two probes of ONE named key (live-service-key.ts), and the two senders.
   {
-    const files = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? files(join(dir, entry.name)) : /\.tsx?$/.test(entry.name) ? [join(dir, entry.name)] : []))
+    const files = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const path = join(dir, entry.name)
+      if (entry.isDirectory()) return files(path)
+      return /\.tsx?$/.test(entry.name) || entry.name.endsWith('.js') || entry.name.endsWith('.mjs') ? [path] : []
+    })
     const mainDir = join(repo, 'src/main')
-    const bearers = {}
-    const naming = []
+    const sources = new Map()
+    const registrations = []
     for (const file of files(mainDir)) {
-      const code = readSource(file).replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1')
+      const code = readSource(file)
       const name = file.slice(mainDir.length + 1)
-      const found = [...code.matchAll(/Bearer \$\{([^}]*)\}/g)].map((match) => match[1])
-      if (found.length) bearers[name] = found
-      assert.ok(!/Bearer(?! \$\{)/.test(code), `${name}: a Bearer header written some other way than \`Bearer \${…}\``)
-      if (/adminSecret/.test(code)) naming.push(name)
+      const ast = ts.createSourceFile(file, code, ts.ScriptTarget.Latest, true)
+      const visit = (node) => {
+        if (ts.isCallExpression(node)
+            && ts.isPropertyAccessExpression(node.expression)
+            && node.expression.expression.getText(ast) === 'ipcMain' && node.expression.name.text === 'handle'
+            && node.arguments[0] && ts.isStringLiteral(node.arguments[0]) && node.arguments[0].text === 'live:go'
+            && node.arguments[1] && ts.isArrowFunction(node.arguments[1])) {
+          registrations.push({ name, start: node.getStart(ast), end: node.end })
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(ast)
+      sources.set(name, code)
     }
-    assert.deepEqual(bearers, {
-      'cloudflare-connection.ts': ['token'],
-      'index.ts': ['secret', 'record.presenterToken', 'record.presenterToken'],
-      'live-admin-request.ts': ['key'],
-      'live-service-key.ts': ['key.key', 'key.key'],
-      'live-session-history.ts': ['record.presenterToken', 'record.presenterToken'],
-      // Read-only Pages inventory uses the named Cloudflare publish authorisation.
-      'observation/cloudflare-inventory.ts': ['token'],
-      // Per-talk publishing's requests: the Cloudflare token handed over by the publish authorisation, or the upload token
-      // Cloudflare issued for it (never a key of this computer).
-      'pages-direct-upload.ts': ['init.auth'],
-      'owner-tokens.ts': ['ownerToken'],
-      'shared-talk-owner-socket.ts': ['options.ownerToken'],
-    }, 'a new Bearer header in src/main: if it carries this computer\'s key it goes through sendAsAdmin (live-admin-request.ts)')
-    // The key an endpoint carries is named only where endpoints are made and in the helper: no module that uses one reads it.
-    assert.deepEqual(naming.sort(), ['index.ts', 'live-admin-request.ts', 'live-service-deploy.ts', 'live-service-key.ts', 'live-service.ts'])
-    // In index.ts it is read twice: by Go live's request, and to hand the helper its endpoint; and the three services get that endpoint.
-    assert.deepEqual([(goLive.match(/endpoint\.adminSecret/g) ?? []).length, (goLive.match(/endpoint: \(\) => liveAdminEndpoint\(\),/g) ?? []).length, /endpoint: \(\) => ensureLiveWorker\(\)/.test(goLive)], [2, 3, false])
+    if (registrations.length !== 1) throw new Error(`Expected one live:go registration, found ${registrations.length}`)
+    const { name, start, end } = registrations[0]
+    const owner = sources.get(name)
+    const live = owner.slice(start, end)
+    sources.set(name, owner.slice(0, start) + '\n' + owner.slice(end))
+    const liveRegistration = 'live:go registration'
+    sources.set(liveRegistration, live)
+
+    const checkKeySources = (parts) => {
+      const cleaned = new Map([...parts].map(([name, text]) => [
+        name, text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:'"`])\/\/[^\n]*/g, '$1'),
+      ]))
+      // Attribute the registration to the original wiring group for the existing Bearer audit.
+      const wiring = new Map(cleaned)
+      wiring.set('index.ts', cleaned.get(liveRegistration) + '\n' + cleaned.get('index.ts'))
+      wiring.delete(liveRegistration)
+      const bearers = {}
+      const naming = []
+      for (const [name, code] of wiring) {
+        const found = [...code.matchAll(/Bearer \$\{([^}]*)\}/g)].map((match) => match[1])
+        if (found.length) bearers[name] = found
+        assert.ok(!/Bearer(?! \$\{)/.test(code), `${name}: a Bearer header written some other way than \`Bearer \${…}\``)
+        if (/adminSecret/.test(code)) naming.push(name)
+      }
+      assert.deepEqual(bearers, {
+        'cloudflare-connection.ts': ['token'],
+        'index.ts': ['secret', 'record.presenterToken', 'record.presenterToken'],
+        'live-admin-request.ts': ['key'],
+        'live-service-key.ts': ['key.key', 'key.key'],
+        'live-session-history.ts': ['record.presenterToken', 'record.presenterToken'],
+        // Read-only Pages inventory uses the named Cloudflare publish authorisation.
+        'observation/cloudflare-inventory.ts': ['token'],
+        // Per-talk publishing's requests: the Cloudflare token handed over by the publish authorisation, or the upload token
+        // Cloudflare issued for it (never a key of this computer).
+        'pages-direct-upload.ts': ['init.auth'],
+        'owner-tokens.ts': ['ownerToken'],
+        'shared-talk-owner-socket.ts': ['options.ownerToken'],
+      }, 'a new Bearer header in src/main: if it carries this computer\'s key it goes through sendAsAdmin (live-admin-request.ts)')
+      // The key an endpoint carries is named only where endpoints are made and in the helper.
+      assert.deepEqual(naming.sort(), ['index.ts', 'live-admin-request.ts', 'live-service-deploy.ts', 'live-service-key.ts', 'live-service.ts'])
+
+      // Check each physical file and the one movable registration independently, including uses outside headers.
+      const keyNames = {}
+      for (const [name, code] of cleaned) {
+        const counts = {}
+        for (const [field] of code.matchAll(/\b(?:secret|presenterToken|adminSecret)\b/g)) {
+          counts[field] = (counts[field] ?? 0) + 1
+        }
+        if (Object.keys(counts).length) keyNames[name] = counts
+      }
+      assert.deepEqual(keyNames, {
+        [liveRegistration]: { adminSecret: 1, secret: 2, presenterToken: 2 },
+        'index.ts': { secret: 1, presenterToken: 2, adminSecret: 13 },
+        'live-admin-request.ts': { adminSecret: 2 },
+        'live-presenter-client.ts': { presenterToken: 4 },
+        'live-service-deploy.ts': { adminSecret: 2 },
+        'live-service-key.ts': { adminSecret: 5 },
+        'live-service-upload.ts': { secret: 1 },
+        'live-service.ts': { adminSecret: 9 },
+        'live-session-history.ts': { presenterToken: 2 },
+        'live-session-manager.ts': { presenterToken: 2 },
+        'live-session-store.ts': { presenterToken: 2 },
+        'recording-storage.ts': { secret: 1 },
+        'settings-migration.ts': { secret: 1 },
+        'setup-cli.ts': { secret: 9 },
+      }, 'unexpected secret or presenter token use in main-process source')
+    }
+    checkKeySources(sources)
+    const plantedFile = 'unregistered-key-use.ts'
+    for (const [file, planted] of [
+      [plantedFile, 'export const header = (secret) => `Bearer ${secret}`'],
+      [plantedFile, 'export const header = (presenterToken) => `Bearer ${presenterToken}`'],
+      [plantedFile, 'export const read = (input) => input.secret'],
+      [plantedFile, 'export const read = (record) => record.presenterToken'],
+      [plantedFile, 'export const read = (endpoint) => endpoint.adminSecret'],
+      ['index.ts', 'export const read = (record) => record.presenterToken'],
+      ['live-service.ts', 'export const read = (endpoint) => endpoint.adminSecret'],
+    ]) {
+      const altered = new Map(sources)
+      altered.set(file, [altered.get(file), planted].join('\n'))
+      assert.throws(() => checkKeySources(altered),
+        (error) => error.code === 'ERR_ASSERTION' && error.message.includes(file))
+    }
+    // The live wiring reads it in the Go live request and when giving the helper its endpoint.
+    // sendAsAdmin consumes its own port separately.
+    const endpointReaders = readMainSource((code, file) => file === 'src/main/live-admin-request.ts'
+      ? code.replace('held?.keys ?? [], endpoint.adminSecret, (key)', 'held?.keys ?? [], (key)')
+      : code)
+    assert.deepEqual([(endpointReaders.match(/endpoint\.adminSecret/g) ?? []).length, (goLive.match(/endpoint: \(\) => liveAdminEndpoint\(\),/g) ?? []).length, /endpoint: \(\) => ensureLiveWorker\(\)/.test(goLive)], [2, 3, false])
     assert.ok(/return \{ baseUrl: endpoint\.baseUrl, adminSecret: endpoint\.adminSecret, held: \{ at: recordedLiveService\(\), keys: liveKeysHeldFor\(endpoint\.baseUrl\) \} \}/.test(goLive))
     for (const [file, route] of [['shared-talk-steps.ts', '`${base}/shares`'], ['run-results-share.ts', '`${endpoint.baseUrl}/results`'], ['run-prework.ts', '`${origin}/prework`']]) {
       const code = readSource(join(mainDir, file))
@@ -1276,8 +1383,11 @@ const ownSecret = (pc, id = ACCOUNT, address = ADDRESS) => `ADMIN_SECRET_${pc.ke
   const attaches = accounts.flatMap(({ fake }) => fake.requests.filter((request) => request.path.endsWith('/domains/records')).map((request) => JSON.parse(request.body.toString())))
   assert.ok(attaches.length >= 4 && attaches.every((body) => Object.entries(body).every(([field, value]) => !field.startsWith('override') || value === false) && body.origins.length === 1))
   // The main process attaches and removes only through this action, which keeps this computer's list in config.json.
-  const main = readSource(join(repo, 'src/main/index.ts'))
-  assert.ok(!/attachShareDomain|detachShareDomain|domains\/records|workers\/domains\//.test(main) && /changeShareAddress\(shareDomainPorts\(\), \{ wanted \}\)/.test(main) && /read: \(\) => shareDomainRecords\(\)/.test(main) && /write: \(entries\) => writeConfig\(\{ liveWorkerShareDomains: entries, liveWorkerShareDomain: undefined, liveWorkerShareDomainPrevious: undefined \}\)/.test(main), 'the main process hands the action the wanted address and config.json\'s list, and nothing else')
+  const main = readMainSource()
+  const domainSource = readMainSource((code, file) => file === 'src/main/live-service-share-domain.ts'
+    ? code.replace('/workers/scripts/${ports.workerName}/domains/records', '').replace('/workers/domains/${id}', '')
+    : code)
+  assert.ok(!/attachShareDomain|detachShareDomain|domains\/records|workers\/domains\//.test(domainSource) && /changeShareAddress\(shareDomainPorts\(\), \{ wanted \}\)/.test(main) && /read: \(\) => shareDomainRecords\(\)/.test(main) && /write: \(entries\) => writeConfig\(\{ liveWorkerShareDomains: entries, liveWorkerShareDomain: undefined, liveWorkerShareDomainPrevious: undefined \}\)/.test(main), 'the main process hands the action the wanted address and config.json\'s list, and nothing else')
   console.log('PASS 14: a second computer\'s set-up and two code updates send no DELETE and touch no domain or route; the share-address action attaches exactly its one hostname, never with an override, and removes only hostnames on this computer\'s own list')
 }
 
@@ -1349,9 +1459,17 @@ const ownSecret = (pc, id = ACCOUNT, address = ADDRESS) => `ADMIN_SECRET_${pc.ke
   // The 0.38.2 signing value is never sent anywhere, and the 0.38.2 key only ever as a bearer to its own live service.
   for (const request of wire) assert.ok(request.bearer !== LEGACY_SIGNING && request.bearer !== TOKEN)
   // The sources: the key is never written to Settings, logged, or put in an IPC payload.
-  const main = readSource(join(repo, 'src/main/index.ts'))
+  const main = readMainSource()
   assert.ok(!/writeConfig\(\{[^}]*(adminSecret|signingSecret|\bkey:)/.test(main), 'config.json never holds a key')
-  assert.ok(!/signingSecret|SIGNING/.test(main.slice(0, main.indexOf('async function startLocalLiveWorker('))), 'the main process keeps no signing secret')
+  const signingSource = readMainSource((code, file) => {
+    if (file === 'src/main/index.ts') return code.replace(functionBody(code, 'startLocalLiveWorker'), '')
+    if (file === 'src/main/live-service-key.ts') {
+      return code.replace(functionBody(code, 'readKeyBlob'), '')
+        .replace('//      wrote ({adminSecret, signingSecret}) is read as ONE `legacy` entry, for the account Settings', '')
+    }
+    return code
+  })
+  assert.ok(!/signingSecret|SIGNING/.test(signingSource), 'the main process keeps no signing secret')
   for (const file of ['live-service-key.ts', 'live-service-deploy.ts', 'live-service-upload.ts', 'live-service.ts', 'live-service-share-domain.ts']) {
     const source = readSource(join(repo, 'src/main', file))
     assert.ok(!/console\.|appendFile|writeFileSync/.test(source), `${file} logs and writes nothing`)

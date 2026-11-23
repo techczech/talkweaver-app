@@ -1,10 +1,11 @@
+import { readMainSource } from './lib/read-source.mjs'
 import { tmpdir as fixtureTmpdir } from 'node:os'
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import vm from 'node:vm'
 import {transformSync} from 'esbuild'
-const source=fs.readFileSync('src/main/index.ts','utf8')
+const source=readMainSource()
 const root=fs.mkdtempSync(path.join(fixtureTmpdir(),'tw-gallery-fs-'))
 try{
  const handlers=new Map();let held=false

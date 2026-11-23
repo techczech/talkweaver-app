@@ -1,7 +1,7 @@
 {
   "garden-notes": {
     "slides": 14,
-    "sha256": "956a53bcc51852cd60d3dd4dcef23c279e7ca87d7b9c3fae782aabd4d0df6ffc"
+    "sha256": "255de11bbb7335f79f0e1b934972eb58a62b889b5a47e5747ca0ffb9b4e8b2e6"
   },
   "harvest-supper-draft": {
     "slides": 10,
@@ -9,15 +9,15 @@
   },
   "lightning-round": {
     "slides": 10,
-    "sha256": "e0f9d7bb1760a61e58bd6bf826c7331d1ce6b78db3655f0cfa072c1a1c13614d"
+    "sha256": "f8ceff4ba049a4abb01af8b65f7ed63e7533deedd3b5e769262c58ff4f29807c"
   },
   "the-saturday-market": {
-    "slides": 25,
-    "sha256": "86fa6fe994e4b995976893c35dbf06d0fa95d23eab3d2bebcf3513ded5b3330b"
+    "slides": 26,
+    "sha256": "57653e5807926607cba4b67c53cc4914829889dd1a477d0ee0d0ed8e83ce645e"
   },
   "walking-the-old-town": {
     "slides": 30,
-    "sha256": "84a9662d871c7c179c05d8288dcd7acc2eb16d728a35bde5abbafe3239e9df36"
+    "sha256": "10324fcbdbea62f4cb8f664b19e47235532f3658278d08ead0c8108bca102e20"
   },
   "braces-that-are-not-icons": {
     "slides": 7,

@@ -2,11 +2,16 @@ export declare const LABEL_RE: RegExp
 export declare const UNKNOWN_LABEL_RE: RegExp
 export declare const NEAREST_LABEL: Readonly<Record<string, string>>
 export declare const TURN_ROLES: readonly string[]
+export declare const NATIVE_TURN_KINDS: readonly string[]
 export declare const PROMPT_ONLY_RE: RegExp
 export declare const COMMAND_RE: RegExp
 export type SegmentKind = 'turns' | 'shell' | 'trace'
 export interface TurnRow {
   role: string
+  envelope?: boolean
+  label?: string
+  options?: string
+  detail?: string
   duration: string | null
   content: string
   headOnLabel: boolean
@@ -32,13 +37,13 @@ export interface TraceSegments { kind: 'trace'; indent?: number; preamble: strin
 export type Segments = TurnSegments | ShellSegments | TraceSegments
 export type AnyRow = TurnRow | ShellRow | TraceRow
 export declare function bodyLineEnding(body: string): '\n' | '\r\n'
-export declare function splitTurnSegments(body: string): TurnSegments
+export declare function splitTurnSegments(body: string, options?: { version?: number }): TurnSegments
 export declare function splitShellSegments(body: string): ShellSegments
 export declare function splitTraceSegments(body: string): TraceSegments
-export declare function splitSegments(kind: 'turns', body: string): TurnSegments
-export declare function splitSegments(kind: 'shell', body: string): ShellSegments
-export declare function splitSegments(kind: 'trace', body: string): TraceSegments
-export declare function splitSegments(kind: SegmentKind, body: string): Segments
+export declare function splitSegments(kind: 'turns', body: string, options?: { version?: number }): TurnSegments
+export declare function splitSegments(kind: 'shell', body: string, options?: { version?: number }): ShellSegments
+export declare function splitSegments(kind: 'trace', body: string, options?: { version?: number }): TraceSegments
+export declare function splitSegments(kind: SegmentKind, body: string, options?: { version?: number }): Segments
 export declare function turnContentHints(content: string): Array<{ line: number; word: string; nearest: string }>
 export type EditedRow = Record<string, unknown> & { original?: AnyRow }
 export declare function serialiseSegments(kind: SegmentKind, body: string, split: Segments, rows: EditedRow[], preamble?: string[]): string

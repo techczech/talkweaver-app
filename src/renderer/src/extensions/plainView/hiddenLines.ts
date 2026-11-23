@@ -58,7 +58,7 @@
 //    settling below and the key guard read `protectedRegions`, never the decorations.
 import { Decoration, EditorView, keymap, type DecorationSet } from '@codemirror/view'
 import {
-  Annotation, EditorSelection, EditorState, Prec, StateField, Transaction,
+  Annotation, EditorSelection, EditorState, Facet, Prec, StateField, Transaction,
   type Extension, type Range, type Text
 } from '@codemirror/state'
 import { notify } from '../../lib/notify'
@@ -252,16 +252,25 @@ export function protectedRegions(doc: Text, focus: FocusRange | null = null): Pr
  * line the caret is on, a line or tail group a non-empty selection, a Find match, sits in).
  * Display only: what is protected is `protectedRegions`. `focus` clips to Slide Focus's band.
  */
-export function computeHidden(doc: Text, sel: readonly SelRange[], focus: FocusRange | null): HiddenState {
+const concealLayoutCodes = Facet.define<boolean, boolean>({ combine: values => values.some(Boolean) })
+
+/** An empty slide starts with a bare id on its heading. Its first typed space belongs to the title. */
+export function keepsTypedTitleSpace(tr: Transaction, head: number, firstGroup: number | undefined): boolean {
+  return tr.startState.facet(concealLayoutCodes) && tr.docChanged && tr.isUserEvent('input.type') &&
+    firstGroup === head && tr.changes.mapPos(tr.startState.selection.main.head, 1) === head &&
+    tr.newDoc.sliceString(head - 1, head) === ' '
+}
+
+export function computeHidden(doc: Text, sel: readonly SelRange[], focus: FocusRange | null, hideCodes = false): HiddenState {
   const regions: HiddenRegion[] = []
   const tails: TailState[] = []
   const deco: Range<Decoration>[] = []
   const atomic: Range<Decoration>[] = []
 
   const revealedLine = (from: number, to: number): boolean =>
-    sel.some((r) => r.empty ? r.head >= from && r.head <= to : r.from >= from && r.to <= to)
+    !hideCodes && sel.some((r) => r.empty ? r.head >= from && r.head <= to : r.from >= from && r.to <= to)
   const revealedSpan = (from: number, to: number): boolean =>
-    sel.some((r) => !r.empty && r.from < to && r.to > from)
+    !hideCodes && sel.some((r) => !r.empty && r.from < to && r.to > from)
 
   const { headings, runs } = structure(doc, focus)
   // The first drawn stretch of each run that starts directly under its line above, by that line's end.
@@ -337,11 +346,15 @@ function selRanges(sel: EditorState['selection']): SelRange[] {
  * and inside an icon group when the caret was already at the end of the text or past it on that
  * line (`walking`: it stepped in from there to edit the icon's name).
  */
-function settleTail(pos: number, tails: readonly TailState[], walking: (tail: TailState) => boolean): number {
+function settleTail(
+  pos: number, tails: readonly TailState[],
+  walking: (tail: TailState) => boolean, typedSpace: (tail: TailState, pos: number) => boolean
+): number {
   for (const t of tails) {
     if (pos <= t.textEnd || pos > t.lineTo) continue
     if (t.revealed.some((g) => pos >= g.from && pos <= g.to)) return pos
     if (t.groups.some((g) => g.icon && pos >= g.from && pos <= g.to) && walking(t)) return pos
+    if (typedSpace(t, pos)) return pos
     return t.textEnd
   }
   return pos
@@ -365,11 +378,11 @@ function settleRun(pos: number, runs: readonly RunStructure[], was: readonly num
 }
 
 const hiddenField = StateField.define<HiddenState>({
-  create: (state) => computeHidden(state.doc, selRanges(state.selection), currentFocusRange(state)),
+  create: (state) => computeHidden(state.doc, selRanges(state.selection), currentFocusRange(state), state.facet(concealLayoutCodes)),
   update(value, tr) {
     // Focus range effects arrive in the same transaction; read it from the NEW state's facet.
     if (!tr.docChanged && !tr.selection && !tr.effects.length) return value
-    return computeHidden(tr.newDoc, selRanges(tr.newSelection), focusAfter(tr))
+    return computeHidden(tr.newDoc, selRanges(tr.newSelection), focusAfter(tr), tr.startState.facet(concealLayoutCodes))
   },
   provide: (f) => [
     EditorView.decorations.from(f, (v) => v.deco),
@@ -410,9 +423,10 @@ const filter = EditorState.transactionFilter.of((tr) => {
   // theirs can) goes round it. A caret that was already on those lines stays among them.
   // The runs are the document's own (the compiler's answer, kept by the document), wherever in a
   // slide they stand; a `{…}` line that is in no run moves no caret.
-  const runs = !tr.docChanged && tr.isUserEvent('select') ? structure(doc, null).runs : []
+  const hideCodes = tr.startState.facet(concealLayoutCodes)
+  const runs = !tr.docChanged && (hideCodes || tr.isUserEvent('select')) ? structure(doc, null).runs : []
   if (runs.length) {
-    const was = tr.startState.selection.ranges.filter((r) => r.empty).map((r) => r.head)
+    const was = hideCodes ? [] : tr.startState.selection.ranges.filter((r) => r.empty).map((r) => r.head)
     ranges = ranges.map((r) => {
       const anchor = settleRun(r.anchor, runs, was), head = settleRun(r.head, runs, was)
       if (anchor === r.anchor && head === r.head) return r
@@ -449,8 +463,11 @@ const filter = EditorState.transactionFilter.of((tr) => {
       const before = headingTail(line.from, line.text)
       return !!before && was.head >= before.textEnd
     }
+    const typedSpace = (tail: TailState, pos: number): boolean =>
+      keepsTypedTitleSpace(tr, pos, tail.groups[0]?.from)
     ranges = ranges.map((r) => {
-      const anchor = settleTail(r.anchor, tails, walking), head = settleTail(r.head, tails, walking)
+      const anchor = settleTail(r.anchor, tails, walking, typedSpace)
+      const head = settleTail(r.head, tails, walking, typedSpace)
       if (anchor === r.anchor && head === r.head) return r
       moved = true
       return EditorSelection.range(anchor, head)
@@ -578,8 +595,9 @@ export function tailOnLine(state: EditorState, lineFrom: number): TailState | nu
   return state.field(hiddenField, false)?.tails.find((t) => t.lineFrom === lineFrom) ?? null
 }
 
-export function hiddenLinesExtension(): Extension {
+export function hiddenLinesExtension(hideCodes = false): Extension {
   return [
+    concealLayoutCodes.of(hideCodes),
     hiddenField,
     filter,
     removalNotice,

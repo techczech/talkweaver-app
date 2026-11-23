@@ -62,7 +62,7 @@ mkdirSync(sisDir, { recursive: true })
 mkdirSync(userDataDir, { recursive: true })
 writeFileSync(join(fxDir, 'focus-fixture-outline.md'), FIX)
 writeFileSync(join(sisDir, 'sister-talk-outline.md'), SISTER)
-writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault }, null, 2))
+writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault, editorViewMode: 'markdown' }, null, 2)) // the fixture clicks raw '### ' lines
 
 await ensureFreshBuild(REPO)
 const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
@@ -132,6 +132,18 @@ try {
     await page.frameLocator('.lt-stage-frame iframe').locator('body', { hasText: 'Shared idea slide' })
       .waitFor({ timeout: 8000 })
     const firstText = await stageBodyText()
+    // The deck frame's sandbox (FIXED_DECK_SANDBOX): its own origin and storage still work, but it
+    // cannot navigate the editor window.
+    const sandbox = (await iframe.getAttribute('sandbox')) || ''
+    const deckFrame = page.frames().find((f) => f.url().startsWith('twpresent://preview/'))
+    const storage = deckFrame ? await deckFrame.evaluate(() => { try { localStorage.setItem('tw-e2e', '1'); return localStorage.getItem('tw-e2e') === '1' ? 'ok' : 'lost' } catch (e) { return String(e) } }) : 'no frame'
+    const editorUrl = page.url()
+    const topNav = deckFrame ? await deckFrame.evaluate(() => { try { window.top.location.href = 'https://example.invalid/'; return 'not refused' } catch { return 'refused' } }) : 'no frame'
+    const bridge = deckFrame ? await deckFrame.evaluate(() => { try { return window.parent.tw === undefined && window.top.tw === undefined ? 'unreachable' : 'REACHABLE' } catch { return 'unreachable' } }) : 'no frame'
+    await page.waitForTimeout(300)
+    record('deck preview is sandboxed: scripts and storage work, Chromium refuses the top navigation, window.tw is out of reach',
+      sandbox.split(' ').includes('allow-scripts') && !sandbox.includes('allow-top-navigation') && storage === 'ok' && topNav === 'refused' && bridge === 'unreachable' && page.url() === editorUrl,
+      `sandbox="${sandbox}" storage=${storage} topNav=${topNav} bridge=${bridge} editorUnchanged=${page.url() === editorUrl}`)
     const rendered =
       (await stage.evaluate((node) => node.tagName)) === 'DIV'
       && firstSrc.startsWith('twpresent://preview/')
@@ -149,7 +161,9 @@ try {
     )
     await page.frameLocator('.lt-stage-frame iframe').locator('body', { hasText: 'EDITEDXYZ' })
       .waitFor({ timeout: 8000 })
-    const after = await stageBodyText()
+    // A later debounced compile can be reloading the frame at the moment of a single read; poll.
+    let after = ''
+    for (let i = 0; i < 20 && !after.includes('EDITEDXYZ'); i++) { after = await stageBodyText(); if (!after.includes('EDITEDXYZ')) await page.waitForTimeout(250) }
     record('stage renders the slide and refreshes (debounced) after an in-band edit',
       rendered && after.includes('EDITEDXYZ'), `rendered=${rendered} updated=${after.includes('EDITEDXYZ')}`)
   }

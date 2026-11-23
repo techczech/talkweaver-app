@@ -16,6 +16,7 @@
 //      state through leaving / a dot / Mark all read, exports with no participant or entry id;
 //   9. the timer counts what waits (one owner-token request, nothing pulled); a pull clears it; markSeen.
 // Usage: node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-run-prework-results.mjs
+import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -340,7 +341,7 @@ const pass = (name) => { results.push(name); console.log(`PASS  ${name}`) }
     assert.equal((await seedPollForRun({ ...open, seed: [{ column: open.options[0].optionId, text: 'From a window' }] }, { talkSlug: SLUG }, deps(DUP_TALK))).seed, undefined, 'a window\'s own seed never survives')
     assert.equal((await seedPollForRun({ ...open, type: 'open', options: [] }, { talkSlug: SLUG, runId: RUN_ID, vaultRoot: root }, deps(DUP_TALK))).seed, undefined)
     // The app\'s handler calls the glue and drops a window\'s seed before it (source check on the real handler).
-    const indexSource = (await import('node:fs')).readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
+    const indexSource = readMainSource()
     assert.match(indexSource, /seedPollForRun\(poll, liveSessions\?\.record\(wcId\)/, 'index.ts seeds through seedPollForRun')
     assert.match(indexSource, /seedFromRunPrework\(event\.sender\.id, withoutSeed\(message\.poll\)\)/, 'index.ts drops a window\'s seed, then seeds')
     pass('the glue: a repeated title seeds its second slide by the compiler\'s id; no Run, a missing Run, a compile failure and a window\'s seed all leave the board empty')

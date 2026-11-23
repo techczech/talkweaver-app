@@ -7,7 +7,7 @@
 // Used by test-ocean-look-dom.mjs (and its --record-main mode, which writes the origin/main reference).
 import { walkSlides } from './slide-readability.mjs'
 
-function clippingProbe() {
+export function clippingProbe() {
   const slide = document.querySelector('.stage > .slide.active')
   if (!slide) throw new Error('no active slide to measure clipping')
   const stage = slide.getBoundingClientRect()
@@ -18,7 +18,16 @@ function clippingProbe() {
     const r = e.getBoundingClientRect()
     return r.width > 0 && r.height > 0
   }
-  const keyOf = (e) => `${e.tagName.toLowerCase()}|${(e.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 48) || [...e.classList].slice(0, 2).join('.')}`
+  // The historical collected-links reference displayed the full URL in a span. Keep
+  // that same source identity when its caption becomes a shorter live link; geometry
+  // and clipping are still measured on the actual element in front of the audience.
+  const identityText = e => {
+    if (e.nodeType === 3) return e.textContent
+    if (e.nodeType !== 1) return ''
+    if (e.matches('.link-url')) return e.getAttribute('href') || e.getAttribute('title') || e.textContent
+    return [...e.childNodes].map(identityText).join('')
+  }
+  const keyOf = e => `${e.matches('.link-url') ? 'span' : e.tagName.toLowerCase()}|${identityText(e).replace(/\s+/g, ' ').trim().slice(0, 48) || [...e.classList].slice(0, 2).join('.')}`
   const clips = []
   for (const e of slide.querySelectorAll('*')) {
     if (e.closest('.notes, .sr-only, iframe, svg') && e.tagName.toLowerCase() !== 'svg') continue

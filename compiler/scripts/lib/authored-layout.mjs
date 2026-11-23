@@ -140,7 +140,9 @@ const ABSORBING_LAYOUTS = new Set(["contrast", "compare", "columns", "cards", "i
  *   `authorTokens` = the sorted author keys that overrode it (empty unless `structural && !divider`).
  */
 export function sectionDividerDecision(slide, authoredKeys, authoredLayout) {
-  const structural = Boolean(slide?.isSection)
+  // An explicitly named divider can exist before its first child is written.
+  const explicit = DIVIDER_ROLES.has(slide?.treeNode?.attrs?.role);
+  const structural = (Boolean(slide?.isSection) || explicit)
     && !(slide?.lines || []).some((line) => String(line).trim())
     && (slide?.cards || []).length === 0;
   if (!structural) return { divider: false, structural: false, foldRefused: false, authorTokens: [] };
@@ -464,7 +466,9 @@ export function foldChildLayoutNodes(rootNodes, { deckTriggerDefaults = {}, warn
     node._foldedCards = children.map((child) => {
       const childAttrs = { ...deckTriggerDefaults, ...(child.attrs || {}) };
       const childLines = nodeContentLinesAndAttrs(child, childAttrs);
-      return { title: child.title, lines: childLines };
+      return { title: child.title, lines: childLines,
+        ...(childAttrs.title === "off" || (childAttrs.notitle === true && !["show", "top", "side"].includes(childAttrs.title)) ? { noTitle: true } : {}),
+        ...(childAttrs["media-title"] === "overlay" ? { mediaTitle: "overlay" } : {}) };
     });
     absorbFoldedChildren(node, children);
     node.children = [];
@@ -518,7 +522,9 @@ export function foldChildLayoutNodes(rootNodes, { deckTriggerDefaults = {}, warn
         node._compareHalves = children.slice(0, 2).map((child) => {
           const childAttrs = { ...deckTriggerDefaults, ...(child.attrs || {}) };
           const childLines = nodeContentLinesAndAttrs(child, childAttrs);
-          return { title: child.title, lines: childLines };
+          return { title: child.title, lines: childLines,
+        ...(childAttrs.title === "off" || (childAttrs.notitle === true && !["show", "top", "side"].includes(childAttrs.title)) ? { noTitle: true } : {}),
+        ...(childAttrs["media-title"] === "overlay" ? { mediaTitle: "overlay" } : {}) };
         });
         if (children.length > 2) warnings.push(`compare-extra-groups:${node.title}`);
         // Extra groups are not drawn (warned above), but their notes are the author's and still

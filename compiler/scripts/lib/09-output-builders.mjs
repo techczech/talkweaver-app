@@ -2,7 +2,7 @@ import { escapeHtml, qrGeneratorSource, overviewRuntimeSource, slideFitRuntimeSo
 import { withoutScripts } from "./04-html-extraction.mjs";
 import { plainInlineText } from "./00-inline-render.mjs";
 import { renderLicenseBody } from "./08-source-adapters.mjs";
-import { simulationStatic } from "./simulation-layout.mjs";
+import { simulationStatic, simulationTranscript } from "./simulation-layout.mjs";
 import { quoteFormScriptBlocks, quoteFormStatic } from "./quote-forms-static.mjs";
 import { liveFollowRuntimeSource } from "../../assets/runtime/live-follow.js";
 import { instantSlideStyles } from "../../assets/runtime/instant-slide.js";
@@ -31,16 +31,13 @@ import { lazySlideAssetsStyles, lazySlideAssetsRuntimeSource } from "../../asset
 // =============================================================================
 
 // Live-presenting ticket 04 (frame V6): the talk's QR overlay on the venue screen. Same shape as
-// the presenter template's .qr-fullscreen — the code large, the short link written the way
-// someone would copy it down (scheme, www. and trailing slash dropped) with the talk id in bold.
+// the presenter template's .qr-fullscreen — the code large and the complete original address
+// in regular display type, with wrap opportunities at slashes and hyphens.
 function venueTalkQrMarkup(svg, url) {
-  const written = String(url || "").replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^www\./i, "").replace(/\/+$/, "");
-  const slash = written.indexOf("/");
-  const link = slash > 0
-    ? `<span>${escapeHtml(written.slice(0, slash))}</span><strong>${escapeHtml(written.slice(slash))}</strong>`
-    : escapeHtml(written);
+  const written = String(url || "");
+  const link = escapeHtml(written).replace(/([/\-])/g, "$1<wbr>");
   return `<div class="qr-fullscreen venue-talk-qr" id="venueTalkQr" role="dialog" aria-label="QR code, full screen" hidden>`
-    + `<div class="qr-fs-code">${svg || ""}</div>${written ? `<div class="qr-fs-url">${link}</div>` : ""}</div>`;
+    + `<div class="qr-fs-code">${svg || ""}</div>${written ? `<div class="qr-fs-url" title="${escapeHtml(written)}" aria-label="${escapeHtml(written)}">${link}</div>` : ""}</div>`;
 }
 
 // `sharedTalk` (ticket 04, share for comments): true, or { proposals, ownerName }, builds the page the
@@ -103,11 +100,15 @@ export function buildShareHtml({ title, slides, styles, includeNotes, slug, lice
   const liveControls = workerBaseUrl
     ? '<button class="btn follow-live-btn" id="followLiveBtn" type="button" hidden><span class="live-dot" aria-hidden="true"></span><span class="btn-label">Stop following</span></button><button class="btn return-live-btn" id="returnToPresenterBtn" type="button" hidden>Return to presenter</button><label class="live-name" id="liveNameWrap" hidden>Your name <input id="liveName" type="text" placeholder="optional" autocomplete="name"></label><span class="live-follow-status" id="liveFollowStatus" role="status" aria-live="polite" hidden></span>'
     : "";
+  const transcripts = venue ? '' : slides.map((slide, index) => {
+    const transcript = simulationTranscript(slide.html);
+    return transcript ? `<section class="sim-transcript" data-transcript-index="${index}">${transcript}</section>` : '';
+  }).join('');
   const slideMarkup = slides.map((slide, index) => {
     const notes = includeNotes && slide.notes
       ? `<aside class="notes">${withoutScripts(slide.notes)}</aside>`
       : "";
-    return quoteFormStatic(simulationStatic(stripAudioElements(slide.html, { keepPlayOnNext: venue })), slide.quoteSource)
+    return quoteFormStatic(simulationStatic(stripAudioElements(slide.html, { keepPlayOnNext: venue })), slide.quoteSource).replace(/<template class="sim-transcript-source">[\s\S]*?<\/template>/g, "")
       .replace(/<section\b([^>]*)>/i, `<section$1 data-share-index="${index}">`)
       .replace(/<\/section>\s*$/i, `${notes}</section>`);
   }).join("\n\n");
@@ -134,6 +135,22 @@ ${styles}
 ${audienceEmbedStyles}
 ${sharedTalk && !venue ? sharedTalkStyles : ""}
 ${homeOn ? handoutHomeStyles : ""}
+body:has(> .sim-transcripts) { overflow-y: auto; }
+.sim-transcripts { width: min(100%, 1000px); margin: 24px auto; padding: 20px; color: #16181d; background: #fff; box-sizing: border-box; }
+.sim-transcripts:has(> :not([hidden])) { display: block; }
+.sim-transcripts:not(:has(> :not([hidden]))) { display: none; }
+.sim-transcript article { margin: 22px 0; }
+.sim-transcript h3 { font-size: 22px; margin-bottom: 8px; }
+.sim-transcript h4 { margin-bottom: 8px; }
+.sim-transcript pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 18px/1.5 ui-monospace, Menlo, monospace; }
+.sim-phone-transcript pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 16px/1.5 ui-monospace, Menlo, monospace; }
+@media screen and (max-width: 699px) { .sim-transcripts { display: none !important; } }
+@media print {
+  .sim-transcripts { display: block !important; width: 100%; margin: 0; padding: 0; }
+  .sim-transcript[hidden], .sim-transcript { display: block !important; break-before: page; }
+  .sim-transcript h2, .sim-transcript h3, .sim-transcript h4 { break-after: avoid; }
+}
+
 ${lazyOn ? lazySlideAssetsStyles : ""}
 body { margin: 0; }
 .presenter-root, #presenterBtn { display: none !important; }
@@ -415,12 +432,12 @@ html, body, .share-shell { width: 100%; height: 100%; overflow: hidden; }
 .venue-closing { position: absolute; right: 4%; top: 13%; z-index: 4; width: 25%; display: grid; justify-items: center; gap: 12px; padding: 25px; box-sizing: border-box; background: #fffdf2; color: #17202a; text-align: center; font: 700 28px system-ui, sans-serif; }
 .venue-closing svg { display: block; width: 100%; height: auto; background: white; }
 .venue-closing small { font-size: 16px; font-weight: 400; overflow-wrap: anywhere; }
-.venue-talk-qr { position: fixed; inset: 0; z-index: 300; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; background: #17202aee; padding: 5vh 5vw; box-sizing: border-box; }
+.venue-talk-qr { position: fixed; inset: 0; z-index: 300; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 24px; background: #17202a; padding: 4vh 4vw; box-sizing: border-box; overflow: auto; }
 .venue-talk-qr[hidden] { display: none !important; }
-.venue-talk-qr .qr-fs-code { width: min(60vh, 70vw); background: #fff; padding: clamp(16px, 2.4vw, 32px); border-radius: 14px; line-height: 0; box-sizing: border-box; }
-.venue-talk-qr .qr-fs-code svg { display: block; width: 100%; height: auto; }
-.venue-talk-qr .qr-fs-url { color: #e8eef5; font: 400 max(34px, 5vw)/1.15 system-ui, sans-serif; word-break: break-all; max-width: 92vw; text-align: center; }
-.venue-talk-qr .qr-fs-url strong { font-weight: 800; color: #ffffff; }
+.venue-talk-qr .qr-fs-code { width: min(48vh, 65vw); flex: 0 0 auto; background: #fff; padding: clamp(16px, 2.4vw, 32px); border-radius: 14px; line-height: 0; box-sizing: border-box; }
+.venue-talk-qr .qr-fs-code :is(svg, img) { display: block; width: 100%; height: auto; }
+.venue-talk-qr .qr-fs-url { color: #fff; font: 400 clamp(28px, 3vw, 64px)/1.2 system-ui, sans-serif; word-break: normal; overflow-wrap: anywhere; max-width: 92vw; text-align: center; }
+.venue-talk-qr .qr-fs-url strong { font-weight: 400; color: inherit; }
 ` : ''}
 </style>
 </head>
@@ -461,6 +478,7 @@ ${slideMarkup}
     </div>
   </footer>
 </main>
+${transcripts ? `<div class="sim-transcripts">${transcripts}</div>` : ""}
 <aside class="nav-panel" id="navPanel" aria-label="Slide overview">
   <button class="btn" id="closeOverview" type="button"><span class="btn-label">Close</span></button>
   <h2>Overview
@@ -995,7 +1013,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
     if (event.target?.tagName === "IMG" && event.target.closest(".stage > .slide.active")) scheduleSlideFit();
   }, true);
   if (document.fonts && document.fonts.ready) document.fonts.ready.then(scheduleSlideFit);
-  document.fonts?.addEventListener("loadingdone", scheduleSlideFit);
+  slideFit.watchFonts(scheduleSlideFit);
 
   /* ---- ADR-0018 phone view: LIST of slides -> slide detail -> rotated full screen ----
      The list clones each real slide onto its own fixed canvas (the mechanism the overview
@@ -1150,10 +1168,21 @@ ${hasMermaid ? mermaidVendorSource : ""}
     setPhoneTitle(title, i);
     host.appendChild(title);
 
+    const transcript = document.querySelector('.sim-transcript[data-transcript-index="' + i + '"]');
+    if (transcript) {
+      const copy = transcript.cloneNode(true);
+      copy.hidden = false;
+      copy.className = 'sim-phone-transcript';
+      copy.removeAttribute('data-transcript-index');
+      copy.querySelector('h2')?.remove();
+      host.appendChild(copy);
+    }
+
     var blocks = SLIDE_SCRIPT[i];
     if (!blocks || !blocks.length) return;
 
     blocks.forEach(function (block) {
+      if (transcript && block.simulationTranscript) return;
       if (block.type === "list") {
         var root = document.createElement("ul");
         var stack = [root];
@@ -1361,6 +1390,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   }, { passive: true });
 
   function render() {
+    document.querySelectorAll('.sim-transcript').forEach((part) => { part.hidden = Number(part.dataset.transcriptIndex) !== index; });
     slides.forEach((slide, slideIndex) => slide.classList.toggle("active", slideIndex === index));
     fitStage();
     // The script companion must follow the slide from EVERY navigation path — full-screen swipe,
@@ -2068,13 +2098,23 @@ ${hasMermaid ? mermaidVendorSource : ""}
   }
   function initMermaids(root) {
     if (!root || typeof window.mermaid === "undefined") return;
+    if (slideFit.afterFonts(root, initMermaids)) return;
     const hosts = root.querySelectorAll ? root.querySelectorAll(".mermaid-mm:not([data-mmd-done])") : [];
     hosts.forEach((host) => {
       const box = host.getBoundingClientRect();
       if (box.width <= 0 || box.height <= 0) return;
       host.dataset.mmdDone = "1";
       const src = host.getAttribute("data-mmd-src") || "";
-      window.mermaid.render("mmd-" + Math.random().toString(36).slice(2), src)
+      const family = slideFit.fontFamily(host);
+      let graphSource = src;
+      if (family) {
+        // Mermaid reads a leading YAML block before it looks for init directives.
+        const frontmatter = /^([^\S\r\n]*)---[^\S\r\n]*\r?\n.*?\r?\n\1---[^\S\r\n]*\r?\n/s.exec(src);
+        const bodyStart = frontmatter?.[0].length ?? 0;
+        const init = "%%{init:" + JSON.stringify({ fontFamily: family, themeVariables: { fontFamily: family } }) + "}%%\n";
+        graphSource = src.slice(0, bodyStart) + init + src.slice(bodyStart);
+      }
+      window.mermaid.render("mmd-" + Math.random().toString(36).slice(2), graphSource)
         // Accepted risk N-6: deck output has no DOMPurify; test:mermaid-vendor-security pins Mermaid's strict internal sanitisation at this innerHTML boundary.
         .then((r) => { host.innerHTML = r.svg; })
         .catch((e) => {
@@ -2105,11 +2145,15 @@ ${hasMermaid ? mermaidVendorSource : ""}
       const ratio = this.options.fitRatio;
       const scale = Math.min(width / w * ratio, height / h * ratio, max);
       const t = window.d3.zoomIdentity.translate((width - w * scale) / 2 - x1 * scale, (height - h * scale) / 2 - y1 * scale).scale(scale);
+      // The slide can be hidden or its predrawn SVG replaced before this transition starts.
+      // D3's default extent reads a relative SVG length that no longer resolves then.
+      this.zoom.extent([[0, 0], [width, height]]);
       return this.transition(this.svg).call(this.zoom.transform, t).end().catch(() => {});
     };
   }
   function initMarkmaps(root) {
     if (!root) return;
+    if (slideFit.afterFonts(root, initMarkmaps)) return;
     const mm = window.markmap;
     if (!mm || !mm.Transformer || !mm.Markmap) return;
     const hosts = root.querySelectorAll ? root.querySelectorAll(".mindmap-mm") : [];
@@ -2240,11 +2284,10 @@ ${hasMermaid ? mermaidVendorSource : ""}
     const qrs = Array.from(slide.querySelectorAll(".slide-qr .qr-code svg")).map((svg) => {
       try {
         const fig = svg.closest("figure");
-        const cap = fig && fig.querySelector(".qr-caption");
         return {
           src: "data:image/svg+xml;base64," + btoa(unescape(encodeURIComponent(svg.outerHTML))),
           alt: "QR code",
-          caption: (cap && cap.textContent || "QR code").trim(),
+          caption: svg.closest(".qr-code")?.getAttribute("data-qr-url") || "QR code",
           isQr: true
         };
       } catch (e) { return null; }
@@ -2280,17 +2323,20 @@ ${hasMermaid ? mermaidVendorSource : ""}
     lightboxImg.src = entry.src;
     lightboxImg.alt = entry.alt;
     // QR entries get URL-display treatment (.qr-focus, shared CSS): the caption is the URL
-    // someone is about to write down — split at the first slash, path (short id) emboldened.
+    // someone is about to read — complete, with breaks at slashes and hyphens.
     lightbox.classList.toggle("qr-focus", Boolean(entry.isQr));
     const cap = (entry.caption || "").trim();
-    const slash = entry.isQr ? cap.indexOf("/") : -1;
-    if (slash > 0) {
-      const host = document.createElement("span");
-      host.textContent = cap.slice(0, slash);
-      const path = document.createElement("strong");
-      path.textContent = cap.slice(slash);
-      lightboxCaption.replaceChildren(host, path);
+    lightboxCaption.replaceChildren();
+    if (entry.isQr) {
+      lightboxCaption.title = cap;
+      lightboxCaption.setAttribute("aria-label", cap);
+      cap.split(/(?<=[/\-])/).forEach((part, index, parts) => {
+        lightboxCaption.appendChild(document.createTextNode(part));
+        if (index < parts.length - 1) lightboxCaption.appendChild(document.createElement("wbr"));
+      });
     } else {
+      lightboxCaption.removeAttribute("title");
+      lightboxCaption.removeAttribute("aria-label");
       lightboxCaption.textContent = cap;
     }
     lightboxCounter.textContent = (lbIndex + 1) + " / " + lbImages.length;
