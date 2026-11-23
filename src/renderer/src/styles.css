@@ -47,11 +47,13 @@ html, body, #root {
   border: none; padding: 9px 11px; border-radius: 8px; font-size: 13px; color: var(--ink);
   cursor: pointer; font-family: var(--font-ui); white-space: nowrap;
 }
-.toolbar-menu-item:hover { background: var(--hover); }
+.toolbar-menu-item:hover:not(:disabled, [aria-disabled="true"]) { background: var(--hover); }
 .toolbar-menu-item svg { color: var(--muted); }
-.toolbar-menu-item:hover svg { color: var(--accent-text); }
+.toolbar-menu-item:hover:not(:disabled, [aria-disabled="true"]) svg { color: var(--accent-text); }
 .toolbar-menu-item.is-danger,
 .toolbar-menu-item.is-danger svg { color: #b3261e; }
+.toolbar-menu-item:is(:disabled, [aria-disabled="true"]) { color: var(--muted); cursor: default; }
+.toolbar-menu-item:is(:disabled, [aria-disabled="true"]) svg { color: var(--faint); }
 .toolbar-menu-hint { margin-left: auto; padding-left: 18px; font-size: 11px; color: var(--faint); font-family: var(--font-mono); }
 /* T27: hairline between command groups inside one menu (the object inserts under Insert). */
 .toolbar-menu-separator { height: 1px; margin: 5px 8px; background: var(--line); }
@@ -715,7 +717,8 @@ html, body, #root {
 .tw-inspector { height: 100%; display: flex; flex-direction: column; overflow-y: auto; container-type: size; background: var(--panel); border-left: 1px solid var(--line); color: var(--ink); }
 .tw-inspector:focus { outline: none; }
 .tw-inspector-preview-head { flex: none; padding: 14px 14px 12px; }
-.tw-inspector-pane { flex: 1 1 auto; min-height: 160px; overflow-y: auto; overflow-anchor: none; overscroll-behavior: contain; padding: 0 14px 48px; }
+/* The scrollbar must not change the content width while the long list sizes its trailing space. */
+.tw-inspector-pane { flex: 1 1 auto; min-height: 160px; overflow-y: auto; scrollbar-gutter: stable; overflow-anchor: none; overscroll-behavior: contain; padding: 0 8px 48px 14px; }
 .tw-inspector-pane > .tw-inspector-unresolved { margin-top: 2px; }
 .tw-inspector-nav { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .tw-inspector-nav button,

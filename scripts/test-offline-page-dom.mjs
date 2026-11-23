@@ -41,39 +41,47 @@ try {
   const workspace = readFileSync('src/renderer/src/components/WorkspaceLayout.tsx', 'utf8')
   const callback = workspace.slice(workspace.indexOf('  const saveOffline = useCallback('), workspace.indexOf('  // Capture embed…', workspace.indexOf('  const saveOffline = useCallback(')))
   const harness = await build({ stdin: { resolveDir: process.cwd(), loader: 'tsx', contents: `
-import React, { useCallback } from 'react'; import { createRoot } from 'react-dom/client'; import { flushSync } from 'react-dom'
+import React, { useCallback, useState } from 'react'; import { createRoot } from 'react-dom/client'; import { flushSync } from 'react-dom'
 import Inspector from './src/renderer/src/components/Inspector'
 import {selectOfflinePage,offlinePageReplacement,type OfflinePageSelection} from './src/renderer/src/lib/offlinePage'
-let buffer='', messages=[], captures=0
+let buffer='', messages=[], captures=0, fixtureId=0
 const activeTalkRef={current:{outlinePath:'/fixture/outline.md'}}, inspectedNowRef={current:0}, slideLinesRef={current:[1]}, offlineSavingRef={current:false}, inspectorCommitInProgressRef={current:false}
 const editorReadRef={current:()=>({text:buffer})}, editorReplaceRef={current:text=>{buffer=text;return text}}
 const notify=message=>messages.push(message), setOfflineSaving=()=>{}
 window.tw={vault:{talkDefaults:async()=>null,onVaultsChanged:()=>()=>{},talkActivity:async()=>[],onTalkActivityChanged:()=>()=>{}},slide:{renderPreview:async()=>null},htmlPage:{saveOffline:async()=>{captures++;return {ok:true,embedPath:'assets/offline.html',images:0,dataFiles:0,omitted:0}}}}
 const root=createRoot(document.body.appendChild(document.createElement('div')))
 function App(){
+const [page, setPage] = useState('home')
+const slide = { slide_id: 'offline-fixture', title: 'A', layout: 'default', role: 'content', warnings: [] }
 ${callback}
 window.menuSave=saveOffline
-return <Inspector talk={{outlinePath:'/fixture/outline.md'}} compiledSlides={null} outlineContent={buffer} triggerFindings={[]} activeIndex={0} headingLine={1} onSaveOffline={saveOffline} onCommitOption={()=>null} onBoardEdit={()=>false} />
+return <Inspector talk={{outlinePath:'/fixture/outline.md'}} compiledSlides={[slide]} page={page} onPageChange={setPage} onTry={()=>{}} outlineContent={buffer} triggerFindings={[]} activeIndex={0} headingLine={1} onSaveOffline={saveOffline} onCommitOption={()=>null} onBoardEdit={()=>false} />
 }
-window.fixture=text=>{buffer=text;messages=[];captures=0;flushSync(()=>root.render(<App key={text}/>))}
+window.fixture=text=>{buffer=text;messages=[];captures=0;flushSync(()=>root.render(<App key={++fixtureId}/>))}
 window.result=()=>({buffer,messages,captures})
-` }, bundle: true, jsx: 'automatic', platform: 'browser', format: 'iife', write: false, logLevel: 'silent' })
+` }, bundle: true, jsx: 'automatic', platform: 'browser', format: 'iife', outfile: 'offline-inspector.js', write: false, logLevel: 'silent' })
   const caller = await browser.newPage()
-  await caller.addScriptTag({content:harness.outputFiles[0].text})
+  const callerErrors = []
+  caller.on('pageerror', error => callerErrors.push(error.message))
+  await caller.addStyleTag({content:harness.outputFiles.find(file=>file.path.endsWith('.css')).text})
+  await caller.addScriptTag({content:harness.outputFiles.find(file=>file.path.endsWith('.js')).text})
   const url = 'https://example.org/page'
   const embed = `[Embed: ${url}]`, simulation = `[Simulation: ${url}]`
   const copied = `[Embed: assets/offline.html]\n\n[Original page](<${url}>)`
   const first = `### A\n${url}\n${embed}\n${embed}`
   await caller.evaluate(text=>window.fixture(text),first)
+  await caller.getByRole('button',{name:/^Web page/}).click()
   await caller.getByRole('button',{name:'Save offline copy',exact:true}).first().click()
   await caller.waitForFunction(()=>window.result().captures===1 && window.result().buffer.includes('assets/offline.html'))
   assert.equal((await caller.evaluate(()=>window.result())).buffer,`### A\n${url}\n${copied}\n${embed}`)
   const mixed = `### A\n${simulation}\n${embed}`
   await caller.evaluate(text=>window.fixture(text),mixed)
+  await caller.getByRole('button',{name:/^Web page/}).click()
   await caller.getByRole('button',{name:'Save offline copy',exact:true}).nth(1).click()
   await caller.waitForFunction(()=>window.result().buffer.includes('assets/offline.html'))
   assert.equal((await caller.evaluate(()=>window.result())).buffer,`### A\n${simulation}\n${copied}`)
   await caller.evaluate(text=>window.fixture(text),mixed)
+  await caller.getByRole('button',{name:/^Web page/}).click()
   await caller.getByRole('button',{name:'Save offline copy',exact:true}).first().click()
   await caller.waitForFunction(()=>window.result().buffer.includes('assets/offline.html'))
   assert.equal((await caller.evaluate(()=>window.result())).buffer,`### A\n[Simulation: assets/offline.html]\n\n[Original page](<${url}>)\n${embed}`)
@@ -84,6 +92,7 @@ window.result=()=>({buffer,messages,captures})
   assert.equal(refused.buffer,duplicate)
   assert.equal(refused.captures,0)
   assert.deepEqual(refused.messages,['This slide has more than one copy of that page. Select the one to save in the Inspector.'])
+  assert.deepEqual(callerErrors, [], 'Inspector navigation and offline save raise no page errors')
   console.log('PASS: real Inspector to Workspace replacement for bare URL plus two Embeds, Simulation plus Embed, and menu ambiguity refusal before capture')
   console.log('PASS: 14 offline DOM, resource isolation and inert supporting-data assertions')
 } finally { await browser.close() }

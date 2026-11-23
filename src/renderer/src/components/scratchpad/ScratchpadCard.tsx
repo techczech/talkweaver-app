@@ -2,6 +2,7 @@
 // highlighted title, group tag, and the buttons that belong to its list.
 import { useEffect, useState } from 'react'
 import { highlightSegments, TYPE_BADGE, type ScratchGroup, type ScratchItem } from '../../../../shared/scratchpad'
+import { readSlides } from '../../../../shared/insert-section'
 import { thumbUrl } from '../../lib/thumbUrl'
 import { noteSourceThumbUnavailable, onThumbRegen, slidePictureFor, thumbRegenNonce } from '../../lib/scratchpadSourceThumbs'
 
@@ -10,14 +11,18 @@ export function Highlight({ text, terms }: { text: string; terms: readonly strin
 }
 
 export function ItemBadges({ item, inTalk = false }: { item: ScratchItem; inTalk?: boolean }): JSX.Element {
-  if (item.kind === 'slide') return <><span className="sp-badge sp-badge--from">From: {item.slide?.talkTitle}</span>{inTalk && <span className="sp-badge sp-badge--from">In talk</span>}</>
-  return (
-    <>
-      <span className="sp-badge sp-badge--agent">Made by agent</span>
-      <span className="sp-badge sp-badge--type">{TYPE_BADGE[item.fileKind ?? 'pic']}</span>
-      {item.missing && <span className="sp-badge sp-badge--missing">File missing</span>}
-    </>
-  )
+  const type = item.kind === 'proposed' ? 'Proposed slide' : item.kind === 'slide' ? 'Picked slide' : item.fileKind === 'sketch' ? 'Sketch' : TYPE_BADGE[item.fileKind ?? 'pic']
+  return <>
+    <span className={`sp-badge sp-badge--type sp-badge--${item.fileKind === 'sketch' ? 'sketch' : item.kind}`}>{type}</span>
+    {inTalk && <span className="sp-badge sp-badge--from">In talk</span>}
+    {item.missing && <span className="sp-badge sp-badge--missing">File missing</span>}
+  </>
+}
+
+export function slideTextLines(markdown: string): string[] {
+  const body = readSlides(markdown).slides[0]?.content ?? ''
+  return body.split('\n').map(line => line.replace(/^\s*(?:[-*+] |\d+[.)] )/, '').trim())
+    .filter(line => line && !/^:::|^!\[/.test(line))
 }
 
 /** The picture for an item: a slide's rendered thumbnail, an agent picture or SVG as an image, and a tile
@@ -32,6 +37,10 @@ export function ItemThumb({ item, big = false }: { item: ScratchItem; big?: bool
     if (next !== nonce) { setNonce(next); setFailed(false) }
   }), [item.slide, nonce])
   const cls = `sp-thumb${big ? ' sp-thumb--big' : ''}`
+  if (item.kind === 'proposed') {
+    const lines = slideTextLines(item.slide?.markdown ?? '').slice(0, big ? 8 : 3)
+    return <div className={`${cls} sp-thumb--proposal`}>{lines.length ? <ul>{lines.map((line, i) => <li key={i}>{line}</li>)}</ul> : <span>{big ? item.title : 'One large sentence'}</span>}</div>
+  }
   if (item.kind === 'slide') {
     const slide = item.slide
     const pic = slide ? slidePictureFor(slide) : null
@@ -41,6 +50,7 @@ export function ItemThumb({ item, big = false }: { item: ScratchItem; big?: bool
     return <div className={`${cls} sp-thumb--text`}><span>{item.title}</span></div>
   }
   if (item.missing) return <div className={`${cls} sp-thumb--tile`}><span>File missing</span></div>
+  if (item.fileKind === 'sketch') return <div className={cls}><pre className="sp-sketch-excerpt">{item.contentText?.slice(0, 240) || 'Empty sketch'}</pre></div>
   if (item.fileKind === 'html') return <HtmlThumb item={item} cls={cls} />
   if (item.fileUrl && !failed) return <div className={cls}><img loading="lazy" decoding="async" src={item.fileUrl} alt="" draggable={false} onError={() => setFailed(true)} /></div>
   return <div className={`${cls} sp-thumb--tile`}><span>{failed ? 'Could not load' : 'Picture'}</span></div>
@@ -80,7 +90,8 @@ export function ScratchpadCard({ item, terms, ticked, selected, groupTag, onSele
     <div
       className={`sp-card${ticked ? ' is-checked' : ''}${selected ? ' is-selected' : ''}`}
       data-item-id={item.id}
-      draggable={active && !item.missing}
+      data-sketch-file={item.fileKind === 'sketch' ? item.file : undefined}
+      draggable={active && !item.missing && item.fileKind !== 'sketch'}
       onDragStart={(event) => { event.dataTransfer.setData('application/x-tw-scratch-item', item.id); event.dataTransfer.effectAllowed = 'copy' }}
       role="button"
       tabIndex={0}
@@ -94,23 +105,18 @@ export function ScratchpadCard({ item, terms, ticked, selected, groupTag, onSele
         else if (e.key === ' ') { e.preventDefault(); onSelect() }
       }}
     >
-      <div className="sp-thumbwrap">
-        <ItemThumb item={item} />
-        {active && (
-          <input
-            type="checkbox"
-            className="sp-tick"
-            aria-label={`Select ${item.title}`}
-            checked={ticked}
-            onClick={(e) => e.stopPropagation()}
-            onChange={onTick}
-          />
-        )}
-      </div>
+      <div className="sp-thumbwrap"><ItemThumb item={item} /></div>
       <div className="sp-card-body">
-        <div className="sp-badges"><ItemBadges item={item} inTalk={inTalk} /></div>
+        <div className="sp-card-labels">
+          <div className="sp-badges"><ItemBadges item={item} inTalk={inTalk} /></div>
+          {active && <input type="checkbox" className="sp-tick" aria-label={`Select ${item.title}`} checked={ticked}
+            onClick={(event) => event.stopPropagation()} onChange={onTick} />}
+        </div>
         <div className="sp-card-title"><Highlight text={item.title} terms={terms} /></div>
-        {item.kind === 'file' && item.file && <div className="sp-card-file"><Highlight text={item.file} terms={terms} /></div>}
+        {item.fileKind === 'sketch' ? <div className="sp-card-context">{item.sketchUses?.some(use => use.ids.length) ? 'Broken into slides' : 'Not broken into slides yet'}</div>
+          : item.kind === 'proposed' ? <div className="sp-card-context">From {item.sourceSketchTitle ? `“${item.sourceSketchTitle}”` : item.slide?.sketchFile}</div>
+          : item.kind === 'slide' ? <div className="sp-card-context">From “{item.slide?.talkTitle}”</div>
+          : item.file && <div className="sp-card-file"><Highlight text={item.file} terms={terms} /></div>}
         {groupTag && active && <div className="sp-grouptag">{groupTag.name}</div>}
         {insertedNote && <div className="sp-inserted">{insertedNote}</div>}
         {!active && (

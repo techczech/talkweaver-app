@@ -91,7 +91,7 @@ assert.match(deckPanelSource, /type="search"/, 'Deck settings must remain search
 assert.match(deckPanelSource, /import \{[^}]*type FrontmatterEdit[^}]*\} from '[^']*shared\/frontmatter-editor'/, 'Deck settings must use the shared byte-preserving frontmatter editor (builds FrontmatterEdit edits)')
 assert.match(deckPanelSource, /onSave\(edits\)/, 'Deck settings must hand their built edits to the host onSave')
 const workspaceLayoutSource = readFileSync(join(root, 'src/renderer/src/components/WorkspaceLayout.tsx'), 'utf8')
-assert.match(workspaceLayoutSource, /applyOutlineMutation\(talk\.outlinePath, \(text\) => editFrontmatterText\(text, edits\)\)/, 'Deck settings must use the shared byte-preserving frontmatter editor through the one writer (applyOutlineMutation)')
+assert.match(workspaceLayoutSource, /applyOutlineMutation\(talk\.outlinePath, \(text\) => editFrontmatterText\(text, edits\), \{ ownUndoStep: true \}\)/, 'Deck settings use the shared frontmatter writer in one undo step')
 assert.match(deckPanelSource, /unknown\.map/, 'Deck settings must show unknown frontmatter keys read-only in Other')
 
 console.log(`deck options parity: ${options.length} declared options cover ${compilerMetaReads().size} compiler metadata reads`)

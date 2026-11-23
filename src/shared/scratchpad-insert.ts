@@ -91,7 +91,7 @@ export {
   headingTitle, insertionPoint, placeForLine, placeRows, resolvePlace, settlePlace, PLACE_GONE
 } from './slide-handling/place.ts'
 export type { InsertionPoint, PlaceRow, ScratchPlace } from './slide-handling/place.ts'
-import { insertionPoint, headingTitle, UNSAFE_PLACE as UNSAFE, type ScratchPlace, type SlidePlace } from './slide-handling/place.ts'
+import { insertionPoint, headingTitle, resolvePlace, UNSAFE_PLACE as UNSAFE, type ScratchPlace, type SlidePlace } from './slide-handling/place.ts'
 
 
 export type PlacedSlide =
@@ -103,16 +103,40 @@ const WOULD_CHANGE = 'Inserting it there would change other slides of the talk, 
 
 /** `block` (a slide: a `##`–`######` heading and what follows) put in as a new slide at `place`, its headings
  *  moved to the place's level. Refused, with the reason, when it would change any other slide. */
-export function insertSlideAt(text: string, place: SlidePlace, block: string): PlacedSlide {
+export type ScratchPlacement = 'slide' | 'section-boundary'
+
+/** A sketch with sections lands at the next section boundary, keeping the original section's slides together. */
+export function scratchSectionPlace(text: string, place: SlidePlace): { at: number; title: string | null } | null {
+  const resolved = resolvePlace(text, place)
+  const read = readOutline(text)
+  if (!resolved || read.openFence || read.openComment) return null
+  const source = text.split('\n')
+  if (resolved.kind === 'start') {
+    const first = read.levels.findIndex(level => level === 2)
+    return { at: first < 0 ? source.length : first, title: null }
+  }
+  let start = resolved.index
+  while (start >= read.bodyStart && read.levels[start] !== 2 && read.levels[start] !== 1) start--
+  if (start >= read.bodyStart && read.levels[start] === 1) start = -1
+  let at = resolved.index + 1
+  while (at < read.levels.length && (read.levels[at] === 0 || read.levels[at] > 2)) at++
+  while (at > resolved.index + 1 && !source[at - 1].trim()) at--
+  return { at, title: start >= read.bodyStart ? headingTitle(source[start]) : null }
+}
+
+export function insertSlideAt(text: string, place: SlidePlace, block: string, placement: ScratchPlacement = 'slide'): PlacedSlide {
   const blockLines = block.replace(/\r\n?/g, '\n').split('\n')
   while (blockLines.length && /^\s*$/.test(blockLines[0])) blockLines.shift()
   while (blockLines.length && /^\s*$/.test(blockLines[blockLines.length - 1])) blockLines.pop()
   if (blockLines.length === 0 || !/^#{2,6}\s/.test(blockLines[0])) return { ok: false, error: NOT_A_SLIDE }
   const own = readOutline(blockLines.join('\n'))
   if (own.openFence || own.openComment) return { ok: false, error: UNSAFE }
-  const point = insertionPoint(text, place)
+  const level = (/^(#+)/.exec(blockLines[0]) as RegExpExecArray)[1].length
+  const sectionPlace = placement === 'section-boundary' ? scratchSectionPlace(text, place) : null
+  if (placement === 'section-boundary' && !sectionPlace) return { ok: false, error: UNSAFE }
+  const point = sectionPlace ? { ok: true as const, at: sectionPlace.at, level } : insertionPoint(text, place)
   if (!point.ok) return point
-  const shift = point.level - (/^(#+)/.exec(blockLines[0]) as RegExpExecArray)[1].length
+  const shift = point.level - level
   const moved = blockLines.map((line, i) => {
     if (own.levels[i] < 2) return line
     const next = Math.max(2, Math.min(6, own.levels[i] + shift))
@@ -214,7 +238,7 @@ export function restampTakenIds(block: string, talkText: string, rng: () => numb
 /** Plan the entire selection without writing. Each block uses the existing placement proof.
  * Place in reverse at the same anchor so a section keeps its children and the next card
  * remains its sibling. IDs are reserved in displayed order before any placement. */
-export function planScratchSlides(text: string, place: SlidePlace, blocks: readonly string[]):
+export function planScratchSlides(text: string, place: SlidePlace, blocks: readonly string[], placement: ScratchPlacement = 'slide'):
   { ok: true; text: string; lines: number[]; selectionLines: number[]; lastPlace: ScratchPlace } | { ok: false; error: string } {
   if (!blocks.length || blocks.length > 5000) return { ok: false, error: 'Choose slides to insert.' }
   let reserved = text
@@ -236,7 +260,7 @@ export function planScratchSlides(text: string, place: SlidePlace, blocks: reado
   let current = text
   let lines: number[] = []
   for (let i = ready.length - 1; i >= 0; i--) {
-    const result = insertSlideAt(current, place, ready[i])
+    const result = insertSlideAt(current, place, ready[i], placement)
     if (!result.ok) return result
     const delta = result.text.split('\n').length - current.split('\n').length
     lines = [result.line, ...lines.map(line => line + delta)]

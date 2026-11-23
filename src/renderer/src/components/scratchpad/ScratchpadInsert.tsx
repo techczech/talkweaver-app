@@ -151,9 +151,9 @@ function VisualThumb({ item, visual }: { item: ScratchItem; visual: ScratchVisua
 export function ScratchpadInsertButtons({ api, item }: { api: ScratchpadInsertApi; item: ScratchItem }): JSX.Element {
   const [choosing, setChoosing] = useState(false)
   const ref = useRef<HTMLSpanElement>(null)
-  const visuals = useMemo(() => (item.kind === 'slide' ? scratchVisuals(item.slide?.markdown ?? '') : []), [item])
+  const visuals = useMemo(() => (item.kind !== 'file' ? scratchVisuals(item.slide?.markdown ?? '') : []), [item])
   useDismiss(ref, choosing, () => setChoosing(false))
-  const slide = item.kind === 'slide'
+  const slide = item.kind !== 'file'
   const noVisual = slide ? visuals.length === 0 : item.missing
   const visualOnly = (): void => {
     if (visuals.length > 1) { setChoosing(!choosing); return }
@@ -163,7 +163,7 @@ export function ScratchpadInsertButtons({ api, item }: { api: ScratchpadInsertAp
     <>
       <button
         type="button" className={`sp-btn sp-btn--sm${slide ? ' sp-btn--primary' : ''}`} disabled={!slide || api.busy}
-        title={slide ? undefined : 'Only a slide picked from a talk can go in whole.'}
+        title={slide ? undefined : 'Choose a picked or proposed slide to insert whole.'}
         onClick={() => void api.insert(item, 'slide')}
       >Insert whole slide</button>
       <span className="sp-anchor" ref={ref}>

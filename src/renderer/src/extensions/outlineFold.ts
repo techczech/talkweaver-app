@@ -1,10 +1,22 @@
 // Folding for the outline editor: collapse a heading's whole section, or a list item's
 // sub-items. Drives the fold gutter arrows + the fold keymap (Ctrl-Shift-[ / ]).
-import { foldNodeProp, foldService } from '@codemirror/language'
+import { foldedRanges, foldNodeProp, foldService, unfoldEffect } from '@codemirror/language'
 import { isImageBlockLine } from '../../../../compiler/scripts/lib/image-line-rules.mjs'
 import type { MarkdownConfig } from '@lezer/markdown'
 import type { EditorState } from '@codemirror/state'
+import { readOutline } from '../../../shared/insert-section'
+import type { Text } from '@codemirror/state'
 import { headingLevel, listMatch, leadingWidth, isBlank } from './outliner'
+
+const levelsByDocument = new WeakMap<Text, readonly number[]>()
+
+export function revealFoldedLine(state: EditorState, pos: number) {
+  const effects: ReturnType<typeof unfoldEffect.of>[] = []
+  foldedRanges(state).between(pos, pos, (from, to) => {
+    if (from < pos) effects.push(unfoldEffect.of({ from, to }))
+  })
+  return effects
+}
 
 export const outlineFoldService = foldService.of(
   (state: EditorState, lineStart: number, lineEnd: number) => {
@@ -13,13 +25,14 @@ export const outlineFoldService = foldService.of(
     // Heading → fold everything until the next heading of the same or higher rank.
     const hl = headingLevel(line.text)
     if (hl > 0) {
-      let endLine = line.number
-      for (let n = line.number + 1; n <= state.doc.lines; n += 1) {
-        const t = state.doc.line(n).text
-        const h = headingLevel(t)
-        if (h > 0 && h <= hl) break
-        endLine = n
+      let levels = levelsByDocument.get(state.doc)
+      if (!levels) {
+        levels = readOutline(state.doc.toString()).levels
+        levelsByDocument.set(state.doc, levels)
       }
+      if (!levels[line.number - 1]) return null
+      let endLine = line.number
+      while (endLine < state.doc.lines && (!levels[endLine] || levels[endLine] > hl)) endLine++
       return endLine > line.number ? { from: lineEnd, to: state.doc.line(endLine).to } : null
     }
 

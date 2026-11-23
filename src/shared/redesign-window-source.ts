@@ -3,9 +3,9 @@ import { readOutlineObjectRegions } from './objects/outline-object-regions.ts'
 import { blockAt, pasteSlides } from './slide-handling/slide-block-ops.ts'
 import { slideAround } from './objects/notes-planner.ts'
 
-export function newTalkSource(title: string, slideId: string): string {
+export function newTalkSource(title: string, slideId: string | null): string {
   return ['---', 'title: ' + JSON.stringify(title), 'outline_version: 2', 'defaults:', '  title: top',
-    '---', '', `### {id=${slideId}}`, '{list}', '', ''].join('\n')
+    '---', '', ...(slideId === null ? [] : [`### {id=${slideId}}`, '{list}', '', ''])].join('\n')
 }
 
 /** The authoring preview treats the identity, starting layout and an empty point as blank. */

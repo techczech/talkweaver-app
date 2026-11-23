@@ -1,12 +1,14 @@
 // Hidden Chromium: real Editor + watcher hook + conflict modal against real files/guard/writer.
 import assert from 'node:assert/strict'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, statSync, rmSync, readdirSync, unlinkSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync, statSync, rmSync, readdirSync, unlinkSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { chromium } from 'playwright'
+import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+import { buildPerSlideProjections } from '../compiler/scripts/lib/10-projections.mjs'
 import { createOutlineDiskGuard } from '../src/main/outline-disk-guard.ts'
 import { createOutlineRecovery } from '../src/main/outline-recovery.ts'
 import { canonicalOutlinePath } from '../src/main/outline-identity.ts'
@@ -27,7 +29,7 @@ const guard = createOutlineDiskGuard({
 configureTalkWriter({ editorBufferFor: () => null, diskGuard: guard })
 try {
   await build({ stdin: { contents: `
-import React,{useRef} from 'react'
+import React,{useEffect,useRef,useState} from 'react'
 import {createRoot} from 'react-dom/client'
 import Editor from './src/renderer/src/components/Editor.tsx'
 import {EditorView} from '@codemirror/view'
@@ -35,12 +37,37 @@ import {useOutlineDiskChange} from './src/renderer/src/components/useOutlineDisk
 import {outlineWritesSettled} from './src/renderer/src/lib/saveQueue.ts'
 import {OutlineDiskChangeChip,OutlineDiskChangeSheet} from './src/renderer/src/components/OutlineDiskChangeBar.tsx'
 import OutlineMergeSheet from './src/renderer/src/components/OutlineMergeSheet.tsx'
-window.tw={talk:{readOutline:(p)=>window.ipcRead(p),writeOutline:(p,t,o)=>window.ipcWrite(p,t,o),outlineDiskVersion:p=>window.ipcDisk(p),acceptOutlineDiskVersion:(p,h,o)=>window.ipcAccept(p,h,o),preserveOutlineMerge:(p,s)=>window.failRecovery?Promise.resolve(null):window.ipcPreserve(p,s),outlineRecovery:p=>window.ipcRecovery(p),discardOutlineRecovery:p=>window.ipcClear(p),discardRemovedOutline:p=>window.ipcClear(p),onOutlineChangedOnDisk:fn=>{window.diskEvent=fn;return()=>{window.diskEvent=null}}},vault:{onTalkMetaUpdated:()=>()=>{}},workFiles:{list:async()=>null},icons:{svg:async()=>null}}
+import SlideDiskReview from './src/renderer/src/components/SlideDiskReview.tsx'
+import Inspector from './src/renderer/src/components/Inspector.tsx'
+import {panelEdit} from './src/renderer/src/components/rightPanelDesigns.ts'
+import {singleSlideDiskReview} from './src/renderer/src/lib/slideDiskReview.ts'
+window.tw={slide:{renderPreview:async()=>null},talk:{readOutline:(p)=>window.ipcRead(p),writeOutline:(p,t,o)=>window.ipcWrite(p,t,o),outlineDiskVersion:p=>window.ipcDisk(p),acceptOutlineDiskVersion:(p,h,o)=>window.ipcAccept(p,h,o),preserveOutlineMerge:(p,s)=>window.failRecovery?Promise.resolve(null):window.ipcPreserve(p,s),outlineRecovery:p=>window.ipcRecovery(p),discardOutlineRecovery:p=>window.ipcClear(p),discardRemovedOutline:p=>window.ipcClear(p),onOutlineChangedOnDisk:fn=>{window.diskEvent=fn;return()=>{window.diskEvent=null}}},vault:{onTalkMetaUpdated:()=>()=>{}},workFiles:{list:async()=>null},icons:{svg:async()=>null}}
 function Fixture(){
  const read=useRef(null),replace=useRef(null),cmd=useRef(null)
- const guard=useOutlineDiskChange({activeOutlinePath:window.outlinePath,readDoc:()=>read.current?.()??null,replaceDoc:(t,o)=>replace.current?.(t,o)??null,saveBuffer:()=>cmd.current.forceSave(),flush:()=>cmd.current.flushSave(),settle:s=>cmd.current.settleSave(s),forceSave:s=>cmd.current.forceSave(s),onDiscardTalk:()=>{}})
- window.guard=guard;window.replace=(t,o)=>replace.current?.(t,o);window.read=()=>read.current?.();window.commands=cmd
- return <><Editor talk={{outlinePath:window.outlinePath,path:'/',slug:'fixture',title:'Fixture'}} content={window.source} viewMode="markdown" onContentChange={()=>{}} registerReadDoc={fn=>read.current=fn} registerReplaceDoc={fn=>replace.current=fn} registerEditorCommands={c=>cmd.current=c}/>{guard.change&&<OutlineDiskChangeChip change={guard.change} busy={guard.busy} onChoose={guard.choose}/ >}{guard.sheet&&<OutlineDiskChangeSheet change={guard.sheet} onAnswer={guard.answerSheet}/ >}{guard.mergeReview&&<OutlineMergeSheet key={guard.mergeReview.generation} review={guard.mergeReview} initialChoices={guard.mergeChoices} busy={guard.busy} onApply={guard.applyMerge} onDismiss={()=>{window.dismissCalls=(window.dismissCalls??0)+1;guard.dismissMerge()}} onDraft={guard.keepMergeDraft}/>}</>
+ const [content,setContent]=useState(window.source),[showPicture,setShowPicture]=useState(false)
+ const [compiled,setCompiled]=useState(null),[panelPage,setPanelPage]=useState('home')
+ useEffect(()=>{
+   if(!showPicture)return
+   let current=true
+   void window.ipcCompilePicture(content).then(result=>{if(current)setCompiled({...result,text:content})})
+   return ()=>{current=false}
+ },[content,showPicture])
+ const row=compiled?.rows[compiled.index]
+ window.compiledPicture=compiled
+ const guard=useOutlineDiskChange({activeOutlinePath:window.outlinePath,readDoc:()=>read.current?.({authoredOnly:true})??null,replaceDoc:(t,o)=>replace.current?.(t,o)??null,saveBuffer:()=>cmd.current.forceSave(),flush:()=>cmd.current.flushSave(),settle:s=>cmd.current.settleSave(s),forceSave:s=>cmd.current.forceSave(s),onDiscardTalk:()=>{}})
+ const preview=guard.mergeReview && singleSlideDiskReview(guard.mergeReview)
+ window.guard=guard;window.replace=(t,o)=>replace.current?.(t,o);window.read=()=>read.current?.();window.commands=cmd;window.openPicture=()=>setShowPicture(true)
+ return <><Editor talk={{outlinePath:window.outlinePath,path:'/',slug:'fixture',title:'Fixture'}} content={window.source} viewMode="markdown" onContentChange={text=>setContent(text)} registerReadDoc={fn=>read.current=fn} registerReplaceDoc={fn=>replace.current=fn} registerEditorCommands={c=>cmd.current=c}/>
+ {row&&<Inspector talk={{outlinePath:window.outlinePath}} outlineContent={content} compiledSlides={compiled.rows}
+   activeIndex={compiled.index} headingLine={row.source_line} triggerFindings={[]} centrePreview page={panelPage} onPageChange={setPanelPage}
+   onTry={()=>{}} onKeep={(slide,layout,design)=>{
+     const doc=read.current()
+     if(doc?.text===content) replace.current?.(panelEdit(doc.text,slide,design,layout),{ownUndoStep:true})
+   }}/>}
+ {guard.change&&<OutlineDiskChangeChip change={guard.change} busy={guard.busy} onChoose={guard.choose}/ >}{guard.sheet&&<OutlineDiskChangeSheet change={guard.sheet} onAnswer={guard.answerSheet}/ >}{guard.mergeReview&&window.pictureReview&&preview
+   ? <SlideDiskReview path={window.outlinePath} review={guard.mergeReview} change={preview} busy={guard.busy}
+       keep={()=>guard.applyMerge(guard.mergeReview.generation,{})} putBack={()=>guard.applyMerge(guard.mergeReview.generation,{},'put-back')} close={guard.dismissMerge}/>
+   : guard.mergeReview&&<OutlineMergeSheet key={guard.mergeReview.generation} review={guard.mergeReview} initialChoices={guard.mergeChoices} busy={guard.busy} onApply={guard.applyMerge} onDismiss={()=>{window.dismissCalls=(window.dismissCalls??0)+1;guard.dismissMerge()}} onDraft={guard.keepMergeDraft}/>}</>
 }
 window.toasts=[];window.addEventListener('tw-toast',event=>window.toasts.push(event.detail.message))
 window.view=()=>EditorView.findFromDOM(document.querySelector('.cm-editor'))
@@ -58,6 +85,12 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   await page.exposeFunction('ipcPreserve', async (p,s) => { preserveCalls++;const file=await recovery.preserveMerge(p,s);if(holdPreserve){holdPreserve=false;preserveWaiting=true;const accepted=await new Promise(resolve=>resumePreserve=resolve);if(accepted===false)return null}return file })
   await page.exposeFunction('ipcRecovery', p => recovery.read(p))
   await page.exposeFunction('ipcClear', async p => { await recovery.clear(p); return true })
+  await page.exposeFunction('ipcCompilePicture', async text => {
+    const model=await prepareSource(path,text,'Picture fixture',statSync(path))
+    const rows=buildPerSlideProjections(model,'picture-fixture')
+    const index=rows.findIndex(row=>row.slide_id==='photo')
+    return {rows,index,side:model.slides.find(slide=>slide.id==='photo').frame.image}
+  })
   await page.exposeFunction('ipcWrite', async (p,text,opts) => {
     const result = await writeTalkOutline(p,text,'editor',{expectedDiskHash:opts?.expectedDiskHash,authorize:()=>{assert.equal(guard.owns('window',p),true)}})
     if (!result.ok && result.changedOnDisk) { await recovery.save(p,text); return {ok:false,refused:'changed-on-disk',change:result.changedOnDisk} }
@@ -74,6 +107,10 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   await page.waitForFunction(()=>window.read()?.base?.includes('alpha'))
   const external = async text => { writeFileSync(path,text); await guard.check(path) }
   const edit = async (before,after) => page.evaluate(({before,after})=>{const v=window.view(),at=v.state.doc.toString().indexOf(before);v.dispatch({changes:{from:at,to:at+before.length,insert:after}})}, {before,after})
+  const keepReady = async () => {
+    await page.waitForFunction(()=>window.guard.mergeReview && !window.guard.busy)
+    await page.getByRole('button',{name:'Keep the changes',exact:true}).click()
+  }
   const fresh = async () => {
     // page.reload bypasses the app's guarded leave; settle a cleared change's save before reset.
     await page.evaluate(async()=>{await window.settled();if(!window.guard.change)await window.commands.current.flushSave();await window.settled()})
@@ -92,6 +129,9 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
     const disk=base.replace('alpha',`agent after provisional ${action}`)
     const before=writes
     await external(disk)
+    await page.waitForFunction(()=>window.guard.mergeReview&&!window.guard.busy)
+    // Keep the provisional picker focused until adoption, as in the original race.
+    await page.evaluate(()=>window.guard.applyMerge(window.guard.mergeReview.generation,{}))
     await page.waitForFunction(()=>window.read().text.includes('agent after provisional')&&!window.guard.busy)
     if(action==='letter') await page.keyboard.type('q')
     else {
@@ -112,6 +152,7 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   await page.evaluate(()=>window.view().focus())
   await page.evaluate(()=>{window.failRecovery=true})
   await external(base.replace('alpha','external clean'))
+  await keepReady()
   await page.waitForFunction(()=>window.read()?.text.includes('external clean')&&!window.guard.busy)
   assert.equal(writes,0)
   assert.equal(await page.evaluate(()=>document.activeElement===window.view().contentDOM),true,'clean reload retains editor focus')
@@ -123,6 +164,7 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   await edit('external clean','local edit')
   holdAccept = true
   await external(base.replace('alpha','external clean').replace('beta','external edit'))
+  await keepReady()
   for(let i=0; !acceptWaiting && i<100; i++) await page.waitForTimeout(20)
   assert.equal(acceptWaiting,true)
   await page.evaluate(()=>window.view().focus())
@@ -139,7 +181,7 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   assert.match(readFileSync(path,'utf8'),/typed-during-accept/)
   await page.evaluate(()=>window.commands.current.undo())
   await page.evaluate(()=>window.commands.current.flushSave())
-  assert.match(readFileSync(path,'utf8'),/external edit/,'M1: undo after auto-merge retains the agent text')
+  assert.match(readFileSync(path,'utf8'),/external edit/,'M1: undo after merging retains the agent text')
   await page.evaluate(()=>window.commands.current.undo())
   assert.match(await page.evaluate(()=>window.read().text),/external clean/,'N2: the user step before adoption is still undoable')
   await page.evaluate(()=>window.commands.current.flushSave())
@@ -224,6 +266,7 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   const crlf = readFileSync(path,'utf8').replace('final combined result','external CRLF').replaceAll('\n','\r\n')
   const beforeCRLF = writes
   await external(crlf)
+  await keepReady()
   await page.waitForFunction(()=>!window.guard.change&&!window.guard.busy&&window.read().text.includes('external CRLF'))
   await page.evaluate(()=>window.commands.current.flushSave())
   assert.equal(writes,beforeCRLF,'clean CRLF reload must not cause a save')
@@ -261,10 +304,16 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   for(const phase of ['prepare','auto-apply','manual-apply']) {
     await fresh()
     await external(base.replace('beta','clean before removal'))
+    await keepReady()
     await page.waitForFunction(()=>window.read().text.includes('clean before removal')&&!window.guard.busy)
     await edit('alpha','local before removal')
-    removeAtRead=phase==='prepare'?1:phase==='auto-apply'?2:0
+    removeAtRead=phase==='prepare'?1:0
     await external(base.replace(phase==='manual-apply'?'alpha':'beta','disk before removal'))
+    if(phase==='auto-apply') {
+      await page.waitForFunction(()=>window.guard.mergeReview && !window.guard.busy)
+      removeAtRead=1
+      await keepReady()
+    }
     if(phase==='manual-apply') {
       await page.getByTestId('outline-merge-sheet').waitFor()
       await page.getByRole('button',{name:'Use mine',exact:true}).click()
@@ -315,6 +364,7 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   await page.evaluate(()=>window.dispatchEvent(new CustomEvent('tw-close-freeze',{detail:{frozen:true,update:false}})))
   await page.waitForTimeout(40)
   await external(base.replace('beta','agent through freeze'))
+  await keepReady()
   await page.waitForFunction(()=>window.read().text.includes('agent through freeze')&&!window.guard.busy)
   await page.evaluate(()=>{window.dispatchEvent(new CustomEvent('tw-close-freeze',{detail:{frozen:false,update:false}}));const v=window.view();v.dispatch({selection:{anchor:v.state.doc.toString().indexOf('alpha')+5}});v.focus()})
   await page.keyboard.type('Q')
@@ -329,6 +379,7 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   await external(base)
   await page.waitForFunction(()=>!window.guard.change&&!window.guard.busy&&!window.read().dirty)
   await external(recurring)
+  await keepReady()
   await page.waitForFunction(()=>window.read().text.includes('recurring disk edit')&&!window.guard.busy)
   // N-b: a fresh H2 read supersedes the H1 event, even when the watcher never reports H2.
   await fresh();await edit('alpha','mine stale watcher')
@@ -395,10 +446,11 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   await page.waitForTimeout(60)
   assert.equal(await page.evaluate(()=>window.toasts.some(t=>t.includes('Could not keep your merge draft'))),false,'retired review failure must be ignored')
   assert.match(readFileSync(path,'utf8'),/mine retired review/)
-  // N-h: leaving joins the automatic merge already in flight instead of cancelling immediately.
+  // N-h: leaving joins the accepted merge already in flight instead of cancelling immediately.
   await fresh();await edit('alpha','local before leave')
   holdAccept=true;acceptWaiting=false
   await external(base.replace('beta','external before leave'))
+  await keepReady()
   for(let i=0;!acceptWaiting&&i<100;i++)await page.waitForTimeout(20)
   assert.equal(acceptWaiting,true)
   await page.evaluate(()=>{window.leaveResult=null;window.guard.guardLeave().then(ok=>window.leaveResult=ok)})
@@ -408,6 +460,56 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   await page.waitForFunction(()=>window.leaveResult===true)
   assert.match(readFileSync(path,'utf8'),/local before leave/)
   assert.match(readFileSync(path,'utf8'),/external before leave/)
+  // CA2: review the unchanged buffer and external bytes, then reject and keep in separate runs.
+  for (const decision of ['Put it back', 'Keep the change']) {
+    await fresh()
+    await page.evaluate(()=>{window.pictureReview=true})
+    const incoming=base.replace('- alpha','- outside icon {icon=lucide:circle}')
+    const beforeWrites=writes
+    await external(incoming)
+    const dialog=page.getByRole('dialog',{name:/One.*changed outside TalkWeaver/})
+    await dialog.waitFor()
+    assert.equal(await page.evaluate(()=>window.read().text),base,'the editor must hold its old bytes during review')
+    assert.equal(readFileSync(path,'utf8'),incoming,'opening review cannot write the talk')
+    assert.equal(writes,beforeWrites)
+    assert.match(await dialog.locator('.tw-review-diff del').innerText(),/alpha/)
+    assert.match(await dialog.locator('.tw-review-diff ins').innerText(),/outside icon/)
+    await dialog.getByRole('button',{name:decision,exact:true}).click()
+    await page.waitForFunction(()=>!window.guard.mergeReview&&!window.guard.busy)
+    const expected=decision==='Put it back'?base:incoming
+    assert.equal(await page.evaluate(()=>window.read().text),expected)
+    assert.equal(readFileSync(path,'utf8'),expected)
+  }
+  await fresh()
+  copyFileSync(new URL('../demo-vault/layout-sampler/assets/sample-image.png', import.meta.url), join(scratch,'beds.png'))
+  const photo = base + '\n### Garden photographs\n{id=photo}\n\n- First view\n\n![The beds](beds.png)\n'
+  await page.evaluate(async text=>{window.replace(text,{ownUndoStep:true});await window.commands.current.settleSave()},photo)
+  const photoIncoming = photo.replace('- alpha','- updated outside the app')
+  await external(photoIncoming)
+  await keepReady()
+  await page.waitForFunction(()=>!window.guard.change&&!window.guard.busy)
+  await page.evaluate(()=>window.openPicture())
+  const panel=page.locator('.tw-inspector')
+  await panel.locator('.tw-right-adjust').getByRole('button',{name:/^Picture\b/}).click()
+  const left=panel.getByRole('button',{name:/On the left/})
+  const right=panel.getByRole('button',{name:/On the right/})
+  assert.equal(await left.getAttribute('aria-pressed'),'true')
+  const checkSide=async (side,choice)=>{
+    await choice.click()
+    await page.evaluate(()=>window.commands.current.settleSave())
+    const text=readFileSync(path,'utf8')
+    assert.ok(text.includes(`{image=${side}}`))
+    await page.waitForFunction(({text,side})=>window.compiledPicture?.text===text&&window.compiledPicture.side===side,{text,side})
+    assert.equal(await choice.getAttribute('aria-pressed'),'true')
+    return text
+  }
+  const pictureRight=await checkSide('right',right)
+  assert.equal(await left.getAttribute('aria-pressed'),'false')
+  await checkSide('left',left)
+  await page.evaluate(async()=>{window.commands.current.undo();await window.commands.current.settleSave()})
+  assert.equal(readFileSync(path,'utf8'),pictureRight,'one Undo after moving back restores the saved right placement')
+  await page.evaluate(async()=>{window.commands.current.undo();await window.commands.current.settleSave()})
+  assert.equal(readFileSync(path,'utf8'),photoIncoming,'a second Undo restores the inherited placement after external Keep')
   assert.deepEqual(errors,[])
   console.log('outline merge DOM: clean cursor-preserving reload, real unsaved editor + external file write, overlap UI, repeated changes/draft recovery, explicit choices, edited result, keyboard focus passed')
 } finally {

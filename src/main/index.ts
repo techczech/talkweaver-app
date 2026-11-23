@@ -133,8 +133,9 @@ app.commandLine.appendSwitch('js-flags', '--max-old-space-size=8192')
 // SIGTRAP on delete whose symbolicated stack was unusable).
 // Bounded (1 MB, trimmed to its last 512 KB) so a crash loop cannot fill the user's disk.
 const appendMainError = createErrorLog(() => join(app.getPath('userData'), 'tw-main-errors.log'))
-const directoryWatchService = createDirectoryWatchService(() =>
-  forkUtilityChild(join(__dirname, 'directory-watch-worker.js'), 'TalkWeaver directory watches') as DirectoryWatcherChild,
+const directoryWatchService = createDirectoryWatchService(
+  () => forkUtilityChild(join(__dirname, 'directory-watch-worker.js'), 'TalkWeaver directory watches') as DirectoryWatcherChild,
+  error => logMainError('directory watch process', error),
 )
 configureDirectoryWatch(directoryWatchService.watch)
 const quitSequence = createQuitSequence(app, (name, error) => appendMainError(`quit step: ${name}`, error), captureQuitVeto)
@@ -336,7 +337,9 @@ import {
   slidePreviewIdFromUrl,
   slidePreviewUrl,
   selectedThumbnailSlide,
-  thumbnailSlides
+  thumbnailSlides,
+  SLIDE_PREVIEW_SURFACES,
+  type SlidePreviewSurface
 } from '../shared/slide-preview'
 import { readFile as readFileAsync, readdir as readdirAsync, stat as statAsync, access as accessAsync } from 'fs/promises'
 import { savedRecordingHome,
@@ -383,7 +386,7 @@ import {
   normaliseMetadataDefaults,
   type MetadataDefaults
 } from '../shared/metadata-surfaces'
-import { WORKSPACE_VIEWS, type SlidesPanelView, type WorkspaceView } from '../shared/workspace-view'
+import { WORKSPACE_VIEWS, type SlideTabView, type SlidesPanelView, type WorkspaceView } from '../shared/workspace-view'
 import { newTalkSource } from '../shared/redesign-window-source'
 import { editFrontmatterText, parseFrontmatterPairs } from '../shared/frontmatter-editor'
 import { extractSection, type SectionLocation } from '../shared/insert-section'
@@ -574,6 +577,7 @@ type Config = {
   vaultLastSeen?: Record<string, LastGood>
   openInView?: WorkspaceView
   slidesPanelView?: SlidesPanelView
+  slideTabView?: SlideTabView
   windowBounds?: { x?: number; y?: number; width: number; height: number }
   toolsWindowBounds?: { x?: number; y?: number; width: number; height: number }
   archiveRoot?: string
@@ -1423,7 +1427,7 @@ function createWindow(): BrowserWindow {
     if (closeConfirmed.has(wcId)) return
     // No talk open: nothing to save, so an update's restart may count this close as safe.
     // A plain close also has to flush typing still waiting in the renderer's autosave debounce.
-    if (!openOutline && !movedEditorReceipts.has(wcId)) { restartWindows.saved(wcId); return }
+    if (!openOutline && !movedEditorReceipts.has(wcId) && !editorSketchDrafts.has(wcId)) { restartWindows.saved(wcId); return }
     event.preventDefault()
     const quit = quitting
     // Electron closes every window in one quit cycle. Each held editor must retain the
@@ -1440,7 +1444,7 @@ function createWindow(): BrowserWindow {
       // An update's restart asked for this close: no answer in time leaves the window open with its work, and the
       // restart is off (ADR-0044 §6). Every other close keeps the fallback below.
       if (restartWindows.timedOut(wcId)) return
-      if (movedEditorReceipts.has(wcId) || !openOutline) { cancelQuitAttempt(); return }
+      if (movedEditorReceipts.has(wcId) || editorSketchDrafts.has(wcId) || !openOutline) { cancelQuitAttempt(); return }
       const real = canonicalOutlinePath(openOutline)
       const text = lastUnsavedText.get(real)
       console.warn(`[outline-guard] the window did not answer the close request within 5 s; closing it${text !== undefined ? ' after keeping its unsaved text in a recovery copy' : ''} (${openOutline})`)
@@ -1466,6 +1470,7 @@ function createWindow(): BrowserWindow {
     editorQuitAttempts.delete(wcId)
     lastSaveFailed.delete(wcId)
     editorRevisions.forget(wcId)
+    editorSketchDrafts.delete(wcId)
     outlineDiskGuard.release(String(wcId))
     galleryReservations.delete(wcId)
     galleryClaimEpochs.delete(wcId); establishedGalleryClaims.delete(wcId)
@@ -2455,14 +2460,18 @@ ipcMain.handle('preferences:set-action-bar-visible', (_event, visible: boolean) 
 })
 
 // ── Editor view (plain editing view): Plain or Markdown, one app-wide setting, broadcast to every window ──
-function workspaceViewPreferences(): { openIn: WorkspaceView; slidesPanel: SlidesPanelView } {
+function workspaceViewPreferences(): { openIn: WorkspaceView; slidesPanel: SlidesPanelView; slideTab: SlideTabView } {
   const view = getConfig('openInView', 'slide') ?? 'slide'
   return {
     openIn: WORKSPACE_VIEWS.includes(view) ? view : 'slide',
+    slideTab: sharedSettings?.store.view().settings['writing.slideTabView'] === 'list' ? 'list' : 'pages',
     slidesPanel: getConfig('slidesPanelView', 'previews') === 'outline' ? 'outline' : 'previews'
   }
 }
 ipcMain.handle('preferences:get-workspace-views', workspaceViewPreferences)
+ipcMain.handle('preferences:set-slide-tab', async (_event, view: unknown) => {
+  if (view === 'pages' || view === 'list') await sharedSettings?.store.set('writing.slideTabView', view)
+})
 ipcMain.handle('preferences:set-slides-panel', (_event, view: unknown) => {
   if (view !== 'previews' && view !== 'outline') return
   writeConfig({ slidesPanelView: view })
@@ -3620,6 +3629,7 @@ ipcMain.handle('layout:preview-thumbnails', async () => {
 type IconsModule = {
   searchIcons: (q: string, n?: number) => Array<{ key: string; source: string }>
   iconSvg: (key: string) => string
+  svglBrandMatch: (text: string, options?: { brandContext: boolean }) => string | null
 }
 let iconsModuleCache: { dir: string; mod: IconsModule } | null = null
 async function loadIconsModule(): Promise<IconsModule | null> {
@@ -3645,6 +3655,12 @@ ipcMain.handle('icons:search', async (_event, query: string) => {
     console.error('[icons:search]', e)
     return []
   }
+})
+
+ipcMain.handle('icons:brand-points', async (_event, points: unknown) => {
+  if (!Array.isArray(points) || points.length > 150 || points.some(point => typeof point !== 'string' || point.length > 1024)) return false
+  const mod = await loadIconsModule()
+  return !!mod && points.some(point => !!mod.svglBrandMatch(point, { brandContext: true }))
 })
 
 ipcMain.handle('icons:svg', async (_event, key: string) => {
@@ -3908,7 +3924,7 @@ ipcMain.handle('pathways:set-slide-ids', async (_event, outlinePath: string, con
   }
 })
 
-const slidePreviewRequests = new Map<number, Map<'workspace' | 'detail', AbortController>>()
+const slidePreviewRequests = new Map<number, Map<SlidePreviewSurface, AbortController>>()
 
 function abortSlidePreviews(owner: number): void {
   const previews = slidePreviewRequests.get(owner)
@@ -4033,7 +4049,7 @@ ipcMain.handle('slide:render-preview', async (_event, outlinePath: string, outli
   const owner = _event.sender.id
   // Slide view and the inspector can both be visible. A newer request replaces
   // the previous one from its own surface.
-  const scope = surface === 'workspace' ? 'workspace' : 'detail'
+  const scope = SLIDE_PREVIEW_SURFACES.find(candidate => candidate === surface) ?? 'detail'
   const requests = slidePreviewRequests.get(owner) ?? new Map()
   slidePreviewRequests.set(owner, requests)
   requests.get(scope)?.abort()
@@ -5165,10 +5181,10 @@ ipcMain.handle('window:confirm-close', (event, opts?: { quit?: boolean; revision
   const attempt = editorQuitAttempts.get(id)
   if (attempt && attempt !== quitAttempt) return false // a late save cannot revive a cancelled Quit
   const forRestart = restartWindows.waiting(id)
-  if (forRestart && opts?.hasDraft === true) {
+  if (editorSketchDrafts.has(id) || (forRestart && opts?.hasDraft === true)) {
     clearTimeout(closeHolds.get(id))
     closeHolds.delete(id)
-    restartWindows.confirm(id, false)
+    if (forRestart) restartWindows.confirm(id, false)
     return keep()
   }
   const verdict = editorRevisions.verdict(id, opts?.revision, forRestart ? 'restart' : 'close')
@@ -9376,6 +9392,17 @@ const scratchpadHtmlThumbs = createHtmlThumbnailer({
 const scratchpadIpc = registerScratchpadIpc({
   ipc: ipcMain,
   outlinePathFor: (event) => editorWindows.get(event.sender.id)?.outlinePath ?? null,
+  sketchVaultRoot: outline => writableTalkRoot(outline) ?? null,
+  chooseSketchCopy: async (event) => {
+    const window = BrowserWindow.fromWebContents(event.sender)
+    if (!window || E2E) return undefined
+    const choice = await dialog.showSaveDialog(window, {
+      title: 'Save a copy of the sketch',
+      defaultPath: 'Sketch recovery.md',
+      filters: [{ name: 'Markdown', extensions: ['md'] }]
+    })
+    return choice.canceled ? undefined : choice.filePath
+  },
   // Compact URLs stream only checked private snapshots when their cards request an image.
   storeOptions: {
     fileUrlFor: scratchSnapshotUrl,
@@ -9651,6 +9678,15 @@ const outlineRecovery = createOutlineRecovery(join(app.getPath('userData'), 'rec
 const closeConfirmed = new Set<number>()
 // A close held for the person's choice, until the renderer acknowledges it (the 5-second fallback).
 const closeHolds = new Map<number, ReturnType<typeof setTimeout>>()
+// A sketch can still have unsaved text after an outside move releases the editor's outline path.
+const editorSketchDrafts = new Set<number>()
+ipcMain.on('scratchpad:sketch-dirty', (event, dirty: unknown) => {
+  const id = event.sender.id
+  if (!editorWindows.has(id)) return
+  if (dirty === true) editorSketchDrafts.add(id)
+  else if (dirty === false) editorSketchDrafts.delete(id)
+})
+
 // The last text each guarded talk's editor failed to save (real path → text): the fallback close's
 // recovery copy. Cleared by the next successful save.
 const lastUnsavedText = new Map<string, string>()
@@ -9677,6 +9713,11 @@ function captureQuitVeto(): () => void {
 quitSequence.add({ name: 'Record quit attempt', stage: 'before-quit', timeoutMs: 0, run: recordQuitAttempt })
 const outlineDiskGuard = createOutlineDiskGuard({
   canonical: canonicalOutlinePath,
+  ownerIsVisible(owner) {
+    const win = editorWindows.get(Number(owner))?.win
+    // GUI tests exercise the visible editor path with their windows kept off-screen.
+    return !!win && !win.isDestroyed() && !win.isMinimized() && (E2E || win.isVisible())
+  },
   async readText(realPath) {
     try { return await readFileAsync(realPath, 'utf8') } catch (error) {
       if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return null
@@ -9701,6 +9742,7 @@ const outlineDiskGuard = createOutlineDiskGuard({
     if (win && !win.isDestroyed()) win.webContents.send('outline:changed-on-disk', { outlinePath, change })
   },
 })
+quitSequence.add({ name: 'Stop directory watch process', stage: 'will-quit', timeoutMs: 0, run: directoryWatchService.stop })
 quitSequence.add({ name: 'Release scratchpad subscriptions', stage: 'will-quit', timeoutMs: 0, run: scratchpadIpc.closeAll })
 quitSequence.add({ name: 'Dispose outline disk guard', stage: 'will-quit', timeoutMs: 0, run: () => outlineDiskGuard.dispose() })
 quitSequence.add({ name: 'Release outline disk watchers', stage: 'will-quit', timeoutMs: 0, run: () => outlineDiskWatchers.releaseAll() })
@@ -9920,7 +9962,7 @@ ipcMain.handle('asset:add-video', async (_event, input: { path?: string; bytes?:
 
 // ── Create talk ────────────────────────────────────────────────────────────
 
-ipcMain.handle('vault:create-talk', async (event, opts: { title: string; slug: string; topicFolder?: string; vaultId?: string }) => {
+ipcMain.handle('vault:create-talk', async (event, opts: { title: string; slug: string; topicFolder?: string; vaultId?: string; startWithSketch?: boolean }) => {
   // An unavailable vault (or one whose folder has just gone) gets no new talk: its folder is never
   // re-created (ticket 07).
   const vaultRoot = writableRootOfVault(opts?.vaultId)
@@ -9940,7 +9982,7 @@ ipcMain.handle('vault:create-talk', async (event, opts: { title: string; slug: s
     mkdirInVault(vaultRoot, dirname(talkDir))
     mkdirSync(talkDir)
     {
-      const initialContent = newTalkSource(title, randomBytes(5).toString('hex'))
+      const initialContent = newTalkSource(title, opts.startWithSketch === true ? null : randomBytes(5).toString('hex'))
       // Pre-fill the presenter's identity and house style: the vault file's affiliation, style and
       // logo, then this person's author for the vault, then Settings → Presenter identity and deck
       // defaults (several-vaults ticket 04). fill-missing only: nothing already in the template is
@@ -10658,7 +10700,7 @@ function preferencesChanged(keys: string[], shortcutKeys: Readonly<Record<string
   const has = (...wanted: string[]): boolean => wanted.some((k) => keys.includes(k))
   if (has('updates.checkForNewVersions', 'updates.alphaVersions')) updateChecker?.settingChanged()
   if (has('writing.actionBar')) broadcastActionBar()
-  if (has('writing.openInView', 'writing.slidesPanelView')) broadcastToWindows('workspace-views:changed', workspaceViewPreferences())
+  if (has('writing.openInView', 'writing.slidesPanelView', 'writing.slideTabView')) broadcastToWindows('workspace-views:changed', workspaceViewPreferences())
   if (has('general.placeChip')) broadcastToWindows('place-chip:changed', { visible: placeChipVisible() })
   if (has('general.guideButton')) { broadcastToWindows('guide-button:changed', { visible: guideButtonVisible() }); pushPresentChapter() }
   if (has('writing.plainFont', 'writing.plainTextSize')) broadcastToWindows('plain-look:changed', plainLook())
@@ -11428,7 +11470,6 @@ quitSequence.add({
 })
 // An in-flight publish or live-service setup runs in a process group that would outlive the app.
 quitSequence.add({ name: 'Stop publish and setup tools', stage: 'will-quit', timeoutMs: 0, run: () => { endAllWranglerRuns() } })
-quitSequence.add({ name: 'Stop directory watch process', stage: 'will-quit', timeoutMs: 0, run: directoryWatchService.stop })
 
 app.on('activate', () => {
   // The setup command never opens a window, whatever macOS asks of it.

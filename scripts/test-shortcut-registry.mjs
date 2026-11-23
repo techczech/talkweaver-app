@@ -396,6 +396,7 @@ const BINDING_MAP = new Map([
 // Generic handlers are deliberately not shortcut commands. Each ignored file must still produce a
 // scan hit, so deleting the handler makes this list fail as stale.
 const SCAN_IGNORE = new Map([
+  ['src/renderer/src/components/SketchView.tsx', 'Escape is the Sketch view’s local Back action. It binds no application shortcut.'],
   ['src/renderer/src/components/AnimatedVideoSheet.tsx', 'Dialog-local Escape dismissal and Tab focus containment; no app command or shortcut.'],
   ['src/renderer/src/components/AgentSkillOffer.tsx', 'Escape-only dismissal of the agent-skill onboarding dialog (Not now); local modal behaviour, no shortcut is bound'],
   ['src/renderer/src/components/vault-gallery/GalleryHandoutSheet.tsx', 'Local handout dialog Tab wrap and Escape dismissal.'],
@@ -409,6 +410,7 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/scratchpad/ScratchpadInsert.tsx', 'Escape dismisses the open insertion menu and Enter chooses the first filtered destination; local menu behaviour, no shortcut is bound'],
   ['src/main/settings-update-menu.ts', 'Uses the effective shared binding for app.check-for-updates while building the app-menu template; declares no shortcut.'],
   ['src/renderer/src/components/scratchpad/ScratchpadCard.tsx', 'Enter opens the big preview and Space selects while a Slide Scratchpad card has focus (native button-like card behaviour); no shortcut is bound'],
+  ['src/renderer/src/components/scratchpad/ScratchpadPanel.tsx', 'Escape dismisses only the open docked options menu. It binds no application shortcut.'],
   ['src/renderer/src/components/slide-handling/BatchBar.tsx', '↑ ↓ and Enter move through the destinations of the open Move to… list and Escape closes it (the same local list behaviour as the Move slide to… panel); no shortcut is bound'],
   ['src/renderer/src/components/scratchpad/ScratchpadGroupMenu.tsx', 'Escape-only dismissal of the open group menu; no shortcut is bound'],
   ['src/renderer/src/components/EditorTabs.tsx', 'Arrow keys, Home and End move focus in the view switch; the selected view is dispatched via the registry'],

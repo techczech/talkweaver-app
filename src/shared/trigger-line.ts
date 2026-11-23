@@ -372,6 +372,10 @@ function sweepOrphanOptionTokens(line: string, committed: OptionGroup, context: 
  * produces, because the answer can depend on the line (`{icons=off}`).
  */
 export interface OptionCommitContext {
+  /** Reset removes only the selected groups and releases their inheritance. */
+  resetToInherited?: boolean
+  /** A heading can also contain braces in its visible wording. */
+  trailingGroupsOnly?: boolean
   unwrittenSelections?: (line: string) => Readonly<Record<string, string>>
   /**
    * Ticket 02: what a statement slide's options read beyond its own line — the deck's
@@ -469,6 +473,7 @@ export function commitOptionSelection(line: string, group: OptionGroup, token: s
   if (!isOptionTokenForGroup(token, group)) {
     throw new Error(`Unknown option token for ${group.key}: ${token}`)
   }
+  if (context.resetToInherited) return commitGroupToken(line, group, '', context)
   if (STATEMENT_OPTION_GROUPS[group.key]) return commitStatementOption(line, group, token, context)
   if (group.key === 'title-look-tone' && token === '' && context.inheritedTitleTone === 'soft') {
     return commitGroupToken(line, group, 'titlelook-tone=strong', context)
@@ -482,7 +487,7 @@ export function commitOptionSelection(line: string, group: OptionGroup, token: s
 }
 
 function commitGroupToken(line: string, group: OptionGroup, token: string, context: OptionCommitContext): string {
-  const tokens = parseAllGroups(line)
+  const tokens = context.trailingGroupsOnly ? parseTriggerGroups(line) : parseAllGroups(line)
   // The compiler applies split=N to the Sidebar tint rail, so choosing a width keeps the Sidebar
   // style token while still removing every other title-placement rival.
   const keepSidebarForWidth = group.key === 'title-placement' && token.startsWith('split=')
@@ -515,7 +520,9 @@ function commitGroupToken(line: string, group: OptionGroup, token: string, conte
   const layoutToken = [...tokens].reverse().find((candidate) =>
     meaningForToken(candidate.raw).some((pair) => pair.key === 'layout')
   )
-  const placeAfter = anchorToken ?? layoutToken
+  const showTitle = group.key === 'title-placement' && token === 'titletop'
+    ? [...tokens].reverse().find(candidate => candidate.raw === 'title=show') : undefined
+  const placeAfter = showTitle ?? anchorToken ?? layoutToken
   if (token && placeAfter) {
     edits.push({ start: placeAfter.groupEnd, end: placeAfter.groupEnd, text: `{${token}}` })
   }
@@ -524,7 +531,7 @@ function commitGroupToken(line: string, group: OptionGroup, token: string, conte
   if (token && !placeAfter) {
     result += `${result ? ' ' : ''}{${token}}`
   }
-  return sweepOrphanOptionTokens(result, group, context)
+  return context.resetToInherited ? result : sweepOrphanOptionTokens(result, group, context)
 }
 
 export function applyLayoutSelection(

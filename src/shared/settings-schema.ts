@@ -95,6 +95,7 @@ export const schema = defineSchema({
     { key: 'general.imageText', label: 'Search the text inside images', section: 'general', group: 'Images', type: 'toggle', default: true, help: 'Reads the text in vault images in the background so image search finds it.' },
     // Writing
     { key: 'writing.openInView', label: 'A talk opens in', section: 'writing', group: 'Views', type: 'choice', default: 'slide', options: WORKSPACE_VIEWS.map(value => ({ value, label: WORKSPACE_VIEW_LABELS[value] })), help: 'Choose the view that opens when you select a talk.' },
+    { key: 'writing.slideTabView', label: 'The Slide tab of the right panel shows', section: 'writing', group: 'Views', type: 'choice', default: 'pages', options: [{ value: 'pages', label: 'Pages' }, { value: 'list', label: 'One long list' }] },
     { key: 'writing.slidesPanelView', label: 'The slides panel shows', section: 'writing', group: 'Views', type: 'choice', default: 'previews', options: [{ value: 'previews', label: 'Previews' }, { value: 'outline', label: 'An outline' }], help: 'The switch at the top of the slides panel changes this too. Pasted pictures are saved in the talk’s assets folder.' },
     { key: 'writing.plainFont', label: 'Plain view font', section: 'writing', group: 'Plain view', type: 'choice', default: PLAIN_FONT_DEFAULT, options: PLAIN_FONTS.map((f) => ({ value: f.id, label: f.label })), help: 'The typeface of the Plain view of the outline.' },
     { key: 'writing.plainTextSize', label: 'Plain view text size', section: 'writing', group: 'Plain view', type: 'number', default: PLAIN_TEXT_SIZE_DEFAULT, min: PLAIN_TEXT_SIZE_MIN, max: PLAIN_TEXT_SIZE_MAX, unit: 'px', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'The text size of the Plain view of the outline.' },
@@ -159,6 +160,7 @@ const SCALARS: readonly ScalarMap[] = [
   { config: 'archiveRoot', key: 'general.imageArchive' },
   { config: 'ocrEnabled', key: 'general.imageText' },
   { config: 'openInView', key: 'writing.openInView' },
+  { config: 'slideTabView', key: 'writing.slideTabView' },
   { config: 'slidesPanelView', key: 'writing.slidesPanelView' },
   { config: 'plainViewFont', key: 'writing.plainFont' },
   { config: 'plainViewTextSize', key: 'writing.plainTextSize' },

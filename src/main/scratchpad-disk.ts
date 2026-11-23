@@ -9,7 +9,7 @@ import { tmpdir } from 'node:os'
 import { join, relative, sep } from 'node:path'
 
 export interface ScratchFileIdentity { dev: string; ino: string }
-export interface ScratchDiskFile { name: string; path: string; mtime: string; sidecar: string | null }
+export interface ScratchDiskFile { name: string; path: string | null; mtime: string; sidecar: string | null; sketchText?: string; sketchLineCount?: number }
 export interface ScratchDiskScan {
   folder: ScratchFileIdentity | null
   state: { text: string | null; error: string | null }
@@ -72,6 +72,8 @@ export function scratchSnapshotFileFor(address: string): string | null {
 
 // Constant Node program; no outline, filename or content is interpolated into executable text.
 // Electron runs it in Node-only mode, including in signed packages. No window or profile opens.
+import { MAX_SKETCH_BYTES, type ScratchSketch } from '../shared/scratchpad.ts'
+
 const IO_SCRIPT = String.raw`
 const fs = require('node:fs'); const path = require('node:path'); const crypto = require('node:crypto');
 const same = (a,b) => String(a.dev) === String(b.dev) && String(a.ino) === String(b.ino);
@@ -102,6 +104,7 @@ function run(job) {
   if (!same(fs.statSync('.',{bigint:true}), job.talkId) || fs.realpathSync('.') !== job.talk) throw new Error('The talk folder changed. Nothing was changed.');
   let info;
   try { info = fs.lstatSync('scratchpad',{bigint:true}); } catch (e) { if (e.code !== 'ENOENT') throw e; }
+  if (!info && (job.action === 'sketch-read' || job.action === 'sketch-write')) throw new Error('The sketch folder is missing.');
   if (!info && job.action === 'scan') return {folder:null, state:{text:null,error:null}, files:[], notices:[]};
   if (!info) { fs.mkdirSync('scratchpad'); info = fs.lstatSync('scratchpad',{bigint:true}); }
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error('The Slide Scratchpad folder is a link or is not a folder. Nothing was changed.');
@@ -115,6 +118,39 @@ function run(job) {
   };
   if (!same(info,held)) throw new Error('The Slide Scratchpad folder changed. Nothing was changed.');
   holds();
+  const readSketch = name => {
+    if (!plain(name) || path.extname(name).toLowerCase() !== '.md') throw new Error('Choose a Markdown sketch.');
+    const {bytes} = readPlain(name, job.maxSketch);
+    const text = new TextDecoder('utf-8', {fatal:true, ignoreBOM:true}).decode(bytes);
+    return {name, text, revision:crypto.createHash('sha256').update(bytes).digest('hex')};
+  };
+  if (job.action === 'sketch-read') return readSketch(job.name);
+  if (job.action === 'sketch-create' || job.action === 'sketch-write') {
+    if (typeof job.text !== 'string' || Buffer.byteLength(job.text) > job.maxSketch) throw new Error('The sketch is too large to save.');
+    const create = job.action === 'sketch-create';
+    const name = create ? 'Sketch-'+crypto.randomBytes(4).toString('hex')+'.md' : job.name;
+    const temp = '.sketch.'+crypto.randomBytes(12).toString('hex')+'.tmp';
+    try {
+      fs.writeFileSync(temp,job.text,{flag:'wx',mode:0o600});
+      holds();
+      if (create) {
+        // Publish complete bytes if supported. Exclusive create still protects an existing filename.
+        try { fs.linkSync(temp,name); }
+        catch (e) {
+          if (!['ENOTSUP','EPERM','EXDEV','EOPNOTSUPP'].includes(e.code)) throw e;
+          holds();
+          fs.writeFileSync(name,job.text,{flag:'wx',mode:0o600});
+        }
+      } else {
+        if (readSketch(name).revision !== job.revision) throw new Error('This sketch changed on disk. Your typing is still here. Save it as a new sketch.');
+        fs.renameSync(temp,name);
+      }
+    } finally { try { fs.unlinkSync(temp); } catch {} }
+    holds();
+    const saved = readSketch(name);
+    if (saved.text !== job.text) throw new Error('The sketch save could not be confirmed.');
+    return saved;
+  }
   const state = () => {
     try { return {text:readPlain('scratchpad-state.json').bytes.toString('utf8'),error:null}; }
     catch (e) { return e.code === 'ENOENT' ? {text:null,error:null} : {text:null,error:e.message}; }
@@ -124,6 +160,11 @@ function run(job) {
     for (const name of fs.readdirSync('.').sort()) {
       if (!plain(name) || !job.extensions.includes(path.extname(name).toLowerCase())) continue;
       try {
+        if (path.extname(name).toLowerCase() === '.md') {
+          const sketch = readSketch(name);
+          files.push({name,path:null,mtime:fs.lstatSync(name).mtime.toISOString(),sidecar:null,sketchText:sketch.text.slice(0,20000),sketchLineCount:sketch.text.split(/\r?\n/).filter(line=>line.trim()).length});
+          continue;
+        }
         const source = readPlain(name);
         const hash = crypto.createHash('sha256').update(source.bytes).digest('hex');
         const bucket = path.join(job.cache,hash); fs.mkdirSync(bucket,{recursive:true,mode:0o700});
@@ -144,7 +185,7 @@ function run(job) {
         try { sidecar = readPlain(name+'.json',256*1024).bytes.toString('utf8'); } catch {}
         files.push({name,path:copy,mtime:source.info.mtime.toISOString(),sidecar});
       } catch (e) {
-        if (e.message === 'is too large to read safely') notices.push('The Slide Scratchpad file '+JSON.stringify(name)+' is larger than 64 MB, so it was not loaded. The original was left unchanged.');
+        if (e.message === 'is too large to read safely') notices.push('The Slide Scratchpad file '+JSON.stringify(name)+' is larger than '+(path.extname(name).toLowerCase() === '.md' ? '400 KB' : '64 MB')+', so it was not loaded. The original was left unchanged.');
         // Vanished, linked, unreadable or changing: never consume a replacement.
       }
     }
@@ -175,7 +216,7 @@ export function createScratchpadDisk(talkDir: string, spawnChild: typeof spawn =
   const talkId = statSync(talk, { bigint: true })
   const folderPath = join(talk, 'scratchpad')
   function run<T>(request: Record<string, unknown>): Promise<T> {
-    const input = JSON.stringify({ ...request, talk, talkId: { dev: talkId.dev.toString(), ino: talkId.ino.toString() }, folderPath, cache: cacheFolder() })
+    const input = JSON.stringify({ ...request, talk, talkId: { dev: talkId.dev.toString(), ino: talkId.ino.toString() }, folderPath, maxSketch: MAX_SKETCH_BYTES, cache: cacheFolder() })
     return new Promise((resolve, reject) => {
       const childEnv: NodeJS.ProcessEnv = { ELECTRON_RUN_AS_NODE: '1' }
       // Built-ins only: never inherit loaders, module paths, injected libraries or inspector hooks.
@@ -220,6 +261,9 @@ export function createScratchpadDisk(talkDir: string, spawnChild: typeof spawn =
     })
   }
   return {
+    sketchRead: (name: string): Promise<ScratchSketch> => run({ action: 'sketch-read', name }),
+    sketchCreate: (text: string): Promise<ScratchSketch> => run({ action: 'sketch-create', text }),
+    sketchWrite: (name: string, revision: string, text: string): Promise<ScratchSketch> => run({ action: 'sketch-write', name, revision, text }),
     scan: (extensions: string[]): Promise<ScratchDiskScan> => run({ action: 'scan', extensions }),
     write: (text: string, previous: string | null, folder: ScratchFileIdentity | null): Promise<void> => run({ action: 'write', text, previous, folder }),
     backup: (name: string, previous: string, folder: ScratchFileIdentity | null): Promise<void> => run({ action: 'backup', name, previous, folder })

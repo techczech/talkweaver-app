@@ -4,7 +4,9 @@
 // On apply, the token is inserted and - if the char after the cursor is not already `}` -
 // a closing brace is appended, so the author always gets `{statement}` not `{statement`.
 import {
+  acceptCompletion,
   autocompletion,
+  currentCompletions,
   closeCompletion,
   CompletionContext,
   pickedCompletion,
@@ -30,9 +32,13 @@ import {
 import { commitInlineTriggerSelection } from './inlineTriggerCommitModel'
 import { deckCommitContext } from '../../../shared/deck-frame'
 import { flashTriggerEchoAt, triggerEchoTokenChanged } from './triggerEcho'
+import { readOutlineObjectRegions } from '../../../shared/objects/outline-object-regions'
+import { nodeAtSourceLine, structureOf, subsectionOwner, type SectionKind } from '../../../shared/talk-structure'
 import type { ObjectInsertRequest } from '../../../shared/objects/insert-objects'
 
 export type TriggerCompleteOptions = {
+  onSectionHeading?: (kind: SectionKind, heading: { from: number; text: string }) => void
+  isMarkdown?: () => boolean
   onInsertObject?: (
     kind: 'chart' | 'mermaid' | 'svg',
     request?: ObjectInsertRequest
@@ -192,6 +198,11 @@ function backToInlineEntries(view: EditorView): boolean {
 function inlineOptionKeys(options: TriggerCompleteOptions): Extension {
   return Prec.highest(keymap.of([
   { key: 'Escape', run: backToInlineEntries },
+  {
+    key: 'Enter',
+    run: (view) => currentCompletions(view.state).some(completion => completion.type === 'section-heading')
+      && acceptCompletion(view)
+  },
   {
     key: 'Backspace',
     run: (view) => {
@@ -366,7 +377,37 @@ export function triggerCompleteExtension(options: TriggerCompleteOptions = {}): 
     inlineOptionState,
     inlineOptionKeys(options),
     autocompletion({
-      override: [(context) => triggerSource(context, options)],
+      override: [(context) => {
+        const line = context.state.doc.lineAt(context.pos)
+        if (options.isMarkdown?.() && options.onSectionHeading && context.pos === line.to &&
+            (line.text === '## ' || line.text === '### ')) {
+          const text = context.state.doc.toString()
+          const regions = readOutlineObjectRegions(text)
+          const i = line.number - 1
+          if (regions.kinds[i] !== 'outline' || regions.unclosedComments.some(comment => comment.line <= i)) return null
+          const kind = line.text === '## ' ? 'section' : 'subsection'
+          if (kind === 'subsection') {
+            const tree = structureOf(text)
+            const parent = nodeAtSourceLine(tree, line.number - 1)
+            if (!parent || !subsectionOwner(tree, parent.line + 1)) return null
+          }
+          return {
+            from: line.from,
+            filter: false,
+            options: [{
+              label: kind === 'section' ? 'New section' : 'New subsection',
+              type: 'section-heading',
+              apply: (view) => {
+                const current = view.state.doc.lineAt(view.state.selection.main.head)
+                if (current.from !== line.from || current.text !== line.text) return
+                closeCompletion(view)
+                options.onSectionHeading?.(kind, { from: line.from, text: line.text })
+              }
+            }]
+          }
+        }
+        return triggerSource(context, options)
+      }],
       activateOnTyping: true,
       defaultKeymap: true,
       tooltipClass: (state) => state.field(inlineOptionState, false) ? 'tw-inline-option-palette' : '',

@@ -223,6 +223,7 @@ export const TRAVELLING: Readonly<Record<string, Travel>> = {
   'general.imageText': toggle,
   'writing.openInView': choice,
   'writing.slidesPanelView': choice,
+  'writing.slideTabView': choice,
   'writing.plainFont': choice,
   'writing.plainTextSize': number,
   'writing.editorKeys': editorKeys,

@@ -92,7 +92,7 @@ export default function ActionBar({ sections, lead }: ActionBarProps): ReactElem
   const button = ({ item }: BarItem): ReactElement => (
     <button
       type="button" key={item.commandId} className="tw-action-bar-btn" data-command={item.commandId}
-      disabled={item.disabled} aria-label={item.label} onMouseDown={keepCaret}
+      disabled={item.disabled} title={item.disabled ? item.tooltip : undefined} aria-label={item.label} onMouseDown={keepCaret}
       onMouseEnter={(event) => showTip(event.currentTarget, item.tooltip)}
       onFocus={(event) => { if (event.currentTarget.matches(':focus-visible')) showTip(event.currentTarget, item.tooltip) }}
       onClick={() => { setTip(null); item.run() }}
@@ -136,7 +136,7 @@ export default function ActionBar({ sections, lead }: ActionBarProps): ReactElem
             <Fragment key={entry.item.commandId}>
               {index > 0 && entry.section !== overflowed[index - 1].section && <div className="tw-action-bar-menu-separator" role="separator" />}
               <button type="button" role="menuitem" data-command={entry.item.commandId}
-                className="tw-action-bar-menu-item" disabled={entry.item.disabled} onMouseDown={keepCaret}
+                className="tw-action-bar-menu-item" disabled={entry.item.disabled} title={entry.item.disabled ? entry.item.tooltip : undefined} onMouseDown={keepCaret}
                 onClick={() => { setTip(null); setMenuOpen(false); entry.item.run() }}>
                 <Icon name={iconFor(entry.item.icon)} size={15} />
                 <span>{entry.item.label}</span>

@@ -15,15 +15,20 @@ const root = fileURLToPath(new URL('..', import.meta.url))
 const dir = mkdtempSync(join(tmpdir(), 'talk-weaver-fold-gutter-'))
 const outfile = join(dir, 'bundle.js')
 const entry = `
-import { EditorView } from '@codemirror/view'
-import { EditorState } from '@codemirror/state'
+import { EditorView, keymap } from '@codemirror/view'
+import { EditorState, Prec } from '@codemirror/state'
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { codeFolding, foldGutter } from '@codemirror/language'
+import { codeFolding, foldGutter, foldable, foldEffect, foldedRanges } from '@codemirror/language'
+import { enterFromHeading } from './src/renderer/src/extensions/outliner.ts'
+import { buildEditorKeyBindings } from './src/renderer/src/keymap/store.ts'
+import { viewModeExtension } from './src/renderer/src/extensions/plainView/index.ts'
+import { triggerCompleteExtension } from './src/renderer/src/extensions/triggerComplete.ts'
 import { imageWidgetExtension } from './src/renderer/src/extensions/imageWidget.ts'
-import { imageParagraphNoFold, outlineFoldService } from './src/renderer/src/extensions/outlineFold.ts'
+import { imageParagraphNoFold, outlineFoldService, revealFoldedLine } from './src/renderer/src/extensions/outlineFold.ts'
 import { setSlideNumberLines, slideNumberGutterExtension } from './src/renderer/src/extensions/slideNumberGutter.ts'
 // The same extension order as components/Editor.tsx.
-window.mountEditor = (doc, slideLines) => {
+window.mountEditor = (doc, slideLines, labels, withEditorKeys = false) => {
+  window.__view?.destroy()
   const view = new EditorView({
     parent: document.getElementById('host'),
     state: EditorState.create({
@@ -34,13 +39,29 @@ window.mountEditor = (doc, slideLines) => {
         codeFolding(),
         foldGutter(),
         outlineFoldService,
+        triggerCompleteExtension({
+          isMarkdown: () => Boolean(labels),
+          onSectionHeading: (kind, heading) => { window.pickedSection = { kind, heading } }
+        }),
+        ...(labels ? [viewModeExtension('markdown'), Prec.highest(keymap.of([{ key: 'Enter', run: enterFromHeading }]))] : []),
         imageWidgetExtension({ vaultRoot: null, talkDir: null, placementForLine: () => ({ kind: 'row', index: 1, count: 2 }) }),
+        ...(withEditorKeys ? [keymap.of(buildEditorKeyBindings())] : []),
         EditorView.lineWrapping
       ]
     })
   })
-  setSlideNumberLines(view, slideLines)
+  setSlideNumberLines(view, slideLines, labels && new Map(labels))
   window.__view = view
+}
+window.foldNavigation = (fromLine, toLine) => {
+  const view = window.__view
+  const head = view.state.doc.line(fromLine)
+  const target = view.state.doc.line(toLine).from
+  const range = foldable(view.state, head.from, head.to)
+  view.dispatch({ effects: foldEffect.of(range) })
+  const before = foldedRanges(view.state).size
+  view.dispatch({ effects: revealFoldedLine(view.state, target), selection: { anchor: target } })
+  return { before, after: foldedRanges(view.state).size, unchanged: view.state.doc.toString() }
 }
 // Fold markers by 1-based document line: the gutter element whose top is the line block's top.
 window.foldMarkerLines = () => {
@@ -99,7 +120,7 @@ let browser
 try {
   await build({ stdin: { contents: entry, resolveDir: root, sourcefile: 'fold-gutter-entry.ts' }, bundle: true, format: 'iife', platform: 'browser', outfile })
   browser = await chromium.launch()
-  const page = await browser.newPage({ viewport: { width: 900, height: 1400 } })
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1400 } })
   await page.setContent('<!doctype html><body style="margin:0"><div id="host" style="width:880px"></div></body>')
   await page.addScriptTag({ content: readFileSync(outfile, 'utf8') })
   await page.evaluate(([d, h]) => window.mountEditor(d, h), [outline, headings])
@@ -124,6 +145,87 @@ try {
   // Nothing else: every marker sits on a heading, the prose paragraph or a list item.
   const allowed = new Set([...headings, lineOf('Some words'), lineOf('- one'), lineOf('  - nested'), lineOf('- two')])
   assert.deepEqual(marked.filter((n) => !allowed.has(n)), [], 'no collapse control on any other line')
+  const source = [
+    '## Section {id=a}', '', '### Subsection {id=b}', '{sub}', '',
+    '#### Slide {id=c}', '', '~~~markdown', '## Example', '~~~', '',
+    '<!--', '## Hidden', '-->', '', '## Next {id=d}', '- Follow'
+  ].join('\n')
+  await page.evaluate(text => window.mountEditor(text, [1, 3, 6, 16], [
+    [1, { kind: 'Section', sectionNumber: '1' }], [3, { kind: 'Subsection', sectionNumber: '1.1' }],
+    [6, { kind: 'Slide' }], [16, { kind: 'Section', sectionNumber: '2' }]
+  ]), source)
+  const labels = await page.locator('.cm-md-heading-marker').evaluateAll(nodes => nodes.map(node => node.title))
+  assert.ok(labels.includes('Section §1') && labels.includes('Subsection §1.1') && labels.includes('Slide 3'))
+  const gutter = page.locator('.cm-lineNumbers')
+  const desktopWidth = (await gutter.boundingBox()).width
+  const revealed = await page.evaluate(() => window.foldNavigation(1, 6))
+  assert.deepEqual(revealed, { before: 1, after: 0, unchanged: source }, 'a jump reveals a folded descendant without editing source')
+  assert.equal((await gutter.boundingBox()).width, desktopWidth, 'fold and reveal preserve the heading gutter width')
+  await page.setViewportSize({ width: 1000, height: 631 })
+  assert.ok((await gutter.boundingBox()).width < desktopWidth, 'the narrow window uses compact heading marks')
+  assert.equal(await page.locator('.cm-md-heading-marker[title="Subsection §1.1"] .cm-md-heading-name').first().isVisible(), false)
+  await page.setViewportSize({ width: 1440, height: 1400 })
+  assert.ok(!(await page.evaluate(() => window.foldMarkerLines())).includes(9), 'a heading inside a fence has no slide fold')
+  for (const [prefix, kind] of [['## ', 'section'], ['### ', 'subsection']]) {
+    const fixture = '## Part {id=part}\n\n### Slide {id=slide}\n\n'
+    await page.evaluate(text => {
+      window.mountEditor(text, [1, 3], [[1, { kind: 'Section' }], [3, { kind: 'Slide' }]])
+      const view = window.__view
+      view.dispatch({ selection: { anchor: view.state.doc.length } })
+      view.focus()
+    }, fixture)
+    await page.keyboard.type(prefix)
+    await page.getByRole('option', { name: 'New ' + kind }).waitFor()
+    // CodeMirror ignores acceptance during the first 75 ms of a new completion list.
+    await page.waitForTimeout(100)
+    await page.keyboard.press('Enter')
+    assert.deepEqual(await page.evaluate(() => window.pickedSection), {
+      kind, heading: { from: fixture.length, text: prefix }
+    })
+  }
+  for (const prefix of ['#', '##', '###', '####']) {
+    const title = prefix + ' Current'
+    const next = prefix + ' Next'
+    for (const typed of [false, true]) {
+      const trigger = typed ? '' : '\n{id=current}'
+      const text = (typed ? '' : title + trigger) + '\n' + next + '\n{id=next}\n'
+      await page.evaluate(({ text, typed }) => {
+        window.mountEditor(text, [], [])
+        const view = window.__view
+        view.dispatch({ selection: { anchor: typed ? 0 : view.state.doc.line(1).to } })
+        view.focus()
+      }, { text, typed })
+      if (typed) await page.keyboard.type(title)
+      await page.keyboard.press('Enter')
+      await page.keyboard.type('Body')
+      assert.equal(await page.evaluate(() => window.__view.state.doc.toString()),
+        title + trigger + '\nBody\n' + next + '\n{id=next}\n', prefix + ' Enter opens a body line and preserves the following heading')
+    }
+  }
+  const promoteSource = '# Talk\n\n## Section {id=section}\n\n### Slide {id=slide}\n\n- Point\n'
+  await page.evaluate(text => {
+    window.mountEditor(text, [3, 5], [], true)
+    window.addEventListener('tw-toast', event => { window.promoteNotice = event.detail.message })
+  }, promoteSource)
+  for (const line of [5, 3, 1]) {
+    await page.evaluate(n => {
+      const view = window.__view
+      view.dispatch({ selection: { anchor: view.state.doc.line(n).to } })
+      view.focus()
+      window.promoteNotice = undefined
+    }, line)
+    await page.keyboard.press('ControlOrMeta+Shift+ArrowLeft')
+    const { text, notice } = await page.evaluate(() => ({
+      text: window.__view.state.doc.toString(), notice: window.promoteNotice
+    }))
+    if (line === 5) {
+      assert.equal(text, promoteSource.replace('### Slide', '## Slide'), 'the real shortcut can still promote a slide')
+      await page.evaluate(text => window.mountEditor(text, [3, 5], [], true), promoteSource)
+    } else {
+      assert.equal(text, promoteSource, 'the real shortcut preserves the title and top-level sections')
+      assert.equal(notice, 'Sections are the top level')
+    }
+  }
   console.log(`editor fold gutter: ok (${marked.length} markers: lines ${marked.join(', ')})`)
 } finally {
   await browser?.close()

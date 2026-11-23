@@ -14,6 +14,7 @@ import { dispatchCloseFreeze } from '../lib/closeFreezeEvent'
 import { editorRevision } from '../lib/editorRevision'
 import { updateRestartDraft } from '../lib/talkDrafts'
 import { applyOutlineMerge, prepareOutlineMerge, type OutlineMergeReview, type OutlineReconcileDeps } from '../lib/outlineReconcile'
+import { singleSlideDiskReview } from '../lib/slideDiskReview'
 import { resolveOutlineMerge } from '../../../shared/outline-merge'
 
 export interface OutlineDiskChangeWiring {
@@ -31,6 +32,8 @@ export interface OutlineDiskChangeWiring {
   settle(signal?: AbortSignal): Promise<void>
   /** Writes the editor's current text even when it looks saved (Editor forceSave). */
   forceSave(signal?: AbortSignal): Promise<boolean>
+  hasPendingSketch?(): boolean
+  saveSketch?(): Promise<boolean>
   /** The talk was discarded (removed on disk): let it go from this window. */
   onDiscardTalk(): void
 }
@@ -41,7 +44,7 @@ export interface OutlineDiskChangeState {
   busy: boolean
   mergeReview: OutlineMergeReview | null
   mergeChoices: Record<string, string>
-  applyMerge(generation: number, choices: Record<string, string>): void
+  applyMerge(generation: number, choices: Record<string, string>, decision?: 'merge' | 'put-back'): void
   dismissMerge(): void
   keepMergeDraft(generation: number, choices: Record<string, string>): void
   /** A choice on the bar. */
@@ -68,6 +71,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
   const recoveryFailedRef = useRef<string | null>(null)
   const autoVersionRef = useRef<string | null>(null)
   const reconciliationRef = useRef<Promise<void> | null>(null)
+  const applyingRef = useRef<Promise<void> | null>(null)
   const sheetAnswerRef = useRef<((choice: OutlineDiskChoice) => void) | null>(null)
 
   // Main's push (the watcher, focus checks, a refused write) → this window's store. A difference that
@@ -177,26 +181,15 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
           if (wiringRef.current.activeOutlinePath !== path) return
           if (prepared.kind === 'retry') continue
           if (prepared.kind === 'removed') { markRemoved(path); return }
-          if (prepared.kind === 'conflict') {
+          if (prepared.kind === 'conflict' || prepared.kind === 'ready') {
             recoveryFailedRef.current = null
             reviewRef.current = { path, review: prepared.review }
             setMergeReview(prepared.review)
             autoVersionRef.current = prepared.review.hash
-            return
+          } else if (prepared.kind === 'error') {
+            if (prepared.recoveryFailed) recoveryFailedRef.current = path
+            notify(prepared.error, 'warning', TOAST)
           }
-          if (prepared.kind === 'ready') {
-            recoveryFailedRef.current = null
-            const result = await applyOutlineMerge(path, prepared.review, {}, depsRef.current!)
-            if (wiringRef.current.activeOutlinePath !== path) return
-            if (result.kind === 'retry') continue
-            if (result.kind === 'removed') { markRemoved(path); return }
-            if (result.kind === 'saved' || result.kind === 'reloaded') {
-              recoveryFailedRef.current = null; reviewRef.current = null; setMergeReview(null)
-              notify(result.kind === 'reloaded' ? 'Updated the talk from disk.' : 'Merged the disk changes with your edits.', 'info', TOAST)
-              return
-            }
-            if (result.kind === 'error') { if (result.recoveryFailed) recoveryFailedRef.current = path; notify(result.error, 'warning', TOAST) }
-          } else if (prepared.kind === 'error') { if (prepared.recoveryFailed) recoveryFailedRef.current = path; notify(prepared.error, 'warning', TOAST) }
           return
         }
         notify('The talk is still changing. Choose Review merge to try again; both versions are kept.', 'info', TOAST)
@@ -219,15 +212,19 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
     if (recoveryFailedRef.current !== activeOutlinePath) recoveryFailedRef.current = null
   }, [activeOutlinePath, change?.kind])
 
-  const applyMerge = useCallback((generation: number, choices: Record<string, string>): void => {
+  const applyMerge = useCallback((generation: number, choices: Record<string, string>, decision: 'merge' | 'put-back' = 'merge'): void => {
     const current = reviewRef.current
     if (!current || generation !== current.review.generation || current.path !== wiringRef.current.activeOutlinePath || busyRef.current) return
+    if (decision === 'put-back' && !singleSlideDiskReview(current.review)) return
     const doc = wiringRef.current.readDoc()
     if (doc?.text !== current.review.mine || depsRef.current!.readBase(current.path) !== current.review.base) { void reconcile(); return }
     const pending = outlineDiskChanges.get(current.path)
     if (pending?.kind !== 'changed' || pending.hash !== current.review.hash) { void reconcile(); return }
     busyRef.current = true; setBusy(true)
-    void applyOutlineMerge(current.path, current.review, choices, depsRef.current!)
+    // The decision is made. Return focus so typing can continue while disk acknowledgement runs.
+    // Conflict choices remain visible until saved so a failed save keeps the edited result in view.
+    if (!current.review.merge.conflicts.length) setMergeReview(null)
+    const applying = applyOutlineMerge(current.path, current.review, choices, depsRef.current!, decision)
       .then(async result => {
         if (wiringRef.current.activeOutlinePath !== current.path) return
         if (result.kind === 'retry') {
@@ -236,10 +233,11 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
         if (result.kind === 'removed') { markRemoved(current.path); return }
         if (result.kind === 'saved' || result.kind === 'reloaded') {
           recoveryFailedRef.current = null; reviewRef.current = null; setMergeReview(null)
-          notify('Merged the disk changes with your edits.', 'info', TOAST)
+          notify(decision === 'put-back' ? 'Put back the slide. The disk edit is in recovery.' : 'Kept the changes to the talk.', 'info', TOAST)
         } else if (result.kind === 'error') { if (result.recoveryFailed) recoveryFailedRef.current = current.path; notify(result.error, 'warning', TOAST) }
       })
-      .finally(() => { busyRef.current = false; setBusy(false) })
+      .finally(() => { applyingRef.current = null; busyRef.current = false; setBusy(false) })
+    applyingRef.current = applying
   }, [reconcile, markRemoved])
   const keepMergeDraft = useCallback((generation: number, choices: Record<string, string>): void => {
     const current = reviewRef.current
@@ -291,7 +289,9 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
 
   const leave = useCallback(async (): Promise<boolean> => {
     const outlinePath = wiringRef.current.activeOutlinePath
+    if (wiringRef.current.saveSketch && !await wiringRef.current.saveSketch()) return false
     if (!outlinePath) return true
+    if (applyingRef.current) await applyingRef.current
     if (reconciliationRef.current) await reconciliationRef.current
     if (wiringRef.current.activeOutlinePath !== outlinePath || busyRef.current) return false
     let ownsBusy = false
@@ -396,6 +396,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
             await closeFrozen({
               ...editorDeps,
               leave: async () => {
+                if (wiringRef.current.saveSketch && !await wiringRef.current.saveSketch()) return false
                 const keep = await new Promise<boolean>(done => window.dispatchEvent(new CustomEvent('tw-retire-moved-editor', {detail:{from,retire:true,done}})))
                 return keep && (!wiringRef.current.activeOutlinePath || wiringRef.current.activeOutlinePath === from)
               },
@@ -407,6 +408,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
         // switched off, as before. An update's restart keeps the fallback on through the confirmation: a frozen editor
         // that does not confirm in time calls the restart off.
         await closeFrozen({ ...editorDeps, leave: async () => {
+          if (update !== true && wiringRef.current.hasPendingSketch?.()) await window.tw.talk.ackCloseRequest?.()
           const mayLeave = await leave()
           if (update !== true) await window.tw.talk.ackCloseRequest?.()
           return mayLeave

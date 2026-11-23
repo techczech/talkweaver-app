@@ -13,6 +13,7 @@ import { HTML_PAGE_INSERT_TEXT } from '../lib/insertHtmlPage'
 import { imagePlacementForLine, type PlacementRow } from '../../../shared/image-placement.ts'
 import {
   getCursorListItemContext,
+  headingPromotionReason,
   minimalChange,
   moveNode,
   reLevel,
@@ -33,7 +34,7 @@ import {
 } from '../keymap/store'
 import { EDITOR_COMMANDS } from '../keymap/registry'
 import { placeOfLine, type Place } from '../../../shared/place.ts'
-import { imageParagraphNoFold, outlineFoldService } from '../extensions/outlineFold'
+import { imageParagraphNoFold, outlineFoldService, revealFoldedLine } from '../extensions/outlineFold'
 import { frontmatterTableExtension } from '../extensions/frontmatterTable'
 import { setWorkStripsData, workStripHandlersFacet } from '../extensions/workStrips'
 import { loadWorkStripsData } from '../lib/workStripsData'
@@ -47,11 +48,12 @@ import {
   lineCommandUnavailable,
   objectBlocksExtension,
   runLineCommand,
-  setOpenObjectBlock
+  setOpenObjectBlock,
+  type ConsumeInsertFence
 } from '../extensions/objectBlocks/field'
-import { EditorView, keymap, highlightActiveLine, showPanel } from '@codemirror/view'
-import { EditorState, EditorSelection, Prec, Compartment, Annotation, Transaction } from '@codemirror/state'
-import { history } from '@codemirror/commands'
+import { Decoration, EditorView, type DecorationSet, keymap, highlightActiveLine, showPanel } from '@codemirror/view'
+import { ChangeSet, EditorState, EditorSelection, Prec, Compartment, Annotation, StateEffect, StateField, Transaction } from '@codemirror/state'
+import { history, isolateHistory } from '@codemirror/commands'
 import { editorBaseKeymap } from '../extensions/editorBaseKeymap'
 import { search, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
 import { commandRan } from '../commands/command-ran'
@@ -70,6 +72,7 @@ import {
   foldAll,
   unfoldAll
 } from '@codemirror/language'
+import type { SectionKind } from '../../../shared/talk-structure'
 import type { TalkInfo } from '../../../preload/index'
 import { notify } from '../lib/notify'
 import { queueOutlineWrite } from '../lib/saveQueue'
@@ -91,7 +94,7 @@ import { blockAnchorAfterLine, insertAtCaretLine, insertBlockAfterLine, pasteAtH
 import type { MoveTarget } from '../extensions/slideBlockOps'
 import type { SlideRef } from '../../../shared/slide-handling/blocks'
 import { quoteLinkFormExtension } from '../extensions/quoteLinkForm'
-import { setSlideNumberLines, slideNumberGutterExtension } from '../extensions/slideNumberGutter'
+import { setSlideNumberLines, slideNumberGutterExtension, type MarkdownHeadingLabel } from '../extensions/slideNumberGutter'
 import { setTextFitNotes, textFitWarningExtension } from '../extensions/textFitWarning'
 import type { TextFitNote } from '../../../shared/text-fit-notes.ts'
 import type { QuoteFormChoice } from '../../../shared/layout-verbs'
@@ -183,7 +186,7 @@ interface Props {
   showResearchInsertion?: boolean
   talk: TalkInfo
   content: string
-  onContentChange: (content: string) => void
+  onContentChange: (content: string, adoptedFrom?: string) => void
   onSaved?: () => void
   /** Save-health signal: true on a real user edit (autosave pending), false once it reaches disk.
    *  A refused/failed save never reports false — the status bar keeps showing unsaved. */
@@ -200,17 +203,20 @@ interface Props {
   /** ADR-0033 §1: heading lines of slides whose text cannot fit at the readable minimum. */
   textFitNotes?: readonly TextFitNote[]
   /** Heading line of each compiled slide (strip order): the gutter numbers those lines, nothing else. */
+  markdownHeadingLabels?: ReadonlyMap<number, MarkdownHeadingLabel>
+  pictureDropLines?: { pointer: number; heading: number | null } | null
   slideLines?: ReadonlyArray<number | null>
   /** Plain view's margin: what each heading line is called (Talk, Section, Slide n) and its layout name. */
   marginLabels?: readonly MarginLabel[]
   /** Compiled slide rows: each carries the compiler's image placements for the editor's image labels. */
   placementRows?: readonly PlacementRow[] | null
   onCursorLine?: (line: number) => void
+  onSectionHeading?: (kind: SectionKind, heading: { from: number; text: string }) => void
   onSectionChild?: (line: number) => void
   onHistoryLine?: (line: number, outline: string) => void
   startWithBullet?: boolean
   /** Onboarding ticket 02: the place of the caret's line (shared/place.ts), reported when it changes. */
-  onPlace?: (place: Place) => void
+  onPlace?: (place: Place, promoteHeadingReason: string | undefined) => void
   /** Whether the caret's line commands (lists, heading levels) have nothing to act on: a closed object
    *  is selected. Reported when it changes. */
   onLineCommandsUnavailable?: (unavailable: boolean) => void
@@ -233,7 +239,7 @@ interface Props {
   /** Diagram remains a layout family until its object renderer arrives. */
   onOpenObjectLayoutFamily?: (kind: 'chart' | 'diagram') => void
   /** Triple-backtick object door, anchored at the live editor coordinates. */
-  onInsertObjectMenu?: (coords: { x: number; y: number }, consumeFence: () => void) => void
+  onInsertObjectMenu?: (coords: { x: number; y: number }, consumeFence: ConsumeInsertFence) => void
   // Lets the app drive editor-only commands (fold/unfold all) from the command palette.
   registerEditorCommands?: (cmds: {
     foldAll: () => void
@@ -273,6 +279,7 @@ interface Props {
     // Move the caret to the document position under viewport (x, y) — the right-click path of
     // the slide context menu, so "the current slide" is the slide under the pointer.
     placeCursorAtCoords: (x: number, y: number) => void
+    lineAtCoords: (x: number, y: number) => number | null
     // Clipboard for the slide context menu's Text rows. Cut/copy defer to the browser command
     // (CodeMirror's own clipboard handlers run); paste splices the clipboard text at the selection.
     cutSelection: () => void
@@ -357,7 +364,7 @@ function plainViewOptions(menus: MarginMenuHandlers): PlainViewOptions {
 
 export type { PlainIconTools }
 
-export type ReadEditorDoc = (options?: { discardProvisionalTrigger?: boolean }) => {
+export type ReadEditorDoc = (options?: { discardProvisionalTrigger?: boolean; authoredOnly?: boolean }) => {
   path: string
   text: string
   caret: number
@@ -391,6 +398,15 @@ function outlinerKeymapExtension() {
 const viewCompartment = new Compartment()
 // The Plain tab's font and text size. Empty in Markdown mode, so that tab stays exactly as it was.
 const plainTypeCompartment = new Compartment()
+const setPictureDropMarks = StateEffect.define<DecorationSet>()
+const pictureDropMarks = StateField.define<DecorationSet>({
+  create: () => Decoration.none,
+  update(marks, transaction) {
+    for (const effect of transaction.effects) if (effect.is(setPictureDropMarks)) return effect.value
+    return transaction.docChanged ? marks.map(transaction.changes) : marks
+  },
+  provide: field => EditorView.decorations.from(field)
+})
 
 /** A transaction allowed through a close's freeze (Reload's text, chosen on the close's own sheet). */
 const closeFreezeExempt = Annotation.define<boolean>()
@@ -424,10 +440,13 @@ export default function Editor({
   focusRange,
   textFitNotes,
   slideLines,
+  markdownHeadingLabels,
+  pictureDropLines,
   marginLabels,
   placementRows,
   onCursorLine,
   onHistoryLine,
+  onSectionHeading,
   onSectionChild,
   startWithBullet = false,
   onPlace,
@@ -547,6 +566,8 @@ export default function Editor({
   // written to disk. Set null when a load starts; set to the path only AFTER its content is dispatched.
   const loadedPathRef = useRef<string | null>(null)
   const onCursorLineRef = useRef(onCursorLine)
+  const onSectionHeadingRef = useRef(onSectionHeading)
+  onSectionHeadingRef.current = onSectionHeading
   const onSectionChildRef = useRef(onSectionChild)
   onSectionChildRef.current = onSectionChild
   const onHistoryLineRef = useRef(onHistoryLine)
@@ -554,7 +575,7 @@ export default function Editor({
   useEffect(() => { onCursorLineRef.current = onCursorLine }, [onCursorLine])
   const onPlaceRef = useRef(onPlace)
   useEffect(() => { onPlaceRef.current = onPlace }, [onPlace])
-  const lastPlaceRef = useRef<Place | null>(null)
+  const lastPlaceRef = useRef<{ place: Place; promoteHeadingReason: string | undefined } | null>(null)
   const onLineCommandsUnavailableRef = useRef(onLineCommandsUnavailable)
   useEffect(() => { onLineCommandsUnavailableRef.current = onLineCommandsUnavailable }, [onLineCommandsUnavailable])
   const lastLineCommandsUnavailableRef = useRef(false)
@@ -908,6 +929,7 @@ export default function Editor({
             }
           }),
           slideNumberGutterExtension,
+          pictureDropMarks,
           historyCompartment.of(history({ minDepth: 200 })),
           // A web link pasted or typed into a quote slide's source line makes the slide a web page in the same undo step (spec 3.1).
           quoteLinkFormExtension(() => compiledLayoutAtRef.current),
@@ -923,6 +945,8 @@ export default function Editor({
           // The extension comes first at highest precedence so scene C can use the first Escape to
           // back up from options; when no chained step is active, the rollback binding below wins.
           triggerCompleteExtension({
+            isMarkdown: () => viewModeRef.current === 'markdown',
+            onSectionHeading: (kind, heading) => onSectionHeadingRef.current?.(kind, heading),
             onInsertObject: (kind, request) => {
               // The object splice owns removal of a provisional chart token. Clear the rollback
               // record first so its queued guard cannot restore the superseded picker bytes.
@@ -1078,14 +1102,15 @@ export default function Editor({
               // A completion inserted its closing brace: the edit is now authored and may cross
               // the parent/autosave boundary normally.
               provisionalTriggerRef.current = null
-              onContentChange(content)
+              const fromSave = update.transactions.some(tr => tr.annotation(savedTextAdopted))
+              onContentChange(content, fromSave ? update.startState.doc.toString() : undefined)
               // Autosave ONLY once this talk's real content is loaded AND the doc still belongs to the
               // active talk — never during the fresh-mount `doc:''` transient or the load's own initial
               // content dispatch (data-loss guard, 2026-07-05). scheduleAutosave also skips empty text.
               if (loadedPathRef.current && loadedPathRef.current === currentTalkRef.current) {
                 // A change of the person's raises the revision; taking a save's ids back in does not (it is the text
                 // that save wrote).
-                if (!update.transactions.some((tr) => tr.annotation(savedTextAdopted))) editorRevision.bump()
+                if (!fromSave) editorRevision.bump()
                 cleanDocumentRef.current.dirty = true
                 onDirtyRef.current?.(true)
                 scheduleAutosave(currentTalkRef.current, content)
@@ -1111,7 +1136,7 @@ export default function Editor({
             }
 
             // Report the 1-based line of the main cursor on selection change.
-            if (update.selectionSet && onCursorLineRef.current) {
+            if ((update.selectionSet || (update.docChanged && viewModeRef.current === 'markdown')) && onCursorLineRef.current) {
               const head = update.state.selection.main.head
               const lineNumber = update.state.doc.lineAt(head).number
               onCursorLineRef.current(lineNumber)
@@ -1141,15 +1166,16 @@ export default function Editor({
               }
             }
 
-            // The caret's place (onboarding ticket 02), read from the caret's line only: no parse.
-            // Reported only when it changes, so typing within a line costs one regex pass.
+            // Report place and heading availability together, including changes between heading levels.
+            // Both start with the caret's line; only top heading candidates need the source heading map.
             if ((update.selectionSet || update.docChanged) && onPlaceRef.current) {
               const doc = update.state.doc
               const line = doc.lineAt(update.state.selection.main.head)
               const place = placeOfLine(line.text, line.number, (n) => (n >= 1 && n <= doc.lines ? doc.line(n).text : ''))
-              if (place !== lastPlaceRef.current) {
-                lastPlaceRef.current = place
-                onPlaceRef.current(place)
+              const promoteHeadingReason = headingPromotionReason(update.state)
+              if (place !== lastPlaceRef.current?.place || promoteHeadingReason !== lastPlaceRef.current.promoteHeadingReason) {
+                lastPlaceRef.current = { place, promoteHeadingReason }
+                onPlaceRef.current(place, promoteHeadingReason)
               }
             }
             if ((update.selectionSet || update.docChanged) && onLineCommandsUnavailableRef.current) {
@@ -1293,9 +1319,21 @@ export default function Editor({
   const slideLinesKey = (slideLines ?? []).join(',')
   useEffect(() => {
     const v = viewRef.current
-    if (v) setSlideNumberLines(v, slideLines ?? [])
+    if (v) setSlideNumberLines(v, slideLines ?? [], viewMode === 'markdown' ? markdownHeadingLabels : undefined)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slideLinesKey, talk.outlinePath])
+  }, [slideLinesKey, talk.outlinePath, viewMode, markdownHeadingLabels])
+
+  useEffect(() => {
+    const view = viewRef.current
+    if (!view) return
+    const lines = pictureDropLines && viewMode === 'markdown'
+      ? [...new Set([pictureDropLines.pointer, pictureDropLines.heading])].filter(
+        (line): line is number => line !== null && line >= 1 && line <= view.state.doc.lines
+      ) : []
+    const marks = lines.map(line => Decoration.line({ class: 'cm-picture-drop-target' }).range(view.state.doc.line(line).from))
+    if (!marks.length && view.state.field(pictureDropMarks).size === 0) return
+    view.dispatch({ effects: setPictureDropMarks.of(Decoration.set(marks, true)) })
+  }, [pictureDropLines, viewMode, talk.outlinePath])
 
   // e2e seam (mirrors KEYMAP_CHANGED_EVENT): the diagnose harness drives focus by dispatching a
   // `tw-focus-scope` window event carrying {from,to} | null, so the scoped view can be exercised in
@@ -1440,31 +1478,25 @@ export default function Editor({
         : skeleton
       const openOffset = entry.object.storage === 'fence' ? block.indexOf('\n') + 1 : 0
       // With an object selected, the new one goes after it, never into it (insertionCaret).
-      const prepared = prepareObjectInsertDocument(
-        view.state.doc.toString(),
-        insertionCaret(view.state),
-        request?.replace
-      )
-      if (prepared.doc !== view.state.doc.toString()) {
-        const change = minimalChange(view.state.doc.toString(), prepared.doc)
-        view.dispatch({
-          changes: change,
-          selection: { anchor: prepared.at }
-        })
-      }
-      const head = insertionCaret(view.state)
+      const doc = view.state.doc.toString()
+      const prepared = prepareObjectInsertDocument(doc, insertionCaret(view.state), request?.replace)
       // A caret inside the heading does not map past a Trigger-line insertion at heading.to.
       // Every object block goes below the heading's id and layout lines (headingEndInsert.ts), so
       // the id line stays directly under its heading.
       const splice = planObjectBlockSplice(
-        view.state.doc.toString(),
-        blockAnchorAfterLine(view.state.doc.toString(), head),
+        prepared.doc,
+        blockAnchorAfterLine(prepared.doc, prepared.at),
         block,
         openOffset
       )
+      // Stamping the slide and replacing any picker text belong to the same Undo as insertion.
+      const insert = { from: splice.from, to: splice.to, insert: splice.insert }
+      const changes = doc === prepared.doc ? insert
+        : view.state.changes(minimalChange(doc, prepared.doc)).compose(ChangeSet.of(insert, prepared.doc.length))
       view.dispatch({
-        changes: { from: splice.from, to: splice.to, insert: splice.insert },
+        changes,
         selection: { anchor: splice.openFrom },
+        annotations: isolateHistory.of('full'),
         effects: setOpenObjectBlock.of({ from: splice.blockFrom, to: splice.blockTo }),
         scrollIntoView: true
       })
@@ -1600,6 +1632,11 @@ export default function Editor({
         if (!v) return
         const pos = v.posAtCoords({ x, y })
         if (pos != null) v.dispatch({ selection: EditorSelection.cursor(pos) })
+      },
+      lineAtCoords: (x, y) => {
+        const view = viewRef.current
+        const pos = view?.posAtCoords({ x, y }, false)
+        return view && pos != null ? view.state.doc.lineAt(pos).number : null
       },
       // Cut/copy re-focus the editor then run the browser command, so CodeMirror's own
       // clipboard handlers apply (same semantics as ⌘X/⌘C, including empty-selection rules).
@@ -1747,8 +1784,8 @@ export default function Editor({
         const written = commitQuoteFormOption(doc, current.headingLine, token, compiledLayout)
         if (written) {
           if (written.outline !== doc) {
-            const ch = minimalChange(doc, written.outline)
-            v.dispatch({ changes: { from: ch.from, to: ch.to, insert: ch.insert } })
+            const spec = replaceDocTransaction(doc, written.outline, { ownUndoStep: true })
+            if (spec) v.dispatch(spec)
           }
           return written.triggerLine
         }
@@ -1765,7 +1802,7 @@ export default function Editor({
       const echoPosition = echo && written
         ? written.from + written.insert.indexOf(next) + echo.from
         : null
-      v.dispatch({ changes: plan.changes })
+      v.dispatch({ changes: plan.changes, annotations: isolateHistory.of('full') })
       if (echo && echoPosition != null) {
         flashTriggerEchoAt(v, echoPosition, echo.token)
       }
@@ -1863,7 +1900,10 @@ export default function Editor({
         if (provisionalTriggerRef.current) return null
         closeCompletion(view)
       }
-      return { path: currentTalkRef.current, text: view.state.doc.toString(), caret: view.state.selection.main.head, base: cleanDocumentRef.current.text, dirty: cleanDocumentRef.current.dirty, epoch: cleanDocumentRef.current, diskHash: cleanDocumentRef.current.diskHash }
+      const provisional = provisionalTriggerRef.current
+      const text = options?.authoredOnly && provisional?.epoch === cleanDocumentRef.current
+        ? provisional.before : view.state.doc.toString()
+      return { path: currentTalkRef.current, text, caret: view.state.selection.main.head, base: cleanDocumentRef.current.text, dirty: cleanDocumentRef.current.dirty, epoch: cleanDocumentRef.current, diskHash: cleanDocumentRef.current.diskHash }
     })
   }, [registerReadDoc, rollbackProvisionalTrigger])
 
@@ -1877,12 +1917,14 @@ export default function Editor({
     const prefix = focusLine.editTitle ? line.text.match(/^#{1,6}[ 	]+/)?.[0].length ?? 0 : 0
     // An untitled divider reserves its second space to separate the name from its ID while typing.
     const reservedSpace = focusLine.editTitle && /^#{2,6} {2}\{id=[\w-]+\}$/.test(line.text) ? 1 : 0
+    const reveal = viewMode === 'markdown' ? revealFoldedLine(view.state, line.from) : []
     view.dispatch({
       selection: { anchor: line.from + prefix - reservedSpace },
       // 'start' parks the target line at the TOP of the editor viewport — matching the slide
       // strip/preview, which already scrolls the selected card to the top. 'center' left the
       // jumped-to slide mid-screen, which read as inconsistent with the previews.
-      effects: focusRange && startWithBullet ? undefined : EditorView.scrollIntoView(line.from, { y: 'start' })
+      effects: focusRange && startWithBullet ? reveal
+        : [...reveal, EditorView.scrollIntoView(line.from, { y: 'start' })]
     })
     if (focusLine.takeFocus) view.focus()
   }, [focusLine])

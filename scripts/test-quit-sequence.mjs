@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict'
-import { EventEmitter } from 'node:events'
+import { spawn } from 'node:child_process'
+import { EventEmitter, once } from 'node:events'
+import { existsSync, writeFileSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { constants, tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { setImmediate as nextTurn } from 'node:timers/promises'
 import { test } from 'node:test'
 import { mainSourceFileAt, readMainSource } from './lib/read-source.mjs'
@@ -260,4 +265,109 @@ test('watcher errors release the subscription and committed Quit kills the child
   child.emit('message', { type: 'change', id: 2, event: 'rename', name: null })
   assert.deepEqual(errors, ['missing'])
   assert.equal(killed, 1)
+})
+
+
+test('killing the directory watch worker reattaches only live watches and rechecks the gap', { timeout: 30000 }, async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'tw-watch-restart-'))
+  const children = []
+  const logs = []
+  const changes = new EventEmitter()
+  const waitForChange = event => once(changes, event, { signal: t.signal })
+  const gapFile = join(folder, 'in-gap.md')
+  const workerUrl = new URL('../src/main/directory-watch-worker.ts', import.meta.url).href
+  const watcher = createDirectoryWatchService(() => {
+    // Run the real worker in a killable OS process, with Node IPC as its Electron parentPort.
+    const processHandle = spawn(process.execPath, ['--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', '-e', `
+      process.parentPort = {
+        on: (event, listener) => process.on(event, data => listener({ data })),
+        postMessage: data => process.send(data)
+      }
+      import(process.argv[1]).catch(error => { throw error })
+    `, workerUrl], { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] })
+    const child = Object.assign(new EventEmitter(), {
+      postMessage: command => processHandle.send(command),
+      kill: () => processHandle.kill('SIGKILL')
+    })
+    processHandle.on('message', message => child.emit('message', message))
+    processHandle.on('error', error => changes.emit('error', error))
+    const exited = new Promise(resolve => processHandle.once('exit', (code, signal) => {
+      child.emit('exit', code ?? 128 + constants.signals[signal])
+      resolve()
+    }))
+    children.push({ child, exited })
+    return child
+  }, error => logs.push(error.message))
+  try {
+    const first = watcher.watch(folder, {}, () => changes.emit('closed'))
+    watcher.watch(folder, { recursive: true }, (event, name) => {
+      if (name === null) changes.emit('ready', existsSync(gapFile))
+      else changes.emit('routed', event, name)
+    })
+    assert.deepEqual(await waitForChange('ready'), [false])
+    const original = children[0]
+    const restarted = waitForChange('ready')
+    original.child.kill()
+    await original.exited
+    first.close()
+    let closedCalls = 0
+    changes.on('closed', () => closedCalls++)
+    original.child.emit('message', { type: 'ready', id: 1 })
+    original.child.emit('message', { type: 'ready', id: 2 })
+    writeFileSync(gapFile, 'during the outage')
+    assert.deepEqual(await restarted, [true], 'the replacement ready event discovers files written during the gap')
+    assert.equal(children.length, 2)
+    assert.equal(closedCalls, 0)
+    assert.match(logs[0], /exited \(\d+\)/)
+    // The replacement's native attachment is acknowledged above. Drive the same late
+    // event through both child identities without depending on OS notification timing.
+    const routed = []
+    changes.on('routed', (...change) => routed.push(change))
+    const reply = { type: 'change', id: 2, event: 'change', name: 'live.md' }
+    original.child.emit('message', reply)
+    children[1].child.emit('message', reply)
+    assert.deepEqual(routed, [['change', 'live.md']])
+  } finally {
+    watcher.stop()
+    await Promise.all(children.map(({ exited }) => exited))
+    await rm(folder, { recursive: true, force: true })
+  }
+})
+
+test('watcher restart has a bounded backoff and Quit cancels a pending restart', t => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] })
+  const children = []
+  const logs = []
+  const spawn = () => {
+    const child = Object.assign(new EventEmitter(), { postMessage() {}, kill() { this.emit('exit', 1) } })
+    children.push(child)
+    return child
+  }
+  const watcher = createDirectoryWatchService(spawn, error => logs.push(error.message))
+  const errors = []
+  watcher.watch('/missing', {}, () => assert.fail('a dead worker cannot report a change'))
+    .on('error', error => errors.push(error.message))
+  for (const delay of [250, 1000, 4000]) {
+    const count = children.length
+    children.at(-1).kill()
+    t.mock.timers.tick(delay - 1)
+    assert.equal(children.length, count)
+    t.mock.timers.tick(1)
+    assert.equal(children.length, count + 1)
+  }
+  children.at(-1).kill()
+  t.mock.timers.tick(60000)
+  assert.equal(children.length, 4)
+  assert.equal(logs.length, 4)
+  assert.match(errors[0], /restart limit/)
+  assert.throws(() => watcher.watch('/new', {}, () => {}), /restart limit/)
+  watcher.stop()
+
+  const quitting = createDirectoryWatchService(spawn, () => {})
+  quitting.watch('/live', {}, () => {})
+  children.at(-1).kill()
+  quitting.stop()
+  t.mock.timers.tick(60000)
+  assert.equal(children.length, 5)
+  assert.throws(() => quitting.watch('/new', {}, () => {}), /stopped/)
 })

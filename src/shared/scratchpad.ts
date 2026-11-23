@@ -5,11 +5,16 @@
 import { highlightSegments, parseQuery as parseSlideQuery, termsMatch, words } from './slide-handling/query.ts'
 
 export type ScratchStatus = 'active' | 'kept' | 'rejected'
-export type ScratchItemKind = 'slide' | 'file'
+export type ScratchItemKind = 'slide' | 'file' | 'proposed'
 /** What an agent file is, from its extension. */
-export type ScratchFileKind = 'svg' | 'html' | 'pic'
+export type ScratchVisualKind = 'svg' | 'html' | 'pic'
+export type ScratchFileKind = ScratchVisualKind | 'sketch'
+export const MAX_SKETCH_BYTES = 4 * 1024 * 1024
+export interface ScratchSketch { name: string; text: string; revision: string }
 /** The four search type filters: Slides, SVG, HTML, Pictures. */
-export type ScratchTypeKey = 'slide' | ScratchFileKind
+export type ScratchTypeKey = 'slide' | ScratchVisualKind
+
+export interface SketchUse { key: string; at: string; ids: string[]; slideCount?: number }
 
 export interface ScratchGroup { id: string; name: string }
 export interface ScratchSource { label: string; url: string }
@@ -26,6 +31,8 @@ export interface ScratchSlide {
   thumbKey: string
   talkSlug?: string
   vaultId?: string
+  sketchFile?: string
+  sketchProposalKey?: string
 }
 
 /** One item as the state file stores it (version 1). */
@@ -33,7 +40,7 @@ export interface ScratchStateItem {
   id: string
   kind: ScratchItemKind
   addedAt: string
-  batch: { source: 'slide-browser' | 'agent'; at: string }
+  batch: { source: 'slide-browser' | 'agent' | 'sketch'; at: string }
   group: string | null
   status: ScratchStatus
   file?: string
@@ -42,6 +49,9 @@ export interface ScratchStateItem {
   insertedAt?: string
   /** The title of the slide it went into (a new slide's own title, or the slide at the cursor). */
   insertedInto?: string
+  sketchUses?: SketchUse[]
+  sketchTitle?: string
+  sketchOrigin?: 'person'
 }
 
 export interface ScratchState {
@@ -64,6 +74,8 @@ export interface ScratchItem extends ScratchStateItem {
   fileUrl?: string
   /** Text found inside an SVG or HTML file, for search only (never shown on cards). */
   contentText?: string
+  sketchLineCount?: number
+  sourceSketchTitle?: string
 }
 
 export interface ScratchSnapshot {
@@ -97,18 +109,18 @@ export const STATE_FILE_NAME = 'scratchpad-state.json'
 export const SCRATCH_FOLDER_NAME = 'scratchpad'
 
 export const FILE_KIND_BY_EXTENSION: Readonly<Record<string, ScratchFileKind>> = Object.freeze({
-  '.svg': 'svg', '.html': 'html', '.htm': 'html',
+  '.md': 'sketch', '.svg': 'svg', '.html': 'html', '.htm': 'html',
   '.png': 'pic', '.jpg': 'pic', '.jpeg': 'pic', '.webp': 'pic', '.gif': 'pic'
 })
 
 export const TYPE_LABEL: Readonly<Record<ScratchTypeKey, string>> = Object.freeze({
   slide: 'Slides', svg: 'SVG', html: 'HTML', pic: 'Pictures'
 })
-export const TYPE_BADGE: Readonly<Record<ScratchFileKind, string>> = Object.freeze({ svg: 'SVG', html: 'HTML', pic: 'Picture' })
+export const TYPE_BADGE: Readonly<Record<ScratchFileKind, string>> = Object.freeze({ svg: 'SVG', html: 'HTML', pic: 'Picture', sketch: 'Sketch' })
 
 /** The item's type for filtering: slides are 'slide'; a file is its file kind (unknown → 'pic'). */
-export function itemTypeKey(item: Pick<ScratchItem, 'kind' | 'fileKind'>): ScratchTypeKey {
-  return item.kind === 'slide' ? 'slide' : (item.fileKind ?? 'pic')
+export function itemTypeKey(item: Pick<ScratchItem, 'kind' | 'fileKind'>): ScratchTypeKey | 'sketch' {
+  return item.kind !== 'file' ? 'slide' : (item.fileKind ?? 'pic')
 }
 
 // ── Search: typed prefixes and chips are one state (the query text) ────────────────────────────
@@ -150,7 +162,7 @@ export function searchableText(item: ScratchItem): string {
 }
 
 export function matchesQuery(item: ScratchItem, parsed: ParsedQuery): boolean {
-  if (parsed.types.length > 0 && !parsed.types.includes(itemTypeKey(item))) return false
+  if (parsed.types.length > 0 && !parsed.types.some(type => type === itemTypeKey(item))) return false
   const talk = (item.slide?.talkTitle ?? '').toLowerCase()
   if (!parsed.from.every((word) => talk.includes(word))) return false
   if (parsed.terms.length === 0) return true
@@ -161,22 +173,24 @@ export { highlightSegments }
 
 // ── Lists, group filter, counts ────────────────────────────────────────────────────────────────
 
-export type ScratchList = 'all' | 'slides' | 'visuals' | 'kept' | 'rejected'
+export type ScratchList = 'all' | 'sketches' | 'proposed' | 'slides' | 'visuals' | 'kept' | 'rejected'
 /** 'all' = every group, 'ungrouped' = no group, else a group id. */
 export type ScratchGroupFilter = 'all' | 'ungrouped' | string
 
 export const LIST_LABEL: Readonly<Record<ScratchList, string>> = Object.freeze({
-  all: 'All', slides: 'Picked slides', visuals: 'Agent visuals', kept: 'Kept', rejected: 'Rejected'
+  all: 'All', sketches: 'Sketches', proposed: 'Proposed slides', slides: 'Picked slides', visuals: 'Agent visuals', kept: 'Kept', rejected: 'Rejected'
 })
-export const LISTS: readonly ScratchList[] = ['all', 'slides', 'visuals', 'kept', 'rejected']
+export const LISTS: readonly ScratchList[] = ['all', 'sketches', 'proposed', 'slides', 'visuals', 'kept', 'rejected']
 
 /** All, Picked slides and Agent visuals show active items only; Kept and Rejected show their status. */
 export function inList(item: ScratchItem, list: ScratchList): boolean {
   if (list === 'kept') return item.status === 'kept'
   if (list === 'rejected') return item.status === 'rejected'
   if (item.status !== 'active') return false
+  if (list === 'sketches') return item.fileKind === 'sketch'
+  if (list === 'proposed') return item.kind === 'proposed'
   if (list === 'slides') return item.kind === 'slide'
-  if (list === 'visuals') return item.kind === 'file'
+  if (list === 'visuals') return item.kind === 'file' && item.fileKind !== 'sketch'
   return true
 }
 
@@ -203,7 +217,7 @@ export type ScratchCounts = Record<ScratchList, number> & { active: number }
 
 /** Tab counts do not move with the search or the group filter; they are what each list holds. */
 export function listCounts(items: readonly ScratchItem[]): ScratchCounts {
-  const counts: ScratchCounts = { all: 0, slides: 0, visuals: 0, kept: 0, rejected: 0, active: 0 }
+  const counts: ScratchCounts = { all: 0, sketches: 0, proposed: 0, slides: 0, visuals: 0, kept: 0, rejected: 0, active: 0 }
   for (const list of LISTS) counts[list] = items.filter((item) => inList(item, list)).length
   counts.active = counts.all
   return counts
@@ -212,7 +226,10 @@ export function listCounts(items: readonly ScratchItem[]): ScratchCounts {
 /** The Show only chips' counts: active items per type. */
 export function typeCounts(items: readonly ScratchItem[]): Record<ScratchTypeKey, number> {
   const out: Record<ScratchTypeKey, number> = { slide: 0, svg: 0, html: 0, pic: 0 }
-  for (const item of items) if (item.status === 'active') out[itemTypeKey(item)]++
+  for (const item of items) {
+    const type = itemTypeKey(item)
+    if (item.status === 'active' && type !== 'sketch') out[type]++
+  }
   return out
 }
 
@@ -246,7 +263,10 @@ export function batchSections(items: readonly ScratchItem[], now: Date = new Dat
   const sorted = [...items].sort(newestFirst)
   const out: BatchSection[] = []
   for (const item of sorted) {
-    const key = `${item.batch.source}|${item.batch.at}`
+    const source = item.fileKind === 'sketch'
+      ? item.sketchOrigin === 'person' ? 'Written here' : 'Added from scratch folder'
+      : item.batch.source === 'agent' ? 'Made by agent' : item.batch.source === 'sketch' ? 'From a sketch' : 'Picked from Slide Browser'
+    const key = `${source}|${item.batch.at}`
     let section = out.find((s) => s.key === key)
     if (!section) {
       const at = new Date(item.batch.at)
@@ -254,7 +274,7 @@ export function batchSections(items: readonly ScratchItem[], now: Date = new Dat
       section = {
         key,
         day: valid ? dayHeading(at, now) : 'Added earlier',
-        label: `${item.batch.source === 'agent' ? 'Made by agent' : 'Picked from Slide Browser'}${valid ? ` ${pad(at.getHours())}:${pad(at.getMinutes())}` : ''}`,
+        label: `${source}${valid ? ` ${pad(at.getHours())}:${pad(at.getMinutes())}` : ''}`,
         items: []
       }
       out.push(section)
@@ -267,6 +287,11 @@ export function batchSections(items: readonly ScratchItem[], now: Date = new Dat
 /** A readable title from an agent's file name when it has no sidecar title: "slide-deep-research-history.svg"
  *  reads "Deep research history". Drops the extension and a leading "slide-", turns hyphens and underscores
  *  into spaces, capitalises the first letter. A name that is nothing but "slide" keeps that word. */
+export function sketchTitleFromText(text: string): string {
+  const first = text.split(/\r?\n/).find(line => line.trim())
+  return first?.trim().replace(/^(?:#{1,6}|[-*+•–]|\d+[.)])[ \t]+/, '').slice(0, 120) || ''
+}
+
 export function titleFromFileName(name: string): string {
   const dot = name.lastIndexOf('.')
   const stem = dot > 0 ? name.slice(0, dot) : name

@@ -287,6 +287,7 @@ const PALETTE_COMMANDS = [
   command({ id: 'research-reveal-folder', label: 'Reveal research folder', scope: 'app', menu: null, palette: { visible: true, keywords: ['reveal', 'research', 'folder', 'finder', 'show'] }, handlerId: 'research-reveal-folder' }),
   // Slide Scratchpad (docs/design/2026-10-27-slide-scratchpad): candidates for this talk. Actions act on the
   // panel's current selection; only the two Insert commands change the outline.
+  command({ id: 'new-sketch', label: 'Sketch slides from an outline…', scope: 'app', menu: { path: ['Insert'], order: 180 }, toolbar: { menu: 'insert', order: 180, icon: 'slides' }, palette: { visible: true, keywords: ['outline', 'sketch', 'scratchpad', 'breakdown'] }, handlerId: 'new-sketch' }),
   command({ id: 'scratchpad-panel', label: 'Slide Scratchpad', scope: 'app', menu: { path: ['View'], order: 182 }, palette: { visible: true, keywords: ['scratchpad', 'slide', 'candidates', 'collect', 'agent', 'visuals', 'triage'] }, handlerId: 'scratchpad-panel' }),
   command({ id: 'scratchpad-dock', label: 'Dock Slide Scratchpad to the right', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'dock', 'right', 'panel'] }, handlerId: 'scratchpad-dock' }),
   command({ id: 'scratchpad-float', label: 'Float Slide Scratchpad over the workspace', scope: 'app', menu: null, palette: { visible: true, keywords: ['scratchpad', 'float', 'panel', 'window'] }, handlerId: 'scratchpad-float' }),
@@ -383,6 +384,8 @@ const PALETTE_COMMANDS = [
   command({ id: 'abstract', label: 'Edit abstract', scope: 'deck', menu: null, toolbar: { menu: 'deck', order: 40, icon: 'abstract' }, palette: { visible: true, keywords: ['edit', 'abstract'] }, handlerId: 'abstract' }),
   command({ id: 'view-panel-previews', label: 'Show slides as previews', scope: 'app', menu: { path: ['View'], order: 90 }, palette: { visible: true, keywords: ['slides', 'thumbnails'] }, handlerId: 'view-panel-previews' }),
   command({ id: 'view-panel-outline', label: 'Show slides as an outline', scope: 'app', menu: { path: ['View'], order: 91 }, palette: { visible: true, keywords: ['slides', 'text', 'outline'] }, handlerId: 'view-panel-outline' }),
+  command({ id: 'view-slide-tab-pages', label: 'Show the Slide tab as pages', scope: 'app', menu: { path: ['View'], order: 93 }, palette: { visible: true, keywords: ['inspector', 'right panel'] }, handlerId: 'view-slide-tab-pages' }),
+  command({ id: 'view-slide-tab-list', label: 'Show the Slide tab as one long list', scope: 'app', menu: { path: ['View'], order: 94 }, palette: { visible: true, keywords: ['inspector', 'right panel'] }, handlerId: 'view-slide-tab-list' }),
   command({ id: 'split-pasted-picture-row', label: 'One slide for each pasted picture', scope: 'app', menu: { path: ['Edit'], order: 89 }, palette: { visible: true, keywords: ['picture', 'row', 'split', 'slides'] }, handlerId: 'split-pasted-picture-row' }),
   command({ id: 'paste-picture', label: 'Paste a picture', scope: 'app', menu: { path: ['Edit'], order: 92 }, palette: { visible: true, keywords: ['clipboard', 'paste', 'image'] }, handlerId: 'paste-picture' }),
   command({ id: 'duplicate-slide', label: 'Duplicate slide', scope: 'app', menu: { path: ['Edit'], order: 93 }, palette: { visible: true, keywords: ['duplicate', 'copy', 'slide'] }, handlerId: 'duplicate-slide' }),

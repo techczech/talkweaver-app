@@ -1,12 +1,15 @@
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { readOutlineSlides } from '../src/shared/feedback-accept.ts'
+import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+import { buildPerSlideProjections } from '../compiler/scripts/lib/10-projections.mjs'
 // Layout content verbs (ADR-0032; ticket 02): pure functions over outline text.
 import { strict as assert } from 'node:assert'
 import {
-  canTakeLayout, LayoutVerbError, previewLayout, setLayout, setLayoutOption, suggestLayouts
+  canTakeLayout, clearPointRow, LayoutVerbError, previewLayout, resetLayoutOptions, setLayout, setLayoutOption, setLayoutOptions, suggestLayouts
 } from '../src/shared/layout-verbs.ts'
 import { LAYOUTS } from '../src/shared/layout-registry/entries.ts'
-import { deckCommitContext } from '../src/shared/deck-frame.ts'
+import { deckCommitContext, pictureSideForSlide } from '../src/shared/deck-frame.ts'
 import { logicalTriggerBlockAfterHeading } from '../src/shared/trigger-line.ts'
 import { commitLayoutSelection, selectionFromTriggerLine, toggleLayoutSelection } from '../src/shared/layout-selection.ts'
 import { planEditorTriggerCommit } from '../src/renderer/src/extensions/inlineTriggerCommitModel.ts'
@@ -35,6 +38,41 @@ title: Intern to Toolmaker
 
 `
 const names = (list) => list.map((s) => s.layout)
+
+{
+  const mixed = '### A picture and points\n{id=family}{list-visual}{font-title=l}\n\n- One\n- Two\n\n![Picture](sample.png)\n'
+  const marked = setLayoutOptions(mixed, 'family', [{ group: 'list-style', token: 'iconlist' }], 'list-visual').outline
+  assert.match(marked, /\{list-visual\}/, 'point icons keep the inferred media layout')
+  assert.match(marked, /\{iconlist\}/)
+  assert.doesNotMatch(marked, /\{sidebar\}|\{titletop\}/)
+  const row = mixed.replace('{list-visual}', '{icon-row}{image=right}')
+  assert.equal(clearPointRow(row, 'family'), row.replace('{icon-row}', ''), 'Reset drops only the Row layout')
+  assert.equal(clearPointRow(marked, 'family'), marked, 'Resetting Row cannot remove another layout')
+}
+
+{
+  const path = fileURLToPath(new URL('../demo-vault/layout-sampler/layout-sampler-outline.md', import.meta.url))
+  const slide = '# Talk\n\n## Gallery\n\n### A picture and points {id=family}\n\n- One\n- Two\n\n![Picture](assets/sample-image.png)\n'
+  const check = async (text, expected) => {
+    const model = await prepareSource(path, text, 'Picture placement')
+    const row = buildPerSlideProjections(model, 'picture-placement').find(row => row.slide_id === 'family')
+    assert.ok(row.image_placements.some(placement => placement.kind === 'beside'))
+    assert.equal(model.slides.find(item => item.id === 'family').frame.image, expected)
+    assert.equal(pictureSideForSlide(text, row.source_line), expected, 'the inspector follows the compiled side')
+    return row.layout
+  }
+  const layout = await check(slide, 'left')
+  const move = (text, side) => setLayoutOptions(text, 'family', [{ group: 'media-placement', token: `image=${side}` }], layout).outline
+  const right = move(slide, 'right')
+  await check(right, 'right')
+  await check(move(right, 'left'), 'left')
+  await check('---\ndefaults:\n  image: right\n---\n' + slide, 'right')
+  const sectionDefaults = '---\ndefaults:\n  image: right\nsections:\n  Gallery: { image: left }\n---\n'
+  await check(sectionDefaults + slide, 'left')
+  await check(sectionDefaults + right, 'right')
+  await check(slide.replace('{id=family}', '{id=family}{media=right}'), 'right')
+  await check(slide.replace('- One', '<!--\n{image=right}\n-->\n- One'), 'left')
+}
 
 // What the editor's ↵ writes: `commitLayoutSelection` from the canonical merged `block.line`, written
 // through `planEditorTriggerCommit` (Editor.tsx applyLayout). The verbs must match it byte for byte.
@@ -72,6 +110,13 @@ assert.equal(byLine.outline, set.outline)
 const again = setLayout(set.outline, 'vi9k8', 'cards')
 assert.equal(again.outline, editorEnter(set.outline, 11, 'cards'))
 assert.equal(setLayout(again.outline, 'vi9k8', 'cards').outline, again.outline)
+{
+  const top = setLayoutOptions(codex, 'vi9k8', [
+    { group: 'title-display', token: 'title=show' },
+    { group: 'title-placement', token: 'titletop' }
+  ], 'list')
+  assert.match(top.triggerLine, /\{title=show\}\{titletop\}/, 'On top writes the canonical adjacent title pair')
+}
 // Switching layout replaces the layout token and keeps {id}.
 // (From the canonical merged line, as the editor's ↵ reads it, so the space before {cards} goes.)
 assert.equal(setLayout(set.outline, 'vi9k8', 'timeline').triggerLine, '{icons}{id=vi9k8}{timeline}')
@@ -417,4 +462,35 @@ assert.match(unstampedChat, /```chat\nuser:/, 'the example also inserts before t
     assert.equal(matchTarget(read, { ...row, source_markdown: '### Changed\n' }), undefined, 'a changed heading still refuses')
     assert.equal(read.lines.join('\n'), text, 'matching leaves original outline bytes intact')
   }
+}
+
+// ADR-0045 IN2: reset reproduces inheritance, even with every option group on the line.
+{
+  const { registryOptionGroups } = await import('../src/shared/layout-registry/options.ts')
+  const groups = registryOptionGroups()
+  const title = new Set(['title-placement', 'title-display', 'title-look', 'title-look-tone', 'font-title', 'title-icon', 'statement-sidebar'])
+  const tokens = groups.flatMap(group => {
+    const value = group.values.find(value => value.token)?.token
+    return value ? [{ key: group.key, value }] : []
+  })
+  const make = (include) => '---\r\ntitle_look: kicker\r\n---\r\n### Example\r\n{id=fixed}{list}'
+    + tokens.filter(include).map(({ value }) => `{${value}}`).join('') + '{unknown=keep}\r\n\r\n- Point\r\n'
+  const all = make(() => true)
+  const reset = resetLayoutOptions(all, 'fixed', [...title]).outline
+  assert.equal(reset, make(({ key }) => !title.has(key)), 'Only the Title group is removed; every other token, id and line ending survives')
+  assert(!reset.includes('titlelook=default'), 'Reset releases inherited title style')
+
+  const legacy = '### Keep {titletop} in the title {id=fixed}{sidebar}\r\n{id=stale}  {titlelook=label}\r\n{numbered=plain}{image=left}\r\n\r\n- Point\r\n'
+  assert.equal(resetLayoutOptions(legacy, 'fixed', [...title]).outline,
+    '### Keep {titletop} in the title {id=fixed}\r\n{id=stale}\r\n{numbered=plain}{image=left}\r\n\r\n- Point\r\n',
+    'Reset handles older heading and multi-line options while preserving unrelated authored bytes')
+
+  const quote = '### A quotation\n{id=fixed}{quote}\n\n> A full sentence.\n'
+  const shown = setLayoutOptions(quote, 'fixed', [
+    { group: 'title-display', token: 'title=show' },
+    { group: 'title-placement', token: 'titletop' },
+    { group: 'title-look', token: 'titlelook=label' }
+  ], 'quote')
+  assert.match(shown.triggerLine, /\{id=fixed\}/)
+  for (const code of ['title=show', 'titletop', 'titlelook=label']) assert(shown.triggerLine.includes('{' + code + '}'))
 }

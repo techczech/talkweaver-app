@@ -62,15 +62,18 @@ const titleCases = (mode) => [
     : ['Markdown: a title with an icon, past column 0 (unchanged)', '## One\n\n## |Two {icon=lucide:route}\n\nMore\n', ['Enter'], '## One\n\n## Two {icon=lucide:route}\n|\nMore\n'],
   // Neighbours, unchanged.
   ['middle of a title (unchanged)', '## One\n\n## T|wo\n\nMore\n', ['Enter'], '## One\n\n## Two\n|\nMore\n'],
-  ['end of a title (unchanged)', '## One\n\n## Two|\n\nMore\n', ['Enter'], '## One\n\n## Two\n|\nMore\n'],
+  ['end of a title with a body line: reuse that line', '## One\n\n## Two|\n\nMore\n', ['Enter'], '## One\n\n## Two\n|\nMore\n'],
   ['column 0 of an ordinary line (unchanged)', '## One\n\n|Text\n', ['Enter'], '## One\n\n\n|Text\n'],
   ['column 0 of a list item (unchanged)', '## One\n\n|- a\n- b\n', ['Enter'], '## One\n\n\n- |- a\n- b\n'],
-  ['a title being typed (marks, no text yet): Enter goes to the body (unchanged)', '## One\n\n## |\nMore\n', ['Enter'], '## One\n\n## \n|More\n'],
+  ['an unfinished heading: go to its existing body', '## One\n\n## |\nMore\n', ['Enter'], '## One\n\n## \n|More\n'],
+  ['end of a title directly before body text: go to the body', '## One|\nMore\n', ['Enter'], '## One\n|More\n'],
+  ['end of a stamped title with a body line: reuse it below the ID', '## One|\n{id=one}\n\nMore\n', ['Enter'], '## One\n{id=one}\n|\nMore\n'],
   ['column 0 of the talk title # (unchanged)', '|# Talk\n\n## One\n', ['Enter'], '\n|# Talk\n\n## One\n'],
   ['a selection starting at column 0 of a title (unchanged: Enter does nothing)', '## One\n\n[## Tw]o\n', ['Enter'], '## One\n\n[## Tw]o\n'],
   ['column 0 of an object line opens the object (text unchanged)', `## One\n\n|${CHAT}\n\nMore\n`, ['Enter'], `## One\n\n|${CHAT}\n\nMore\n`],
   // B's other side: a slide that begins with an object gets a line from the title.
-  ['end of a title whose slide begins with an object: a line above the object', `## One|\n${CHAT}\n## Two\n`, ['Enter'], `## One\n|\n\n${CHAT}\n## Two\n`]
+  ['end of a title whose slide begins with an object: a line above the object', `## One|\n${CHAT}\n## Two\n`, ['Enter'], `## One\n|\n\n${CHAT}\n## Two\n`],
+  ['end of a stamped title before an object: a line below the ID, with a separator', `## One|\n{id=one}\n${CHAT}\n## Two\n`, ['Enter'], `## One\n{id=one}\n|\n\n${CHAT}\n## Two\n`]
 ]
 
 // ── B: the line after an object ─────────────────────────────────────────────────────────────────────

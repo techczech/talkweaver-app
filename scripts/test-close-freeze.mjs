@@ -214,8 +214,10 @@ await test('update restart: retained Details and design, Advanced and live objec
     const index = readMainSource()
     const handler = index.slice(index.indexOf("ipcMain.handle('window:confirm-close'"), index.indexOf('// Insert section (talk search 07'))
     let confirm
+    const editorSketchDrafts = new Set()
     const main = { ipcMain: { handle: (_name, fn) => { confirm = fn } },
       editorWindows: new Map([[1, { win: { isDestroyed: () => false, close: () => calls.push('closed') } }]]),
+      editorSketchDrafts,
       restartWindows: { waiting: () => true, confirm: (_id, saved) => { calls.push(saved); return saved ? 'close' : 'keep' } },
       editorRevisions: { verdict: () => 'saved' }, editorWorkSaved: () => true,
       cancelQuitAttempt: () => {}, editorQuitAttempts: new Map(), quitAttempt: null,
@@ -224,6 +226,10 @@ await test('update restart: retained Details and design, Advanced and live objec
     calls.length = 0
     assert.equal(confirm({ sender: { id: 1 } }, { revision: 1, hasDraft: true }), false)
     assert.deepEqual(calls, [false], 'main records kept, never closes')
+    calls.length = 0
+    editorSketchDrafts.add(1)
+    assert.equal(confirm({ sender: { id: 1 } }, { revision: 1 }), false)
+    assert.deepEqual(calls, [false], 'a pending sketch also keeps the window when the outline is saved')
     shell.__twCommit()
     assert.equal(drafts.updateRestartDraft(root), null, 'Done releases the object draft')
   } finally { drafts.clearDrafts(null); dom.restore() }

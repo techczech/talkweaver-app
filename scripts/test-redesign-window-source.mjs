@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import { isEmptyAuthoringSlide, newTalkSource, placeBlankSlide, placePictures, splitPictureRow } from '../src/shared/redesign-window-source.ts'
 import { normalizePositions } from '../src/shared/outline-normalize.ts'
 import { parseFrontmatterPairs } from '../src/shared/frontmatter-editor.ts'
-import { createSection, groupSection, reorderStructure } from '../src/shared/talk-structure.ts'
+import { carouselPaneSibling, createSection, groupSection, nodeAtSourceLine, reorderStructure, structureOf } from '../src/shared/talk-structure.ts'
 import { readSlides } from '../src/shared/insert-section.ts'
 import { previewLayout } from '../src/shared/layout-verbs.ts'
 
@@ -39,6 +39,11 @@ const structure = [
   '### Repair {id=repair}', '- Fence', '', '### Plant {id=plant}', '- Seeds', '',
   '### Share {id=share}', '- Tools', '', '## Next season {id=next}', '', '### Harvest {id=harvest}', ''
 ].join('\r\n')
+const tree = structureOf(structure)
+assert.equal(nodeAtSourceLine(tree, 2), undefined, 'frontmatter has no authored slide')
+assert.equal(nodeAtSourceLine(tree, 11)?.id, 'water', 'a fenced heading does not become the caret slide')
+assert.equal(nodeAtSourceLine(tree, 15)?.id, 'water', 'a note stays in its authored slide')
+assert.equal(nodeAtSourceLine(tree, 23)?.id, 'sat', 'a carousel pane owns its raw source lines')
 const position = id => readSlides(structure).slides.find(slide => slide.id === id).line + 1
 const originalSlides = readSlides(structure).slides
 const added = createSection(structure, { kind: 'section', after: position('sat'), id: 'summer' })
@@ -67,6 +72,10 @@ assert.deepEqual(readSlides(moved.text).slides.map(slide => slide.id),
   ['year', 'water', 'dates', 'sat', 'sun', 'share', 'next', 'harvest', 'repair', 'plant'])
 assert.deepEqual(moved.text.split('\n').slice().sort(), structure.split('\n').slice().sort(), 'a same-depth move preserves the exact line multiset')
 assert.ok(reorderStructure(structure, [position('year')], position('harvest'), 'after').error, 'a place cannot change an unrelated slide’s parent')
+const subLine = readSlides(subsection.text).slides.find(slide => slide.id === 'plans').line + 1
+const pictureAfterSubsection = placePictures(subsection.text, subLine, true, pictures, 'picture')
+assert.ok(pictureAfterSubsection, 'a subsection gets a separate child picture slide')
+assert.deepEqual(readSlides(pictureAfterSubsection).slides.filter(slide => slide.id !== 'picture').map(slide => slide.id), readSlides(subsection.text).slides.map(slide => slide.id))
 const unsectioned = '### First {id=first}\n- A\n\n### Second {id=second}\n- B\n\n### Third {id=third}\n- C\n'
 const beforeSection = unsectioned + '\n## Later {id=later}\n\n### More {id=more}\n- D\n'
 for (const source of [unsectioned, beforeSection]) {
@@ -80,6 +89,23 @@ for (const source of [unsectioned, beforeSection]) {
   assert.deepEqual(slides.filter(slide => slide.ancestors.includes(owner)).map(slide => slide.id), ['second', 'third'])
   assert.match(groupSection(source, before.slice(0, 2).map(slide => slide.line + 1), 'group').error, /Select through to the end/)
 }
+const carousels = [
+  '### First carousel {id=first}', '{carousel}', '', '#### One {id=one}', '- A', '',
+  '#### Two {id=two}', '- B', '', '### Second carousel {id=second}', '{carousel}', '',
+  '#### Three {id=three}', '- C', ''
+].join('\n')
+const carouselTree = structureOf(carousels)
+const paneAt = id => carouselTree.nodes.find(node => node.id === id)
+const paneLine = id => paneAt(id).line + 1
+assert.equal(carouselPaneSibling(carouselTree, paneAt('one'), 'up'), undefined)
+assert.equal(carouselPaneSibling(carouselTree, paneAt('two'), 'down'), undefined, 'last pane stays in its carousel')
+assert.equal(carouselPaneSibling(carouselTree, paneAt('three'), 'up'), undefined, 'first pane stays in its carousel')
+assert.equal(carouselPaneSibling(carouselTree, paneAt('one'), 'down')?.id, 'two')
+assert.equal(carouselPaneSibling(carouselTree, paneAt('two'), 'up')?.id, 'one')
+const swappedPanes = reorderStructure(carousels, [paneLine('one')], paneLine('two'), 'after')
+assert.ok(swappedPanes.text, swappedPanes.error)
+assert.deepEqual(readSlides(swappedPanes.text).slides.map(slide => slide.id), ['first', 'two', 'one', 'second', 'three'])
+assert.ok(reorderStructure(carousels, [paneLine('two')], paneLine('three'), 'after').error)
 console.log('Structure source edits preserved IDs, notes, comments, code and CRLF.')
 
 const sectionPicture = previewLayout(added.text, 'summer', 'section', [{ group: 'container-mode', token: 'contents' }])

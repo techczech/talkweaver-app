@@ -129,7 +129,9 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
     const slideId = request.slideId
     let modified: string
     try {
-      modified = previewLayout(request.outline, request.headingLine != null ? { headingLine: request.headingLine } : slideId, request.layout, request.options ?? [])
+      modified = request.layout === '' && request.options == null
+        ? request.outline
+        : previewLayout(request.outline, request.headingLine != null ? { headingLine: request.headingLine } : slideId, request.layout, request.options ?? [])
     } catch (error) {
       if (error instanceof LayoutVerbError && error.code === 'cannot-take') {
         return { status: 'cannot-take', slideId, reason: error.reason ?? error.message }

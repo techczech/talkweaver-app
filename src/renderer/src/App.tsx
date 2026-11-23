@@ -8,7 +8,7 @@ import VaultGallery from './components/vault-gallery/VaultGallery'
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type { TalkInfo, VaultView } from '../../preload/index'
 import WelcomeTalk from './components/WelcomeTalk'
-import { WELCOME_COMMANDS, type SlidesPanelView, type StartingView, type WorkspaceView } from '../../shared/workspace-view'
+import { WELCOME_COMMANDS, type SlideTabView, type SlidesPanelView, type StartingView, type WorkspaceView } from '../../shared/workspace-view'
 import { safeTalkSlug } from '../../shared/vault-gallery-browse'
 import TalkList, { PromptModal } from './components/talklist/TalkList'
 import WorkspaceLayout from './components/WorkspaceLayout'
@@ -447,11 +447,12 @@ function MainApp() {
   const [welcomeStart, setWelcomeStart] = useState<{ path: string; view: WorkspaceView } | null>(null)
   const [previewsHost, setPreviewsHost] = useState<HTMLDivElement | null>(null)
   const [slidesPanelView, setSlidesPanelView] = useState<SlidesPanelView>('previews')
+  const [slideTabView, setSlideTabView] = useState<SlideTabView>('pages')
   const [openInView, setOpenInView] = useState<WorkspaceView>('slide')
   useEffect(() => {
     let mounted = true
-    const change = (prefs: { openIn: WorkspaceView; slidesPanel: SlidesPanelView }) => {
-      if (mounted) { setOpenInView(prefs.openIn); setSlidesPanelView(prefs.slidesPanel) }
+    const change = (prefs: { openIn: WorkspaceView; slidesPanel: SlidesPanelView; slideTab?: SlideTabView }) => {
+      if (mounted) { setOpenInView(prefs.openIn); setSlidesPanelView(prefs.slidesPanel); setSlideTabView(prefs.slideTab ?? 'pages') }
     }
     void window.tw.settings.getWorkspaceViews?.().then(change).catch(() => {})
     const unsubscribe = window.tw.settings.onWorkspaceViewsChanged?.(change)
@@ -991,7 +992,7 @@ function MainApp() {
     if (!title || !slug) return 'Give the talk a name with at least one letter or number.'
     commandRan(WELCOME_COMMANDS[view])
     if (!vault && !await window.tw.vault.useDefaultRoot()) return 'The TalkWeaver folder could not be opened. Choose a folder and try again.'
-    const talk = await window.tw.vault.createTalk({ title, slug, vaultId: vault?.id })
+    const talk = await window.tw.vault.createTalk({ title, slug, vaultId: vault?.id, startWithSketch: view === 'outline' })
     if (!talk) return 'A folder with that name already exists, or this location is unavailable. Change the name or folder and try again.'
     if (!vault) await loadVaults({ force: true })
     setWelcomeStart({ path: talk.outlinePath, view })
@@ -1140,6 +1141,7 @@ function MainApp() {
                 <button
                   key={m.id}
                   role="tab"
+                  aria-label={m.label}
                   aria-selected={sidebarMode === m.id}
                   className={`sidebar-mode-btn ${sidebarMode === m.id ? 'sidebar-mode-btn--active' : ''}`}
                   onClick={() => setSidebarMode(m.id)}
@@ -1213,6 +1215,7 @@ function MainApp() {
           vaultId={newTalkVault.id}
           folders={state.foldersByVault[newTalkVault.id] ?? []}
           defaultTopic={newTalkTopic}
+          startWithSketch={newTalkStartView === 'outline'}
           onCreated={async (talk) => {
             setNewTalkTopic(null)
             setNewTalkStartView(null)
@@ -1264,9 +1267,12 @@ function MainApp() {
         }}
         activeTalk={activeTalk}
         startView={welcomeStart?.path === activeTalk?.outlinePath ? welcomeStart?.view : undefined}
+        onSketchStarted={() => setWelcomeStart(null)}
         defaultView={openInView}
         welcome={welcomeContent(firstUsableVault ?? undefined)}
         leftPreviewsHost={sidebarMode === 'slides' && !sidebarCollapsed ? previewsHost : null}
+        slideTabView={slideTabView}
+        onChooseSlideTabView={view => { void window.tw.settings.setSlideTab(view).catch(() => notify('The Slide tab setting could not be saved.', 'warning')) }}
         slidesPanelView={slidesPanelView}
         onChooseSlidesPanelView={chooseSlidesPanelView}
         vaultRoot={activeVault.root}

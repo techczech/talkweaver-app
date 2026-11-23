@@ -14,7 +14,7 @@ import { iconPicturesExtension, type IconSvgSource } from './iconPictures'
 import { guardKeysExtension } from './guardKeys'
 import { settleCaretExtension } from './settleCaret'
 import type { EditorViewMode } from '../../../../shared/editor-view-mode'
-import { titleStartPastMarks } from '../outliner'
+import { markdownHeadingEnter, titleStartPastMarks } from '../outliner'
 
 export interface PlainViewOptions extends MarginMenuHandlers {
   hideLayoutCodes?: boolean
@@ -29,5 +29,5 @@ export function plainViewExtension(options: PlainViewOptions = {}): Extension {
 
 /** What the view compartment holds for a mode. Markdown = exactly today's editor. */
 export function viewModeExtension(mode: EditorViewMode, options: PlainViewOptions = {}): Extension {
-  return mode === 'plain' ? plainViewExtension(options) : markdownLookExtension()
+  return mode === 'plain' ? plainViewExtension(options) : [markdownLookExtension(), markdownHeadingEnter.of(true)]
 }

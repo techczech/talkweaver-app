@@ -11,6 +11,7 @@ interface Props {
   folders?: string[]
   /** Pre-selected subfolder (e.g. when "New talk here" was used on a folder). */
   defaultTopic?: string
+  startWithSketch?: boolean
   onCreated: (talk: TalkInfo) => void
   onClose: () => void
 }
@@ -27,7 +28,7 @@ export function newTalkSlug(title: string): string {
     .replace(/^-+|-+$/g, '')
 }
 
-export default function NewTalkDialog({ vaultRoot: _vaultRoot, vaultId, folders = [], defaultTopic = '', onCreated, onClose }: Props) {
+export default function NewTalkDialog({ vaultRoot: _vaultRoot, vaultId, folders = [], defaultTopic = '', startWithSketch = false, onCreated, onClose }: Props) {
   const [topicFolder, setTopicFolder] = useState(defaultTopic)
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -58,9 +59,10 @@ export default function NewTalkDialog({ vaultRoot: _vaultRoot, vaultId, folders 
 
     try {
       // IPC handler vault:create-talk is wired in main/index.ts
-      const newTalk: TalkInfo | null = await (window as any).tw.vault.createTalk({
+      const newTalk: TalkInfo | null = await window.tw.vault.createTalk({
         title,
         slug,
+        startWithSketch,
         topicFolder: topicFolder.trim() || undefined,
         ...(vaultId ? { vaultId } : {})
       })

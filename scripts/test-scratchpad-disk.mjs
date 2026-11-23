@@ -8,6 +8,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { pathToFileURL } from 'node:url'
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
+import { registerScratchpadIpc } from '../src/main/scratchpad-ipc.ts'
 import { createScratchpadStore } from '../src/main/scratchpad-store.ts'
 import { createScratchpadDisk } from '../src/main/scratchpad-disk.ts'
 import * as snapshotUrls from '../src/main/scratchpad-disk.ts'
@@ -66,6 +67,132 @@ try {
         await assert.rejects(store.createGroup('Refused'),/Nothing was changed/)
       } else if(selected==='page.html') assert.equal(snap.items.length,0,'a different inode was refused')
       else assert.equal(snap.items[0].title,'Page','the linked sidecar was not consumed')
+    })
+  }
+  await check('Markdown sketches are separate files and stale edits cannot overwrite a newer version', async () => {
+    const talk = folder('sketches')
+    const outline = join(talk, 'talk-outline.md')
+    fs.writeFileSync(outline, '## Existing talk\n')
+    const store = makeStore(talk)
+    const one = await store.createSketch('## First sketch\r\n- Keep its bytes')
+    const two = await store.createSketch('')
+    assert.notEqual(one.name, two.name)
+    const snapshot = await store.load()
+    assert.deepEqual(snapshot.items.map(item => item.fileKind), ['sketch', 'sketch'])
+    assert.equal(await store.fileFor(snapshot.items[0].id), null)
+    const destination = join(talk, 'scratchpad', one.name)
+    const outside = '## An independent edit\r\n'
+    fs.writeFileSync(destination, outside)
+    await assert.rejects(store.saveSketch(one.name, one.revision, 'Obsolete draft'), /changed on disk/)
+    assert.equal(fs.readFileSync(destination, 'utf8'), outside)
+    const latest = await store.readSketch(one.name)
+    assert.equal(latest.text, outside)
+    await store.saveSketch(one.name, latest.revision, '## Kept draft\n')
+    assert.equal(fs.readFileSync(destination, 'utf8'), '## Kept draft\n')
+    const before = fs.readFileSync(destination)
+    const proposal = { talkPath: outline, talkTitle: 'Talk', title: 'Candidate', markdown: '### Candidate\n- A point', slideId: '', thumbKey: '' }
+    await store.recordSketchUse(one.name, 'use-1', [], [proposal])
+    const used = await store.recordSketchUse(one.name, 'use-1', ['abcde'], [])
+    assert.deepEqual(used.items.find(item => item.file === one.name).sketchUses[0].ids, ['abcde'])
+    assert.equal(used.items.filter(item => item.kind === 'proposed').length, 1)
+    assert.deepEqual(fs.readFileSync(destination), before)
+    assert.equal(fs.readFileSync(outline, 'utf8'), '## Existing talk\n')
+    await assert.rejects(store.readSketch('../talk-outline.md'), /Choose a Markdown sketch/)
+    const link = join(talk, 'scratchpad', 'link.md')
+    fs.symlinkSync(outline, link)
+    await assert.rejects(store.readSketch('link.md'), /is a link/)
+    await assert.rejects(store.saveSketch('link.md', latest.revision, 'Do not write through links'), /is a link/)
+    assert.equal(fs.readFileSync(outline, 'utf8'), '## Existing talk\n')
+  })
+  await check('sketch names and authorship are stored separately from Markdown bytes', async () => {
+    const talk = folder('sketch-names')
+    const store = makeStore(talk)
+    const sketch = await store.createSketch('## A name from the heading\n- A point')
+    fs.writeFileSync(join(talk, 'scratchpad', 'outside.md'), '# An outside sketch')
+    const before = await store.load()
+    assert.deepEqual(before.items.map(item => [item.title, item.sketchOrigin, item.sketchLineCount]).sort(), [
+      ['A name from the heading', 'person', 2], ['An outside sketch', undefined, 1],
+    ])
+    await store.renameSketch(sketch.name, 'A better name')
+    const after = (await makeStore(talk).load()).items.find(item => item.file === sketch.name)
+    assert.equal(after.title, 'A better name')
+    assert.equal(after.sketchOrigin, 'person')
+    assert.equal((await store.readSketch(sketch.name)).text, sketch.text)
+  })
+  await check('use after Undo records fresh slide ids without duplicating the same proposal', async () => {
+    const talk = folder('sketch-reapply')
+    const store = makeStore(talk)
+    const sketch = await store.createSketch('### Candidate')
+    const other = await store.createSketch('### Candidate')
+    const outline = join(talk, 'talk-outline.md')
+    const proposal = { talkPath: outline, talkTitle: 'Talk', title: 'Candidate', markdown: '### Candidate\n{id=one}\n\n- A point', slideId: '', thumbKey: '' }
+    await store.recordSketchUse(sketch.name, 'first-apply', ['first-id'], [proposal])
+    const item = (await store.load()).items.find(item => item.kind === 'proposed')
+    await store.setStatus([item.id], 'kept')
+    const retry = { ...proposal, markdown: proposal.markdown.replace('{id=one}', '{id=two}') }
+    const reapplied = await store.recordSketchUse(sketch.name, 'second-apply', ['second-id'], [retry])
+    assert.deepEqual(reapplied.items.filter(item => item.kind === 'proposed').map(item => [item.id, item.status]), [[item.id, 'kept']])
+    assert.deepEqual(reapplied.items.find(item => item.file === sketch.name).sketchUses.at(-1).ids, ['second-id'])
+    const different = await store.recordSketchUse(sketch.name, 'different-cut', [], [{ ...retry, markdown: retry.markdown + '\n- More detail' }])
+    assert.equal(different.items.filter(item => item.kind === 'proposed').length, 2)
+    const separate = await store.recordSketchUse(other.name, 'another-sketch', [], [retry])
+    assert.equal(separate.items.filter(item => item.kind === 'proposed').length, 3)
+  })
+  await check('a large typed sketch can be saved and read back through IPC', async () => {
+    const talk = folder('large-sketch')
+    const outline = join(talk, 'talk-outline.md')
+    const handlers = new Map()
+    registerScratchpadIpc({ ipc: { handle: (channel, fn) => handlers.set(channel, fn) },
+      outlinePathFor: () => outline, revealFolder: () => {}, htmlPreview: async () => ({ error: 'unused' }) })
+    const created = await handlers.get('scratchpad:sketch-create')({}, outline, 'A starting point')
+    assert.equal(created.ok, true)
+    const text = 'Oversized relative to the old cap. é\n'.repeat(16_000)
+    assert.ok(Buffer.byteLength(text) > 400_000)
+    const reply = await handlers.get('scratchpad:sketch-save')({}, outline, created.sketch.name, created.sketch.revision, text)
+    assert.equal(reply.ok, true, reply.error)
+    assert.equal(fs.readFileSync(join(talk, 'scratchpad', created.sketch.name), 'utf8'), text)
+  })
+  await check('sketch pictures resolve inside the active vault and keep missing files unplaced', async () => {
+    const talk = folder('sketch-pictures')
+    const outline = join(talk, 'talk-outline.md')
+    fs.mkdirSync(join(talk, 'assets'))
+    fs.writeFileSync(join(talk, 'assets', 'garden-beds.jpg'), 'synthetic JPG fixture')
+    const handlers = new Map()
+    registerScratchpadIpc({ ipc: { handle: (channel, fn) => handlers.set(channel, fn) }, outlinePathFor: () => outline,
+      sketchVaultRoot: () => talk, revealFolder: () => {}, htmlPreview: async () => ({ error: 'unused' }) })
+    const pictures = handlers.get('scratchpad:sketch-pictures')
+    assert.deepEqual(await pictures({}, outline, ['[picture: garden-beds.jpg]', '[picture: missing.jpg]']), {
+      ok: true, pictures: [['[picture: garden-beds.jpg]', 'assets/garden-beds.jpg']],
+    })
+    assert.equal((await pictures({}, join(root, 'other-outline.md'), ['[picture: garden-beds.jpg]'])).ok, false)
+  })
+  await check('sketch export writes only the chosen unused destination', async () => {
+    const talk = folder('sketch-export')
+    let destination
+    const handlers = new Map()
+    registerScratchpadIpc({ ipc: { handle: (channel, fn) => handlers.set(channel, fn) },
+      outlinePathFor: () => null, revealFolder: () => {}, htmlPreview: async () => ({ error: 'unused' }),
+      chooseSketchCopy: async () => destination })
+    const exportSketch = text => handlers.get('scratchpad:sketch-export')({}, text)
+    assert.deepEqual(await exportSketch('Cancelled'), { ok: true, saved: false })
+    destination = join(talk, 'recovered.md')
+    const original = 'Preserved é\r\n'.repeat(390_000)
+    assert.deepEqual(await exportSketch(original), { ok: true, saved: true })
+    assert.equal((await exportSketch('Never overwrite')).ok, false)
+    assert.equal(fs.readFileSync(destination, 'utf8'), original)
+  })
+  for (const code of ['EPERM', 'ENOTSUP', 'EXDEV']) {
+    await check(`a sketch can be created exclusively when hard links fail with ${code}`, async () => {
+      const talk = folder('sketch-no-link-' + code)
+      const script = `const fs=require('node:fs'); fs.linkSync=()=>{ throw Object.assign(new Error('hard links unavailable'), { code: '${code}' }) }`
+      const store = makeStore(talk)
+      const sketch = await withHook(script, () => store.createSketch('## No hard links here'))
+      assert.equal((await store.readSketch(sketch.name)).text, '## No hard links here')
+      assert.deepEqual(fs.readdirSync(join(talk, 'scratchpad')), [sketch.name])
+      const collision = script.replace('fs.linkSync=()=>', "fs.linkSync=(_temp,name)=>").replace("throw Object.assign", "fs.writeFileSync(name, 'A different sketch'); throw Object.assign")
+      await assert.rejects(withHook(collision, () => store.createSketch('Never replace another sketch')), /EEXIST/)
+      assert.deepEqual(fs.readdirSync(join(talk, 'scratchpad')).map(name => fs.readFileSync(join(talk, 'scratchpad', name), 'utf8')).sort(),
+        ['## No hard links here', 'A different sketch'])
     })
   }
   await check('an oversized agent file is refused with a notice and is never rewritten',async()=>{

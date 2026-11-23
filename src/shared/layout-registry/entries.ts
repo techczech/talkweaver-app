@@ -395,8 +395,8 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     appliesTo: { titleRegimes: ['sidebar', 'top'] },
     values: [
       { token: '', label: 'Auto', description: "Use the layout's own title placement" },
-      { token: 'titletop', label: 'Top', description: 'Force the top-title treatment' },
-      { token: 'notitle', label: 'Hidden', description: 'Hide the on-slide title while keeping navigation text' },
+      { token: 'titletop', label: 'Top', altTokens: ['title=top'], description: 'Force the top-title treatment' },
+      { token: 'notitle', label: 'Hidden', altTokens: ['title=off', 'title=none', 'title=hide'], description: 'Hide the on-slide title while keeping navigation text' },
       { token: 'sidebar', label: 'Sidebar', description: 'Solid tint title panel' },
       { token: 'split=30', label: '30', description: 'Put the title in a 30% left rail' },
       { token: 'split=35', label: '35', description: 'Put the title in a 35% left rail' },
@@ -418,7 +418,7 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     // and the compiler answers it with the `retired-title-compact` hint.
     dictionaryTokens: ['title=compact'],
     values: [
-      { token: '', label: 'Layout default', description: 'Use the layout’s normal title treatment' },
+      { token: '', label: 'Layout default', altTokens: ['title=compact'], description: 'Use the layout’s normal title treatment' },
       { token: 'title=show', label: 'Show', description: 'Restore a full visible heading on title-quiet layouts' }
     ]
   },
@@ -866,7 +866,7 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     sectionLabel: 'Icon treatment',
     appliesTo: {
       anyOf: [
-        { requiresTokens: { 'list-style': ['iconlist'] } },
+        { requiresTokens: { 'list-style': ['iconlist', 'logolist'] } },
         { requiresTokens: { 'icon-level': ['icons=top', 'icons=all'] } }
       ]
     },
@@ -963,6 +963,44 @@ const SIM_STREAM_GROUP: OptionGroup = {
     { token: 'stream=on', label: 'Stream', description: 'The answer and reasoning stream in at about 70 tokens a second as they come on screen' }
   ]
 }
+
+const LIST_OPTIONS: OptionGroup[] = [{
+  key: 'list-style',
+  label: 'List style',
+  sectionLabel: 'Style',
+  preview: 'segmented',
+  values: [
+    {
+      token: '',
+      label: 'Plain',
+      description: 'Plain bullet list',
+      // T32 (Decision 1A): {plainlist} is the authored PLAIN override a deck-wide icons
+      // default needs. This one button still writes its canonical '' (follow the deck);
+      // the Inspector alone decides to write the alt token when the deck's choice is icons.
+      altTokens: ['plainlist']
+    },
+    { token: 'iconlist', label: 'Icons', description: 'Semantic icon bullets' },
+    { token: 'logolist', label: 'Logos', description: 'Use brand-logo bullets where mappings exist' },
+    { token: 'numbered', label: 'Numbered', description: 'Numbers in place of icons' },
+    { token: 'annotated', label: 'Annotated', description: 'Nested children become right-hand annotations' }
+  ]
+}, {
+  key: 'icon-level',
+  label: 'List icons',
+  sectionLabel: 'Icons on',
+  preview: 'segmented',
+  // T28: the real tokens the compiler honours (11-frame.mjs normIcons: top/all/off) are the
+  // option's OWN values; dictionaryTokens additionally registers the normaliser's legacy
+  // aliases (none/on/yes) so the Doctor stays clean for values the compiler still accepts —
+  // the same pattern as section-label's show/hide aliases.
+  dictionaryTokens: ['icons=top', 'icons=all', 'icons=off', 'icons=none', 'icons=on', 'icons=yes'],
+  values: [
+    { token: '', label: 'Auto', description: 'Use the chosen list style' },
+    { token: 'icons=top', label: 'Top', description: 'Show icons on top-level list items' },
+    { token: 'icons=all', label: 'All', description: 'Show icons on top-level and nested list items' },
+    { token: 'icons=off', label: 'Off', description: 'Do not override the chosen list style' }
+  ]
+}]
 
 export const LAYOUTS: LayoutDef[] = [
   // -- Everyday ---------------------------------------------------------------
@@ -1076,43 +1114,7 @@ The registry is the product contract.`,
     purpose: 'Everyday',
     whenItFits: 'Any set of points; the default when nothing else fits better.',
     cssModule: 'list',
-    options: [{
-      key: 'list-style',
-      label: 'List style',
-      sectionLabel: 'Style',
-      preview: 'segmented',
-      values: [
-        {
-          token: '',
-          label: 'Plain',
-          description: 'Plain bullet list',
-          // T32 (Decision 1A): {plainlist} is the authored PLAIN override a deck-wide icons
-          // default needs. This one button still writes its canonical '' (follow the deck);
-          // the Inspector alone decides to write the alt token when the deck's choice is icons.
-          altTokens: ['plainlist']
-        },
-        { token: 'iconlist', label: 'Icons', description: 'Semantic icon bullets' },
-        { token: 'logolist', label: 'Logos', description: 'Use brand-logo bullets where mappings exist' },
-        { token: 'numbered', label: 'Numbered', description: 'Numbers in place of icons' },
-        { token: 'annotated', label: 'Annotated', description: 'Nested children become right-hand annotations' }
-      ]
-    }, {
-      key: 'icon-level',
-      label: 'List icons',
-      sectionLabel: 'Icons on',
-      preview: 'segmented',
-      // T28: the real tokens the compiler honours (11-frame.mjs normIcons: top/all/off) are the
-      // option's OWN values; dictionaryTokens additionally registers the normaliser's legacy
-      // aliases (none/on/yes) so the Doctor stays clean for values the compiler still accepts —
-      // the same pattern as section-label's show/hide aliases.
-      dictionaryTokens: ['icons=top', 'icons=all', 'icons=off', 'icons=none', 'icons=on', 'icons=yes'],
-      values: [
-        { token: '', label: 'Auto', description: 'Use the chosen list style' },
-        { token: 'icons=top', label: 'Top', description: 'Show icons on top-level list items' },
-        { token: 'icons=all', label: 'All', description: 'Show icons on top-level and nested list items' },
-        { token: 'icons=off', label: 'Off', description: 'Do not override the chosen list style' }
-      ]
-    }]
+    options: LIST_OPTIONS
   },
   {
     name: 'iconlist',
@@ -1364,7 +1366,8 @@ Text sits beside a single visual.`,
     category: 'everyday',
     purpose: 'Everyday',
     whenItFits: 'A short text beside one picture that illustrates it.',
-    cssModule: 'media'
+    cssModule: 'media',
+    options: LIST_OPTIONS
   },
   {
     name: 'cards',
@@ -1709,7 +1712,8 @@ A timeline with a comment lays the two side by side.`,
     category: 'specialised',
     purpose: 'Specialised',
     whenItFits: 'A list of features beside one image or video.',
-    cssModule: 'list'
+    cssModule: 'list',
+    options: LIST_OPTIONS
   },
   {
     name: 'flow',

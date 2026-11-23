@@ -274,32 +274,17 @@ try {
   await outlineWelcome.getByText('Saved in Documents/TalkWeaver.', { exact: true }).waitFor()
   await outlinePage.getByLabel('Name of the talk').fill('Neighbour checklist')
   await outlinePage.getByRole('button', { name: /Start with an outline/ }).click()
-  const outlineEditor = outlinePage.locator('[data-view="outline"] .cm-content')
-  await outlineEditor.getByText('Slide title', { exact: true }).waitFor()
-  await outlineEditor.getByText('First point', { exact: true }).waitFor()
+  const sketchEditor = outlinePage.getByRole('textbox', { name: 'Sketch text' })
+  await sketchEditor.waitFor()
+  assert.equal(await sketchEditor.inputValue(), '')
   const outlineStarted = join(vault, 'neighbour-checklist', 'neighbour-checklist-outline.md')
-  try {
-    // The prompts can paint before compile finishes and the app parks the caret in the title.
-    await outlinePage.waitForFunction(() => {
-      const field = document.querySelector('[data-view="outline"] .cm-content')
-      const node = document.getSelection()?.focusNode
-      const element = node instanceof Element ? node : node?.parentElement
-      return field && document.activeElement === field &&
-        field.contains(node ?? null) && element?.closest('.cm-line')?.textContent?.includes('Slide title')
-    })
-    await outlinePage.keyboard.type('Look after the beds')
-    await outlinePage.keyboard.press('Enter')
-    await outlinePage.keyboard.type('Check the watering')
-    await until('the Outline start did not write the title and a bullet', () =>
-      existsSync(outlineStarted) && /^### Look after the beds[^\n]*\n(?:\{[^\n]+\}\n)*\s*- Check the watering/m.test(readFileSync(outlineStarted, 'utf8')))
-  } catch (error) {
-    console.error('Synthetic Outline start:', existsSync(outlineStarted) ? readFileSync(outlineStarted, 'utf8') : 'file missing')
-    console.error('Outline focus:', await outlinePage.evaluate(() => ({
-      field: document.activeElement?.className, caret: document.getSelection()?.focusNode?.textContent
-    })))
-    await outlinePage.screenshot({ path: join(output, 'diagnostic-outline-start.png') })
-    throw error
-  }
+  await sketchEditor.fill('### Look after the beds\n- Check the watering')
+  await outlinePage.getByRole('button', { name: 'Break into slides', exact: true }).click()
+  await outlinePage.getByRole('button', { name: /^As marked/ }).click()
+  await outlinePage.getByRole('button', { name: 'Add 1 slide to the talk', exact: true }).click()
+  await outlinePage.locator('[data-view="outline"] .cm-content').waitFor()
+  await until('the Sketch start did not write the title and a bullet', () =>
+    existsSync(outlineStarted) && /^### Look after the beds[^\n]*\n(?:\{[^\n]+\}\n)*\s*- Check the watering/m.test(readFileSync(outlineStarted, 'utf8')))
 
   // Edit one slide, select another, then Undo and Redo from the scoped Slide view.
   await outlinePage.locator('.workspace-edit-controls > button[data-command="new-slide"]').click()

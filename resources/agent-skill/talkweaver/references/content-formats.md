@@ -93,3 +93,62 @@ Choosing a Pathway selects content; it does not rewrite the audience wording in 
 A Run is a delivery record, not another source outline. Preserve existing Run records, dates, links and Pathway relationships; do not invent a historical delivery or edit run-state files from a guessed schema. Read the actual app contract when writing Run metadata.
 
 Keep relative assets relocatable and preserve speaker notes in the source. Treat audience slides, speaker notes, handouts and recordings as different publication surfaces. Inspect the real exported artefact before sharing; do not assume notes are absent because the audience view hides them.
+## A request copied from the Slide tab
+
+Change only the named aspect, keep the id line, and leave the wording, media, notes and
+other slides unchanged. Identify the slide by its id. Save the Markdown file once so
+the open app can review the disk change.
+
+### Place and style the title
+
+- `{id=p4k2m}{titletop}` puts it on top.
+- `{id=p4k2m}{sidebar}{split=35}` uses a coloured left panel at 35%. Other widths are
+  `{split=30}`, `{split=40}` and `{split=50}`.
+- `{id=p4k2m}{notitle}` hides the painted title while keeping its navigation text.
+  Remove conflicting placement and `{title=show}`. On a title-quiet layout, for example
+  `{id=p4k2m}{quote}{title=show}`, the latter restores a heading.
+- Statements can use `{title=show}{sidebar}{statement-sidebar=on}` for a title panel,
+  or `{title=show}{titletop}{statement-sidebar=off}` for a title above the statement.
+
+| Top title style | Example |
+| --- | --- |
+| Plain | `{id=p4k2m}{titlelook=default}` |
+| Tab | `{id=p4k2m}{titlelook=tab}{titlelook-tone=strong}` |
+| Soft tab | `{id=p4k2m}{titlelook=tab}{titlelook-tone=soft}` |
+| Kicker | `{id=p4k2m}{titlelook=kicker}` |
+| Label | `{id=p4k2m}{titlelook=label}` |
+| Section strip | `{id=p4k2m}{titlelook=tab-strip}` |
+| Intro only | `{id=p4k2m}{titlelook=intro-then-none}` |
+
+Intro only uses the section slide's title and hides titles on the slides that follow.
+To follow the talk again, remove the slide's title overrides. A plain override pins
+a plain title even when the talk changes.
+
+`{font-title=l}` makes the title larger. Other sizes include `{font-title=xs}`,
+`{font-title=s}` and `{font-title=xl}`. Medium leaves the size off. For an icon above
+the title and a different icon at the start of a point's text treatment, write:
+
+```markdown
+### Three priorities {icon=lucide:list}
+{id=p4k2m}{title-icon=above}{iconlist}
+
+- Repair the beds {icon=lucide:hammer}
+- Share the tools
+```
+
+Remove `{title-icon=above}` to place the heading icon before the title. Remove a
+point's explicit icon to let it be chosen automatically. `{icons=top}` marks top-level
+points, `{icons=all}` includes sub-points, and `{icons=off}` disables the frame's marks.
+
+### Change one section
+
+```markdown
+## What we made
+{id=make1}{section-colour=amber}{contents}
+```
+
+This section has an amber slide and shows a contents rail. Use `{grid-zoom}` to zoom into
+tiles, `{grid-linear}` to step through the tiles in order, or `{carousel}` when the children
+have pictures. For One after another, remove the container-mode code. Removing the colour
+override restores rotation. Other colours include `{section-colour=blue}`,
+`{section-colour=deep-blue}`, `{section-colour=light}` and `{section-colour=light-amber}`.

@@ -17,8 +17,9 @@ import {history,undo,isolateHistory} from '@codemirror/commands';
 import {insertSlideAfterCaret} from './src/shared/old-slide.ts';
 import {insertAtCaretLine} from './src/renderer/src/extensions/headingEndInsert.ts';
 import {createOutlineMutator} from './src/renderer/src/lib/outlineMutation.ts';
+import {replaceDocTransaction} from './src/renderer/src/lib/replaceDocTransaction.ts';
 let editor;const path='/vault/talk/talk-outline.md';
-const writer=createOutlineMutator({bufferFor:()=>editor?{read:()=>editor.state.doc.toString(),apply:(_path,text)=>{editor.dispatch({changes:{from:0,to:editor.state.doc.length,insert:text}});return text},adopt:()=>{},insertAtCaret:(_path,text)=>{insertAtCaretLine(editor,text);return true}}:null,settled:async()=>{},write:async(_path,text)=>{window.saved=text;return {ok:true,content:text}}});
+const writer=createOutlineMutator({bufferFor:()=>editor?{read:()=>editor.state.doc.toString(),apply:(_path,text,opts)=>{const spec=replaceDocTransaction(editor.state.doc.toString(),text,opts);if(spec)editor.dispatch(spec);return editor.state.doc.toString()},adopt:()=>{},insertAtCaret:(_path,text)=>{insertAtCaretLine(editor,text);return true}}:null,settled:async()=>{},write:async(_path,text)=>{window.saved=text;return {ok:true,content:text}}});
 const talk={path:'/vault/alias-talk',outlinePath:path}; let currentTalk=talk;
 const host={activeTalk:()=>currentTalk,readItem:async input=>{window.reads=(window.reads||0)+1;if(window.switchDuringRead)currentTalk={path:'/vault/other',outlinePath:'/vault/other/other-outline.md'};if(window.editDuringRead){editor.dispatch({changes:{from:editor.state.doc.length,insert:'Unsaved edit\\n'},annotations:isolateHistory.of('full')});window.editDuringRead=false};return window.tw.research.list(input)},editor:()=>({path:window.wrongEditor?'/vault/other':path,text:editor.state.doc.toString(),caret:editor.state.selection.main.head}),mutator:writer};
 async function insert(entry,slide){window.calls.push(slide?'slide':'insert');return realInsert(entry.file,slide,host)}

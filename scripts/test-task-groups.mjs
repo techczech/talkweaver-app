@@ -28,8 +28,11 @@ const test = (name, fn) => { try { fn(); results.push([true, name]) } catch (err
 // Commands the map leaves out, or marks "Did not fit": placed by the builder from the map's
 // neighbours, reported to the owner. Id -> [task, subgroup].
 const BUILDER_PLACED = {
+  'new-sketch': ['Reuse slides', 'Slide Scratchpad'],
   'view-panel-previews': ['See the talk', 'Views'],
   'view-panel-outline': ['See the talk', 'Views'],
+  'view-slide-tab-pages': ['See the talk', 'Views'],
+  'view-slide-tab-list': ['See the talk', 'Views'],
   'view-slide-panel': ['See the talk', 'Sidebar and outline search'],
   'split-pasted-picture-row': ['Build a slide', 'Images and icons'],
   'paste-picture': ['Build a slide', 'Images and icons'],
@@ -342,7 +345,7 @@ test('the count per task group is derived and equals the map plus the builder\'s
     expected[task] += 1
   }
   assert.deepEqual(counts, expected)
-  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 337) // ADR-0045 adds 17 actions.
+  assert.equal(Object.values(counts).reduce((a, b) => a + b, 0), 340) // ADR-0045 adds the Sketch entry to Insert.
 })
 
 test('a chord becomes the key event that matches it', () => {

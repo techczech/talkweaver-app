@@ -24,7 +24,7 @@ for (const id of ['deck-design', 'metadata']) {
   assert.equal(command.handlerId, id)
 }
 const layout = read('src/renderer/src/components/WorkspaceLayout.tsx')
-assert.match(layout, /'deck-design': \(\) => openTalkTab\(\)/, 'deck-design opens the Talk tab')
+assert.match(layout, /'deck-design': \(\) => openTalkTab\('design'\)/, 'deck-design opens the Talk tab on Design')
 assert.match(layout, /metadata: \(\) => openTalkTab\(\)/, 'metadata opens the Talk tab')
 assert.ok(!/setDeckDesignOpen|deckDesignOpen/.test(layout), 'the Talk design dialog is gone')
 assert.ok(!/MetadataPanel/.test(read('src/renderer/src/App.tsx')), 'the Metadata dialog is gone')

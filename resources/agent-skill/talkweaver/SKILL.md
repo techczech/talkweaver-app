@@ -62,6 +62,7 @@ What this skill does require of any plan:
 - Shorter or reordered cut of existing slides: a Pathway. Keep the outline and slide IDs unchanged.
 - Revised ideas or wording: precise source edits. Move whole slide blocks with notes, triggers and assets. Do not renumber IDs after a move or title change.
 - Before building a custom HTML widget or diagram image, choose a native layout or object from the [layout and object chooser](references/layout-and-object-chooser.md): every registered trigger by content shape, with syntax, an example and how often it is used. Native slides stay editable by the author; a widget is for interaction a slide cannot show.
+- Sketch or Scratchpad request: follow [Sketches and the Slide Scratchpad](references/sketches-and-scratchpad.md). Work in the named Scratchpad file and leave the talk outline intact.
 - New content: a draft outline. Use registered layout and object syntax; do not invent triggers from their English names.
 - AI chat or terminal slide (a chat or shell transcript drawn as a slide): `{chat}`, `{chat-lanes}`, `{terminal}`, `{terminal-agent}` per [AI chat and terminal slides](references/talkweaver-ai-chat-and-terminal-slides.md). Strip secrets and personal data first.
 - Formats: [outline and Pathway formats](references/content-formats.md). Research material: [research folder](references/research-folder.md).

@@ -38,6 +38,8 @@ export const TASK_GROUP_ICONS = {
 
 export const TASK_GROUP_TABLE: Readonly<Record<string, readonly [TaskGroup, string]>> = {
   'view-panel-previews': ['See the talk', 'Views'],
+  'view-slide-tab-pages': ['See the talk', 'Views'],
+  'view-slide-tab-list': ['See the talk', 'Views'],
   'view-panel-outline': ['See the talk', 'Views'],
   'view-slide-panel': ['See the talk', 'Sidebar and outline search'],
   'split-pasted-picture-row': ['Build a slide', 'Images and icons'],
@@ -55,6 +57,7 @@ export const TASK_GROUP_TABLE: Readonly<Record<string, readonly [TaskGroup, stri
   'ocr-index': ['Check and repair', 'Index image text'],
   'check-embeds': ['Check and repair', 'Check embeds'],
   'layout-doctor': ['Check and repair', 'Layout Doctor'],
+  'new-sketch': ['Reuse slides', 'Slide Scratchpad'],
   'scratchpad-panel': ['Reuse slides', 'Slide Scratchpad'],
   'scratchpad-dock': ['Reuse slides', 'Slide Scratchpad'],
   'scratchpad-float': ['Reuse slides', 'Slide Scratchpad'],

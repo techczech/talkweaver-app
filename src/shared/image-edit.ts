@@ -33,7 +33,11 @@ export function imageMarksSvg(recipe: ImageEditRecipe, width: number, height: nu
 }
 
 type Destination = { id: string; from: number; to: number }
-type ImageToken = { type: string; children?: ImageToken[] | null; attrGet: (name: string) => string | null; meta?: { editDestination?: Destination } }
+type InlineImage = { from: number; to: number; destinationFrom: number; destinationTo: number }
+type ImageToken = {
+  type: string; children?: ImageToken[] | null; attrGet: (name: string) => string | null
+  meta?: { editDestination?: Destination; inlineImage?: InlineImage }
+}
 type InlineState = { src: string; pos: number; posMax: number; tokens: ImageToken[] }
 const imageMarkdown = new MarkdownIt({ html: true })
 // Capture only spans accepted by the real image rule. Searching raw text can hit escaped text or titles.
@@ -50,14 +54,15 @@ imageMarkdown.inline.ruler.at('image', (state: InlineState, silent: boolean) => 
   if (!destination.ok || destination.pos > state.pos) return accepted
   let to = destination.pos
   if (state.src[from] === '<') { from++; to-- }
+  token.meta = { ...token.meta, inlineImage: { from: start, to: state.pos, destinationFrom: from, destinationTo: to } }
   const id = token.attrGet('src')
   if (id && /^img-[0-9a-f]{7,64}$/.test(id) && state.src.slice(from,to) === id) {
-    token.meta = { editDestination: { id, from, to } }
+    token.meta.editDestination = { id, from, to }
   }
   return accepted
 })
 
-function singleImageDestination(line: string, context: string, selectedLine: number): Destination | null {
+function singleImage(line: string, context: string, selectedLine: number): ImageToken | null {
   const env = {}
   const document = imageMarkdown.parse(context, env) as Array<{ type: string; map: [number,number] | null }>
   // Inline parsing alone would treat literal source inside code/HTML blocks as an editable image.
@@ -77,10 +82,27 @@ function singleImageDestination(line: string, context: string, selectedLine: num
     }
   }
   visit(blocks)
-  if (uncertain || images.length !== 1) return null
-  const destination = images[0].meta?.editDestination
+  return !uncertain && images.length === 1 ? images[0] : null
+}
+
+function singleImageDestination(line: string, context: string, selectedLine: number): Destination | null {
+  const destination = singleImage(line, context, selectedLine)?.meta?.editDestination
   if (!destination || line.slice(destination.from,destination.to) !== destination.id) return null
   return destination
+}
+
+/** Plan an edit of one unambiguous inline picture reference, preserving the surrounding text. */
+export function editInlinePicture(text: string, line: number, replacement: string | null): string | null {
+  if (replacement !== null && !/^img-[0-9a-f]{7,64}$/.test(replacement)) return null
+  const lines = text.split('\n')
+  const raw = lines[line]
+  if (raw == null || !raw.includes('![')) return null
+  const picture = singleImage(raw, text, line)?.meta?.inlineImage
+  if (!picture) return null
+  lines[line] = replacement === null
+    ? raw.slice(0, picture.from) + raw.slice(picture.to)
+    : raw.slice(0, picture.destinationFrom) + replacement + raw.slice(picture.destinationTo)
+  return lines.join('\n')
 }
 
 /** Without a caret column, only a single, inline image token can identify the intended picture. */

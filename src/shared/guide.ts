@@ -148,7 +148,7 @@ export function firstStepsCount(steps: readonly FirstStep[]): string {
 
 // ── The right sidebar's tab row ─────────────────────────────────────────────────────────────────
 
-export type RightColumnTab = 'inspector' | 'slides' | 'talk' | 'guide' | 'research' | 'images' | 'feedback' | 'whats-new'
+export type RightColumnTab = 'inspector' | 'slides' | 'talk' | 'scratchpad' | 'guide' | 'research' | 'images' | 'feedback' | 'whats-new'
 
 /**
  * The right sidebar's tabs (house rules R11a, R18). One sidebar with tabs: the Inspector first (the default),
@@ -157,11 +157,11 @@ export type RightColumnTab = 'inspector' | 'slides' | 'talk' | 'guide' | 'resear
  * it is up (update notices, ADR-0041). With no talk open there is no slide to show, so only the tabs that
  * are up (Guide, What's new) are listed.
  */
-export function rightColumnTabs(input: { guideUp: boolean; whatsNewUp?: boolean; hasTalk: boolean; shared?: boolean }): RightColumnTab[] {
+export function rightColumnTabs(input: { guideUp: boolean; whatsNewUp?: boolean; hasTalk: boolean; shared?: boolean; scratchpad?: boolean }): RightColumnTab[] {
   const up: RightColumnTab[] = [...(input.guideUp ? ['guide' as const] : []), ...(input.whatsNewUp ? ['whats-new' as const] : [])]
   if (!input.hasTalk) return up
   return [
-    'inspector', 'talk', 'guide', 'research', 'images',
+    'inspector', 'talk', ...(input.scratchpad ? ['scratchpad' as const] : []), 'guide', 'research', 'images',
     ...(input.shared ? ['feedback' as const] : []),
     ...(input.whatsNewUp ? ['whats-new' as const] : [])
   ]

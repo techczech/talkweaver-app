@@ -52,8 +52,10 @@ import type {
 
 export { exactTextWrite, setExpandedObjectBlock, setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
 
+export type ConsumeInsertFence = (replace?: (range: { from: number; to: number } | undefined) => void) => void
+
 export type ObjectBlocksOptions = {
-  onInsertMenu?: (coords: { x: number; y: number }, consumeFence: () => void) => void
+  onInsertMenu?: (coords: { x: number; y: number }, consumeFence: ConsumeInsertFence) => void
   onZoom?: (block: ObjectBlock) => void
   cheatSheet?: ShellCheatSheet
 }
@@ -1171,8 +1173,10 @@ export function objectBlocksExtension(options: ObjectBlocksOptions): Extension {
       userEvent: 'input'
     })
     const coords = view.coordsAtPos(line.from)
-    if (coords) options.onInsertMenu({ x: coords.left, y: coords.bottom + 4 }, () => {
+    if (coords) options.onInsertMenu({ x: coords.left, y: coords.bottom + 4 }, (replace) => {
       const fence = view.state.field(insertFenceField)
+      // A direct object insertion replaces the trigger in its own document transaction.
+      if (replace) { replace(fence ?? undefined); return }
       if (!fence) return
       view.dispatch({
         changes: { from: fence.from, to: fence.to },

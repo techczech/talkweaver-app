@@ -12,6 +12,7 @@
 // All ops rewrite the whole doc in one transaction and restore the caret to the same
 // logical line/column, so onContentChange + autosave stay in sync (ADR-0001 canonical).
 import { EditorView } from '@codemirror/view'
+import { isolateHistory } from '@codemirror/commands'
 import { EditorSelection, Facet, StateEffect, type EditorState, type Transaction } from '@codemirror/state'
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
 import type { SyntaxNode } from '@lezer/common'
@@ -38,7 +39,7 @@ import { plainFactsOf } from './plainView/outlineLines'
 import { insertAtHeadingEnd } from './headingEndInsert'
 import { relocateBlock, relocateBlockInto, relocateBlockToEnd } from './slideOutline'
 import { reLevelHeadingLines } from '../../../shared/heading-relevel'
-import { headingLevels, headingMarkLevel } from '../../../shared/heading-lines'
+import { headingLevels, headingLevelsOfText, headingMarkLevel } from '../../../shared/heading-lines'
 import { LayoutVerbError, setQuoteForm, type QuoteFormChoice } from '../../../shared/layout-verbs'
 
 const INDENT = '  ' // one list level = two spaces
@@ -542,6 +543,14 @@ export function moveNode(view: EditorView, dir: 'up' | 'down'): boolean {
   return applyMove(view, lines, newLines, caretLine, col)
 }
 
+/** The title and level-two section headings cannot be promoted through the editor command. */
+export function headingPromotionReason(state: EditorState): string | undefined {
+  const line = state.doc.lineAt(state.selection.main.head)
+  const level = headingLevel(line.text)
+  if (level === 0 || level > 2) return undefined
+  return headingLevelsOfText(state.doc.toString())[line.number - 1] ? 'Sections are the top level' : undefined
+}
+
 // delta: -1 = promote (heading: fewer #, list: outdent), +1 = demote.
 // `byKey`: reached from the Tab or Shift-Tab key (indentList, outdentList). The change then carries `keyTyped`, but
 // only when the caret's line is the one line it changed: an item moved with the lines under it is no typing on a line.
@@ -553,6 +562,11 @@ export function reLevel(
   byKey = false
 ): boolean {
   if (cursorInFrontmatter(view)) return true // protected metadata — consume, no-op
+  const blocked = delta < 0 ? headingPromotionReason(view.state) : undefined
+  if (blocked) {
+    notify(blocked, 'info', 'promote-heading')
+    return true
+  }
   const lines = view.state.doc.toString().split('\n')
   const sel = view.state.selection.main
   const curLine = view.state.doc.lineAt(sel.head)
@@ -841,6 +855,7 @@ function openLineAboveTitle(view: EditorView, line: { from: number }): boolean {
 // made only when there is none), and this command runs before the Plain view's own Enter binding.
 export const headingEnterOwners = Facet.define<(view: EditorView) => boolean>()
 export const goToSectionChild = Facet.define<(line: number) => void>()
+export const markdownHeadingEnter = Facet.define<boolean, boolean>({ combine: values => values.some(Boolean) })
 
 export function enterFromHeading(view: EditorView, headings: { test(line: string): boolean } = PROTECTED_HEADING_RE): boolean {
   const sel = view.state.selection.main
@@ -859,6 +874,23 @@ export function enterFromHeading(view: EditorView, headings: { test(line: string
     )
   }
   const line = view.state.doc.lineAt(sel.head)
+  if (view.state.facet(markdownHeadingEnter) && view.state.selection.ranges.length === 1 &&
+      sel.head === line.to && headingLevel(line.text) > 0 && !fenced[line.number - 1] &&
+      !cursorInFrontmatter(view) && !view.state.readOnly && !view.composing && !view.compositionStarted) {
+    if (headings.test(line.text)) {
+      const headingIndex = line.number - 1
+      return landAfterTriggerBlock(view, lines, headingIndex)
+        || landAfterUnstampedHeading(view, lines, headingIndex, '')
+    }
+    if (insertAtHeadingEnd(view, '\n', 'input.type')) return true
+    view.dispatch({
+      changes: { from: line.to, insert: '\n' },
+      selection: EditorSelection.cursor(line.to + 1),
+      scrollIntoView: true,
+      ...typedByKey()
+    })
+    return true
+  }
   if (!headings.test(line.text)) {
     return view.state.facet(headingEnterOwners).some((own) => own(view)) || insertAtHeadingEnd(view, '\n', 'input')
   }
@@ -1125,6 +1157,7 @@ export function deleteSlideAtCursor(view: EditorView): boolean {
   view.dispatch({
     changes: { from, to, insert: '' },
     selection: EditorSelection.cursor(Math.min(from, view.state.doc.length)),
+    annotations: isolateHistory.of('full'),
     userEvent: 'delete.slide',
     scrollIntoView: true
   })

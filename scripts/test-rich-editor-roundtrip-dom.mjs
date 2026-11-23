@@ -31,7 +31,7 @@ function Fixture(){
 }
 const render=()=>flushSync(()=>root.render(<Fixture key={serial}/>))
 window.attempts=0
-window.reload=text=>{window.diskText=text;outlineDiskChanges.report({outlinePath:'/fixture.md',kind:'changed',hash:'changed',changedAt:Date.now()});window.diskGuard.choose('reload')}
+window.externalChange=text=>{window.diskText=text;outlineDiskChanges.report({outlinePath:'/fixture.md',kind:'changed',hash:'changed',changedAt:Date.now()})}
 window.caught=[]
 window.mount=(text,nextMode,delayed=false)=>{source=text;mode=nextMode;serial++;window.delayed=delayed;render();window.view().dispatch({effects:StateEffect.appendConfig.of(EditorView.exceptionSink.of(e=>window.caught.push(String(e))))})}
 window.mode=m=>{mode=m;render()}
@@ -76,7 +76,10 @@ window.leave=()=>flushSync(()=>root.render(null))
       const changed=source.replace('Review control','Reloaded control')
       writeFileSync(disk,changed)
       const before=readFileSync(disk),mtime=statSync(disk,{bigint:true}).mtimeNs
-      await page.evaluate(text=>window.reload(text),changed)
+      await page.evaluate(text=>window.externalChange(text),changed)
+      await page.waitForFunction(()=>window.diskGuard.mergeReview && !window.diskGuard.busy)
+      assert.equal(await page.evaluate(()=>window.view()?.state.doc.toString()), source, `${mode}: review leaves the buffer alone`)
+      await page.evaluate(()=>window.diskGuard.applyMerge(window.diskGuard.mergeReview.generation, {}))
       await page.waitForFunction(()=>window.view()?.state.doc.toString().includes('Reloaded control'))
       await page.evaluate(()=>window.cmd.flushSave())
       await page.waitForTimeout(1700)

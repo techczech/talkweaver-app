@@ -15,6 +15,8 @@ import { parseOutlineTree, type OutlineTreeNode } from '../../compiler/scripts/l
 import { plainListForcedIcons, resolveSlideFrame } from '../../compiler/scripts/lib/11-frame.mjs'
 import { resolveTitleLook } from '../../compiler/scripts/lib/title-look.mjs'
 import { parseHeadingAttrs, parseTriggerLine } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
+import { deckTriggerDefaultsFromMeta, effectiveSlideAttrs } from '../../compiler/scripts/lib/slide-attrs.mjs'
+import { blankHtmlCommentsKeepingCaptureMarkers } from '../../compiler/scripts/lib/live-page-capture-markup.mjs'
 import type { OptionCommitContext } from './trigger-line.ts'
 
 /** The deck's choice as a list-style option token: Icons (`iconlist`) or Plain (`''`). */
@@ -54,6 +56,17 @@ function findSlide(root: OutlineTreeNode, headingLine: number): { node: OutlineT
     return null
   }
   return walk(root, null)
+}
+
+/** Side of the media slot when the compiled slide places its picture beside text. */
+export function pictureSideForSlide(outline: string, headingLine: number | null): 'left' | 'right' {
+  const { meta, body } = splitFrontmatter(outline)
+  const slide = headingLine == null ? null : findSlide(parseOutlineTree(blankHtmlCommentsKeepingCaptureMarkers(body)).root, headingLine)
+  const section = slide?.section ? asMap(asMap(meta.sections)[slide.section.title]) : {}
+  // The projection's triggers omit attributes the compiler has already resolved into the frame.
+  const defaults = deckTriggerDefaultsFromMeta(meta).attrs
+  const attrs = slide ? effectiveSlideAttrs(slide.node, defaults) : defaults
+  return resolveSlideFrame(attrs, section, asMap(meta.defaults)).image === 'right' ? 'right' : 'left'
 }
 
 /**

@@ -1,13 +1,17 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { Bookmark, ChevronDown, ChevronRight, ClipboardPaste, Plus, StickyNote } from 'lucide-react'
+import { Bookmark, Check, ChevronDown, ChevronRight, ClipboardPaste, Plus, StickyNote, Undo2 } from 'lucide-react'
 import type { ProjectionRow } from '../../../preload/index'
 import type { NotesEntry } from '../../../shared/objects/object-verbs'
 import FixedDeckPreview from './FixedDeckPreview'
 import { useLiveSlidePreview } from './useLiveSlidePreview'
+import type { PanelTry } from './RightPanelPictures'
 
 interface Props {
   path: string
   outline: string
+  trying?: PanelTry | null
+  applied?: string | null
+  onUndoDesign?: () => void
   row: ProjectionRow | undefined
   index: number
   count: number
@@ -29,10 +33,10 @@ interface Props {
 
 // WN1 / NT1 use Slide Focus's stage and the same scoped editor, with the editor under the stage.
 export default function WorkspaceSlideView({
-  path, outline, row, index, count, place, notes, notesOpen, onToggleNotes, onNotesChange,
+  path, outline, trying, applied, onUndoDesign, row, index, count, place, notes, notesOpen, onToggleNotes, onNotesChange,
   attachEditor, onTalkDetails, editable, emptySlide, sourceRecovery, section, subslides, addSubslide, subslide
 }: Props) {
-  const { previewUrl, previewErr, compiling } = useLiveSlidePreview(path, outline, row?.slide_id ?? '', 'workspace')
+  const { previewUrl, previewErr, compiling } = useLiveSlidePreview(path, trying?.text ?? outline, row?.slide_id ?? '', 'workspace')
   const [refused, setRefused] = useState<{ slide: string | undefined; body: string; error: string } | null>(null)
   const refusedNotes = refused?.slide === row?.slide_id ? refused : null
   const open = notesOpen
@@ -45,7 +49,7 @@ export default function WorkspaceSlideView({
     <div className="workspace-slide-view" data-view="slide" ref={slideView}>
       <div className="workspace-slide-content">
         <div className="workspace-slide-crumb">{place && `${place} · `}{subslide ? <strong>Subslide of “{subslide.title}”</strong> : count > 0 && <strong>Slide {index + 1} of {count}</strong>}</div>
-        <div className="workspace-slide-stage" tabIndex={-1} aria-busy={compiling} data-empty-slide={showEmptySlide || undefined}>
+        <div className="workspace-slide-stage" tabIndex={-1} aria-busy={compiling} data-empty-slide={showEmptySlide || undefined} data-panel-trying={!!trying || undefined}>
           {sourceRecovery ? <div className="workspace-slide-message">This slide couldn’t be previewed.</div>
             : subslide?.thumb ? <img className="tw-subslide-stage-image" src={subslide.thumb} alt="" />
               : previewUrl ? <FixedDeckPreview title="Slide preview" src={previewUrl} readOnly />
@@ -56,7 +60,11 @@ export default function WorkspaceSlideView({
               <span>First point</span>
             </div>
           )}
+          {trying && <div className="tw-right-bar is-trying tw-try-chip" role="status">Trying: {trying.label}. Not applied.</div>}
         </div>
+        {applied && <div className="tw-right-bar" role="status"><Check size={15} />Applied: {applied}
+            <button type="button" className="toolbar-btn" onClick={onUndoDesign}><Undo2 size={14} />Undo</button>
+          </div>}
         <div className="workspace-slide-text">
           <div className="workspace-slide-text-label">
             <strong>{sourceRecovery ? 'Talk text' : section?.label ?? (subslide ? 'Subslide text' : 'Slide text')}</strong>

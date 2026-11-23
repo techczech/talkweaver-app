@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { OutlineMergeReview } from '../lib/outlineReconcile'
+import ReviewChangedLines from './ReviewChangedLines'
 import './OutlineMergeSheet.css'
 
 export default function OutlineMergeSheet({ review, busy, onApply, onDismiss, onDraft, initialChoices = {} }: {
@@ -23,7 +24,7 @@ export default function OutlineMergeSheet({ review, busy, onApply, onDismiss, on
     const key = (event: KeyboardEvent): void => {
       if (event.key === 'Escape') { event.preventDefault(); event.stopImmediatePropagation(); if (!busyRef.current) dismissRef.current(); return }
       if (event.key !== 'Tab') return
-      const items = Array.from(surface.current?.querySelectorAll<HTMLElement>('button:not(:disabled), textarea:not(:disabled)') ?? [])
+      const items = Array.from(surface.current?.querySelectorAll<HTMLElement>('button:not(:disabled), textarea:not(:disabled), .tw-review-diff') ?? [])
       const first = items[0], last = items.at(-1)
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus() }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus() }
@@ -39,15 +40,23 @@ export default function OutlineMergeSheet({ review, busy, onApply, onDismiss, on
     const next = { ...choices, [id]: text }
     setChoices(next); onDraft(review.generation, next)
   }
+  const hasConflicts = review.merge.conflicts.length > 0
   const remaining = review.merge.conflicts.filter(item => !Object.hasOwn(choices, item.id)).length
   return createPortal(<div ref={surface} className="outline-merge-root">
     <div className="disk-change-sheet__scrim" />
     <div className="outline-merge-sheet" role="dialog" aria-modal="true" aria-labelledby="outline-merge-title" data-testid="outline-merge-sheet">
-      <h2 id="outline-merge-title">Choose the changes to keep</h2>
-      <p>These slides changed in both places. Independent edits are already included. Both versions are kept in recovery. Nothing is written until you apply the merge.</p>
+      <h2 id="outline-merge-title">{hasConflicts ? 'Choose the changes to keep' : 'This talk was changed outside TalkWeaver'}</h2>
+      <p>{hasConflicts
+        ? 'These slides changed in both places. Independent edits are already included. Both versions are kept in recovery. Nothing is written until you apply the merge.'
+        : 'Review the current and incoming text. Keeping the changes combines them with your typing.'}</p>
       <button type="button" disabled={busy} onClick={onDismiss}>Stay here</button>
       {review.recoveryPath && <button type="button" disabled={busy} onClick={() => { void window.tw.shell.showInFolder(review.recoveryPath!) }}>Show recovery copy</button>}
       <div className="outline-merge-conflicts">
+        <ReviewChangedLines before={review.base} after={review.disk} />
+        {!hasConflicts && <div className="outline-merge-versions">
+          <label>In this window<textarea aria-label="In this window" readOnly value={review.mine} /></label>
+          <label>On disk<textarea aria-label="On disk" readOnly value={review.disk} /></label>
+        </div>}
         {review.merge.conflicts.map((item, index) => <section key={item.id} aria-label={`Conflict ${index + 1}: ${item.label}`}>
           <h3>{item.label}</h3>
           <div className="outline-merge-versions">
@@ -66,8 +75,8 @@ export default function OutlineMergeSheet({ review, busy, onApply, onDismiss, on
         </section>)}
       </div>
       <div className="outline-merge-actions">
-        <span role="status">{remaining} {remaining === 1 ? 'slide still needs' : 'slides still need'} a choice</span>
-        <button type="button" disabled={busy || review.merge.conflicts.some(item => !Object.hasOwn(choices, item.id))} onClick={() => onApply(review.generation, choices)}>{busy ? 'Saving…' : 'Apply merge'}</button>
+        {hasConflicts && <span role="status">{remaining} {remaining === 1 ? 'slide still needs' : 'slides still need'} a choice</span>}
+        <button type="button" disabled={busy || review.merge.conflicts.some(item => !Object.hasOwn(choices, item.id))} onClick={() => onApply(review.generation, choices)}>{busy ? 'Saving…' : hasConflicts ? 'Apply merge' : 'Keep the changes'}</button>
       </div>
     </div>
   </div>, document.body)

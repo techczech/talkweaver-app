@@ -1,10 +1,15 @@
 // What the Slide Scratchpad says when nothing has been collected yet (wording from the locked mockup).
-export function ScratchpadEmpty({ onShowFolder, onOpenSlideBrowser }: { onShowFolder: () => void; onOpenSlideBrowser: () => void }): JSX.Element {
+export function ScratchpadEmpty({ onShowFolder, onOpenSlideBrowser, onNewSketch }: { onShowFolder: () => void; onOpenSlideBrowser: () => void; onNewSketch?: () => void }): JSX.Element {
   return (
     <div className="sp-empty">
       <div className="sp-empty-icon" aria-hidden="true" />
       <h3>Nothing in the Slide Scratchpad yet</h3>
-      <p>This is where candidates for this talk collect, so you can look at them next to your slides and decide.</p>
+      <p>Sketches, proposed slides, picked slides and visuals for this talk collect here.</p>
+      {onNewSketch && <div className="sp-empty-box">
+        <b>Sketch an outline</b>
+        Start with rough notes and break them into slides when you are ready.
+        <div><button type="button" className="sp-btn sp-btn--sm" onClick={onNewSketch}>Start a sketch</button></div>
+      </div>}
       <div className="sp-empty-box">
         <b>Visuals made by an agent</b>
         Ask an agent to make pictures, SVG diagrams or HTML widgets in this talk&rsquo;s scratch folder. Every file it puts there appears here on its own. Agents only make files in that folder; they never change your slides.

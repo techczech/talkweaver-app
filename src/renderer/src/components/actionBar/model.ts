@@ -59,6 +59,7 @@ export type RunnableActionBarCommand = {
    * rather than hidden, so the bar keeps its shape when a source of availability appears.
    */
   disabled?: boolean
+  disabledReason?: string
   run: () => void
 }
 
@@ -122,7 +123,7 @@ export function resolveActionBarItems(
       label: command.label,
       icon: command.icon ?? ACTION_BAR_FALLBACK_ICON,
       keys: command.keys ?? null,
-      tooltip: tooltipFor(command.label, command.keys),
+      tooltip: [tooltipFor(command.label, command.keys), command.disabledReason].filter(Boolean).join(' — '),
       disabled: command.disabled === true,
       run: command.run
     })

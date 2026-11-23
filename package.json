@@ -1,6 +1,6 @@
 {
   "name": "talk-weaver",
-  "version": "0.45.3-alpha.1",
+  "version": "0.45.3-alpha.2",
   "description": "Desktop authoring app for the presentation ecosystem",
   "main": "./out/main/index.js",
   "engines": {
@@ -12,7 +12,11 @@
     "perf:make-large-talk-fixture": "node scripts/perf/make-large-talk-fixture.mjs",
     "test:redesign-window-source": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-redesign-window-source.mjs",
     "test:structure-property": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-structure-property.mjs",
+    "test:redesign-markdown:e2e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/diagnose-redesign-markdown.mjs",
+    "test:redesign-sketch:e2e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/diagnose-redesign-sketch.mjs",
     "test:redesign-structure:e2e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/diagnose-redesign-structure.mjs",
+    "test:redesign-right-panel-dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-redesign-right-panel-dom.mjs",
+    "test:redesign-right-panel:e2e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/diagnose-redesign-right-panel.mjs",
     "test:redesign-window:e2e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/diagnose-redesign-window.mjs",
     "diagnose:surface-tour": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/diagnose-surface-tour.mjs",
     "postinstall": "node node_modules/electron/install.js",
@@ -738,6 +742,8 @@
     "test:save-tidy-up-after-undo-dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-save-tidy-up-after-undo-dom.mjs",
     "test:abstract-contract": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-abstract-contract.mjs",
     "test:research-capture": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-research-capture.mjs",
+    "test:sketch-breakdown": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-sketch-breakdown.mjs",
+    "test:sketch-draft:dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-sketch-draft-dom.mjs",
     "test:scratchpad-disk": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-scratchpad-disk.mjs",
     "test:scratchpad-store": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-scratchpad-store.mjs",
     "test:scratchpad-source-thumbs": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-scratchpad-source-thumbs.mjs",

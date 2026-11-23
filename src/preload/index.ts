@@ -1,5 +1,5 @@
 import type { PublishHistoryAttempt, PublishSiteCheck } from '../shared/publish-history'
-import type { SlidesPanelView, WorkspaceView } from '../shared/workspace-view'
+import type { SlideTabView, SlidesPanelView, WorkspaceView } from '../shared/workspace-view'
 import type { ImageEditPreview, ImageEditRecipe, ImageEditResult } from '../shared/image-edit'
 import type { OfflinePageInput, OfflinePageSaveResult } from '../shared/offline-page'
 import type { GalleryHandouts } from '../shared/gallery-handouts'
@@ -9,7 +9,7 @@ import type { ResearchWriteOp, ResearchWriteInput, ResearchWriteResult } from '.
 import type { HtmlPageChoice, HtmlPageImport } from '../shared/html-page-import'
 import type { ResearchListInput, ResearchSearchInput, ResearchUsedInput, ResearchListResult, ResearchUsedResult } from '../shared/research'
 import type { readAbstract } from '../main/abstract-ipc'
-import type { ScratchPreparedInsert, ScratchInsertedRecord, ScratchGroup, ScratchReply, ScratchSlideInput, ScratchSnapshot, ScratchStatus, ScratchVisualImport } from '../shared/scratchpad'
+import type { ScratchSketch, ScratchPreparedInsert, ScratchInsertedRecord, ScratchGroup, ScratchReply, ScratchSlideInput, ScratchSnapshot, ScratchStatus, ScratchVisualImport } from '../shared/scratchpad'
 export type { ScratchGroup, ScratchItem, ScratchReply, ScratchSlideInput, ScratchSnapshot, ScratchStatus, ScratchVisualImport } from '../shared/scratchpad'
 import type { RecordingRecovery } from '../shared/recording-recovery'
 export type { RecordingRecovery } from '../shared/recording-recovery'
@@ -759,7 +759,7 @@ const api = {
       ipcRenderer.on('vault:talk-meta-updated', listener)
       return () => ipcRenderer.removeListener('vault:talk-meta-updated', listener)
     },
-    createTalk: (opts: { title: string; slug: string; topicFolder?: string; vaultId?: string }): Promise<TalkInfo | null> =>
+    createTalk: (opts: { title: string; slug: string; topicFolder?: string; vaultId?: string; startWithSketch?: boolean }): Promise<TalkInfo | null> =>
       ipcRenderer.invoke('vault:create-talk', opts),
     // Clone a talk (copy its folder, retitle, strip the published handout link). Lands as a sibling.
     cloneTalk: (outlinePath: string, newTitle: string): Promise<TalkInfo | null> =>
@@ -878,11 +878,12 @@ const api = {
       ipcRenderer.invoke('preferences:get-action-bar'),
     setActionBarVisible: (visible: boolean): Promise<boolean> =>
       ipcRenderer.invoke('preferences:set-action-bar-visible', visible),
-    getWorkspaceViews: (): Promise<{ openIn: WorkspaceView; slidesPanel: SlidesPanelView }> =>
+    getWorkspaceViews: (): Promise<{ openIn: WorkspaceView; slidesPanel: SlidesPanelView; slideTab: SlideTabView }> =>
       ipcRenderer.invoke('preferences:get-workspace-views'),
+    setSlideTab: (view: SlideTabView): Promise<void> => ipcRenderer.invoke('preferences:set-slide-tab', view),
     setSlidesPanel: (view: SlidesPanelView): Promise<void> => ipcRenderer.invoke('preferences:set-slides-panel', view),
-    onWorkspaceViewsChanged: (cb: (view: { openIn: WorkspaceView; slidesPanel: SlidesPanelView }) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, preferences: { openIn: WorkspaceView; slidesPanel: SlidesPanelView }) => cb(preferences)
+    onWorkspaceViewsChanged: (cb: (view: { openIn: WorkspaceView; slidesPanel: SlidesPanelView; slideTab: SlideTabView }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, preferences: { openIn: WorkspaceView; slidesPanel: SlidesPanelView; slideTab: SlideTabView }) => cb(preferences)
       ipcRenderer.on('workspace-views:changed', listener)
       return () => ipcRenderer.removeListener('workspace-views:changed', listener)
     },
@@ -1238,7 +1239,7 @@ const api = {
   slide: {
     // Compile the full live outline through the presentation pipeline and return its stable
     // twpresent:// document URL. The renderer adds a slide-id hash for navigation.
-    renderPreview: (outlinePath: string, outlineContent: string, surface: 'workspace' | 'detail' = 'detail'): Promise<string | null> =>
+    renderPreview: (outlinePath: string, outlineContent: string, surface: import('../shared/slide-preview').SlidePreviewSurface = 'detail'): Promise<string | null> =>
       ipcRenderer.invoke('slide:render-preview', outlinePath, outlineContent, surface)
   },
   publish: {
@@ -1454,6 +1455,14 @@ const api = {
   // only the app-owned state file changes. `subscribe` answers the snapshot and then `onChanged` carries every
   // later one (folder watch, or a change made from any window on the talk); `unsubscribe` stops it.
   scratchpad: {
+    recordSketchUse: (outline: string, name: string, key: string, ids: string[], proposals: ScratchSlideInput[], slideCount?: number): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:sketch-used', outline, name, key, ids, proposals, slideCount),
+    renameSketch: (outline: string, name: string, title: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:sketch-rename', outline, name, title),
+    sketchPictures: (outline: string, lines: string[]): Promise<ScratchReply<{ pictures: Array<[string, string]> }>> => ipcRenderer.invoke('scratchpad:sketch-pictures', outline, lines),
+    readSketch: (outline: string, name: string): Promise<ScratchReply<{ sketch: ScratchSketch }>> => ipcRenderer.invoke('scratchpad:sketch-read', outline, name),
+    createSketch: (outline: string, text = ''): Promise<ScratchReply<{ sketch: ScratchSketch }>> => ipcRenderer.invoke('scratchpad:sketch-create', outline, text),
+    reportSketchDirty: (dirty: boolean): void => ipcRenderer.send('scratchpad:sketch-dirty', dirty),
+    exportSketch: (text: string): Promise<ScratchReply<{ saved: boolean }>> => ipcRenderer.invoke('scratchpad:sketch-export', text),
+    saveSketch: (outline: string, name: string, revision: string, text: string): Promise<ScratchReply<{ sketch: ScratchSketch }>> => ipcRenderer.invoke('scratchpad:sketch-save', outline, name, revision, text),
     setSort: (sort: 'newest' | 'manual', expectedOutline: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:set-sort', sort, expectedOutline),
     reorder: (visible: string[], next: string[], expectedOutline: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>> => ipcRenderer.invoke('scratchpad:reorder', visible, next, expectedOutline),
     prepareInsert: (ids: string[], expectedOutline: string): Promise<ScratchReply<{ entries: ScratchPreparedInsert[] }>> => ipcRenderer.invoke('scratchpad:prepare-insert', ids, expectedOutline),
@@ -1634,6 +1643,7 @@ const api = {
       ipcRenderer.invoke('layout:preview-thumbnails')
   },
   icons: {
+    hasBrandPoints: (points: string[]): Promise<boolean> => ipcRenderer.invoke('icons:brand-points', points),
     // Free-text icon search over the engine's vocabulary (Lucide names/tags + SVGL brands +
     // the full Tabler collection), backed by 05-icons.mjs searchIcons. Returns the top matches as
     // {key, source} where key is `lucide:name`, `svgl:name` or `tabler:name`. The icon picker

@@ -34,23 +34,23 @@ const asideHost={outlinePath:path,settled:async()=>{},read:()=>({path,text:windo
 const insertHost={talk:()=>path,editor:()=>({path,text:window.text(),caret:0}),apply,prepareSlide:async s=>s,api:{slideSource:async()=>({ok:true,outlinePath:path}),markInserted:async()=>({ok:true,snapshot:snap})},notify:()=>{}}
 async function drop(id,place){window.lastDrop=place;await runScratchInsert(insertHost,{mode:'slide',item:snap.items.find(i=>i.id===id),place})}
 function App(){const[text,setText]=React.useState(original),[active,setActive]=React.useState(1),[n,setN]=React.useState(0);update=setText;refresh=()=>setN(x=>x+1);const layoutApi=useScratchpadLayout();React.useEffect(()=>layoutApi.dock(),[])
+ const [dockHost,setDockHost]=React.useState(null)
  const rows=placeRows(text);publishOutline(path,text)
  const cards=rows.map((r,i)=>({slide_id:(text.split('\\n')[r.line-1].match(/id=([^}]+)/)||[])[1],title:r.title,nav_title:r.title,role:r.level===2?'section-title':'content',section:r.level===2?r.title:'Section',source_markdown:text.split('\\n')[r.line-1],render_hash:''+i,content_hash:''+i,layout:'default',warnings:[],line:r.line}))
  const ref=i=>({line:rows[i].line,headingText:text.split('\\n')[rows[i].line-1]})
  return <><div style={{width:750,height:650}}><GridView talk={{slug:'t',outlinePath:path,title:'Talk'}} compiledSlides={cards} triggerFindings={[]} thumbnails={null} activeIndex={active} onSelectSlide={setActive} slideRefOf={ref} lineOfSlide={i=>rows[i]?.line} onMoveSlides={()=>{}} onCutSlides={async()=>true} onCopySlides={()=>''} onSetAsideSlides={refs=>runSetAside(asideHost,refs,source)} onScratchDrop={drop} slideOps={{cut:()=>null,copy:()=>null,delete:()=>{},paste:()=>null,moveTo:()=>null}}/></div>
- <ScratchpadPanel data={{snapshot:snap,loading:false,activeCount:snap.items.length}} layoutApi={layoutApi} registerActions={()=>{}} onOpenSlideBrowser={()=>{}} outlineText={text}/></>}
+ <div className="sp-dock-host" ref={setDockHost} style={{width:400,height:650}}/>
+ <ScratchpadPanel dockHost={dockHost} data={{snapshot:snap,loading:false,activeCount:snap.items.length}} layoutApi={layoutApi} registerActions={()=>{}} onOpenSlideBrowser={()=>{}} outlineText={text}/></>}
 createRoot(document.getElementById('root')).render(<App/>);
 ` }, bundle:true, platform:'browser', format:'iife', jsx:'automatic', outfile:join(temp,'test.js'), loader:{'.css':'css'}, logLevel:'error' })
  writeFileSync(join(temp,'test.html'),'<link rel="stylesheet" href="test.css"><div id="root" style="display:flex"></div><div id="editor"></div><script src="test.js"></script>')
  browser=await chromium.launch({headless:true});const page=await browser.newPage({viewport:{width:1400,height:1100}})
  const errors=[];page.on('pageerror',e=>errors.push(e.message))
- // The harness has no sidebars, so the panel is placed where it floats over the right half (the app opens it beside the sidebar).
- await page.addInitScript(()=>localStorage.setItem('tw-scratchpad-layout-v1',JSON.stringify({mode:'collapsed',restore:'float',box:{x:670,y:90,w:700,h:800}})))
  await page.goto(pathToFileURL(join(temp,'test.html')).href)
  await page.locator('.grid-cell').first().waitFor()
  await page.getByLabel('Select A',{exact:true}).check();await page.getByLabel('Select B',{exact:true}).check()
  await page.getByRole('button',{name:'Set aside in Slide Scratchpad',exact:true}).click()
- await page.locator('.sp-card').first().waitFor();assert.equal(await page.locator('.sp-card').count(),2);assert(!await page.evaluate(()=>window.text().includes('Body A')));checks++
+ const dockedCards=page.locator('.sp-dock-host .sp-card');await dockedCards.first().waitFor();assert.equal(await dockedCards.count(),2);assert(!await page.evaluate(()=>window.text().includes('Body A')));checks++
  await page.evaluate(()=>window.undo());await page.waitForFunction(()=>window.text().includes('Body A'))
  assert.equal(await page.evaluate(()=>window.text()),original);assert.equal(await page.getByText('In talk',{exact:true}).count(),2);checks++
  await page.locator('.sp-card').first().dblclick();assert.equal(await page.getByText('In talk',{exact:true}).count(),1);await page.getByRole('button',{name:'← Back to the list'}).click();checks++

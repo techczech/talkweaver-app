@@ -6,7 +6,7 @@ import {
   toggleTypeInQuery, titleFromFileName, typeCounts, visibleItems
 } from '../src/shared/scratchpad.ts'
 import { sourceOutlineCandidates } from '../src/renderer/src/lib/scratchpadSourceThumbs.ts'
-import { DOCK_MIN_WINDOW, FLOAT_TOP, SIDEBAR_RESERVE, clampBox, collapse, defaultLayout, dock, expand, float, parseLayout, toggle } from '../src/shared/scratchpad-layout.ts'
+import { FLOAT_TOP, SIDEBAR_RESERVE, clampBox, collapse, defaultLayout, dock, expand, float, parseLayout, toggle } from '../src/shared/scratchpad-layout.ts'
 
 let checks = 0
 const check = (name, fn) => { fn(); checks++ }
@@ -74,7 +74,7 @@ check('lists: All, Picked slides and Agent visuals are active only; Kept and Rej
   assert.deepEqual(ids('visuals'), ['c', 'd'])
   assert.deepEqual(ids('kept'), ['e'])
   assert.deepEqual(ids('rejected'), ['f'])
-  assert.deepEqual(listCounts(items), { all: 4, slides: 2, visuals: 2, kept: 1, rejected: 1, active: 4 })
+  assert.deepEqual(listCounts(items), { all: 4, sketches: 0, proposed: 0, slides: 2, visuals: 2, kept: 1, rejected: 1, active: 4 })
   assert.deepEqual(typeCounts(items), { slide: 2, svg: 1, html: 1, pic: 0 })
 })
 
@@ -136,14 +136,13 @@ check('layout (R17): the floating panel opens beside the right sidebar and below
     assert.ok(box.x + box.w <= vp.w - SIDEBAR_RESERVE + 20, `${vp.w}: the box ends before the sidebar (${box.x + box.w})`)
     assert.ok(box.y >= FLOAT_TOP, `${vp.w}: the box starts below the toolbars`)
   }
-  assert.ok(DOCK_MIN_WINDOW > 1440, 'the dock (560 px) never fits beside a 1440 px window\'s sidebars with the editor keeping its share')
 })
 
 check('layout: a stored box is clamped to the window it opens in; odd storage falls back to the default', () => {
   const vp = { w: 1000, h: 700 }
   const box = clampBox({ x: 900, y: -50, w: 5000, h: 10 }, vp)
   assert.deepEqual(box, { x: 0, y: 28, w: 1000, h: 320 })
-  assert.deepEqual(clampBox({ x: 5000, y: 5000, w: 500, h: 400 }, vp), { x: 500, y: 640, w: 500, h: 400 })
+  assert.deepEqual(clampBox({ x: 5000, y: 5000, w: 500, h: 400 }, vp), { x: 500, y: 300, w: 500, h: 400 })
   const stored = JSON.stringify({ mode: 'docked', restore: 'float', box: { x: 10, y: 40, w: 600, h: 500 } })
   assert.deepEqual(parseLayout(stored, vp), { mode: 'docked', restore: 'float', box: { x: 10, y: 40, w: 600, h: 500 } })
   for (const bad of [null, '', '{nope', '42', JSON.stringify({ mode: 'huge', box: { x: 'a' } })]) assert.deepEqual(parseLayout(bad, vp), defaultLayout(vp))

@@ -855,7 +855,7 @@ for (const hashes of protectedHeadingLevels) {
       /insertBlockAfterLine\(current, insertionPlace\(current\.state, dropPos\), /, // dropped SVG (after an object it lands on)
       /insertBlockAfterLine\(viewRef\.current, insertionPlace\(viewRef\.current\.state, dropPos\), /, // dropped picture
       /insertAtCaretLine\(view, text, insertionCaret\(view\.state\)\)/, // component or slide at the caret (after a selected object)
-      /blockAnchorAfterLine\(view\.state\.doc\.toString\(\), head\)/, // object from the Insert menu
+      /blockAnchorAfterLine\(prepared\.doc, prepared\.at\)/, // object from the Insert menu
       /pasteBlockAtSelection\(v, '```svg/, /pasteBlockAtSelection\(v, serialiseTable/
     ]) assert.match(source, call, `Editor.tsx calls ${call}`)
   }

@@ -1940,3 +1940,47 @@ What the counts miss: slides whose layout is chosen automatically with no trigge
 - The sampler lives at `talk-weaver/docs/layout-sampler-outline.md`; there is no copy at the repo root. The library's `z-sample-presentations/layout-showcase/layout-showcase-outline.md` is a separate, shorter real-talk-style deck (315 lines), not a copy.
 - Unverified per `layout-sampler-unverified-report.md`: `mermaid` and `svg` (compile and render non-empty; held for live verification) and `timer-audience` (compiled deck carries no `data-section-timer` attribute). All other entries are `stable` in the registry. The registry status field is the only evidence of verification used; nothing was rendered for this file.
 - Not done: no layout was compiled or rendered; examples were not re-run through the compiler; usage counts are a text scan, not a compiler read; limits beyond the "Fits" ranges were not searched for in compiler code.
+## Designs and individual changes from the Slide tab
+
+Change only the named aspect, keep the id line, and keep all slide text, media and notes.
+These examples show the trigger line below a slide heading.
+
+| Choice | Example |
+| --- | --- |
+| Title and points | `{id=p4k2m}{list}{titletop}{plainlist}` |
+| Icon list | `{id=p4k2m}{list}{iconlist}{iconlist=list}` |
+| Icon boxes | `{id=p4k2m}{list}{iconlist}{iconlist=boxes}` |
+| Row of icons | `{id=p4k2m}{iconrow}` |
+| Logo list | `{id=p4k2m}{list}{logolist}{iconlist=list}`, with points naming recognised brands |
+| Logo boxes | `{id=p4k2m}{list}{logolist}{iconlist=boxes}` |
+| Notes under each | `{id=p4k2m}{list}{annotated}`, with a sub-point under each point |
+| Numbers, coloured | `{id=p4k2m}{list}{numbered}` |
+| Numbers, plain | `{id=p4k2m}{list}{numbered=plain}` |
+| Numbers, large | `{id=p4k2m}{list}{numbered=styled}` |
+| Picture on the left | `{id=p4k2m}{list}{image=left}`, with an existing image line |
+| Picture on the right | `{id=p4k2m}{list}{image=right}`, with an existing image line |
+
+`{plainlist}` pins bullets even when a talk defaults to icons. Use one list treatment at
+a time. `{font-body=l}` makes the points or table text larger. Other sizes include
+`{font-body=xs}`, `{font-body=s}` and `{font-body=xl}`. Medium has no size code.
+
+For a table with ordinary first-row cells, rules between rows only, and a plain first column:
+
+```markdown
+### Volunteer shifts
+{id=p4k2m}{table}{table-header=off}{table-columns=off}{table-first-column=off}
+
+| Day | Volunteers |
+| --- | --- |
+| Monday | 4 |
+| Tuesday | 6 |
+```
+
+- Header row uses the defaults. Remove the three `=off` codes.
+- Rows only sets all three switches to `off`.
+- First column leads switches the header off and keeps column rules and the accent.
+- Plain grid switches the header and first-column accent off and keeps the rules between columns.
+- Title at the side uses Rows only plus `{sidebar}{split=30}`.
+
+The explicit on forms are `{table-header=on}`, `{table-columns=on}` and `{table-first-column=on}`.
+Keep the table cells unchanged when adjusting its look.

@@ -1,17 +1,17 @@
 // Compare side by side (locked mockup state 6): 2 to 4 ticked items, large, in columns, each with its own
 // actions, so they can be decided one by one; one placement note for all of them at the bottom.
 import type { ScratchGroup, ScratchItem } from '../../../../shared/scratchpad'
-import { ItemBadges, ItemThumb } from './ScratchpadCard'
+import { ItemBadges, ItemThumb, slideTextLines } from './ScratchpadCard'
 
 /** The slide's text, shortened, without its heading and markup tokens: what the column shows under the title. */
 function slideText(markdown: string): string {
-  const lines = markdown.split('\n').slice(1).map((l) => l.replace(/\{[^}]*\}/g, '').replace(/^\s*[-*+]\s+/, '').trim()).filter(Boolean)
-  const text = lines.join(' · ')
+  const text = slideTextLines(markdown).join(' · ')
   return text.length > 220 ? `${text.slice(0, 219)}…` : text
 }
 
-export function ScratchpadCompare({ items, groupOf, onBack, onTakeOut, onOpen, actions, note, inTalk = () => false }: {
+export function ScratchpadCompare({ items, groupOf, onBack, onTakeOut, onOpen, actions, note, current, inTalk = () => false }: {
   inTalk?: (item: ScratchItem) => boolean
+  current?: { title: string; markdown: string }
   items: ScratchItem[]
   groupOf: (id: string | null) => ScratchGroup | null
   onBack: () => void
@@ -25,20 +25,25 @@ export function ScratchpadCompare({ items, groupOf, onBack, onTakeOut, onOpen, a
     <div className="sp-compare">
       <div className="sp-compare-top">
         <button type="button" className="sp-btn sp-btn--sm" onClick={onBack}>← Back to the list</button>
-        <b>Side by side · {items.length} {items.length === 1 ? 'item' : 'items'}</b>
+        <b>{current ? 'Compare with this slide' : `Side by side · ${items.length} ${items.length === 1 ? 'item' : 'items'}`}</b>
         <span className="sp-compare-hint">Each column has its own actions, so you can decide one by one.</span>
       </div>
-      <div className="sp-compare-cols" style={{ gridTemplateColumns: `repeat(${Math.max(1, items.length)}, minmax(0, 1fr))` }}>
+      <div className="sp-compare-cols" style={{ gridTemplateColumns: `repeat(${Math.max(1, items.length + (current ? 1 : 0))}, minmax(0, 1fr))` }}>
+        {current && <div className="sp-compare-col">
+          <span className="sp-badge">In the talk now</span>
+          <div className="sp-compare-title">{current.title}</div>
+          <div className="sp-compare-text">{slideText(current.markdown)}</div>
+        </div>}
         {items.map((item) => {
           const group = groupOf(item.group)
           return (
             <div className="sp-compare-col" key={item.id} data-item-id={item.id}>
-              <ItemThumb item={item} big />
+              {item.kind !== 'proposed' && <ItemThumb item={item} big />}
               <div className="sp-badges"><ItemBadges item={item} inTalk={inTalk(item)} />{group && <span className="sp-badge">{group.name}</span>}</div>
               <div className="sp-compare-title">{item.title}</div>
               {item.description && <div className="sp-compare-desc">{item.description}</div>}
-              {item.kind === 'slide' && item.slide && <div className="sp-compare-text">Slide text: {slideText(item.slide.markdown)}</div>}
-              <div className="sp-compare-when">{item.kind === 'slide' ? <>Picked from {item.slide?.talkTitle}</> : <>File <code>{item.file}</code></>}</div>
+              {item.kind !== 'file' && item.slide && <div className="sp-compare-text">Slide text: {slideText(item.slide.markdown)}</div>}
+              <div className="sp-compare-when">{item.kind === 'slide' ? <>Picked from {item.slide?.talkTitle}</> : item.kind === 'proposed' ? <>From {item.sourceSketchTitle ?? item.slide?.sketchFile}</> : <>File <code>{item.file}</code></>}</div>
               {item.status !== 'active' && <div className="sp-compare-done">{item.status === 'kept' ? 'Kept for library' : 'Rejected'}</div>}
               <div className="sp-actions">{actions(item)}</div>
               <div className="sp-compare-foot">

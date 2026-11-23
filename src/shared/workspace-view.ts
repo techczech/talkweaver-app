@@ -1,6 +1,7 @@
 // ADR-0045 §3: four ways to work on the same outline.
 export const WORKSPACE_VIEWS = ['slide', 'grid', 'outline', 'markdown'] as const
 export type WorkspaceView = typeof WORKSPACE_VIEWS[number]
+export type SlideTabView = 'pages' | 'list'
 export type SlidesPanelView = 'previews' | 'outline'
 export type StartingView = Exclude<WorkspaceView, 'grid'>
 

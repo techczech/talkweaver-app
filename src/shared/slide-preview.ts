@@ -184,3 +184,5 @@ export function markSlidePreviewHtml(rawHtml: string, options: { localPages?: bo
     ? withStyle + STEP_BRIDGE
     : withStyle.slice(0, at) + STEP_BRIDGE + withStyle.slice(at)
 }
+export const SLIDE_PREVIEW_SURFACES = ['workspace', 'detail', 'intro-example', 'review-before', 'review-after'] as const
+export type SlidePreviewSurface = typeof SLIDE_PREVIEW_SURFACES[number]

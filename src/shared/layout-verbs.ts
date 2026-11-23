@@ -540,12 +540,19 @@ function isOneTriggerToken(token: string): boolean {
  *  second layout's token on the line. */
 function optionGroupNamed(key: string, line: string, at: Located, inferredLayout?: string): OptionGroup {
   const layoutName = winningAuthoredLayout(line)?.layout ?? inferredLayout
-  const applicable = optionGroupsForSlide({
+  const groups = optionGroupsForSlide({
     layoutName,
     headingLevel: at.slide.level,
     hasChildren: at.slide.opensSection || at.slide.container
-  }).find(({ group }) => group.key === key)?.group
+  })
+  const applicable = groups.find(({ group }) => group.key === key)?.group
   if (applicable) return applicable
+  // The Slide tab can force a title to show even on a title-quiet layout. The old
+  // option surfaces omit placement and top-title style for such a layout by default.
+  if (inferredLayout && groups.some(({ group }) => group.key === 'title-display') &&
+    ['title-placement', 'title-look', 'title-look-tone'].includes(key)) {
+    return registryOptionGroups().find(group => group.key === key)!
+  }
   if (registryOptionGroups().some((candidate) => candidate.key === key)) {
     throw new LayoutVerbError('option-not-applicable', `option group "${key}" does not apply to ${layoutName ? `the ${layoutName} layout` : 'this slide'}`)
   }
@@ -694,9 +701,10 @@ function lineEdits(onLine: readonly SlideToken[], gone: ReadonlySet<SlideToken>,
  * except `swap`, which becomes `put`. A layout line left with no token is removed with its line
  * break; nothing else of the text is touched.
  */
-function editLayoutTokens(outline: string, slide: SlideLayoutFacts, swap: SlideToken | null, put: string): string {
+function editLayoutTokens(outline: string, slide: SlideLayoutFacts, swap: SlideToken | null, put: string,
+  remove: (token: SlideToken) => boolean = token => token.writesLayout): string {
   const lines = outline.split('\n')
-  const gone = new Set(slide.tokens.filter((token) => token.writesLayout && token !== swap))
+  const gone = new Set(slide.tokens.filter(token => remove(token) && token !== swap))
   const byLine = new Map<number, SlideToken[]>()
   for (const token of slide.tokens) {
     const list = byLine.get(token.line)
@@ -856,11 +864,49 @@ export function chooseLayout(outline: string, slide: SlideRef, layout: string): 
 
 /** Set one option of the slide's layout (an Inspector option picture, a picker chip). */
 export function setLayoutOption(outline: string, slide: SlideRef, group: string, value: string): TriggerWrite {
-  const [choice] = optionChoices([{ group, token: value }])
+  return setLayoutOptions(outline, slide, [{ group, token: value }])
+}
+
+/** Apply a bundle to the same trigger block for one editor transaction. */
+export function setLayoutOptions(outline: string, slide: SlideRef, options: readonly LayoutOptionChoice[], inferredLayout?: string): TriggerWrite {
   const at = locate(outline, slide)
-  const newLine = applyOptionChoices(at.oldLine, at, outline, [choice])
+  const newLine = applyOptionChoices(at.oldLine, at, outline, optionChoices(options), inferredLayout)
   const text = withTriggerLine(outline, at, newLine)
   return { outline: text, triggerLine: newLine, warnings: at.warnings }
+}
+
+/** Clear only the named option groups, including groups hidden by the current layout. */
+export function resetLayoutOptions(outline: string, slide: SlideRef, keys: readonly string[]): TriggerWrite {
+  const at = locate(outline, slide)
+  const registry = registryOptionGroups()
+  const groups = keys.flatMap(key => {
+    const matches = registry.filter(candidate => candidate.key === key)
+    if (matches.length === 0) throw new LayoutVerbError('unknown-option-group', key)
+    return matches
+  })
+  const clear = (line: string, trailingGroupsOnly = false): string => groups.reduce(
+    (current, group) => commitOptionSelection(current, group, '', { resetToInherited: true, trailingGroupsOnly }), line
+  )
+  const lines = [...at.read.lines]
+  lines[at.slide.start] = clear(lines[at.slide.start], true)
+  for (let index = at.blockStart; index >= 0 && index < at.blockEnd; index++) {
+    lines[index] = clear(lines[index])
+  }
+  return { outline: lines.join('\n'), triggerLine: clear(at.oldLine), warnings: [] }
+}
+
+/** Remove only the explicit layout written by the Points page's Row arrangement. */
+export function clearPointRow(outline: string, slide: SlideRef): string {
+  const { slide: at } = locate(outline, slide)
+  const facts = compilerFactsOf(outline).slideLayouts.get(at.start)
+  if (!facts) return outline
+  const isRow = (token: SlideToken): boolean => token.attrs.layout === 'iconrow'
+  const tokens = facts.tokens.filter(isRow)
+  if (!tokens.length) return outline
+  if (!facts.consistent || tokens.some(token => !token.readWhole)) {
+    throw new LayoutVerbError('cannot-take', 'The Row code could not be cleared here. Edit it in Markdown.')
+  }
+  return editLayoutTokens(outline, facts, null, '', isRow)
 }
 
 // ── Quote forms (docs/design/2026-10-11-source-styled-quote-slides, spec 11) ─────────────────

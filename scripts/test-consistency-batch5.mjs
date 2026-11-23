@@ -52,7 +52,13 @@ assert.match(meta, /\(dirty \|\| saving \|\| savedFlash\) && footerEl/, 'Advance
 
 // The one name of the Slide Scratchpad (CONTEXT.md).
 for (const file of ['src/renderer/src/components/SlideRowMenus.tsx', 'src/renderer/src/components/slide-handling/BatchBar.tsx', 'src/shared/command-registry.ts', 'src/shared/shortcut-registry.ts', 'src/renderer/src/components/scratchpad/ScratchpadPanel.tsx']) {
-  const text = read(file).split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && !/^\s*import /.test(line)).join('\n')
+  let text = read(file).split('\n').filter((line) => !/^\s*(\/\/|\*|\/\*)/.test(line) && !/^\s*import /.test(line)).join('\n')
+  if (file.endsWith('/ScratchpadPanel.tsx')) {
+    // SP1 uses the short name inside the panel. Allow it for the search hint and two dock control labels.
+    for (const label of ['aria-label="Scratchpad options"', 'placeholder="Search the Scratchpad"', 'aria-label="Scratchpad items"']) {
+      text = text.replace(label, '')
+    }
+  }
   assert.ok(!/(?<!Slide )(?<![A-Za-z])Scratchpad(?![A-Za-z])/.test(text), `${file} says "Scratchpad" without "Slide"`)
 }
 

@@ -12,6 +12,7 @@ export interface StructureActions {
   group: () => void
   selectSeveral: () => void
   levelUp: () => void
+  levelUpReason?: string
   duplicate: () => void
   delete: () => void
   clear: () => void
@@ -28,7 +29,8 @@ export function StructureMenu({ actions, opensUp }: { actions: StructureActions;
     { icon: 'slides', label: 'Make a section from several slides…', separatorBefore: true,
       onClick: actions.count > 0 ? actions.group : actions.selectSeveral,
       disabled: !!actions.groupReason, note: actions.groupReason },
-    { icon: 'promote', label: 'Turn this slide into a section', hint: liveShortcutLabel('editor.promote'), onClick: actions.levelUp }
+    { icon: 'promote', label: 'Turn this slide into a section', hint: liveShortcutLabel('editor.promote'), onClick: actions.levelUp,
+      disabled: !!actions.levelUpReason, note: actions.levelUpReason }
   ]
   return <ToolbarMenu icon="section" label="Section" title="New section or subsection" items={items} opensUp={opensUp} />
 }

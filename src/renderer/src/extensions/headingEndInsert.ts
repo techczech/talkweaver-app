@@ -34,6 +34,7 @@
 // scripts/test-protected-lines.mjs tests it.
 import { EditorSelection, Facet, type EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
+import { isolateHistory } from '@codemirror/commands'
 import { isBareUrl, PARAGRAPH_STOP_RE } from '../../../../compiler/scripts/lib/02-triggers-layout.mjs'
 import { LAYOUTS } from '../../../shared/layout-registry/entries'
 import { headingLevels } from '../../../shared/heading-lines'
@@ -254,7 +255,12 @@ export function caretLineInsertion(text: string, pos: number, source: string): C
  *  caret to anchor at (Editor.tsx passes the end of a selected object, so the block goes after it). */
 export function insertAtCaretLine(view: EditorView, source: string, pos = view.state.selection.main.head): void {
   const plan = caretLineInsertion(view.state.doc.toString(), pos, source)
-  view.dispatch({ changes: { from: plan.from, insert: plan.insert }, selection: EditorSelection.cursor(plan.cursor), scrollIntoView: true })
+  view.dispatch({
+    changes: { from: plan.from, insert: plan.insert },
+    selection: EditorSelection.cursor(plan.cursor),
+    annotations: isolateHistory.of('full'),
+    scrollIntoView: true
+  })
 }
 
 // The words of the component lines the Insert menu writes (`[QR: …]`, `[Action: …]`, `[Embed: …]`),

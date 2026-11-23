@@ -68,7 +68,7 @@ for (const shortcut of SHORTCUT_REGISTRY) {
 
 const expectedPaletteIds = [
   'research-panel', 'research-find', 'research-rename', 'research-change-kind', 'research-delete', 'research-move', 'research-copy', 'research-insert-here', 'research-insert', 'research-make-slide', 'research-open', 'research-previous', 'research-next', 'research-scope', 'research-close', 'research-copy-reference', 'research-reveal', 'research-source', 'research-used-in', 'research-scope-talk', 'research-scope-research', 'research-scope-everything', 'research-retry',
-  'refresh', 'optimize-images', 'ocr-index', 'check-embeds', 'layout-doctor', 'research-capture', 'research-reveal-folder', 'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place', 'scratchpad-move-up', 'scratchpad-move-down', 'where-used', 'focus-slide',
+  'refresh', 'optimize-images', 'ocr-index', 'check-embeds', 'layout-doctor', 'research-capture', 'research-reveal-folder', 'new-sketch', 'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place', 'scratchpad-move-up', 'scratchpad-move-down', 'where-used', 'focus-slide',
   'toggle-inspector', 'studio', 'runs', 'history', 'importer', 'plan-run', 'attach-prework', 'attach-postwork', 'pathways', 'add-to-pathway', 'present-pathway', 'new-window', 'open-in-new-window', 'new-talk', 'new-folder',
   'refresh-talks', 'change-vault', 'vault-gallery', 'search-talks',
   'find-talk', 'add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section',
@@ -81,7 +81,7 @@ const expectedPaletteIds = [
   'insert-html-page', 'save-offline-page', 'capture-embed',
   'format-bold', 'format-italic', 'format-inline-code', 'format-highlight', 'format-strikethrough', 'format-underline', 'format-link',
   'deck-design', 'metadata', 'tag-slide', 'abstract',
-  'view-panel-previews', 'view-panel-outline', 'split-pasted-picture-row', 'paste-picture', 'duplicate-slide', 'move-current-slide-up', 'move-current-slide-down',
+  'view-panel-previews', 'view-panel-outline', 'view-slide-tab-pages', 'view-slide-tab-list', 'split-pasted-picture-row', 'paste-picture', 'duplicate-slide', 'move-current-slide-up', 'move-current-slide-down',
   'edit-speaker-notes', 'view-slide-panel', 'welcome-slide', 'welcome-outline', 'welcome-markdown',
   'view-slides', 'view-plain', 'view-markdown', 'change-heading-level', 'change-slide-layout', 'view-strip', 'view-grid', 'fold-all', 'unfold-all', 'outline-collapse-all', 'outline-expand-all',
   'move-slide-to', 'move-section-to', 'select-section', 'clear-slide-selection', 'set-aside-slides', 'move-selected-slides-to',
@@ -123,7 +123,7 @@ assert.deepEqual(
 const insertToolbar = toolbarCommands('insert').map((command) => command.id)
 assert.deepEqual(
   insertToolbar,
-  ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'save-offline-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
+  ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'new-sketch', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'save-offline-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
   'the Insert toolbar menu is the five built-ins, then the six objects, then the components with HTML page… after Embed and speaker notes last, in order'
 )
 
@@ -227,18 +227,18 @@ assert.deepEqual(
   [
     ['Edit', 'split-pasted-picture-row'], ['Edit', 'paste-picture'], ['Edit', 'duplicate-slide'], ['Edit', 'move-current-slide-up'], ['Edit', 'move-current-slide-down'],
     ['File', 'welcome-slide'], ['File', 'welcome-outline'], ['File', 'welcome-markdown'],
-    ['Help', 'check-for-updates'], ['Help', 'whats-new'], ['Help', 'help'], ['Insert', 'edit-image'], ['Present', 'present-slide-window'],
+    ['Help', 'check-for-updates'], ['Help', 'whats-new'], ['Help', 'help'], ['Insert', 'edit-image'], ['Insert', 'new-sketch'], ['Present', 'present-slide-window'],
     ['Slides', 'set-aside-slides'], ['Talk', 'toggle-inspector'], ['Talk', 'pathways'],
     ['Talk', 'new-section'], ['Talk', 'new-subsection'], ['Talk', 'make-section'], ['Talk', 'select-several-slides'],
     ['Tools', 'tools-animated-video'], ['View', 'vault-gallery'],
-    ['View', 'view-panel-previews'], ['View', 'view-panel-outline'], ['View', 'edit-speaker-notes'], ['View', 'view-slide-panel'],
+    ['View', 'view-panel-previews'], ['View', 'view-panel-outline'], ['View', 'view-slide-tab-pages'], ['View', 'view-slide-tab-list'], ['View', 'edit-speaker-notes'], ['View', 'view-slide-panel'],
     ['View', 'research-panel'], ['View', 'research-find'], ['View', 'scratchpad-panel']
   ],
   'window and authoring commands are in the native menus'
 )
 
 const expectedToolbarIds = {
-  insert: ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'save-offline-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
+  insert: ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'new-sketch', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'save-offline-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
   deck: ['deck-design', 'pathways', 'metadata', 'abstract', 'refresh', 'normalize-triggers', 'delete-slide'],
   tools: ['studio', 'runs', 'importer', 'settings', 'app.command-palette', 'help', 'get-started-open-guide'],
   present: ['present-slide-window', 'present-window', 'present-presenter', 'present-from-here', 'present-audience', 'plan-run']

@@ -487,6 +487,11 @@ await test('the app wires the restart\'s close through the editor\'s own close r
   assert.match(index, /if \(restartWindows\.confirm\(id, verdict === 'saved' && editorWorkSaved\(id\)\) === 'keep'\) return keep\(\)\n  closeConfirmed\.add/)
   assert.match(index, /if \(win\.isDestroyed\(\)\) return\n[^\n]*\n[^\n]*\n      if \(restartWindows\.timedOut\(wcId\)\) return\n/, 'the fallback leaves a restart\'s window open before anything else')
   assert.match(index, /restartWindows\.ordinaryClose\(wcId\)/)
+  assert.match(index, /if \(!openOutline && !movedEditorReceipts\.has\(wcId\) && !editorSketchDrafts\.has\(wcId\)\)/,
+    'the empty-window shortcut keeps a detached sketch draft behind the close guard')
+  assert.match(index, /if \(editorSketchDrafts\.has\(id\) \|\| \(forRestart && opts\?\.hasDraft === true\)\)/,
+    'main refuses to confirm close while the editor still has an unsaved sketch')
+
   assert.match(index, /closeWindowsForRestart: \(\) => \{\n      beginQuitAttempt\(\)\n      return restartWindows\.closeWindows\(\)/,
     'the helper gate is held before closing editors through their existing save route')
   assert.match(index, /restartAbandoned: \(\) => \{\n      cancelQuitAttempt\(\)\n      restartWindows\.abandoned\(\)/,
@@ -499,7 +504,7 @@ await test('the app wires the restart\'s close through the editor\'s own close r
   assert.match(index, /editorRevisions\.loaded\(event\.sender\.id, opts\.revision\)/)
   assert.match(index, /function runBackupFor\([^)]*\): Promise<BackupRun> \{\n  return restartHolds\.during\('exporting', runBackupExports\)\(talks\)/, 'a backup run holds the restart as an export, from its first talk to its last')
   const hook = fs.readFileSync(new URL('../src/renderer/src/components/useOutlineDiskChange.ts', import.meta.url), 'utf8')
-  assert.match(hook, /await closeFrozen\(\{ \.\.\.editorDeps, leave: async \(\) => \{\n          const mayLeave = await leave\(\)\n          if \(update !== true\) await window\.tw\.talk\.ackCloseRequest\?\.\(\)/, 'every close of a window with a talk goes through the freeze; only the ordinary close switches the fallback off after its flush')
+  assert.match(hook, /await closeFrozen\(\{ \.\.\.editorDeps, leave: async \(\) => \{\n          if \(update !== true && wiringRef\.current\.hasPendingSketch\?\.\(\)\) await window\.tw\.talk\.ackCloseRequest\?\.\(\)\n          const mayLeave = await leave\(\)\n          if \(update !== true\) await window\.tw\.talk\.ackCloseRequest\?\.\(\)/, 'every close goes through the freeze; ordinary close switches the fallback off after flushing, or before a pending sketch save')
   assert.match(hook, /onCloseCancelled\?\.\(\(\) => \{ for \(const release of/, 'a called-off restart releases the frozen editor')
   const editor = fs.readFileSync(new URL('../src/renderer/src/components/Editor.tsx', import.meta.url), 'utf8')
   assert.match(editor, /closeFrozenRef\.current && !tr\.annotation\(savedTextAdopted\) && !tr\.annotation\(closeFreezeExempt\)\)\) && tr\.docChanged \? \[\] : tr/, 'the freeze refuses every edit but Reload and a save\'s ids')

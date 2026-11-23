@@ -49,14 +49,14 @@ export async function prepareOutlineMerge(path: string, deps: OutlineReconcileDe
   } catch (e) { return error(e) }
 }
 
-export async function applyOutlineMerge(path: string, review: OutlineMergeReview, choices: Record<string, string>, deps: OutlineReconcileDeps): Promise<ReconcileResult> {
-  const text = resolveOutlineMerge(review.merge, choices)
+export async function applyOutlineMerge(path: string, review: OutlineMergeReview, choices: Record<string, string>, deps: OutlineReconcileDeps, decision: 'merge' | 'put-back' = 'merge'): Promise<ReconcileResult> {
+  const text = decision === 'put-back' ? review.mine : resolveOutlineMerge(review.merge, choices)
   if (text === null) return error('Choose or edit each conflicting slide before applying the merge.')
   try {
     await deps.settled(path)
     if (!unchanged(path, review, deps)) return { kind: 'retry' }
     // Preserve a manually edited result too. A failed archive never advances the disk baseline.
-    if (review.merge.conflicts.length) {
+    if (review.merge.conflicts.length || decision === 'put-back') {
       if (!await preserve(path, { ...review, draft: text }, deps)) return recoveryError('Could not keep the merge result in recovery. Nothing was changed.')
       if (!unchanged(path, review, deps)) return { kind: 'retry' }
     }

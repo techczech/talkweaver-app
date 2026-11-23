@@ -1,24 +1,25 @@
 import { offlinePageCandidates, type OfflinePageSelection } from '../lib/offlinePage'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, ChevronLeft, ChevronRight } from 'lucide-react'
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Undo2 } from 'lucide-react'
 import type { ProjectionRow, TalkInfo } from '../../../preload/index'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
 import type { LayoutDef, OptionGroup } from '../data/layouts'
 import { LAYOUTS } from '../data/layouts'
-import { deckListStyleForSlide, deckStatementTokenForOutline, inheritedTitleLookForSlide, inheritedTitleToneForSlide } from '../../../shared/deck-frame'
+import { deckListStyleForSlide, deckStatementTokenForOutline, inheritedTitleLookForSlide, inheritedTitleToneForSlide, pictureSideForSlide } from '../../../shared/deck-frame'
+import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
+import { readableSectionLabel } from './slideFocusModel'
 import {
   extractInspectorSlideBlock, headingLineForSlideId, inspectorCommitToken, inspectorModel, sectionIdAtScrollTop,
   type InspectorBindingModel
 } from './inspectorModel'
 import { OptionControl } from './CommandPalette'
-import { liveShortcutLabel } from '../keymap/store'
 import {
   PaneMemory, paneAnchorAt, paneScrollTarget, tabJumpScrollTop, tabTrailingSpace, type PaneNode
 } from './inspectorScroll'
 import { surfacedWarnings } from './SlideStrip'
 import { useLiveSlidePreview } from './useLiveSlidePreview'
 import FixedDeckPreview from './FixedDeckPreview'
-import { headingHasChildSlides } from '../../../shared/trigger-line'
+import { headingHasChildSlides, logicalTriggerBlockAfterHeading, parseTriggerLine } from '../../../shared/trigger-line'
 import type { SlideRef } from '../../../shared/layout-verbs'
 import InspectorBoard from './InspectorBoard'
 import QuoteFormNotes from './QuoteFormNotes'
@@ -26,6 +27,12 @@ import InspectorOptionPictures from './InspectorOptionPictures'
 import VaultOrigin from './VaultOrigin'
 import SlideProvenance from './SlideProvenance'
 import TalkActivity from './TalkActivity'
+import { DESIGN_PAGES, designsFor, option, OWN_LABELS, pageForBinding, type Design } from './rightPanelDesigns'
+import { AdjustRows, ColourPage, DesignsBlock, IconRows, IconsPage, PageHead, PicturePage, PointsPage, sectionDesigns, TablePage, TitlePage, type PanelPage, type PanelSurface } from './RightPanelPages'
+import RightPanelPictures, { type PanelTry } from './RightPanelPictures'
+import './rightPanel.css'
+import { editInlinePicture, pooledImageOnLine } from '../../../shared/image-edit'
+import { readOutlineSlides, slidePointLines } from '../../../shared/feedback-accept'
 import { slideIdOf } from './slideFocusModel'
 import type { BoardEdit } from '../../../../compiler/scripts/lib/board-slide.mjs'
 import InspectorPrework from './InspectorPrework'
@@ -62,23 +69,52 @@ interface Props {
   picker?: { column: React.ReactNode; tryOutline: string | null; tryLabel: string | null } | null
   /** The layout section's Change button: opens the picker on this slide. */
   onChangeLayout?: () => void
+  long?: boolean
+  centrePreview?: boolean
+  multiCount?: number
+  preview?: PanelTry | null
+  applied?: string | null
+  onTry: (preview: PanelTry | null) => void
+  onKeep: (slide: SlideRef, layout: string, design: Design) => void
+  onUndo: () => void
+  onTalk: (page: 'details' | 'design') => void
+  onCopy?: (aspect: string) => void
+  page: string
+  onPageChange: (page: string) => void
+  onIcon: (line: number, icon: string | null, base: string) => void
+  onCropPicture: (line: number, id: string) => void
+  onReplacePicture: (line: number) => void
+  onRemovePicture: (line: number) => void
+  onMarkdown: () => void
+  structure?: { section: boolean; childCount: number; carousel: boolean; panes?: { title: string; select: () => void }[]; addSubslide: () => void; inheritedColour?: { value: string; selectSection: () => void } }
+
 }
 
-function triggerLineOf(block: string): string {
-  const candidate = block.split('\n')[1] ?? ''
-  return /^\s*(\{[^}]*\}\s*)+$/.test(candidate) ? candidate : ''
+function triggerLineOf(outline: string, headingLine: number | null): string {
+  if (headingLine == null) return ''
+  const lines = outline.split('\n')
+  const index = headingLine - 1
+  const heading = parseTriggerLine(lines[index] ?? '').map(item => `{${item.source}}`).join('')
+  return heading + (logicalTriggerBlockAfterHeading(lines, index)?.line ?? '')
 }
 
 export default function Inspector({
   talk, compiledSlides, outlineContent, triggerFindings, activeIndex, headingLine,
-  onPrev, onNext, onEdit, onExplain, onOpenLayoutDoctor, onCaptureEmbed, onSaveOffline, offlineSaving, onRemoveSavedView, onOpenLayoutPicker, onCommitOption, onBoardEdit, picker = null, onChangeLayout
+  onPrev, onNext, onEdit, onExplain, onOpenLayoutDoctor, onCaptureEmbed, onSaveOffline, offlineSaving, onRemoveSavedView, onCommitOption, onBoardEdit, picker = null,
+  long = false, centrePreview = false, multiCount = 0, preview, applied, onTry, onKeep, onUndo, onTalk, onCopy, onIcon, onMarkdown, structure,
+  onCropPicture, onReplacePicture, onRemovePicture, page, onPageChange
 }: Props) {
   const row = compiledSlides?.[activeIndex] ?? null
   const block = useMemo(
     () => extractInspectorSlideBlock(outlineContent, headingLine) ?? '',
     [outlineContent, headingLine]
   )
-  const triggerLine = triggerLineOf(block)
+  const read = useMemo(() => readOutlineSlides(outlineContent), [outlineContent])
+  const points = useMemo(() => {
+    const slide = read.slides.find(candidate => candidate.line === headingLine)
+    return slide ? slidePointLines(read, slide) : []
+  }, [read, headingLine])
+  const triggerLine = useMemo(() => triggerLineOf(outlineContent, headingLine), [outlineContent, headingLine])
   // Capture embed…: the slide's web pages and their saved views ({capture} lines), from its text now.
   const livePages = useMemo(() => slideLivePages(block), [block])
   const headingLevel = block.match(/^(#{1,6})\s/)?.[1].length ?? 3
@@ -118,7 +154,7 @@ export default function Inspector({
     }))
   // Trigger-line changes are option commits: bypass the ordinary typing debounce so every
   // selection recompiles the stage immediately, as locked in ADR-0011.
-  const { previewUrl, compiling, previewErr } = useLiveSlidePreview(talk.outlinePath, picker?.tryOutline ?? outlineContent, row?.slide_id ?? '')
+  const { previewUrl, compiling, previewErr } = useLiveSlidePreview(talk.outlinePath, centrePreview && !picker ? '' : picker?.tryOutline ?? preview?.text ?? outlineContent, row?.slide_id ?? '')
   const iframeRef = useRef<HTMLIFrameElement | null>(null)
   const [step, setStep] = useState(0)
   useEffect(() => { setStep(0) }, [activeIndex, model.steps.count, model.steps.mode])
@@ -136,6 +172,7 @@ export default function Inspector({
   // the pane (trailing space lets the last one get there); the lit chip is the section at the top,
   // read from scroll position. The pane's place is held as an anchor per slide (inspectorScroll.ts)
   // and put back after every render, so an option change never moves what the user is looking at.
+  const inspectorRef = useRef<HTMLElement | null>(null)
   const paneRef = useRef<HTMLDivElement | null>(null)
   const tailRef = useRef<HTMLDivElement | null>(null)
   const sectionRefs = useRef(new Map<string, HTMLElement>())
@@ -144,6 +181,13 @@ export default function Inspector({
   const slideKey = row?.slide_id || `index:${activeIndex}`
   const slideKeyRef = useRef(slideKey)
   slideKeyRef.current = slideKey
+  const changePage = (id: string): void => {
+    onTry(null)
+    onPageChange(id)
+    if (paneRef.current) paneRef.current.scrollTop = 0
+    // The button that opened the page is gone as soon as the page renders.
+    inspectorRef.current?.focus({ preventScroll: true })
+  }
   const [litSection, setLitSection] = useState<string | null>(null)
 
   const paneNodes = (pane: HTMLElement): PaneNode[] => {
@@ -225,7 +269,7 @@ export default function Inspector({
       key={binding.group.reactionsKey ? `${binding.group.key}:${slideKey}:${binding.selectedToken}` : binding.group.key}
       data-group={binding.group.key}
     >
-      <span className="tw-inspector-group-label">{binding.group.sectionLabel ?? binding.group.label}</span>
+      <span className="tw-inspector-group-label">{OWN_LABELS[binding.group.key] ?? binding.group.sectionLabel ?? binding.group.label}</span>
       {binding.pictures && pictureSlide ? (
         <>
           <InspectorOptionPictures
@@ -269,7 +313,15 @@ export default function Inspector({
     </div>
   )
 
+  const returnHome = (): void => changePage('home')
   const onKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
+    if (event.key === 'Escape' && !event.defaultPrevented && !event.nativeEvent.isComposing &&
+        !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && !picker && !long && pageInfo) {
+      event.preventDefault()
+      event.stopPropagation()
+      returnHome()
+      return
+    }
     if (!event.altKey) return
     if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
       event.preventDefault()
@@ -284,17 +336,99 @@ export default function Inspector({
     }
   }
 
-  return (
-    <aside className="tw-inspector" aria-label="Inspector" tabIndex={-1} onKeyDown={onKeyDown}>
-      <div className="tw-inspector-preview-head">
-        <div className="tw-inspector-nav">
-          <button type="button" onClick={onPrev} disabled={activeIndex <= 0} title="Previous slide (⌥↑)" aria-label="Previous slide"><ChevronLeft /></button>
-          <span className="tw-inspector-pos">{activeIndex + 1} / {compiledSlides?.length ?? 0}</span>
-          <button type="button" onClick={onNext} disabled={activeIndex >= (compiledSlides?.length ?? 1) - 1} title="Next slide (⌥↓)" aria-label="Next slide"><ChevronRight /></button>
-          <span className="tw-inspector-title">{model.title}</span>
-          {picker?.tryLabel && <span className="tw-inspector-trying" role="status">Trying {picker.tryLabel}</span>}
+  const layout = row?.has_table && ['list', undefined].includes(model.layoutName) ? 'table' : model.layoutName ?? 'list'
+  const table = row?.has_table || layout === 'table' || layout === 'table-outline'
+  const section = structure?.section ?? false
+  const own = structure?.panes ? 'Subslides' : model.board ? 'Board' : livePages.length ? 'Web page'
+    : model.selectedTokens['poll-type']?.startsWith('poll=') ? 'Poll' : DESIGN_PAGES[layout]
+  const titleSlide = row?.role === 'opening' && row.layout === 'title' && row.source_line == null && !row.source_markdown
+  const hasBesidePicture = row?.image_placements?.some(placement => placement.kind === 'beside') ?? false
+  const pictureSide = useMemo(() => hasBesidePicture ? pictureSideForSlide(outlineContent, headingLine) : null,
+    [hasBesidePicture, headingLine, outlineContent])
+  const pages: PanelPage[] = [
+    ...(section ? [{ id: 'colour', label: 'Colour', summary: 'Section colour' }] : []),
+    { id: 'title', label: 'Title', summary: section ? 'Section name, large' : row?.title_layout === 'left' ? 'At the side' : row?.title_layout === 'hidden' ? 'Not shown' : 'On top' },
+    ...(table ? [{ id: 'table', label: 'Table', summary: 'Style and text size' }] : own ? [{ id: 'own', label: own, summary: structure?.panes ? `${structure.panes.length} subslides` : 'Options for this design' }] : !section ? [
+      { id: 'points', label: 'Points', summary: model.selectedTokens['list-style'] === 'numbered' ? 'Numbers' : 'Arrangement and size' },
+      { id: 'icons', label: 'Icons', summary: 'Marks beside the points' }
+    ] : []),
+    ...(!section && !!row?.image_count ? [{ id: 'picture', label: 'Picture', summary: pictureSide === 'left' ? 'On the left'
+      : pictureSide === 'right' ? 'On the right' : 'Placement and editing' }] : []),
+    { id: 'more', label: 'More', summary: section ? 'Steps, reactions, about this slide' : 'Steps, background, poll, reactions' }
+  ]
+  const pageInfo = pages.find(candidate => candidate.id === page)
+  const subsection = row?.subsection && compiledSlides?.find(candidate => candidate.role === 'subsection-title' && candidate.subsection === row.subsection)
+  const slidePlace = [readableSectionLabel(compiledSlides, activeIndex), subsection ? plainInlineText(subsection.nav_title || subsection.title) : ''].filter(Boolean).join(' › ')
+  const showPage = (id: string): boolean => long || (pageInfo ? id === page : false)
+  const surface: PanelSurface | null = pictureSlide ? {
+    path: talk.outlinePath, text: outlineContent, slide: pictureSlide, layout, onTry,
+    onKeep: design => onKeep(pictureSlide, layout, design), onCopy
+  } : null
+  const [brands, setBrands] = useState<{ block: string; found: boolean } | null>(null)
+  useEffect(() => {
+    if (!window.tw?.icons?.hasBrandPoints) return
+    if (!points.length) return
+    let current = true
+    const labels = points.slice(0, 150).map(point => point.text.slice(0, 1024))
+    void window.tw.icons.hasBrandPoints(labels).then(found => { if (current) setBrands({ block, found }) }).catch(() => {})
+    return () => { current = false }
+  }, [block, points])
+  const hasBrands = brands?.block === block && brands.found
+  const designs = useMemo((): Design[] => {
+    if (!pictureSlide || !row || model.unresolved || titleSlide) return []
+    try {
+      return section && structure ? sectionDesigns({ modes: true, carousel: structure.carousel, childCount: structure.childCount, trigger: triggerLine })
+        : designsFor(outlineContent, pictureSlide, row, {...model, layoutName: layout}, block, hasBrands, pictureSide)
+    } catch { return [] }
+  }, [outlineContent, slideKey, row, model, block, section, structure?.carousel, structure?.childCount, titleSlide, triggerLine, hasBrands, layout, pictureSide]) // eslint-disable-line react-hooks/exhaustive-deps
+  const bindings = model.sections.flatMap(item => item.bindings)
+  const pageGroups = (id: string, omit: readonly string[] = []): React.ReactNode =>
+    bindings.filter(binding => pageForBinding(binding, own, table) === id && !omit.includes(binding.group.key))
+      .map(binding => {
+        const { group } = binding
+        if (!surface || id !== 'own' || !['thumbs'].includes(group.preview ?? '') &&
+          !['quote-form', 'palette', 'direction'].includes(group.key)) return renderGroup({ ...binding, nestedUnder: undefined })
+        return <div className="tw-inspector-group" data-group={group.key} key={group.key}>
+          <h4>{OWN_LABELS[group.key] ?? group.label}</h4>
+          <RightPanelPictures {...surface} group={group.key} choices={binding.values
+            .filter(value => !(group.key === 'variant' && value.token === 'contrast=cards'))
+            .map(value => ({
+              label: value.label === 'Tweet' ? 'Post' : value.label === 'Web' ? 'Web page' : value.label,
+              current: value.token === binding.selectedToken, options: [option(group.key, value.token)]
+            }))} />
+          {group.key === 'quote-form' && pictureSlide && <QuoteFormNotes outline={outlineContent} slide={pictureSlide} compiledLayout={layout} />}
         </div>
-        <div className={`tw-inspector-stage ${compiling ? 'is-compiling' : ''}${picker?.tryOutline ? ' is-trying' : ''}`} title="Double-click to jump to source">
+      })
+  const titleIcon = headingLine == null ? null : <>
+    <h4>Icon in the title</h4><IconRows key={slideKey} text={outlineContent} lines={[{ line: headingLine - 1, name: model.title }]} onIcon={onIcon} onEscape={returnHome} title />
+    {bindings.filter(binding => binding.group.key === 'title-icon').map(binding => renderGroup(binding))}
+  </>
+  const linePoints = points.map(point => ({ line: point.line, name: point.text.replace(/\s*\{icon=[^}]+\}\s*$/, '') }))
+  const pictureLine = useMemo(() => {
+    if (headingLine == null || row?.image_count !== 1) return null
+    const { notes, blanked } = read
+    const matches = block.split('\n').flatMap((line, index) => {
+      const at = headingLine + index - 1
+      return !notes.has(at) && line.includes('![') && blanked[at]?.includes('![') &&
+        editInlinePicture(outlineContent, at, null) != null ? [at] : []
+    })
+    return matches.length === 1 ? matches[0] : null
+  }, [block, headingLine, row?.image_count, outlineContent, read])
+  const pictureId = pictureLine == null ? null : pooledImageOnLine(outlineContent.split('\n')[pictureLine], outlineContent, pictureLine)
+
+  return (
+    <aside ref={inspectorRef} className="tw-inspector" aria-label="Inspector" tabIndex={-1} onKeyDown={onKeyDown}>
+      <div className="tw-inspector-preview-head">
+        <div className="tw-right-who">
+          <div><strong>{multiCount > 1 ? `${multiCount} slides selected` : model.title}</strong>
+            <small>{multiCount > 1 ? 'Choose one slide to see its designs' : `${section ? 'Section · slide' : 'Slide'} ${activeIndex + 1} of ${compiledSlides?.length ?? 0}${slidePlace ? ' · ' + slidePlace : ''}`}</small></div>
+          {multiCount <= 1 && <>
+            <button type="button" className="toolbar-btn" onClick={onPrev} disabled={activeIndex <= 0} aria-label="Previous slide"><ChevronUp size={16} /></button>
+            <button type="button" className="toolbar-btn" onClick={onNext} disabled={activeIndex >= (compiledSlides?.length ?? 1) - 1} aria-label="Next slide"><ChevronDown size={16} /></button>
+          </>}
+        </div>
+        {(!centrePreview || picker) && multiCount <= 1 && <>
+        <div className={`tw-inspector-stage ${compiling ? 'is-compiling' : ''}${picker?.tryOutline ? ' is-trying' : ''}`} data-panel-trying={!picker && !!preview || undefined} title="Double-click to jump to source">
           {previewErr && previewUrl == null ? (
             <div className="tw-inspector-preview-error">
               {block ? <><AlertTriangle /> Preview unavailable</> : <span className="tw-inspector-preview-quiet">Auto-generated slide — no source to inspect</span>}
@@ -313,6 +447,7 @@ export default function Inspector({
             onDoubleClick={onEdit}
             onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onEdit() } }}
           />
+          {!picker && preview && <div className="tw-right-bar is-trying tw-try-chip" role="status">Trying: {preview.label}. Not applied.</div>}
         </div>
         {!picker && model.steps.count > 0 && (
           <div className="tw-inspector-stepbar">
@@ -323,39 +458,26 @@ export default function Inspector({
             <button type="button" className="tw-inspector-explain" onClick={onExplain} title="Authoring markup, examples and rendering decisions">Explain &amp; markup</button>
           </div>
         )}
-        {!picker && model.steps.count === 0 && (warnings.length > 0 || row) && (
-          <div className="tw-inspector-stepbar tw-inspector-stepbar--plain">
-            {warnings.length > 0 && <span className="tw-inspector-warning" title={warnings.map((warning) => warning.text).join('\n')}>⚠ {warnings.length} warning{warnings.length === 1 ? '' : 's'}</span>}
-            <button type="button" className="tw-inspector-explain" onClick={onExplain} title="Authoring markup, examples and rendering decisions">Explain &amp; markup</button>
-          </div>
-        )}
+        </>}
+        {!centrePreview && !picker && applied && <div className="tw-right-bar" role="status"><Check size={15} />Applied: {applied}<button type="button" className="toolbar-btn" onClick={onUndo}><Undo2 size={14} />Undo</button></div>}
       </div>
 
       {picker?.column}
 
-      {!picker && !model.unresolved && (model.sections.length > 0 || livePages.length > 0) && (
-        <div className="tw-inspector-jumplist" role="navigation" aria-label="Option sections">
-          {[...model.sections.map((section) => ({ id: section.id, label: section.chip ?? section.heading })),
-            ...(livePages.length > 0 ? [{ id: 'web-page', label: 'Web page' }] : [])].map((chip) => (
-            <button
-              key={chip.id}
-              type="button"
-              className={litSection === chip.id ? 'is-lit' : undefined}
-              aria-current={litSection === chip.id ? 'true' : undefined}
-              onClick={() => scrollToSection(chip.id)}
-            >{chip.label}</button>
-          ))}
-        </div>
-      )}
+      {!picker && long && !titleSlide && !model.unresolved && multiCount <= 1 && <div className="tw-inspector-jumplist" role="navigation" aria-label="Jump to">
+        {[{id: 'designs', label: 'Designs'}, ...pages].map(chip => <button key={chip.id} type="button"
+          className={litSection === chip.id ? 'is-lit' : undefined} aria-current={litSection === chip.id ? 'true' : undefined}
+          onClick={() => scrollToSection(chip.id)}>{chip.label}</button>)}
+      </div>}
 
-      {!picker && <div
+      {!picker && multiCount <= 1 && <div
         className={`tw-inspector-pane${model.unresolved ? '' : ' tw-inspector-options'}`}
         ref={paneRef}
         onScroll={onPaneScroll}
       >
         {model.unresolved ? (
           <div className="tw-inspector-unresolved" role="alert">
-            <div className="tw-inspector-unresolved-title"><AlertTriangle /> Unresolved trigger</div>
+            <div className="tw-inspector-unresolved-title"><AlertTriangle /> Needs a look</div>
             <div className="tw-inspector-unresolved-list">
               {unresolvedTokens.map((warning, index) => (
                 <div className="tw-inspector-unresolved-row" key={`${warning.token}:${index}`}>
@@ -364,60 +486,69 @@ export default function Inspector({
                 </div>
               ))}
             </div>
-            <button type="button" onClick={onOpenLayoutDoctor}>Open Layout Doctor</button>
+            <button type="button" onClick={onOpenLayoutDoctor}>Fix it</button><button type="button" onClick={onMarkdown}>Show it in Markdown</button>
           </div>
-        ) : (
-          <>
-            {model.sections.map((section) => (
-              <section
-                key={section.id}
-                className="tw-inspector-section"
-                data-section={section.id}
-                aria-label={section.heading}
-                ref={(element) => { if (element) sectionRefs.current.set(section.id, element); else sectionRefs.current.delete(section.id) }}
-              >
-                <h3 className="tw-inspector-section-heading">
-                  {section.heading}
-                  {section.id === 'layout' && (onChangeLayout ?? onOpenLayoutPicker) && (
-                    <button type="button" className="tw-inspector-change" onClick={onChangeLayout ?? onOpenLayoutPicker} data-open-picker title={`Change layout (${liveShortcutLabel('app.layout-picker')})`}>
-                      Change <kbd>{liveShortcutLabel('app.layout-picker')}</kbd>
-                    </button>
-                  )}
-                </h3>
-                {model.board && section.id === 'poll' ? (
-                  // ADR-0032 (round-3 A2–A6): the board's own editor, its settings rows, then the
-                  // poll type (so the slide can stop being a board).
-                  <>
-                    <InspectorBoard
-                      board={model.board}
-                      slideKey={slideKey}
-                      onEdit={onBoardEdit}
-                      settings={section.bindings
-                        .filter((binding) => binding.group.key.startsWith('board-'))
-                        .map((binding) => renderGroup({ ...binding, nestedUnder: undefined }))}
-                    />
-                    {section.bindings
-                      .filter((binding) => !binding.group.key.startsWith('board-') && !binding.nestedUnder)
-                      .map((binding) => renderGroup(binding, section.bindings.filter((child) =>
-                        child.nestedUnder === binding.group.key && !child.group.key.startsWith('board-'))))}
-                  </>
-                ) : model.prework && section.id === 'prework' ? (
-                  // Ticket 27: a `{results=…}` slide's Results section.
-                  <InspectorPrework
-                    model={model.prework}
-                    onResults={(token) => { if (model.prework?.results) onCommitOption(undefined, model.prework.results.group, token) }}
-                  />
-                ) : section.bindings.filter((binding) => !binding.nestedUnder).map((binding) =>
-                  renderGroup(binding, section.bindings.filter((child) => child.nestedUnder === binding.group.key)))}
-              </section>
-            ))}
-            {onSaveOffline && offlinePageCandidates(outlineContent, headingLine).map(candidate => (
-              <section className="tw-inspector-section" key={candidate.line} aria-label="HTML page">
-                <h3 className="tw-inspector-section-heading">HTML page</h3><p>{candidate.source}</p>
-                <button type="button" className="tw-inspector-change" disabled={offlineSaving} onClick={() => onSaveOffline({ line: candidate.line, text: candidate.text })}>{offlineSaving ? 'Saving…' : 'Save offline copy'}</button>
-              </section>
-            ))}
-            {livePages.length > 0 && (
+        ) : titleSlide ? <>
+          <h3>This slide</h3><p>Made from the talk’s details: its title, subtitle and your name.</p>
+          <button type="button" className="toolbar-btn" onClick={() => onTalk('details')}>Edit talk details</button><button type="button" className="toolbar-btn" onClick={() => onTalk('design')}>Talk design</button>
+        </> : surface && <>
+          {(long || !pageInfo) && <section className="tw-inspector-section" data-section="designs"
+            ref={element => { if (element) sectionRefs.current.set('designs', element); else sectionRefs.current.delete('designs') }}>
+            <DesignsBlock key={slideKey} surface={surface} designs={designs} long={long} compact={!centrePreview} section={section} />
+          </section>}
+          {!long && !pageInfo && <AdjustRows pages={pages} choose={changePage} />}
+          {pages.filter(item => showPage(item.id)).map(item => <section key={item.id} data-section={item.id}
+            ref={element => { if (element) sectionRefs.current.set(item.id, element); else sectionRefs.current.delete(item.id) }}
+            className="tw-inspector-section tw-right-page" aria-label={item.label}>
+            <PageHead label={item.label} aspect={item.id === 'own' ? item.label : item.id} back={long ? undefined : () => changePage('home')} onCopy={onCopy} />
+            {item.id === 'title' && <TitlePage surface={surface} where={row?.title_layout ?? 'top'} trigger={triggerLine}
+              inheritedLook={inheritedTitleLook} inheritedTone={inheritedTitleTone} onTalk={() => onTalk('design')} section={section} icon={titleIcon}>
+              {bindings.filter(binding => binding.group.key === 'font-title').map(binding => renderGroup(binding))}
+            </TitlePage>}
+            {item.id === 'points' && <PointsPage surface={surface} tokens={model.selectedTokens} trigger={triggerLine}
+              onTalk={() => onTalk('design')} deckStyle={deckListStyle} hasSubpoints={/^ {2,}[-*+] /m.test(block)} pointCount={points.length}>
+              {bindings.filter(binding => binding.group.key === 'font-body').map(binding => renderGroup(binding))}
+            </PointsPage>}
+            {item.id === 'icons' && <IconsPage surface={surface} hasLogos={hasBrands} tokens={model.selectedTokens}>
+              <IconRows key={slideKey} text={outlineContent} lines={linePoints} onIcon={onIcon} onEscape={returnHome} />
+              {/^ {2,}[-*+] /m.test(block) && pageGroups('icons')}
+            </IconsPage>}
+            {item.id === 'picture' && <PicturePage surface={surface} side={pictureSide}
+              actions={pictureLine == null ? undefined : {
+                crop: pictureId ? () => onCropPicture(pictureLine, pictureId) : undefined,
+                replace: () => onReplacePicture(pictureLine), remove: () => onRemovePicture(pictureLine)
+              }}>
+              {pageGroups('picture', ['media-placement'])}
+            </PicturePage>}
+            {item.id === 'table' && <TablePage surface={surface} tokens={model.selectedTokens}>
+              {bindings.filter(binding => binding.group.key === 'font-body').map(binding => renderGroup(binding))}
+            </TablePage>}
+            {item.id === 'colour' && (structure?.inheritedColour ? <div className="tw-right-origin">
+              <span>Follows its section.</span><button type="button" className="toolbar-btn" onClick={structure.inheritedColour.selectSection}>Change colour on its section</button>
+            </div> : <ColourPage surface={surface} trigger={triggerLine} />)}
+            {item.id === 'own' && <>
+              {structure?.panes && <><h4>Subslides of this slide</h4><div className="tw-right-adjust">
+                {structure.panes.map((child, index) => <button type="button" key={index} onClick={child.select}>{index + 1}<strong>{child.title}</strong></button>)}
+              </div><button type="button" className="toolbar-btn" onClick={structure.addSubslide}>New subslide</button></>}
+              {onSaveOffline && offlinePageCandidates(outlineContent, headingLine).map(candidate => <div key={candidate.line}>
+                <p>{candidate.source}</p><button type="button" className="toolbar-btn" disabled={offlineSaving}
+                  onClick={() => onSaveOffline({ line: candidate.line, text: candidate.text })}>{offlineSaving ? 'Saving…' : 'Save offline copy'}</button>
+              </div>)}
+              {model.board && <InspectorBoard board={model.board} slideKey={slideKey} onEdit={onBoardEdit}
+                settings={bindings.filter(binding => binding.group.key.startsWith('board-')).map(binding => renderGroup(binding))} />}
+              {pageGroups('own', model.board ? bindings.filter(binding => binding.group.key.startsWith('board-')).map(binding => binding.group.key) : [])}
+            </>}
+            {item.id === 'more' && <>
+              {pageGroups('more')}
+              {model.prework && <InspectorPrework model={model.prework} onResults={token => { if (model.prework) onCommitOption(undefined, model.prework.results.group, token) }} />}
+              <h4>About this slide</h4><button type="button" className="toolbar-btn" onClick={onExplain}>Explain how this slide was made</button>
+              {warnings.length > 0 && <p>{warnings.map(warning => warning.text).join(' · ')}</p>}
+              {activeIndex === 0 && <VaultOrigin outlinePath={talk.outlinePath} outlineContent={outlineContent} />}
+              <SlideProvenance outlinePath={talk.outlinePath} slideId={slideIdOf(block)} />
+              <TalkActivity outlinePath={talk.outlinePath} />
+            </>}
+          </section>)}
+            {showPage('own') && livePages.length > 0 && (
               <section
                 className="tw-inspector-section tw-inspector-web-pages"
                 data-section="web-page"
@@ -464,12 +595,8 @@ export default function Inspector({
                 })}
               </section>
             )}
-            {activeIndex === 0 && <VaultOrigin outlinePath={talk.outlinePath} outlineContent={outlineContent} />}
-            <SlideProvenance outlinePath={talk.outlinePath} slideId={slideIdOf(block)} />
-            <TalkActivity outlinePath={talk.outlinePath} />
-            <div className="tw-inspector-tail" ref={tailRef} aria-hidden="true" />
-          </>
-        )}
+            {long && <div className="tw-inspector-tail" ref={tailRef} aria-hidden="true" />}
+          </>}
       </div>}
     </aside>
   )

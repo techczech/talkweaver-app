@@ -98,7 +98,7 @@ async function placeSlide(host: ScratchInsertHost, talk: string, place: SlidePla
 
 async function wholeSlide(host: ScratchInsertHost, talk: string, request: Extract<ScratchInsertRequest, { mode: 'slide' }>): Promise<ScratchInsertOutcome> {
   const { item } = request
-  if (item.kind !== 'slide' || !item.slide) { host.notify('Only a picked slide can be inserted whole.', 'info', 'scratchpad-insert'); return FAIL }
+  if (item.kind === 'file' || !item.slide) { host.notify('Choose a picked or proposed slide to insert whole.', 'info', 'scratchpad-insert'); return FAIL }
   const source = await host.api.slideSource(item.id)
   if (!source.ok) { host.notify(source.error, 'warning', 'scratchpad-insert'); return FAIL }
   const markdown = await host.prepareSlide(item.slide.markdown, source.outlinePath)

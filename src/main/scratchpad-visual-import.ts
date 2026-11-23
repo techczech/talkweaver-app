@@ -17,7 +17,7 @@ import { existsSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 import { pathStaysInside } from './path-containment.ts'
 import type { HtmlPageImport } from '../shared/html-page-import.ts'
-import type { ScratchFileKind, ScratchSlide, ScratchVisualImport } from '../shared/scratchpad.ts'
+import type { ScratchVisualKind, ScratchSlide, ScratchVisualImport } from '../shared/scratchpad.ts'
 
 export interface ScratchVisualImportDeps {
   /** The pool import for one file (importImageForTalk with a lookup that answers only this file); null: refused. */
@@ -27,7 +27,7 @@ export interface ScratchVisualImportDeps {
 }
 
 export interface VisualRequest {
-  kind: ScratchFileKind
+  kind: ScratchVisualKind
   /** The file to copy from (absolute, checked by the caller). */
   path: string
   /** The talk the line will go into. */

@@ -41,9 +41,10 @@ console.log('PASS actual main claim/settlement glue: two windows, outgoing reser
 // A normal close must use the existing awaited renderer flush, even without an external-change sheet.
 const closeSource=src.slice(src.indexOf("  win.on('close', (event) => {"),src.indexOf("  win.on('closed', () => {"));
 const closeEvents=new Map(),sent=[],confirmed=new Set(),closeWindows=new Map([[7,{outlinePath:'A'}]]);
-Function('win','outlineDiskGuard','editorWindows','wcId','closeConfirmed','movedEditorReceipts','quitting','quitCycle','closeHolds','clearTimeout','setTimeout','canonicalOutlinePath','lastUnsavedText','outlineRecovery','app','restartWindows','editorQuitAttempts','quitAttempt','setImmediate','cancelQuitAttempt',ts.transpileModule(closeSource,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(
+const editorSketchDrafts = new Set();
+Function('win','outlineDiskGuard','editorWindows','wcId','closeConfirmed','movedEditorReceipts','editorSketchDrafts','quitting','quitCycle','closeHolds','clearTimeout','setTimeout','canonicalOutlinePath','lastUnsavedText','outlineRecovery','app','restartWindows','editorQuitAttempts','quitAttempt','setImmediate','cancelQuitAttempt',ts.transpileModule(closeSource,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText)(
  {on:(name,fn)=>closeEvents.set(name,fn),webContents:{send:(...args)=>sent.push(args)}},
- {pendingFor:()=>null},closeWindows,7,confirmed,new Map(),false,0,new Map(),()=>{},()=>1,p=>p,new Map(),{},{},
+ {pendingFor:()=>null},closeWindows,7,confirmed,new Map(),editorSketchDrafts,false,0,new Map(),()=>{},()=>1,p=>p,new Map(),{},{},
 {ordinaryClose(){},saved(){},timedOut:()=>false,waiting:()=>false},new Map(),null,setImmediate,()=>{} // an update's restart (restart-windows.ts): none under way here
 );
 let prevented=0;closeEvents.get('close')({preventDefault:()=>prevented++});
@@ -51,7 +52,14 @@ assert.equal(prevented,1,'ordinary active editor close waits for its pending tex
 assert.equal(sent[0]?.[0],'outline:close-requested');
 confirmed.add(7);closeEvents.get('close')({preventDefault:()=>prevented++});assert.equal(prevented,1,'confirmed close proceeds');
 confirmed.clear();closeWindows.get(7).outlinePath=null;closeEvents.get('close')({preventDefault:()=>prevented++});assert.equal(prevented,1,'empty editor closes without waiting');
-console.log('PASS actual close listener: active editor waits for renderer flush, confirmed/empty windows close normally');
+editorSketchDrafts.add(7);
+closeEvents.get('close')({ preventDefault: () => prevented++ });
+assert.equal(prevented, 2, 'a window without an outline still waits for its detached sketch');
+assert.equal(sent.at(-1)?.[0], 'outline:close-requested');
+editorSketchDrafts.clear();
+closeEvents.get('close')({ preventDefault: () => prevented++ });
+assert.equal(prevented, 2, 'the window closes once the detached sketch is settled');
+console.log('PASS actual close listener: active editors and detached sketch drafts wait for the renderer, confirmed and empty windows close normally');
 
 const lifecycle=src.slice(src.indexOf('const gallerySenders ='),src.indexOf('let galleryEpoch ='));
 const listeners=new Map();const sender={id:9,once:(name,cb)=>listeners.set(name,cb)};let cancelled=0;

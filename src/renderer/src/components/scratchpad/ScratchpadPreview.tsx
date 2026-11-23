@@ -62,9 +62,9 @@ export function ScratchpadPreview({ item, group, onBack, actions, note = null, i
         </ul>
       )}
       <div className="sp-preview-meta">
-        {item.kind === 'file' ? <>File <code>{item.file}</code> in this talk&rsquo;s scratch folder</> : <>Picked from {item.slide?.talkTitle}</>}
+        {item.kind === 'file' ? <>File <code>{item.file}</code> in this talk&rsquo;s scratch folder</> : item.kind === 'proposed' ? <>From {item.slide?.sketchFile}</> : <>Picked from {item.slide?.talkTitle}</>}
       </div>
-      {item.kind === 'slide' && item.slide && <pre className="sp-preview-text">{item.slide.markdown}</pre>}
+      {item.kind !== 'file' && item.slide && <pre className="sp-preview-text">{item.slide.markdown}</pre>}
       <div className="sp-preview-actions">{actions}</div>
       {note}
     </div>

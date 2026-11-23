@@ -36,8 +36,10 @@ const registry = createDirectoryWatcherRegistry((directory, onChange) => {
   return fake
 })
 const notices = []
+const visibleOwners = new Set()
 const guard = createOutlineDiskGuard({
   canonical: canonicalOutlinePath,
+  ownerIsVisible: (owner) => visibleOwners.has(owner),
   async readText(realPath) {
     try { return await readFile(realPath, 'utf8') } catch (error) { if (error?.code === 'ENOENT') return null; throw error }
   },
@@ -124,6 +126,42 @@ try {
     assert.equal(notices.at(-1)?.change, null, 'back to what the editor has: cleared')
     assert.equal((await writeTalkOutline(path, OUTLINE + '\n## Fine\n', 'editor')).ok, true, 'and saving works again')
     guard.release('w3')
+  }
+
+  // The directory watch can register successfully and still never deliver native events.
+  {
+    const owner = 'metadata'
+    const path = talk()
+    const observed = async (text) => {
+      const hash = hashOutlineText(text)
+      const deadline = Date.now() + 2000
+      while (Date.now() < deadline) {
+        if (guard.pendingFor(owner)?.hash === hash) return true
+        await tick(20)
+      }
+      return false
+    }
+
+    visibleOwners.add(owner)
+    guard.track(owner, path, OUTLINE)
+    const edited = OUTLINE + 'outside change'
+    outside(path, edited)
+    assert.ok(await observed(edited), 'a visible outline reports an in-place edit without a directory event')
+
+    visibleOwners.delete(owner)
+    const replacement = OUTLINE + 'rename replace'
+    const temp = join(dirname(path), '.sync-tmp')
+    writeFileSync(temp, replacement)
+    renameSync(temp, path)
+    await tick(1250)
+    assert.equal(guard.pendingFor(owner)?.hash, hashOutlineText(edited), 'the metadata check is paused while the editor is hidden')
+
+    visibleOwners.add(owner)
+    assert.ok(await observed(replacement), 'the next visible sample notices an atomic replacement without a directory event')
+    assert.equal(readFileSync(path, 'utf8'), replacement, 'metadata reconciliation never writes the outline')
+    visibleOwners.delete(owner)
+    guard.release(owner)
+    notices.length = 0
   }
 
   // 4. A save whose text is exactly what is on disk is accepted silently (no refusal, no notice) and is

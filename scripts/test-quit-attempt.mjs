@@ -18,12 +18,14 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
 function harness() {
   let held = 0, releases = 0, confirm
   const app = new EventEmitter(), sent = [], closeHolds = new Map()
+  const editorSketchDrafts = new Set(), checkedOutlineRevisions = []
   const editorWindows = new Map([[1, { win: { isDestroyed: () => false, webContents: { send: channel => sent.push(channel) }, close: () => { throw Error('unexpected close') } } }]])
   const deps = {
     holdRenderHelpers: () => { held++; return () => { held--; releases++ } },
-    closeHolds, clearTimeout, thumbnailPrewarm: { nudge() {} }, editorWindows,
+    closeHolds, clearTimeout, thumbnailPrewarm: { nudge() {} }, editorWindows, editorSketchDrafts,
     restartWindows: { kept() {}, waiting: () => false, confirm: () => 'keep' },
-    editorRevisions: { verdict: () => 'saved' }, editorWorkSaved: () => true, closeConfirmed: new Set(),
+    editorRevisions: { verdict: id => { checkedOutlineRevisions.push(id); return 'saved' } },
+    editorWorkSaved: () => true, closeConfirmed: new Set(),
     ipcMain: { handle: (_channel, fn) => { confirm = fn } }, app, createQuitSequence,
   }
   const boot = `
@@ -33,7 +35,7 @@ function harness() {
   `
   const api = new Function(...Object.keys(deps), stripTypeScriptTypes(boot + attemptCode + confirmCode + quitCode) +
     '; return { beginQuitAttempt, cancelQuitAttempt, editorQuitAttempts, active: () => quitAttempt }')(...Object.values(deps))
-  return { ...api, app, sent, editorWindows, held: () => held, releases: () => releases,
+  return { ...api, app, sent, editorWindows, editorSketchDrafts, checkedOutlineRevisions, held: () => held, releases: () => releases,
     confirm: (id = 1) => confirm({ sender: { id } }, { quit: true, revision: 1 }) }
 }
 await test('restart and native Quit hold once; cancelling releases once', () => {
@@ -47,6 +49,14 @@ await test('a missing editor and a refused confirmation both end the attempt', (
     const h = harness(); h.beginQuitAttempt()
     assert.equal(h.confirm(id), false); assert.equal(h.held(), 0)
   }
+})
+await test('an unsaved sketch cancels Quit before the outline revision is checked', () => {
+  const h = harness()
+  h.editorSketchDrafts.add(1)
+  h.beginQuitAttempt()
+  assert.equal(h.confirm(), false)
+  assert.deepEqual(h.checkedOutlineRevisions, [])
+  assert.equal(h.held(), 0)
 })
 await test('a prevented before-quit, including a later listener, releases the hold', async () => {
   const h = harness()

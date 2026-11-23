@@ -25,8 +25,8 @@ import { createScratchpadDisk, type ScratchDiskScan, type ScratchFileIdentity } 
 import { extname, join } from 'node:path'
 import { contentTextFor, MAX_CONTENT_CHARS } from './scratchpad-text.ts'
 import {
-  scratchOrder, newestFirst, FILE_KIND_BY_EXTENSION, SCRATCH_FOLDER_NAME, STATE_FILE_NAME, titleFromFileName,
-  type ScratchFileKind, type ScratchGroup, type ScratchItem, type ScratchSlide, type ScratchSlideInput,
+  scratchOrder, newestFirst, FILE_KIND_BY_EXTENSION, SCRATCH_FOLDER_NAME, STATE_FILE_NAME, sketchTitleFromText, titleFromFileName,
+  type ScratchFileKind, type ScratchVisualKind, type ScratchSketch, type SketchUse, type ScratchGroup, type ScratchItem, type ScratchSlide, type ScratchSlideInput,
   type ScratchSnapshot, type ScratchSource, type ScratchState, type ScratchStateItem, type ScratchStatus
 } from '../shared/scratchpad.ts'
 import { trackWrite } from './write-queues.ts'
@@ -45,6 +45,11 @@ export interface ScratchpadStore {
   readonly folder: string
   /** Scans the folder, merges it into the state (writing the state when that changed it) and answers the whole panel. */
   load(): Promise<ScratchSnapshot>
+  readSketch(name: string): Promise<ScratchSketch>
+  createSketch(text: string): Promise<ScratchSketch>
+  saveSketch(name: string, revision: string, text: string): Promise<ScratchSketch>
+  recordSketchUse(name: string, key: string, ids: string[], proposals: ScratchSlide[], slideCount?: number): Promise<ScratchSnapshot>
+  renameSketch(name: string, title: string): Promise<ScratchSnapshot>
   addSlides(inputs: readonly ScratchSlideInput[]): Promise<{ snapshot: ScratchSnapshot; added: number; skipped: number }>
   /** Atomically saves every snapshot and its dated group; rejects the entire batch on any invalid input. */
   setAside(inputs: readonly ScratchSlideInput[]): Promise<ScratchSnapshot>
@@ -57,7 +62,7 @@ export interface ScratchpadStore {
   /** Takes "File missing" items out of the state. Items whose file exists are left alone. State only. */
   removeMissing(ids: readonly string[]): Promise<ScratchSnapshot>
   /** A private copy of the checked agent file, retaining its name and bytes; else null. */
-  fileFor(id: string): Promise<{ path: string; name: string; kind: ScratchFileKind } | null>
+  fileFor(id: string): Promise<{ path: string; name: string; kind: ScratchVisualKind } | null>
   /** The item as the state holds it now (a picked slide's snapshot, for an insert), or null. */
   itemFor(id: string): Promise<ScratchStateItem | null>
   /** After an insert: when, and the title of the slide it went into. Nothing else about the item changes. */
@@ -93,20 +98,25 @@ function slideFrom(value: unknown): ScratchSlide | null {
   const slide: ScratchSlide = { talkPath, talkTitle, slideId, title, markdown, thumbKey }
   if (typeof value.talkSlug === 'string') slide.talkSlug = value.talkSlug
   if (typeof value.vaultId === 'string') slide.vaultId = value.vaultId
+  if (plainName(value.sketchFile)) slide.sketchFile = value.sketchFile
+  if (typeof value.sketchProposalKey === 'string') slide.sketchProposalKey = value.sketchProposalKey
   return slide
 }
+
+const proposalContent = (slide: ScratchSlide): string =>
+  slide.markdown.replace(/^(### [^\r\n]*\r?\n)\{id=[A-Za-z0-9_-]+\}\r?\n/, '$1')
 
 function itemFrom(value: unknown): ScratchStateItem | null {
   if (!isRecord(value)) return null
   const { id, kind, status } = value
   if (typeof id !== 'string' || id === '') return null
-  if (kind !== 'slide' && kind !== 'file') return null
+  if (kind !== 'slide' && kind !== 'file' && kind !== 'proposed') return null
   if (status !== 'active' && status !== 'kept' && status !== 'rejected') return null
   const addedAt = isoOrNull(value.addedAt)
   const batch = isRecord(value.batch) ? value.batch : null
   const batchAt = batch ? isoOrNull(batch.at) : null
   if (!addedAt || !batch || !batchAt) return null
-  const source = batch.source === 'agent' ? 'agent' : batch.source === 'slide-browser' ? 'slide-browser' : null
+  const source = batch.source === 'agent' ? 'agent' : batch.source === 'slide-browser' ? 'slide-browser' : batch.source === 'sketch' ? 'sketch' : null
   if (!source) return null
   const item: ScratchStateItem = {
     id, kind, addedAt, batch: { source, at: batchAt },
@@ -115,6 +125,14 @@ function itemFrom(value: unknown): ScratchStateItem | null {
   if (kind === 'file') {
     if (!plainName(value.file)) return null
     item.file = value.file
+    if (typeof value.sketchTitle === 'string' && value.sketchTitle.trim()) item.sketchTitle = value.sketchTitle.slice(0, MAX_TITLE)
+    if (value.sketchOrigin === 'person') item.sketchOrigin = 'person'
+    if (Array.isArray(value.sketchUses)) item.sketchUses = value.sketchUses.filter((use): use is SketchUse =>
+      isRecord(use) && typeof use.key === 'string' && isoOrNull(use.at) !== null && Array.isArray(use.ids) &&
+      use.ids.every(id => typeof id === 'string')).map(use => ({
+        key: use.key, at: use.at, ids: use.ids,
+        ...(typeof use.slideCount === 'number' && Number.isInteger(use.slideCount) && use.slideCount >= 0 ? { slideCount: use.slideCount } : {}),
+      }))
   } else {
     const slide = slideFrom(value.slide)
     if (!slide) return null
@@ -162,7 +180,7 @@ function parseState(text: string): ParsedState {
   return { state: { version: 1, groups, items, ...(Array.isArray(raw.order) && raw.order.every(id => typeof id === 'string') ? { order: scratchOrder(items, raw.order as string[]) } : {}), ...(raw.sort === 'manual' || raw.sort === 'newest' ? { sort: raw.sort } : {}) }, problems }
 }
 
-interface FolderFile { name: string; path: string; kind: ScratchFileKind; mtime: Date; sidecar: string | null }
+interface FolderFile { name: string; path: string | null; kind: ScratchFileKind; mtime: Date; sidecar: string | null; sketchText?: string; sketchLineCount?: number }
 
 function readSidecar(text: string | null): { title?: string; description?: string; sources: ScratchSource[] } {
   try {
@@ -254,7 +272,9 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
       .sort((a, b) => a.name.localeCompare(b.name))
   }
 
-  /** Merges the folder into the state: new files become agent items stamped with this scan. */
+  // The folder alone cannot tell us who wrote a file. Remember creations until the first state scan.
+  const sketchesWrittenHere = new Set<string>()
+  /** Merges folder arrivals into the state without guessing the author of a Markdown file. */
   function merge(state: ScratchState, files: readonly FolderFile[], stableIds = false): ScratchState {
     const known = new Set(state.items.filter((i) => i.file !== undefined).map((i) => i.file))
     const fresh = files.filter((f) => !known.has(f.name))
@@ -263,16 +283,20 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
     const added: ScratchStateItem[] = fresh.map((f) => ({
       // Read-only (the state is not saved): an id made from the file name, so it names the same file on the next read.
       id: stableIds ? readOnlyId(f.name) : newItemId(), kind: 'file', addedAt: f.mtime.toISOString(), batch: { source: 'agent', at },
-      group: null, status: 'active', file: f.name
+      group: null, status: 'active', file: f.name,
+      ...(f.kind === 'sketch' && sketchesWrittenHere.has(f.name) ? { sketchOrigin: 'person' as const } : {})
     }))
     return { ...state, items: [...state.items, ...added] }
   }
 
   function view(state: ScratchState, files: readonly FolderFile[], notices: string[]): ScratchSnapshot {
     const byName = new Map(files.map((f) => [f.name, f]))
+    const sketches = new Map(state.items.flatMap(item => item.file && FILE_KIND_BY_EXTENSION[extname(item.file).toLowerCase()] === 'sketch'
+      ? [[item.file, item.sketchTitle || sketchTitleFromText(byName.get(item.file)?.sketchText ?? '') || titleFromFileName(item.file)] as const] : []))
     const items: ScratchItem[] = state.items.map((item) => {
-      if (item.kind === 'slide' && item.slide) {
-        return { ...item, title: item.slide.title, description: '', sources: [], missing: false }
+      if (item.kind !== 'file' && item.slide) {
+        return { ...item, title: item.slide.title, description: '', sources: [], missing: false,
+          sourceSketchTitle: item.slide.sketchFile ? sketches.get(item.slide.sketchFile) : undefined }
       }
       const name = item.file as string
       const file = byName.get(name)
@@ -280,13 +304,14 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
       const sidecar = file ? readSidecar(file.sidecar) : { sources: [] as ScratchSource[] }
       return {
         ...item,
-        title: sidecar.title ?? titleFromFileName(name),
+        title: sketches.get(name) ?? sidecar.title ?? titleFromFileName(name),
+        sketchLineCount: file?.sketchLineCount,
         description: sidecar.description ?? '',
         sources: sidecar.sources,
         fileKind: kind,
         missing: !file,
-        fileUrl: file && kind !== 'html' ? options.fileUrlFor?.(file.path) : undefined,
-        contentText: file ? mergedText(contentTextFor(file.path, kind), kind === 'html' ? options.renderedTextFor?.(file.path) ?? '' : '') || undefined : undefined
+        fileUrl: file?.path && kind !== 'html' ? options.fileUrlFor?.(file.path) : undefined,
+        contentText: file?.sketchText ?? (file?.path ? mergedText(contentTextFor(file.path, kind), kind === 'html' ? options.renderedTextFor?.(file.path) ?? '' : '') || undefined : undefined)
       }
     })
     return { groups: state.groups, items, notices, ...(state.order ? { order: scratchOrder(items, state.order) } : {}), ...(state.sort ? { sort: state.sort } : {}) }
@@ -312,6 +337,7 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
       const hasContent = changed.state.items.length > 0 || changed.state.groups.length > 0
       if (writable && (hasContent || text !== null)) {
         await writeState(changed.state, text, scan.folder)
+        for (const item of changed.state.items) if (item.file && item.sketchOrigin === 'person') sketchesWrittenHere.delete(item.file)
       }
       return { snapshot: view(changed.state, files, notices), result: changed.result }
     })
@@ -333,6 +359,60 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
   return {
     folder,
     async load() { return (await operate('read', (state) => ({ state, result: null }))).snapshot },
+
+    readSketch: name => serial(() => disk.sketchRead(name)),
+    createSketch: text => serial(async () => {
+      const sketch = await disk.sketchCreate(text)
+      sketchesWrittenHere.add(sketch.name)
+      return sketch
+    }),
+    saveSketch: (name, revision, text) => serial(() => disk.sketchWrite(name, revision, text)),
+
+    async renameSketch(name, title) {
+      const nextTitle = title.trim().replace(/\s+/g, ' ').slice(0, MAX_TITLE)
+      if (!nextTitle) throw new Error('Enter a sketch name.')
+      return (await operate('change', (state, files) => {
+        if (!files.some(file => file.name === name && file.kind === 'sketch')) throw new Error('The sketch is missing.')
+        const items = state.items.map(item => item.file === name ? { ...item, sketchTitle: nextTitle } : item)
+        return { state: { ...state, items }, result: null }
+      })).snapshot
+    },
+
+    async recordSketchUse(name, key, ids, proposals, slideCount) {
+      if (!plainName(name) || extname(name).toLowerCase() !== '.md') throw new Error('Choose a Markdown sketch.')
+      const slides = proposals.map(value => {
+        const slide = slideFrom(value)
+        if (!slide || slide.markdown.length > MAX_SLIDE_MARKDOWN || !/^###\s/.test(slide.markdown)) throw new Error('A proposed slide could not be saved.')
+        return { ...slide, sketchFile: name }
+      })
+      return (await operate('change', (state, files) => {
+        const sketch = state.items.find(item => item.file === name)
+        if (!sketch || !files.some(file => file.name === name)) throw new Error('The sketch is missing from the Scratchpad.')
+        const previous = sketch.sketchUses?.find(use => use.key === key)
+        if (previous) {
+          if (!ids.length || previous.ids.length) return { state, result: null }
+          const items = state.items.map(item => item === sketch ? {
+            ...item, sketchUses: item.sketchUses?.map(use => use.key === key ? { ...use, ids, slideCount } : use),
+          } : item)
+          return { state: { ...state, items }, result: null }
+        }
+        const at = now().toISOString()
+        const items = state.items.map(item => item === sketch
+          ? { ...item, sketchUses: [...(item.sketchUses ?? []), { key, at, ids, slideCount }] } : item)
+        const existing = items.flatMap(item => item.kind === 'proposed' && item.slide?.sketchFile === name ? [item.slide] : [])
+        const keyed = new Set(existing.filter(slide => slide.sketchProposalKey).map(slide =>
+          JSON.stringify([slide.sketchProposalKey, proposalContent(slide)])))
+        const legacy = new Set(existing.filter(slide => !slide.sketchProposalKey).map(proposalContent))
+        for (const slide of slides) {
+          const content = proposalContent(slide)
+          const identity = JSON.stringify([slide.sketchProposalKey, content])
+          if (keyed.has(identity) || legacy.delete(content)) continue
+          keyed.add(identity)
+          items.push({ id: newItemId(), kind: 'proposed', addedAt: at, batch: { source: 'sketch', at }, group: null, status: 'active', slide })
+        }
+        return { state: { ...state, items }, result: null }
+      })).snapshot
+    },
 
     async addSlides(inputs) {
       const { snapshot, result } = await operate('change', (state) => {
@@ -414,7 +494,7 @@ export function createScratchpadStore(talkDir: string, options: ScratchpadStoreO
         const item = state.items.find((i) => i.id === id)
         if (!item || item.kind !== 'file') return null
         const file = files.find((f) => f.name === item.file)
-        if (!file) return null
+        if (!file?.path || file.kind === 'sketch') return null
         return { path: file.path, name: file.name, kind: file.kind }
       })
     },

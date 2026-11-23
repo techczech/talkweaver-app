@@ -20,18 +20,21 @@
 // Ways in:
 //   - `track` when an editor window loads the talk (talk:read-outline with forEditor); its folder is
 //     watched. `release` when the window switches talk or closes: the entry is dropped at once.
-//   - the watcher (and window focus) calls `check`; a watcher that errors stops, and the guard then
-//     relies on those checks and on the check every save makes (`watching` says which).
+//   - the directory watcher, a change in the outline's sampled metadata, and window focus trigger
+//     a check. A stopped directory watcher leaves the metadata, focus and save-time checks in place.
 //   - talk-writer.ts asks `conflict` before every whole-text write of a tracked file, under the lock.
 //   - `accept(hash)`: the person chose (Keep mine, Reload, Save it again, Save again) having seen version
 //     `hash`; a file that changed again since is refused with the newer change.
 import { createHash } from 'crypto'
+import { lstat } from 'node:fs/promises'
 import { sep } from 'path'
 import type { OutlineDiskAccept, OutlineDiskChange } from '../shared/outline-disk-change.ts'
 
 export interface OutlineDiskGuardDeps {
   /** The file's real path (outline-identity.ts canonicalOutlinePath): the guard's key. */
   canonical(outlinePath: string): string
+  /** Enables metadata checks while at least one owner has a visible editor. */
+  ownerIsVisible?(owner: string): boolean
   /** The file's text, or null when it does not exist (ENOENT). Other errors throw. */
   readText(realPath: string): Promise<string | null>
   /** The file's modification time (ms), or null when it does not exist. */
@@ -99,6 +102,18 @@ export const hashOutlineText = (text: string): string => createHash('sha256').up
 /** The version of a missing file. */
 export const ABSENT = 'removed'
 const partialToken = (tempPath: string): string => `partial:${tempPath}`
+const METADATA_CHECK_MS = 1000
+
+async function metadataStamp(realPath: string): Promise<string | null | undefined> {
+  try {
+    const file = await lstat(realPath, { bigint: true })
+    if (!file.isFile()) return undefined
+    return `${file.dev}:${file.ino}:${file.size}:${file.mtimeNs}:${file.ctimeNs}`
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    return undefined
+  }
+}
 
 interface Entry {
   baseline: string
@@ -112,6 +127,7 @@ interface Entry {
   /** A save that failed halfway, until the person saves again. */
   partial: { tempPath: string; at: number } | null
   watching: boolean
+  metadataTimer?: ReturnType<typeof setTimeout>
 }
 
 export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskGuard {
@@ -145,6 +161,7 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
   const versionOf = (text: string | null): string => text === null ? ABSENT : hashOutlineText(text)
 
   const drop = (realPath: string, entry: Entry): void => {
+    clearTimeout(entry.metadataTimer)
     if (entry.watching) { entry.watching = false; try { deps.unwatch(realPath) } catch { /* already gone */ } }
     if (entries.get(realPath) === entry) entries.delete(realPath)
   }
@@ -168,20 +185,50 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
     let text: string | null
     try { text = await deps.readText(realPath) } catch { return entry.reported }
     const change = await differenceFor(realPath, entry, versionOf(text))
+    if (entries.get(realPath) !== entry) return null
     report(entry, change)
     return change
+  }
+
+  const requestCheck = (realPath: string, entry: Entry): void => {
+    void deps.withLock(realPath, async () => {
+      if (entries.get(realPath) !== entry) return null
+      return recheck(realPath)
+    }).catch(() => undefined)
+  }
+
+  // Native directory events can be late or absent. Only changes to the outline's metadata
+  // request a read, and the normal locked comparison decides whether the editor needs a notice.
+  const startMetadataChecks = (realPath: string, entry: Entry, ownerIsVisible: (owner: string) => boolean): void => {
+    let previous: string | null | undefined
+    const sample = async (): Promise<void> => {
+      if ([...entry.owners.keys()].some(ownerIsVisible)) {
+        const stamp = await metadataStamp(realPath)
+        if (entries.get(realPath) !== entry) return
+        if (stamp !== undefined && stamp !== previous) {
+          previous = stamp
+          requestCheck(realPath, entry)
+        }
+      }
+      schedule()
+    }
+    const schedule = (): void => {
+      entry.metadataTimer = setTimeout(() => { void sample() }, METADATA_CHECK_MS)
+      entry.metadataTimer.unref()
+    }
+    schedule()
   }
 
   const startWatching = (realPath: string, entry: Entry): void => {
     try {
       deps.watch(
         realPath,
-        () => { void deps.withLock(realPath, () => recheck(realPath)).catch(() => undefined) },
+        () => requestCheck(realPath, entry),
         () => { entry.watching = false },
       )
       entry.watching = true
     } catch {
-      entry.watching = false // cannot watch: focus and save-time checks only
+      entry.watching = false // the metadata, focus and save-time checks still work
     }
   }
 
@@ -200,6 +247,7 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
       entry.owners.set(owner, { path: outlinePath })
       report(entry, null)
       if (!entry.watching) startWatching(realPath, entry)
+      if (deps.ownerIsVisible && !entry.metadataTimer) startMetadataChecks(realPath, entry, deps.ownerIsVisible)
     },
     release(owner) { releaseFrom(owner) },
     forget(path) {

@@ -1,0 +1,230 @@
+.tw-sketch {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-block-size: 0;
+  min-inline-size: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font: 14px var(--font-ui);
+}
+
+.tw-sketch-bar, .tw-sketch-head, .tw-sketch-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tw-sketch-bar {
+  flex: none;
+  padding: 7px 12px;
+  border-block-end: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.tw-sketch-bar .mode-back { background: transparent; border-color: transparent; padding-inline: 5px; }
+.tw-sketch-actions, .tw-sketch-head > span { margin-inline-start: auto; }
+.tw-sketch-head > span { color: var(--muted); font-size: 12.5px; }
+.tw-sketch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+}
+.tw-sketch .is-warning { background: var(--amber-bg); color: var(--amber); }
+.tw-sketch .is-placed { background: var(--green-bg); color: var(--green); }
+.tw-sketch .is-info { background: color-mix(in srgb, var(--accent-text) 8%, var(--panel)); }
+.tw-sketch-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+.tw-sketch-notice.is-warning { border-color: color-mix(in srgb, var(--amber) 34%, var(--line)); }
+.tw-sketch-notice > span { flex: 1; color: var(--ink); }
+.tw-sketch-notice > svg { flex: none; }
+.tw-sketch-notice button { flex: none; }
+
+.tw-sketch-page {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-start;
+  gap: 12px;
+  padding: 17px clamp(14px, 2.1vw, 30px) 24px;
+  width: min(100%, 700px);
+  margin-inline: auto;
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  background: var(--panel);
+}
+
+.tw-sketch-head h2 { margin: 0; font-size: 17px; }
+.tw-sketch-picker { position: relative; min-width: 0; }
+.tw-sketch-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  font-weight: 700;
+  text-align: start;
+  cursor: pointer;
+}
+.tw-sketch-name > svg, .tw-sketch-menu button svg { flex: none; }
+.tw-sketch-name > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-sketch-name:hover:not(:disabled), .tw-sketch-menu button:hover:not(:disabled) { background: var(--hover); }
+.tw-sketch-menu {
+  z-index: 8;
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(355px, calc(100vw - 44px));
+  max-height: 45vh;
+  overflow: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 12px 28px #17202a40;
+  padding: 7px;
+}
+.tw-sketch-menu .tw-sketch-label { padding: 5px 8px; }
+.tw-sketch-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--ink);
+  background: transparent;
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.tw-sketch-menu button:disabled { color: var(--muted); cursor: default; }
+.tw-sketch-menu button small { margin-inline-start: auto; flex: none; color: var(--muted); font: 11px var(--font-mono); }
+.tw-sketch-menu-actions { border-top: 1px solid var(--line); margin-top: 4px; padding-top: 4px; }
+.tw-sketch-rename { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tw-sketch-rename input { font: inherit; padding: 5px 8px; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--ink); background: var(--panel); }
+
+.tw-sketch-page textarea {
+  block-size: min(520px, 74%);
+  box-sizing: border-box;
+  min-height: 120px;
+  resize: none;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.6;
+  background: var(--panel);
+  color: var(--ink);
+}
+
+.tw-sketch-example { margin: 0; color: var(--muted); font-size: 12.5px; }
+.tw-sketch-example button, .tw-sketch-link { border: 0; padding: 0; font: inherit; color: var(--accent-text); background: none; cursor: pointer; }
+.tw-sketch-example button { text-decoration: underline; }
+.tw-sketch-error { color: var(--ink); padding: 8px; border: 1px solid var(--amber); border-radius: 8px; }
+
+.tw-sketch-breakdowns { flex: 1; min-height: 0; overflow: auto; padding: 18px 22px; }
+.tw-sketch-breakdowns h2 { margin: 0 0 5px; font-size: 18px; }
+.tw-sketch-breakdowns p { margin: 0 0 12px; color: var(--text-2); font-size: 13.5px; line-height: 1.45; }
+.tw-sketch-breakdowns .tw-sketch-notice { margin-bottom: 12px; }
+.tw-sketch-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 205px), 1fr)); gap: 12px; }
+.tw-sketch-option, .tw-sketch-proposal, .tw-sketch-line-choice {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--ink);
+}
+.tw-sketch-option { display: flex; flex-direction: column; gap: 6px; text-align: start; padding: 12px; font: inherit; cursor: pointer; }
+.tw-sketch-option > strong { font-size: 14.5px; }
+.tw-sketch-option:hover, .tw-sketch-option:focus-visible { border-color: var(--accent-text); }
+.tw-sketch-count, .tw-sketch-description { font-size: 12.5px; color: var(--text-2); }
+.tw-sketch-count b { font-size: 22px; color: var(--ink); }
+.tw-sketch-description { min-height: 3.6em; line-height: 1.45; }
+.tw-sketch-film { display: grid; width: 100%; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+.tw-sketch-mini {
+  display: block;
+  box-sizing: border-box;
+  overflow: hidden;
+  aspect-ratio: 16 / 9;
+  border-radius: 4px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  font-size: 10px;
+  background: var(--surface-2);
+  overflow-wrap: anywhere;
+}
+.tw-sketch-mini strong { display: block; padding-block-end: 3px; color: var(--accent-text); }
+.tw-sketch-mini.is-statement { display: grid; align-content: center; background: color-mix(in srgb, var(--accent-text) 8%, var(--panel)); }
+.tw-sketch-mini ul { padding-inline-start: 12px; margin-block: 0; }
+.tw-sketch-film .tw-sketch-mini { font-size: clamp(5px, .54vw, 8px); }
+.tw-sketch-review { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.tw-sketch-review-columns { display: grid; grid-template-columns: minmax(160px, min(34%, 300px)) minmax(0, 1fr); flex: 1; min-height: 0; }
+.tw-sketch-source, .tw-sketch-proposals { overflow: auto; padding: 10px 14px; }
+.tw-sketch-source { background: var(--panel); border-inline-end: 1px solid var(--line); }
+.tw-sketch-label { margin: 0 0 6px; font-size: 11px; font-weight: 750; letter-spacing: .07em; text-transform: uppercase; color: var(--text-2); }
+.tw-sketch-line { overflow-wrap: anywhere; padding: 1px 0 1px 14px; font-size: 13px; line-height: 1.4; }
+.tw-sketch-line.is-detail { padding-inline-start: 30px; color: var(--text-2); }
+.tw-sketch-line.is-title { font-weight: 600; }
+.tw-sketch-line.is-section { padding-inline-start: 0; font-weight: 700; }
+.tw-sketch-line .is-undecided { background: var(--amber-bg); color: var(--ink); border-radius: 3px; padding: 1px 4px; font-style: italic; }
+.tw-sketch-cut {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-text);
+  margin: 7px 0 2px;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+}
+.tw-sketch-cut::after { content: ""; flex: 1; border-top: 1px dashed currentColor; }
+.tw-sketch-cut.is-section { color: var(--ink); margin: 15px 12px 5px; }
+.tw-sketch-cut.is-section::after { border-top: 2px solid currentColor; }
+.tw-sketch-review-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.tw-sketch-review-head .tw-sketch-link { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; font-weight: 600; }
+.tw-sketch-proposal-section > h3 { margin-top: 7px; }
+.tw-sketch-proposal { display: grid; grid-template-columns: minmax(68px, min(24%, 150px)) minmax(0, 1fr); gap: 10px; padding: 8px; margin-block-end: 7px; }
+.tw-sketch-proposal.is-aside { border-style: dashed; }
+.tw-sketch-slide-title {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 1px 3px;
+  border: 1px solid transparent;
+  border-bottom: 1px dashed var(--line-strong);
+  background: transparent;
+  color: var(--ink);
+  font: 700 14px var(--font-ui);
+}
+.tw-sketch-slide-title:focus-visible { border-color: var(--accent-text); outline: none; border-radius: 4px; }
+.tw-sketch-slide-title[aria-invalid] { border-bottom-color: var(--amber); }
+.tw-sketch-slide-meta { color: var(--text-2); font-size: 12.5px; padding-block: 3px; }
+.tw-sketch-card-actions { display: flex; flex-wrap: wrap; gap: 5px; margin-block-start: 4px; }
+.tw-sketch-card-actions .tw-btn { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; font-size: 12px; }
+.tw-sketch-line-choice { padding: 9px 10px; margin-block-end: 7px; overflow-wrap: anywhere; font-size: 13px; }
+.tw-sketch-line-choice.is-warning { color: var(--ink); border-color: color-mix(in srgb, var(--amber) 34%, var(--line)); }
+.tw-sketch-line-choice svg { vertical-align: text-bottom; }
+.tw-sketch-foot { display: flex; flex: none; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 14px; border-block-start: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+.tw-sketch-foot [role="status"] { display: flex; flex-wrap: wrap; gap: 5px; }
+.tw-sketch-foot > span:last-of-type { margin-inline-end: auto; color: var(--text-2); }

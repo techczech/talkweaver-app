@@ -29,7 +29,7 @@
 //
 // The step is made in `savedTextChanges` form: one small change per touched line (an id line put in,
 // a layout line moved), so the caret and Slide Focus's range map through it as through a user's edit.
-import { Annotation, Prec, StateEffect, type EditorState, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
+import { Annotation, EditorState, Prec, StateEffect, type Extension, type Transaction, type TransactionSpec } from '@codemirror/state'
 import { EditorView, type Command } from '@codemirror/view'
 import { invertedEffects, isolateHistory, redo, undo } from '@codemirror/commands'
 import { minimalChange } from '../lib/minimalChange'
@@ -44,6 +44,25 @@ export const savedTextAdopted = Annotation.define<boolean>()
 /** Carried by a save's step, and by every undo and redo of it (the history keeps it with the step). */
 const saveStep = StateEffect.define<null>()
 const keepsSaveStep = invertedEffects.of((tr) => (tr.effects.some((e) => e.is(saveStep)) ? [saveStep.of(null)] : []))
+
+type Replay = (dispatch: () => void) => void
+const outlineEditReplay = StateEffect.define<Replay>()
+let pendingReplay: Replay | undefined
+
+/** Attach view state to the isolated edit made synchronously by a buffer command. */
+export function withOutlineEditReplay<T>(replay: Replay, commit: () => T): T {
+  const previous = pendingReplay
+  pendingReplay = replay
+  try { return commit() }
+  finally { pendingReplay = previous }
+}
+
+const markOutlineEdit = EditorState.transactionExtender.of(tr => {
+  if (!pendingReplay || !tr.docChanged || tr.annotation(isolateHistory) !== 'full') return null
+  const replay = pendingReplay
+  pendingReplay = undefined
+  return { effects: outlineEditReplay.of(replay) }
+})
 
 /** True when `tr` makes, undoes or redoes a save's step. */
 export const isSaveStep = (tr: Transaction): boolean => tr.effects.some((e) => e.is(saveStep))
@@ -116,7 +135,10 @@ export function redoTransactions(state: EditorState): Transaction[] {
 // would be read as two specs and merged into one transaction.
 const run = (view: EditorView, trs: Transaction[]): boolean => {
   if (trs.length === 0) return false
-  view.dispatch(trs)
+  const dispatch = (): void => view.dispatch(trs)
+  const replay = trs.flatMap(tr => tr.effects).find(effect => effect.is(outlineEditReplay))
+  if (replay) replay.value(dispatch)
+  else dispatch()
   return true
 }
 
@@ -131,6 +153,8 @@ export const redoWithSave: Command = (view) => run(view, redoTransactions(view.s
 export function savedTextAdoption(): Extension {
   return [
     keepsSaveStep,
+    markOutlineEdit,
+    invertedEffects.of(tr => tr.effects.filter(effect => effect.is(outlineEditReplay))),
     // Ahead of history()'s own handler, which runs CodeMirror's single-step undo and redo.
     Prec.high(EditorView.domEventHandlers({
       beforeinput(event, view) {

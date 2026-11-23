@@ -241,6 +241,17 @@ export function readOutlineSlides(text: string): OutlineSlides {
   return read
 }
 
+/** Visible points with their source indexes. Speaker notes are private slide text. */
+export function slidePointLines(read: OutlineSlides, slide: OutlineSlide): { line: number; text: string }[] {
+  const points: { line: number; text: string }[] = []
+  for (let line = slide.start + 1; line < slide.end; line += 1) {
+    if (read.notes.has(line)) continue
+    const point = read.blanked[line]?.match(/^ {0,3}(?:[-+*]|\d+\.)[ \t]+(.+)$/)
+    if (point) points.push({ line, text: point[1] })
+  }
+  return points
+}
+
 /** The slide an item names: by `{id=…}` (the first, as the compiler keeps the first of a collision),
  *  else the compile's heading line. */
 export function findSlide(read: OutlineSlides, slideId: string | undefined, line?: number | null): OutlineSlide | null {

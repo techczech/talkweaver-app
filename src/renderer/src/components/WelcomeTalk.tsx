@@ -64,7 +64,7 @@ export default function WelcomeTalk({ folder, onStart, onChangeFolder, onExample
               </span>
             </span>
             <strong><ListTree size={17} />Start with an outline</strong>
-            <span>Type or paste a bulleted outline.</span>
+            <span>Type or paste an outline, then review how to turn it into slides.</span>
           </button>
         </div>
         {error && <div role="alert" className="tw-welcome-error">{error}</div>}

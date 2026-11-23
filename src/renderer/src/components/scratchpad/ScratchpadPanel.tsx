@@ -5,13 +5,12 @@
 // no agent file is ever touched. Spec: docs/design/2026-10-27-slide-scratchpad/.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { GripVertical, Search } from 'lucide-react'
+import { Ellipsis, GripVertical, PanelRightClose, Search } from 'lucide-react'
 import {
-  LISTS, LIST_LABEL, TYPE_LABEL, scratchOrder, batchSections, groupCounts, listCounts, parseQuery, toggleTypeInQuery, typeCounts, visibleItems,
-  type ScratchGroupFilter, type ScratchItem, type ScratchList, type ScratchTypeKey
+  LISTS, LIST_LABEL, scratchOrder, batchSections, groupCounts, listCounts, parseQuery, visibleItems,
+  type ScratchGroupFilter, type ScratchItem, type ScratchList
 } from '../../../../shared/scratchpad'
 import { useSlideSelection } from '../../lib/useSlideSelection'
-import { DOCK_WIDTH } from '../../../../shared/scratchpad-layout'
 import type { ScratchpadData } from '../../lib/useScratchpad'
 import type { ScratchpadLayoutApi } from '../../lib/useScratchpadLayout'
 import { notify } from '../../lib/notify'
@@ -44,10 +43,16 @@ export interface ScratchpadActions {
 export const COMPARE_MIN = 2
 export const COMPARE_MAX = 4
 
-const TYPE_CHIPS: ScratchTypeKey[] = ['slide', 'svg', 'html', 'pic']
+const CHIP_LABEL: Partial<Record<ScratchList, string>> = { proposed: 'Proposed', slides: 'Picked', visuals: 'Visuals' }
 const plural = (n: number): string => (n === 1 ? '1 item' : `${n} items`)
 
-export default function ScratchpadPanel({ data, layoutApi, registerActions, onOpenSlideBrowser, insert, outlineText = '', pillHost }: {
+export default function ScratchpadPanel({ data, layoutApi, registerActions, onOpenSlideBrowser, insert, outlineText = '', pillHost, dockHost, onExpand, onDock, onOpenSketch, currentSlide, onCopyItem }: {
+  dockHost?: HTMLElement | null
+  onExpand?: () => void
+  onDock?: () => void
+  currentSlide?: { title: string; markdown: string }
+  onCopyItem?: (item: ScratchItem) => void
+  onOpenSketch?: (name?: string, breakdown?: boolean) => void
   outlineText?: string
   /** Where the collapsed pill sits (R17): a slot in the status bar, so it never floats over the strip or the controls. Without a host it is drawn in place. */
   pillHost?: HTMLElement | null
@@ -59,6 +64,8 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
   insert?: ScratchpadInsertApi
 }): JSX.Element {
   const { layout } = layoutApi
+  const docked = layout.mode === 'docked'
+  const [dockTools, setDockTools] = useState(false)
   const { items, groups } = data.snapshot
   const [query, setQuery] = useState('')
   const [list, setList] = useState<ScratchList>('all')
@@ -68,6 +75,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
   const [previewId, setPreviewId] = useState<string | null>(null)
   const [menu, setMenu] = useState<'filter' | 'move' | 'new' | null>(null)
   /** Compare side by side: the items in the columns, in the order they were ticked; null shows the list. */
+  const [compareCurrent, setCompareCurrent] = useState(false)
   const [compareIds, setCompareIds] = useState<string[] | null>(null)
   /** Change place is open (from the note's link or the command). */
   const [placeOpen, setPlaceOpen] = useState(false)
@@ -83,7 +91,6 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
   }, [groups, group])
 
   const counts = useMemo(() => listCounts(items), [items])
-  const types = useMemo(() => typeCounts(items), [items])
   const gCounts = useMemo(() => groupCounts(items, groups), [items, groups])
   const parsed = useMemo(() => parseQuery(query), [query])
   const manual = data.snapshot.sort === 'manual'
@@ -94,12 +101,12 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
     const rank = new Map(order.map((id, index) => [id, index]))
     return result.sort((a,b) => rank.get(a.id)! - rank.get(b.id)!)
   }, [items, list, group, query, manual, data.snapshot.order])
-  const sections = useMemo(() => (manual || list === 'kept' || list === 'rejected' ? null : batchSections(visible)), [visible, list, manual])
+  const sections = useMemo(() => (docked || manual || list === 'kept' || list === 'rejected' ? null : batchSections(visible)), [docked, visible, list, manual])
   const displayed = useMemo(() => sections ? sections.flatMap(section => section.items) : visible, [sections, visible])
   const selection = useSlideSelection(displayed.map(item => item.id))
   const selectedIds = selection.pickedIndices.map(index => displayed[index].id)
   const batchIds = displayed.filter(item => selectedIds.includes(item.id)).map(item => item.id)
-  const batchSlideCount = batchIds.reduce((count, id) => { const item = items.find(candidate => candidate.id === id); return count + (item?.kind === 'slide' ? placeRows(item.slide?.markdown ?? '').filter(row => row.level >= 2).length : 1) }, 0)
+  const batchSlideCount = batchIds.reduce((count, id) => { const item = items.find(candidate => candidate.id === id); return count + (item?.slide ? placeRows(item.slide?.markdown ?? '').filter(row => row.level >= 2).length : 1) }, 0)
   const focusedId = selection.focusedIndex == null ? null : displayed[selection.focusedIndex].id
   const byId = useMemo(() => new Map(items.map((i) => [i.id, i])), [items])
   const groupOf = (id: string | null) => groups.find((g) => g.id === id) ?? null
@@ -173,8 +180,9 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
     const item = ids.length === 1 ? byId.get(ids[0]) : undefined
     if (!insert) return
     if (!item) { notify('Select one Slide Scratchpad item to insert first.', 'info', 'scratchpad'); return }
-    if (mode === 'slide' && item.kind !== 'slide') { notify('Only a slide picked from a talk can go in whole. Use Insert visual only.', 'info', 'scratchpad'); return }
-    if (mode === 'visual' && item.kind === 'slide') {
+    if (item.fileKind === 'sketch') return
+    if (mode === 'slide' && item.kind === 'file') { notify('Choose a picked or proposed slide to insert whole.', 'info', 'scratchpad'); return }
+    if (mode === 'visual' && item.kind !== 'file') {
       const visuals = scratchVisuals(item.slide?.markdown ?? '')
       if (visuals.length > 1) { notify(`This slide shows ${visuals.length} visuals: choose one with Insert visual only in the Slide Scratchpad.`, 'info', 'scratchpad'); selection.reset(displayed.findIndex(i => i.id === item.id)); return }
       void insert.insert(item, 'visual', visuals[0] ?? null)
@@ -185,7 +193,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
   const compareTicked = (): void => {
     const ids = selectedIds
     if (ids.length < COMPARE_MIN || ids.length > COMPARE_MAX) { notify('Tick 2 to 4 Slide Scratchpad items to compare them side by side.', 'info', 'scratchpad'); return }
-    setPreviewId(null); setMenu(null); setCompareIds(ids)
+    setPreviewId(null); setMenu(null); setCompareCurrent(false); setCompareIds(ids)
   }
   const actionsRef = useRef<ScratchpadActions>({})
   actionsRef.current = {
@@ -258,25 +266,34 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
 
   if (layout.mode === 'collapsed') {
     const pill = (
-      <button type="button" className={`sp-pill${pillHost ? ' sp-pill--status' : ''}`} onClick={layoutApi.expand} title="Show the Slide Scratchpad" aria-label={`Slide Scratchpad, ${data.activeCount}. Expand`}>
+      <button type="button" className={`sp-pill${pillHost ? ' sp-pill--status' : ''}`} onClick={onExpand ?? layoutApi.expand} title="Show the Slide Scratchpad" aria-label={`Slide Scratchpad, ${data.activeCount}. Expand`}>
         Slide Scratchpad · {data.activeCount} <span>Expand</span>
       </button>
     )
     return pillHost ? createPortal(pill, pillHost) : pill
   }
 
-  const docked = layout.mode === 'docked'
-  const style = docked ? { width: DOCK_WIDTH, flexBasis: DOCK_WIDTH } : { left: layout.box.x, top: layout.box.y, width: layout.box.w, height: layout.box.h }
+  const style = docked ? undefined : { left: layout.box.x, top: layout.box.y, width: layout.box.w, height: layout.box.h }
   const empty = items.length === 0 && !data.loading
   const previewItem = previewId ? byId.get(previewId) ?? null : null
   const selectedOne = !previewItem && selectedIds.length < 2 ? byId.get(selectedIds[0] ?? focusedId ?? '') ?? null : null
   const listIsTriage = list !== 'kept' && list !== 'rejected'
+  const startCurrentComparison = (item: ScratchItem): void => {
+    setPreviewId(null)
+    setCompareCurrent(true)
+    setCompareIds([item.id])
+  }
+  const copyItem = (item: ScratchItem) => !item.missing && onCopyItem && <button type="button" className="sp-btn sp-btn--sm" onClick={() => onCopyItem(item)}>Copy for agent</button>
   const itemActions = (ids: string[], item?: ScratchItem, withMove = true): JSX.Element => (
     item && item.status !== 'active'
-      ? <button type="button" className="sp-btn sp-btn--sm" onClick={() => void moveBack(ids)}>Move back</button>
+      ? <>{copyItem(item)}<button type="button" className="sp-btn sp-btn--sm" onClick={() => void moveBack(ids)}>Move back</button></>
       : (
         <>
-          {insert && item && ids.length === 1 && <ScratchpadInsertButtons api={insert} item={item} />}
+          {item?.fileKind === 'sketch' && !item.missing && <button type="button" className="sp-btn sp-btn--sm sp-btn--primary" onClick={() => onOpenSketch?.(item.file)}>Open sketch</button>}
+          {item?.fileKind === 'sketch' && !item.missing && <button type="button" className="sp-btn sp-btn--sm" onClick={() => onOpenSketch?.(item.file, true)}>Break into slides</button>}
+          {insert && item && item.fileKind !== 'sketch' && ids.length === 1 && <ScratchpadInsertButtons api={insert} item={item} />}
+          {item && currentSlide && !compareIds && item.fileKind !== 'sketch' && <button type="button" className="sp-btn sp-btn--sm" onClick={() => startCurrentComparison(item)}>Compare with this slide</button>}
+          {item && copyItem(item)}
           <button type="button" className="sp-btn sp-btn--sm" onClick={() => void keep(ids)}>Keep for library</button>
           <button type="button" className="sp-btn sp-btn--sm" onClick={() => void reject(ids)}>Reject</button>
           {withMove && <span className="sp-anchor">
@@ -293,7 +310,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
         </>
       )
   )
-  const placeNote = (item: ScratchItem | null): JSX.Element | null => (insert ? <ScratchpadPlaceNote api={insert} item={item} open={placeOpen} onOpenChange={setPlaceOpen} /> : null)
+  const placeNote = (item: ScratchItem | null): JSX.Element | null => (insert && item?.fileKind !== 'sketch' ? <ScratchpadPlaceNote api={insert} item={item} open={placeOpen} onOpenChange={setPlaceOpen} /> : null)
   const compareItems = compareIds ? compareIds.map((id) => byId.get(id)).filter((i): i is ScratchItem => Boolean(i)) : null
   const insertedNote = (item: ScratchItem): string | null => {
     if (!item.insertedAt) return null
@@ -303,23 +320,56 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
     return insert && !insert.hasSlideTitled(item.insertedInto) ? 'Inserted before · not in the talk now' : `Inserted · ‘${item.insertedInto}’`
   }
 
-  return (
+  const orderControls = <div className="sp-order-controls">
+    <label>Order <select aria-label="Slide Scratchpad sort order" value={manual ? 'manual' : 'newest'} disabled={insert?.busy} onChange={event => void data.setSort(event.target.value as 'manual' | 'newest')}><option value="newest">Newest first</option><option value="manual">Your order</option></select></label>
+    <button type="button" className="sp-btn sp-btn--sm" aria-label="Move selected items up" disabled={insert?.busy || targetIds().length === 0} onClick={() => moveSelected(false)}>Move up</button>
+    <button type="button" className="sp-btn sp-btn--sm" aria-label="Move selected items down" disabled={insert?.busy || targetIds().length === 0} onClick={() => moveSelected(true)}>Move down</button>
+  </div>
+  const groupFilter = <span className="sp-anchor">
+    <button type="button" className="sp-btn" aria-haspopup="menu" aria-expanded={menu === 'filter' || menu === 'new'} onClick={() => setMenu(menu === 'filter' ? null : 'filter')}>
+      {group === 'all' ? 'All items' : groupName} ▾
+    </button>
+    {(menu === 'filter' || menu === 'new') && <ScratchpadGroupMenu
+      startNaming={menu === 'new'}
+      heading="Show group" rows={filterRows}
+      onPick={(id) => { setGroup(id); if (!listIsTriage) setList('all') }}
+      onNewGroup={(name) => createGroupThen(name, (id) => { setGroup(id); if (!listIsTriage) setList('all') })}
+      onClose={() => setMenu(null)}
+    />}
+  </span>
+  const dockControls = <div className="sp-dock-controls">
+    <button type="button" className="sp-dock-button" onClick={() => { setDockTools(false); layoutApi.float() }}><PanelRightClose size={14} aria-hidden="true" />Float</button>
+    <div className="sp-anchor">
+      <button type="button" className="sp-dock-button" aria-label="Scratchpad options" aria-expanded={dockTools} onClick={() => { setMenu(null); setDockTools(!dockTools) }}>
+        <Ellipsis size={16} aria-hidden="true" />
+      </button>
+      {dockTools && <div className="sp-menu sp-dock-menu" onKeyDown={event => { if (event.key === 'Escape') { event.stopPropagation(); setDockTools(false); setMenu(null) } }}>
+        {onOpenSketch && <button type="button" className="sp-btn sp-btn--sm" onClick={() => { setDockTools(false); onOpenSketch() }}>New sketch</button>}
+        <button type="button" className="sp-btn sp-btn--sm" onClick={() => { setDockTools(false); layoutApi.collapse() }}>Collapse</button>
+        {groupFilter}
+        {orderControls}
+      </div>}
+    </div>
+  </div>
+
+  const panel = (
     <section
       className={`sp-panel sp-panel--${docked ? 'docked' : 'float'}${empty ? ' is-empty' : ''}`}
       style={style}
       aria-label="Slide Scratchpad"
     >
-      <div className="sp-head" onPointerDown={(e) => drag(e, 'move')}>
+      {!docked && <div className="sp-head" onPointerDown={(e) => drag(e, 'move')}>
         <GripVertical size={14} className="sp-grip" aria-hidden="true" />
-        <b>Slide Scratchpad</b>
-        <span className="sp-count">{data.activeCount}</span>
+        <b>Slide Scratchpad</b><span className="sp-count">{data.activeCount}</span>
         <span className="sp-flex" />
-        {(docked || layoutApi.canDock) && <button type="button" className="sp-btn sp-btn--sm" onClick={docked ? layoutApi.float : layoutApi.dock}>{docked ? 'Float' : 'Dock to the right'}</button>}
+        {onOpenSketch && <button type="button" className="sp-btn sp-btn--sm" onClick={() => onOpenSketch()}>New sketch</button>}
+        {layoutApi.canDock && <button type="button" className="sp-btn sp-btn--sm" onClick={onDock ?? layoutApi.dock}>Dock to the right</button>}
         <button type="button" className="sp-btn sp-btn--sm" onClick={layoutApi.collapse}>Collapse</button>
-      </div>
+      </div>}
+      {docked && (empty || previewItem || compareItems?.length) ? <div className="sp-dock-head">{dockControls}</div> : null}
 
       {empty ? (
-        <ScratchpadEmpty onShowFolder={showFolder} onOpenSlideBrowser={onOpenSlideBrowser} />
+        <ScratchpadEmpty onShowFolder={showFolder} onOpenSlideBrowser={onOpenSlideBrowser} onNewSketch={onOpenSketch ? () => onOpenSketch() : undefined} />
       ) : previewItem ? (
         <ScratchpadPreview
           item={previewItem} inTalk={inTalk(previewItem)}
@@ -332,7 +382,8 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
         <ScratchpadCompare
           items={compareItems} inTalk={inTalk}
           groupOf={groupOf}
-          onBack={() => setCompareIds(null)}
+          current={compareCurrent ? currentSlide : undefined}
+          onBack={() => { setCompareCurrent(false); setCompareIds(null) }}
           onTakeOut={(id) => setCompareIds((c) => { const next = (c ?? []).filter((x) => x !== id); return next.length > 0 ? next : null })}
           onOpen={(id) => setPreviewId(id)}
           actions={(item) => itemActions([item.id], item, false)}
@@ -341,52 +392,27 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
       ) : (
         <>
           <div className="sp-top">
-            <div className="sp-order-controls">
-              <label>Order <select aria-label="Slide Scratchpad sort order" value={manual ? 'manual' : 'newest'} disabled={insert?.busy} onChange={event => void data.setSort(event.target.value as 'manual' | 'newest')}><option value="newest">Newest first</option><option value="manual">Your order</option></select></label>
-              <button type="button" className="sp-btn sp-btn--sm" aria-label="Move selected items up" disabled={insert?.busy || targetIds().length === 0} onClick={() => moveSelected(false)}>Move up</button>
-              <button type="button" className="sp-btn sp-btn--sm" aria-label="Move selected items down" disabled={insert?.busy || targetIds().length === 0} onClick={() => moveSelected(true)}>Move down</button>
-            </div>
+            {!docked && orderControls}
             <div className="sp-searchrow">
               <label className="sp-search">
                 <Search size={14} aria-hidden="true" />
                 <input
                   value={query} spellCheck={false} aria-label="Search the Slide Scratchpad"
-                  placeholder="Search titles, text inside visuals, talks and slide text"
+                  placeholder="Search the Scratchpad"
                   title="Type a kind before your words: slide: svg: html: pic: — or from: and a talk name for one talk"
                   onChange={(e) => setQuery(e.target.value)}
                 />
                 {query && <button type="button" className="sp-link" onClick={() => setQuery('')}>Clear</button>}
               </label>
-              <span className="sp-anchor">
-                <button type="button" className="sp-btn" aria-haspopup="menu" aria-expanded={menu === 'filter' || menu === 'new'} onClick={() => setMenu(menu === 'filter' ? null : 'filter')}>
-                  {group === 'all' ? 'All items' : groupName} ▾
-                </button>
-                {(menu === 'filter' || menu === 'new') && (
-                  <ScratchpadGroupMenu
-                    startNaming={menu === 'new'}
-                    heading="Show group" rows={filterRows}
-                    onPick={(id) => { setGroup(id); if (!listIsTriage) setList('all') }}
-                    onNewGroup={(name) => createGroupThen(name, (id) => { setGroup(id); if (!listIsTriage) setList('all') })}
-                    onClose={() => setMenu(null)}
-                  />
-                )}
-              </span>
+              {docked ? dockControls : groupFilter}
             </div>
-            <div className="sp-row2">
-            <div className="sp-chips" role="group" aria-label="Show only">
-              {TYPE_CHIPS.map((type) => (
-                <button key={type} type="button" className={`sp-chip${parsed.types.includes(type) ? ' is-on' : ''}`} aria-pressed={parsed.types.includes(type)} onClick={() => setQuery(toggleTypeInQuery(query, type))}>
-                  {TYPE_LABEL[type]}<em>{types[type]}</em>
-                </button>
-              ))}
-            </div>
-            <div className="sp-tabs" role="tablist">
+            <div className="sp-tabs" role="tablist" aria-label="Scratchpad items">
             {LISTS.map((l) => (
-              <button key={l} type="button" role="tab" aria-selected={list === l} className={list === l ? 'is-on' : ''} onClick={() => { setList(l); clearSelection() }}>
-                {LIST_LABEL[l]}<em>{counts[l]}</em>
+              <button key={l} type="button" role="tab" aria-selected={list === l} aria-label={`${LIST_LABEL[l]} ${counts[l]}`}
+                className={list === l ? 'is-on' : ''} onClick={() => { setList(l); clearSelection() }}>
+                {CHIP_LABEL[l] ?? LIST_LABEL[l]}<em>{counts[l]}</em>
               </button>
             ))}
-            </div>
             </div>
           </div>
 
@@ -397,7 +423,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
               <div className="sp-note">Kept items are marked for your library, which all your talks will share. Move one back to use it in this talk.</div>
             ) : list === 'rejected' ? (
               <div className="sp-note">Rejected items are never deleted. Move one back to bring it into the Slide Scratchpad again.</div>
-            ) : group === 'all' ? (
+            ) : docked && group === 'all' ? null : group === 'all' ? (
               <div className="sp-res"><b>{visible.length}</b> {visible.length === 1 ? 'item' : 'items'}, {manual ? 'your order' : 'newest first'}</div>
             ) : (
               <div className="sp-res"><b>{groupName}</b> · {plural(visible.length)}, {manual ? 'your order' : 'newest first'}</div>
@@ -414,12 +440,12 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
                     {sections && <div className="sp-batch">{section.label}<em>{section.items.length}</em></div>}
                     <div className="sp-cards">
                       {section.items.map((item) => (
-                        <div key={item.id} className="sp-order-card"
+                        <div key={item.id} className={`sp-order-card${!docked || manual ? ' has-order-handle' : ''}`}
                           onDragOver={event => { if (orderDrag.current) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move' } }}
                           onDrop={event => { const moving = orderDrag.current; orderDrag.current = null; if (!moving) return; event.preventDefault(); event.stopPropagation(); const box = event.currentTarget.getBoundingClientRect(); arrange(moving, item.id, event.clientY > box.top + box.height / 2) }}>
-                        <button type="button" className="sp-order-handle" aria-label={`Arrange ${item.title}`} title="Drag to arrange in Your order" draggable={!insert?.busy}
+                        {(!docked || manual) && <button type="button" className="sp-order-handle" aria-label={`Arrange ${item.title}`} title="Drag to arrange in Your order" draggable={!insert?.busy}
                           onDragStart={event => { event.stopPropagation(); orderDrag.current = selectedIds.includes(item.id) ? batchIds : [item.id]; event.dataTransfer.setData('application/x-talkweaver-scratchpad-order', item.id); event.dataTransfer.effectAllowed = 'move' }}
-                          onDragEnd={() => { orderDrag.current = null }}><GripVertical size={14} aria-hidden="true" /></button>
+                          onDragEnd={() => { orderDrag.current = null }}><GripVertical size={14} aria-hidden="true" /></button>}
                         <ScratchpadCard item={item} terms={parsed.terms}
                           ticked={selectedIds.includes(item.id)} selected={focusedId === item.id && selectedIds.length === 0}
                           groupTag={group === 'all' ? groupOf(item.group) : null}
@@ -446,7 +472,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
                 <>
                   <div className="sp-batchbar">
                     <b>{selectedIds.length} selected</b>
-                    {insert && <button type="button" className="sp-btn sp-btn--sm sp-btn--primary" disabled={insert.busy || selectedIds.some(id => byId.get(id)?.missing)} onClick={() => void insert.insertMany(batchIds).then(ok => { if (ok) clearSelection() })}>{selectedIds.every(id => byId.get(id)?.kind === 'slide') ? `Insert ${batchSlideCount} slides` : 'Insert selection as slides'}</button>}
+                    {insert && <button type="button" className="sp-btn sp-btn--sm sp-btn--primary" disabled={insert.busy || selectedIds.some(id => byId.get(id)?.missing || byId.get(id)?.fileKind === 'sketch')} onClick={() => void insert.insertMany(batchIds).then(ok => { if (ok) clearSelection() })}>{selectedIds.every(id => Boolean(byId.get(id)?.slide)) ? `Insert ${batchSlideCount} slides` : 'Insert selection as slides'}</button>}
                     {itemActions(selectedIds)}
                     <button type="button" className="sp-btn sp-btn--sm sp-btn--primary" disabled={selectedIds.length > COMPARE_MAX} onClick={compareTicked}>Compare side by side</button>
                     <span className="sp-flex" />
@@ -473,4 +499,5 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
       {!docked && <div className="sp-resize" onPointerDown={(e) => drag(e, 'size')} aria-hidden="true" />}
     </section>
   )
+  return docked ? (dockHost ? createPortal(panel, dockHost) : <></>) : panel
 }

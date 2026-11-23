@@ -2,13 +2,17 @@
 // path: the talk is the one the sending window has open. One store per talk folder, so every window on it
 // shares one queue. A window that subscribes gets `scratchpad:changed` with the whole snapshot whenever the
 // scratch folder changes (debounced watch) or any window changes the state.
-import { dirname } from 'node:path'
+import { writeFile } from 'node:fs/promises'
+import { statSync } from 'node:fs'
+import { dirname, relative, sep } from 'node:path'
 import type { IpcMain, IpcMainInvokeEvent, WebContents } from 'electron'
 import { createScratchpadStore, type ScratchpadStore, type ScratchpadStoreOptions } from './scratchpad-store.ts'
 import { watchScratchFolder, type ScratchpadWatch } from './scratchpad-watch.ts'
 import type { ScratchHtmlPreview } from './scratchpad-html.ts'
 import { slideVisualFile, type VisualRequest } from './scratchpad-visual-import.ts'
 import { scratchVisuals, visualNeedsCopy } from '../shared/scratchpad-insert.ts'
+import { extractImageRefs, resolveImagePaths } from './slide-image-refs.ts'
+import { MAX_SKETCH_BYTES } from '../shared/scratchpad.ts'
 import type { ScratchPreparedInsert, ScratchReply, ScratchSlide, ScratchSlideInput, ScratchSnapshot, ScratchStatus, ScratchVisualImport } from '../shared/scratchpad.ts'
 
 export interface ScratchpadIpcDeps {
@@ -24,6 +28,8 @@ export interface ScratchpadIpcDeps {
   htmlText?: (path: string) => string
   /** Shows the folder in the file manager (creating it when absent); never runs under tests. */
   revealFolder: (folder: string) => void
+  sketchVaultRoot?: (outline: string) => string | null
+  chooseSketchCopy?: (event: IpcMainInvokeEvent) => Promise<string | undefined>
   debounceMs?: number
   /** Insert visual only (ticket 2): copies a file into the open talk's vault and answers the line to insert
    *  (scratchpad-visual-import.ts). Never writes the outline; never writes the file it copies from. */
@@ -97,6 +103,77 @@ export function registerScratchpadIpc(deps: ScratchpadIpcDeps): { closeAll(): vo
   deps.ipc.handle('scratchpad:unsubscribe', (event) => { unsubscribe(event.sender.id); return { ok: true } })
   deps.ipc.handle('scratchpad:load', (event) => withTalk(event, async (store) => ({ snapshot: await store.load() })))
 
+  const validSketchText = (value: unknown): value is string => typeof value === 'string' && Buffer.byteLength(value) <= MAX_SKETCH_BYTES
+  deps.ipc.handle('scratchpad:sketch-read', (event, expected: unknown, name: unknown) => {
+    if (expected !== deps.outlinePathFor(event) || typeof name !== 'string') return { ok: false, error: 'The open talk changed.' }
+    return withTalk(event, async store => ({ sketch: await store.readSketch(name) }))
+  })
+  deps.ipc.handle('scratchpad:sketch-create', (event, expected: unknown, text: unknown) => {
+    if (expected !== deps.outlinePathFor(event)) return { ok: false, error: 'The open talk changed.' }
+    if (!validSketchText(text)) return { ok: false, error: 'Sketches can be up to 4 MB. Copy or shorten your text before saving.' }
+    return withTalk(event, async (store, talkDir) => {
+      const sketch = await store.createSketch(text)
+      await store.load().then(snapshot => publish(talkDir, snapshot), () => undefined)
+      return { sketch }
+    })
+  })
+  deps.ipc.handle('scratchpad:sketch-save', (event, expected: unknown, name: unknown, revision: unknown, text: unknown) => {
+    if (expected !== deps.outlinePathFor(event) || typeof name !== 'string' || typeof revision !== 'string') return { ok: false, error: 'The open talk or sketch changed.' }
+    if (!validSketchText(text)) return { ok: false, error: 'Sketches can be up to 4 MB. Copy or shorten your text before saving.' }
+    return withTalk(event, async (store, talkDir) => {
+      const sketch = await store.saveSketch(name, revision, text)
+      await store.load().then(snapshot => publish(talkDir, snapshot), () => undefined)
+      return { sketch }
+    })
+  })
+
+  deps.ipc.handle('scratchpad:sketch-export', async (event, text: unknown) => {
+    if (typeof text !== 'string' || Buffer.byteLength(text) > 32 * 1024 * 1024) {
+      return { ok: false, error: 'The copy is too large to save here. Copy the text from the sketch editor.' }
+    }
+    try {
+      const destination = await deps.chooseSketchCopy?.(event)
+      if (!destination) return { ok: true, saved: false }
+      // The native picker supplies the path. Never replace another file, including the original sketch.
+      await writeFile(destination, text, { flag: 'wx', mode: 0o600 })
+      return { ok: true, saved: true }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') return { ok: false, error: 'Choose a new filename for the copy.' }
+      return failure(error)
+    }
+  })
+
+  deps.ipc.handle('scratchpad:sketch-rename', (event, expected: unknown, name: unknown, title: unknown) => {
+    if (expected !== deps.outlinePathFor(event) || typeof name !== 'string' || typeof title !== 'string') return { ok: false, error: 'The open talk or sketch changed.' }
+    return change(event, store => store.renameSketch(name, title))
+  })
+  deps.ipc.handle('scratchpad:sketch-pictures', (event, expected: unknown, lines: unknown) => {
+    const outline = deps.outlinePathFor(event)
+    const inputs = strings(lines)
+    if (!outline || expected !== outline || !inputs) return { ok: false, error: 'The open talk or sketch changed.' }
+    const root = deps.sketchVaultRoot?.(outline)
+    const talk = dirname(outline)
+    const pictures: Array<[string, string]> = []
+    if (root) for (const line of new Set(inputs)) {
+      if (line.length > 2000) continue
+      const named = /^\[picture:\s*([^\]]+)\]$/i.exec(line)?.[1]?.trim()
+      const refs = named ? [{ kind: 'picture' as const, ref: named }] : extractImageRefs(line)
+      const file = resolveImagePaths(refs, talk, root)[0]
+      if (!file) continue
+      try {
+        if (statSync(file).isFile()) pictures.push([line, named && /^img-[a-f0-9]{7}$/i.test(named) ? named : relative(talk, file).split(sep).join('/')])
+      } catch { /* A missing picture stays a line to decide. */ }
+    }
+    return { ok: true, pictures }
+  })
+  deps.ipc.handle('scratchpad:sketch-used', (event, expected: unknown, name: unknown, key: unknown, ids: unknown, proposals: unknown, count: unknown) => {
+    const list = strings(ids)
+    if (expected !== deps.outlinePathFor(event) || typeof name !== 'string' || typeof key !== 'string' ||
+      !list || !Array.isArray(proposals) || proposals.length > MAX_IDS) return { ok: false, error: 'The open talk or sketch changed.' }
+    if (count !== undefined && (typeof count !== 'number' || !Number.isInteger(count) || count < 0 || count > list.length)) return { ok: false, error: 'The slide count changed.' }
+    return change(event, store => store.recordSketchUse(name, key, list, proposals as ScratchSlide[], count as number | undefined))
+  })
+
   deps.ipc.handle('scratchpad:add-slides', async (event, inputs: unknown) => {
     if (!Array.isArray(inputs) || inputs.length > MAX_IDS) return { ok: false, error: 'Choose slides to add.' }
     return withTalk(event, async (store, talkDir) => {
@@ -169,7 +246,7 @@ export function registerScratchpadIpc(deps: ScratchpadIpcDeps): { closeAll(): vo
   const outlineOf = (event: IpcMainInvokeEvent): string => deps.outlinePathFor(event) as string
   const slideItem = async (store: ScratchpadStore, id: unknown): Promise<ScratchSlide> => {
     const item = typeof id === 'string' ? await store.itemFor(id) : null
-    if (!item || item.kind !== 'slide' || !item.slide) throw new Error('That slide is not in the Slide Scratchpad any more.')
+    if (!item || item.kind === 'file' || !item.slide) throw new Error('That slide is not in the Slide Scratchpad any more.')
     return item.slide
   }
   const visualReply = (reply: ScratchVisualImport): { line: string; page?: NonNullable<Extract<ScratchVisualImport, { ok: true }>['page']> } => {
@@ -187,6 +264,7 @@ export function registerScratchpadIpc(deps: ScratchpadIpcDeps): { closeAll(): vo
   })
   deps.ipc.handle('scratchpad:slide-source', (event, id: unknown) => withTalk(event, async (store) => {
     const slide = await slideItem(store, id)
+    if (slide.sketchFile) return { outlinePath: outlineOf(event) }
     const source = deps.slideSource?.(slide, outlineOf(event)) ?? null
     if (!source) throw new Error(`The talk “${slide.talkTitle}” this slide came from cannot be found, so nothing was inserted.`)
     return { outlinePath: source.outlinePath }
@@ -213,12 +291,12 @@ export function registerScratchpadIpc(deps: ScratchpadIpcDeps): { closeAll(): vo
       const check = (): void => { if (deps.outlinePathFor(event) !== outline) throw new Error('The talk changed while preparing the selection. Nothing was inserted.') }
       const snapshot = await store.load(); check()
       const items = list.map(id => snapshot.items.find(item => item.id === id))
-      if (items.some(item => !item || item.missing || item.status !== 'active')) throw new Error('An item is no longer available. Nothing was inserted.')
+      if (items.some(item => !item || item.missing || item.fileKind === 'sketch' || item.status !== 'active')) throw new Error('An item is no longer available. Nothing was inserted.')
       const entries: ScratchPreparedInsert[] = []
       for (const candidate of items) {
         const item = candidate!; check()
-        if (item.kind === 'slide' && item.slide) {
-          const source = deps.slideSource?.(item.slide, outline)
+        if (item.kind !== 'file' && item.slide) {
+          const source = item.kind === 'proposed' ? { outlinePath: outline } : deps.slideSource?.(item.slide, outline)
           if (!source) throw new Error(`The source talk for “${item.title}” is unavailable. Nothing was inserted.`)
           entries.push({ id: item.id, title: item.title, markdown: item.slide.markdown, sourceOutlinePath: source.outlinePath })
         } else {

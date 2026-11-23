@@ -23,6 +23,7 @@ try {
       contents: `import React from 'react'; import { createRoot } from 'react-dom/client'
 import './src/renderer/src/styles.css'
 import './src/renderer/src/image-drawer.css'
+import RightColumnTabs from './src/renderer/src/components/RightColumnTabs.tsx'
 import ScratchpadPanel from './src/renderer/src/components/scratchpad/ScratchpadPanel.tsx'
 import { useScratchpad } from './src/renderer/src/lib/useScratchpad.ts'
 import { useScratchpadLayout } from './src/renderer/src/lib/useScratchpadLayout.ts'
@@ -52,6 +53,14 @@ window.tw = { scratchpad: {
 } }
 window.repaint = () => { snap = { ...snap }; emit() }
 window.empty = () => { snap = { groups: [], items: [], notices: [] }; emit() }
+window.proposedFixture = () => {
+  const source = slide('proposal-1', 'One proposed slide', 'A talk', 50)
+  snap = { groups: [], notices: [], items: [
+    { ...source, kind: 'proposed', slide: { ...source.slide, markdown: '### One proposed slide\\n- Visible point\\n\\n:::notes\\nNotes only\\n:::' } },
+    slide('proposal-2', 'Another slide', 'A talk', 40)
+  ] }
+  emit()
+}
 window.selectionFixture = () => {
   snap = { groups: [{ id: 'g1', name: 'Opening' }], notices: [], items: [
     slide('old', 'Run oldest', 'Talk', 10), slide('hidden', 'Outside search', 'Talk', 45),
@@ -80,14 +89,19 @@ function useFakeInsert() {
 }
 function App() {
   const data = useScratchpad('/vault/talk/talk-outline.md'); const layoutApi = useScratchpadLayout(); const actions = React.useRef({}); const insert = useFakeInsert()
+  const [dockHost, setDockHost] = React.useState(null)
   window.layoutApi = layoutApi; window.run = (id) => actions.current[id]?.()
   const btn = (label, extra = '') => <button type="button" className={'toolbar-btn' + extra}><span className="toolbar-btn-content"><svg width="15" height="15" /><span>{label}</span><svg width="12" height="12" /></span></button>
-  return <div className="workspace-row" style={{ flex: 1 }}><div className="workspace-main"><div className={'workspace-toolbar' + (layoutApi.layout.mode === 'docked' ? ' workspace-toolbar--tight' : '')} data-testid="fake-toolbar">
+  return <div className="workspace-row" style={{ flex: 1 }}><div className="workspace-main"><div className={'workspace-toolbar' + ('')} data-testid="fake-toolbar">
       <span className="workspace-title">A talk with a fairly long title</span>
       <div className="pane-toggle">{[1, 2, 3, 4].map((n) => <button key={n} className="pane-btn"><svg width="17" height="17" /></button>)}</div>
       <div className="toolbar-actions">{btn('Share')}{btn('Place')}{btn('Talk')}{btn('Tools')}{btn('Present', ' toolbar-btn--primary')}</div>
     </div><button id="open-browser-probe" onClick={() => window.calls.push('browser')}>probe</button></div>
-    <ScratchpadPanel data={data} layoutApi={layoutApi} registerActions={(a) => { actions.current = a }} onOpenSlideBrowser={() => window.calls.push('browser')} insert={insert} /></div>
+    {layoutApi.layout.mode === 'docked' && <aside data-right-column style={{ width: 'clamp(300px, 24vw, 360px)', display: 'flex', flexDirection: 'column' }}>
+      <RightColumnTabs guideUp={false} hasTalk scratchpad active="scratchpad" onSelect={() => {}} onCloseGuide={() => {}} />
+      <div ref={setDockHost} className="sp-dock-host" />
+    </aside>}
+    <ScratchpadPanel dockHost={dockHost} data={data} layoutApi={layoutApi} registerActions={(a) => { actions.current = a }} onOpenSlideBrowser={() => window.calls.push('browser')} insert={insert} /></div>
 }
 createRoot(document.getElementById('root')).render(<App />)`,
       sourcefile: 'scratchpad-dom.tsx', loader: 'tsx', resolveDir: root
@@ -115,37 +129,31 @@ createRoot(document.getElementById('root')).render(<App />)`,
     await page.locator('.sp-panel--float').waitFor()
   })
   const tabs = async () => (await page.locator('.sp-tabs button').allInnerTexts()).map((t) => t.replace(/\s+/g, ' ')).join('|')
-  await step('the header is two rows: search + group menu, then chips + tabs on one row', async () => {
-    const rows = await page.evaluate(() => {
-      const y = (sel) => Math.round(document.querySelector(sel).getBoundingClientRect().top)
-      return { search: y('.sp-searchrow'), chips: y('.sp-chips'), tabs: y('.sp-tabs'), hint: document.querySelectorAll('.sp-hint').length, w: [document.querySelector('.sp-panel').clientWidth, document.querySelector('.sp-chips').getBoundingClientRect().width, document.querySelector('.sp-tabs').getBoundingClientRect().width, document.querySelector('.sp-tabs').scrollWidth] }
-    })
-    assert.equal(rows.hint, 0, 'the prefix hint line is gone (it is the search box tooltip)')
-    assert.ok(Math.abs(rows.chips - rows.tabs) < 14, 'chips and tabs share a row ' + JSON.stringify(rows))
-    assert.ok(rows.chips > rows.search)
+  await step('search sits above one set of list filter chips', async () => {
+    const search = await page.locator('.sp-searchrow').boundingBox()
+    const chips = await page.locator('.sp-tabs').boundingBox()
+    assert.equal(await page.locator('.sp-chips').count(), 0)
+    assert.ok(chips.y >= search.y + search.height)
     assert.match(await page.getByLabel('Search the Slide Scratchpad').getAttribute('title'), /slide: svg: html: pic:/)
   })
   await step('tabs with counts; newest-first sections per arrival batch', async () => {
-    assert.equal(await tabs(), 'All5|Picked slides2|Agent visuals3|Kept1|Rejected1')
+    assert.equal(await tabs(), 'All5|Sketches0|Proposed0|Picked2|Visuals3|Kept1|Rejected1')
     assert.deepEqual((await page.locator('.sp-batch').allInnerTexts()).map((h) => h.replace(/\s+/g, ' ')), ['Picked from Slide Browser 22:502', 'Made by agent 22:402', 'Made by agent 22:101'])
     assert.equal(await page.locator('.sp-day').count(), 1, 'one day heading over batches of the same day')
     assert.equal(await page.locator('.sp-badge--missing').count(), 1)
     if (shots) await page.screenshot({ path: join(shots, 'scratchpad-float.png') })
   })
-  await step('search: chips edit the query text, typing a prefix lights the chip, hits are highlighted, counts hold', async () => {
+  await step('search: type prefixes and From still work with one chip set, hits are highlighted, counts hold', async () => {
     const input = page.getByLabel('Search the Slide Scratchpad')
-    await page.getByRole('button', { name: /^SVG/ }).click()
-    assert.equal(await input.inputValue(), 'svg:')
-    assert.equal(await page.getByRole('button', { name: /^SVG/ }).getAttribute('aria-pressed'), 'true')
+    await input.fill('svg:')
     assert.equal(await page.locator('.sp-card').count(), 2, 'svg: shows diagram and the missing svg (active only)')
     await input.fill('html: loop')
-    assert.equal(await page.getByRole('button', { name: /^HTML/ }).getAttribute('aria-pressed'), 'true')
     assert.equal(await page.locator('.sp-card').count(), 1)
     assert.equal(await page.locator('.sp-card-title mark').innerText(), 'loop')
     await input.fill('from:workflow')
     assert.deepEqual(await page.locator('.sp-card-title').allInnerTexts(), ['A research loop'])
     assert.match(await page.locator('.sp-res').innerText(), /1 match/)
-    assert.equal(await tabs(), 'All5|Picked slides2|Agent visuals3|Kept1|Rejected1')
+    assert.equal(await tabs(), 'All5|Sketches0|Proposed0|Picked2|Visuals3|Kept1|Rejected1')
     await page.getByRole('button', { name: 'Clear', exact: true }).click()
     assert.equal(await input.inputValue(), '')
   })
@@ -325,7 +333,7 @@ createRoot(document.getElementById('root')).render(<App />)`,
     await page.getByLabel('Select diagram').check()
     await page.getByRole('button', { name: 'Keep for library' }).click()
     assert.deepEqual(await calls(), ['status:kept:a,d'])
-    assert.equal(await tabs(), 'All3|Picked slides1|Agent visuals2|Kept3|Rejected1')
+    assert.equal(await tabs(), 'All3|Sketches0|Proposed0|Picked1|Visuals2|Kept3|Rejected1')
     await clear()
     await page.getByLabel('Select research-loop').check()
     await page.getByLabel('Select A research loop').check()
@@ -343,7 +351,7 @@ createRoot(document.getElementById('root')).render(<App />)`,
     await clear()
   })
   await step('missing file: Remove from Slide Scratchpad takes the state item out', async () => {
-    await page.locator('.sp-tabs button', { hasText: 'Agent visuals' }).click()
+    await page.getByRole('tab', { name: /^Agent visuals/ }).click()
     await page.getByRole('button', { name: 'Remove from Slide Scratchpad' }).click()
     assert.deepEqual(await calls(), ['remove:m'])
     await clear()
@@ -376,19 +384,38 @@ createRoot(document.getElementById('root')).render(<App />)`,
     await clear()
   })
   await step('dock, float and collapse; the layout is saved and restored', async () => {
+    await page.evaluate(() => window.selectionFixture())
     await page.getByRole('button', { name: 'Dock to the right' }).click()
     assert.ok(await page.locator('.sp-panel--docked').count() === 1)
-    assert.equal(await page.locator('.sp-panel--docked').evaluate((el) => Math.round(el.getBoundingClientRect().width)), 560)
+    assert.equal(await page.locator('[data-right-column] .sp-panel--docked').count(), 1)
+    assert.equal(await page.getByRole('tab', { name: 'Scratchpad', exact: true }).getAttribute('aria-selected'), 'true')
+    assert.equal(await page.locator('.sp-panel--docked').evaluate(el => Math.round(el.getBoundingClientRect().width)), 360)
     if (shots) await page.screenshot({ path: join(shots, 'scratchpad-docked.png') })
-    // R17: a window narrower than the dock needs (1700 px) draws the docked panel as the floating one, with no Dock button,
-    // so it never squeezes the toolbar or the editor below their room.
-    await page.setViewportSize({ width: 1160, height: 900 })
-    await page.locator('.sp-panel--float').waitFor()
-    assert.equal(await page.locator('.sp-panel--docked').count(), 0, 'no docked panel in a narrow window')
-    assert.equal(await page.getByRole('button', { name: 'Dock to the right' }).count(), 0, 'no Dock button where the dock does not fit')
-    assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('tw-scratchpad-layout-v1'))).mode, 'docked', 'the saved choice is kept for a wider window')
+    await page.setViewportSize({ width: 1000, height: 631 })
+    const dock = page.locator('.sp-panel--docked')
+    assert.equal(await dock.getByRole('tablist', { name: 'Scratchpad items' }).count(), 1)
+    const searchBox = await dock.getByLabel('Search the Slide Scratchpad').boundingBox()
+    const floatBox = await dock.getByRole('button', { name: 'Float', exact: true }).boundingBox()
+    assert.ok(Math.abs(searchBox.y + searchBox.height / 2 - floatBox.y - floatBox.height / 2) <= 2)
+    const cards = dock.locator('.sp-card')
+    const first = await cards.nth(0).boundingBox()
+    const second = await cards.nth(1).boundingBox()
+    assert.ok(second.x > first.x && Math.abs(first.y - second.y) < 1, 'two cards share the first row')
+    await cards.first().click()
+    const listBox = await dock.locator('.sp-main').boundingBox()
+    const selected = await cards.first().boundingBox()
+    assert.ok(selected.y >= listBox.y - 1 && selected.y + selected.height <= listBox.y + listBox.height + 1,
+      `selected card ${JSON.stringify(selected)} fits the list ${JSON.stringify(listBox)}`)
+    const tick = await cards.first().locator('.sp-tick').boundingBox()
+    const excerpt = await cards.first().locator('.sp-thumbwrap').boundingBox()
+    assert.ok(tick.y >= excerpt.y + excerpt.height)
+    if (shots) await page.screenshot({ path: join(shots, 'scratchpad-docked-selected-1000x631.png') })
+    await page.locator('[data-right-column] .sp-panel--docked').waitFor()
+    assert.equal(await page.locator('.sp-panel--float').count(), 0)
+    assert.equal(JSON.parse(await page.evaluate(() => localStorage.getItem('tw-scratchpad-layout-v1'))).mode, 'docked')
     await page.setViewportSize({ width: 1800, height: 900 })
     await page.locator('.sp-panel--docked').waitFor()
+    await page.getByRole('button', { name: 'Scratchpad options' }).click()
     await page.getByRole('button', { name: 'Collapse' }).click()
     await page.locator('.sp-pill').waitFor()
     const saved = JSON.parse(await page.evaluate(() => localStorage.getItem('tw-scratchpad-layout-v1')))
@@ -408,6 +435,11 @@ createRoot(document.getElementById('root')).render(<App />)`,
     assert.ok(sized.width < moved.width - 50 && sized.height < moved.height - 50)
     const stored = JSON.parse(await page.evaluate(() => localStorage.getItem('tw-scratchpad-layout-v1')))
     assert.equal(stored.mode, 'float'); assert.equal(stored.box.w, Math.round(sized.width))
+    await page.setViewportSize({ width: 1000, height: 631 })
+    const small = await panel().boundingBox()
+    assert.ok(small.x >= 0 && small.x + small.width <= 1001 && small.y + small.height <= 632)
+    if (shots) await page.screenshot({ path: join(shots, 'scratchpad-float-1000x631.png') })
+    await page.setViewportSize({ width: 1800, height: 900 })
   })
   await step('search and newest-first range: tick exactly the visible run, Keep only those cards', async () => {
     await page.evaluate(() => window.selectionFixture())
@@ -504,9 +536,43 @@ createRoot(document.getElementById('root')).render(<App />)`,
     assert.equal((await order())[0], 'Select Run middle')
     await page.evaluate(() => window.run('scratchpad-move-down'))
     await page.waitForFunction(() => document.querySelector('.sp-card input[type=checkbox]')?.getAttribute('aria-label') === 'Select Run newest')
-    await page.getByRole('button', { name: 'Arrange Run tail', exact: true }).dragTo(page.locator('.sp-order-card').filter({ has: page.getByLabel('Select Run newest', { exact: true }) }), { targetPosition: { x: 5, y: 5 } })
+    const from = page.getByRole('button', { name: 'Arrange Run tail', exact: true })
+    const to = page.locator('.sp-order-card').filter({ has: page.getByLabel('Select Run newest', { exact: true }) })
+    await from.scrollIntoViewIfNeeded()
+    await to.scrollIntoViewIfNeeded()
+    const handle = await from.boundingBox()
+    const target = await to.boundingBox()
+    assert.ok(handle && target)
+    const points = { sx: handle.x + handle.width / 2, sy: handle.y + handle.height / 2, tx: target.x + 9, ty: target.y + 9 }
+    const hit = await page.evaluate(({ sx, sy, tx, ty }) => ({
+      source: document.elementFromPoint(sx, sy)?.closest('.sp-order-handle')?.getAttribute('aria-label'),
+      target: document.elementFromPoint(tx, ty)?.closest('.sp-order-card')?.querySelector('input')?.getAttribute('aria-label'),
+    }), points)
+    assert.deepEqual(hit, { source: 'Arrange Run tail', target: 'Select Run newest' }, JSON.stringify({ handle, target }))
+    await page.mouse.move(points.sx, points.sy)
+    await page.mouse.down()
+    // Chromium delivers dragover on a second move over the drop target.
+    await page.mouse.move(points.tx, points.ty, { steps: 8 })
+    await page.mouse.move(points.tx + 2, points.ty + 3)
+    await page.mouse.up()
     await page.waitForFunction(() => document.querySelector('.sp-card input[type=checkbox]')?.getAttribute('aria-label') === 'Select Run tail')
 
+
+  })
+  await step('proposal cards show their points once and Compare omits notes syntax', async () => {
+    await page.evaluate(() => window.proposedFixture())
+    await page.locator('.sp-tabs button').first().click()
+    await page.getByLabel('Search the Slide Scratchpad').fill('')
+    const proposed = card('One proposed slide')
+    assert.match(await proposed.innerText(), /Visible point/)
+    assert.equal((await proposed.innerText()).match(/One proposed slide/g)?.length, 1)
+    await page.getByLabel('Select One proposed slide').check()
+    await page.getByLabel('Select Another slide').check()
+    await page.getByRole('button', { name: 'Compare side by side' }).click()
+    const compared = await page.locator('.sp-compare').innerText()
+    assert.match(compared, /Visible point/)
+    assert.doesNotMatch(compared, /:::|Notes only/)
+    await page.getByRole('button', { name: /Back to the list/ }).click()
   })
   await step('empty state: the mockup wording, both starting points work', async () => {
     await page.evaluate(() => window.empty())

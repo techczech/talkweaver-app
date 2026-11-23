@@ -20,6 +20,8 @@ import {
 } from '../data/layouts'
 import { layoutSubmenuEntries } from './layoutPickerModel'
 import { liveShortcutLabel } from '../keymap/store'
+import type { ConsumeInsertFence } from '../extensions/objectBlocks/field'
+import type { ObjectInsertRequest } from '../../../shared/objects/insert-objects'
 
 export type SlideMenuAction =
   | 'layout' | 'icon' | 'image' | 'tag'
@@ -129,14 +131,21 @@ export default function SlideContextMenu({
   startAtAction?: SlideMenuAction
   /** True for right-click openings: the Text (cut/copy/paste) group joins at the bottom. */
   withText?: boolean
-  onAction: (action: SlideMenuAction) => void
+  onAction: (action: SlideMenuAction, request?: ObjectInsertRequest) => void
   currentLayoutName?: string
   onSetLayout: (layout: LayoutDef) => void
   onClose: () => void
   /** Typed fences remain on dismissal and are consumed only by a chosen command. */
-  consumeFence?: () => void
+  consumeFence?: ConsumeInsertFence
 }) {
-  const onAction = (action: SlideMenuAction): void => { consumeFence?.(); runAction(action) }
+  const onAction = (action: SlideMenuAction): void => {
+    if (consumeFence && (action === 'insert-table' || action === 'insert-chart' || action === 'insert-mermaid' || action === 'insert-svg')) {
+      consumeFence(replace => runAction(action, { replace }))
+      return
+    }
+    consumeFence?.()
+    runAction(action)
+  }
   const onSetLayout = (layout: LayoutDef): void => { consumeFence?.(); setLayout(layout) }
   useDismiss(onClose)
   const { ref, left, top } = useClamped(x, y)

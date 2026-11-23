@@ -19,6 +19,8 @@ import { VERB_INVENTORY, CLI_VERBS } from '../src/main/agent-inventory.ts'
 import { USAGE } from '../src/main/setup-cli.ts'
 import { runTalkWeaverSettings } from '../src/main/settings-cli.ts'
 import { readSkillMetadata } from '../src/main/agent-skill/skill-source.ts'
+import { buildHandoffPrompt } from '../src/shared/handoff-prompt.ts'
+import { readOutlineSlides, slidePointLines } from '../src/shared/feedback-accept.ts'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
@@ -72,6 +74,69 @@ const omissions = notInSkill(join(root, 'resources', 'agent-skill', 'not-in-skil
 
 // 1. the real skill covers the real inventory
 assert.deepEqual(coverageProblems(built, VERB_INVENTORY, omissions), [])
+
+// ADR-0045: each code in the Slide tab's new bundles needs an example in the packaged skill.
+const inspectorReferences = ['content-formats.md', 'layout-and-object-chooser.md']
+  .map(name => readFileSync(join(built, 'references', name), 'utf8')).join('\n')
+const inspectorCodes = [
+  'titletop', 'sidebar', 'split=30', 'split=35', 'split=40', 'split=50', 'notitle', 'title=show',
+  'statement-sidebar=on', 'statement-sidebar=off', 'titlelook=default', 'titlelook=tab',
+  'titlelook-tone=strong', 'titlelook-tone=soft', 'titlelook=kicker', 'titlelook=label',
+  'titlelook=tab-strip', 'titlelook=intro-then-none', 'font-title=xs', 'font-title=s',
+  'font-title=l', 'font-title=xl', 'title-icon=above', 'icon=lucide:list', 'icon=lucide:hammer',
+  'list', 'plainlist', 'iconlist', 'iconlist=list', 'iconlist=boxes', 'iconrow', 'logolist', 'annotated',
+  'numbered', 'numbered=plain', 'numbered=styled', 'icons=top', 'icons=all', 'icons=off',
+  'font-body=xs', 'font-body=s', 'font-body=l', 'font-body=xl', 'image=left', 'image=right',
+  'table-header=off', 'table-columns=off', 'table-first-column=off', 'section-colour=amber',
+  'section-colour=blue', 'section-colour=deep-blue', 'section-colour=light', 'section-colour=light-amber',
+  'contents', 'grid-zoom', 'grid-linear', 'carousel'
+]
+for (const code of inspectorCodes) assert.ok(inspectorReferences.includes(`{${code}}`), `Slide tab example missing for {${code}}`)
+assert.match(inspectorReferences, /Change only the named aspect, keep the id line/)
+{
+  const reference = readFileSync(join(built, 'references', 'sketches-and-scratchpad.md'), 'utf8')
+  assert.match(reference, /A sketch request never edits the talk file/)
+  assert.match(reference, /As marked/)
+  const scratch = { kind: 'sketch', title: 'Garden sketch', file: '/example/scratchpad/garden.md', folder: '/example/scratchpad' }
+  const handoff = { path: '/example/outline.md', scratch }
+  for (const aspect of ['sketch', 'split', 'scratch']) {
+    const prompt = buildHandoffPrompt(aspect, handoff, 'My wish')
+    assert.match(prompt, /garden\.md/)
+    assert.match(prompt, /Do not edit the talk file/)
+    assert.match(prompt, /My wish/)
+    assert.doesNotMatch(prompt, /edit the talk’s Markdown file directly/)
+  }
+  const split = buildHandoffPrompt('split', handoff, '')
+  assert.match(split, /## .*### /)
+  const picked = buildHandoffPrompt('scratch', { ...handoff, scratch: { ...scratch, kind: 'snapshot',
+    file: undefined, markdown: '### A picked slide' } }, '')
+  assert.match(picked, /Write a new Markdown sketch/)
+  assert.match(picked, /### A picked slide/)
+}
+{
+  const source = { path: '/example/outline.md', slide: { title: '**Three priorities**', section: 'The garden',
+    line: 23, number: 6, current: 'On top', points: [] } }
+  assert.match(buildHandoffPrompt('title', source, ''), /This slide has no id. Find it by its saved heading “\*\*Three priorities\*\*”, in the section “The garden”, at line 23/)
+  assert.match(buildHandoffPrompt('title', { ...source, slide: { ...source.slide, id: 'p4k2m' } }, ''), /id p4k2m; currently slide 6/)
+}
+{
+  const secret = 'PRIVATE: client fee is 40k'
+  const read = readOutlineSlides([
+    '## Garden meeting', '', '### Three priorities', '{id=p1}', '',
+    '- Visible first point', '', ':::notes', '- ' + secret, ':::', '', '2. Visible second point', ''
+  ].join('\n'))
+  const slide = read.slides.find(candidate => candidate.id === 'p1')
+  const points = slidePointLines(read, slide)
+  assert.deepEqual(points, [{ line: 5, text: 'Visible first point' }, { line: 11, text: 'Visible second point' }],
+    'Icons gets authored point rows, with original source indexes and no speaker notes')
+  const source = { path: '/example/outline.md', slide: { id: slide.id, title: 'Three priorities', section: 'Garden meeting',
+    line: slide.line, number: 2, current: 'On top', points: points.map(point => point.text) } }
+  for (const aspect of ['design', 'title', 'points', 'icons', 'picture', 'table', 'colour', 'more', 'Chart', 'talkdesign']) {
+    const prompt = buildHandoffPrompt(aspect, aspect === 'talkdesign' ? { path: source.path } : source, '')
+    assert.ok(!prompt.includes(secret), `${aspect} excludes private notes`)
+    if (aspect === 'points' || aspect === 'icons') assert.match(prompt, /Visible first point/)
+  }
+}
 
 // 2. a missing verb fails and is named; so does a stale one; generated commands.md does not count
 {

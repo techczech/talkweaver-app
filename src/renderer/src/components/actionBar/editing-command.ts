@@ -1,3 +1,4 @@
+import { isolateHistory } from '@codemirror/commands'
 import type { EditorView } from '@codemirror/view'
 import { insertNewSlide, toggleList } from './editing.ts'
 import { runLineCommand } from '../../extensions/objectBlocks/field.ts'
@@ -17,7 +18,11 @@ export function runActionBarEditing(view: EditorView, action: 'new-slide' | 'bul
       const result = toggleList(text, selection.from, selection.to, action === 'bulleted-list' ? 'bullet' : 'numbered')
       const trailing = text.length - result.to
       const insert = result.text.slice(result.from, result.text.length - trailing)
-      target.dispatch({ changes: { from: result.from, to: result.to, insert }, selection: { anchor: result.from, head: result.from + insert.length } })
+      target.dispatch({
+        changes: { from: result.from, to: result.to, insert },
+        selection: { anchor: result.from + insert.length },
+        annotations: isolateHistory.of('full')
+      })
       return true
     })
   }

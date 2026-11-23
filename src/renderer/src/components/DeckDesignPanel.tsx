@@ -17,6 +17,7 @@ import { parseFrontmatterPairs, type FrontmatterEdit } from '../../../shared/fro
 
 interface Props {
   isOpen: boolean
+  page?: 'details' | 'design'
   outlineContent: string
   activeTalk: { title: string; outlinePath: string } | null
   /** The frontmatter edits to make. The host applies them to the talk's text as it stands (the
@@ -34,7 +35,7 @@ function haystack(groupLabel: string, field: SurfaceFieldModel): string {
   return `${groupLabel} ${field.key} ${field.aliases.join(' ')} ${field.label} ${field.explanation} ${choices}`.toLowerCase()
 }
 
-export default function DeckDesignPanel({ isOpen, outlineContent, activeTalk, onSave }: Props) {
+export default function DeckDesignPanel({ isOpen, outlineContent, activeTalk, onSave, page }: Props) {
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState<Record<string, string>>({})
   const [baseline, setBaseline] = useState<Record<string, string>>({})
@@ -212,9 +213,9 @@ export default function DeckDesignPanel({ isOpen, outlineContent, activeTalk, on
   )
 
   {
-    const detailGroups = visibleGroups.map((group) => ({ group, fields: group.readOnly ? [] : group.fields.filter((field) => detailsKeys.has(field.key)) }))
+    const detailGroups = visibleGroups.map((group) => ({ group, fields: group.readOnly || page === 'design' ? [] : group.fields.filter((field) => detailsKeys.has(field.key) || ['prework', 'postwork'].includes(field.key)) }))
     // The keys TalkWeaver manages (a read-only group) are listed under Advanced, with what removing each one costs.
-    const designGroups = visibleGroups.map((group) => ({ group, fields: group.readOnly ? [] : group.fields.filter((field) => !detailsKeys.has(field.key)) }))
+    const designGroups = visibleGroups.map((group) => ({ group, fields: group.readOnly || page === 'details' ? [] : group.fields.filter((field) => !detailsKeys.has(field.key) && !['prework', 'postwork', ...(page ? ['palette', 'title_look', 'title_look_tone'] : [])].includes(field.key)) }))
     const hasDetails = detailGroups.some((entry) => entry.fields.length > 0)
     const hasDesign = designGroups.some((entry) => entry.fields.length > 0)
     return (
@@ -239,7 +240,7 @@ export default function DeckDesignPanel({ isOpen, outlineContent, activeTalk, on
             </div>
           )}
           {visibleGroups.length === 0 && <div style={S.empty}>No talk design options match “{query}”.</div>}
-          {unknownBlock}
+          {page !== 'details' && unknownBlock}
         </div>
         {saveFooter}
       </div>

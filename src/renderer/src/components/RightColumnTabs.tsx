@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { X, SlidersHorizontal, Rows3, BookOpen, Image as ImageIcon, GraduationCap, Inbox, FileText, Sparkles, type LucideIcon } from 'lucide-react'
+import { X, Ellipsis, SlidersHorizontal, Rows3, BookOpen, Image as ImageIcon, GraduationCap, Inbox, FileText, Sparkles, Archive, type LucideIcon } from 'lucide-react'
+import type { SlideTabView } from '../../../shared/workspace-view'
 import { GUIDE_TEXT, rightColumnTabs, type RightColumnTab } from '../../../shared/guide'
 
 // The right sidebar's tab row (house rules R11a, R18): Inspector (the default), Strip, Talk (the talk's details and design), then Guide, Research,
@@ -10,25 +11,31 @@ import { GUIDE_TEXT, rightColumnTabs, type RightColumnTab } from '../../../share
 // tooltip. The row measures itself, so the switch happens where the words really stop fitting, not at a guessed width.
 
 const LABELS: Record<RightColumnTab, string> = {
-  inspector: 'Slide', slides: 'Strip', talk: 'Talk', guide: GUIDE_TEXT.button, research: 'Research', images: 'Images', feedback: 'Feedback', 'whats-new': 'What’s new'
+  inspector: 'Slide', slides: 'Strip', talk: 'Talk', scratchpad: 'Scratchpad', guide: GUIDE_TEXT.button, research: 'Research', images: 'Images', feedback: 'Feedback', 'whats-new': 'What’s new'
 }
 const ICONS: Record<RightColumnTab, LucideIcon> = {
-  inspector: SlidersHorizontal, slides: Rows3, talk: FileText, guide: GraduationCap, research: BookOpen, images: ImageIcon, feedback: Inbox, 'whats-new': Sparkles
+  inspector: SlidersHorizontal, slides: Rows3, talk: FileText, scratchpad: Archive, guide: GraduationCap, research: BookOpen, images: ImageIcon, feedback: Inbox, 'whats-new': Sparkles
 }
 
-export default function RightColumnTabs({ guideUp, whatsNewUp = false, hasTalk, shared = false, active, onSelect, onCloseGuide, onCloseWhatsNew }: {
+export default function RightColumnTabs({ guideUp, whatsNewUp = false, hasTalk, shared = false, scratchpad = false, active, onSelect, onCloseGuide, onCloseWhatsNew, slideTabView, onChooseSlideTabView, onDismissPanelOptions }: {
   guideUp: boolean
   whatsNewUp?: boolean
   hasTalk: boolean
   shared?: boolean
+  scratchpad?: boolean
   active: RightColumnTab
   onSelect: (tab: RightColumnTab) => void
+  slideTabView?: SlideTabView
+  onChooseSlideTabView?: (view: SlideTabView) => void
+  onDismissPanelOptions?: () => void
   onCloseGuide: () => void
   onCloseWhatsNew?: () => void
 }) {
-  const tabs = rightColumnTabs({ guideUp, whatsNewUp, hasTalk, shared })
+  const tabs = rightColumnTabs({ guideUp, whatsNewUp, hasTalk, shared, scratchpad })
   const rowRef = useRef<HTMLDivElement>(null)
   const fullWidth = useRef<number | null>(null)
+  const [options, setOptions] = useState(false)
+  const optionsButton = useRef<HTMLButtonElement>(null)
   const [compact, setCompact] = useState(false)
   const tabKey = tabs.join('|')
   // A new set of tabs is measured afresh with every word showing.
@@ -73,6 +80,24 @@ export default function RightColumnTabs({ guideUp, whatsNewUp = false, hasTalk, 
           </div>
         )
       })}
+      {slideTabView && <div className="tw-right-panel-options" onKeyDown={event => {
+        if (!options || event.key !== 'Escape' || event.nativeEvent.isComposing ||
+            event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+        event.preventDefault()
+        event.stopPropagation()
+        setOptions(false)
+        onDismissPanelOptions?.()
+        optionsButton.current?.focus()
+      }}>
+        <button ref={optionsButton} type="button" className="toolbar-btn" aria-label="Panel options" aria-expanded={options} onClick={event => {
+          event.currentTarget.focus()
+          setOptions(!options)
+        }}><Ellipsis size={17} /></button>
+        {options && <div className="tw-right-panel-menu">{(['pages', 'list'] as const).map(view =>
+          <button type="button" key={view} className="toolbar-btn" aria-pressed={slideTabView === view} onClick={() => { onChooseSlideTabView?.(view); setOptions(false) }}>
+            {view === 'pages' ? 'Pages' : 'One long list'}
+          </button>)}</div>}
+      </div>}
     </div>
   )
 }

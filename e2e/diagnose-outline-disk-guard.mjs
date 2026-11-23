@@ -2,7 +2,7 @@
 // Open a talk, change its outline file from outside the app (as another TalkWeaver on a shared cloud-synced
 // folder would), and check:
 //   (O) the app's own saves never raise the bar;
-//   (B) an independent outside change raises the bar and joins the editor without a dialog;
+//   (B) an independent outside change raises the bar and waits for Keep the changes;
 //   (S) conflicting editor and disk bytes are kept until the author chooses a merge result;
 //   (R) choosing the disk slide adopts it, with the old editor and disk bytes retained in recovery;
 //   (K) choosing the editor's slide writes it alongside independent disk edits;
@@ -186,9 +186,12 @@ try {
   const barAfter = await waitFor(barVisible, 2000)
   const text1 = await barText()
   if (process.env.TW_E2E_SHOT && barAfter !== null) await page.screenshot({ path: process.env.TW_E2E_SHOT })
+  await review().waitFor()
+  const unchangedBeforeChoice = (await editorText()) !== theirs && disk() === theirs
+  await review().getByRole('button', { name: 'Keep the changes', exact: true }).click()
   const adopted = await waitFor(async () => (await editorText()) === theirs, 4000)
-  record('an independent disk edit raises the bar and is adopted without opening conflict review',
-    barAfter !== null && /Disk edits are waiting to be merged.*Review merge/.test(text1) && adopted !== null && !(await review().isVisible()),
+  record('an independent disk edit stays out of the editor until Keep the changes',
+    barAfter !== null && /Disk edits are waiting to be merged.*Review merge/.test(text1) && unchangedBeforeChoice && adopted !== null && !(await review().isVisible()),
     'bar=' + barAfter + 'ms, adopted=' + (adopted !== null) + ', text=' + text1)
 
   // (S) Both sides edited the same slide. An unresolved merge cannot overwrite the outside bytes.
@@ -238,6 +241,7 @@ try {
   renameSync(temp, OUTLINE_PATH)
   const gridBar = await waitFor(barVisible, 2000)
   const inGrid = await page.getByTestId('grid-toggle').evaluate(button => button.classList.contains('pane-btn--active'))
+  await review().getByRole('button', { name: 'Keep the changes', exact: true }).click()
   const gridAdopted = await waitFor(async () => !(await barVisible()), 3000)
   record('Grid view shows the bar for a rename-replace change within 2 s',
     gridBar !== null && inGrid && gridAdopted !== null && disk() === renamedOver, 'after ' + gridBar + 'ms, grid=' + inGrid)
@@ -356,13 +360,17 @@ try {
   record('renaming the folder that holds the open talk re-selects it: the next save lands at the new path, the old folder is not recreated',
     folderMoved !== null && savedThere !== null && folderDisk().includes('BEFOREFOLDER') && !existsSync(FOLDER_OLD) && !existsSync(join(vault, 'topic-a')) && (await activeTitle()) === FOLDER_TITLE && !(await barVisible()),
     `moved=${folderMoved !== null}, saved at new path=${savedThere !== null}, before-typing kept=${existsSync(FOLDER_NEW) && folderDisk().includes('BEFOREFOLDER')}, old recreated=${existsSync(join(vault, 'topic-a'))}, title="${await activeTitle()}", bar=${await barVisible()}`)
-  writeFileSync(FOLDER_NEW, folderDisk() + '\n### Outside after folder rename {id=fld3}\n\nOutside at the new path.\n')
+  const editedAfterMove = folderDisk() + '\n### Outside after folder rename {id=fld3}\n\nOutside at the new path.\n'
+  writeFileSync(FOLDER_NEW, editedAfterMove)
   const guardedThere = await waitFor(barVisible, 2000)
-  record('after the folder rename the talk is guarded at its new path (an outside change raises the bar)',
-    guardedThere !== null && editorAfter?.includes('AFTERFOLDER'), `bar after ${guardedThere}ms`)
+  let adoptedThere = null
   if (guardedThere !== null) {
-    await waitFor(async () => !(await barVisible()), 3000)
+    await review().getByRole('button', { name: 'Keep the changes', exact: true }).click()
+    adoptedThere = await waitFor(async () => (await editorText()) === editedAfterMove && !(await barVisible()), 4000)
   }
+  record('after the folder rename the talk is guarded at its new path (an outside change raises the bar)',
+    guardedThere !== null && editorAfter?.includes('AFTERFOLDER') && adoptedThere !== null,
+    `bar after ${guardedThere}ms, adopted=${adoptedThere !== null}`)
 
   // (D) Delete the folder holding the open talk: the removed-file bar; typing is refused and kept.
   await folderAction('topic-b', 'delete')

@@ -10,9 +10,6 @@ export interface ScratchLayout {
   box: ScratchBox
 }
 
-export const DOCK_WIDTH = 560
-/** The narrowest window that can dock the panel and still leave the editor its share (R17): below it the panel floats. */
-export const DOCK_MIN_WINDOW = 1700
 export const MIN_BOX = { w: 420, h: 320 } as const
 /** The panel's header stays below the window's own title bar. */
 export const TOP_INSET = 28
@@ -30,10 +27,10 @@ export function defaultLayout(viewport: { w: number; h: number }): ScratchLayout
 
 /** Keeps the box inside the window: at least the minimum size, no larger than the window, header reachable. */
 export function clampBox(box: ScratchBox, viewport: { w: number; h: number }): ScratchBox {
-  const w = Math.round(Math.min(Math.max(box.w, MIN_BOX.w), Math.max(MIN_BOX.w, viewport.w)))
-  const h = Math.round(Math.min(Math.max(box.h, MIN_BOX.h), Math.max(MIN_BOX.h, viewport.h - TOP_INSET)))
+  const w = Math.round(Math.min(Math.max(box.w, MIN_BOX.w), Math.max(0, viewport.w)))
+  const h = Math.round(Math.min(Math.max(box.h, MIN_BOX.h), Math.max(0, viewport.h - TOP_INSET)))
   const x = Math.round(Math.min(Math.max(box.x, 0), Math.max(0, viewport.w - w)))
-  const y = Math.round(Math.min(Math.max(box.y, TOP_INSET), Math.max(TOP_INSET, viewport.h - 60)))
+  const y = Math.round(Math.min(Math.max(box.y, TOP_INSET), Math.max(TOP_INSET, viewport.h - h)))
   return { x, y, w, h }
 }
 

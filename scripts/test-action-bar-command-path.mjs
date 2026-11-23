@@ -30,5 +30,15 @@ for (const id of ['bulleted-list', 'undo']) {
   assert.equal(document.activeElement, view.contentDOM, `${id} retains editor focus`)
   assert.equal(view.state.doc.toString().includes('- Alpha'), id === 'bulleted-list', `${id} changes the real CodeMirror document`)
 }
+for (const [id, marker] of [['bulleted-list', '- '], ['numbered-list', '1. ']]) {
+  runActionBarEditorCommand(commands, id)
+  const { selection, doc } = view.state
+  assert.equal(selection.main.empty, true, id + ' leaves a caret')
+  assert.equal(selection.main.head, doc.line(3).to, id + ' leaves the caret at the line end')
+  view.dispatch(view.state.replaceSelection(' Beta'))
+  assert.equal(view.state.doc.line(3).text, marker + 'Alpha Beta')
+  runActionBarEditorCommand(commands, 'undo')
+  runActionBarEditorCommand(commands, 'undo')
+}
 view.destroy()
 console.log('action bar command path: focused editor, bullet, undo passed')

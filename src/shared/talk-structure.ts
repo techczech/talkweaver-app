@@ -32,6 +32,22 @@ export function structureOf(text: string) {
   return { ...reading, nodes, lines: shape.lines, ...readOutline(text) }
 }
 
+/** The authored heading owning a 1-based source line, including a carousel pane. */
+export function nodeAtSourceLine(structure: Structure, line: number): Node | undefined {
+  for (let i = structure.nodes.length - 1; i >= 0; i--) {
+    if (structure.nodes[i].line < line) return structure.nodes[i]
+  }
+  return undefined
+}
+
+export function carouselPaneSibling(structure: Structure, pane: Node, direction: 'up' | 'down'): Node | undefined {
+  if (!pane.folded) return undefined
+  const owner = pane.ancestors.at(-1)
+  const siblings = structure.nodes.filter(node => node.folded && node.level === pane.level && node.ancestors.at(-1) === owner)
+  const index = siblings.indexOf(pane)
+  return index < 0 ? undefined : siblings[index + (direction === 'up' ? -1 : 1)]
+}
+
 function containerAt(nodes: readonly Node[], node: Node): Node {
   return node.ancestors.map(i => nodes[i]).find(parent => parent.container) ?? node
 }
