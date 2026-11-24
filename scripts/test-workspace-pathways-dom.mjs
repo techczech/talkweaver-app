@@ -52,12 +52,14 @@ const slides = titles.map((title, i) => ({
 }))
 const source = ['---', 'outline_version: 2', 'title: Garden notes',
   'auto_title_slide: false', 'auto_thanks_slide: false', '---', '', '## Garden {id=garden}',
-  ...slides.flatMap(row => ['### ' + row.title + ' {id=' + row.slide_id + '}', '', '- Garden notes', ''])
+  ...slides.flatMap(row => ['### ' + row.title + ' {id=' + row.slide_id + '}', '', '- Garden notes', '']),
+  '| Crop | Count |', '| --- | --- |', '| Beans | 12 |', ''
 ].join('\\n')
 const sets = [
   { id: 'short', name: 'Short version', slideIds: ['harvest','beds'] },
   { id: 'volunteers', name: 'For volunteers', slideIds: ['seedlings'] },
-  { id: 'empty', name: 'Empty draft', slideIds: [] }
+  { id: 'empty', name: 'Empty draft', slideIds: [] },
+  { id: 'long', name: 'For new members who have not seen the plots yet', slideIds: ['seedlings'] }
 ]
 const snapshot = paths => ({
   slides, pathways: paths.map(p => ({ ...p, present: p.slideIds.map(id => slides.find(row => row.slide_id === id)), missing: [] }))
@@ -126,6 +128,34 @@ createRoot(document.getElementById('root')).render(<WindowChrome><App /></Window
 
   await switcher.getByText('Full talk').waitFor()
   await activateSidebar()
+  await tab('Slides').click()
+  await view('Outline').click()
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'dark' })
+  const tableCell = page.locator('[data-view="outline"] .tw-obj-table tbody td').first()
+  await tableCell.waitFor()
+  const contrast = await tableCell.evaluate(cell => {
+    const luminance = colour => {
+      const [red, green, blue] = colour.match(/\d+/g).slice(0, 3).map(Number).map(channel => {
+        const srgb = channel / 255
+        return srgb <= 0.04045 ? srgb / 12.92 : ((srgb + 0.055) / 1.055) ** 2.4
+      })
+      return 0.2126 * red + 0.7152 * green + 0.0722 * blue
+    }
+    const ink = luminance(getComputedStyle(cell).color)
+    const fill = luminance(getComputedStyle(cell.closest('.tw-obj-body')).backgroundColor)
+    return (Math.max(ink, fill) + 0.05) / (Math.min(ink, fill) + 0.05)
+  })
+  const insert = page.locator('[data-sidebar] .tw-structure-insert-trigger').first()
+  await insert.waitFor()
+  const insertSize = await insert.evaluate(button => ({
+    font: getComputedStyle(button.querySelector('span')).fontSize,
+    height: getComputedStyle(button).height,
+    labelHeight: button.querySelector('span').getBoundingClientRect().height
+  }))
+  console.log(`Outline dark table contrast ${contrast.toFixed(2)}:1, Insert here ${insertSize.font} in ${insertSize.height}`)
+  assert.ok(contrast >= 4.5, 'dark Outline table body text meets 4.5:1')
+  assert.deepEqual(insertSize, { font: '11px', height: '14px', labelHeight: 11 })
+  await page.evaluate(() => { document.documentElement.dataset.theme = 'light' })
   assert.deepEqual(await page.locator('.sidebar-modes [role=tab]').evaluateAll(tabs => tabs.map(tab => tab.getAttribute('aria-label'))), ['Slides', 'Talks', 'Pathways'])
   await tab('Pathways').click()
   await page.locator('[data-sidebar] [data-pathway-dock]').waitFor()
@@ -137,6 +167,19 @@ createRoot(document.getElementById('root')).render(<WindowChrome><App /></Window
   assert.equal(await dock.getByRole('combobox', { name: 'Pathway' }).inputValue(), 'short')
   assert.deepEqual(await dock.locator('[data-pathway-row]').evaluateAll(rows => rows.map(row => row.dataset.pathwayRow)), ['harvest', 'beds'])
   assert.deepEqual(await indices(), [0, 1, 2])
+  await selectPath('Empty draft')
+  await dock.getByText('No slides yet. Drag slides here, or select them in the grid and press Add selected.').waitFor()
+  const addSelected = dock.getByRole('button', { name: 'Add selected', exact: true })
+  assert.ok(await addSelected.isDisabled())
+  const tick = grid.locator('[data-grid-tick]').first()
+  await tick.check()
+  await addSelected.click()
+  const addDialog = page.getByRole('dialog', { name: 'Add to pathway', exact: true })
+  await addDialog.getByRole('heading', { name: 'Add 1 slides in talk order' }).waitFor()
+  await addDialog.getByRole('button', { name: 'Cancel' }).click()
+  await tick.uncheck()
+  await dock.locator('button:disabled').filter({ hasText: 'Add selected' }).waitFor()
+  await selectPath('Short version')
   await dock.getByRole('button', { name: 'Present this pathway', exact: true }).click()
   await page.waitForFunction(() => window.dockPresented?.[2] === 'short')
   console.log('PASS Pathways tab and title-bar switch agree in both directions, including dock presentation')
@@ -217,6 +260,23 @@ createRoot(document.getElementById('root')).render(<WindowChrome><App /></Window
   await dock.waitFor()
   assert.equal(await tab('Pathways').getAttribute('aria-selected'), 'true')
   console.log('PASS Talk menu, keyboard shortcut and Manage pathways all open the same tab')
+
+  const longPathway = 'For new members who have not seen the plots yet'
+  await selectPath(longPathway)
+  assert.equal(await switcher.getAttribute('title'), longPathway)
+  const titleGeometry = await titleBar.evaluate(bar => {
+    const box = node => node.getBoundingClientRect()
+    const title = bar.querySelector(':scope > div:first-child > button')
+    const label = bar.querySelector('.workspace-pathway-switch .toolbar-btn-content > span')
+    const presentMenu = bar.querySelector('.toolbar-split > button:last-child')
+    return {
+      talkTitleWidth: box(title).width,
+      presentFits: box(presentMenu).right <= box(bar).right,
+      titleClearsPathway: box(title).right <= box(label.closest('button')).left
+    }
+  })
+  assert.ok(titleGeometry.talkTitleWidth >= 95 && titleGeometry.presentFits && titleGeometry.titleClearsPathway,
+    'the long pathway still leaves room for the talk title and Present menu at 1000 px: ' + JSON.stringify(titleGeometry))
 
   if (look) {
     for (const [width, height] of [[1000, 631], [1440, 900]]) {

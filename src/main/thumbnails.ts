@@ -426,7 +426,7 @@ async function renderThumbnailsInWindow(
     const cacheKey = artworkKey ? artworkKey + baseKey.replace(/^[0-9a-f]{16}-/, '') : baseKey
     const pngPath = join(cacheDir, `${cacheKey}.png`)
     const cached = existsSync(pngPath)
-    const steps = cached && opts.onRevealSteps ? await readRevealSteps(pngPath + '.steps') : undefined
+    const steps = cached && opts.onRevealSteps ? await readRevealSteps(pngPath + '.reveal-steps') : undefined
     if (cached && (!opts.onRevealSteps || steps !== undefined)) {
       if (steps !== undefined) opts.onRevealSteps?.(steps)
       result[slide.key] = pngPath
@@ -511,7 +511,7 @@ async function renderThumbnailsInWindow(
         result[item.key] = item.pngPath
         if (opts.onRevealSteps && typeof target.revealSteps === 'string' && /^\d{1,8}$/.test(target.revealSteps)) {
           opts.onRevealSteps(Number(target.revealSteps))
-          await writePicture(item.pngPath + '.steps', Buffer.from(target.revealSteps), opts.beforeWrite).catch(() => {})
+          await writePicture(item.pngPath + '.reveal-steps', Buffer.from(target.revealSteps), opts.beforeWrite).catch(() => {})
         }
         capturedThisTurn = true
 

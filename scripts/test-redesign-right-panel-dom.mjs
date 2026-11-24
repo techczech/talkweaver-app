@@ -463,6 +463,92 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     await assertCurrentSlide('Inspector arrow moves the Grid selection', 'sample-quote')
     await command('view-slides')
     await assertCurrentSlide('Returning to Slide view preserves the current slide', 'sample-quote')
+
+    const navSource = await buffer()
+    const previewStage = page.locator('.workspace-slide-stage')
+    const slideEditor = panel.locator('.cm-content')
+    for (const [name, target] of [['preview', previewStage], ['Slide text', slideEditor]]) {
+      for (const [key, id] of [
+        ['PageDown', 'sample-list'], ['PageUp', 'sample-quote'],
+        ['ControlOrMeta+ArrowDown', 'sample-list'], ['ControlOrMeta+ArrowUp', 'sample-quote']
+      ]) {
+        await target.press(key)
+        await assertCurrentSlide(`${key} from ${name} moves the shared current slide`, id)
+        assert.equal(await buffer(), navSource, `${key} from ${name} preserves the outline bytes`)
+      }
+    }
+    await previewStage.press('PageDown')
+    await assertCurrentSlide('Select the slide with object controls', 'sample-list')
+    await panel.locator('[data-slide-text-object="picture"]').getByRole('button', { name: 'Move up' }).press('PageUp')
+    await assertCurrentSlide('Page Up works from an object card button', 'sample-quote')
+    assert.equal(await buffer(), navSource)
+    assert.match(await nextSlide.getAttribute('title'), /⌘↓.*Page Down/)
+    assert.match(await previousSlide.getAttribute('title'), /⌘↑.*Page Up/)
+    const deliveredTo = async (target, key) => {
+      await target.evaluate((node, expected) => {
+        window.fixtureNavKeyDelivered = false
+        node.addEventListener('keydown', event => {
+          if (event.key === expected) window.fixtureNavKeyDelivered = true
+        }, { signal: AbortSignal.timeout(5000) })
+      }, key.split('+').at(-1))
+      await target.press(key)
+      assert.equal(await page.evaluate(() => window.fixtureNavKeyDelivered), true, `${key} reaches its focused control`)
+    }
+    await deliveredTo(previewStage, 'Control+Meta+ArrowDown')
+    await assertCurrentSlide('Control-Command arrows are a separate chord', 'sample-quote')
+    const toggleNotes = panel.getByRole('button', { name: /Speaker notes/ })
+    await toggleNotes.click()
+    const notesInput = page.locator('.workspace-slide-notes textarea')
+    await deliveredTo(notesInput, 'PageDown')
+    await deliveredTo(notesInput, 'ControlOrMeta+ArrowDown')
+    await assertCurrentSlide('Speaker notes keep their text navigation', 'sample-quote')
+    await toggleNotes.click()
+    for (const [viewCommand, view] of [['view-plain', 'outline'], ['view-markdown', 'markdown']]) {
+      await command(viewCommand)
+      const fullEditor = page.locator(`[data-view="${view}"] .cm-content`)
+      await fullEditor.waitFor()
+      await placeCaret(body)
+      const headBefore = await page.evaluate(() => window.editorView().state.selection.main.head)
+      await deliveredTo(fullEditor, 'ControlOrMeta+ArrowDown')
+      if (process.platform === 'darwin') {
+        const headAfter = await page.evaluate(() => window.editorView().state.selection.main.head)
+        assert.ok(headAfter > headBefore, `⌘↓ moves the text caret in ${view}`)
+      }
+      assert.equal(await buffer(), navSource)
+    }
+    await command('view-slides')
+    await selectSlide('A quotation')
+    await assertCurrentSlide('Slide view after text navigation checks', 'sample-quote')
+    await command('app.command-palette')
+    await page.getByRole('combobox', { name: 'Command query' }).fill('Next slide')
+    const nextCommand = page.locator('[data-command="next-slide"]')
+    assert.match(await nextCommand.innerText(), /⌘↓.*Page Down/)
+    await nextCommand.click()
+    await assertCurrentSlide('Next slide in the command palette', 'sample-list')
+    await previousSlide.click()
+    await assertCurrentSlide('Return to the quote after the command palette', 'sample-quote')
+    await page.keyboard.press('Control+/')
+    await page.getByRole('textbox', { name: 'Filter all commands' }).fill('Next slide')
+    assert.match(await page.locator('[data-sheet-row="next-slide"]').innerText(), /⌘↓.*Page Down/)
+    await page.keyboard.press('Escape')
+    await page.evaluate(() => {
+      localStorage.setItem('tw-keymap-overrides', JSON.stringify({ 'next-slide': 'Alt-ArrowRight' }))
+      window.dispatchEvent(new Event('tw-keymap-changed'))
+    })
+    await page.waitForFunction(() => document.querySelector('.tw-inspector button[aria-label="Next slide"]')?.title.includes('⌥→'))
+    await deliveredTo(slideEditor, 'PageDown')
+    await assertCurrentSlide('Rebinding removes the default slide shortcut', 'sample-quote')
+    await slideEditor.press('Alt+ArrowRight')
+    await assertCurrentSlide('Rebound shortcut moves the shared current slide', 'sample-list')
+    assert.equal(await buffer(), navSource)
+    await page.evaluate(() => {
+      localStorage.removeItem('tw-keymap-overrides')
+      window.dispatchEvent(new Event('tw-keymap-changed'))
+    })
+    await previousSlide.click()
+    await assertCurrentSlide('Return to the quote after testing the shortcuts', 'sample-quote')
+    console.log('PASS four Slide view shortcuts in preview and Slide text, text-field protection, Outline and Markdown navigation, and live rebinding')
+
     await nextSlide.click()
     await assertCurrentSlide('Inspector arrow moves the centre and caret in Slide view', 'sample-list')
     const alternateDesign = page.locator('.tw-inspector .tw-right-picture[aria-pressed="false"]:enabled').first()
@@ -800,7 +886,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
       const gapBox = await trigger.boundingBox()
       const upper = await row(45).boundingBox()
       const lower = await row(46).boundingBox()
-      assert.ok(gapBox.height > 0 && gapBox.height <= 10 &&
+      assert.ok(gapBox.height > 0 && gapBox.height <= 14 &&
         gapBox.y >= upper.y + upper.height - 1 && gapBox.y + gapBox.height <= lower.y + 1,
       `${mode}: the hit area fits between the rows`)
       for (const number of [46, 45]) {

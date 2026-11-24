@@ -34,4 +34,4 @@ export function foldChildLayoutNodes(nodes: LayoutTreeNode[], options?: { deckTr
 /** What a slide is made of, for a node of the folded tree. `lex` is the Markdown lexer. */
 export function slideLayoutInput(node: LayoutTreeNode, deckTriggerDefaults: Record<string, unknown>, lex: (lines: readonly string[]) => any[]): SlideLayoutInput
 /** The layout of the compiled slide. */
-export function finalSlideLayout(slide: SlideLayoutInput, lex: (lines: readonly string[]) => any[]): FinalSlideLayout
+export function finalSlideLayout(slide: SlideLayoutInput, lex: (lines: readonly string[]) => any[], frameImageExplicit?: boolean): FinalSlideLayout

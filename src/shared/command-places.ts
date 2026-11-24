@@ -181,6 +181,8 @@ export const COMMAND_PLACES: Readonly<Record<string, PlaceDeclaration>> = {
   'welcome-outline': NOT_BY_PLACE,
   'welcome-markdown': NOT_BY_PLACE,
   'view-slides': NOT_BY_PLACE,
+  'previous-slide': NOT_BY_PLACE,
+  'next-slide': NOT_BY_PLACE,
   'view-plain': NOT_BY_PLACE,
   'change-heading-level': NOT_BY_PLACE,
   'change-slide-layout': NOT_BY_PLACE,

@@ -25,6 +25,7 @@ import { blankHtmlComments } from '../../compiler/scripts/lib/html-comments.mjs'
 import { lexMarkdownBlocksWith, type LexedBlock } from '../../compiler/scripts/lib/03-markdown-lexer-core.mjs'
 import { classifyContentLines, parseOutlineTree, type OutlineTreeNode } from '../../compiler/scripts/lib/14-outline-tree.mjs'
 import { authoredLayoutDecision, childFoldKind, deckTriggerDefaultsFrom, finalSlideLayout, foldChildLayoutNodes, slideLayoutInput, type FinalSlideLayout } from '../../compiler/scripts/lib/authored-layout.mjs'
+import { hasExplicitFrameImage } from '../../compiler/scripts/lib/11-frame.mjs'
 import { headingBraceGroups, parseHeadingAttrs } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
 import { tokenizeTriggerBody } from '../../compiler/scripts/lib/trigger-tokenizer.mjs'
 import { parseSimpleYaml } from '../../compiler/scripts/lib/simple-yaml.mjs'
@@ -289,7 +290,8 @@ export function compilerFacts(text: string, normalise: IconKeyNormaliser = edito
   const { body, fmEnd } = outlineCompilerBody(text, blankHtmlComments)
   const tree = parseOutlineTree(body)
   // The front matter's `triggers:` defaults, read as the compiler's adapter reads them.
-  const deckDefaults = fmEnd > 0 ? deckTriggerDefaultsFrom(parseSimpleYaml(String(text ?? '').slice(3, fmEnd - 4).trim()).triggers).defaults : {}
+  const meta = fmEnd > 0 ? parseSimpleYaml(String(text ?? '').slice(3, fmEnd - 4).trim()) : {}
+  const deckDefaults = deckTriggerDefaultsFrom(meta.triggers).defaults
   const straysOf = new Map<OutlineTreeNode, Array<Record<string, unknown>>>()
   const nodes: OutlineTreeNode[] = []
   const layoutLines = new Set<number>(tree.triggerLineIndexes)
@@ -356,11 +358,15 @@ export function compilerFacts(text: string, normalise: IconKeyNormaliser = edito
   const lex = (lines: readonly string[]): LexedBlock[] => slideRead(lines, normalise).blocks
   const finals = new Map<number, FinalSlideLayout>()
   const kept = new Map<number, number[]>()
-  const drawn = (list: readonly OutlineTreeNode[]): void => {
+  const sections = meta.sections as Record<string, unknown> | undefined
+  const drawn = (list: readonly OutlineTreeNode[], section = ''): void => {
     for (const node of list) {
       kept.set(node.sourceLine - 1, node.children.map((child) => child.sourceLine - 1))
-      finals.set(node.sourceLine - 1, finalSlideLayout(slideLayoutInput(node, deckDefaults, lex), lex))
-      drawn(node.children)
+      const owner = node.level === 2 ? node.title : section
+      const slide = slideLayoutInput(node, deckDefaults, lex)
+      const frameImageExplicit = hasExplicitFrameImage(slide.attrs, sections?.[owner], meta.defaults)
+      finals.set(node.sourceLine - 1, finalSlideLayout(slide, lex, frameImageExplicit))
+      drawn(node.children, owner)
     }
   }
   drawn(folded)

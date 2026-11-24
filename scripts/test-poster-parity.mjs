@@ -224,14 +224,10 @@ for (const palette of palettes) {
   const openingIcon = opening.querySelector('.tp-title .title-icon svg')
   const closingIcon = closing.querySelector('.tp-title .title-icon svg')
   assert(openingIcon, palette)
-  if (palette === 'classic' || palette === 'green') {
-    assert.equal(closingIcon, null, palette)
-  } else {
-    assert.equal(closingIcon?.outerHTML, openingIcon.outerHTML, palette)
-    assert.equal(closingIcon?.closest('.title-with-icon').dataset.titleIcon, 'above', palette)
-    const noIcon = await compileDeck(content, extraMeta)
-    assert.equal(noIcon.slides.at(-1).querySelector('.tp-title .title-icon'), null, palette)
-  }
+  assert.equal(closingIcon?.outerHTML, openingIcon.outerHTML, palette)
+  assert.equal(closingIcon?.closest('.title-with-icon').dataset.titleIcon, 'above', palette)
+  const noIcon = await compileDeck(content, extraMeta)
+  assert.equal(noIcon.slides.at(-1).querySelector('.tp-title .title-icon'), null, palette)
   assert.equal(model.palette, modelPaletteFor(palette), palette)
   assert.equal(closing.dataset.role, 'ending', palette)
   assert.equal(closing.dataset.layout, 'closing', palette)

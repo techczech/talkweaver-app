@@ -54,6 +54,7 @@
 .tw-inspector-preview-head:has(.tw-right-who):not(:has(.tw-inspector-stage)) { padding: 0 4px; }
 .tw-right-who > div { flex: 1; min-width: 0; }
 .tw-right-who strong, .tw-right-who small { display: block; overflow-wrap: anywhere; }
+.tw-right-who strong { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
 .tw-right-who small { color: var(--muted); }
 .tw-right-page { padding-bottom: 12px; }
 .tw-inspector, .tw-talk-settings { font-size: .8125rem; }

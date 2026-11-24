@@ -22,7 +22,7 @@ static napi_value ClickQuit(napi_env env, napi_callback_info info) {
     }
   }
   if(!found) { napi_throw_error(env,nullptr,"native application Quit item not found");return nullptr; }
-  // Run the selected real NSMenu item, inside this test app's process, after the inspector reply.
+  // Run the real NSMenu item on the next main-queue turn. Quit can overtake the inspector reply.
   dispatch_async(dispatch_get_main_queue(), ^{ [found performActionForItemAtIndex:index]; });
   napi_value result;napi_create_string_utf8(env,[wanted UTF8String],NAPI_AUTO_LENGTH,&result);return result;
 }

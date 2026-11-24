@@ -49,6 +49,7 @@ interface Props {
   headingLine: number | null
   onPrev: () => void
   onNext: () => void
+  navigationShortcuts?: { previous: string; next: string }
   onEdit: () => void
   onExplain: () => void
   onOpenLayoutDoctor: () => void
@@ -100,7 +101,7 @@ function triggerLineOf(outline: string, headingLine: number | null): string {
 
 export default function Inspector({
   talk, compiledSlides, outlineContent, triggerFindings, activeIndex, headingLine,
-  onPrev, onNext, onEdit, onExplain, onOpenLayoutDoctor, onCaptureEmbed, onSaveOffline, offlineSaving, onRemoveSavedView, onCommitOption, onBoardEdit, picker = null,
+  onPrev, onNext, navigationShortcuts, onEdit, onExplain, onOpenLayoutDoctor, onCaptureEmbed, onSaveOffline, offlineSaving, onRemoveSavedView, onCommitOption, onBoardEdit, picker = null,
   long = false, centrePreview = false, multiCount = 0, preview, applied, onTry, onKeep, onUndo, onTalk, onCopy, onIcon, onMarkdown, structure,
   onCropPicture, onReplacePicture, onRemovePicture, page, onPageChange
 }: Props) {
@@ -454,15 +455,19 @@ export default function Inspector({
   }, [block, headingLine, row?.image_count, outlineContent, read])
   const pictureId = pictureLine == null ? null : pooledImageOnLine(outlineContent.split('\n')[pictureLine], outlineContent, pictureLine)
 
+  const inspectorTitle = multiCount > 1 ? `${multiCount} slides selected` : model.title
+
   return (
     <aside ref={inspectorRef} className="tw-inspector" aria-label="Inspector" tabIndex={-1} onKeyDown={onKeyDown}>
       <div className="tw-inspector-preview-head">
         <div className="tw-right-who">
-          <div><strong>{multiCount > 1 ? `${multiCount} slides selected` : model.title}</strong>
+          <div><strong title={inspectorTitle}>{inspectorTitle}</strong>
             <small>{multiCount > 1 ? 'Choose one slide to see its designs' : `${section ? 'Section · slide' : 'Slide'} ${activeIndex + 1} of ${compiledSlides?.length ?? 0}${slidePlace ? ' · ' + slidePlace : ''}`}</small></div>
           {multiCount <= 1 && <>
-            <button type="button" className="toolbar-btn" onClick={onPrev} disabled={activeIndex <= 0} aria-label="Previous slide"><ChevronUp size={16} /></button>
-            <button type="button" className="toolbar-btn" onClick={onNext} disabled={activeIndex >= (compiledSlides?.length ?? 1) - 1} aria-label="Next slide"><ChevronDown size={16} /></button>
+            <button type="button" className="toolbar-btn" onClick={onPrev} disabled={activeIndex <= 0} aria-label="Previous slide"
+              title={navigationShortcuts && `Previous slide (${navigationShortcuts.previous})`}><ChevronUp size={16} /></button>
+            <button type="button" className="toolbar-btn" onClick={onNext} disabled={activeIndex >= (compiledSlides?.length ?? 1) - 1} aria-label="Next slide"
+              title={navigationShortcuts && `Next slide (${navigationShortcuts.next})`}><ChevronDown size={16} /></button>
           </>}
         </div>
         {(!centrePreview || picker) && multiCount <= 1 && <>

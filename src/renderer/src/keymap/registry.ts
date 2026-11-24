@@ -386,6 +386,8 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   surfaceCommand('view-grid', 'app.view-grid'),
   surfaceCommand('view-plain', 'app.view-plain'),
   surfaceCommand('view-markdown', 'app.view-markdown'),
+  surfaceCommand('previous-slide', 'app.previous-slide'),
+  surfaceCommand('next-slide', 'app.next-slide'),
   surfaceCommand('check-for-updates', 'app.check-for-updates'),
   surfaceCommand('whats-new', 'app.whats-new'),
   surfaceCommand('research-panel', 'app.research-panel'),

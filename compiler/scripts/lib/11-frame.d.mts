@@ -13,6 +13,7 @@ export function hasExplicitFrameTitle(
   sectionDefaults?: Record<string, unknown>,
   deckDefaults?: Record<string, unknown>
 ): boolean
+export function hasExplicitFrameImage(...sources: unknown[]): boolean
 export function resolveSlideFrame(
   slideAttrs?: Record<string, unknown>,
   sectionDefaults?: Record<string, unknown>,

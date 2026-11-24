@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { strict as assert } from 'node:assert'
+import { runInNewContext } from 'node:vm'
+import { installAuthoringRevealRuntime } from '../src/shared/authoring-reveal-runtime.ts'
 import { LAYOUTS } from '../src/shared/layout-registry/entries.ts'
 import { optionGroupsForSlide } from '../src/shared/layout-registry/options.ts'
 import * as layoutDoctor from '../src/shared/layout-doctor.ts'
@@ -83,6 +85,36 @@ assert.match(previewHtml, /\.drawer[^}]*display:\s*none\s*!important/, 'preview 
 assert.match(previewHtml, /\.focus-banner[^}]*display:\s*none\s*!important/, 'preview HTML hides fixed deck overlays')
 assert.equal((previewHtml.match(/type==='tw-step'/g) ?? []).length, 1, 'preview HTML carries one main-side step bridge')
 assert.doesNotMatch(previewHtml, /__twErrs/, 'preview HTML drops the diagnostic error trap')
+
+// The authoring badge excludes the optional final undimming press. The preview
+// navigation still needs the original deck maximum, including that press.
+for (const [units, max] of [[4, 5], [1, 1], [0, 0], [4, 4]]) {
+  const slide = { dataset: { mode: 'reveal', id: 'fixture' } }
+  const messages = []
+  const source = installAuthoringRevealRuntime(`// data-mode="reveal"
+  syncFromHash();
+  // On a cold start,
+  if (authored) state.mode = { kind: authored, step: 0 };
+  applyModeDimming();
+`)
+  runInNewContext(source, {
+    arrivalMode: () => ({ kind: 'reveal', step: 0 }),
+    applyModeDimming: () => {},
+    currentSlide: () => slide,
+    slideNoStep: () => false,
+    slideSteps: () => ({ els: Array(units), max }),
+    clampStepTo: (step, upper) => Math.min(step, upper),
+    document: { addEventListener() {} },
+    location: { href: 'about:blank#fixture' },
+    window: { parent: { postMessage: message => messages.push(message) } },
+    syncFromHash() {},
+    authored: 'reveal',
+    state: { index: 0 }
+  })
+  assert.equal(slide.dataset.twRevealSteps, String(units), 'thumbnail metadata counts presses that reveal a unit')
+  assert.equal(messages[0].revealCount, units, 'the live preview badge gets the same reveal count')
+  assert.equal(messages[0].count, max, 'preview navigation keeps the deck step limit')
+}
 
 assert.equal(typeof createSlidePreviewStore, 'function', 'preview store factory is available to the main process')
 const previewStore = createSlidePreviewStore(2)

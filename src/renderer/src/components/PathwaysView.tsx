@@ -1,3 +1,4 @@
+import { Plus } from 'lucide-react'
 import ModeBack from './ModeBack'
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PathwaySnapshot, ProjectionRow, TalkInfo } from '../../../preload/index'
@@ -152,12 +153,14 @@ export function usePathways(outlinePath: string | undefined, content: string | n
   }
 }
 
-export default function PathwaysView({ talk, model, thumbnails, docked, onBack }: {
+export default function PathwaysView({ talk, model, thumbnails, docked, onBack, canAddSelected, onAddSelected }: {
   talk: TalkInfo
   model: ReturnType<typeof usePathways>
   thumbnails: Record<string, string> | null
   docked: boolean
   onBack?: () => void
+  canAddSelected?: boolean
+  onAddSelected?: () => void
 }) {
   const { snapshot, pathway, rows, busy, error, conflictFile, dialog, adding,
     refresh, writeIds, add, present, submit, setPathwayId, setDialog, setAdding } = model
@@ -229,14 +232,21 @@ export default function PathwaysView({ talk, model, thumbnails, docked, onBack }
           {snapshot?.pathways.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
         <div className="pathway-actions"><button disabled={!snapshot} onClick={() => setDialog({ kind: 'new', name: '' })}>New</button><button disabled={!pathway} onClick={() => setDialog({ kind: 'rename', name: pathway?.name ?? '' })}>Rename</button><button disabled={!pathway} onClick={() => setDialog({ kind: 'delete', name: pathway?.name ?? '' })}>Delete</button></div>
-        <div className="pathway-actions"><span>{pathway ? ids.length : rows.length} slides</span><button aria-pressed={!matrix} onClick={() => setMatrix(false)}>List</button><button aria-pressed={matrix} onClick={() => setMatrix(true)}>Matrix</button></div>
+        <div className="pathway-actions">
+          <span>{pathway ? ids.length : rows.length} slides</span>
+          <button aria-pressed={!matrix} onClick={() => setMatrix(false)}>List</button>
+          <button aria-pressed={matrix} onClick={() => setMatrix(true)}>Matrix</button>
+          <button type="button" className="toolbar-btn" disabled={!canAddSelected} onClick={onAddSelected}>
+            <span className="toolbar-btn-content"><Plus size={15} aria-hidden /><span>Add selected</span></span>
+          </button>
+        </div>
       </header>
       {error && <p role="alert" data-pathway-error>{error} {conflictFile && <button onClick={() => { void window.tw.shell.showInFolder(conflictFile) }}>Show in Finder</button>} <button onClick={refresh}>Try again</button></p>}
       {missing.length > 0 && <p role="status" data-pathway-warning>{missing.length} slides no longer in the talk. <button onClick={() => pathway && writeIds(pathway.id, removePathwaySlides)}>Drop missing</button></p>}
       {matrix ? <div className="pathway-matrix-scroll"><table data-pathway-matrix><thead><tr><th>Talk order</th>{snapshot?.pathways.map(p => <th key={p.id}><button onClick={() => setPathwayId(p.id)} aria-pressed={pathway?.id === p.id}>{p.name}</button></th>)}</tr></thead><tbody>
         {[...rows.map(r => r.slide_id), ...new Set(snapshot?.pathways.flatMap(p => p.slideIds.filter(id => !byId.has(id))) ?? [])].map(id => <tr key={id}><td>{title(id)}{snapshot?.pathways.some(p => p.missing.includes(id)) && ' — missing'}</td>{snapshot?.pathways.map(p => <td key={p.id}><button aria-label={`${p.slideIds.includes(id) ? 'Remove' : 'Add'} ${title(id)} ${p.slideIds.includes(id) ? 'from' : 'to'} ${p.name}`} onClick={() => writeIds(p.id, before => before.includes(id) ? removePathwaySlides(before, [id]) : addPathwaySlides(before, [id], rows.map(r => r.slide_id)))}>{p.slideIds.includes(id) ? p.slideIds.indexOf(id) + 1 : '+'}</button></td>)}</tr>)}
       </tbody></table></div> : <div className="pathway-list" data-pathway-list onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setMarker(null) }}>
-        {!ids.length && <p>{pathway ? 'Empty. Drag slides here, or select slides and use Add to pathway.' : 'Choose or create a pathway to edit its slides.'}</p>}
+        {!ids.length && <p>{pathway ? 'No slides yet. Drag slides here, or select them in the grid and press Add selected.' : 'Choose or create a pathway to edit its slides.'}</p>}
         {ids.map((id, i) => <Fragment key={id}>
           {marker === i && <div className="pathway-insertion-marker" data-pathway-insertion-marker />}
           <div className={`pathway-row${selection.focusedIndex === i ? ' pathway-row--focused' : ''}`} data-pathway-row={id} role="listitem" tabIndex={0} draggable
@@ -253,7 +263,7 @@ export default function PathwaysView({ talk, model, thumbnails, docked, onBack }
             }}
             onDragStart={e => { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData(LIST_DRAG, JSON.stringify({ outlinePath: talk.outlinePath, pathwayId: pathway?.id, slideIds: [id] })) }} onDragEnd={() => setMarker(null)} {...dropProps(i)}>
             <span className="pathway-grip" aria-hidden>⠿</span><span className="pathway-number">{i + 1}</span>
-            {image(id) && <img src={image(id)} alt="" />}<span className="pathway-row-title">{title(id)}{missing.includes(id) && <small>Slide removed</small>}</span>
+            {image(id) && <img src={image(id)} alt="" />}<span className="pathway-row-title"><span title={title(id)}>{title(id)}</span>{missing.includes(id) && <small>Slide removed</small>}</span>
             <button aria-label={`Remove ${title(id)} from pathway`} onClick={e => { e.stopPropagation(); if (pathway) writeIds(pathway.id, before => removePathwaySlides(before, [id])) }}>×</button>
           </div>
         </Fragment>)}

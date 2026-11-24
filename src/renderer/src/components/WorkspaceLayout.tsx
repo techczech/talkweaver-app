@@ -484,6 +484,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     : toolbarWidth >= TOOLBAR_LABELS_FROM_PX ? 'compact' : toolbarWidth >= TOOLBAR_ICONS_FROM_PX ? 'icons' : 'tight'
   // Grid and Pathways use the current slide shared with the Inspector.
   const pathwaysMode = !!leftPathwaysHost
+  const [hasPathwayGridSelection, setHasPathwayGridSelection] = useState(false)
   const [gridMode, setGridMode] = useState<boolean>(false)
   const onNeedRoomRef = useRef(onNeedRoom)
   onNeedRoomRef.current = onNeedRoom
@@ -895,6 +896,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const [focusOpen, setFocusOpen] = useState(false)
   const focusSlide = focusOpen ? activeSlide : null
   const scopeOnSlide = !gridMode && paneState !== 'strip' && textView === 'slide'
+  const slideNavigationActive = !!activeTalk && scopeOnSlide && focusSlide === null
+  const slideNavigationRef = useRef({ active: false, scopedText: false })
   const markdownView = textView === 'markdown' && !gridMode && paneState !== 'strip' && focusSlide === null
   const [focusRange, setFocusRange] = useState<FocusRange | null>(null)
   const focusSlideRef = useRef<number | null>(focusSlide)
@@ -2218,6 +2221,22 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         e.stopPropagation()
         runRegisteredCommand('new-slide')
         return
+      }
+      if (slideNavigationRef.current.active && !overlayOpenRef.current && !e.defaultPrevented && !e.isComposing) {
+        const target = e.target
+        // Talk rows have their own folder navigation. Of the text fields, only the scoped
+        // Slide text editor uses these keys to leave the current slide.
+        const editingText = target instanceof HTMLElement &&
+          (target.isContentEditable || target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement)
+        const scopedText = slideNavigationRef.current.scopedText &&
+          target instanceof HTMLElement && target.matches('.workspace-slide-input .cm-content')
+        if (!(target instanceof HTMLElement && target.closest('.tl-panel')) &&
+            (!editingText || (scopedText && !isTypingKey(e)))) {
+          for (const id of ['previous-slide', 'next-slide'] as const) {
+            if (e.metaKey && e.ctrlKey && !effectiveKeys(id).split('-').includes('Ctrl')) continue
+            if (surfaceKey(e, id)) { e.preventDefault(); e.stopPropagation(); runRegisteredCommand(id); return }
+          }
+        }
       }
       for (const id of ['new-section', 'new-subsection', 'present-from-here', 'present-presenter'] as const) {
         if (surfaceKey(e, id) && activeTalkRef.current && !(isTypingTarget(e.target) && isTypingKey(e))) {
@@ -4071,6 +4090,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [scopeOnSlide, currentSlideLine, scopeKey, outlineOwner]
   )
+  slideNavigationRef.current = { active: slideNavigationActive, scopedText: viewScope !== null }
   const emptySlide = useMemo(
     () => scopeOnSlide && isEmptyAuthoringSlide(extractSlideBlock(outlineContent, currentSlideLine)),
     [scopeOnSlide, outlineContent, currentSlideLine]
@@ -4387,6 +4407,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     'change-slide-layout': () => openMarginMenuAtCaret('layout'),
     'view-markdown': () => selectWorkspaceView('markdown'),
     'view-slides': selectSlides,
+    'previous-slide': () => { if (slideNavigationActive) stepInspector(-1) },
+    'next-slide': () => { if (slideNavigationActive) stepInspector(1) },
     'view-strip': selectStrip,
     'view-grid': () => selectWorkspaceView('grid'),
     'outline-collapse-all': () => { if (collapseKey) { publishOutline(collapseKey, outlineContentRef.current); collapseAllSections(collapseKey) } },
@@ -4952,6 +4974,10 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const subsection = activeRow?.subsection && compiledSlides?.find(row => row.role === 'subsection-title' && row.subsection === activeRow.subsection)
   const slidePlace = [readableSectionLabel(compiledSlides, activeSlide), subsection ? plainInlineText(subsection.nav_title || subsection.title) : ''].filter(Boolean).join(' › ')
   const sourceRecovery = !activeRow && failedCompilePath === activeTalk.outlinePath
+  const navigationShortcuts = slideNavigationActive ? {
+    previous: liveShortcutLabel('app.previous-slide'),
+    next: liveShortcutLabel('app.next-slide')
+  } : undefined
   const editorColumn = scopeOnSlide ? (
     <WorkspaceSlideView
       key={activeTalk.outlinePath} path={activeTalk.outlinePath} outline={ownsOutline ? outlineContent : ''} row={activeRow}
@@ -4970,6 +4996,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         next: pathwayPosition >= 0 && pathwayPosition + 1 < pathwayOrder.length ? () => handleSelectSlide(pathwayOrder[pathwayPosition + 1]) : undefined,
         empty: !!compiledSlides && pathwayOrder.length === 0
       }}
+      navigationShortcuts={navigationShortcuts}
       notes={speakerNotes} notesKey={slideNoteKey} notesOpen={notesVisibility?.row === slideNoteKey ? notesVisibility.open : speakerNotes.length > 0}
       onToggleNotes={() => runRegisteredCommand('edit-speaker-notes')} onNotesChange={editSlideNotes}
       onNotesEngaged={() => onEditorEngaged?.(activeTalk.outlinePath)}
@@ -5070,9 +5097,10 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   selectSlideRef.current = handleSelectSlide
 
   function stepInspector(direction: -1 | 1): void {
+    const index = activeSlideRef.current
     const next = scopeOnSlide && pathwayOrder
-      ? pathwayOrder[pathwayOrder.indexOf(activeSlide) + direction]
-      : navigateInspectorSlide(activeSlide, direction, compiledSlides?.length ?? 0)
+      ? pathwayOrder[pathwayOrder.indexOf(index) + direction]
+      : navigateInspectorSlide(index, direction, compiledSlidesRef.current?.length ?? 0)
     if (next !== undefined) handleSelectSlide(next)
   }
 
@@ -5139,6 +5167,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         headingLine={inspectorLine}
         onPrev={() => stepInspector(-1)}
         onNext={() => stepInspector(1)}
+        navigationShortcuts={navigationShortcuts}
         onEdit={() => handleEditSlide(activeSlide)}
         onExplain={() => setExplainIndex(activeSlide)}
         onOpenLayoutDoctor={() => runRegisteredCommand('layout-doctor')}
@@ -5418,6 +5447,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         slideOrder={pathwaysMode ? undefined : pathwayOrder}
         pathwayIds={pathwaysMode ? selectedPathway?.slideIds : undefined}
         onAddToPathway={pathwaysMode ? pathways.setAdding : undefined}
+        onHasSelectionChange={pathwaysMode ? setHasPathwayGridSelection : undefined}
         searchOnDemand
         selection={pathwaysMode || pathwayOrder ? undefined : selection}
         onMakeSection={pathwaysMode || pathwayOrder ? undefined : structureActions.group}
@@ -5485,7 +5515,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       {createPortal(editorElement, editorHostRef.current)}
       {leftPreviewsHost && paneState !== 'strip' && createPortal(slidesPanel, leftPreviewsHost)}
       {createPortal(<PathwaysView key={activeTalk.outlinePath} talk={activeTalk} model={pathways} thumbnails={thumbnails}
-        docked={pathwaysMode} onBack={backFromPathways} />, leftPathwaysHost ?? document.body)}
+        docked={pathwaysMode} onBack={backFromPathways} canAddSelected={gridMode && hasPathwayGridSelection}
+        onAddSelected={() => runRegisteredCommand('add-to-pathway')} />, leftPathwaysHost ?? document.body)}
       {publishing && (
         // Non-modal: a corner status toast that NEVER blocks the app — pointer-events off so you can
         // launch Presenter view, edit, etc. while the deploy runs in the background.
@@ -5520,7 +5551,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         <ToolbarMenu icon="design" label={plainTalkTitle(activeTalk.title)} title="Talk menu" items={toolbarItems('deck')} />
         {pathways.snapshot?.pathways.length ? (
           <div className="workspace-pathway-switch">
-            <ToolbarMenu icon="slides" label={selectedPathway?.name ?? 'Full talk'} title={`Pathway: ${selectedPathway?.name ?? 'Full talk'}`}
+            <ToolbarMenu icon="slides" label={selectedPathway?.name ?? 'Full talk'} title={selectedPathway?.name ?? 'Full talk'}
               items={[
                 { icon: 'slides', label: 'Full talk', checked: !selectedPathway, onClick: () => pathways.setPathwayId(null) },
                 ...pathways.snapshot.pathways.map(pathway => ({
@@ -6002,6 +6033,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
           id: command.id,
           title: command.label,
           hint: liveCommandShortcutLabel(command),
+          disabled: (command.id === 'previous-slide' || command.id === 'next-slide') && !slideNavigationActive,
           group: command.taskGroup ?? undefined,
           subgroup: command.subgroup ?? undefined,
           keywords: command.palette.keywords,

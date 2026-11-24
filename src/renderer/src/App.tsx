@@ -1,4 +1,4 @@
-import { GalleryThumbnails, Layers, LayoutGrid, Library, ListTree } from 'lucide-react'
+import { GalleryThumbnails, LayoutGrid, Library, ListTree, Route } from 'lucide-react'
 import { NARROW_WINDOW_PX } from '../../shared/window-widths'
 import { flushSync } from 'react-dom'
 import ManagementLayer from './components/vault-gallery/ManagementLayer'
@@ -1163,7 +1163,7 @@ function MainApp() {
                     ? window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail: 'pathways' }))
                     : setSidebarMode(m.id)}
                 >
-                  {m.id === 'slides' ? <GalleryThumbnails size={15} /> : m.id === 'talks' ? <Library size={15} /> : <Layers size={15} />}
+                  {m.id === 'slides' ? <GalleryThumbnails size={15} /> : m.id === 'talks' ? <Library size={15} /> : <Route size={15} />}
                   <span>{m.label}</span>
                 </button>
               ))}

@@ -371,16 +371,22 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     check(content.groups.every(([name, count]) => { const g = VIEW.subgroups.find((x) => x.name === name); return count === `${g.tried} of ${g.total}` }), 'each sub-group shows its own count')
     const firstOpen = VIEW.subgroups.find((g) => g.tried < g.total).name
     check(content.groups.filter((g) => g[2] === 'true').map((g) => g[0]).join() === firstOpen, `the first sub-group with something left starts open (${firstOpen})`)
-    const next = content.rows.find((r) => r[0] === 'presenter.next')
-    check(!next || (next[1] === 'true' && next[2] === '→ Space +3'), `Next is ticked with "→ Space +3" (${JSON.stringify(next)})`)
     check(content.rows.some((r) => r[1] === 'false'), 'untried rows are drawn untried')
-    for (const name of ['lucide-graduation-cap', 'lucide-x', 'lucide-presentation', 'lucide-check', 'lucide-radio']) check(content.icons.includes(name), `lucide icon ${name}`)
-    // Open a sub-group, then main pushes a tick: the row ticks and flashes, counts and chip follow.
-    await page.click('#twguide-col .twg-cg[data-subgroup="Move through slides"] .twg-cg-h')
-    await settle(page)
+    for (const name of ['lucide-graduation-cap', 'lucide-x', 'lucide-presentation', 'lucide-radio']) check(content.icons.includes(name), `lucide icon ${name}`)
+    // The default open group may have no tried rows. Open the group containing the known ticks.
+    const movement = page.locator('#twguide-col .twg-cg[data-subgroup="Move through slides"] .twg-cg-h')
+    if (await movement.getAttribute('aria-expanded') !== 'true') await movement.click()
+    const next = page.locator('#twguide-col [data-command-row="presenter.next"]')
+    const overview = page.locator('#twguide-col [data-command-row="presenter.overview"]')
+    check(await next.getAttribute('data-ticked') === 'true' &&
+      (await next.locator('kbd').allTextContents()).join(' ') === '→ Space +3', 'Next is ticked with "→ Space +3"')
+    check(await next.locator('.twg-tick svg.lucide-check').count() === 1, 'Next has a checkmark')
+    check(await overview.getAttribute('data-ticked') === 'false' &&
+      await overview.locator('.twg-tick svg').count() === 0, 'Outline starts without a checkmark')
+    // Main pushes a tick. The row ticks and flashes, and the counts and chip follow.
     const ticked = viewWith([...TRIED, 'presenter.overview'])
     await page.evaluate((reply) => window.__push('guide:present-chapter-changed', reply), { view: ticked, open: true })
-    await settle(page, 150)
+    await overview.locator('.twg-tick svg.lucide-check').waitFor()
     const after = await page.evaluate(() => ({
       row: document.querySelector('#twguide-col [data-command-row="presenter.overview"]')?.className || '',
       ticked: document.querySelector('#twguide-col [data-command-row="presenter.overview"]')?.dataset.ticked,

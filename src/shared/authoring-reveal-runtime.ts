@@ -15,11 +15,14 @@ const RUNTIME = `  // TalkWeaver authoring preview
     const slide = currentSlide();
     if (!slide) return;
     const enabled = slide.dataset.mode === "reveal" && !slideNoStep(state.index);
-    const count = enabled ? slideSteps(slide, "reveal").max : 0;
-    if (enabled) slide.dataset.twRevealSteps = String(count);
+    const plan = enabled ? slideSteps(slide, "reveal") : null;
+    const count = plan?.max ?? 0;
+    // Each unit takes one press. The optional final press only restores full emphasis.
+    const revealCount = plan?.els.length ?? 0;
+    if (enabled) slide.dataset.twRevealSteps = String(revealCount);
     if (window.parent === window) return;
     window.parent.postMessage({
-      type: "tw-preview-reveal", url: location.href, slideId: slide.dataset.id, enabled, count,
+      type: "tw-preview-reveal", url: location.href, slideId: slide.dataset.id, enabled, count, revealCount,
       step: enabled ? clampStepTo(state.mode.step, count) : 0
     }, "*");
   };

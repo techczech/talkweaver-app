@@ -47,6 +47,7 @@ interface Props {
   slideOrder?: readonly number[]
   pathwayIds?: readonly string[]
   onAddToPathway?: (ids: string[]) => void
+  onHasSelectionChange?: (hasSelection: boolean) => void
   previewsPending?: boolean
   activeIndex: number
   onSelectSlide: (index: number) => void
@@ -555,6 +556,7 @@ export default function GridView({
   slideOrder,
   pathwayIds,
   onAddToPathway,
+  onHasSelectionChange,
   previewsPending = false,
   activeIndex,
   onSelectSlide,
@@ -1040,6 +1042,9 @@ export default function GridView({
   )
   const localSelection = useSlideSelection(slideKeyList)
   const sel = selection ?? localSelection
+  const hasSelection = sel.count > 0
+  useEffect(() => { onHasSelectionChange?.(hasSelection) }, [hasSelection, onHasSelectionChange])
+  useEffect(() => () => onHasSelectionChange?.(false), [onHasSelectionChange])
   const onStructureDropRef = useRef(onStructureDrop)
   onStructureDropRef.current = onStructureDrop
   const structureSourceRef = useRef(structureSource)

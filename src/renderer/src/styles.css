@@ -775,6 +775,13 @@ button.tw-reveal-badge:hover { background: var(--hover); }
 button.tw-reveal-badge:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 :has(> [data-slide-warning], > .tw-fb-badge) > .tw-reveal-badge { inset-block-start: 20px; }
 [data-panel-trying] .tw-fixed-deck-preview > .tw-reveal-badge { inset-block-start: 36px; }
+.tw-strip-thumbnail > .tw-reveal-badge {
+  inset-block-start: auto;
+  inset-block-end: 3px;
+  inset-inline-start: 3px;
+  inset-inline-end: auto;
+}
+.tw-reveal-badge-short { display: none; }
 .tw-fixed-deck-preview { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; }
 .tw-fixed-deck-preview__canvas { position: absolute; top: 0; left: 0; transform: scale(var(--tw-fixed-deck-scale)); transform-origin: top left; }
 .tw-fixed-deck-preview iframe { display: block; width: 1280px; height: 720px; border: 0; }
@@ -1759,7 +1766,7 @@ button.tw-reveal-badge:focus-visible { outline: 2px solid var(--focus); outline-
   flex: 0 0 auto; color: var(--muted); font-weight: 700;
   letter-spacing: .09em; text-transform: uppercase;
 }
-.tw-obj-step { min-width: 0; overflow: hidden; color: var(--faint); text-overflow: ellipsis; white-space: nowrap; }
+.tw-obj-step { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; }
 .tw-obj-slot {
   display: inline-flex; flex: 0 0 auto; align-items: center; margin-left: auto;
   border: 1px solid var(--line); border-radius: 4px; padding: 1px 7px;
@@ -1778,7 +1785,7 @@ button.tw-reveal-badge:focus-visible { outline: 2px solid var(--focus); outline-
   color: var(--muted); font: 500 12px/1.5 var(--font-ui);
 }
 .tw-obj-table {
-  width: 100%; border-collapse: collapse; color: #101418;
+  width: 100%; border-collapse: collapse; color: var(--ink);
   font: 400 11.5px/1.5 "Trebuchet MS", var(--font-ui);
 }
 .tw-obj-table th {

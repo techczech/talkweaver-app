@@ -213,7 +213,7 @@ try {
   const checkBadge = async (scope, label, dark, expected = 'Reveal on', pointer = 'none') => {
     const element = page.locator(scope).locator(badge).first()
     await element.waitFor()
-    assert.equal(await element.textContent(), expected, label)
+    assert.equal(await element.innerText(), expected, label)
     const image = page.locator(scope).filter({ has: page.locator(badge) }).first().locator('img').first()
     if (await image.count()) {
       await image.evaluate(img => { img.loading = 'eager' })
@@ -224,13 +224,16 @@ try {
       const p = el.parentElement.getBoundingClientRect()
       const css = getComputedStyle(el)
       return {
-        top: r.top - p.top, right: p.right - r.right, width: r.width, height: r.height,
+        top: r.top - p.top, right: p.right - r.right,
+        bottom: p.bottom - r.bottom, left: r.left - p.left, width: r.width, height: r.height,
         fill: css.backgroundColor, ink: css.color, pointer: css.pointerEvents,
         trying: el.closest('[data-panel-trying]') != null
       }
     })
-    assert.ok(geometry.top >= 0 && geometry.top <= 8 && geometry.right >= 0 && geometry.right <= 8,
-      label + ' sits in the upper-right corner ' + JSON.stringify(geometry))
+    const strip = scope === '.tw-strip-thumbnail'
+    const edges = strip ? [geometry.bottom, geometry.left] : [geometry.top, geometry.right]
+    assert.ok(edges.every(edge => edge >= 0 && edge <= 8),
+      label + ' sits in its preview corner ' + JSON.stringify(geometry))
     assert.ok(geometry.width > 35 && geometry.height >= 12, label + ' is readable')
     assert.equal(geometry.pointer, pointer)
     const hit = await element.evaluate(el => {
@@ -276,7 +279,7 @@ try {
       // The Inspector's own pane scrolls. Scrolling the tile into view can also scroll
       // the ancestors that clip the pane, which is not an interaction Studio offers.
       await page.locator('.tw-inspector-pane').evaluate(pane => { pane.scrollTop = 0 })
-      await checkBadge('.tw-right-picture-frame', 'design tile', dark, 'Reveal on · 4 steps')
+      await checkBadge('.tw-right-picture-frame', 'design tile', dark, 'Reveal on · 3 steps')
       await decodePictures('.tw-right-designs .tw-right-picture-frame img', 2)
       await screenshot(look + '-inspector-sidebar')
       const sidebarToggle = page.getByTestId('sidebar-toggle')
@@ -304,7 +307,7 @@ try {
       await forward.click()
       await page.getByText('step 1 / 4 · reveal', { exact: true }).waitFor()
       assert.equal(await visibleCount(inspector, 'hidden'), 2, 'Forward exposes one point')
-      await checkBadge('.tw-right-picture-frame', 'design stays fully revealed while Inspector is stepped', dark, 'Reveal on · 4 steps')
+      await checkBadge('.tw-right-picture-frame', 'design stays fully revealed while Inspector is stepped', dark, 'Reveal on · 3 steps')
       assert.equal(await page.evaluate(() => window.fixtureWrites), 0)
       assert.equal(await readFile(viewportOutline, 'utf8'), text)
 
@@ -331,10 +334,10 @@ try {
       const slide = page.frameLocator('iframe[title="Slide preview"]')
       await slide.locator('.slide.active[data-id="about"] [data-mode-state="full"]').first().waitFor()
       assert.equal(await visibleCount(slide, 'full'), 3, 'Slide view is fully revealed after stepping Inspector')
-      await checkBadge('.workspace-slide-stage', 'Slide view', dark, 'Reveal on · 4 steps', 'auto')
+      await checkBadge('.workspace-slide-stage', 'Slide view', dark, 'Reveal on · 3 steps', 'auto')
       await decodePictures('.tw-right-designs .tw-right-picture-frame img', 4)
       const listDesign = page.locator('.tw-right-designs .tw-right-picture[aria-pressed="true"]')
-      assert.equal(await listDesign.locator(badge).textContent(), 'Reveal on · 4 steps')
+      assert.equal(await listDesign.locator(badge).textContent(), 'Reveal on · 3 steps')
       await screenshot(look + '-slide')
       const adjust = page.locator('.tw-right-adjust-direct')
       await adjust.getByText('Reveal one by one · on', { exact: true }).waitFor()
@@ -342,7 +345,7 @@ try {
       await adjustScroll.evaluate(pane => { pane.scrollTop = pane.scrollHeight })
       await screenshot(look + '-steps-row')
 
-      const revealDoor = page.getByRole('button', { name: 'Reveal on · 4 steps', exact: true })
+      const revealDoor = page.getByRole('button', { name: 'Reveal on · 3 steps', exact: true })
       await revealDoor.click()
       const stepsPage = page.getByRole('region', { name: 'Steps', exact: true })
       await stepsPage.getByText('Reveal one by one · on', { exact: true }).waitFor()
@@ -379,7 +382,7 @@ try {
     await page.evaluate(({ path, outlinePath }) => window.mountFixture({ path, outlinePath }), { path: scratch, outlinePath: legacyOutline })
     await page.getByTestId('slides-toggle').click()
     await page.locator('[data-slides-organizer]').getByRole('button', { name: /Next/ }).click()
-    await page.getByRole('button', { name: 'Reveal on · 3 steps', exact: true }).click()
+    await page.getByRole('button', { name: 'Reveal on · 2 steps', exact: true }).click()
     await page.getByRole('region', { name: 'Steps', exact: true }).getByRole('button', { name: 'Turn reveal off' }).click()
     await expectSaved(legacyOutline, normalizePositions(cleared))
   }

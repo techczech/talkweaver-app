@@ -431,7 +431,7 @@
    "f58920bab4c6af10abba",
    "4e88f16fecaed912fde5",
    "38230dfcc3c926872105",
-   "35872fcdf64afec6a52e"
+   "029eb8440dd393ce845f"
   ]
  },
  "intentionalUpdates": [
@@ -444,6 +444,11 @@
    "date": "2026-11-24",
    "reason": "Generated closing slides adopt the selected opening treatment (issue #423)",
    "changedSlides": 3
+  },
+  {
+   "date": "2026-11-24",
+   "reason": "Generated Classic closings repeat the opening title icon",
+   "changedSlides": 1
   }
  ]
 }

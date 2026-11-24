@@ -545,6 +545,7 @@
     "test:slide-readability",
     "test:reading-weight-look",
     "test:slide-fit",
+    "test:list-picture-fit",
     "test:fit-step-down",
     "test:panel-step-down-zero-change",
     "test:simulation-dom",

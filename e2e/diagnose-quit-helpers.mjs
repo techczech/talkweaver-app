@@ -92,7 +92,7 @@ try {
     const original = disk(), marker = ` QUIT_HELPERS_${scenario}_${route}_${repeat}`
     const record = { scenario, route, repeat, pass: false }
     report.cases.push(record)
-    let held, samplingTimer, samples, saveBegan = null
+    let expectedOutline, samplingTimer, samples, saveBegan = null
     try {
       app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`, '--use-mock-keychain'], cwd: repo,
         env: { ...env, TW_UPDATE_TEST_SAVE_DELAY_FILE: delay } })
@@ -141,7 +141,15 @@ try {
         // Exercise the edit's queued picture render as well as the ordinary typing/close save.
         if (scenario === 'edit') await waitFor(() => disk().includes(marker), 'Edit did not persist')
       }
-      held = await text()
+      const held = await text()
+      expectedOutline = Buffer.from(held, 'utf8')
+      if (scenario === 'move-undo') {
+        // Undo restores the unstamped editor text. Its save keeps the slide ID on disk,
+        // and the editor does not adopt that save while redo is available.
+        assert.equal(authored(held), authored(original), 'Undo must restore the authored buffer')
+        expectedOutline = readFileSync(outline)
+        assert.equal(authored(expectedOutline.toString('utf8')), authored(original), 'Undo must be persisted before shutdown')
+      }
       let closed = false
       page.once('close', () => { closed = true })
       const sampleOnMac = route === 'quit' && process.platform === 'darwin'
@@ -171,21 +179,37 @@ try {
             })
         }, interactiveQuitLimitMs)
       }
+      let quitRequestError
       if (route === 'quit') {
-        record.menuLabel = await app.evaluate(({ Menu, app }, { repo, userData, addon, pid }) => {
+        // The native action can close Playwright before the trigger RPC replies. The owned
+        // process and its lifecycle trace are the completion signal.
+        void app.evaluate(({ Menu, app }, { repo, userData, addon, pid }) => {
           if (app.getAppPath() !== repo || app.getPath('userData') !== userData) throw Error('Wrong test app/profile')
           const group = Menu.getApplicationMenu().items.find(i => i.submenu?.items.some(j => j.role === 'quit'))
           const item = group?.submenu.items.find(i => i.role === 'quit')
           if (!item?.enabled) throw Error('Application Quit item missing or disabled')
           const { appendFileSync } = process.getBuiltinModule('fs')
+          if (addon) process.getBuiltinModule('module').createRequire(repo + '/package.json')(addon).clickQuit(pid, item.label)
+          else setImmediate(() => item.click())
           appendFileSync(userData + '/quit-lifecycle.jsonl', JSON.stringify({ type: 'menu:quit', at: Date.now(), label: item.label }) + '\n')
-          if (addon) return process.getBuiltinModule('module').createRequire(repo + '/package.json')(addon).clickQuit(pid, item.label)
-          setImmediate(() => item.click()); return item.label
-        }, { repo, userData, addon, pid: proc.pid })
+        }, { repo, userData, addon, pid: proc.pid }).catch(error => {
+          quitRequestError = error
+          record.quitRequestError = error.message
+        })
       } else await (await app.browserWindow(page)).evaluate(w => w.close())
-      await waitFor(() => route === 'close' ? closed : lifecycle(userData).some(event => event.type === 'quit'), 'No terminal quit within five seconds', 5000)
+      await waitFor(() => {
+        if (route === 'close') return closed
+        const events = lifecycle(userData)
+        if (quitRequestError && !events.some(event => event.type === 'menu:quit')) throw quitRequestError
+        if (events.some(event => event.type === 'quit')) return true
+        if (exitedAt !== null) throw Error(`Process exited without terminal Quit (code ${proc.exitCode}, signal ${proc.signalCode})`)
+        return false
+      }, 'No terminal quit within five seconds', 5000)
       record.lifecycle = lifecycle(userData)
       if (route === 'quit') {
+        const requests = record.lifecycle.filter(event => event.type === 'menu:quit')
+        assert.equal(requests.length, 1, 'Exactly one native Quit was scheduled')
+        record.menuLabel = requests[0].label
         const terminal = record.lifecycle.find(event => event.type === 'quit')
         assert.equal(terminal.exitCode, 0); assert.equal(terminal.windows, 0)
         const beginning = record.lifecycle.findIndex(event => event.type === 'before-quit')
@@ -194,11 +218,11 @@ try {
           'No helper may be created after Quit begins')
         record.terminalMilliseconds = terminal.at - start
         assert.ok(record.terminalMilliseconds < 5000)
-        // Assert persistence before releasing the debugger transport.
-        assert.equal(authored(disk()), authored(held))
         detachAfterTerminalQuit(app, proc)
         await waitFor(() => exitedAt !== null, 'No process exit after the first Quit request', 5000)
-        assert.equal(proc.exitCode, 0); assert.equal(proc.signalCode, null)
+        record.exitCode = proc.exitCode
+        record.signal = proc.signalCode
+        assert.equal(record.exitCode, 0); assert.equal(record.signal, null)
         record.milliseconds = exitedAt - start
         if (['move', 'edit', 'browser'].includes(scenario)) {
           assert.ok(record.milliseconds < interactiveQuitLimitMs,
@@ -206,15 +230,14 @@ try {
         }
       } else record.milliseconds = Date.now() - start
       assert.equal(crashed, false)
-      assert.equal(authored(disk()), authored(held), 'Whole authored buffer must be saved')
-      if (scenario === 'move-undo') assert.equal(authored(disk()), authored(original))
+      assert.ok(readFileSync(outline).equals(expectedOutline), 'The saved outline must match the expected bytes')
       record.savedOnDisk = true; record.pass = true
       console.log(`PASS ${scenario} ${route} ${repeat}/${repeats}: ${record.milliseconds} ms`)
     } catch (error) {
       record.error = error.stack
       record.lifecycle = lifecycle(userData)
-      if (held !== undefined) record.savedOnDisk = authored(disk()) === authored(held)
-      if (app) {
+      if (expectedOutline !== undefined) record.savedOnDisk = readFileSync(outline).equals(expectedOutline)
+      if (app && proc?.exitCode === null && proc.signalCode === null) {
         record.windows = await Promise.race([app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().map(w => ({ id: w.id, visible: w.isVisible(), url: w.webContents.getURL() }))).catch(() => null), sleep(1000).then(() => null)])
       }
       console.error(`FAIL ${scenario} ${route} ${repeat}/${repeats}: ${error.message}`)

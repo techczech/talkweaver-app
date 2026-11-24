@@ -7,6 +7,7 @@ import { SIM_FENCE_LANGS, simulationLayoutForFence } from "./simulation-fences.m
 import { pollDirectivesFor, pollDefinitionFor } from "./poll-authoring.mjs";
 import { takeRightMarkers } from "./prework.mjs";
 import { isStatementDimensionKey } from "./statement-options.mjs";
+import { hasExplicitFrameImage } from "./11-frame.mjs";
 import { SECTION_ONLY_TRIGGER_KEYS } from "../triggers.mjs";
 
 // =============================================================================
@@ -194,16 +195,21 @@ export { SIM_FENCE_LANGS, simulationLayoutForFence };
 
 // Which layout a slide gets from its tokens, its folded cards and its content. `s` is
 // { attrs, authoredAttrKeys, cards, lines, isSection }; `lex` the Markdown lexer over `s.lines`.
-export function inferSlideLayout(s, lex) {
+export function inferSlideLayout(s, lex, frameImageExplicit = hasExplicitFrameImage(s.attrs)) {
   const authored = authoredLayoutDecision(s.attrs, s.authoredAttrKeys);
-  if (authored) return authored.layout;
+  if (authored && (authored.layout !== "list" || frameImageExplicit || s.cards.length)) return authored.layout;
   if (s.cards.length) return "cards";
   // Quote forms, ticket 10: on a slide whose form is set, the address on its own line under the one quotation is
   // the quote's source line, not media, so the slide is the quote-only slide it would be with `- https://…`
   // (the same reading slide-quote-reading.mjs inferSlideLayout makes for the app's check before a quote write).
   const blocks = adoptAddressUnderQuote(lex(s.lines), s.lines, s.attrs);
-  const hasMedia = blocks.some((b) => ["image", "embed", "video"].includes(b.type));
+  const media = blocks.filter((b) => ["image", "embed", "video"].includes(b.type));
+  const hasMedia = media.length > 0;
   const hasList = blocks.some((b) => b.type === "list");
+  const hasTimeline = blocks.some((b) => b.type === "timeline");
+  // New Slide starts with {list}. A pasted picture should sit beside the points as it does
+  // on a slide with no layout trigger, unless the author has chosen a picture placement.
+  if (authored && !(hasList && media.length === 1 && media[0].type === "image" && !hasTimeline)) return authored.layout;
   // ADR-0023 §4: a claim is a wholly bold PARAGRAPH — it occupies the same slot, so layout
   // inference must not see a slide differently because its prose happens to be a claim.
   const hasParagraph = blocks.some((b) => b.type === "paragraph" || b.type === "claim");
@@ -219,7 +225,7 @@ export function inferSlideLayout(s, lex) {
   // column, comment beside, centred as a unit) instead of stacking the comment under the
   // rail. This reuses the copy-/list-visual column grammar (Fix 1). A timeline with a list
   // (not a comment), or a bare timeline, keeps the single-column `timeline` layout.
-  if (blocks.some((b) => b.type === "timeline")) {
+  if (hasTimeline) {
     const hasComment = (hasParagraph || hasQuote) && !hasMedia && !hasList;
     return hasComment ? "timeline-visual" : "timeline";
   }
@@ -257,8 +263,8 @@ export function inferSlideLayout(s, lex) {
 // The slide's layout before its cards are looked at, as flushSlide decides it: the inferred layout,
 // replaced by `section-title` when the divider default applies, then by `chart` when every block
 // is a chart object. `rawBlocks` are the lexer's blocks of the slide's lines.
-export function slideLayoutPlan(slide, lex) {
-  const authoredLayout = inferSlideLayout(slide, lex);
+export function slideLayoutPlan(slide, lex, frameImageExplicit) {
+  const authoredLayout = inferSlideLayout(slide, lex, frameImageExplicit);
   const dividerDecision = sectionDividerDecision(slide, slide.authoredAttrKeys, authoredLayout);
   let layout = dividerDecision.divider ? "section-title" : authoredLayout;
   const rawBlocks = lex(slide.lines);
@@ -317,8 +323,8 @@ export function impliedListStyle(attrs) {
 //   cardsKind   the card treatment (cardsLayoutDecision), or null;
 //   listStyle   the style stamped on the slide's lists ("" when none, or an unknown one);
 //   hasList     the slide's content holds a list (for the `list` layout: the list that is drawn).
-export function finalSlideLayout(slide, lex) {
-  const plan = slideLayoutPlan(slide, lex);
+export function finalSlideLayout(slide, lex, frameImageExplicit) {
+  const plan = slideLayoutPlan(slide, lex, frameImageExplicit);
   const cards = cardsLayoutDecision({ layout: plan.layout, attrs: slide.attrs, cardCount: (slide.cards || []).length });
   const style = impliedListStyle(slide.attrs);
   return {

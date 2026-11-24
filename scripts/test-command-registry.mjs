@@ -83,7 +83,7 @@ const expectedPaletteIds = [
   'deck-design', 'metadata', 'tag-slide', 'abstract',
   'view-panel-previews', 'view-panel-outline', 'view-slide-tab-pages', 'view-slide-tab-list', 'split-pasted-picture-row', 'paste-picture', 'duplicate-slide', 'move-current-slide-up', 'move-current-slide-down',
   'edit-speaker-notes', 'view-slide-panel', 'welcome-slide', 'welcome-outline', 'welcome-markdown',
-  'view-slides', 'view-plain', 'view-markdown', 'change-heading-level', 'change-slide-layout', 'view-strip', 'view-grid', 'fold-all', 'unfold-all', 'outline-collapse-all', 'outline-expand-all',
+  'view-slides', 'view-plain', 'view-markdown', 'previous-slide', 'next-slide', 'change-heading-level', 'change-slide-layout', 'view-strip', 'view-grid', 'fold-all', 'unfold-all', 'outline-collapse-all', 'outline-expand-all',
   'move-slide-to', 'move-section-to', 'select-section', 'clear-slide-selection', 'set-aside-slides', 'move-selected-slides-to',
   'search-slides-grid', 'search-next', 'search-previous',
   'normalize-triggers', 'undo', 'redo', 'new-slide', 'new-section', 'new-subsection', 'make-section', 'select-several-slides', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings-setup-folder', 'settings', 'check-for-updates', 'whats-new',
@@ -234,6 +234,7 @@ assert.deepEqual(
     ['Talk', 'new-section'], ['Talk', 'new-subsection'], ['Talk', 'make-section'], ['Talk', 'select-several-slides'],
     ['Tools', 'tools-animated-video'], ['View', 'vault-gallery'],
     ['View', 'view-panel-previews'], ['View', 'view-panel-outline'], ['View', 'view-slide-tab-pages'], ['View', 'view-slide-tab-list'], ['View', 'edit-speaker-notes'], ['View', 'view-slide-panel'],
+    ['View', 'previous-slide'], ['View', 'next-slide'],
     ['View', 'research-panel'], ['View', 'research-find'], ['View', 'scratchpad-panel']
   ],
   'window and authoring commands are in the native menus'
@@ -482,6 +483,8 @@ try {
   window.localStorage.setItem('tw-keymap-overrides', '{}')
   const sheetRow = (shortcutId) => sheetRowOf(shortcutId).chord
   for (const [shortcutId, keys] of [
+    ['app.previous-slide', '⌘↑ / Page Up'],
+    ['app.next-slide', '⌘↓ / Page Down'],
     ['app.find-talk', '⇧⌘S'],
     ['slide-picker.add-beside', '⌘↵'],
     ['slide-picker.talk-beside', 'O'],
@@ -517,6 +520,8 @@ try {
       ['view-grid', 'app.view-grid', 'See the talk'],
       ['view-plain', 'app.view-plain', 'See the talk'],
       ['view-markdown', 'app.view-markdown', 'See the talk'],
+      ['previous-slide', 'app.previous-slide', 'See the talk'],
+      ['next-slide', 'app.next-slide', 'See the talk'],
       ['check-for-updates', 'app.check-for-updates', 'Set up TalkWeaver'],
       ['whats-new', 'app.whats-new', 'Set up TalkWeaver'],
       ['research-panel', 'app.research-panel', 'Shape the talk'],
@@ -557,7 +562,7 @@ try {
       ['close-beside', 'slide-picker.close-beside', 'Reuse slides'],
       ['select-whole-section', 'slide-picker.select-whole-section', 'Reuse slides']
     ],
-    'the five talk-search keys are Settings rows (rebindable), grouped under their task group, Reuse slides (onboarding 01)'
+    'rebindable surface commands appear in Settings under their registered task groups'
   )
   assert.deepEqual(
     Object.entries(shortcutUi.SURFACE_KEYS),

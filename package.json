@@ -1,6 +1,6 @@
 {
   "name": "talk-weaver",
-  "version": "0.45.3-alpha.4",
+  "version": "0.45.3-alpha.5",
   "description": "Desktop authoring app for the presentation ecosystem",
   "main": "./out/main/index.js",
   "engines": {
@@ -647,6 +647,7 @@
     "test:media-inside-vault-dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/media-inside-vault-dom.test.mjs",
     "test:media-steps-dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/media-steps-dom.test.mjs",
     "test:slide-fit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON ./scripts/slide-fit-dom.test.mjs",
+    "test:list-picture-fit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-list-picture-fit.mjs",
     "test:panel-arrangement": "node scripts/test-panel-arrangement.mjs",
     "test:fit-step-down": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-fit-step-down.mjs",
     "test:panel-step-down-zero-change": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-panel-step-down-zero-change.mjs",

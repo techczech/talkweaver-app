@@ -39,6 +39,8 @@ export const REBINDABLE: Readonly<Record<string, string>> = {
   'app.view-grid': 'view-grid',
   'app.view-plain': 'view-plain',
   'app.view-markdown': 'view-markdown',
+  'app.previous-slide': 'previous-slide',
+  'app.next-slide': 'next-slide',
   'app.check-for-updates': 'check-for-updates',
   'app.whats-new': 'whats-new',
   'app.research-panel': 'research-panel',

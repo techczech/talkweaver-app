@@ -157,6 +157,8 @@ Saturdays, eight until one.
 
 > **Try it.** <kbd>⌘1</kbd> editor only, <kbd>⌘2</kbd> editor and slides, <kbd>⌘3</kbd> slide strip, <kbd>⌘4</kbd> grid. If a slide looks out of date, choose **Rebuild preview** in All commands (<kbd>⌘⇧P</kbd>).
 
+> **Try it.** In Slide view, <kbd>⌘↓</kbd> or <kbd>Page Down</kbd> moves to the next slide. <kbd>⌘↑</kbd> or <kbd>Page Up</kbd> moves back.
+
 ### The plant stall
 {id=s14}
 

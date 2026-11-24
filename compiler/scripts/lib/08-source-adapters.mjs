@@ -20,7 +20,7 @@ import { timelineContinuationParts } from "./timeline-layout.mjs";
 import { annotateCodeLayout } from "./code-layout.mjs";
 import { annotateSimulationLayout, simulationMode, simulationLayoutForFence } from "./simulation-layout.mjs";
 import { annotateTextLayout } from "./text-layout.mjs";
-import { hasExplicitFrameTitle, resolveSlideFrame, FRAME_BUILTINS } from "./11-frame.mjs";
+import { hasExplicitFrameImage, hasExplicitFrameTitle, resolveSlideFrame, FRAME_BUILTINS } from "./11-frame.mjs";
 import { parseSimpleYaml } from "./simple-yaml.mjs";
 import { followsSectionCard, PLAIN_TITLE_LOOKS, resolveTitleLook, sectionStrip, TITLE_LOOKS, TITLE_LOOK_TONES } from "./title-look.mjs";
 import { resolveScreenshotStyle, SCREENSHOT_STYLES } from "./screenshot-row.mjs";
@@ -470,16 +470,6 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
     if (titleAliasOverridesDefaults(s)) frame.title = FRAME_BUILTINS.title;
     return frame;
   };
-  // SD-14: true when the slide (or its section/deck defaults) explicitly sets image= so the
-  // split layout activates. Without this flag, frame.image always resolves to the builtin "left",
-  // which would force a split on any slide that happens to have an image + other blocks.
-  const frameImageExplicitFor = (s) => {
-    const rawAttrs = s.attrs || {};
-    const sectionDef = sectionDefaultsMap[s.sectionTitle] || {};
-    return (rawAttrs.image != null || rawAttrs.media != null)
-      || (sectionDef.image != null || sectionDef.media != null)
-      || (deckDefaults.image != null || deckDefaults.media != null);
-  };
   const frameTitleExplicitFor = (s) => !titleAliasOverridesDefaults(s)
     && hasExplicitFrameTitle(s.attrs, sectionDefaultsMap[s.sectionTitle] || {}, deckDefaults);
 
@@ -806,7 +796,9 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
     // A Run's extra slide (work-files ticket 25, run-extras.mjs) has no outline lines: its paragraphs are
     // made from its text as typed, and are read here instead of lexing, so nothing in the text is structure.
     const presetBlocks = slide.treeNode?._runExtraBlocks;
-    const layoutPlan = slideLayoutPlan(slide, Array.isArray(presetBlocks) ? () => presetBlocks.map((block) => ({ ...block })) : lexMarkdownBlocks);
+    const frameImageExplicit = hasExplicitFrameImage(slide.attrs, sectionDefaultsMap[slide.sectionTitle], deckDefaults);
+    const lex = Array.isArray(presetBlocks) ? () => presetBlocks.map((block) => ({ ...block })) : lexMarkdownBlocks;
+    const layoutPlan = slideLayoutPlan(slide, lex, frameImageExplicit);
     const { dividerDecision, rawBlocks } = layoutPlan;
     if (dividerDecision.structural && !dividerDecision.divider) {
       warnings.push(`divider-default-suppressed-by-tokens:${slide.id}:${dividerDecision.authorTokens.join(", ")}`);
@@ -1385,7 +1377,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
       frame: frameFor(slide),
       // SD-14: whether image= was explicitly authored (vs the builtin default "left"); the split
       // layout only activates when image was explicitly set so existing mixed slides are unchanged.
-      frameImageExplicit: frameImageExplicitFor(slide),
+      frameImageExplicit,
       // 2026-07-08: whether title=/sidebar was explicitly authored (vs the builtin "top").
       // An explicit {title=top} must SHOW the title on layouts that hide it by default
       // (quote, statement); without this flag the resolved frame always reads "top".
@@ -1845,13 +1837,14 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
       { meta, title: thanks, subtitle: cta },
       { role: "opening" }
     );
-    if (closingPoster.variant === "poster" && deckLookForPalette(palette) === "ocean") {
+    const classic = deckLookForPalette(palette) === "classic";
+    if (classic || closingPoster.variant === "poster") {
       const titleSlide = slides.find((s) => s.layout === "title" && s.role === "opening")
-        ?? slides.find((s) => s.layout === "title");
-      const openingPoster = titleSlide?.blocks?.find((block) => block.type === "title-poster" && block.variant === "poster");
+        ?? (classic ? undefined : slides.find((s) => s.layout === "title"));
+      const openingPoster = titleSlide?.blocks?.find((block) => block.type === "title-poster" && block.variant === closingPoster.variant);
       if (openingPoster?.data.titleIcon) {
         closingPoster.data.titleIcon = openingPoster.data.titleIcon;
-        if (openingPoster.data.titleIconAt) closingPoster.data.titleIconAt = openingPoster.data.titleIconAt;
+        if (classic || openingPoster.data.titleIconAt === "above") closingPoster.data.titleIconAt = "above";
       }
     }
     if (closingPoster.variant !== "poster") closingPoster.data.keepBookendAssets = true;

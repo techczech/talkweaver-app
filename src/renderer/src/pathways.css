@@ -2,10 +2,12 @@
 .pathway-dock { flex: 1; min-width: 0; min-height: 0; border-inline-end: 1px solid var(--line); background: var(--paper); display: flex; flex-direction: column; font-size: .8125rem; }
 .pathways-back { margin-bottom: 8px; }
 .pathways-back .mode-back { max-width: 100%; }
-.workspace-pathway-switch { flex: none; min-width: 0; max-width: min(18vw, 180px); }
+.workspace-pathway-switch { flex: 0 1 auto; min-width: 0; max-width: min(18vw, 180px); }
 .workspace-pathway-switch > div, .workspace-pathway-switch .toolbar-btn { max-width: 100%; }
 .workspace-pathway-switch .toolbar-btn-content { min-width: 0; }
 .workspace-pathway-switch .toolbar-btn-content > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-view-titlebar[data-density]:not([data-density="full"]) .workspace-pathway-switch .toolbar-btn { padding-inline: 6px; }
+.workspace-view-titlebar[data-density]:not([data-density="full"]) .workspace-pathway-switch .toolbar-btn-content > span { max-width: 14ch; }
 .workspace-pathway-switch .toolbar-menu { right: auto; left: 0; max-width: min(55vw, 360px); max-height: min(60vh, 420px); overflow: auto; }
 .workspace-pathway-switch .toolbar-menu-item > span:first-of-type { white-space: normal; overflow-wrap: anywhere; }
 .workspace-pathway-add.toolbar-btn { flex: none; color: var(--muted); background: transparent; border-color: transparent; }
@@ -34,7 +36,7 @@
 .pathway-dock button, .pathway-dialog button { cursor:pointer; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--ink); padding:5px 8px; font:inherit; }
 .pathway-dock button:disabled { opacity:.45; cursor:default; }
 .pathway-actions { display:flex; flex-wrap: wrap; gap:6px; margin-top:10px; align-items:center; }
-.pathway-actions span { flex:1; color:var(--muted); }
+.pathway-actions > span { flex:1; color:var(--muted); }
 .pathway-list, .pathway-matrix-scroll { flex:1; min-height:0; overflow:auto; padding:10px; }
 .pathway-row { display:flex; gap:7px; align-items:center; min-height:58px; border:1px solid var(--line); border-radius:6px; margin-bottom:6px; padding:7px; cursor:grab; background:var(--panel); }
 .pathway-row--focused { border-color:var(--oxford); background:var(--accent-soft); }
@@ -43,6 +45,7 @@
 .pathway-grip { color:var(--muted); }
 .pathway-number { color:var(--accent-text); font-weight:700; min-width:16px; }
 .pathway-row-title { flex:1; min-width:0; overflow-wrap:anywhere; }
+.pathway-row-title > span { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
 .pathway-row-title small { display:block; color:#a34b22; }
 .pathway-dock footer { padding:12px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:12px; }
 .pathway-dock footer small { color:var(--muted); font-size:11px; line-height:1.5; }

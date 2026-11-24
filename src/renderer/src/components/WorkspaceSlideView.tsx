@@ -17,6 +17,7 @@ interface Props {
   index: number
   count: number
   pathwayNavigation?: { prev?: () => void; next?: () => void; empty: boolean }
+  navigationShortcuts?: { previous: string; next: string }
   place: string
   notes: NotesEntry[]
   notesKey: string
@@ -37,7 +38,7 @@ interface Props {
 
 // WN1 / NT1 use Slide Focus's stage and the same scoped editor, with the editor under the stage.
 export default function WorkspaceSlideView({
-  path, outline, trying, applied, onUndoDesign, onOpenReveal, row, index, count, pathwayNavigation, place, notes, notesKey, notesOpen, onToggleNotes, onNotesChange, onNotesEngaged,
+  path, outline, trying, applied, onUndoDesign, onOpenReveal, row, index, count, pathwayNavigation, navigationShortcuts, place, notes, notesKey, notesOpen, onToggleNotes, onNotesChange, onNotesEngaged,
   attachEditor, onTalkDetails, editable, emptySlide, sourceRecovery, section, subslides, addSubslide, subslide
 }: Props) {
   const { previewUrl, previewErr, compiling } = useLiveSlidePreview(path, trying?.text ?? outline, row?.slide_id ?? '', 'workspace')
@@ -52,8 +53,10 @@ export default function WorkspaceSlideView({
       <div className="workspace-slide-content">
         <div className="workspace-slide-crumb">{place && `${place} · `}{subslide ? <strong>Subslide of “{subslide.title}”</strong> : index >= 0 && count > 0 && <strong>Slide {index + 1} of {count}</strong>}
           {pathwayNavigation && count > 0 && <div className="pathway-slide-nav" role="group" aria-label="Pathway slides">
-            <button type="button" className="icon-btn" aria-label="Previous pathway slide" disabled={!pathwayNavigation.prev} onClick={pathwayNavigation.prev}><ChevronLeft size={16} aria-hidden /></button>
-            <button type="button" className="icon-btn" aria-label="Next pathway slide" disabled={!pathwayNavigation.next} onClick={pathwayNavigation.next}><ChevronRight size={16} aria-hidden /></button>
+            <button type="button" className="icon-btn" aria-label="Previous pathway slide" disabled={!pathwayNavigation.prev} onClick={pathwayNavigation.prev}
+              title={navigationShortcuts && `Previous pathway slide (${navigationShortcuts.previous})`}><ChevronLeft size={16} aria-hidden /></button>
+            <button type="button" className="icon-btn" aria-label="Next pathway slide" disabled={!pathwayNavigation.next} onClick={pathwayNavigation.next}
+              title={navigationShortcuts && `Next pathway slide (${navigationShortcuts.next})`}><ChevronRight size={16} aria-hidden /></button>
           </div>}
         </div>
         {pathwayNavigation?.empty ? <p className="workspace-slide-message">No slides in this pathway.</p> : <>

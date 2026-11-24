@@ -25,7 +25,7 @@ export default function FixedDeckPreview({ src, title, className = '', iframeRef
   const localFrame = useRef<HTMLIFrameElement>(null)
   const frame = iframeRef ?? localFrame
   const [scale, setScale] = useState(0)
-  const [reveal, setReveal] = useState<RevealPreviewStep>()
+  const [reveal, setReveal] = useState<RevealPreviewStep & { revealCount: number }>()
 
   useLayoutEffect(() => {
     if (!src) return
@@ -37,9 +37,10 @@ export default function FixedDeckPreview({ src, title, className = '', iframeRef
           data.url.split('#')[0] !== expected.href.split('#')[0] ||
           (expected.hash && expected.hash !== '#' + encodeURIComponent(data.slideId))) return
       if (data.enabled === true && Number.isSafeInteger(data.count) && data.count >= 0 &&
+          Number.isSafeInteger(data.revealCount) && data.revealCount >= 0 && data.revealCount <= data.count &&
           Number.isSafeInteger(data.step) && data.step >= 0 && data.step <= data.count) {
         const status = { src, count: data.count, step: data.step }
-        setReveal(status)
+        setReveal({ ...status, revealCount: data.revealCount })
         onRevealStep?.(status)
       } else setReveal(undefined)
     }
@@ -83,7 +84,7 @@ export default function FixedDeckPreview({ src, title, className = '', iframeRef
           height={FIXED_DECK_HEIGHT}
         />
       </div>
-      {reveal && reveal.src === src && <RevealPreviewBadge count={onOpenReveal ? reveal.count : undefined} onOpen={onOpenReveal} />}
+      {reveal && reveal.src === src && <RevealPreviewBadge count={onOpenReveal ? reveal.revealCount : undefined} onOpen={onOpenReveal} />}
     </div>
   )
 }

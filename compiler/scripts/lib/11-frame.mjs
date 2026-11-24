@@ -67,6 +67,11 @@ export function hasExplicitFrameTitle(slideAttrs = {}, sectionDefaults = {}, dec
     || hasTitle(deckDefaults) || deckDefaults.sidebar != null;
 }
 
+// The builtin side must not count as an explicit request to place the picture.
+export function hasExplicitFrameImage(...sources) {
+  return sources.some((source) => source?.image != null || source?.media != null);
+}
+
 export function resolveSlideFrame(slideAttrs = {}, sectionDefaults = {}, deckDefaults = {}) {
   const out = {};
   for (const key of Object.keys(FRAME_BUILTINS)) {

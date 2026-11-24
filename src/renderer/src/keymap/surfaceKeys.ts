@@ -12,6 +12,8 @@ export const SURFACE_KEYS = {
   'view-grid': 'app.view-grid',
   'view-plain': 'app.view-plain',
   'view-markdown': 'app.view-markdown',
+  'previous-slide': 'app.previous-slide',
+  'next-slide': 'app.next-slide',
   'check-for-updates': 'app.check-for-updates',
   'whats-new': 'app.whats-new',
   'research-panel': 'app.research-panel',

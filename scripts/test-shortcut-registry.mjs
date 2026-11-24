@@ -816,7 +816,9 @@ const SURFACE_KEY_IDS = Object.fromEntries(
   [...(surfaceKeysSource.match(/export const SURFACE_KEYS = \{([\s\S]*?)\}/)?.[1] ?? '').matchAll(/'([^']+)':\s*'([^']+)'/g)]
     .map((match) => [match[1], match[2]])
 )
-assert.equal(Object.keys(SURFACE_KEY_IDS).length, 45, 'the rebindable structure, view, presentation, talk-search and research keys are read from surfaceKeys.ts')
+assert.equal(Object.keys(SURFACE_KEY_IDS).length, 47, 'the rebindable structure, view, Slide navigation, presentation, talk-search and research keys are read from surfaceKeys.ts')
+assert.equal(SURFACE_KEY_IDS['previous-slide'], 'app.previous-slide')
+assert.equal(SURFACE_KEY_IDS['next-slide'], 'app.next-slide')
 const SURFACE_KEY_COMPARISON = /\be\.key\s*[!=]==|\.includes\(e\.key\)|\.test\(e\.key\)|surfaceKey\(|findBoxOwnsKey\(e\.key/
 const PICKER_REGIONS = [
   ['picker', slideBrowserSource, 'function handleKey(e: KeyboardEvent): void {', "window.addEventListener('keydown', handleKey, { capture: true })"],

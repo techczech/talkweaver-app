@@ -519,7 +519,7 @@ function SlideCard({
       {dropLabel && <span className="tw-structure-drop" data-drop-side={dropEdge === 'below' ? 'after' : 'before'}>{dropLabel}</span>}
       {/* 16:9 thumbnail */}
       <div className="tw-strip-thumbnail" style={{ position: 'relative' as const, paddingTop: '56.25%', background: 'var(--paper)' }}>
-        {slide.row?.reveal_enabled && <RevealPreviewBadge />}
+        {slide.row?.reveal_enabled && <RevealPreviewBadge shortLabel="Steps" />}
         {marker && <FeedbackBadge marker={marker} onClick={onMarker} />}
         {warnings.length > 0 && (
           <span
