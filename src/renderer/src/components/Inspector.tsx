@@ -18,7 +18,7 @@ import {
 } from './inspectorScroll'
 import { surfacedWarnings } from './SlideStrip'
 import { useLiveSlidePreview } from './useLiveSlidePreview'
-import FixedDeckPreview from './FixedDeckPreview'
+import FixedDeckPreview, { type RevealPreviewStep } from './FixedDeckPreview'
 import { headingHasChildSlides, logicalTriggerBlockAfterHeading, parseTriggerLine } from '../../../shared/trigger-line'
 import type { SlideRef } from '../../../shared/layout-verbs'
 import InspectorBoard from './InspectorBoard'
@@ -155,16 +155,21 @@ export default function Inspector({
   // Trigger-line changes are option commits: bypass the ordinary typing debounce so every
   // selection recompiles the stage immediately, as locked in ADR-0011.
   const { previewUrl, compiling, previewErr } = useLiveSlidePreview(talk.outlinePath, centrePreview && !picker ? '' : picker?.tryOutline ?? preview?.text ?? outlineContent, row?.slide_id ?? '')
-  const iframeRef = useRef<HTMLIFrameElement | null>(null)
-  const [step, setStep] = useState(0)
-  useEffect(() => { setStep(0) }, [activeIndex, model.steps.count, model.steps.mode])
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const [fallbackStep, setFallbackStep] = useState(0)
+  const [revealed, setRevealed] = useState<RevealPreviewStep>()
+  const liveReveal = revealed && revealed.src === previewUrl ? revealed : undefined
+  const stepMode = liveReveal ? 'reveal' : model.steps.mode
+  const stepCount = liveReveal?.count ?? (row?.reveal_enabled ? 0 : model.steps.count)
+  const step = liveReveal?.step ?? fallbackStep
+  useEffect(() => { setFallbackStep(0) }, [activeIndex, previewUrl, stepCount, stepMode])
 
   const moveStep = (direction: -1 | 1): void => {
-    const next = Math.max(0, Math.min(model.steps.count, step + direction))
+    const next = Math.max(0, Math.min(stepCount, step + direction))
     if (next === step) return
     const key = direction > 0 ? 'ArrowRight' : 'ArrowLeft'
     iframeRef.current?.contentWindow?.postMessage({ type: 'tw-step', key }, '*')
-    setStep(next)
+    if (!liveReveal) setFallbackStep(next)
   }
 
   // The options pane works as tabs (Dominik's preview.11 check, 29 Sep): the preview head and the
@@ -346,6 +351,35 @@ export default function Inspector({
   const hasAbovePicture = row?.image_placements?.some(placement => placement.kind === 'above') ?? false
   const pictureSide = useMemo(() => hasAbovePicture ? 'above' : hasBesidePicture ? pictureSideForSlide(outlineContent, headingLine) : null,
     [hasAbovePicture, hasBesidePicture, headingLine, outlineContent])
+  const bindings = model.sections.flatMap(item => item.bindings)
+  const arrival = bindings.find(binding => binding.group.key === 'arrival-mode')
+  const legacyReveal = !arrival?.selectedToken && parseTriggerLine(triggerLine).some(token => token.source === 'reveal=steps')
+  const revealSelected = arrival?.selectedToken === 'reveal' || legacyReveal
+  const revealOn = revealSelected && model.selectedTokens.stepping !== 'nostep'
+  const toggleReveal = (): void => {
+    if (!arrival) return
+    // The compiler still accepts {reveal=steps}. Treat it as an alias when clearing Steps.
+    const group = legacyReveal ? {
+      ...arrival.group,
+      values: arrival.group.values.map(value => value.token === 'reveal'
+        ? { ...value, altTokens: [...(value.altTokens ?? []), 'reveal=steps'] }
+        : value)
+    } : arrival.group
+    onCommitOption(undefined, group, inspectorCommitToken(arrival, revealSelected ? '' : 'reveal'))
+  }
+  const revealAction = revealOn
+    ? { label: 'Turn off', accessibleLabel: 'Turn reveal off' }
+    : revealSelected
+      ? { label: 'Remove reveal', accessibleLabel: 'Remove reveal setting' }
+      : { label: 'Turn on', accessibleLabel: 'Turn reveal on' }
+  const revealSummary = `Reveal one by one · ${revealOn ? 'on' : 'off'}`
+  const stepsControl = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    if (page === 'steps' && stepsControl.current) {
+      stepsControl.current.closest('.tw-inspector-pane')?.scrollTo({ top: 0 })
+      stepsControl.current.focus({ preventScroll: true })
+    }
+  }, [page, arrival != null])
   const pages: PanelPage[] = [
     ...(section ? [{ id: 'colour', label: 'Colour', summary: 'Section colour' }] : []),
     { id: 'title', label: 'Title', summary: section ? 'Section name, large' : row?.title_layout === 'left' ? 'At the side' : row?.title_layout === 'hidden' ? 'Not shown' : 'On top' },
@@ -355,6 +389,10 @@ export default function Inspector({
     ] : []),
     ...(!section && !!row?.image_count ? [{ id: 'picture', label: 'Picture', summary: pictureSide === 'left' ? 'On the left'
       : pictureSide === 'right' ? 'On the right' : pictureSide === 'above' ? 'Above the points' : 'Placement and editing' }] : []),
+    ...(arrival && (revealSelected || page === 'steps') ? [{
+      id: 'steps', label: 'Steps', summary: revealSummary,
+      action: { ...revealAction, run: toggleReveal }
+    }] : []),
     { id: 'more', label: 'More', summary: section ? 'Steps, reactions, about this slide' : 'Steps, background, poll, reactions' }
   ]
   const pageInfo = pages.find(candidate => candidate.id === page)
@@ -382,7 +420,6 @@ export default function Inspector({
         : designsFor(outlineContent, pictureSlide, row, {...model, layoutName: layout}, block, hasBrands, pictureSide)
     } catch { return [] }
   }, [outlineContent, slideKey, row, model, block, section, structure?.carousel, structure?.childCount, titleSlide, triggerLine, hasBrands, layout, pictureSide]) // eslint-disable-line react-hooks/exhaustive-deps
-  const bindings = model.sections.flatMap(item => item.bindings)
   const pageGroups = (id: string, omit: readonly string[] = []): React.ReactNode =>
     bindings.filter(binding => pageForBinding(binding, own, table) === id && !omit.includes(binding.group.key))
       .map(binding => {
@@ -437,7 +474,7 @@ export default function Inspector({
           ) : (
             /* twpresent gives trusted app-generated output its own origin; a sandbox would only
                disable capabilities the deck runtime legitimately needs. */
-            <FixedDeckPreview iframeRef={iframeRef} title="Inspector live preview" src={previewUrl ?? undefined} />
+            <FixedDeckPreview iframeRef={iframeRef} onRevealStep={setRevealed} title="Inspector live preview" src={previewUrl ?? undefined} />
           )}
           <div
             className="tw-inspector-stage-hit"
@@ -450,11 +487,11 @@ export default function Inspector({
           />
           {!picker && preview && <div className="tw-right-bar is-trying tw-try-chip" role="status">Trying: {preview.label}. Not applied.</div>}
         </div>
-        {!picker && model.steps.count > 0 && (
+        {!picker && stepCount > 0 && (
           <div className="tw-inspector-stepbar">
             <button type="button" onClick={() => moveStep(-1)} disabled={step <= 0} title="Step back (⌥←)">◂</button>
-            <button type="button" onClick={() => moveStep(1)} disabled={step >= model.steps.count} title="Step forward (⌥→)">▸</button>
-            <span>step {step} / {model.steps.count} · {model.steps.mode}</span>
+            <button type="button" onClick={() => moveStep(1)} disabled={step >= stepCount} title="Step forward (⌥→)">▸</button>
+            <span>step {step} / {stepCount} · {stepMode}</span>
             {warnings.length > 0 && <span className="tw-inspector-warning" title={warnings.map((warning) => warning.text).join('\n')}>⚠ {warnings.length} warning{warnings.length === 1 ? '' : 's'}</span>}
             <button type="button" className="tw-inspector-explain" onClick={onExplain} title="Authoring markup, examples and rendering decisions">Explain &amp; markup</button>
           </div>
@@ -504,6 +541,7 @@ export default function Inspector({
             className="tw-inspector-section tw-right-page" aria-label={item.label}>
             <PageHead label={item.label} aspect={item.id === 'own' ? item.label : item.id} back={long ? undefined : () => changePage('home')} onCopy={onCopy} />
             {item.id === 'title' && <TitlePage surface={surface} where={row?.title_layout ?? 'top'} trigger={triggerLine} pictureAbove={hasAbovePicture}
+              tokens={model.selectedTokens} pointCount={points.length}
               inheritedLook={inheritedTitleLook} inheritedTone={inheritedTitleTone} onTalk={() => onTalk('design')} section={section} icon={titleIcon}>
               {bindings.filter(binding => binding.group.key === 'font-title').map(binding => renderGroup(binding))}
             </TitlePage>}
@@ -540,6 +578,11 @@ export default function Inspector({
                 settings={bindings.filter(binding => binding.group.key.startsWith('board-')).map(binding => renderGroup(binding))} />}
               {pageGroups('own', model.board ? bindings.filter(binding => binding.group.key.startsWith('board-')).map(binding => binding.group.key) : [])}
             </>}
+            {item.id === 'steps' && <div className="tw-right-reveal-setting">
+              <span>{revealSummary}</span>
+              <button type="button" ref={stepsControl} className="toolbar-btn" onClick={toggleReveal}
+                aria-label={revealAction.accessibleLabel}>{revealAction.label}</button>
+            </div>}
             {item.id === 'more' && <>
               {pageGroups('more')}
               {model.prework && <InspectorPrework model={model.prework} onResults={token => { if (model.prework) onCommitOption(undefined, model.prework.results.group, token) }} />}

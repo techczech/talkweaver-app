@@ -74,9 +74,9 @@ export const CARRIED_ROWS: readonly CarriedRow[] = [
   // The whole slide (or the whole section, on a section's title): the rows of the slide and section
   // context menus. They are not the universal text Cut, Copy and Paste (UNIVERSAL_COMMAND_IDS), which
   // stay out; they show no chord, because in the editor ⌘X, ⌘C and ⌘V work on the selected text.
-  { id: 'slide-cut', label: 'Cut slide', taskGroup: 'Write the outline', places: MOVE_TO_PLACES, keywords: ['section', 'clipboard', 'whole'] },
-  { id: 'slide-copy', label: 'Copy slide', taskGroup: 'Write the outline', places: MOVE_TO_PLACES, keywords: ['section', 'clipboard', 'whole'] },
-  { id: 'slide-paste-after', label: 'Paste slide after', taskGroup: 'Write the outline', places: MOVE_TO_PLACES, keywords: ['section', 'clipboard', 'whole'] },
+  { id: 'slide-cut', label: 'Cut slide', taskGroup: 'Outlining', places: MOVE_TO_PLACES, keywords: ['section', 'clipboard', 'whole'] },
+  { id: 'slide-copy', label: 'Copy slide', taskGroup: 'Outlining', places: MOVE_TO_PLACES, keywords: ['section', 'clipboard', 'whole'] },
+  { id: 'slide-paste-after', label: 'Paste slide after', taskGroup: 'Outlining', places: MOVE_TO_PLACES, keywords: ['section', 'clipboard', 'whole'] },
   // A talk row.
   { id: 'talk.metadata', label: 'Metadata…', taskGroup: 'Shape the talk', places: ['talk'] },
   { id: 'talk.reveal', label: 'Reveal in Finder', taskGroup: 'Manage talks', places: ['talk'] },
@@ -182,7 +182,7 @@ export function actionRowsAt(place: Place, context: ActionsContext = {}, registr
     ...(context.quoteSlide === true && QUOTE_FORM_PLACES.includes(place)
       ? registry.filter((command) => (QUOTE_FORM_COMMAND_IDS as readonly string[]).includes(command.id)).map((command, order) => ({ row: rowOfCommand(command, false), rank: 0.5, order }))
       : []),
-    // Move slide to… / Move section to…: after the drawn rows of Write the outline, on a slide.
+    // Move slide to… / Move section to…: after the drawn rows of Outlining, on a slide.
     ...(!ownRowsOnly && MOVE_TO_PLACES.includes(place)
       ? registry.filter((command) => (MOVE_TO_COMMAND_IDS as readonly string[]).includes(command.id) || SECTION_FOLD_COMMAND_IDS.includes(command.id)).map((command, order) => ({ row: rowOfCommand(command, true), rank: 0.6, order }))
       : []),

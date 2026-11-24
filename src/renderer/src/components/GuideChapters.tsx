@@ -4,12 +4,11 @@ import {
   SlidersHorizontal, Stethoscope
 } from 'lucide-react'
 import { GUIDE_TEXT } from '../../../shared/guide'
-import { CHAPTER_ICONS, rowChords, shortChord, subgroupLabel, type Chapter } from '../../../shared/guide-chapters'
+import { CHAPTER_ICONS, rowChords, shortChord, subgroupLabel, type Chapter, type GuideChapter } from '../../../shared/guide-chapters'
 import {
   chapterComplete, chapterHistory, chapterHistoryText, finishedCountText, hasNoProgress, nextChapter, rowTried, triedCount,
   type GuideLearn
 } from '../../../shared/guide-learn'
-import type { TaskGroup } from '../../../shared/task-groups'
 
 // Learn the commands (onboarding ticket 08; locked drawing states 04, 05 and 06): the Chapters card
 // with the ten chapters and their history, and a chapter opened as This chapter: its commands by
@@ -20,7 +19,7 @@ const ICONS: Record<string, LucideIcon> = {
   'pen-line': PenLine, 'layout-template': LayoutTemplate, library: Library, eye: Eye, route: Route, presentation: Presentation,
   share: Share, folders: Folders, stethoscope: Stethoscope, 'sliders-horizontal': SlidersHorizontal
 }
-const iconOf = (task: TaskGroup): LucideIcon => ICONS[CHAPTER_ICONS[task]] ?? PenLine
+const iconOf = (task: GuideChapter): LucideIcon => ICONS[CHAPTER_ICONS[task]] ?? PenLine
 
 // The row's chords (shortChord, rowChords) are shared with the presenter's Guide column (ticket 10).
 export { rowChords, shortChord } from '../../../shared/guide-chapters'
@@ -37,13 +36,13 @@ export interface GuideChaptersProps {
   chapters: Chapter[]
   learn: GuideLearn
   /** The chapter shown as This chapter, or null for the list. */
-  selected: TaskGroup | null
-  onSelect: (task: TaskGroup) => void
+  selected: GuideChapter | null
+  onSelect: (task: GuideChapter) => void
   onBack: () => void
   /** The effective chord text of a shortcut id (a rebinding applied). */
   chordOf: (shortcutId: string) => string
-  practice: (task: TaskGroup) => PracticeState
-  onOpenPractice: (task: TaskGroup) => void
+  practice: (task: GuideChapter) => PracticeState
+  onOpenPractice: (task: GuideChapter) => void
   /** The row (by its id) that has just ticked in this window: it flashes. */
   flashId: string | null
 }

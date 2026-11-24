@@ -1,8 +1,7 @@
 // Compact object cards (ADR-0042, Shape A): every fence that is not a drawable object, speaker notes and
 // standalone HTML comments. A card is one line of what the object is; ⌄ expands a bounded, read-only
 // preview (session chrome, never written); `</>` shows the exact source. Every piece of author text is
-// set with textContent: no HTML from a fence, a note or a comment ever reaches the editor's DOM, and no
-// card loads anything.
+// set with textContent. Local page previews load into a scriptless, network-free frame.
 import { Facet } from '@codemirror/state'
 import { type EditorView, WidgetType } from '@codemirror/view'
 import { splitSegments } from '../../../../../compiler/scripts/lib/simulation-segments.mjs'
@@ -13,12 +12,14 @@ import {
   SIMULATION_DESIGN_LABELS
 } from '../../../../shared/objects/card-kinds.ts'
 import { objectBlockEditableSource, type InlineComment, type ObjectBlock } from './detect.ts'
-import { exactTextWrite, setExpandedObjectBlock, setRawObjectBlock } from './effects.ts'
+import { exactTextWrite, setExpandedObjectBlock, setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
 import { ObjectWidget } from './widgets.ts'
+import { cardPreviewKind, showPagePreview, simulationPreview, type CardPreviewKind } from './previews.ts'
 import { cardFileNote, cardStatusRefs, type CardFileStatus } from './status.ts'
 import { CARD_ACTION_LABELS, cardActionHost, cardActionsFor, runCardAction } from './cardActions.ts'
 import { planNotesClose } from '../../../../shared/objects/notes-planner.ts'
 import { notify } from '../../lib/notify.ts'
+import { notesMoveHandle } from './notesDrag.ts'
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`
 
@@ -50,7 +51,8 @@ export function cardSummary(block: ObjectBlock): { title: string; detail: string
     return {
       title: label,
       detail: [body.trim() ? plural(words, 'word') : 'empty', position].filter(Boolean).join(' · '),
-      chips: ['Presenter only']
+      chips: ['Presenter only'],
+      first: nonBlankLines(body)[0]
     }
   }
   if (block.kind === 'embed' && block.embed) {
@@ -135,9 +137,6 @@ function expandedRows(block: ObjectBlock): Array<{ label: string; text: string }
       { label: 'What it is', text: block.comment?.explanation ?? '' }
     ]
   }
-  if (block.kind === 'notes') {
-    return [{ label: '', text: body }, { label: 'Privacy', text: NOTES_PRIVACY_TEXT }]
-  }
   if (block.kind === 'embed' && block.embed) {
     return [
       { label: 'Address', text: block.embed.src },
@@ -147,21 +146,50 @@ function expandedRows(block: ObjectBlock): Array<{ label: string; text: string }
   return [{ label: '', text: body }]
 }
 
+type MountedCard = { block: ObjectBlock; dispose?: () => void }
+const mountedCards = new WeakMap<HTMLElement, MountedCard>()
+
 export class CardWidget extends ObjectWidget {
   readonly expanded: boolean
   readonly statuses: ReadonlyMap<string, CardFileStatus>
   /** The statuses of this card's own references, as one comparable string. */
   readonly statusKey: string
+  readonly preview: CardPreviewKind | null
 
-  constructor(block: ObjectBlock, selected: boolean, raw: boolean, expanded: boolean, statuses: ReadonlyMap<string, CardFileStatus> = new Map()) {
+  constructor(block: ObjectBlock, selected: boolean, raw: boolean, expanded: boolean, statuses: ReadonlyMap<string, CardFileStatus> = new Map(), previews = false) {
     super(block, selected, raw)
     this.expanded = expanded
     this.statuses = statuses
+    this.preview = previews ? cardPreviewKind(block) : null
     this.statusKey = cardStatusRefs(block).map((ref) => `${ref}=${statuses.get(ref)?.state ?? ''}`).join('|')
   }
 
   eq(other: WidgetType): boolean {
-    return super.eq(other) && other instanceof CardWidget && other.expanded === this.expanded && other.statusKey === this.statusKey
+    return super.eq(other) && other instanceof CardWidget && this.sameDisplay(other)
+  }
+
+  private sameDisplay(other: CardWidget): boolean {
+    return this.expanded === other.expanded && this.statusKey === other.statusKey
+      && this.preview === other.preview && this.block.design === other.block.design
+  }
+
+  updateDOM(dom: HTMLElement, _view: EditorView, from: this): boolean {
+    // Typing above a visible card moves its source offsets. Keep its rendered body and point the
+    // existing controls at the new range, instead of reading the HTML file again on each keystroke.
+    if (!this.preview || !this.sameDisplay(from) || this.raw !== from.raw
+        || this.block.kind !== from.block.kind || this.block.source !== from.block.source
+        || this.block.simulationVersion !== from.block.simulationVersion) return false
+    const mounted = mountedCards.get(dom)
+    if (!mounted) return false
+    mounted.block = this.block
+    dom.classList.toggle('tw-obj-selected', this.selected)
+    return true
+  }
+
+  destroy(dom: HTMLElement): void {
+    mountedCards.get(dom)?.dispose?.()
+    mountedCards.delete(dom)
+    super.destroy(dom)
   }
 
   /** The status of the file this card's first line names (a local page, simulation or clip). */
@@ -173,33 +201,54 @@ export class CardWidget extends ObjectWidget {
   }
 
   get estimatedHeight(): number {
-    return this.expanded || this.raw ? 220 : 58
+    if (this.expanded || this.raw) return 220
+    if (this.block.kind === 'notes') return 32
+    if (this.preview === 'page') return 195
+    return this.preview ? 136 : 58
   }
 
   toDOM(view: EditorView): HTMLElement {
     const summary = cardSummary(this.block)
     const shell = el('div', `tw-obj tw-obj-card tw-obj-card-${this.block.kind}${this.selected ? ' tw-obj-selected' : ''}`)
     shell.dataset.objectBlock = this.block.kind
+    const mounted: MountedCard = { block: this.block }
+    mountedCards.set(shell, mounted)
     const header = el('div', 'tw-obj-head')
+    if (this.block.kind === 'notes') {
+      this.notesHeader(view, header, summary, mounted)
+      shell.append(header)
+      if (this.raw) this.rawSource(shell)
+      return shell
+    }
     header.append(el('span', 'tw-obj-kind', summary.title))
     header.append(el('span', 'tw-obj-step', summary.detail))
     for (const chip of summary.chips) {
       const node = el('span', 'tw-obj-chip', chip)
-      if (this.block.kind === 'notes') node.title = NOTES_PRIVACY_TEXT
       if (this.block.kind === 'comment' && this.block.comment) node.title = this.block.comment.explanation
       header.append(node)
     }
     const own = this.ownFileStatus()
     const note = cardFileNote(own)
+    const readPage = view.state.facet(cardMediaFacet).readPage
     if (note) header.append(el('span', `tw-obj-chip tw-obj-status tw-obj-status-${own?.state}`, note))
-    header.append(this.actions(view))
+    header.append(this.actions(view, mounted))
     header.append(this.toggle(view, 'tw-obj-raw', '</>', this.raw, this.raw ? 'Hide the source' : 'Show the source', () =>
-      setRawObjectBlock.of({ from: this.block.from, raw: !this.raw })))
+      setRawObjectBlock.of({ from: mounted.block.from, raw: !this.raw })))
     header.append(this.toggle(view, 'tw-obj-expand', this.expanded ? '⌃' : '⌄', this.expanded, this.expanded ? 'Collapse' : 'Expand', () =>
-      setExpandedObjectBlock.of({ from: this.block.from, expanded: !this.expanded })))
+      setExpandedObjectBlock.of({ from: mounted.block.from, expanded: !this.expanded })))
     shell.append(header)
     if (this.raw) {
       this.rawSource(shell)
+    } else if (this.preview && this.preview !== 'page') {
+      const visual = simulationPreview(this.block, this.preview)
+      if (this.expanded) visual.classList.add('is-expanded')
+      shell.append(visual)
+    } else if (this.preview === 'page' && this.block.embed && !note && readPage) {
+      const { src, name } = this.block.embed
+      const host = el('div', 'tw-obj-preview-frame', 'Loading page preview…')
+      if (this.expanded) host.classList.add('is-expanded')
+      shell.append(host)
+      mounted.dispose = showPagePreview(host, name, () => readPage(src))
     } else if (this.expanded) {
       const body = el('div', 'tw-obj-body tw-obj-card-expanded')
       for (const row of expandedRows(this.block)) {
@@ -217,6 +266,26 @@ export class CardWidget extends ObjectWidget {
     }
     shell.append(el('span', 'tw-obj-hint', '↵ edit · ⌫ delete'))
     return shell
+  }
+
+  private notesHeader(view: EditorView, header: HTMLElement, summary: ReturnType<typeof cardSummary>, mounted: MountedCard): void {
+    const open = el('button', 'workspace-notes-toggle tw-obj-expand tw-notes-disclosure')
+    open.type = 'button'
+    open.setAttribute('aria-expanded', 'false')
+    open.setAttribute('aria-label', this.block.deckNotes ? 'Speaker notes for the whole talk' : 'Speaker notes')
+    open.title = [NOTES_PRIVACY_TEXT, summary.detail].filter(Boolean).join(' · ')
+    open.append(el('span', 'tw-notes-chevron'), el('strong', '', summary.title))
+    if (!this.raw) open.append(el('span', 'tw-notes-first', summary.first ?? 'None yet'))
+    open.addEventListener('mousedown', event => event.stopPropagation())
+    open.addEventListener('click', () => {
+      const { from, to, source } = this.block
+      if (view.state.doc.sliceString(from, to) !== source) return
+      view.dispatch({ selection: { anchor: from }, effects: setOpenObjectBlock.of({ from, to }), scrollIntoView: true })
+    })
+    if (!this.block.deckNotes) header.append(notesMoveHandle(view, this.block))
+    header.append(open, this.actions(view, mounted))
+    header.append(this.toggle(view, 'tw-obj-raw', '</>', this.raw, this.raw ? 'Hide the source' : 'Show the source', () =>
+      setRawObjectBlock.of({ from: this.block.from, raw: !this.raw })))
   }
 
   /** The page's saved views: a local thumbnail when the editor can resolve one, and a per-view Remove. */
@@ -251,7 +320,7 @@ export class CardWidget extends ObjectWidget {
   }
 
   /** Open, Reveal, Copy markup, Replace file and Remove (cardActions.ts); shown on hover and when selected. */
-  private actions(view: EditorView): HTMLElement {
+  private actions(view: EditorView, mounted: MountedCard): HTMLElement {
     const strip = el('span', 'tw-obj-actions')
     for (const action of cardActionsFor(this.block, view.state.facet(cardActionHost))) {
       const label = CARD_ACTION_LABELS[action]
@@ -263,7 +332,7 @@ export class CardWidget extends ObjectWidget {
       button.addEventListener('mousedown', (event) => {
         event.preventDefault()
         event.stopPropagation()
-        void runCardAction(view, this.block, action)
+        void runCardAction(view, mounted.block, action)
       })
       strip.append(button)
     }
@@ -293,7 +362,11 @@ export class CardWidget extends ObjectWidget {
 }
 
 /** Where the editor can find a local picture for a saved view (Editor.tsx wires the image widget's resolver). */
-export const cardMediaFacet = Facet.define<{ resolveImage?: (src: string) => string | null }, { resolveImage?: (src: string) => string | null }>({
+type CardMedia = {
+  resolveImage?: (src: string) => string | null
+  readPage?: (src: string) => Promise<string | null>
+}
+export const cardMediaFacet = Facet.define<CardMedia, CardMedia>({
   combine: (values) => values[0] ?? {}
 })
 
@@ -409,6 +482,6 @@ export class AddNotesCloseWidget extends WidgetType {
   }
 }
 
-export function cardWidgetFor(block: ObjectBlock, selected: boolean, raw: boolean, expanded: boolean, statuses?: ReadonlyMap<string, CardFileStatus>): CardWidget {
-  return new CardWidget(block, selected, raw, expanded, statuses)
+export function cardWidgetFor(block: ObjectBlock, selected: boolean, raw: boolean, expanded: boolean, statuses?: ReadonlyMap<string, CardFileStatus>, previews?: boolean): CardWidget {
+  return new CardWidget(block, selected, raw, expanded, statuses, previews)
 }

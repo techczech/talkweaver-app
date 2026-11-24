@@ -168,30 +168,19 @@ const identityRows = [
 assert.deepEqual(
   resolveInspectedSlide([identityRows[2], identityRows[0], identityRows[1]], 'image-grid', 1),
   { id: 'image-grid', index: 2 },
-  'Inspector re-derives its index from the stable slide id after a recompile reorders rows'
+  'History finds the edited slide by stable ID after a recompile reorders rows'
 )
 assert.deepEqual(
   resolveInspectedSlide(identityRows.slice(0, 2), 'section-b', 9),
   { id: 'image-grid', index: 1 },
-  'Inspector falls back to the clamped previous index only when its slide id vanished'
+  'History falls back to the clamped index only when the edited slide ID vanished'
 )
 assert.equal(
   headingLineForSlideId('## Section B\n{id=section-b}\n\n### Image grid\n{id=image-grid}{image-grid}\n', 'image-grid'),
   4,
-  'Inspector option commits derive the heading line from the inspected id, not the caret-owned active index'
+  'Inspector option commits derive the heading line from the current slide ID'
 )
 assert.equal(headingLineForSlideId('### Image grid\n{id=image-grid}\n', 'missing'), null)
-
-assert.equal(
-  inspectorModule.inspectedSlideIdAfterCursorChange(identityRows, 2, 'section-a', false),
-  'section-b',
-  'Inspector follows a cursor-driven active-slide change'
-)
-assert.equal(
-  inspectorModule.inspectedSlideIdAfterCursorChange(identityRows, 2, 'section-a', true),
-  'section-a',
-  'Inspector keeps its stable id while an option commit dispatches'
-)
 
 const rows = [{
   layout: 'contrast', nav_title: 'Changed', title: 'Changed', source_markdown: '### Changed\n{contrast}{reveal}\n\n- one\n- two\n- three',

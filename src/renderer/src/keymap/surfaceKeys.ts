@@ -18,6 +18,8 @@ export const SURFACE_KEYS = {
   'research-find': 'app.research-find',
   'pathways': 'app.pathways',
   'add-to-pathway': 'app.add-to-pathway',
+  'present-from-here': 'app.present-current',
+  'present-presenter': 'app.present',
   'present-pathway': 'app.present-pathway',
   'set-aside-slides': 'app.set-aside',
   'search-slides-grid': 'app.grid-search',

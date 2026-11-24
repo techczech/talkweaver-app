@@ -13,4 +13,4 @@ export function listSlideBlocks(text: string): SlideBlock[]
 export function lineHasUnclosedBrace(line: string): boolean
 export function headingIdKey(heading: string): string
 /** The headings stampMissingIds (12-outline-edit.mjs) will stamp on a save of `text`. */
-export function headingsMissingIds(text: string): Array<{ heading: string; occurrence: number; prefKey: string }>
+export function headingsMissingIds(text: string): Array<{ heading: string; occurrence: number; prefKey: string; index: number }>

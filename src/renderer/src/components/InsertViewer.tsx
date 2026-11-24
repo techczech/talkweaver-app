@@ -172,9 +172,9 @@ export default function InsertViewer({
 
   return (
     <div ref={rootRef} className="lt-viewer" role="dialog" aria-modal="true" aria-label="Insert from talk" tabIndex={-1}>
-      <header className="lt-iv-top">
+      <header className="lt-iv-top tw-window-drag">
         <span className="lt-iv-room">Insert from</span>
-        <span className="lt-iv-talk" title={talkTitle}>{talkTitle}</span>
+        <span className="lt-iv-talk" data-window-title title={talkTitle}>{talkTitle}</span>
         <span className="lt-iv-pos">{index + 1} / {deck.length}</span>
         <span className="lt-iv-spacer" />
         <button type="button" className="lt-btn" onClick={onClose} title="Back to the Browser (Esc)">

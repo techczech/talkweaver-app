@@ -104,18 +104,30 @@ await test('the real reader: an unreadable record file fails the whole list', as
   } finally { chmodSync(locked, 0o644) }
   assert.equal((await answerEarlierViews(7, outline, PAGE, deps)).views.length, 2)
 })
-await test('a slow disk: main keeps running, the answer comes at the deadline, and a read finishing after it is not used', async () => {
-  let ticks = 0
-  const ticker = setInterval(() => { ticks += 1 }, 10)
-  // The last read finishes after the 250 ms budget: no success with it.
-  const slow = seamOf((name) => new Promise((done) => setTimeout(() => done(realText.get(name)), name === realNames[1] ? 300 : 0)))
-  const t0 = performance.now()
-  const answer = await answerEarlierViews(7, outline, PAGE, { ...deps, earlierFs: slow })
-  const ms = performance.now() - t0
-  clearInterval(ticker)
-  assert.deepEqual(answer, { ok: false, reason: 'unreadable' })
-  assert.ok(ms < 300, `answered at the deadline (${ms} ms)`)
-  assert.ok(ticks >= 15, `main kept running (${ticks} ticks)`)
+await test('a slow disk: main keeps running and the deadline answers while the last read is still pending', async () => {
+  const started = Promise.withResolvers()
+  const pending = Promise.withResolvers()
+  const nextTurn = () => new Promise(resolve => setImmediate(resolve))
+  const slow = seamOf((name) => {
+    if (name !== realNames[1]) return realText.get(name)
+    started.resolve()
+    return pending.promise
+  })
+  mock.timers.enable({ apis: ['setTimeout'] })
+  try {
+    let answer
+    const work = answerEarlierViews(7, outline, PAGE, { ...deps, earlierFs: slow }).then(result => { answer = result })
+    await Promise.race([started.promise, work])
+    mock.timers.tick(STATUS_BUDGET_MS - 1)
+    await nextTurn()
+    assert.equal(answer, undefined, 'the event loop ran while the read and deadline were pending')
+    mock.timers.tick(1)
+    await nextTurn()
+    assert.deepEqual(answer, { ok: false, reason: 'unreadable' }, 'the deadline answers without a partial list or the last read')
+  } finally {
+    pending.resolve(realText.get(realNames[1]))
+    mock.timers.reset()
+  }
 })
 await test('a window that changed talk while the records were read is not answered', async () => {
   let talk = outline

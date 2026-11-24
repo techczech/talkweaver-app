@@ -52,6 +52,8 @@ export const plainTheme = EditorView.theme({
     caretColor: 'var(--accent-text)',
     fontFamily: PLAIN_SANS
   },
+  // Use the scroller's available width even when a card has a large intrinsic width.
+  '.cm-content.cm-lineWrapping': { minWidth: '0' },
   '.cm-line': { lineHeight: '1.6', color: 'var(--ink)' },
   '.cm-plain-code': { fontFamily: CODE_FONT, fontSize: '14px' },
   '.cm-gutters': {

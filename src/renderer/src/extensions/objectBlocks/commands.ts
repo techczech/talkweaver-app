@@ -6,8 +6,8 @@ import type { Extension } from '@codemirror/state'
 import { readOutlineObjectRegions } from '../../../../shared/objects/outline-object-regions.ts'
 import { planNotesInsert, slideAround } from '../../../../shared/objects/notes-planner.ts'
 import { notify } from '../../lib/notify.ts'
-import { objectBlocksIn } from './field.ts'
-import { exactTextWrite, setOpenObjectBlock } from './effects.ts'
+import { objectBlocksIn, outlineObjectsIn } from './field.ts'
+import { editNotesAsSource, exactTextWrite, setOpenObjectBlock } from './effects.ts'
 import type { ObjectBlock } from './detect.ts'
 import { cardStatusRefs, objectStatusField, objectStatusSource, setObjectStatuses, type CardFileStatus } from './status.ts'
 
@@ -27,11 +27,11 @@ export function insertSpeakerNotes(view: EditorView): boolean {
       const regions = readOutlineObjectRegions(text)
       const slide = slideAround(text, caretLine, regions)
       const head = state.selection.main.head
-      const blocks = objectBlocksIn(state).filter((b) => b.kind === 'notes' && slide
+      const blocks = (outlineObjectsIn(state)?.blocks ?? []).filter((b) => b.kind === 'notes' && slide
         && b.from >= regions.lineStarts[slide.heading] && b.from < (regions.lineStarts[slide.end] ?? text.length + 1))
       const target = blocks.find((b) => b.from >= head) ?? blocks[blocks.length - 1]
       if (target) {
-        view.dispatch({ selection: { anchor: target.from }, effects: setOpenObjectBlock.of({ from: target.from, to: target.to }), scrollIntoView: true })
+        focusSpeakerNotes(view, target)
         return true
       }
       if (plan.open !== undefined) view.dispatch({ selection: { anchor: regions.lineStarts[plan.open] }, scrollIntoView: true })
@@ -42,9 +42,20 @@ export function insertSpeakerNotes(view: EditorView): boolean {
   const eolLength = plan.insert.startsWith('\r\n') ? 2 : 1
   const from = plan.from + eolLength * 2
   view.dispatch({ changes: { from: plan.from, insert: plan.insert }, selection: { anchor: from }, userEvent: 'input.notes', scrollIntoView: true })
-  const block = objectBlocksIn(view.state).find((b) => b.kind === 'notes' && b.from === from)
-  if (block) view.dispatch({ effects: setOpenObjectBlock.of({ from: block.from, to: block.to }) })
+  const block = outlineObjectsIn(view.state)?.blocks.find((b) => b.kind === 'notes' && b.from === from)
+  if (block) focusSpeakerNotes(view, block)
   return true
+}
+
+function focusSpeakerNotes(view: EditorView, block: ObjectBlock): void {
+  const { from, to, bodyFrom } = block
+  if (view.state.facet(editNotesAsSource)) {
+    const closing = view.state.doc.lineAt(to - 1)
+    const anchor = bodyFrom != null && bodyFrom < closing.from ? bodyFrom : view.state.doc.lineAt(from).to
+    view.dispatch({ selection: { anchor }, scrollIntoView: true })
+    return
+  }
+  view.dispatch({ selection: { anchor: from }, effects: setOpenObjectBlock.of({ from, to }), scrollIntoView: true })
 }
 
 /**
@@ -104,7 +115,7 @@ export function deletionNotice(block: ObjectBlock): string | null {
 export const objectDeletionNotices: Extension = EditorView.updateListener.of((update) => {
   if (!update.docChanged) return
   if (!update.transactions.some((tr) => tr.isUserEvent('delete') || tr.isUserEvent('cut') || tr.isUserEvent('input'))) return
-  const before = objectBlocksIn(update.startState)
+  const before = outlineObjectsIn(update.startState)?.blocks ?? []
   if (!before.length) return
   const removed: ObjectBlock[] = []
   update.changes.iterChangedRanges((fromA, toA) => {

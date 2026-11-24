@@ -3,7 +3,7 @@
 // right, or collapsed to a pill. Keep and Reject only change an item's status. The two Insert buttons (ticket 2) are
 // and card drags ask the workspace to change the outline (`insert`, ScratchpadInsert.tsx);
 // no agent file is ever touched. Spec: docs/design/2026-10-27-slide-scratchpad/.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Ellipsis, GripVertical, PanelRightClose, Search } from 'lucide-react'
 import {
@@ -114,6 +114,19 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
 
   const targetIds = useCallback((): string[] => (selectedIds.length > 0 ? selectedIds : focusedId ? [focusedId] : []), [selectedIds, focusedId])
   const orderDrag = useRef<string[] | null>(null)
+  const [orderTarget, setOrderTarget] = useState<{ id: string; edge: 'before' | 'after' } | null>(null)
+  const orderEdge = (event: DragEvent<HTMLDivElement>): 'before' | 'after' => {
+    const box = event.currentTarget.getBoundingClientRect()
+    return event.clientY > box.top + box.height / 2 ? 'after' : 'before'
+  }
+  const endOrderDrag = (): void => {
+    orderDrag.current = null
+    setOrderTarget(null)
+  }
+  // The move follows the cards on screen, while the store checks its ungrouped sort order.
+  const saveOrder = (ids: string[], next: string[]): void => {
+    if (next.some((id, index) => id !== ids[index])) void data.reorder(visible.map(item => item.id), next)
+  }
   const arrange = (picked: string[], target: string, after = false): void => {
     if (insert?.busy || picked.includes(target)) return
     const ids = displayed.map(item => item.id)
@@ -122,7 +135,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
     const at = next.indexOf(target)
     if (!moving.length || at < 0) return
     next.splice(at + (after ? 1 : 0), 0, ...moving)
-    if (next.some((id, index) => id !== ids[index])) void data.reorder(ids, next)
+    saveOrder(ids, next)
   }
   const moveSelected = (down: boolean): void => {
     if (insert?.busy) return
@@ -137,7 +150,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
         ;[next[i], next[neighbour]] = [next[neighbour], next[i]]
       }
     }
-    if (next.some((id, index) => id !== ids[index])) void data.reorder(ids, next)
+    saveOrder(ids, next)
   }
   const clearSelection = (): void => { selection.clear(); setMenu(null) }
 
@@ -310,7 +323,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
         </>
       )
   )
-  const placeNote = (item: ScratchItem | null): JSX.Element | null => (insert && item?.fileKind !== 'sketch' ? <ScratchpadPlaceNote api={insert} item={item} open={placeOpen} onOpenChange={setPlaceOpen} /> : null)
+  const placeNote = (item: ScratchItem | null, batch = false): JSX.Element | null => (insert && item?.fileKind !== 'sketch' ? <ScratchpadPlaceNote api={insert} item={item} batch={batch} open={placeOpen} onOpenChange={setPlaceOpen} /> : null)
   const compareItems = compareIds ? compareIds.map((id) => byId.get(id)).filter((i): i is ScratchItem => Boolean(i)) : null
   const insertedNote = (item: ScratchItem): string | null => {
     if (!item.insertedAt) return null
@@ -441,11 +454,36 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
                     <div className="sp-cards">
                       {section.items.map((item) => (
                         <div key={item.id} className={`sp-order-card${!docked || manual ? ' has-order-handle' : ''}`}
-                          onDragOver={event => { if (orderDrag.current) { event.preventDefault(); event.stopPropagation(); event.dataTransfer.dropEffect = 'move' } }}
-                          onDrop={event => { const moving = orderDrag.current; orderDrag.current = null; if (!moving) return; event.preventDefault(); event.stopPropagation(); const box = event.currentTarget.getBoundingClientRect(); arrange(moving, item.id, event.clientY > box.top + box.height / 2) }}>
+                          data-order-target={orderTarget?.id === item.id ? orderTarget.edge : undefined}
+                          onDragOver={event => {
+                            const moving = orderDrag.current
+                            if (!moving) return
+                            event.stopPropagation()
+                            if (moving.includes(item.id) || insert?.busy) {
+                              event.dataTransfer.dropEffect = 'none'
+                              setOrderTarget(null)
+                              return
+                            }
+                            event.preventDefault()
+                            event.dataTransfer.dropEffect = 'move'
+                            const edge = orderEdge(event)
+                            setOrderTarget(current => current?.id === item.id && current.edge === edge ? current : { id: item.id, edge })
+                          }}
+                          onDragLeave={event => {
+                            if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return
+                            setOrderTarget(current => current?.id === item.id ? null : current)
+                          }}
+                          onDrop={event => {
+                            const moving = orderDrag.current
+                            if (!moving) return
+                            event.preventDefault()
+                            event.stopPropagation()
+                            endOrderDrag()
+                            arrange(moving, item.id, orderEdge(event) === 'after')
+                          }}>
                         {(!docked || manual) && <button type="button" className="sp-order-handle" aria-label={`Arrange ${item.title}`} title="Drag to arrange in Your order" draggable={!insert?.busy}
                           onDragStart={event => { event.stopPropagation(); orderDrag.current = selectedIds.includes(item.id) ? batchIds : [item.id]; event.dataTransfer.setData('application/x-talkweaver-scratchpad-order', item.id); event.dataTransfer.effectAllowed = 'move' }}
-                          onDragEnd={() => { orderDrag.current = null }}><GripVertical size={14} aria-hidden="true" /></button>}
+                          onDragEnd={endOrderDrag}><GripVertical size={14} aria-hidden="true" /></button>}
                         <ScratchpadCard item={item} terms={parsed.terms}
                           ticked={selectedIds.includes(item.id)} selected={focusedId === item.id && selectedIds.length === 0}
                           groupTag={group === 'all' ? groupOf(item.group) : null}
@@ -478,7 +516,7 @@ export default function ScratchpadPanel({ data, layoutApi, registerActions, onOp
                     <span className="sp-flex" />
                     <button type="button" className="sp-link" onClick={clearSelection}>Clear selection</button>
                   </div>
-                  {placeNote(null)}
+                  {placeNote(null, true)}
                   {selectedIds.length > COMPARE_MAX && <div className="sp-why">Compare side by side takes 2 to 4 items. Untick some to compare.</div>}
                 </>
               ) : selectedOne ? (

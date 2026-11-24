@@ -159,7 +159,16 @@ await test('a window that changed talk while the disk was looked at is not answe
 await test('the IPC handler answers by the sender id main knows, not by anything the renderer says', async () => {
   const handlers = new Map()
   registerObjectStatusIpc({ ...deps, ipcMain: { handle: (channel, fn) => { handlers.set(channel, fn) } } })
-  assert.deepEqual([...handlers.keys()], ['object:status', 'object:earlier-views'])
+  assert.deepEqual([...handlers.keys()], ['object:status', 'object:static-preview', 'object:earlier-views'])
+  const preview = handlers.get('object:static-preview')
+  const ownWindow = { sender: { id: 7 } }
+  assert.equal(await preview(ownWindow, outline, 'media/page.html#part'), process.platform === 'darwin' ? '<p>hi</p>' : null)
+  assert.equal(await preview(ownWindow, outline, 'media/escape.html'), null)
+  assert.equal(await preview(ownWindow, outline, 'media/my view.png'), null)
+  assert.equal(await preview(ownWindow, outline, 'https://example.org/page.html'), null)
+  assert.equal(await preview({ sender: { id: 8 } }, outline, 'media/page.html'), null)
+  writeFileSync(join(talkDir, 'media', 'large.html'), 'x'.repeat(512 * 1024 + 1))
+  assert.equal(await preview(ownWindow, outline, 'media/large.html'), null)
   const handler = handlers.get('object:status')
   assert.equal((await handlers.get('object:earlier-views')({ sender: { id: 8 } }, outline, 'https://example.org/')).ok, false)
   assert.equal((await handler({ sender: { id: 8 } }, outline, ['media/page.html'])).ok, false)

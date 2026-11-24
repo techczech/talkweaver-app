@@ -14,6 +14,7 @@ import type { EditorView } from '@codemirror/view'
 import { locateCard, planCardRemoval } from '../../../../shared/objects/card-actions.ts'
 import { parseTriggerLine } from '../../../../shared/trigger-line.ts'
 import { notify } from '../../lib/notify.ts'
+import { minimalChange } from '../../lib/minimalChange.ts'
 import { detectObjectBlocks, type ObjectBlock } from './detect.ts'
 import { exactTextWrite } from './effects.ts'
 
@@ -74,7 +75,8 @@ export function planObjectRemoval(text: string, block: RemovableObject): ObjectR
     const whole = planCardRemoval(text, { from: lineFrom, to: at.to, source: text.slice(lineFrom, at.to) })
     return whole.ok ? { ok: true, changes: [whole.change], caret: whole.change.from } : whole
   }
-  const edit = { from: lineFrom, to: lineFrom + lineText.length, insert: kept }
+  const tokenEdit = minimalChange(lineText, kept)
+  const edit = { from: lineFrom + tokenEdit.from, to: lineFrom + tokenEdit.to, insert: tokenEdit.insert }
   return { ok: true, changes: [edit, body.change], caret: body.change.from - (lineText.length - kept.length) }
 }
 

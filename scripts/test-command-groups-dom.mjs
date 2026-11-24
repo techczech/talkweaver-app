@@ -17,7 +17,7 @@ import CommandMenu from './src/renderer/src/components/CommandMenu.tsx';
 import{listedPaletteCommands}from'./src/shared/command-registry.ts';
 window.ran=[];
 const commands=listedPaletteCommands().map(c=>({id:c.id,title:c.label,group:c.taskGroup,subgroup:c.subgroup,keywords:c.palette.keywords,hint:c.id==='undo'?'⌘Z':'',run:()=>window.ran.push(c.id)}));
-commands.push({id:'disabled',title:'Unavailable fixture',group:'Write the outline',subgroup:'Fixture',disabled:true,run:()=>window.ran.push('disabled')});
+commands.push({id:'disabled',title:'Unavailable fixture',group:'Outlining',subgroup:'Fixture',disabled:true,run:()=>window.ran.push('disabled')});
 let open;
 function App(){const[isOpen,setOpen]=useState(false),[query,setQuery]=useState('');open=q=>{setQuery(q);setOpen(true)};return <><textarea id="source" defaultValue="Original text"/><button id="outside">Outside</button><CommandMenu isOpen={isOpen} initialQuery={query} onClose={()=>setOpen(false)} commands={commands}/></>}
 flushSync(()=>createRoot(document.getElementById('root')).render(<App/>));window.openPalette=(q='')=>flushSync(()=>open(q));
@@ -32,17 +32,17 @@ flushSync(()=>createRoot(document.getElementById('root')).render(<App/>));window
   const active = () => page.locator('[role=option][data-active=true]')
   async function check(name, fn) { await fn(); passed++; console.log(`PASS ${name}`) }
   async function open(text = '') { await page.locator('#source').focus(); await page.evaluate(q => window.openPalette(q), text); await query.waitFor(); await query.focus() }
-  await check('empty palette lists ten distinct icon categories in canonical order', async () => {
+  await check('empty palette lists eleven distinct icon categories in canonical order', async () => {
     await open()
     assert.deepEqual(await page.locator('[data-task-group]').evaluateAll(rows => rows.map(r => r.dataset.taskGroup)), TASK_GROUPS)
     assert.equal(await page.locator('[data-command]').count(), 0)
-    assert.equal(await page.locator('[data-group-icon]').count(), 10)
+    assert.equal(await page.locator('[data-group-icon]').count(), TASK_GROUPS.length)
   })
   await check('Right opens category and subgroup headings are not navigable commands', async () => {
     await query.press('ArrowRight')
     assert.ok(await page.locator('.command-menu-subgroup').count() > 0)
     assert.equal(await page.locator('[data-task-group]').count(), 0)
-    assert.equal(await query.getAttribute('placeholder'), 'Search Write the outline…')
+    assert.equal(await query.getAttribute('placeholder'), 'Search Outlining…')
     assert.ok(await active().getAttribute('data-command'))
   })
   await check('typing in a group cannot return commands from another group', async () => {
@@ -54,20 +54,23 @@ flushSync(()=>createRoot(document.getElementById('root')).render(<App/>));window
     assert.equal(await page.locator('[data-command]').count(), 0)
   })
   await check('Escape returns to categories and remembers the group row', async () => {
-    await query.press('Escape'); assert.equal(await active().getAttribute('data-task-group'), 'Write the outline')
+    await query.press('Escape'); assert.equal(await active().getAttribute('data-task-group'), 'Outlining')
     assert.equal(await query.inputValue(), '')
     await query.press('ArrowDown'); await query.press('Enter'); await query.press('ArrowLeft')
-    assert.equal(await active().getAttribute('data-task-group'), 'Build a slide')
+    assert.equal(await active().getAttribute('data-task-group'), 'Formatting')
   })
   await check('Backspace only navigates back when the query is empty', async () => {
     await query.press('Enter'); await query.fill('x'); await query.press('Backspace')
     assert.equal(await page.locator('[data-task-group]').count(), 0)
-    await query.press('Backspace'); assert.equal(await active().getAttribute('data-task-group'), 'Build a slide')
+    await query.press('Backspace'); assert.equal(await active().getAttribute('data-task-group'), 'Formatting')
   })
   await check('top query searches group and subgroup names and command labels', async () => {
     await query.fill('Undo'); assert.ok(await page.locator('[data-command=undo]').count())
     assert.equal(await page.locator('[data-task-group]').count(), 0)
-    await query.fill('Write the outline'); assert.ok(await page.locator('[data-command]').count() > 1)
+    await query.fill('Outlining'); assert.ok(await page.locator('[data-command=new-slide]').count())
+    assert.equal(await page.locator('[data-command=format-bold]').count(), 0)
+    await query.fill('Formatting'); assert.ok(await page.locator('[data-command=format-bold]').count())
+    assert.equal(await page.locator('[data-command=new-slide]').count(), 0)
     await query.fill('Headings and levels'); assert.ok(await page.locator('[data-command]').count() > 0)
   })
   await check('composition keys neither run nor navigate nor dismiss', async () => {
@@ -90,7 +93,7 @@ flushSync(()=>createRoot(document.getElementById('root')).render(<App/>));window
   })
   await check('forwarded Actions here query searches immediately and reopening clears group state', async () => {
     await open('Undo'); assert.equal(await query.inputValue(), 'Undo'); assert.ok(await page.locator('[data-command=undo]').count())
-    await query.press('Escape'); await open(); assert.equal(await page.locator('[data-task-group]').count(), 10)
+    await query.press('Escape'); await open(); assert.equal(await page.locator('[data-task-group]').count(), TASK_GROUPS.length)
   })
   await check('Tab and Shift Tab remain in palette and Escape restores focus', async () => {
     await query.press('Tab'); assert.equal(await query.evaluate(el => el === document.activeElement), true)

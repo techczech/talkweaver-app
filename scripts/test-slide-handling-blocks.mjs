@@ -152,6 +152,7 @@ refused(TALK, moveBlocks(TALK, [ref(TALK, '### A {id=a}')], place('before', TALK
   const cut = cutBlocks(T, [ref(T, '### D'), ref(T, '### A')])
   assert(!('refused' in cut))
   assert.equal(cut.count, 2)
+  assert.deepEqual(cut.headingOrder, [0, 2, 3, 4], 'cut records the surviving heading positions')
   assert.equal(cut.clip, J('### A', 'a', '', '### D', 'd', ''))
   assert(!cut.text.includes('### A') && !cut.text.includes('### D') && cut.text.includes('### B') && cut.text.includes('### C'))
   assert.equal(nonBlank(cut.text + '\n' + cut.clip), nonBlank(T))

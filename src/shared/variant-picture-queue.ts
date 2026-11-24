@@ -37,17 +37,26 @@ export const VARIANT_PICTURE_POLICY = {
 
 /** What a surface draws for a key: a picture URL, `null` (keep the fallback: the sample, the named tile)
  *  or `{ reason }` (the render says the slide cannot take it: grey it, say why). Absent while unasked. */
-export type VariantPictureMark = string | null | { reason: string }
+type RevealPictureMark = { url: string; reveal: true; revealSteps?: number }
+export type VariantPictureMark = string | RevealPictureMark | null | { reason: string }
+
+export function isRevealPicture(mark: VariantPictureMark | undefined): mark is RevealPictureMark {
+  return typeof mark === 'object' && mark !== null && 'reveal' in mark
+}
+
+export function pictureMarkUrl(mark: VariantPictureMark | undefined): string | undefined {
+  return typeof mark === 'string' ? mark : isRevealPicture(mark) ? mark.url : undefined
+}
 export type VariantPictureMarks = Readonly<Record<string, VariantPictureMark>>
 
 export function isGreyMark(mark: VariantPictureMark | undefined): mark is { reason: string } {
-  return typeof mark === 'object' && mark !== null
+  return typeof mark === 'object' && mark !== null && 'reason' in mark
 }
 
 /** A key's marks after an answer: a picture or a verdict replaces what was there. */
 export function markSettled(marks: VariantPictureMarks, key: string, mark: VariantPictureMark): VariantPictureMarks {
   const current = marks[key]
-  if (current === mark || (isGreyMark(current) && isGreyMark(mark) && current.reason === mark.reason)) return marks
+  if (current === mark || (isRevealPicture(current) && isRevealPicture(mark) && current.url === mark.url && current.revealSteps === mark.revealSteps) || (isGreyMark(current) && isGreyMark(mark) && current.reason === mark.reason)) return marks
   return { ...marks, [key]: mark }
 }
 
@@ -73,7 +82,7 @@ export function nextPictureStep(
   const action = variantPictureAction(result)
   const policy = VARIANT_PICTURE_POLICY
   switch (action.kind) {
-    case 'picture': return { kind: 'settle', mark: action.url }
+    case 'picture': return { kind: 'settle', mark: action.reveal ? { url: action.url, reveal: true, revealSteps: action.revealSteps } : action.url }
     case 'grey': return { kind: 'settle', mark: { reason: action.reason } }
     case 'sample': return { kind: 'settle', mark: null }
     case 'ask-again': {

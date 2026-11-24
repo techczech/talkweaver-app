@@ -216,10 +216,10 @@ try {
   await caretAt('- Fix the fence')
   await until(async () => (await inspector.innerText()).includes('Repair'), 'right panel did not follow the Markdown caret')
   await until(async () => (await row('Repair').getAttribute('class')).includes('so-row--current'), 'outline did not follow the Markdown caret')
-  const labels = page.locator('.workspace-centre .cm-lineNumbers')
-  await labels.getByTitle('Section §1', { exact: true }).first().waitFor()
-  await labels.getByTitle('Subsection §1.1', { exact: true }).first().waitFor()
-  await labels.getByTitle(/^Slide \d+$/).first().waitFor()
+  assert.deepEqual(
+    await page.locator('.workspace-centre .cm-gutter').evaluateAll(nodes => nodes.map(node => node.className)),
+    ['cm-gutter cm-foldGutter']
+  )
   await caretAt('## Season')
   const fold = page.locator('.workspace-centre .cm-foldGutter [title="Fold line"]').first()
   await fold.click()

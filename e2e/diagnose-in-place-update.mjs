@@ -266,7 +266,7 @@ try {
   const known = new Set(app.windows())
   await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Other ways to present', exact: true }).click()
-  await page.getByRole('menuitem', { name: /^With my notes and a timer\b/ }).click()
+  await page.getByRole('menuitem', { name: /^Presenter view from the start\b/ }).click()
   let presenter = null
   for (let i = 0; i < 120 && !presenter; i++) { presenter = app.windows().find((w) => !known.has(w) && !w.isClosed()) ?? null; if (!presenter) await pause(250) }
   record('a presenter window opens during the download', !!presenter)

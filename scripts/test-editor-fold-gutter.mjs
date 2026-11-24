@@ -1,5 +1,5 @@
 // The editor gutter gives each foldable slide heading (or list item) exactly one collapse control and
-// leaves image lines without one. The real extensions (slide-number gutter, fold gutter, outline fold
+// leaves image lines without one. The real extensions (Markdown heading styles, fold gutter, outline fold
 // service, markdown parser with its fold override, image widget with placement chips) are bundled for
 // Chromium; fold markers are matched to document lines by position in the rendered DOM.
 // SCREENSHOT=<path> saves a picture of the gutter.
@@ -25,32 +25,32 @@ import { viewModeExtension } from './src/renderer/src/extensions/plainView/index
 import { triggerCompleteExtension } from './src/renderer/src/extensions/triggerComplete.ts'
 import { imageWidgetExtension } from './src/renderer/src/extensions/imageWidget.ts'
 import { outlineParagraphFolds, outlineFolding, outlineFoldService, revealFoldedLine } from './src/renderer/src/extensions/outlineFold.ts'
-import { setSlideNumberLines, slideNumberGutterExtension } from './src/renderer/src/extensions/slideNumberGutter.ts'
+import { setMarkdownHeadings, markdownHeadingStyles } from './src/renderer/src/extensions/markdownHeadings.ts'
 // The same extension order as components/Editor.tsx.
-window.mountEditor = (doc, slideLines, labels, withEditorKeys = false) => {
+window.mountEditor = (doc, headings, withEditorKeys = false) => {
   window.__view?.destroy()
   const view = new EditorView({
     parent: document.getElementById('host'),
     state: EditorState.create({
       doc,
       extensions: [
-        slideNumberGutterExtension,
+        markdownHeadingStyles,
         markdown({ base: markdownLanguage, extensions: [outlineParagraphFolds] }),
         outlineFolding,
         foldGutter(),
         outlineFoldService,
         triggerCompleteExtension({
-          isMarkdown: () => Boolean(labels),
+          isMarkdown: () => Boolean(headings),
           onNewHeading: (kind, heading) => { window.pickedSection = { kind, heading } }
         }),
-        ...(labels ? [viewModeExtension('markdown'), Prec.highest(keymap.of([{ key: 'Enter', run: enterFromHeading }]))] : []),
+        ...(headings ? [viewModeExtension('markdown'), Prec.highest(keymap.of([{ key: 'Enter', run: enterFromHeading }]))] : []),
         imageWidgetExtension({ vaultRoot: null, talkDir: null, placementForLine: () => ({ kind: 'row', index: 1, count: 2 }) }),
         ...(withEditorKeys ? [keymap.of(buildEditorKeyBindings())] : []),
         EditorView.lineWrapping
       ]
     })
   })
-  setSlideNumberLines(view, slideLines, labels && new Map(labels))
+  setMarkdownHeadings(view, headings && new Map(headings))
   window.__view = view
 }
 window.foldAt = line => {
@@ -140,7 +140,7 @@ try {
   await page.setContent('<!doctype html><body style="margin:0;background:var(--panel)"><div id="host" style="width:880px"></div></body>')
   await page.addStyleTag({ content: theme + foldStyles })
   await page.addScriptTag({ content: readFileSync(outfile, 'utf8') })
-  await page.evaluate(([d, h]) => window.mountEditor(d, h), [outline, headings])
+  await page.evaluate(doc => window.mountEditor(doc), outline)
   await page.waitForSelector('.cm-foldGutter .cm-gutterElement', { state: 'attached' })
   await page.waitForTimeout(300)
   const marked = await page.evaluate(() => window.foldMarkerLines())
@@ -168,12 +168,8 @@ try {
     '#### Slide {id=c}', '', '~~~markdown', '## Example', '~~~', '',
     '<!--', '## Hidden', '-->', '', '## Next {id=d}', '- Follow'
   ].join('\n')
-  await page.evaluate(text => window.mountEditor(text, [1, 3, 6, 16], [
-    [1, { kind: 'Section', sectionNumber: '1' }], [3, { kind: 'Subsection', sectionNumber: '1.1' }],
-    [6, { kind: 'Slide' }], [16, { kind: 'Section', sectionNumber: '2' }]
-  ]), source)
-  const labels = await page.locator('.cm-md-heading-marker').evaluateAll(nodes => nodes.map(node => node.title))
-  assert.ok(labels.includes('Section §1') && labels.includes('Subsection §1.1') && labels.includes('Slide 3'))
+  await page.evaluate(text => window.mountEditor(text, [[1, 'section'], [3, 'subsection'], [6, 'slide'], [16, 'section']]), source)
+  assert.deepEqual(await page.locator('.cm-gutter').evaluateAll(nodes => nodes.map(node => node.className)), ['cm-gutter cm-foldGutter'])
   const folded = await page.evaluate(() => window.foldAt(6))
   assert.equal(folded.folded, 1)
   assert.ok(folded.count > 1)
@@ -201,20 +197,19 @@ try {
     }
     await placeholder.click()
   }
-  const gutter = page.locator('.cm-lineNumbers')
+  const gutter = page.locator('.cm-foldGutter')
   const desktopWidth = (await gutter.boundingBox()).width
   const revealed = await page.evaluate(() => window.foldNavigation(1, 6))
   assert.deepEqual(revealed, { before: 1, after: 0, unchanged: source }, 'a jump reveals a folded descendant without editing source')
-  assert.equal((await gutter.boundingBox()).width, desktopWidth, 'fold and reveal preserve the heading gutter width')
+  assert.equal((await gutter.boundingBox()).width, desktopWidth, 'fold and reveal preserve the fold gutter width')
   await page.setViewportSize({ width: 1000, height: 631 })
-  assert.ok((await gutter.boundingBox()).width < desktopWidth, 'the narrow window uses compact heading marks')
-  assert.equal(await page.locator('.cm-md-heading-marker[title="Subsection §1.1"] .cm-md-heading-name').first().isVisible(), false)
+  assert.equal((await gutter.boundingBox()).width, desktopWidth, 'Markdown uses the same compact fold gutter at the minimum width')
   await page.setViewportSize({ width: 1440, height: 1400 })
   assert.ok(!(await page.evaluate(() => window.foldMarkerLines())).includes(9), 'a heading inside a fence has no slide fold')
   for (const [prefix, kind, accept] of [['## ', 'section', 'Enter'], ['### ', 'slide', 'Tab'], ['### ', 'subsection', 'click']]) {
     const fixture = '## Part {id=part}\n\n### Slide {id=slide}\n\n'
     await page.evaluate(text => {
-      window.mountEditor(text, [1, 3], [[1, { kind: 'Section' }], [3, { kind: 'Slide' }]])
+      window.mountEditor(text, [[1, 'section'], [3, 'slide']])
       window.pickedSection = null
       const view = window.__view
       view.dispatch({ selection: { anchor: view.state.doc.length } })
@@ -235,7 +230,7 @@ try {
   }
   const headingFixture = '## Part {id=part}\n\n### An existing slide {id=slide}\n\n'
   await page.evaluate(text => {
-    window.mountEditor(text, [], [])
+    window.mountEditor(text, [])
     const view = window.__view
     view.dispatch({ selection: { anchor: view.state.doc.length } })
     view.focus()
@@ -259,7 +254,7 @@ try {
       const trigger = typed ? '' : '\n{id=current}'
       const text = (typed ? '' : title + trigger) + '\n' + next + '\n{id=next}\n'
       await page.evaluate(({ text, typed }) => {
-        window.mountEditor(text, [], [])
+        window.mountEditor(text, [])
         const view = window.__view
         view.dispatch({ selection: { anchor: typed ? 0 : view.state.doc.line(1).to } })
         view.focus()
@@ -272,7 +267,7 @@ try {
     }
   }
   const tabSource = '## Section\n\n```py\n# comment\n```\n'
-  await page.evaluate(text => window.mountEditor(text, [], [], true), tabSource)
+  await page.evaluate(text => window.mountEditor(text, [], true), tabSource)
   const tabAt = async (n, offsetFromEnd = 0) => {
     await page.evaluate(({ line, offsetFromEnd }) => {
       const view = window.__view
@@ -287,7 +282,7 @@ try {
   assert.equal(await tabAt(4), tabSource.replace('# comment', '# comment  '), 'Tab still types an indent inside a code fence')
   const promoteSource = '# Talk\n\n## Section {id=section}\n\n### Slide {id=slide}\n\n- Point\n'
   await page.evaluate(text => {
-    window.mountEditor(text, [3, 5], [], true)
+    window.mountEditor(text, [], true)
     window.addEventListener('tw-toast', event => { window.promoteNotice = event.detail.message })
   }, promoteSource)
   for (const line of [5, 3, 1]) {
@@ -303,7 +298,7 @@ try {
     }))
     if (line === 5) {
       assert.equal(text, promoteSource.replace('### Slide', '## Slide'), 'the real shortcut can still promote a slide')
-      await page.evaluate(text => window.mountEditor(text, [3, 5], [], true), promoteSource)
+      await page.evaluate(text => window.mountEditor(text, [], true), promoteSource)
     } else {
       assert.equal(text, promoteSource, 'the real shortcut preserves the title and top-level sections')
       assert.equal(notice, 'Sections are the top level')

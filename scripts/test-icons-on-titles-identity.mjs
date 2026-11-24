@@ -69,6 +69,17 @@ const sources = talks.map((slug) => ({ slug, path: join(BUNDLE, slug, `${slug}-o
 sources.push({ slug: 'braces-that-are-not-icons', path: LITERAL, example: false })
 for (const slug of DECK_DEFAULTS) sources.push({ slug, path: join(FIXTURES, `${slug}-outline.md`), example: false })
 
+// The generated closing now takes the title treatment (#423). Restore its three legacy
+// presentation classes for the older hash while still checking the text and every icon.
+function withoutClosingTreatment(html) {
+  if (!/^<section class="slide" data-id="deck-thanks" data-section="" data-subsection="" data-role="ending" data-layout="closing"/.test(html)) return html
+  if (!html.includes('<div class="slide-content layout-title">')) return html
+  return html
+    .replace('<div class="slide-content layout-title">', '<div class="slide-content layout-closing">')
+    .replace('<div class="tp tp-poster">', '<div class="tp tp-poster tp-closing">')
+    .replace('<p class="tp-sub">', '<p class="tp-cta">')
+}
+
 const actual = {}
 const sectionsOf = {}
 for (const { slug, path, example } of sources) {
@@ -81,7 +92,9 @@ for (const { slug, path, example } of sources) {
   // The reference was recorded before 0.44: compile in the classic look (slide-markup-identity.mjs).
   const model = await prepareSource(path, inClassicLook(text), slug, statSync(path))
   // Stamps a later ticket added to every slide are left out (scripts/lib/slide-markup-identity.mjs).
-  const sections = findSlideSections(model.fullHtml).map((span) => withoutLaterSlideStamps(span.html, { talkNamesTitleLook: talkNamesTitleLook(text) }))
+  const referenceOptions = { talkNamesTitleLook: talkNamesTitleLook(text) }
+  const sections = findSlideSections(model.fullHtml)
+    .map(({ html }) => withoutLaterSlideStamps(withoutClosingTreatment(html), referenceOptions))
   sectionsOf[slug] = sections
   actual[slug] = {
     slides: sections.length,

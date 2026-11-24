@@ -14,6 +14,7 @@ import {
   type Segments
 } from '../../../../compiler/scripts/lib/simulation-segments.mjs'
 import { compiledRowCount } from '../../../../compiler/scripts/lib/simulation-reading.mjs'
+import { IMAGE_SYNTAX_RE } from '../../../../compiler/scripts/lib/image-line-rules.mjs'
 import { parseMarkdownFenceOpeningLine } from '../../../../compiler/scripts/lib/03-object-token.mjs'
 import {
   NOTES_PRIVACY_TEXT,
@@ -497,6 +498,34 @@ export function mountRowsEditor(kind: SegmentKind, body: string, cheatSheet?: Sh
 
 const ROW_KIND: Readonly<Record<string, SegmentKind>> = { turns: 'turns', 'shell-session': 'shell', 'trace-rows': 'trace' }
 
+const MEDIA_FIELDS = new RegExp(IMAGE_SYNTAX_RE.source, 'd')
+
+function mountMediaFields(source: string): MountedEditor | null {
+  const line = source.trim()
+  const parts = MEDIA_FIELDS.exec(line)?.indices
+  if (!parts) return null
+  const offset = source.indexOf(line)
+  const [altFrom, altTo] = parts[1].map(index => index + offset)
+  const [refFrom, refTo] = parts[2].map(index => index + offset)
+  const form = el('div', 'oe-media-fields')
+  const field = (name: string, value: string): HTMLInputElement => {
+    const label = el('label', 'oe-media-field', name)
+    const input = el('input', 'oe-markup')
+    input.type = 'text'
+    input.value = value
+    label.append(input)
+    form.append(label)
+    return input
+  }
+  const alt = field('Alternative text', source.slice(altFrom, altTo))
+  const ref = field('File or URL', source.slice(refFrom, refTo))
+  return {
+    element: form,
+    serialise: () => source.slice(0, altFrom) + alt.value + source.slice(altTo, refFrom) + ref.value + source.slice(refTo),
+    focus: () => alt.focus()
+  }
+}
+
 export function mountCardEditor(
   block: ObjectBlock,
   card: CardKindDeclaration,
@@ -552,10 +581,18 @@ export function mountCardEditor(
     editor.element.title = NOTES_PRIVACY_TEXT
     return mountShell({
       kind: block.deckNotes ? `${card.label} · whole talk · Presenter only` : `${card.label} · Presenter only`,
+      disclosure: 'Collapse speaker notes',
       editor,
       foot: '↵ newline · esc leave · ⌘↵ done',
       api,
       cheatSheet
+    })
+  }
+  if (block.media) {
+    const editor = mountMediaFields(inner)
+    if (editor) return mountShell({
+      kind: block.media.kind === 'video' ? 'Video' : block.media.kind === 'audio' ? 'Audio' : 'Picture',
+      editor, markup, parseEditor: mountMediaFields, foot: 'esc leave · ⌘↵ done', api, cheatSheet
     })
   }
   if (card.editor === 'source') {

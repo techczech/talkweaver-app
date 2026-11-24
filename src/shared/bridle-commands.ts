@@ -45,6 +45,8 @@ export const REBINDABLE: Readonly<Record<string, string>> = {
   'app.research-find': 'research-find',
   'app.pathways': 'pathways',
   'app.add-to-pathway': 'add-to-pathway',
+  'app.present-current': 'present-from-here',
+  'app.present': 'present-presenter',
   'app.present-pathway': 'present-pathway',
   'app.set-aside': 'set-aside-slides',
   'app.grid-search': 'search-slides-grid',
@@ -200,7 +202,7 @@ export const registry = defineRegistry<CommandGroup, undefined>(bridleDefs())
 /** The menu bar's app menus, by task (the frame supplies the App, Edit, View, Window and Help frames). */
 const MENU_PLAN: ReadonlyArray<MenuDecl<CommandGroup>> = [
   { label: 'File', groups: ['Manage talks', 'Share'] },
-  { label: 'Edit', groups: ['Write the outline'] },
+  { label: 'Edit', groups: ['Outlining', 'Formatting'] },
   { label: 'Slide', groups: ['Build a slide', 'Reuse slides'] },
   { label: 'Talk', groups: ['Shape the talk', 'Check and repair'] },
   { label: 'View', groups: ['See the talk'] },

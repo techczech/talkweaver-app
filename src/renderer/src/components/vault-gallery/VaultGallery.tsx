@@ -289,14 +289,14 @@ export default function VaultGallery({ revision, onClose, onOpen, management, ta
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus() }
     }
   }}>
-    <header className="vg-titlebar">
+    <header className="vg-titlebar tw-window-drag">
       <div className="vg-tbleft"><ModeBack className="vg-return" talkTitle={talkTitle} disabled={busy} onBack={onClose} /></div>
-      <nav className="vg-crumbs" aria-label="Location">
+      <nav className={`vg-crumbs${browsing && vault ? '' : ' vg-crumbs--overview'}`} aria-label="Location">
         {browsing && vault ? <>
           <button className="vg-crumb top" onClick={chooseOverview}>{UI.allVaults}</button>
           {crumb(vault.name, () => go({ kind: 'folder', path: '' }), scope.kind === 'folder' && !folder, 'vault')}
           {scope.kind === 'all' ? crumb(UI.allTalks, null, true, 'all') : crumbParts(folder).map((c, i, all) => c.path === null ? crumb(c.label, null, false, 'gap') : crumb(c.label, () => go({ kind: 'folder', path: c.path! }), i === all.length - 1, c.path))}
-        </> : <span className="vg-crumb here top">{UI.allVaults}</span>}
+        </> : <span className="vg-crumb here top tw-window-title" data-window-title>{UI.allVaults}</span>}
       </nav>
       <div className="vg-search"><Search size={16} aria-hidden /><input ref={searchRef} aria-label={placeholder} placeholder={placeholder} value={query} onChange={e => setQuery(e.target.value)} />{query && <button aria-label={UI.clearSearch} onClick={() => { setQuery(''); searchRef.current?.focus() }}><X size={14} aria-hidden /></button>}</div>
     </header>

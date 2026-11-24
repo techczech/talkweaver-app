@@ -6,8 +6,9 @@
 // 2. Generated documents. For every line of every document, setLineIcon either
 //      refuses  → the text comes back unchanged, with a reason (counted by reason); or
 //      succeeds → the REAL compiler (adaptMarkdownOutlineV2) is run on the outline before and
-//                 after, and the two results differ in icon fields only, on the one slide that
-//                 holds the line, with the icon asked for; no line but the one written changed;
+//                 after, and the two results differ in icon fields only, on the slide that holds
+//                 the line and on the generated closing circle if it repeats the deck title icon.
+//                 The slides show the icon asked for. Only the written line changed;
 //                 line endings are as they were; a paragraph's token is where the compiler's own
 //                 verb writes it (12-outline-edit.mjs setParagraphIcon, the same text byte for
 //                 byte) and a title's where setHeadingIcon writes it; and on a line that had no
@@ -22,6 +23,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { ICON_KEY_RE, clearLineIcon, iconLineAt, lineIconState, setLineIcon } from '../src/shared/icon-verbs.ts'
 import { adaptMarkdownOutlineV2 } from '../compiler/scripts/lib/08-source-adapters.mjs'
+import { deckLookForPalette } from '../compiler/scripts/lib/02-triggers-layout.mjs'
 import { setHeadingIcon, setParagraphIcon } from '../compiler/scripts/lib/12-outline-edit.mjs'
 
 const arg = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1]
@@ -57,23 +59,32 @@ function slideIndexOf(slides, line) {
 }
 
 /**
- * The compiled talk changed in icons only, on the one slide of `line`: `icon` is there now (null:
- * what was there is gone). Returns the reason it is not so, or null.
+ * Check that the edited slide shows the requested icon and that a generated closing reflects
+ * an edited deck title icon. Returns the reason for a mismatch, or null.
  */
 function compiledIconChange(before, after, line, icon, isTalkTitle) {
-  const was = compile(before)
+  const { slides: was, palette } = adaptMarkdownOutlineV2(before, 'Fallback', {})
   const now = compile(after)
   if (was.length !== now.length) return `${was.length} slides became ${now.length}`
   const diffs = differences(was, now)
   if (!diffs.length) return SAME
   const other = diffs.find((d) => !ICON_PATH.test(d.path))
   if (other) return `more than an icon changed: ${other.path} ${JSON.stringify(other.was)} → ${JSON.stringify(other.now)}`
-  const slides = new Set(diffs.map((d) => d.path.split('.')[1]))
-  if (slides.size !== 1) return `icons changed on ${slides.size} slides`
   const expected = isTalkTitle ? was.findIndex((slide) => slide.layout === 'title') : slideIndexOf(was, line)
-  if (Number([...slides][0]) !== expected) return `the icon changed on slide ${[...slides][0]}, the line is in slide ${expected}`
-  if (icon ? !diffs.some((d) => holds(d.now, icon)) : diffs.some((d) => d.now != null && !(Array.isArray(d.now) && d.now.every((v) => v == null)) && d.was != null && typeof d.now === 'string')) {
-    return icon ? `the compiled slide does not show ${icon}: ${JSON.stringify(diffs)}` : `an icon is still there: ${JSON.stringify(diffs)}`
+  const expectedSlides = new Set([expected])
+  if (isTalkTitle && was[expected]?.id === 'deck-title' && deckLookForPalette(palette) === 'ocean') {
+    const closing = was.findIndex(slide => slide.generatedClosing && slide.blocks[0]?.variant === 'poster')
+    if (closing >= 0) expectedSlides.add(closing)
+  }
+  const changedSlides = new Set(diffs.map(d => Number(d.path.split('.')[1])))
+  if (changedSlides.size !== expectedSlides.size || [...changedSlides].some(index => !expectedSlides.has(index))) {
+    return `icons changed on slides ${[...changedSlides]}, expected ${[...expectedSlides]}`
+  }
+  for (const index of expectedSlides) {
+    const slideDiffs = diffs.filter(d => d.path.startsWith(`.${index}.`))
+    if (icon ? !slideDiffs.some(d => holds(d.now, icon)) : slideDiffs.some(d => d.now != null && !(Array.isArray(d.now) && d.now.every(v => v == null)) && d.was != null && typeof d.now === 'string')) {
+      return icon ? `slide ${index} does not show ${icon}: ${JSON.stringify(slideDiffs)}` : `slide ${index} still shows an icon: ${JSON.stringify(slideDiffs)}`
+    }
   }
   return null
 }

@@ -11,6 +11,7 @@
 // extension's range semantics (from inclusive, to the block's upper edge; an insert AT `to` grows it).
 
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
+import { readOutlineLinesOf } from '../../../shared/plain-view-outline-lines.ts'
 
 const HEADING_RE = /^#{1,6}\s/
 // `{id=…}` slide-identity token, as stamped on a slide's heading or its Trigger line.
@@ -28,12 +29,13 @@ export function slideBlockBounds(
   const lines = content.split('\n')
   const startIdx = headingLine - 1 // 0-based
   if (startIdx < 0 || startIdx >= lines.length) return null
-  if (!HEADING_RE.test(lines[startIdx])) return null
+  const { kinds } = readOutlineLinesOf(content)
+  if (kinds[startIdx] !== 'outline' || !HEADING_RE.test(lines[startIdx])) return null
 
   // First structural heading AFTER the start line bounds the block (exclusive); else EOF.
   let endExclusive = lines.length
   for (let i = startIdx + 1; i < lines.length; i += 1) {
-    if (HEADING_RE.test(lines[i])) { endExclusive = i; break }
+    if (kinds[i] === 'outline' && HEADING_RE.test(lines[i])) { endExclusive = i; break }
   }
   // Trim trailing blank lines so the band ends on real content (never on the boundary blank line).
   let last = endExclusive - 1

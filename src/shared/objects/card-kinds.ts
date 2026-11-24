@@ -6,7 +6,7 @@
 export type CardEditor = 'code' | 'turns' | 'shell-session' | 'trace-rows' | 'notes' | 'comment' | 'source'
 
 export interface CardKindDeclaration {
-  kind: 'code' | 'chat' | 'terminal' | 'trace' | 'notes' | 'comment' | 'embed'
+  kind: 'code' | 'chat' | 'terminal' | 'trace' | 'notes' | 'comment' | 'embed' | 'picture'
   /** The kind as the card's chip and the editor's header say it. */
   label: string
   editor: CardEditor
@@ -21,7 +21,8 @@ export const CARD_KINDS: readonly CardKindDeclaration[] = [
   { kind: 'trace', label: 'Trace', editor: 'trace-rows', emptyPrompt: 'Empty trace: add a turn' },
   { kind: 'notes', label: 'Speaker notes', editor: 'notes', emptyPrompt: 'Empty: type your notes' },
   { kind: 'comment', label: 'Comment', editor: 'comment', emptyPrompt: 'Empty comment' },
-  { kind: 'embed', label: 'Page', editor: 'source', emptyPrompt: '' }
+  { kind: 'embed', label: 'Page', editor: 'source', emptyPrompt: '' },
+  { kind: 'picture', label: 'Picture', editor: 'source', emptyPrompt: '' }
 ]
 
 /** What an embed card calls itself, by what its line names. */

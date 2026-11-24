@@ -1,6 +1,6 @@
 // Onboarding 0.38.1 ticket 04: ⌘/ opens the keyboard sheet on where you are.
 //   - the data function (place, registry, overrides in, sections out): Here first and equal to the
-//     Actions-here list, then the ten task groups with counts and sub-groups, then the surfaces;
+//     Actions-here list, then the task groups with counts and sub-groups, then the surfaces;
 //   - rebound chords, "no key" with a Run action, the filter, no talk open;
 //   - the sheet is generated: a command added to the registry adds a row;
 //   - the render (Here first, counts, rows).
@@ -62,7 +62,7 @@ test('with no talk open there is no Here and the sheet opens on the first task g
   assert.equal(sheet.opensOn, TASK_GROUPS[0])
 })
 
-test('then the ten task groups, in order, each with its count and sub-groups', () => {
+test('then the task groups, in order, each with its count and sub-groups', () => {
   const sheet = keyboardSheet(input())
   assert.deepEqual(sheet.groups.map((group) => group.taskGroup), [...TASK_GROUPS])
   for (const group of sheet.groups) {
@@ -175,7 +175,7 @@ try {
   const text = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ')
   globalThis.window ??= { addEventListener() {}, removeEventListener() {}, localStorage: { getItem: () => null } }
 
-  test('the sheet opens on Here with its count, then the ten task groups with counts, and a filter', () => {
+  test('the sheet opens on Here with its count, then the task groups with counts, and a filter', () => {
     const html = sheet({ place: 'slide-heading' })
     const data = keyboardSheet(input())
     assert.match(html, /aria-label="Keyboard shortcuts"/)
@@ -184,7 +184,7 @@ try {
     assert.ok(text(html).includes('Here: on a slide heading'))
     assert.match(html, new RegExp(`data-sheet-count="here">${data.here.count}<`))
     for (const group of data.groups) assert.match(html, new RegExp(`data-sheet-count="${group.taskGroup}">${group.count}<`), group.taskGroup)
-    assert.ok(html.indexOf('data-sheet-section="here"') < html.indexOf('data-sheet-section="Write the outline"'), 'Here comes first')
+    assert.ok(html.indexOf('data-sheet-section="here"') < html.indexOf('data-sheet-section="Outlining"'), 'Here comes first')
     assert.equal((html.match(/data-sheet-row="/g) ?? []).length, data.here.count, 'the pane lists exactly the Here rows')
   })
 
@@ -201,7 +201,7 @@ try {
     const html = sheet({ place: null })
     assert.ok(!html.includes('data-sheet-section="here"'))
     assert.match(html, /data-sheet-pane="section"/)
-    assert.ok(text(html).includes('Write the outline'))
+    assert.ok(text(html).includes('Outlining'))
   })
 } finally {
   rmSync(dir, { recursive: true, force: true })

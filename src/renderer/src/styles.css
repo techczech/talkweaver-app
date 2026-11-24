@@ -630,7 +630,7 @@ html, body, #root {
 .workspace-empty { flex: 1; display: flex; align-items: center; justify-content: center; background: var(--bg-0); }
 .workspace-empty-hint { color: var(--text-2); font-size: 14px; }
 .workspace { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-.workspace-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 0 16px; background: var(--bg-1); border-bottom: 1px solid var(--border); padding-top: 28px; height: calc(var(--toolbar-height) + 28px); flex-shrink: 0; }
+.workspace-toolbar { display: flex; align-items: center; justify-content: space-between; padding: 0 16px; background: var(--bg-1); border-bottom: 1px solid var(--border); padding-top: var(--tw-native-block, 0px); height: calc(var(--toolbar-height) + var(--tw-native-block, 0px)); flex-shrink: 0; }
 /* T28: with `titleBarStyle: 'hiddenInset'` this bar IS the editor window's top bar (both the
    talk view and the empty-state twin), so the whole of it drags the window — the talk title
    span included — and macOS keeps double-click zoom/minimise. Every interactive descendant
@@ -756,6 +756,25 @@ html, body, #root {
 .tw-inspector-stage { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border: 1px solid var(--line); border-radius: 6px; background: var(--surface-2); box-shadow: var(--slide-shadow); transition: opacity .15s; }
 .tw-inspector-stage.is-compiling { opacity: .72; }
 .tw-inspector-preview-head .tw-inspector-stage { max-width: calc(50cqh * 16 / 9); margin-inline: auto; }
+.tw-reveal-badge {
+  position: absolute;
+  inset-block-start: 3px;
+  inset-inline-end: 3px;
+  z-index: 1;
+  padding: 1px 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  color: var(--ink);
+  font: 650 .625rem/1.2 var(--font-ui);
+  white-space: nowrap;
+  pointer-events: none;
+}
+button.tw-reveal-badge { pointer-events: auto; cursor: pointer; }
+button.tw-reveal-badge:hover { background: var(--hover); }
+button.tw-reveal-badge:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+:has(> [data-slide-warning], > .tw-fb-badge) > .tw-reveal-badge { inset-block-start: 20px; }
+[data-panel-trying] .tw-fixed-deck-preview > .tw-reveal-badge { inset-block-start: 36px; }
 .tw-fixed-deck-preview { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; }
 .tw-fixed-deck-preview__canvas { position: absolute; top: 0; left: 0; transform: scale(var(--tw-fixed-deck-scale)); transform-origin: top left; }
 .tw-fixed-deck-preview iframe { display: block; width: 1280px; height: 720px; border: 0; }
@@ -826,6 +845,7 @@ html, body, #root {
    author's own slide, the current one outlined; "Change ⌘L" sits in the layout section's heading. */
 .opt-pics { display: grid; gap: 10px 8px; grid-template-columns: repeat(var(--n, 4), minmax(0, 1fr)); }
 .opt-pic { display: flex; flex-direction: column; gap: 4px; align-items: stretch; border: 0; background: none; padding: 0; cursor: pointer; font: 500 11px var(--font-ui); color: var(--muted); text-align: center; min-width: 0; }
+.tw-option-picture-frame { position: relative; display: block; }
 .opt-pic img, .opt-pic .opt-pic-blank { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; border: 1px solid var(--line); border-radius: 4px; background: var(--hover); }
 .opt-pic:hover img, .opt-pic:hover .opt-pic-blank { border-color: color-mix(in srgb, var(--oxford) 45%, var(--line)); }
 .opt-pic.is-selected img, .opt-pic.is-selected .opt-pic-blank { outline: 2px solid var(--focus); outline-offset: 1px; border-color: var(--oxford); }
@@ -1126,7 +1146,7 @@ html, body, #root {
 .command-item-desc { font-size: 12px; color: var(--muted); }
 
 /* ── Image Widget ────────────────────────────────────────── */
-.cm-image-widget { display: block; margin: 4px 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); max-width: 320px; cursor: pointer; }
+.cm-image-widget { display: block; margin: 4px 0; padding: 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); max-width: min(320px, 100%); cursor: pointer; }
 .cm-image-widget img { max-width: 280px; max-height: 160px; object-fit: contain; display: block; border-radius: 4px; }
 .cm-image-caption { font-size: 11px; color: var(--muted); margin-top: 4px; font-style: italic; }
 .cm-image-placeholder { width: 120px; height: 80px; background: var(--hover); border-radius: 4px; display: flex; align-items: center; justify-content: center; color: var(--faint); font-size: 11px; }
@@ -1431,7 +1451,7 @@ html, body, #root {
   align-items: center;
 }
 
-/* ── Keyboard sheet (⌘/): Here, the ten task groups, a filter ─────────────────── */
+/* ── Keyboard sheet (⌘/): Here, the task groups, a filter ─────────────────── */
 .kbd-sheet-backdrop { position: fixed; inset: 0; z-index: 1000; background: rgba(23, 32, 42, 0.35); }
 .kbd-sheet {
   position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 1001;
@@ -1536,10 +1556,10 @@ html, body, #root {
 /* ── Left sidebar: mode bar, collapse rail, presentation nav ──────────────────── */
 .sidebar-rail {
   width: 34px; flex-shrink: 0; background: var(--panel); border-right: 1px solid var(--line);
-  display: flex; flex-direction: column; align-items: center; padding-top: 30px;
+  display: flex; flex-direction: column; align-items: center; padding-top: var(--tw-native-block, 0px);
 }
 .sidebar-modebar {
-  display: flex; align-items: center; gap: 6px; padding: 30px 8px 6px;
+  display: flex; align-items: center; gap: 6px; padding: var(--tw-native-block, 0px) 8px 6px;
   border-bottom: 1px solid var(--line); flex-shrink: 0;
 }
 .sidebar-modes { display: flex; gap: 2px; flex: 1; }
@@ -1790,6 +1810,7 @@ html, body, #root {
 /* Object cards (ADR-0042, lock Shape A): one compact line per fence, page, notes block or comment;
    ⌄ opens a read-only preview of bounded height, </> the source. Text only; nothing remote loads. */
 .tw-obj-card .tw-obj-head { border-bottom: 0; }
+.tw-obj-card .tw-obj-step { flex: 1 1 6ch; }
 .tw-obj-chip {
   flex: 0 1 auto; min-width: 0; overflow: hidden; border: 1px solid var(--line); border-radius: 4px;
   padding: 0 6px; color: var(--muted); text-overflow: ellipsis; white-space: nowrap;
@@ -1844,7 +1865,7 @@ html, body, #root {
 
 /* An inline comment as one chip in the text; × deletes exactly that comment. */
 .tw-comment-chip {
-  display: inline-flex; align-items: baseline; gap: 4px; max-width: 28ch; margin: 0 1px;
+  display: inline-flex; align-items: baseline; gap: 4px; max-width: min(28ch, calc(100% - 2px)); margin: 0 1px;
   border: 1px dashed var(--line); border-radius: 4px; padding: 0 4px;
   color: var(--muted); font: 500 11px/1.4 var(--font-ui); vertical-align: baseline; cursor: default;
 }
@@ -2420,3 +2441,55 @@ html, body, #root {
 .mode-back svg { flex: 0 0 auto; }
 .mode-back-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mode-back-bar { display: flex; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--paper); flex: 0 0 auto; }
+
+/* Read-only previews sit under the object header and use the editor's width. */
+.tw-obj-preview, .tw-obj-preview-frame {
+  order: 1;
+  border-top: 1px solid var(--line);
+  font: 400 0.8125rem/1.45 var(--font-ui);
+}
+.tw-obj-preview {
+  padding: .5rem .75rem;
+  max-height: 9rem;
+  overflow: auto;
+  background: var(--panel);
+}
+.tw-obj-preview.is-expanded { max-height: 22rem; }
+.tw-obj-preview-turn {
+  width: fit-content;
+  max-width: 92%;
+  padding: .375rem .625rem;
+  margin-block: .25rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.tw-obj-preview-turn[data-role="user"] {
+  margin-inline-start: auto;
+  background: var(--accent-soft);
+}
+.tw-obj-preview-turn[data-role="bot"] { background: var(--hover); }
+.tw-obj-preview-label { font-weight: 600; color: var(--muted); }
+.tw-obj-preview-text, .tw-obj-preview-detail, .tw-obj-preview-command {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.tw-obj-preview-detail, .tw-obj-preview-terminal { font-family: var(--font-mono); }
+.tw-obj-preview-detail { color: var(--muted); margin-top: .25rem; }
+.tw-obj-preview-command { font-weight: 600; color: var(--accent-text); }
+.tw-obj-preview-command:not(:first-child) { margin-top: .5rem; }
+.tw-obj-preview-frame {
+  height: 9rem;
+  align-content: center;
+  text-align: center;
+  color: var(--muted);
+  background: var(--panel);
+}
+.tw-obj-preview-frame.is-expanded { height: 22rem; }
+.tw-obj-preview-page {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: white;
+  pointer-events: none;
+}

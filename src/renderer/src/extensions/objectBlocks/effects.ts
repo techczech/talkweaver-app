@@ -1,4 +1,9 @@
-import { Annotation, StateEffect } from '@codemirror/state'
+import { Annotation, Facet, StateEffect } from '@codemirror/state'
+
+/** Markdown leaves speaker notes in the editor's source text. */
+export const editNotesAsSource = Facet.define<boolean, boolean>({
+  combine: values => values.includes(true)
+})
 
 /** A write whose result must be exactly the text given: a disk version adopted, a save's stamped text
  *  adopted, a planned whole-text rewrite put in as a minimal change, and an object's own planned write

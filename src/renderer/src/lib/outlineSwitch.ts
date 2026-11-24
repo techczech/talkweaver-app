@@ -1,7 +1,7 @@
 // T29b (2026-09-19): one-shot "open → engage → Slide outline" sidebar rule.
 //
 // Opening a talk from the Talks panel deliberately leaves the sidebar on Talks (the user scrolls
-// the editor to see if it is the right file); the FIRST engagement with the editor — a pointerdown
+// the editor to see if it is the right file); the FIRST engagement with the editor — a click
 // inside it, or the first document-changing keydown — then switches the sidebar to the Slide
 // outline, so once work starts the outline is the default view. The rule is once per opened talk:
 // going back to Talks and clicking in the same talk does not switch again; re-opening from the
@@ -21,7 +21,7 @@ export function armOutlineSwitch(outlinePath: string | null): OutlineSwitchArmed
 }
 
 /**
- * The editor engaged (first pointerdown / first user document change). Fires the sidebar switch
+ * The editor engaged (first click / first user document change). Fires the sidebar switch
  * only when an arm is pending AND the armed talk is still the active one. Any engagement consumes
  * the pending state — a stale arm (active talk moved on via a non-panel route) dies here instead
  * of firing against the wrong talk later.

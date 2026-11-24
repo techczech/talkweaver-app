@@ -15,7 +15,7 @@ import { insertResearchItem as insertResearchItemInEditor } from '../lib/researc
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { runActionBarEditorCommand } from './actionBar/command-runner'
 import { venueScreenLinkFromOutline } from '../../../shared/venue-screen-link'
-import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, useSyncExternalStore, useId } from 'react'
 import { createPortal } from 'react-dom'
 import type { TalkInfo, ProjectionRow, RecordingSession } from '../../../preload/index'
 import { textFitNotesFor } from '../../../shared/text-fit-notes.ts'
@@ -24,7 +24,7 @@ import { marginLabels, MARGIN_LAYOUT_NAMES } from '../../../shared/plain-view-ma
 import { levelMenuFor, setHeadingKind, type HeadingKind } from '../../../shared/heading-kind.ts'
 import { dismissToast, notify } from '../lib/notify'
 import type { HeadingCompletionSource } from '../extensions/triggerComplete'
-import Editor, { type HeadingTools, type ObjectInsertHandler, type PlainIconTools, type ReadEditorDoc, type SlideBlockOps } from './Editor'
+import Editor, { type HeadingTools, type ObjectInsertHandler, type PlainIconTools, type ReadEditorDoc, type ReplaceEditorDoc, type SlideBlockOps } from './Editor'
 import MarginMenu, { MORE_IN_INSPECTOR_KEY } from './MarginMenu'
 import { slideSelectionControls } from '../lib/slideSelectionBus'
 import { rememberSlideClip } from '../extensions/slideBlockOps'
@@ -56,7 +56,7 @@ import WhatsNewPane from './WhatsNewPane'
 import { WHATS_NEW_OPEN_EVENT, openWhatsNewTab, runCheckForUpdates } from '../lib/updateNotices'
 import type { RightColumnTab } from '../../../shared/guide'
 import GridView from './GridView'
-import PathwaysView from './PathwaysView'
+import PathwaysView, { usePathways } from './PathwaysView'
 import StatusBar from './StatusBar'
 import { usePlace } from '../lib/usePlace'
 import { placeAt, type Place } from '../../../shared/place.ts'
@@ -64,6 +64,7 @@ import { actionRowsAt, paletteChordText, type ActionRow } from '../../../shared/
 import ActionsHerePanel from './ActionsHerePanel'
 import type { SheetRow } from '../../../shared/keyboard-sheet.ts'
 import { useTalkFacts } from '../lib/talkFacts'
+import RevealPreviewBadge from './RevealPreviewBadge'
 import LayoutPickerColumn from './LayoutPickerColumn'
 import { reanchorPickerSlide, selectionFromTriggerLine, toggleLayoutSelection, type LayoutPickerContext } from './layoutPickerModel'
 import { LayoutVerbError, chooseLayout, clearLayout, isQuoteSlide, previewLayout, setLayout, type QuoteFormChoice, type SlideRef } from '../../../shared/layout-verbs'
@@ -86,7 +87,7 @@ import CaptureResearchSheet from './CaptureResearchSheet'
 import ResearchPanel, { type ResearchActions } from './ResearchPanel'
 import ScratchpadPanel, { type ScratchpadActions } from './scratchpad/ScratchpadPanel'
 import type { PlaceChoice, ScratchpadInsertApi } from './scratchpad/ScratchpadInsert'
-import { runScratchBatch, runScratchInsert, type ScratchInsertHost } from '../lib/scratchpadInsert'
+import { prepareScratchBatchSlide, runScratchBatch, runScratchInsert, type ScratchInsertHost } from '../lib/scratchpadInsert'
 import { settlePlace, type ScratchPlace, type ScratchVisual } from '../../../shared/scratchpad-insert'
 import { blockAt, copyBlocks, cutBlocks, moveBlocks, refAt, refHolds, stepPlace, type SlideRef as MoveRef } from '../../../shared/slide-handling/blocks'
 import type { SlidePlace } from '../../../shared/slide-handling/place'
@@ -157,7 +158,7 @@ import WorkspaceSlideView from './WorkspaceSlideView'
 import { VIEW_COMMANDS, WORKSPACE_VIEWS, type SlideTabView, type SlidesPanelView, type StartingView, type WorkspaceView } from '../../../shared/workspace-view'
 import { completeBlankSlide, isEmptyAuthoringSlide, placeBlankSlide, placePictures, splitPictureRow } from '../../../shared/redesign-window-source'
 import { notesGet, notesInsert, notesReplace } from '../../../shared/objects/object-verbs'
-import { Image, Plus, SmilePlus, Table2 } from 'lucide-react'
+import { ChevronDown, ChevronRight, Image, Plus, SmilePlus, Table2 } from 'lucide-react'
 import { copyBlock, pasteSlides } from '../../../shared/slide-handling/slide-block-ops'
 import '../workspace-views.css'
 import { PLAIN_LOOK_DEFAULT, type PlainLook } from '../../../shared/plain-view-look'
@@ -185,7 +186,6 @@ import { editFrontmatterText, type FrontmatterEdit } from '../../../shared/front
 import type { CursorListItemContext } from '../extensions/outliner'
 import {
   headingLineForSlideId,
-  inspectedSlideIdAfterCursorChange,
   migrateInspectorMode,
   migratePaneState,
   navigateInspectorSlide,
@@ -271,6 +271,9 @@ interface Props {
   onChooseSlideTabView?: (view: SlideTabView) => void
   slidesPanelView?: SlidesPanelView
   leftPreviewsHost?: HTMLDivElement | null
+  leftPathwaysHost?: HTMLDivElement | null
+  onOpenPathways?: () => void
+  onClosePathways?: () => void
   onChooseSlidesPanelView?: (view: SlidesPanelView) => void
   // Lets App's left sidebar (Outline / Slides views) mirror the live outline and jump the
   // editor + strip to a source line.
@@ -283,7 +286,7 @@ interface Props {
   /** T29b: editor engagement ping (first pointerdown in the editor / first user document change),
    *  fired by the Editor; App consumes it to switch the sidebar to the Slide outline once per
    *  opened talk. Pure pass-through. */
-  onEditorEngaged?: () => void
+  onEditorEngaged?: (path: string) => void
   /** Hand App a "flush the current editor's pending edit" fn. App calls it BEFORE a genuine talk
    *  switch so a sub-1.5s edit made just before switching is persisted to the OUTGOING talk's file
    *  (data-loss guard, 2026-07-05). No-op when nothing is pending. */
@@ -314,6 +317,7 @@ const GRID_COLS_MIN = 1
 const GRID_COLS_MAX = 6
 const PANE_STATE_STORAGE_KEY = 'tw-pane-state'
 const SIDEBAR_TAB_STORAGE_KEY = 'tw-right-tab'
+const OUTLINE_PREVIEW_COLLAPSED_KEY = 'tw-outline-preview-collapsed'
 // The right sidebar's default width: wide enough for the Inspector, narrow enough that the editor keeps its share of a 1280 window.
 const RIGHT_SIDEBAR_DEFAULT_PX = 346
 // The toolbar's widths (px) at which it gives way: view names go, then the menu buttons' words, then Present's.
@@ -356,7 +360,7 @@ function readGridColumns(): number {
   }
 }
 
-export default function WorkspaceLayout({ researchJump, onResearchJump, activeTalk, vaultRoot, onOpenSettings, onSelectTalk, onEditorEngaged, registerFlushSave, onMetadataSaved, registerLeaveGuard, onDiscardTalk, guide, leftSidebarShown = false, onNeedRoom, startView, onSketchStarted, defaultView = 'slide', welcome, leftPreviewsHost, slidesPanelView = 'previews', onChooseSlidesPanelView, slideTabView = 'pages', onChooseSlideTabView }: Props) {
+export default function WorkspaceLayout({ researchJump, onResearchJump, activeTalk, vaultRoot, onOpenSettings, onSelectTalk, onEditorEngaged, registerFlushSave, onMetadataSaved, registerLeaveGuard, onDiscardTalk, guide, leftSidebarShown = false, onNeedRoom, startView, onSketchStarted, defaultView = 'slide', welcome, leftPreviewsHost, leftPathwaysHost, onOpenPathways, onClosePathways, slidesPanelView = 'previews', onChooseSlidesPanelView, slideTabView = 'pages', onChooseSlideTabView }: Props) {
   const commandHandlersRef = useRef<Record<PaletteCommandHandlerId, () => void> | null>(null)
   const [, setKeymapRevision] = useState(0)
   useEffect(
@@ -452,10 +456,18 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     setSavedPaneState(next)
   }, [])
   const paneState: PaneState = autoCollapsed && savedPaneState === 'both' ? 'editor' : savedPaneState
+  const [outlinePreviewCollapsed, setOutlinePreviewCollapsed] = useState(() => {
+    try { return window.sessionStorage.getItem(OUTLINE_PREVIEW_COLLAPSED_KEY) === 'true' }
+    catch { return false }
+  })
+  const outlinePreviewId = useId()
+  useEffect(() => {
+    try { window.sessionStorage.setItem(OUTLINE_PREVIEW_COLLAPSED_KEY, String(outlinePreviewCollapsed)) }
+    catch { /* keep the choice in this renderer */ }
+  }, [outlinePreviewCollapsed])
   // One right sidebar with tabs (R11a). `paneState` says whether it is showing: 'both' = Slides with the sidebar
   // on, 'editor' = Slides with it off, 'strip' = the Strip view (full width, no sidebar); `sidebarTab` says which tab.
   const [sidebarTab, setSidebarTab] = useState<RightColumnTab>(readSidebarTab)
-  const inspectorMode = sidebarTab === 'inspector'
   // R17: the toolbar's density follows its own measured width (see styles.css [data-density]).
   const [toolbarEl, setToolbarEl] = useState<HTMLDivElement | null>(null)
   const [toolbarWidth, setToolbarWidth] = useState<number | null>(null)
@@ -470,13 +482,13 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const colsInline = toolbarWidth === null || toolbarWidth >= TOOLBAR_COLS_INLINE_FROM_PX
   const toolbarDensity = toolbarWidth === null || toolbarWidth >= TOOLBAR_FULL_FROM_PX ? 'full'
     : toolbarWidth >= TOOLBAR_LABELS_FROM_PX ? 'compact' : toolbarWidth >= TOOLBAR_ICONS_FROM_PX ? 'icons' : 'tight'
-  // Grid mode is a distinct full-width view; any pane-toggle click clears it.
-  const [pathwaysMode, setPathwaysMode] = useState(false)
+  // Grid and Pathways use the current slide shared with the Inspector.
+  const pathwaysMode = !!leftPathwaysHost
   const [gridMode, setGridMode] = useState<boolean>(false)
   const onNeedRoomRef = useRef(onNeedRoom)
   onNeedRoomRef.current = onNeedRoom
   // R17: in a narrow window the two sidebars are not open together; the one opened last stays.
-  const rightSidebarShown = paneState === 'both' && !gridMode
+  const rightSidebarShown = paneState === 'both'
   const wasRightShownRef = useRef(rightSidebarShown)
   const wasLeftShownRef = useRef(leftSidebarShown)
   useEffect(() => {
@@ -499,11 +511,11 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   useEffect(() => { if (!leftSidebarShown) setAutoCollapsed(false) }, [leftSidebarShown])
   useEffect(() => {
     const show = (event: Event): void => {
-      if ((event as CustomEvent).detail === activeTalk?.outlinePath) { setPathwaysMode(true); setGridMode(true) }
+      if ((event as CustomEvent).detail === activeTalk?.outlinePath) openPathways()
     }
     window.addEventListener('tw-show-pathways', show)
     return () => window.removeEventListener('tw-show-pathways', show)
-  }, [activeTalk?.outlinePath])
+  }, [activeTalk?.outlinePath, onOpenPathways])
   const [gridColumns, setGridColumns] = useState<number>(readGridColumns)
   // The Guide tab (onboarding ticket 07). Up while App says so; `guideActive` is whether it is the tab
   // showing (Slides and Inspector are the others). Each request to open it shows it and brings the
@@ -536,6 +548,17 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // Which talk `outlineContent` is the text of: a newly opened talk starts empty, but the first render after the switch still holds the previous talk's text. The Talk tab compares a kept draft with the text, so it is given none until it is this talk's.
   const [outlineOwner, setOutlineOwner] = useState<string | null>(null)
   const [compiledSlides, setCompiledSlides] = useState<ProjectionRow[] | null>(null)
+  const pathwaySourceReady = !!activeTalk && outlineOwner === activeTalk.outlinePath
+  const pathways = usePathways(activeTalk?.outlinePath, pathwaySourceReady ? outlineContent : null, pathwaySourceReady ? compiledSlides : null, pathwaysMode)
+  const selectedPathway = pathways.pathway
+  const pathwayOrder = useMemo(() => {
+    if (!selectedPathway) return undefined
+    const indices = new Map((compiledSlides ?? []).map((row, index) => [row.slide_id, index]))
+    return selectedPathway.slideIds.flatMap(id => {
+      const index = indices.get(id)
+      return index === undefined ? [] : [index]
+    })
+  }, [selectedPathway, compiledSlides])
   const structure = useMemo(() => structureOf(outlineContent), [outlineContent])
   const liveStructureRef = useRef({ text: outlineContent, structure })
   liveStructureRef.current = { text: outlineContent, structure }
@@ -544,7 +567,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const [selectingSeveral, setSelectingSeveral] = useState(false)
   const [selectedSubslide, setSelectedSubslide] = useState<{ path: string; id: string; line: number } | null>(null)
   const clearSelection = selection.clear
-  useEffect(() => { clearSelection(); setSelectingSeveral(false) }, [activeTalk?.outlinePath, clearSelection])
+  useEffect(() => { clearSelection(); setSelectingSeveral(false) }, [activeTalk?.outlinePath, selectedPathway?.id, clearSelection])
   const [failedCompilePath, setFailedCompilePath] = useState<string | null>(null)
   const compiledSourceRef = useRef<string | null>(null)
   const [triggerFindings, setTriggerFindings] = useState<LayoutDoctorFinding[]>([])
@@ -848,12 +871,9 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
 
   // Strip ↔ editor sync + reorder/insert plumbing
   const [activeSlide, setActiveSlide] = useState<number>(0)
-  const [inspectedSlideId, setInspectedSlideId] = useState<string | null>(null)
   const [panelOpened, setPanelOpened] = useState<{ slide: string | null; page: string } | null>(null)
-  const panelPage = panelOpened?.slide === inspectedSlideId ? panelOpened.page : 'home'
   const panelRemap = useRef<{ id: string | null; index: number } | null>(null)
   const panelHistoryInProgress = useRef(false)
-  const inspectorVisible = useRef(false)
   // takeFocus distinguishes deliberate "go edit this" jumps (outline sidebar, deck ⌘E — the caret
   // should land in the editor) from strip/grid card CLICKS, which only aim the editor's viewport:
   // stealing focus there killed the strip's own arrow-key navigation for mouse users.
@@ -871,12 +891,10 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // Actions here (⌘K, right-click, Menu key): the panel at the caret or the selected slide.
   const [actionsHere, setActionsHere] = useState<{ x: number; y: number; place: Place; returnTo: HTMLElement | null } | null>(null)
 
-  // Slide Focus (B1/B3/B4). A VIEW state (peer of gridMode, not a scrim): the compiled index of the
-  // focused slide, or null. `focusRange` is the line-aligned band handed to the Editor's focusRange
-  // prop. Focus is a WORKSPACE-only affair since v0.15.x: the Browser's ↵ opens its own
-  // insert-decision viewer and never switches talks (the pendingFocus cross-talk path is gone —
-  // the silent activeTalk switch it performed caused a data-loss near-miss).
-  const [focusSlide, setFocusSlide] = useState<number | null>(null)
+  // Slide Focus scopes the editor to the same current slide as the other workspace views.
+  const [focusOpen, setFocusOpen] = useState(false)
+  const focusSlide = focusOpen ? activeSlide : null
+  const scopeOnSlide = !gridMode && paneState !== 'strip' && textView === 'slide'
   const markdownView = textView === 'markdown' && !gridMode && paneState !== 'strip' && focusSlide === null
   const [focusRange, setFocusRange] = useState<FocusRange | null>(null)
   const focusSlideRef = useRef<number | null>(focusSlide)
@@ -911,11 +929,31 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // lands on the slide you're on: the cursor is wherever strip/grid/outline navigation last put it, so
   // this both fixes the snap-to-top AND follows a slide you picked while the editor was hidden. Two
   // frames: one for React's commit (host reparented), one for CM's post-attach measure.
-  const scrollEditorToCursor = useCallback(() => {
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => editorCmdsRef.current?.scrollCursorIntoView())
-    })
+  const editorScrollFrame = useRef<number | null>(null)
+  const cancelEditorScroll = useCallback(() => {
+    if (editorScrollFrame.current === null) return
+    cancelAnimationFrame(editorScrollFrame.current)
+    editorScrollFrame.current = null
   }, [])
+  const scrollEditorToCursor = useCallback(() => {
+    cancelEditorScroll()
+    editorScrollFrame.current = requestAnimationFrame(() => {
+      editorScrollFrame.current = requestAnimationFrame(() => {
+        editorScrollFrame.current = null
+        editorCmdsRef.current?.scrollCursorIntoView()
+      })
+    })
+  }, [cancelEditorScroll])
+
+  useEffect(() => {
+    const host = editorHostRef.current
+    // The pointer targets the editor as painted. A queued scroll must yield to that click.
+    host?.addEventListener('pointerdown', cancelEditorScroll, true)
+    return () => {
+      host?.removeEventListener('pointerdown', cancelEditorScroll, true)
+      cancelEditorScroll()
+    }
+  }, [cancelEditorScroll])
 
   // Imperative insert-at-cursor channel (ADR-0013). The Editor registers a function
   // here on mount; the cross-talk search palette calls it to splice an imported
@@ -926,7 +964,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // history kept, no remount); `{ save: true }` also supersedes the autosave and returns the text to
   // save now (Editor registerReplaceDoc). editorReadRef reads the buffer itself — the doc CodeMirror
   // holds — never the outlineContent mirror (one-writer spec D1).
-  const editorReplaceRef = useRef<((text: string, opts?: { save?: boolean; savedFrom?: string; ownUndoStep?: boolean; fromDisk?: boolean; diskBase?: string; diskHash?: string }) => string | null) | null>(null)
+  const editorReplaceRef = useRef<ReplaceEditorDoc | null>(null)
   const editorReadRef = useRef<ReadEditorDoc | null>(null)
   const editorLayoutContextRef = useRef<(() => LayoutPickerContext | null) | null>(null)
   const editorApplyLayoutRef = useRef<((initial: LayoutDef[], selected: LayoutDef[]) => void) | null>(null)
@@ -1060,11 +1098,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // Mirror the strip's current-slide mapping into refs so the (deps-[]) global key handler can
   // resolve the ACTIVE slide for the where-used command — same pattern as activeTalkRef above.
   const activeSlideRef = useRef<number>(activeSlide)
-  useEffect(() => { activeSlideRef.current = activeSlide }, [activeSlide])
   const compiledSlidesRef = useRef<ProjectionRow[] | null>(compiledSlides)
-  useEffect(() => { compiledSlidesRef.current = compiledSlides }, [compiledSlides])
-  const inspectedSlideIdRef = useRef<string | null>(inspectedSlideId)
-  useEffect(() => { inspectedSlideIdRef.current = inspectedSlideId }, [inspectedSlideId])
   const inspectorCommitInProgressRef = useRef(false)
   const cursorLineRef = useRef<number | null>(null)
   const editedCaret = useRef<{ path: string | undefined; text: string; line: number } | null>(null)
@@ -1074,29 +1108,19 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   outlineLineListener.current = onActiveLineChange
   const [activeLineReporter] = useState(() => createActiveLineReporter(() => outlineLineListener.current))
   const cursorAwaitsCompileRef = useRef(false)
-  // The heading line of a board slide just inserted, until the Inspector has opened on it.
   const sectionNotice = useRef<{ path: string; token: string } | null>(null)
-  const insertedBoardLineRef = useRef<number | null>(null)
-  const inspectedSlideIndexRef = useRef(0)
-  const inspectedSlideIndex = resolveInspectedSlide(
-    compiledSlides,
-    inspectedSlideId,
-    inspectedSlideIndexRef.current
-  ).index
+  const currentCompiledSlideId = compiledSlides?.[activeSlide]?.slide_id ?? null
+  const panelPage = panelOpened?.slide === currentCompiledSlideId ? panelOpened.page : 'home'
   // ADR-0033 §1: heading lines the outline editor marks for text that cannot fit at the readable minimum.
   const textFitNotes = useMemo(() => textFitNotesFor(compiledSlides, slideLines), [compiledSlides, slideLines])
-  const markdownHeadingLabels = useMemo(() => {
+  const markdownHeadings = useMemo(() => {
     if (!markdownView || outlineOwner !== activeTalk?.outlinePath) return undefined
-    const numbers = new Map(marginLabelList.flatMap(label => label.sectionNumber ? [[label.line, label.sectionNumber] as const] : []))
-    return new Map(structure.nodes.map(node => [node.line + 1, {
-      kind: node.folded ? 'Subslide' : node.section ? node.level === 2 ? 'Section' : 'Subsection' : 'Slide',
-      sectionNumber: node.section ? numbers.get(node.line + 1) : undefined
-    }] as const))
-  }, [markdownView, outlineOwner, activeTalk?.outlinePath, structure, marginLabelList])
+    return new Map(structure.nodes.map(node => [
+      node.line + 1,
+      node.folded ? 'subslide' : node.section ? node.level === 2 ? 'section' : 'subsection' : 'slide'
+    ] as const))
+  }, [markdownView, outlineOwner, activeTalk?.outlinePath, structure])
   const slideLinesRef = useRef<(number | null)[]>(slideLines)
-  // The slide the inspector shows, as of this render (Capture embed… acts on it).
-  const inspectedNowRef = useRef(inspectedSlideIndex)
-  inspectedNowRef.current = inspectedSlideIndex
   // Nothing is published before the first compile of the open talk (compiledSlides is null on talk load), so numbers never carry from another talk.
   useEffect(() => { publishStripNumbers(stripNumbersToPublish(compiledSlides, slideLines)) }, [compiledSlides, slideLines])
   useEffect(() => () => publishStripNumbers(null), [])
@@ -1110,7 +1134,9 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     publishSlideThumbs(compiledSlides && thumbnails ? compiledSlides.map((r) => thumbnails[r.render_hash || r.content_hash || r.slide_id || ''] ?? null) : null)
   }, [compiledSlides, thumbnails])
   useEffect(() => () => publishSlideThumbs(null), [])
-  useEffect(() => { slideLinesRef.current = slideLines }, [slideLines])
+  useEffect(() => {
+    if (compiledSlidesRef.current === compiledSlides) slideLinesRef.current = slideLines
+  }, [compiledSlides, slideLines])
   // The layout the compiler gave the compiled slide whose heading is on `line` (the quote commands need it for a quote-only slide with no `{quote}` token).
   const compiledLayoutAtLine = useCallback((line: number): string | undefined => {
     const index = slideLinesRef.current.indexOf(line)
@@ -1236,38 +1262,14 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     setMoveRequest({ x: anchor.x, y: anchor.y, line: subject.line, mode: 'move' })
   }
 
-  // The Inspector owns its navigation while open. Recompiles may insert, remove, or reorder rows,
-  // so its index is always recovered from the stable deep-link id. Only a vanished id falls back
-  // to the previous (clamped) position.
-  useEffect(() => {
-    if (!inspectorMode) return
-    // Insert › Board slide (ADR-0032 A1): the Inspector opens on the new board once a compile
-    // carries it. Until then the caret's slide index points into the rows compiled before it.
-    const inserted = insertedBoardLineRef.current
-    const insertedIndex = inserted == null ? -1 : slideLines.findIndex((line) => line === inserted)
-    if (insertedIndex >= 0 && compiledSlides?.[insertedIndex]) {
-      insertedBoardLineRef.current = null
-      const id = compiledSlides[insertedIndex].slide_id ?? null
-      inspectedSlideIdRef.current = id
-      inspectedSlideIndexRef.current = insertedIndex
-      setInspectedSlideId(id)
-      return
-    }
-    const previousIndex = inspectedSlideId == null ? activeSlideRef.current : inspectedSlideIndexRef.current
-    const seedId = inspectedSlideId
-      ?? compiledSlides?.[Math.max(0, Math.min((compiledSlides?.length ?? 1) - 1, activeSlideRef.current))]?.slide_id
-      ?? null
-    const resolved = resolveInspectedSlide(compiledSlides, seedId, previousIndex)
+  useLayoutEffect(() => {
     const remap = panelRemap.current
-    if (remap && remap.id === inspectedSlideId && resolved.index === remap.index && resolved.id !== remap.id) {
-      // The first save can replace the compiler's temporary id. Carry the page to the same row.
-      setPanelOpened(opened => opened?.slide === remap.id ? { ...opened, slide: resolved.id } : opened)
-      panelRemap.current = { id: resolved.id, index: resolved.index }
+    if (remap && compiledSlides?.[activeSlide] && activeSlide === remap.index && currentCompiledSlideId !== remap.id) {
+      // A save can replace the compiler's temporary ID without changing the current slide.
+      setPanelOpened(opened => opened?.slide === remap.id ? { ...opened, slide: currentCompiledSlideId } : opened)
+      panelRemap.current = { id: currentCompiledSlideId, index: activeSlide }
     }
-    inspectedSlideIdRef.current = resolved.id
-    inspectedSlideIndexRef.current = resolved.index
-    setInspectedSlideId(resolved.id)
-  }, [compiledSlides, inspectorMode, activeTalk?.outlinePath])
+  }, [compiledSlides, activeSlide, currentCompiledSlideId])
 
   // The ledger {id=…} of the slide the strip/cursor is currently on, or null if it has none
   // (a synthesized cover/closing row, or a slide not yet saved-and-stamped). Reads refs only, so
@@ -1318,9 +1320,9 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     const range = focusRangeForSlideLine(outlineContentRef.current, lines[idx])
     if (!range) { notify('This slide can’t be focused — it has no editable block yet.', 'info'); return }
     lastFocusLineRef.current = lines[idx]
-    setActiveSlide(idx)
+    selectSlideRef.current(idx)
     setFocusRange(range)
-    setFocusSlide(idx)
+    setFocusOpen(true)
   }, [])
   const enterFocusRef = useRef(enterFocus)
   useEffect(() => { enterFocusRef.current = enterFocus }, [enterFocus])
@@ -1339,13 +1341,12 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     if (!range) return
     lastFocusLineRef.current = lines[next]
     setFocusRange(range)
-    setActiveSlide(next)
-    setFocusSlide(next)
+    selectSlideRef.current(next)
   }, [])
 
   const exitFocus = useCallback(() => {
     lastFocusLineRef.current = null
-    setFocusSlide(null)
+    setFocusOpen(false)
     setFocusRange(null)
     // Focus only ever enters from the workspace now — hand the keyboard back to the editor.
     requestAnimationFrame(() => (document.querySelector('.cm-content') as HTMLElement | null)?.focus())
@@ -1398,7 +1399,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     if (offlineSavingRef.current) return
     const talk = activeTalkRef.current?.outlinePath
     const doc = editorReadRef.current?.()
-    const index = inspectedNowRef.current
+    const index = activeSlideRef.current
     const line = slideLinesRef.current[index]
     if (!talk || !doc || line == null) { notify('Choose a slide with an HTML page first.', 'info', 'save-offline-page'); return }
     const selected = selectOfflinePage(doc.text, line, requested)
@@ -1427,7 +1428,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // each saved view's {capture} line reaches this editor through the talk writer like any main edit.
   const captureEmbed = useCallback(async (pageUrl?: string) => {
     const path = activeTalkRef.current?.outlinePath
-    const index = inspectedNowRef.current
+    const index = activeSlideRef.current
     const row = compiledSlidesRef.current?.[index] ?? null
     const compiledSource = compiledSourceRef.current
     try {
@@ -1478,7 +1479,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // its record stay in the talk folder. A refusal leaves the text exactly as it is and says why.
   const removeSavedView = useCallback((pageUrl: string, image: string, embed: { index: number; of: number }) => {
     const doc = editorReadRef.current?.()
-    const index = inspectedNowRef.current
+    const index = activeSlideRef.current
     if (!doc) { notify('This saved view could not be removed: the slide is not ready yet. Try again in a moment.', 'warning', 'capture-embed'); return }
     const plan = planSavedViewRemoval({ text: doc.text, rows: compiledSlidesRef.current, index, line: slideLinesRef.current[index] ?? null, pageUrl, image, embed })
     if ('refused' in plan) { notify(plan.refused, 'warning', 'capture-embed'); return }
@@ -1670,16 +1671,22 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // same queue as the Editor's saves — so a workspace write made before an instant-slide save
   // ("Add to talk") can never land on disk after it (live-presenting ticket 07).
   function writeOutline(outlinePath: string, text: string): ReturnType<typeof window.tw.talk.writeOutline> {
-    const before = editorReadRef.current?.()
+    const before = editorReadRef.current?.({ saveText: text })
     const currentBaseline = (): boolean => {
       const current = editorReadRef.current?.()
       return before?.path !== outlinePath || (current?.path === outlinePath && current.epoch === before.epoch)
     }
-    const observedVersion = (): { expectedDiskHash?: string } | undefined => {
+    return queueOutlineWrite(outlinePath, async () => {
+      if (!currentBaseline()) return false
       const doc = editorReadRef.current?.()
-      return doc?.path === outlinePath ? { expectedDiskHash: doc.diskHash } : undefined
-    }
-    return queueOutlineWrite(outlinePath, () => currentBaseline() ? window.tw.talk.writeOutline(outlinePath, text, observedVersion()) : Promise.resolve(false as const))
+      const identity = before?.path === outlinePath ? before.saveIdentity : undefined
+      const reply = await window.tw.talk.writeOutline(outlinePath, text, {
+        expectedDiskHash: doc?.path === outlinePath ? doc.diskHash : undefined,
+        identity: identity?.options()
+      })
+      if (reply && reply.ok && currentBaseline()) identity?.acknowledge(reply.content ?? text)
+      return reply
+    })
   }
 
   // One writer for talk files, renderer side (spec D1, lib/outlineMutation.ts). Every programmatic
@@ -1701,7 +1708,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
           if (!doc || doc.path !== path) return null
           // A completed move/cut is one deliberate edit, so its new order need not wait for a typing pause.
           if (applyOpts?.ownUndoStep && next !== doc.text) compileImmediatelyRef.current = true
-          return editorReplaceRef.current?.(next, { save: true, ownUndoStep: applyOpts?.ownUndoStep }) ?? null
+          return editorReplaceRef.current?.(next, { save: true, ownUndoStep: applyOpts?.ownUndoStep, headingOrder: applyOpts?.headingOrder }) ?? null
         },
         adopt: (path, sent, saved) => {
           // What the save wrote (tidied, ids stamped): the editor adopts it only while its buffer is
@@ -2084,28 +2091,33 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
 
   function selectGrid(): void {
     returnToGridRef.current = false
-    setPathwaysMode(false)
+    onClosePathways?.()
     setGridMode(true)
   }
 
-  // Aim the Inspector at the slide the editor is on, as it opens.
-  function seedInspector(): void {
-    const activeId = compiledSlidesRef.current?.[activeSlideRef.current]?.slide_id ?? null
-    const resolved = resolveInspectedSlide(compiledSlidesRef.current, activeId, activeSlideRef.current)
-    inspectedSlideIdRef.current = resolved.id
-    inspectedSlideIndexRef.current = resolved.index
-    setInspectedSlideId(resolved.id)
+  function openPathways(): void {
+    if (!activeTalk) return
+    onOpenPathways?.()
+    if (focusSlideRef.current != null) exitFocus()
+    setGridMode(true)
+  }
+
+  function backFromPathways(): void {
+    onClosePathways?.()
+    selectSlides()
+  }
+
+  function openPathwaysWithHint(): void {
+    openPathways()
+    notify('Choose a pathway, then Present this pathway.', 'info', 'pathways')
   }
 
   // Show one tab of the right sidebar, bringing the sidebar up beside the editor (Slides view) if it was off.
   function showTab(tab: RightColumnTab): void {
     returnToGridRef.current = false
     setSidebarTab(tab)
-    if (tab === 'inspector') seedInspector()
-    setPaneState((current) => {
-      if (current !== 'both') window.setTimeout(() => scrollEditorToCursor(), 0)
-      return 'both'
-    })
+    if (paneStateRef.current !== 'both') scrollEditorToCursor()
+    setPaneState('both')
   }
 
   useEffect(() => {
@@ -2143,12 +2155,10 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     if (paneStateRef.current === 'strip') {
       setGridMode(false)
       setPaneState('both')
-      if (sidebarTab === 'inspector') seedInspector()
       scrollEditorToCursor()
       return
     }
     if (paneStateRef.current === 'editor') {
-      if (sidebarTab === 'inspector') seedInspector()
       setPaneState('both')
     } else {
       setPaneState('editor')
@@ -2209,7 +2219,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         runRegisteredCommand('new-slide')
         return
       }
-      for (const id of ['new-section', 'new-subsection'] as const) {
+      for (const id of ['new-section', 'new-subsection', 'present-from-here', 'present-presenter'] as const) {
         if (surfaceKey(e, id) && activeTalkRef.current && !(isTypingTarget(e.target) && isTypingKey(e))) {
           e.preventDefault(); e.stopPropagation(); runRegisteredCommand(id); return
         }
@@ -2322,29 +2332,6 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       }
       // ⌘L opens the LAYOUT picker (replaces the old `/` auto-popup, which left stray slashes). It
       // places the chosen trigger on the current slide's Trigger line via the editor's layout channel.
-      // F5 launches the presenter view for the current talk (uses refs — the handler has deps []).
-      // ⇧F5 starts the presenter on the slide you're currently on (present-from-here); plain F5
-      // starts at the top. An unstamped current slide has no {id=…} to deep-link to, so ⇧F5 falls
-      // back to the top with a hint rather than silently starting elsewhere.
-      if (e.key === 'F5' && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        e.preventDefault()
-        e.stopPropagation()
-        const content = outlineContentRef.current
-        if (blockedByUnresolved(content)) return
-        const t = activeTalkRef.current
-        if (t) {
-          commandRan(e.shiftKey ? 'present-from-here' : 'present-presenter')
-          let startSlideId: string | undefined
-          if (e.shiftKey) {
-            startSlideId = currentSlideId() ?? undefined
-            if (!startSlideId) notify('This slide isn’t stamped yet — starting from the top. Save the outline to enable present-from-here.', 'info')
-          }
-          void window.tw.talk
-            .present(t.outlinePath, content, 'presenter', startSlideId)
-            .then((r) => { if (r && r.success === false) notify('Present failed: ' + (r.error || 'unknown error'), 'error') })
-        }
-        return
-      }
       if ((e.metaKey || e.ctrlKey) && !e.shiftKey && (e.key === 'l' || e.key === 'L')) {
         e.preventDefault()
         e.stopPropagation()
@@ -2673,7 +2660,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       if (line == null) return
       // Leave Focus + grid, make sure the editor is on-screen (strip-only hides it), then jump.
       // setFocusLine drives the Editor's scroll-to-line + focus; the cursor move re-syncs the strip.
-      setFocusSlide(null)
+      setFocusOpen(false)
       setFocusRange(null)
       setGridMode(false)
       setPaneState((p) => (p === 'strip' ? 'both' : p))
@@ -2708,9 +2695,12 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // Reset per-talk state when talk changes. Also drops any active Focus — switching talks must
   // never leave the scoped editor pointing at the previous talk's offsets.
   useEffect(() => {
+    activeSlideRef.current = 0
+    compiledSlidesRef.current = null
+    compiledSourceRef.current = null
+    slideLinesRef.current = []
     setCompiledSlides(null)
     setFailedCompilePath(null)
-    compiledSourceRef.current = null
     setTriggerFindings([])
     setThumbnails(null)
     thumbnailRowsRef.current = null
@@ -2723,13 +2713,11 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     setOutlineOwner(null)
     setPictureDropLines(null)
     setActiveSlide(0)
-    inspectedSlideIndexRef.current = 0
     panelRemap.current = null
     setPanelOpened(null)
-    setInspectedSlideId(null)
     setDirty(false) // pending edits were flushed at the switch boundary
     setFocusLine(null)
-    setFocusSlide(null)
+    setFocusOpen(false)
     setFocusRange(null)
     // Clear the outline sidebar's follow-cursor highlight so it doesn't linger on the previous
     // talk's line until the first cursor move in the new talk.
@@ -2782,7 +2770,15 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       const previousRows = thumbnailRowsRef.current
       thumbnailRowsRef.current = slides
       setThumbnails((pictures) => retainMatchingThumbnails(pictures, previousRows, slides))
+      const previousIndex = activeSlideRef.current
+      const previousId = compiledSlidesRef.current?.[previousIndex]?.slide_id ?? null
+      const index = slides?.length ? resolveInspectedSlide(slides, previousId, previousIndex).index : previousIndex
+      // Inspector actions can read these before React commits the new rows.
+      compiledSlidesRef.current = slides
       compiledSourceRef.current = slides ? outlineContent : null
+      slideLinesRef.current = computeSlideLines(slides, outlineContent)
+      activeSlideRef.current = index
+      if (index !== previousIndex) setActiveSlide(index)
       setCompiledSlides(slides)
       setFailedCompilePath(slides === null ? outlinePath : null)
       setTriggerFindings(slides === null
@@ -2835,27 +2831,30 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   async function handlePresent(mode: 'window' | 'presenter' | 'audience' = 'window', startSlideId?: string) {
     if (!activeTalk || !outlineContent) return
     if (blockedByUnresolved(outlineContent)) return
-    const result = await window.tw.talk.present(activeTalk.outlinePath, outlineContent, mode, startSlideId)
+    if (selectedPathway && pathwayOrder?.length === 0) {
+      notify('Add slides to this pathway before presenting.', 'info', 'pathways')
+      return
+    }
+    const start = !selectedPathway || (startSlideId && selectedPathway.slideIds.includes(startSlideId)) ? startSlideId : undefined
+    const result = await window.tw.talk.present(activeTalk.outlinePath, outlineContent, mode, start, undefined, undefined, { pathwayId: selectedPathway?.id })
     if (result && result.success === false) notify('Present failed: ' + (result.error || 'unknown error'), 'error')
   }
 
-  // Presenter view starting on the slide you're currently on (⇧F5 / Present menu). An unstamped
-  // current slide has no {id=…} to deep-link to, so it falls back to the top with a hint.
+  // Generated slides have a compiled id but no outline heading to look up.
   async function presentFromHere() {
     if (!activeTalk || !outlineContent) return
-    if (blockedByUnresolved(outlineContent)) return
-    const id = currentSlideId()
+    const row = compiledSlidesRef.current?.[activeSlideRef.current]
+    const generatedId = compiledSourceRef.current === outlineContent && !row?.source_line ? row?.slide_id : undefined
+    const id = currentSlideId() ?? generatedId
     if (!id) notify('This slide isn’t stamped yet — starting from the top. Save the outline to enable present-from-here.', 'info')
-    const result = await window.tw.talk.present(activeTalk.outlinePath, outlineContent, 'presenter', id ?? undefined)
-    if (result && result.success === false) notify('Present failed: ' + (result.error || 'unknown error'), 'error')
+    await handlePresent('presenter', id ?? undefined)
   }
 
   // The ⌘L layout picker, also reachable from the toolbar Insert → Layout. A bare trigger lands on
   // the slide's Trigger line; a multi-line template is spliced as a new block at the caret.
   //
   // ADR-0032: the picker is the Inspector column, so opening it brings that column up (slides beside the
-  // outline, not the grid, not Focus) and aims it at the Inspector's slide, or at the caret's slide when the
-  // Inspector is not showing. Pressed again, it closes and the slide is as it was.
+  // outline, not the grid, not Focus) and aims it at the current slide. Pressed again, it closes and the slide is as it was.
   const closeLayoutPicker = useCallback((): void => {
     setLayoutPicker(null)
     setPickerTry(null)
@@ -2866,27 +2865,15 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     const doc = editorReadRef.current?.()
     if (!doc) return
     const read = readOutlineSlides(doc.text)
-    const inspectorShowing = inspectorMode && paneState === 'both'
+    const currentLine = lineOfSlideIndex(activeSlideRef.current)
     const caretLine = doc.text.slice(0, doc.caret).split('\n').length - 1
-    const byCaret = [...read.slides].reverse().find((candidate) => candidate.start <= caretLine)
-    const byInspector = inspectorShowing && inspectedSlideIdRef.current
-      ? read.slides.find((candidate) => candidate.id === inspectedSlideIdRef.current)
-      : undefined
-    const target = byInspector ?? byCaret
+    const target = read.slides.find(candidate => candidate.line === currentLine)
+      ?? read.slides.findLast(candidate => candidate.start <= caretLine)
     if (!target) { notify('Put the cursor on a slide first: the layout picker changes the slide you are on.', 'info', 'layout-picker'); return }
     if (focusSlideRef.current != null) exitFocus()
     if (gridModeRef.current) setGridMode(false)
     showTab('inspector')
-    // The Inspector previews the slide the picker acts on, stamped or not (an unstamped one is found by its heading line).
-    const index = target.id
-      ? compiledSlides?.findIndex((row) => row.slide_id === target.id) ?? -1
-      : slideLinesRef.current.findIndex((line) => line === target.line)
-    const inspectId = target.id || (index >= 0 ? compiledSlides?.[index]?.slide_id ?? null : null)
-    if (inspectId) {
-      inspectedSlideIdRef.current = inspectId
-      if (index >= 0) inspectedSlideIndexRef.current = index
-      setInspectedSlideId(inspectId)
-    }
+    if (currentLine !== target.line) jumpToOutlineLine(target.line, { takeFocus: false })
     setPickerTry(null)
     setLayoutPicker({ slide: target.id ? target.id : { headingLine: target.line }, slideId: target.id || null, query, anchor: doc.text })
   }
@@ -3022,11 +3009,11 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
 
   // The picker belongs to one slide: moving the Inspector to another (⌥↑ ⌥↓, a click in the strip) closes it.
   useEffect(() => {
-    if (layoutPicker?.slideId && inspectedSlideId && inspectedSlideId !== layoutPicker.slideId) {
+    if (layoutPicker?.slideId && currentCompiledSlideId && currentCompiledSlideId !== layoutPicker.slideId) {
       setLayoutPicker(null)
       setPickerTry(null)
     }
-  }, [inspectedSlideId, layoutPicker])
+  }, [currentCompiledSlideId, layoutPicker])
   // ...and so does the talk it was opened on.
   useEffect(() => { setLayoutPicker(null); setPickerTry(null) }, [activeTalk?.outlinePath])
 
@@ -3215,63 +3202,54 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     else notify('OCR indexing failed: ' + (res?.error || 'unknown error'), 'error', 'ocr')
   }
 
-  // Map the editor cursor line back to a slide index (editor → strip highlight): the slide
-  // whose source line is the greatest one at/before the cursor.
-  function handleCursorLine(line: number) {
-    // Remember where the caret is, and whether the rows it was mapped against were the compiler's yet: a click made
-    // before the first compile maps against the heading-only fallback, so it is mapped again when the rows arrive.
-    cursorLineRef.current = line
-    cursorAwaitsCompileRef.current = compiledSlidesRef.current == null
-    if (panelHistoryInProgress.current) return
-    closePickerIfCaretLeft()
-    let idx = slideIndexAtLine(slideLines, line)
-    let sourceLine = slideLines[idx] ?? null
-    if (markdownView) {
-      const text = editorReadRef.current?.()?.text ?? outlineContentRef.current
-      const snapshot = liveStructureRef.current
-      const tree = snapshot.text === text ? snapshot.structure : structureOf(text)
-      const node = nodeAtSourceLine(tree, line)
-      const authored = node?.folded ? node.ancestors.map(i => tree.nodes[i]).find(parent => parent.container) : node
-      const rows = compiledSlidesRef.current
-      if (!authored) idx = rows?.findIndex(row => row.slide_id === 'deck-title') ?? -1
-      else if (text === compiledSourceRef.current) idx = slideLines.indexOf(authored.line + 1)
-      else {
-        const matches = rows?.flatMap((row, index) => authored.id && row.slide_id === authored.id ? [index] : []) ?? []
-        idx = matches.length === 1 ? matches[0] : -1
-      }
-      sourceLine = node ? node.line + 1 : null
-      activeLineReporter.report(sourceLine)
-      cursorAwaitsCompileRef.current = idx < 0
+  function slideAtEditorLine(line: number, text: string): { index: number; sourceLine: number | null } {
+    const snapshot = liveStructureRef.current
+    const tree = snapshot.text === text ? snapshot.structure : structureOf(text)
+    const node = nodeAtSourceLine(tree, line)
+    const authored = node?.folded ? node.ancestors.map(i => tree.nodes[i]).find(parent => parent.container) : node
+    const rows = compiledSlidesRef.current
+    let index = -1
+    if (!rows) index = slideIndexAtLine(slideLinesRef.current, line)
+    else if (!authored) index = rows.findIndex(row => row.slide_id === 'deck-title')
+    else if (text === compiledSourceRef.current) index = slideLinesRef.current.indexOf(authored.line + 1)
+    else if (authored.id) {
+      const first = rows.findIndex(row => row.slide_id === authored.id)
+      if (first >= 0 && first === rows.findLastIndex(row => row.slide_id === authored.id)) index = first
     }
+    return { index, sourceLine: node ? node.line + 1 : null }
+  }
+
+  function handleCursorLine(line: number) {
+    cursorLineRef.current = line
+    if (panelHistoryInProgress.current || inspectorCommitInProgressRef.current) return
+    closePickerIfCaretLeft()
+    const text = editorReadRef.current?.()?.text ?? outlineContentRef.current
+    const { index: idx, sourceLine } = slideAtEditorLine(line, text)
+    cursorAwaitsCompileRef.current = compiledSlidesRef.current == null || idx < 0
+    activeLineReporter.report(sourceLine)
     // The Slide Scratchpad's note: below the heading of the caret's slide reads as "in its text" (the insert itself checks
     // exactly, against the editor's text).
-    setScratchCaretInBody(idx >= 0 && slideLines[idx] != null && line > (slideLines[idx] as number))
+    setScratchCaretInBody(idx >= 0 && sourceLine != null && line > sourceLine)
     if (idx >= 0) {
-      // Tell the outline sidebar only when the LINE it should mark changes (not every keystroke). By
-      // line, not by slide index: after a move the same index is another slide on another line.
-      if (!markdownView) activeLineReporter.report(sourceLine)
       activeSlideRef.current = idx
       setActiveSlide(idx)
       const path = activeTalkRef.current?.outlinePath
       const row = compiledSlidesRef.current?.[idx]
       if (row && path && entrySlideChosen.current === path) rememberedSlides.current.set(path, row.slide_id)
-      if (inspectorMode) {
-        const nextInspectedId = inspectedSlideIdAfterCursorChange(
-          compiledSlidesRef.current,
-          idx,
-          inspectedSlideIdRef.current,
-          inspectorCommitInProgressRef.current
-        )
-        if (nextInspectedId !== inspectedSlideIdRef.current) {
-          inspectedSlideIdRef.current = nextInspectedId
-          inspectedSlideIndexRef.current = idx
-          setInspectedSlideId(nextInspectedId)
-        }
-      }
     }
   }
 
-  function reportEditorCursor(line: number, editedText?: string): void {
+  function reportEditorCursor(line: number, editedText?: string, scopedHeadingLine?: number): void {
+    if (scopedHeadingLine !== undefined) {
+      // The scoped editor already owns this caret. Its new line can be past a neighbour's old
+      // compiled heading after a long paste, even though the edit never left this slide.
+      editedCaret.current = null
+      cursorLineRef.current = line
+      cursorAwaitsCompileRef.current = false
+      activeLineReporter.report(scopedHeadingLine)
+      setScratchCaretInBody(line > scopedHeadingLine)
+      return
+    }
     const path = activeTalkRef.current?.outlinePath
     if (markdownView && editedText !== undefined && (editedText !== outlineContent || path !== outlineOwner)) {
       // React already reads the new structure for the outline. Follow that same revision
@@ -3354,7 +3332,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       if ('refused' in moved) throw new Error(moved.refused)
       landed = moved.movedRanges[0]?.line ?? null
       movedText = moved.text
-      return moved.text
+      return { text: moved.text, headingOrder: moved.headingOrder }
     }, { ownUndoStep: true })
     if (!result.ok && !result.applied) { notify(result.error, 'info', 'slide-move'); return }
     // Saving may finish after Undo, another move or a talk switch. A late landing must not
@@ -3403,7 +3381,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       clip = cut.clip
       count = cut.count
       one = oneBlockName(text, refs, cut.titles)
-      return cut.text
+      return { text: cut.text, headingOrder: cut.headingOrder }
     }, { ownUndoStep: true })
     if (!result.ok && !result.applied) { notify(result.error, 'info', 'slide-clipboard'); return false }
     if (mode === 'cut') {
@@ -3639,14 +3617,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       const outcome = await runScratchBatch({ ...scratchInsertHost, api: window.tw.scratchpad,
         prepareSlide: async (markdown, source) => {
           if (activeTalkRef.current?.outlinePath !== talk) throw new Error('The open talk changed.')
-          if (source === talk) return markdown
-          const idsInTalk = [...text.matchAll(/\{id=([A-Za-z0-9_-]+)\}/g)].map(match => match[1])
-          const copied = await window.tw.talk.insertFromVault(source, talk, markdown, idsInTalk)
-          if (!copied.ok) throw new Error(copied.error)
-          if (copied.crossVault) return copied.markdown
-          const materialized = await window.tw.talk.materializeSlideAssets(source, markdown)
-          if (!materialized?.success) throw new Error('The selected slide media could not be prepared.')
-          return materialized.markdown
+          return prepareScratchBatchSlide(window.tw.talk, markdown, source, talk, text)
         }
       }, ids, place)
       if (!outcome.ok) return false
@@ -4027,7 +3998,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     if ('error' in edit) { notify(edit.error ?? 'Choose another place for the slides.', 'info', 'structure'); return }
     const result = await applyOutlineMutation(talk.outlinePath, text => {
       if (text !== doc.text) throw new Error('The outline changed. Choose the place again.')
-      return edit.text
+      return { text: edit.text, headingOrder: edit.headingOrder }
     }, { ownUndoStep: true })
     if (!result.ok && !result.applied) { notify(result.error, 'warning', 'structure'); return }
     const saved = structureUndoText(result, edit.text)
@@ -4085,31 +4056,51 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const selectedRow = compiledSlides?.[activeSlide]
   const paneNode = selectedSubslide?.path === activeTalk?.outlinePath ? structure.nodes.find(node =>
     node.folded && (selectedSubslide?.id ? node.id === selectedSubslide.id : node.line + 1 === selectedSubslide?.line)) : undefined
-  const currentSlideLine = paneNode ? paneNode.line + 1 : selectedRow && selectedRow.slide_id !== 'deck-title' ? slideLines[activeSlide] ?? null : null
-  const scopeOnSlide = !gridMode && paneState !== 'strip' && textView === 'slide'
+  // A slide selected just after an edit or Undo may have moved since its preview compiled.
+  const liveSlideNode = scopeOnSlide && selectedRow && outlineContent !== compiledSourceRef.current
+    ? structure.nodes.find(node => node.id === selectedRow.slide_id)
+    : undefined
+  const currentSlideLine = paneNode ? paneNode.line + 1 : liveSlideNode ? liveSlideNode.line + 1
+    : selectedRow && selectedRow.slide_id !== 'deck-title' ? slideLines[activeSlide] ?? null : null
   // CodeMirror maps the band through edits, including a blank body line begun with Enter. Only
   // selecting a different slide, or a compile moving its heading, should replace that band.
   const scopeKey = compiledSlides?.[activeSlide]?.slide_id
   const viewScope = useMemo(
-    () => scopeOnSlide && currentSlideLine !== null ? focusRangeForSlideLine(outlineContentRef.current, currentSlideLine) : null,
+    () => scopeOnSlide && currentSlideLine !== null ? focusRangeForSlideLine(outlineContent, currentSlideLine) : null,
+    // The heading line and text must come from the same render. CodeMirror maps the band on other edits.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [scopeOnSlide, currentSlideLine, scopeKey, outlineOwner]
   )
   const emptySlide = useMemo(
     () => scopeOnSlide && isEmptyAuthoringSlide(extractSlideBlock(outlineContent, currentSlideLine)),
     [scopeOnSlide, outlineContent, currentSlideLine]
   )
-  const speakerNote = useMemo(
-    () => scopeOnSlide && currentSlideLine !== null ? notesGet(outlineContent, currentSlideLine).blocks[0] : undefined,
+  const slideNoteKey = JSON.stringify([activeTalk?.outlinePath, selectedRow?.slide_id, paneNode?.id ?? paneNode?.line])
+  const speakerNotes = useMemo(
+    () => scopeOnSlide && currentSlideLine !== null ? notesGet(outlineContent, currentSlideLine).blocks : [],
     [scopeOnSlide, currentSlideLine, outlineContent]
   )
 
-  function editSlideNotes(body: string): string | null {
+  function notesLineOfCurrentSlide(text: string): number | null {
+    if (!paneNode) return lineOfSlideIndex(activeSlideRef.current)
+    const snapshot = liveStructureRef.current
+    const live = snapshot.text === text ? snapshot.structure : structureOf(text)
+    if (!paneNode.id) return text === outlineContent ? paneNode.line + 1 : null
+    const matches = live.nodes.filter(node => node.folded && node.id === paneNode.id)
+    return matches.length === 1 ? matches[0].line + 1 : null
+  }
+
+  function editSlideNotes(body: string, position: number, expectedHash?: string): string | null {
     const doc = editorReadRef.current?.({ discardProvisionalTrigger: true })
-    const line = lineOfSlideIndex(activeSlideRef.current)
-    if (!doc || line == null || doc.path !== activeTalkRef.current?.outlinePath) return 'Select a slide to edit its notes.'
-    const latest = notesGet(doc.text, line).blocks[0]
+    if (!doc || doc.path !== activeTalkRef.current?.outlinePath) return 'Select a slide to edit its notes.'
+    const line = notesLineOfCurrentSlide(doc.text)
+    if (line == null) return 'Select a slide to edit its notes.'
+    const blocks = notesGet(doc.text, line).blocks
+    const latest = blocks[position]
+    if (latest?.hash !== expectedHash || (!latest && blocks.length)) return 'These notes have changed. Reopen the slide to edit the latest text.'
     const result = latest ? notesReplace(doc.text, latest.index, latest.hash, body) : notesInsert(doc.text, line, body)
     if (!result.ok) return result.message
+    if (result.text === doc.text) return null
     return editorReplaceRef.current?.(result.text) === result.text ? null : 'The notes could not be saved. Try again.'
   }
 
@@ -4298,13 +4289,13 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     // The strips under the Metadata table (work-files ticket 30): the command presses the strip's own Attach button.
     'attach-prework': () => { const why = activeTalkRef.current ? pressAttachOnStrip(document, 'pre') : 'Open a talk first.'; if (why) notify(why, 'info', 'attach-work-file') },
     'attach-postwork': () => { const why = activeTalkRef.current ? pressAttachOnStrip(document, 'post') : 'Open a talk first.'; if (why) notify(why, 'info', 'attach-work-file') },
-    pathways: () => { setPathwaysMode(true); setGridMode(true) },
+    pathways: openPathways,
     'add-to-pathway': () => {
-      if (!gridModeRef.current || !pathwaysMode) { setPathwaysMode(true); setGridMode(true); notify('Choose a pathway, then Present this pathway.', 'info', 'pathways') }
+      if (!gridModeRef.current || !pathwaysMode) openPathwaysWithHint()
       else slideSelectionControls()?.addToPathway?.()
     },
     'present-pathway': () => {
-      if (!gridModeRef.current || !pathwaysMode) { setPathwaysMode(true); setGridMode(true); notify('Choose a pathway, then Present this pathway.', 'info', 'pathways') }
+      if (!gridModeRef.current || !pathwaysMode) openPathwaysWithHint()
       else window.dispatchEvent(new CustomEvent('tw-pathway-command', { detail: 'present' }))
     },
     'new-window': () => { void window.tw.windows?.open?.() },
@@ -4316,7 +4307,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     'vault-gallery': () => window.dispatchEvent(new Event('tw-vault-gallery')),
     'search-talks': () => window.dispatchEvent(new Event('tw-search-talks')),
     'present-slide-window': () => { void handlePresent('window', currentSlideId() ?? compiledSlidesRef.current?.[activeSlideRef.current]?.slide_id) },
-    'present-window': () => handlePresent('window', compiledSlidesRef.current?.[0]?.slide_id),
+    'present-window': () => handlePresent('window'),
     'present-presenter': () => handlePresent('presenter'),
     'present-from-here': () => { void presentFromHere() },
     'present-audience': () => handlePresent('audience'),
@@ -4383,14 +4374,10 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     'move-current-slide-up': () => moveCurrentSlide('up'),
     'move-current-slide-down': () => moveCurrentSlide('down'),
     'edit-speaker-notes': () => {
-      const row = compiledSlidesRef.current?.[activeSlideRef.current]
-      const line = lineOfSlideIndex(activeSlideRef.current)
       const doc = editorReadRef.current?.()
-      if (!row || !doc || line == null) return
-      const key = doc.path + ':' + row.slide_id
-      const hasNotes = notesGet(doc.text, line).blocks.length > 0
+      if (!selectedRow || !doc || notesLineOfCurrentSlide(doc.text) == null) return
       selectWorkspaceView('slide')
-      setNotesVisibility(current => ({ row: key, open: !(current?.row === key ? current.open : hasNotes) }))
+      setNotesVisibility(current => ({ row: slideNoteKey, open: !scopeOnSlide || !(current?.row === slideNoteKey ? current.open : speakerNotes.length > 0) }))
     },
     'view-slide-panel': () => showTab('inspector'),
     'welcome-slide': () => openNewTalkInView('slide'),
@@ -4448,7 +4435,13 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       setSelectingSeveral(true)
       selection.addMany([activeSlideRef.current])
     },
-    'insert-board-slide': () => { insertedBoardLineRef.current = editorCmdsRef.current?.insertBoardSlide() ?? null },
+    'insert-board-slide': () => {
+      const line = editorCmdsRef.current?.insertBoardSlide()
+      const doc = editorReadRef.current?.()
+      if (line == null || !doc) return
+      const board = nodeAtSourceLine(structureOf(doc.text), line)
+      if (board) slideLanded(board.line + 1)
+    },
     'promote-heading': () => runActionBarEditorCommand(editorCmdsRef.current, 'promote-heading'),
     'demote-heading': () => runActionBarEditorCommand(editorCmdsRef.current, 'demote-heading'),
     'bulleted-list': () => runActionBarEditorCommand(editorCmdsRef.current, 'bulleted-list'),
@@ -4507,9 +4500,10 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
 
   function applyInspectorOption(entry: LayoutDef | undefined, group: OptionGroup, token: string): string | null {
     const path = activeTalkRef.current?.outlinePath
-    const headingLine = headingLineForSlideId(outlineContentRef.current, inspectedSlideIdRef.current)
+    const id = compiledSlidesRef.current?.[activeSlideRef.current]?.slide_id ?? null
+    const headingLine = headingLineForSlideId(outlineContentRef.current, id, group.key === 'arrival-mode')
     if (!path || headingLine == null) return null
-    return commitPanelEdit(path, () => applyOption(entry, group, token, headingLine, inspectedSlideIdRef.current))
+    return commitPanelEdit(path, () => applyOption(entry, group, token, headingLine, id))
   }
   // ADR-0032 (ticket 01): the Board section edits the slide BODY, not only its Trigger line. The
   // edit is computed against the editor's own buffer (never the outlineContent mirror), for the
@@ -4518,7 +4512,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   function applyInspectorBoardEdit(edit: BoardEdit): boolean {
     const doc = editorReadRef.current?.()
     if (!doc) return false
-    const headingLine = headingLineForSlideId(doc.text, inspectedSlideIdRef.current)
+    const id = compiledSlidesRef.current?.[activeSlideRef.current]?.slide_id ?? null
+    const headingLine = headingLineForSlideId(doc.text, id)
     if (headingLine == null) return false
     const next = applyBoardEditToOutline(doc.text, headingLine, edit)
     if (next === doc.text) return true
@@ -4558,8 +4553,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       setHandoff({ aspect, path: doc.path, base: doc.text, number: 0, current: '' })
       return
     }
-    const row = compiledSlides?.[inspectedSlideIndex]
-    const line = slideLines[inspectedSlideIndex]
+    const row = compiledSlides?.[activeSlide]
+    const line = slideLines[activeSlide]
     if (!row) return
     // Before save tidies Trigger lines, the parser can already see an id on a legacy heading.
     // Prefer source identity so a save that moves that id cannot strand a heading-line locator.
@@ -4569,7 +4564,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     if (!source) return
     const slide = source.id || { headingLine: source.line }
     const current = [row.layout, row.title_layout].filter(Boolean).join(' · ')
-    setHandoff({ aspect, path: doc.path, base: doc.text, slide, number: inspectedSlideIndex + 1, current })
+    setHandoff({ aspect, path: doc.path, base: doc.text, slide, number: activeSlide + 1, current })
   }
   async function prepareHandoff(request: NonNullable<typeof handoff>): Promise<HandoffReady> {
     const initial = editorReadRef.current?.()
@@ -4631,15 +4626,13 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   }
 
   const [panelTry, setPanelTry] = useState<(PanelTry & { base: string; path: string; index: number }) | null>(null)
-  const activePanelTry = panelTry?.path === activeTalk?.outlinePath && panelTry?.base === outlineContent &&
-    panelTry?.index === inspectedSlideIndex && ['inspector', 'talk'].includes(sidebarTab) ? panelTry : null
   const activePanelApplied = panelApplied?.path === activeTalk?.outlinePath && panelApplied?.text === outlineContent &&
-    panelApplied?.index === inspectedSlideIndex ? panelApplied : null
+    panelApplied?.index === activeSlide ? panelApplied : null
   function previewPanelDesign(preview: PanelTry | null): void {
-    setPanelTry(preview && activeTalk ? { ...preview, base: outlineContent, path: activeTalk.outlinePath, index: inspectedSlideIndex } : null)
+    setPanelTry(preview && activeTalk ? { ...preview, base: outlineContent, path: activeTalk.outlinePath, index: activeSlide } : null)
   }
   const replayPanelEdit = useCallback((place: { path: string; id: string | null; index: number; page: string }, dispatch: () => void): void => {
-    if (activeTalkRef.current?.outlinePath !== place.path || !inspectorVisible.current) {
+    if (activeTalkRef.current?.outlinePath !== place.path) {
       dispatch()
       return
     }
@@ -4649,21 +4642,17 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       dispatch()
       const resolved = resolveInspectedSlide(compiledSlidesRef.current, place.id, place.index)
       panelRemap.current = resolved
-      inspectedSlideIdRef.current = resolved.id
-      inspectedSlideIndexRef.current = resolved.index
-      activeSlideRef.current = resolved.index
-      setInspectedSlideId(resolved.id)
-      setActiveSlide(resolved.index)
-      activeLineReporter.report(slideLinesRef.current[resolved.index] ?? null)
+      if (focusSlideRef.current != null) enterFocusRef.current(resolved.index)
+      else if (activeSlideRef.current !== resolved.index) selectSlideRef.current(resolved.index)
       setPanelOpened({ slide: resolved.id, page: place.page })
     } finally {
       // The editor reports its history landing in a microtask after its caret clamp.
       queueMicrotask(() => { panelHistoryInProgress.current = false })
     }
-  }, [activeLineReporter])
+  }, [])
 
   function commitPanelEdit<T>(path: string, commit: () => T): T {
-    const place = { path, id: inspectedSlideIdRef.current, index: inspectedSlideIndex, page: panelPage }
+    const place = { path, id: currentCompiledSlideId, index: activeSlide, page: panelPage }
     inspectorCommitInProgressRef.current = true
     compileImmediatelyRef.current = true
     try {
@@ -4687,7 +4676,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       const next = apply(doc.text)
       if (next === doc.text) return true
       const accepted = commitPanelEdit(doc.path, () => editorReplaceRef.current?.(next, { ownUndoStep: true }))
-      if (accepted != null) setPanelApplied({ text: accepted, path: doc.path, index: inspectedSlideIndex, label })
+      if (accepted != null) setPanelApplied({ text: accepted, path: doc.path, index: activeSlide, label })
       return accepted != null
     } catch {
       notify('The change could not be applied to this slide.', 'warning')
@@ -4719,10 +4708,11 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const columnTab: RightColumnTab = activeTalk
     ? (sidebarTab === 'scratchpad' && !scratchDocked) || (sidebarTab === 'whats-new' && !whatsNewUp) || (sidebarTab === 'guide' && !guideUp) || (sidebarTab === 'feedback' && !feedbackShared) ? 'inspector' : sidebarTab
     : whatsNewShown || !guideUp ? 'whats-new' : 'guide'
-  inspectorVisible.current = !!activeTalk && columnTab === 'inspector' && paneState === 'both' && !gridMode && focusSlide == null
+  const activePanelTry = rightSidebarShown && panelTry?.path === activeTalk?.outlinePath && panelTry?.base === outlineContent &&
+    panelTry?.index === activeSlide && (columnTab === 'inspector' || columnTab === 'talk') ? panelTry : null
+  useEffect(() => { setPanelTry(null) }, [activeSlide, columnTab, rightSidebarShown, focusOpen])
   useEffect(() => { if (columnTab !== 'images') replacingPanelImage.current = null }, [columnTab, activeTalk?.outlinePath])
   function selectColumnTab(tab: RightColumnTab): void {
-    if (tab === 'inspector' && sidebarTab !== 'inspector') seedInspector()
     setSidebarTab(tab)
   }
   const guidePane = <div className="pane pane--guide">{guide?.body}</div>
@@ -4740,6 +4730,12 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       onDismissPanelOptions={() => { setPanelOpened(null); setPanelTry(null) }}
       onCloseGuide={() => guide?.onClose()} onCloseWhatsNew={() => { setWhatsNewUp(false); closeTab('whats-new') }} />
   )
+
+  useEffect(() => {
+    if (focusSlide !== null || (gridMode ? pathwaysMode : !scopeOnSlide)) return
+    if (!pathwayOrder?.length || pathwayOrder.includes(activeSlideRef.current)) return
+    selectSlideRef.current(pathwayOrder[0])
+  }, [pathwayOrder, pathwaysMode, gridMode, scopeOnSlide, focusSlide, activeSlide])
 
   if (!activeTalk) {
     return (
@@ -4809,8 +4805,10 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       onDirty={setDirty}
       vaultRoot={vaultRoot}
       focusRange={focusSlide != null ? focusRange : viewScope}
+      slideTextPanel={focusSlide == null && viewScope != null}
       startWithBullet={focusSlide == null && textView !== 'markdown'}
       viewMode={editorViewMode}
+      showSourceObjectPreviews={textView !== 'slide'}
       plainLook={plainLook}
       onMarginLevelMenu={(line, anchor) => openMarginMenu('level', line, anchor)}
       onMarginLayoutMenu={(line, anchor) => openMarginMenu('layout', line, anchor)}
@@ -4819,8 +4817,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       registerPlainIconTools={(tools) => { plainIconToolsRef.current = tools }}
       onPlanRun={() => setPlanSheet({ run: null })}
       textFitNotes={textFitNotes}
-      slideLines={slideLines}
-      markdownHeadingLabels={markdownHeadingLabels}
+      markdownHeadings={markdownHeadings}
       pictureProgress={pictureProgress?.path === activeTalk.outlinePath ? pictureProgress : undefined}
       pictureDropLines={pictureDropLines}
       marginLabels={marginLabelList}
@@ -4844,9 +4841,15 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
           sectionNotice.current = null
           dismissToast('section-added')
         }
-        if (panelHistoryInProgress.current || focusSlideRef.current != null || markdownView) return
-        const index = slideIndexAtLine(computeSlideLines(compiledSlidesRef.current, outline), line)
-        if (index >= 0 && index !== activeSlideRef.current) selectSlideRef.current(index)
+        if (panelHistoryInProgress.current) return
+        const { index, sourceLine } = slideAtEditorLine(line, outline)
+        if (index < 0) {
+          if (sourceLine !== null) slideLanded(sourceLine)
+          return
+        }
+        if (index === activeSlideRef.current) return
+        if (focusSlideRef.current != null) enterFocusRef.current(index)
+        else selectSlideRef.current(index)
       }}
       onPlace={(place, reason) => {
         setEditorPlace(place)
@@ -4931,7 +4934,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     actionBarCommands
   )
   const ownsOutline = outlineOwner === activeTalk.outlinePath
-  const activeRow = ownsOutline ? compiledSlides?.[activeSlide] : undefined
+  const pathwayPosition = pathwayOrder?.indexOf(activeSlide) ?? -1
+  const activeRow = ownsOutline && (!scopeOnSlide || !pathwayOrder || pathwayPosition >= 0) ? compiledSlides?.[activeSlide] : undefined
   const authoredNode = structure.nodes.find(node => node.line + 1 === currentSlideLine)
   const childrenOf = (node: typeof authoredNode) => node
     ? structure.nodes.filter(child => child.ancestors.includes(structure.nodes.indexOf(node))) : []
@@ -4945,20 +4949,31 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const currentPaneIndex = currentPaneParent ? childrenOf(currentPaneParent).filter(child => child.folded).indexOf(paneNode!) : -1
   const currentThumbKey = activeRow?.render_hash || activeRow?.content_hash || activeRow?.slide_id
   const activePaneThumb = currentPaneIndex >= 0 ? thumbnails?.[`${currentThumbKey}__${currentPaneIndex}`] : undefined
-  const slideNoteKey = `${activeTalk.outlinePath}:${activeRow?.slide_id ?? ''}`
   const subsection = activeRow?.subsection && compiledSlides?.find(row => row.role === 'subsection-title' && row.subsection === activeRow.subsection)
   const slidePlace = [readableSectionLabel(compiledSlides, activeSlide), subsection ? plainInlineText(subsection.nav_title || subsection.title) : ''].filter(Boolean).join(' › ')
   const sourceRecovery = !activeRow && failedCompilePath === activeTalk.outlinePath
   const editorColumn = scopeOnSlide ? (
     <WorkspaceSlideView
       key={activeTalk.outlinePath} path={activeTalk.outlinePath} outline={ownsOutline ? outlineContent : ''} row={activeRow}
-      trying={activeSlide === inspectedSlideIndex ? activePanelTry : null}
-      applied={activeSlide === inspectedSlideIndex ? activePanelApplied?.label : null}
+      trying={activePanelTry}
+      applied={activePanelApplied?.label}
       onUndoDesign={undoPanelEdit}
-      index={activeSlide} count={compiledSlides?.length ?? 0} place={slidePlace}
-      notes={speakerNote} notesOpen={notesVisibility?.row === slideNoteKey ? notesVisibility.open : !!speakerNote}
+      onOpenReveal={() => {
+        showTab('inspector')
+        if (layoutPicker) closeLayoutPicker()
+        setPanelOpened({ slide: currentCompiledSlideId, page: 'steps' })
+      }}
+      index={pathwayOrder ? pathwayPosition : activeSlide} count={pathwayOrder?.length ?? compiledSlides?.length ?? 0}
+      place={activeRow ? slidePlace : ''}
+      pathwayNavigation={pathwayOrder && {
+        prev: pathwayPosition > 0 ? () => handleSelectSlide(pathwayOrder[pathwayPosition - 1]) : undefined,
+        next: pathwayPosition >= 0 && pathwayPosition + 1 < pathwayOrder.length ? () => handleSelectSlide(pathwayOrder[pathwayPosition + 1]) : undefined,
+        empty: !!compiledSlides && pathwayOrder.length === 0
+      }}
+      notes={speakerNotes} notesKey={slideNoteKey} notesOpen={notesVisibility?.row === slideNoteKey ? notesVisibility.open : speakerNotes.length > 0}
       onToggleNotes={() => runRegisteredCommand('edit-speaker-notes')} onNotesChange={editSlideNotes}
-      attachEditor={attachEditorSlot} editable={ownsOutline && (viewScope !== null || sourceRecovery)}
+      onNotesEngaged={() => onEditorEngaged?.(activeTalk.outlinePath)}
+      attachEditor={attachEditorSlot} editable={ownsOutline && (!!activeRow && viewScope !== null || sourceRecovery)}
       sourceRecovery={sourceRecovery}
       section={sectionSlide && authoredNode ? { label: authoredNode.level === 2 ? 'Section' : 'Subsection',
         count: authoredChildren.filter(child => !child.section && !child.folded).length,
@@ -5001,6 +5016,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     clear: clearStructureSelection
   }
   const addLine = (line: number | null, always?: boolean) => <StructureAddLine
+    key={`${activeTalk.outlinePath}:${line}`}
     always={always} subsectionReason={subsectionReason(line)}
     onAdd={kind => { if (kind === 'slide') void addWorkspaceSlide(line); else void addStructure(kind, line) }}
   />
@@ -5044,28 +5060,20 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     activeSlideRef.current = i
     setActiveSlide(i)
     if (activeTalk && compiledSlides?.[i]) rememberedSlides.current.set(activeTalk.outlinePath, compiledSlides[i].slide_id)
-    // Keep the Slide-outline sidebar in sync with strip/grid picks (told once per line: lib/activeOutlineLine.ts).
-    activeLineReporter.report(slideLines[i] ?? null)
-    const target = outlineLine ?? (markdownView ? lineOfSlideIndex(i) : slideLines[i])
+    // Preview cards keep keyboard navigation. Clicking a source heading moves focus to the editor.
+    const target = outlineLine ?? lineOfSlideIndex(i)
+    activeLineReporter.report(target)
     revealSlideLine(target)
-    // An outline row opens its heading for typing. Preview cards keep keyboard navigation.
     if (target != null) setFocusLine({ line: target, takeFocus: outlineLine !== undefined, editTitle: markdownView })
-    if (inspectorMode && compiledSlides?.[i]) {
-      inspectedSlideIdRef.current = compiledSlides[i].slide_id
-      inspectedSlideIndexRef.current = i
-      setInspectedSlideId(compiledSlides[i].slide_id)
-    }
   }
 
   selectSlideRef.current = handleSelectSlide
 
-  function handleSelectInspectorSlide(i: number): void {
-    const row = compiledSlides?.[i]
-    if (!row) return
-    inspectedSlideIdRef.current = row.slide_id
-    inspectedSlideIndexRef.current = i
-    setInspectedSlideId(row.slide_id)
-    handleSelectSlide(i)
+  function stepInspector(direction: -1 | 1): void {
+    const next = scopeOnSlide && pathwayOrder
+      ? pathwayOrder[pathwayOrder.indexOf(activeSlide) + direction]
+      : navigateInspectorSlide(activeSlide, direction, compiledSlides?.length ?? 0)
+    if (next !== undefined) handleSelectSlide(next)
   }
 
   // Enter / double-click on a card: put the CARET in that slide's source, focused and ready
@@ -5074,11 +5082,9 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // leaves grid mode (recording that Esc in the editor returns there); from a strip-only
   // pane it opens editor+slides, since editing needs the editor on screen.
   function handleEditSlide(i: number): void {
-    setActiveSlide(i)
-    activeLineReporter.report(slideLines[i] ?? null)
-    const target = slideLines[i]
+    handleSelectSlide(i)
+    const target = lineOfSlideIndex(i)
     if (target == null) return
-    revealSlideLine(target)
     if (gridModeRef.current) {
       returnToGridRef.current = true
       setGridMode(false)
@@ -5108,9 +5114,11 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     return applyScannedTitleIconRestore((mutate, options) => applyOutlineMutation(scan.outlinePath, mutate, options), scan.text, finding)
   }
 
-  const structureInspectorRow = compiledSlides?.[inspectedSlideIndex]
-  const inspectorLine = slideLines[inspectedSlideIndex] ?? null
-  const inspectorNode = structure.nodes.find(node => node.line + 1 === inspectorLine)
+  const structureInspectorRow = compiledSlides?.[activeSlide]
+  const inspectorNode = outlineContent === compiledSourceRef.current
+    ? structure.nodes.find(node => node.line + 1 === slideLines[activeSlide])
+    : structure.nodes.find(node => node.id && node.id === currentCompiledSlideId)
+  const inspectorLine = inspectorNode ? inspectorNode.line + 1 : null
   const inspectorSection = inspectorNode && inspectorNode.level > 2 && inspectorLine !== null
     ? subsectionOwner(structure, inspectorLine) : undefined
   const inspectorSubslides = choicesFor(inspectorNode, structureInspectorRow)
@@ -5127,12 +5135,12 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         compiledSlides={ownsOutline ? compiledSlides : null}
         outlineContent={ownsOutline ? outlineContent : ''}
         triggerFindings={triggerFindings}
-        activeIndex={inspectedSlideIndex}
-        headingLine={slideLines[inspectedSlideIndex] ?? null}
-        onPrev={() => handleSelectInspectorSlide(navigateInspectorSlide(inspectedSlideIndex, -1, compiledSlides?.length ?? 0))}
-        onNext={() => handleSelectInspectorSlide(navigateInspectorSlide(inspectedSlideIndex, 1, compiledSlides?.length ?? 0))}
-        onEdit={() => handleEditSlide(inspectedSlideIndex)}
-        onExplain={() => setExplainIndex(inspectedSlideIndex)}
+        activeIndex={activeSlide}
+        headingLine={inspectorLine}
+        onPrev={() => stepInspector(-1)}
+        onNext={() => stepInspector(1)}
+        onEdit={() => handleEditSlide(activeSlide)}
+        onExplain={() => setExplainIndex(activeSlide)}
         onOpenLayoutDoctor={() => runRegisteredCommand('layout-doctor')}
         onCaptureEmbed={captureEmbed}
         onSaveOffline={saveOffline}
@@ -5140,10 +5148,10 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         onRemoveSavedView={removeSavedView}
         onCommitOption={applyInspectorOption}
         onBoardEdit={applyInspectorBoardEdit}
-        long={slideTabView === 'list'}
+        long={slideTabView === 'list' && panelPage !== 'steps'}
         page={panelPage}
-        onPageChange={page => setPanelOpened({ slide: inspectedSlideId, page })}
-        centrePreview={!gridMode && paneState !== 'strip' && scopeOnSlide && activeSlide === inspectedSlideIndex}
+        onPageChange={page => setPanelOpened({ slide: currentCompiledSlideId, page })}
+        centrePreview={!gridMode && paneState !== 'strip' && scopeOnSlide}
         multiCount={selection.count}
         preview={activePanelTry}
         applied={activePanelApplied?.label}
@@ -5178,7 +5186,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
             value: String(JSON.parse(inspectorSection.attrs)['section-colour'] ?? ''),
             selectSection: () => {
               const index = slideIndexAtLine(slideLines, inspectorSection.line + 1)
-              if (index >= 0) handleSelectInspectorSlide(index)
+              if (index >= 0) handleSelectSlide(index)
             }
           } : undefined
         } : undefined}
@@ -5205,6 +5213,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     <div className="pane pane--strip">
       <SlideStrip
         talk={activeTalk}
+        sidebarFollow={!!leftPreviewsHost && paneState !== 'strip'}
         compiledSlides={compiledSlides}
         outlineContent={outlineContent}
         triggerFindings={triggerFindings}
@@ -5247,8 +5256,10 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       } }
     ] as const
   }
-  const pinnedKey = activeRow?.render_hash || activeRow?.content_hash || activeRow?.slide_id
-  const pinnedUrl = activePaneThumb || (pinnedKey && thumbnails?.[pinnedKey])
+  const showPinnedPreview = !rightSidebarShown && !scopeOnSlide && focusSlide == null
+  const pinnedUrl = activePaneThumb || (currentThumbKey && thumbnails?.[currentThumbKey])
+  const pinnedTitle = plainInlineText(activeRow?.nav_title || activeRow?.title || '') || 'New slide'
+  const pinnedCaption = paneNode ? paneNode.title : `Slide ${activeSlide + 1} · ${pinnedTitle}`
   const slidesPanel = <div className="tw-structure-panel">
     {slidesPanelView === 'previews' ? stripPane : <>
       <SlidesOrganizer content={outlineContent} onJump={jumpToOutlineLine} ops={outlineOps}
@@ -5256,6 +5267,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         structureRows={structure.nodes} dropStructure={structure} rowStructureItems={structureRowItems}
         cover={compiledSlides?.[0]?.slide_id === 'deck-title' ? plainInlineText(compiledSlides[0].title) : undefined}
         closing={compiledSlides?.at(-1)?.slide_id === 'deck-thanks' ? 'Closing' : undefined}
+        currentGenerated={activeRow?.slide_id === 'deck-title' ? 'cover' : activeRow?.slide_id === 'deck-thanks' ? 'closing' : undefined}
         onGenerated={kind => handleSelectSlide(kind === 'cover' ? 0 : (compiledSlides?.length ?? 1) - 1)}
         selectedLines={selectedLines}
         onPickStructure={(line, event) => {
@@ -5266,11 +5278,22 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         renderAddLine={addLine}
         onStructureMove={handleStructureDrop}
       />
-      {activeRow && <div className="tw-structure-pinned" aria-label="Current slide preview">
-        {pinnedUrl
-          ? <img src={pinnedUrl} draggable={false} alt="" />
-          : <div className="tw-structure-pinned-placeholder">{plainInlineText(activeRow.nav_title || activeRow.title) || 'New slide'}</div>}
-        <span>{paneNode ? paneNode.title : `Slide ${activeSlide + 1} · ${plainInlineText(activeRow.nav_title || activeRow.title) || 'New slide'}`}</span>
+      {showPinnedPreview && activeRow && <div className="tw-structure-pinned">
+        <button type="button" className="tw-structure-preview-toggle"
+          aria-label={`Current slide preview · ${pinnedCaption}`} aria-expanded={!outlinePreviewCollapsed} aria-controls={outlinePreviewId}
+          title={outlinePreviewCollapsed ? 'Expand slide preview' : 'Collapse slide preview'}
+          onClick={() => setOutlinePreviewCollapsed(collapsed => !collapsed)}>
+          {outlinePreviewCollapsed ? <ChevronRight size={14} aria-hidden /> : <ChevronDown size={14} aria-hidden />}
+          <span>{pinnedCaption}</span>
+        </button>
+        <div id={outlinePreviewId} hidden={outlinePreviewCollapsed}>
+          {!outlinePreviewCollapsed && <div className="tw-structure-pinned-picture">
+            {pinnedUrl
+              ? <img src={pinnedUrl} draggable={false} alt="" />
+              : <div className="tw-structure-pinned-placeholder">{pinnedTitle}</div>}
+            {activeRow.reveal_enabled && <RevealPreviewBadge />}
+          </div>}
+        </div>
       </div>}
     </>}
     <StructureFooter actions={structureActions} />
@@ -5371,7 +5394,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       outlineContent={outlineOwner === activeTalk.outlinePath ? outlineContent : ''}
       startPage={talkTabPage}
       onCopy={openHandoff}
-      onTry={preview => { if (preview) setPanelTry({ ...preview, base: outlineContent, path: activeTalk.outlinePath, index: inspectedSlideIndex }); else setPanelTry(null) }}
+      onTry={preview => { if (preview) setPanelTry({ ...preview, base: outlineContent, path: activeTalk.outlinePath, index: activeSlide }); else setPanelTry(null) }}
       onMarkdown={() => runRegisteredCommand('view-markdown')}
       onAbstract={() => runRegisteredCommand('abstract')}
       onSaveDesign={(edits) => { void handleDeckDesignSave(edits) }}
@@ -5391,18 +5414,20 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
 
   const gridPane = (
     <div className="pane pane--grid">
-      <PathwaysView key={activeTalk.outlinePath} talk={activeTalk} content={outlineContent} slides={compiledSlides} thumbnails={thumbnails} docked={pathwaysMode} onBack={() => { setPathwaysMode(false); selectSlides() }}>{pathwayGridProps => <GridView
+      <GridView
+        slideOrder={pathwaysMode ? undefined : pathwayOrder}
+        pathwayIds={pathwaysMode ? selectedPathway?.slideIds : undefined}
+        onAddToPathway={pathwaysMode ? pathways.setAdding : undefined}
         searchOnDemand
-        selection={pathwaysMode ? undefined : selection}
-        onMakeSection={pathwaysMode ? undefined : structureActions.group}
+        selection={pathwaysMode || pathwayOrder ? undefined : selection}
+        onMakeSection={pathwaysMode || pathwayOrder ? undefined : structureActions.group}
         makeSectionReason={groupReason}
         rowStructureItems={structureRowItems}
-        {...pathwayGridProps}
         talk={activeTalk}
         compiledSlides={compiledSlides}
         triggerFindings={triggerFindings}
         thumbnails={thumbnails}
-        onStructureDrop={pathwaysMode ? undefined : handleGridStructureDrop}
+        onStructureDrop={pathwaysMode || pathwayOrder ? undefined : handleGridStructureDrop}
         structureSource={outlineContent}
         structureDropLabel={(line, side) => structureDrop(structure, line, side)?.label}
         previewsPending={previewsPending}
@@ -5410,21 +5435,20 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         onSelectSlide={handleSelectSlide}
         onEdit={handleEditSlide}
         slideRefOf={slideRefOf}
-        onMoveSlides={handleMoveSlides}
+        onMoveSlides={!pathwaysMode && pathwayOrder ? undefined : handleMoveSlides}
         onSetAsideSlides={handleSetAsideSlides}
         onScratchDrop={handleScratchDrop}
         onCutSlides={handleCutSlides}
         onCopySlides={handleCopySlides}
-        onStepSlide={handleStepSlide}
+        onStepSlide={!pathwaysMode && pathwayOrder ? undefined : handleStepSlide}
         onExplain={(i) => setExplainIndex(i)}
         columns={gridColumns}
         slideOps={slideOps}
         lineOfSlide={lineOfSlideIndex}
         onPasteAfterCard={handlePasteAfterCard}
         onLanded={slideLanded}
-        onMoreActions={(i, at) => { activeSlideRef.current = i; openActionsHereRef.current({ region: 'strip', at }) }}
+        onMoreActions={(i, at) => { handleSelectSlide(i); openActionsHereRef.current({ region: 'strip', at }) }}
       />
-      }</PathwaysView>
     </div>
   )
 
@@ -5460,6 +5484,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
           remount when Focus opens/closes. */}
       {createPortal(editorElement, editorHostRef.current)}
       {leftPreviewsHost && paneState !== 'strip' && createPortal(slidesPanel, leftPreviewsHost)}
+      {createPortal(<PathwaysView key={activeTalk.outlinePath} talk={activeTalk} model={pathways} thumbnails={thumbnails}
+        docked={pathwaysMode} onBack={backFromPathways} />, leftPathwaysHost ?? document.body)}
       {publishing && (
         // Non-modal: a corner status toast that NEVER blocks the app — pointer-events off so you can
         // launch Presenter view, edit, etc. while the deploy runs in the background.
@@ -5492,6 +5518,24 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       <>
       <div ref={setToolbarEl} data-density={toolbarDensity} data-present={toolbarWidth !== null && toolbarWidth < TOOLBAR_PRESENT_LABEL_FROM_PX ? 'icon' : undefined} className="workspace-toolbar workspace-view-titlebar">
         <ToolbarMenu icon="design" label={plainTalkTitle(activeTalk.title)} title="Talk menu" items={toolbarItems('deck')} />
+        {pathways.snapshot?.pathways.length ? (
+          <div className="workspace-pathway-switch">
+            <ToolbarMenu icon="slides" label={selectedPathway?.name ?? 'Full talk'} title={`Pathway: ${selectedPathway?.name ?? 'Full talk'}`}
+              items={[
+                { icon: 'slides', label: 'Full talk', checked: !selectedPathway, onClick: () => pathways.setPathwayId(null) },
+                ...pathways.snapshot.pathways.map(pathway => ({
+                  icon: 'slides' as const, label: pathway.name, checked: selectedPathway?.id === pathway.id,
+                  onClick: () => pathways.setPathwayId(pathway.id)
+                })),
+                { icon: 'settings', label: 'Manage pathways…', separatorBefore: true, onClick: openPathways }
+              ]} />
+          </div>
+        ) : (
+          <button type="button" className="toolbar-btn workspace-pathway-add" aria-label="Add a pathway" disabled={!pathwaySourceReady || (!pathways.snapshot && !pathways.error)}
+            onClick={() => { openPathways(); if (pathways.snapshot) pathways.setDialog({ kind: 'new', name: '' }) }}>
+            <span className="toolbar-btn-content"><Icon name="insert" size={15} /><span>Pathway</span></span>
+          </button>
+        )}
         <EditorTabs mode={gridMode ? 'grid' : paneState === 'strip' ? null : textView}
           onChange={view => runRegisteredCommand(VIEW_COMMANDS[view])}
           shortcut={view => liveCommandShortcutLabel(COMMAND_REGISTRY.find(command => command.id === VIEW_COMMANDS[view])!)} />
@@ -5567,8 +5611,9 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
             ]}
           />
           <ToolbarMenu icon="more" label="Tools" iconOnly title="Studio, history, and app settings" items={toolbarItems('tools')} />
-          <ToolbarMenu icon="present" label="Present" primary title="Present from this slide"
-            defaultAction={() => runRegisteredCommand('present-slide-window')} items={toolbarItems('present', ['present-from-here'])} />
+          <ToolbarMenu icon="present" label="Present" primary
+            title={COMMAND_REGISTRY.find(command => command.id === 'present-from-here')!.label}
+            defaultAction={() => runRegisteredCommand('present-from-here')} items={toolbarItems('present')} />
         </div>
       </div>
 

@@ -2,7 +2,7 @@
 //
 // The real extensions (plainView, idProtect, focusScope, the slide-number gutter, search), bundled
 // for chrome-headless-shell, in Plain mode over a sample outline:
-//   - the margin gutter: TALK / SECTION / SLIDE n with the layout name, fed through setMarginLabels,
+//   - the margin gutter: # / §n / n with the layout control, fed through setMarginLabels,
 //     riding edits, falling back to depth for a heading nothing compiled names; Markdown shows the
 //     slide-number gutter and no margin;
 //   - hidden layout lines: gone from the DOM and from the layout (no gap), wherever in the slide they stand (ticket 11:
@@ -39,7 +39,6 @@ import { setMarginLabels } from './src/renderer/src/extensions/plainView/margin.
 import { hiddenRegions } from './src/renderer/src/extensions/plainView/hiddenLines.ts'
 import { tokenProtectExtension } from './src/renderer/src/extensions/idProtect.ts'
 import { focusScopeExtension, setFocusRange } from './src/renderer/src/extensions/focusScope.ts'
-import { slideNumberGutterExtension, setSlideNumberLines } from './src/renderer/src/extensions/slideNumberGutter.ts'
 import { marginLabels } from './src/shared/plain-view-margin.ts'
 import { appEnterBindings, appKeyState, failOnCaughtExceptions } from './scripts/lib/plain-view-test-mount.mjs'
 
@@ -49,7 +48,7 @@ window.mount = (doc, mode, protect = true) => {
   const view = new EditorView({ parent: document.getElementById('host'), state: EditorState.create({
     doc, selection: EditorSelection.cursor(0),
     extensions: [
-      slideNumberGutterExtension, history(), highlightActiveLine(),
+      history(), highlightActiveLine(),
       markdown({ base: markdownLanguage, codeLanguages: languages }),
       protect ? tokenProtectExtension() : [], focusScopeExtension(), appKeyState(), search(),
       // The app's own Enter chain (keymap/registry.ts), with the state it reads, ahead of the default keymap: the cases below test what the app does.
@@ -65,7 +64,6 @@ window.mount = (doc, mode, protect = true) => {
 window.setMode = (mode) => window.__v.dispatch({ effects: compartment.reconfigure(viewModeExtension(mode)) })
 window.labels = () => setMarginLabels(window.__v, marginLabels(null, window.__v.state.doc.toString()))
 window.setLabels = (l) => setMarginLabels(window.__v, l)
-window.numbers = (lines) => setSlideNumberLines(window.__v, lines)
 window.focusBlock = (from, to) => setFocusRange(window.__v, from === null ? null : { from, to })
 window.caret = (pos, head) => window.__v.dispatch({ selection: head === undefined ? EditorSelection.cursor(pos) : EditorSelection.single(pos, head), userEvent: 'select' })
 const testMark = StateEffect.define()
@@ -96,7 +94,7 @@ window.lineBox = (text) => {
   return { top: r.top, bottom: r.bottom, left: r.left, right: r.right, html: line.innerHTML }
 }
 window.margin = () => [...document.querySelectorAll('.cm-plain-margin .cm-gutterElement [data-margin-kind]:not([data-margin-line="0"])')].map((e) => ({
-  kind: e.dataset.marginKind, line: Number(e.dataset.marginLine), text: [...e.children].map((c) => c.querySelector('.cm-plain-margin-chevron') ? c.firstElementChild.textContent : c.textContent).join(' '), word: e.querySelector('.cm-plain-margin-word')?.textContent, layout: e.querySelector('.cm-plain-margin-layout > span:first-child')?.textContent ?? null
+  kind: e.dataset.marginKind, line: Number(e.dataset.marginLine), title: e.querySelector('.cm-plain-margin-word')?.title, word: e.querySelector('.cm-plain-margin-word')?.textContent, layout: e.querySelector('.cm-plain-margin-layout > span:first-child')?.textContent ?? null
 }))
 window.selectMatch = (text) => {
   const v = window.__v
@@ -149,40 +147,35 @@ try {
   await open()
   let m = await ev(() => window.margin())
   assert.deepEqual(m.map((x) => [x.kind, x.line]), [['talk', 1], ['section', 3], ['slide', 6], ['slide', 14], ['slide', 18]], 'one marker per heading, by depth before any compile')
-  assert.equal(m[0].text, 'Talk')
-  assert.equal(m[1].text, '§1 L1 \u00b7 3 slides', 'a section: its number, its level and the slides inside it')
-  assert.equal(m[2].word, 'Slide 1', 'number from the order of slide headings while nothing is compiled')
+  assert.equal(m[0].word, '#')
+  assert.equal(m[1].title, '§1 · L1 \u00b7 3 slides', 'a section: its number, its level and the slides inside it')
+  assert.equal(m[2].word, '1', 'number from the order of slide headings while nothing is compiled')
   assert.equal(m[2].layout, 'Icon list', 'the written {iconlist} names the slide')
   assert.equal(m[3].layout, 'Auto', 'a slide with no layout reads Auto')
   assert.equal(m[4].layout, 'Statement')
-  const css = await ev(() => { const w = document.querySelector('.cm-plain-margin .cm-plain-margin-word'); const g = document.querySelector('.cm-plain-margin'); const l = document.querySelector('.cm-plain-margin-layout'); return { color: getComputedStyle(w).color, upper: getComputedStyle(w).textTransform, layoutColor: getComputedStyle(l).color, width: g.getBoundingClientRect().width, numberGutter: getComputedStyle(document.querySelector('.cm-gutter.cm-lineNumbers')).display, first: document.querySelector('.cm-gutters > .cm-gutter').className } })
-  assert.equal(css.upper, 'uppercase')
+  const css = await ev(() => { const w = document.querySelector('.cm-plain-margin .cm-plain-margin-word'); const g = document.querySelector('.cm-plain-margin'); const l = document.querySelector('.cm-plain-margin-layout'); return { color: getComputedStyle(w).color, layoutColor: getComputedStyle(l).color, width: g.getBoundingClientRect().width, first: document.querySelector('.cm-gutters > .cm-gutter').className } })
   assert.equal(css.color, 'rgb(95, 107, 122)', 'label is grey')
   assert.equal(css.layoutColor, 'rgb(29, 78, 216)', 'layout name is the accent blue')
-  assert.ok(css.width >= 70 && css.width <= 78, 'margin width ' + css.width)
-  assert.equal(css.numberGutter, 'none', 'the slide-number gutter is not shown in Plain')
+  assert.ok(css.width >= 30 && css.width <= 40, 'margin width ' + css.width)
   assert.match(css.first, /cm-plain-margin/, 'the margin is the first gutter')
 
   // Compiled labels arrive, then edits move them with the heading.
   await ev(() => window.setLabels([{ line: 1, kind: 'talk' }, { line: 3, kind: 'section' }, { line: 6, kind: 'slide', number: 3, layoutLabel: 'Auto' }, { line: 14, kind: 'slide', number: 4, layoutLabel: 'Auto' }]))
   m = await ev(() => window.margin())
-  assert.equal(m.find((x) => x.line === 6).word, 'Slide 3')
+  assert.equal(m.find((x) => x.line === 6).word, '3')
   assert.equal(m.find((x) => x.line === 6).layout, 'Auto', 'compiled labels win over the written fallback')
   await ev(() => window.userEdit({ from: 0, insert: 'New first line\n' }, 'input.type'))
   m = await ev(() => window.margin())
-  assert.equal(m.find((x) => x.line === 7).word, 'Slide 3', 'the label rides the edit to its heading')
+  assert.equal(m.find((x) => x.line === 7).word, '3', 'the label rides the edit to its heading')
   assert.equal(m.find((x) => x.line === 2).kind, 'talk')
   assert.equal(m.find((x) => x.line === 19).layout, 'Statement', 'a heading with no anchor falls back to its written layout')
   await ev(() => window.userEdit({ from: 0, to: 15, insert: '' }, 'delete'))
 
-  // Markdown: the slide-number gutter, no margin, every line and chip as today.
+  // Markdown preserves every source line and chip.
   await open()
   await ev(() => window.setMode('markdown'))
-  await ev(() => window.numbers([1, 3, 6]))
-  const md = await ev(() => ({ margin: document.querySelectorAll('.cm-plain-margin').length, numbers: [...document.querySelectorAll('.cm-gutter.cm-lineNumbers .cm-gutterElement')].map((e) => e.textContent).filter((t) => /^\d+$/.test(t)), text: window.domText(), chips: document.querySelectorAll('.cm-trigger-chip, .cm-id-chip').length, bullets: document.querySelectorAll('.cm-plain-bullet').length, display: getComputedStyle(document.querySelector('.cm-gutter.cm-lineNumbers')).display }))
-  assert.equal(md.margin, 0, 'Markdown has no margin gutter')
-  assert.notEqual(md.display, 'none')
-  assert.ok(md.numbers.includes('1') && md.numbers.includes('2') && md.numbers.includes('3'), 'Markdown shows the slide-number gutter: ' + md.numbers)
+  const md = await ev(() => ({ gutter: document.querySelectorAll('.cm-gutter').length, text: window.domText(), chips: document.querySelectorAll('.cm-trigger-chip, .cm-id-chip').length, bullets: document.querySelectorAll('.cm-plain-bullet').length }))
+  assert.equal(md.gutter, 0, 'Markdown has no label gutter')
   for (const want of ['{iconlist}', '{id=one}', '{id=sec-a}', '{statement}', '{orphan}', '{id=s1}', '{icon=lucide:bike}', '- item one']) assert.ok(md.text.includes(want), 'Markdown shows ' + want)
   assert.ok(md.chips >= 8, 'Markdown shows the chips: ' + md.chips)
   assert.equal(md.bullets, 0, 'Markdown keeps the typed list mark')

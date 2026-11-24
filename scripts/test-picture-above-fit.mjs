@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
+import { waitForSlidePaint } from './lib/settled-paint.mjs'
 
 const scratch = mkdtempSync(join(tmpdir(), 'tw-picture-above-fit-'))
 const assets = join(import.meta.dirname, 'fixtures/layout')
@@ -32,6 +33,10 @@ const cases = styles.flatMap(([kind, codes, marked]) => points.map((_point, inde
   vertical: kind !== 'automatic-icons'
 })))
 cases.push({ id: 'side-caption', count: 8, codes: '{list}{sidebar}', marked: false, caption: true, vertical: true })
+const rows = [
+  { id: 'row-icons', points: ['Soil {icon=lucide:sprout}', 'Water the plants nearest to the greenhouse door {icon=lucide:droplet}', 'Sun {icon=lucide:sun}'], icons: true },
+  { id: 'row-numbers', points: ['Zqxpl', 'Vrxzl Kxqpl Trzvn Zqxpl Vrxzl Kxqpl Trzvn', 'Trzvn'], icons: false }
+]
 
 let browser
 try {
@@ -43,6 +48,10 @@ try {
       `### Garden jobs {id=${id}}`, `${codes}{image=above}`, '',
       `![Planting beds](picture.png${caption ? ' "Planting beds after watering"' : ''})`, '',
       ...points.slice(0, count).map(point => `- ${point}${marked ? ' {icon=lucide:sprout}' : ''}`), ''
+    ]),
+    ...rows.flatMap(row => [
+      `### Garden jobs {id=${row.id}}`, '{iconrow}{image=above}', '',
+      '![Planting beds](picture.png)', '', ...row.points.map(point => `- ${point}`), ''
     ])
   ].join('\n')
   const path = join(scratch, 'fit.html')
@@ -91,8 +100,38 @@ try {
       }
       if (caption || count === 1 || count === 8) console.log(detail)
     }
+    for (const row of rows) {
+      await page.evaluate(slideId => { window.location.hash = slideId }, row.id)
+      const slide = page.locator(`section.slide.active[data-id="${row.id}"]`)
+      await slide.locator('.slot-media img').evaluate(async image => {
+        await image.decode()
+        await document.fonts.ready
+        await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      })
+      await waitForSlidePaint(page)
+      const cells = await slide.locator('.slot-copy .icon-row > .ir-item').evaluateAll(items => items.map(item => {
+        const { top, bottom } = item.getBoundingClientRect()
+        const stageBottom = item.closest('.slide').getBoundingClientRect().bottom
+        return {
+          top, bottom, stageBottom, labelHeight: item.querySelector('.ir-label').getBoundingClientRect().height,
+          divider: parseFloat(getComputedStyle(item).borderInlineStartWidth),
+          icon: !!item.querySelector('.ir-icon svg')
+        }
+      }))
+      const detail = `${theme} ${row.id}: ${JSON.stringify(cells)}`
+      assert.equal(cells.length, 3, detail)
+      assert.ok(cells[1].labelHeight > cells[0].labelHeight, detail)
+      assert.ok(cells.every(cell => cell.icon === row.icons), detail)
+      assert.ok(cells.slice(1).every(cell => cell.divider > 0), detail)
+      assert.ok(cells.every(cell => cell.top === cells[0].top && cell.bottom === cells[0].bottom && cell.bottom < cell.stageBottom), detail)
+      if (process.env.TW_SLIDE_DESIGN_CAPTURE === '1') {
+        const capture = await slide.screenshot({ type: 'jpeg', quality: 75 })
+        console.log(`SLIDE_DESIGN_CAPTURE ${row.id} ${theme} ${capture.toString('base64')}`)
+      }
+      console.log(detail)
+    }
   }
-  console.log(`Picture Above fits all ${cases.length * 2} slide and theme combinations.`)
+  console.log(`Picture Above fits all ${(cases.length + rows.length) * 2} slide and theme combinations.`)
 } finally {
   await browser?.close()
   rmSync(scratch, { recursive: true, force: true })

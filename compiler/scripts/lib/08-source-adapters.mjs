@@ -3,7 +3,7 @@ import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
 import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
 import { args, slugify, parseGridDims, escapeHtml } from "./01-cli-utils.mjs";
-import { titleRegimeForLayout, parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, accentForDeckColour, backgroundTintForName, resolveClaimStyle, CLAIM_STYLES, DECK_ACCENT_NAMES, VALID_SPLITS, lookPaletteFor, sectionAccentMapForPalette } from "./02-triggers-layout.mjs";
+import { titleRegimeForLayout, parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, accentForDeckColour, backgroundTintForName, resolveClaimStyle, CLAIM_STYLES, DECK_ACCENT_NAMES, VALID_SPLITS, deckLookForPalette, lookPaletteFor, sectionAccentMapForPalette } from "./02-triggers-layout.mjs";
 import { lexMarkdownBlocks, takeParagraphIcon } from "./03-markdown-lexer.mjs";
 import { chartObjectTokenAt, parseMarkdownFenceOpeningLine, isMarkdownFenceClosingLine } from "./03-object-token.mjs";
 import { extractTitle, updateDeckTitle } from "./04-html-extraction.mjs";
@@ -1825,11 +1825,14 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
     });
     root.children.unshift(syntheticNode("deck-title", title, { role: "opening" }));
   }
+  // Convert authored bookends first so the generated closing can read the rendered title poster.
+  applyAuthoredPosters(slides, meta);
+  const palette = modelPaletteFor(DECK_PALETTES.includes(deckPalette) ? deckPalette : "");
+
   // Closing: a `deck-thanks` slide (role ending, layout closing). Suppressed when an
   // authored slide already declares {role=ending} or frontmatter sets
-  // `auto_thanks_slide: false`. `thanks` (default "Thank you") is the statement; `cta` (a
-  // call-to-action string) renders below in the accent; with no cta we still show the
-  // author/event line so the slide is never bare.
+  // `auto_thanks_slide: false`. The generated closing uses the opening treatment, with
+  // `thanks` (default "Thank you") as the heading and `cta` as its supporting line.
   const hasEnding = slides.some((s) => s.role === "ending");
   const autoThanksFlag = readDeckFlag(meta.auto_thanks_slide);
   if (autoThanksFlag.state === "unreadable") warnings.push(`deck-flag-unknown:auto_thanks_slide:${autoThanksFlag.raw}`);
@@ -1838,16 +1841,36 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
     const thanks = typeof meta.thanks === "string" && meta.thanks.trim() ? meta.thanks.trim() : "Thank you";
     const cta = typeof meta.cta === "string" ? meta.cta.trim() : "";
     const titleAccent = posterAccentFor(meta);
-    // The closing mirrors the ADR-0015 title Poster as one structured block, from the same
-    // emitter an authored {closing} slide goes through (ADR-0023 §6).
-    const closingBlocks = [posterBlockFor(
+    const closingPoster = posterBlockFor(
       { meta, title: thanks, subtitle: cta },
-      { role: "ending" }
-    )];
+      { role: "opening" }
+    );
+    if (closingPoster.variant === "poster" && deckLookForPalette(palette) === "ocean") {
+      const titleSlide = slides.find((s) => s.layout === "title" && s.role === "opening")
+        ?? slides.find((s) => s.layout === "title");
+      const openingPoster = titleSlide?.blocks?.find((block) => block.type === "title-poster" && block.variant === "poster");
+      if (openingPoster?.data.titleIcon) {
+        closingPoster.data.titleIcon = openingPoster.data.titleIcon;
+        if (openingPoster.data.titleIconAt) closingPoster.data.titleIconAt = openingPoster.data.titleIconAt;
+      }
+    }
+    if (closingPoster.variant !== "poster") closingPoster.data.keepBookendAssets = true;
+    const suppliedContacts = meta.contact_links ?? meta.contacts;
+    if (suppliedContacts && typeof suppliedContacts === "object") {
+      const contacts = Object.entries(suppliedContacts).flatMap(([key, value]) => {
+        const rawUrl = typeof value === "string" ? value : value?.url;
+        if (typeof rawUrl !== "string") return [];
+        const url = rawUrl.trim();
+        if (!url || (hideEmail && /^mailto:/i.test(url))) return [];
+        const label = typeof value?.label === "string" ? value.label.trim() : key.trim();
+        return [{ label: label || url, url }];
+      });
+      if (contacts.length) closingPoster.data.contacts = contacts;
+    }
     slides.push({
       id: "deck-thanks", section: "", role: "ending", layout: "closing",
       kicker: "", navTitle: thanks, title: thanks,
-      titleMode: "show", blocks: closingBlocks,
+      titleMode: "show", blocks: [closingPoster], generatedClosing: true,
       titleAccent,
       reuse: defaultReuseForRole("ending"), notes: "",
       frame: { ...FRAME_BUILTINS }
@@ -1855,20 +1878,13 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
     root.children.push(syntheticNode("deck-thanks", thanks, { role: "ending" }));
   }
 
-  // E7b — AUTHORED BOOKENDS (ADR-0023 §6). An authored {title} / {closing} slide renders through
-  // the SAME poster as the auto bookends above: its heading is the poster title, its first
-  // paragraph fills the subtitle slot, and every further block rides under the byline as
-  // `.tp-body` so nothing authored is dropped. Runs after E7 so the auto slides — which already
-  // carry their poster block — are passed over untouched.
-  applyAuthoredPosters(slides, meta);
-
   // Title Posters reserve a sidebar slot for the handout QR (ADR-0015); layouts without that
   // slot retain the established corner treatment. Keyed off the poster block first so an
   // authored bookend (which need not carry the opening/ending ROLE) gets the same sidebar QR.
   const handoutUrl = typeof meta.handout_url === "string" && meta.handout_url.trim() ? meta.handout_url.trim() : "";
   if (handoutUrl) {
     for (const s of slides) {
-      const titlePoster = (s.blocks || []).find((block) => block.type === "title-poster" && (block.variant === "poster" || block.variant === "closing"));
+      const titlePoster = (s.blocks || []).find((block) => block.type === "title-poster" && (s.generatedClosing || block.variant === "poster" || block.variant === "closing"));
       if (titlePoster) titlePoster.data = { ...(titlePoster.data || {}), handoutUrl };
       else if (s.role === "opening" || s.role === "ending") {
         (s.blocks = s.blocks || []).push({ type: "qr", url: handoutUrl, label: "Handout" });
@@ -1964,7 +1980,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
   const sectionLeads = resolveSectionLeads({
     sections: sections.map((section) => ({ id: section.id, override: sectionLeadOverrides.get(section.id), prework: prework?.sectionId === section.id })),
     setting: sectionColours,
-    bold: modelPaletteFor(DECK_PALETTES.includes(deckPalette) ? deckPalette : "") === "ocean-bold",
+    bold: palette === "ocean-bold",
   });
   for (const s of slides) s.sectionLead = (s.section && sectionLeads.bySection.get(s.section)) || sectionLeads.outside;
   const beats = assertBeatRecordAgreement(
@@ -1982,7 +1998,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
     ...(liveLookAhead ? {} : { liveLookAhead: false }),
     warnAtMinutes, urgentAtMinutes,
     ...(license ? { license } : {}),
-    palette: modelPaletteFor(DECK_PALETTES.includes(deckPalette) ? deckPalette : ""),
+    palette,
     brandLogoColour,
     // LAYER 2 (drop-in): a frontmatter `icons:` block (concept phrase → icon name) becomes the
     // deck-level override map. Built once and threaded into the icon vocabulary.

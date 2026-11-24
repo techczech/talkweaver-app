@@ -1,3 +1,5 @@
+import { installAuthoringRevealRuntime } from './authoring-reveal-runtime.ts'
+
 const PREVIEW_STYLE = `<style data-tw-preview-style>
 body[data-tw-preview] .share-footer,
 body[data-tw-preview] footer.footer,
@@ -24,6 +26,11 @@ body[data-tw-preview] .share-shell { min-height: 100vh; grid-template-rows: 1fr;
 // The scheme-hosted preview has its own origin, so the parent cannot synthesise arrow keys
 // inside it. postMessage crosses that boundary and this bridge replays the deck step locally.
 const STEP_BRIDGE = `<script data-tw-step-bridge>window.addEventListener('message',function(e){var d=e&&e.data;if(e&&e.source!==window.parent)return;if(d&&d.type==='tw-step'&&(d.key==='ArrowRight'||d.key==='ArrowLeft')){window.dispatchEvent(new KeyboardEvent('keydown',{key:d.key,code:d.key,bubbles:true}))}})</script>`
+const AUTHORING_STEP_BRIDGE = STEP_BRIDGE.replace(
+  'window.dispatchEvent(new KeyboardEvent',
+  'if(!document.dispatchEvent(new CustomEvent("tw-preview-step",{cancelable:true,detail:d.key==="ArrowRight"?1:-1})))return;window.dispatchEvent(new KeyboardEvent'
+)
+
 
 /** A preview document: the HTML text, or the file the compile's process wrote it to (preview-variant.ts),
  *  served from disk so the main process holds no copy of it. */
@@ -82,6 +89,7 @@ export function thumbnailDocumentCacheKey(documentId: string, slideKey: string):
 
 export interface ThumbnailProjectionRow {
   slide_id?: string
+  reveal_enabled?: true
   source_line?: number | null
   render_hash?: string
   thumbnail_hash?: string
@@ -154,7 +162,7 @@ export function selectedThumbnailSlideAtLine(
 }
 
 /** Mark shared preview HTML so Slide Focus and Inspector use the same chrome-free stage. */
-export function markSlidePreviewHtml(rawHtml: string, options: { localPages?: boolean } = {}): string {
+export function markSlidePreviewHtml(rawHtml: string, options: { localPages?: boolean; authoring?: boolean } = {}): string {
   // A preview never plays or loads an audio chip's file: drop the <audio> elements (and any inlined
   // data URI) before the preview document exists. The chip itself stays as a static label.
   // Conservative consumers keep the poster. The authoring opt-in preserves the compiled document;
@@ -179,10 +187,13 @@ export function markSlidePreviewHtml(rawHtml: string, options: { localPages?: bo
   // split a script mid-string ("Unexpected end of input", dead runtime, blank stage) — anchor
   // the bridge at the LAST '</body>', which is the document's own.
   if (withStyle.includes('data-tw-step-bridge')) return withStyle
-  const at = withStyle.lastIndexOf('</body>')
+  const authoring = options.authoring !== false
+  const document = authoring ? installAuthoringRevealRuntime(withStyle) : withStyle
+  const bridge = authoring ? AUTHORING_STEP_BRIDGE : STEP_BRIDGE
+  const at = document.lastIndexOf('</body>')
   return at < 0
-    ? withStyle + STEP_BRIDGE
-    : withStyle.slice(0, at) + STEP_BRIDGE + withStyle.slice(at)
+    ? document + bridge
+    : document.slice(0, at) + bridge + document.slice(at)
 }
 export const SLIDE_PREVIEW_SURFACES = ['workspace', 'detail', 'intro-example', 'review-before', 'review-after'] as const
 export type SlidePreviewSurface = typeof SLIDE_PREVIEW_SURFACES[number]

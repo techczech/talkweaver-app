@@ -9,6 +9,7 @@ import * as path from 'node:path'
 import { tmpdir } from 'node:os'
 import { prepareCrossVaultInsert, assignTargetIds, cutUntravelledRefs, scrubSourceRoot } from '../src/main/cross-vault-insert.ts'
 import { createProvenanceStore, originHintsFor } from '../src/main/provenance-store.ts'
+import { prepareScratchBatchSlide, runScratchBatch } from '../src/renderer/src/lib/scratchpadInsert.ts'
 import { importImageForTalk, talkVaultWriteRoot } from '../src/main/image-search/image-import.ts'
 import { createHash } from 'node:crypto'
 import { resolveInVaults } from '../src/main/vault-registry.ts'
@@ -305,6 +306,64 @@ try {
     assert.deepEqual(store.get('dst', 'n3w01'), rec)
     assert.equal(store.get('other', 'n3w01'), null)
     assert.ok(JSON.parse(fs.readFileSync(path.join(tmp, 'userData', 'provenance.json'), 'utf8')).entries['dst/n3w01'])
+  })
+
+  await test('a Scratchpad batch keeps cross-vault provenance on the fresh IDs in the saved outline', async () => {
+    const v = makeVaults('scratch-batch')
+    const file = path.join(tmp, 'scratch-batch-profile', 'provenance.json')
+    const store = createProvenanceStore(file)
+    const pending = new Map()
+    let text = fs.readFileSync(v.dstOutline, 'utf8')
+    let writes = 0
+    const entries = [
+      { id: 'foreign', title: 'Maps', markdown: '### Maps {id=abc12}\n\nBody.', sourceOutlinePath: v.srcOutline },
+      { id: 'local', title: 'Local', markdown: '### Local {id=loc01}\n\nBody.', sourceOutlinePath: v.dstOutline },
+      { id: 'repeat', title: 'Maps again', markdown: '### Maps again {id=abc12}\n\nBody.', sourceOutlinePath: v.srcOutline },
+    ]
+    const reuse = {
+      async insertFromVault(source, target, markdown, reservedIds) {
+        assert.equal(source, v.srcOutline)
+        assert.equal(target, v.dstOutline)
+        const result = await prepareCrossVaultInsert({
+          source: v.source, target: v.target, sourceOutlinePath: source,
+          sourceTalkTitle: 'Metaphor talk 2026', markdown, extraTaken: [...reservedIds, ...pending.keys()]
+        }, tools, quiet)
+        assert.ok(result.ok, result.error)
+        for (const slide of result.slides) {
+          pending.set(slide.id, slide.origin)
+          store.record(v.target.id, slide.id, slide.privateRecord)
+        }
+        return { ...result, crossVault: true }
+      }
+    }
+    const result = await runScratchBatch({
+      talk: () => v.dstOutline,
+      editor: () => ({ path: v.dstOutline, text, caret: 0 }),
+      prepareSlide: (markdown, source) => prepareScratchBatchSlide(reuse, markdown, source, v.dstOutline, text),
+      apply: async (target, mutate) => {
+        writes++
+        text = mutate(text)
+        fs.writeFileSync(target, text)
+        ledger.recordOutlineSave(v.dst, target, text, { originHints: originHintsFor(v.target.id, pending, store) })
+        return { ok: true, saved: { content: text } }
+      },
+      notify: (message, kind) => assert.notEqual(kind, 'warning', message),
+      api: {
+        prepareInsert: async () => ({ ok: true, entries }),
+        markInsertedMany: async () => ({ ok: true })
+      }
+    }, entries.map(entry => entry.id), { kind: 'start' })
+    assert.ok(result.ok)
+    assert.equal(writes, 1)
+    const savedIds = [...text.matchAll(/\{id=([^}]+)\}/g)].map(match => match[1])
+    assert.deepEqual([savedIds[0], savedIds[2]], [...pending.keys()])
+    assert.equal(new Set(savedIds).size, 4)
+    assert.ok(!savedIds.includes('abc12') && !savedIds.includes('loc01'), 'both local and cross-vault copies receive fresh IDs')
+    for (const id of [savedIds[0], savedIds[2]]) {
+      assert.equal(store.get(v.target.id, id)?.source_slide_id, 'abc12')
+      assert.deepEqual(ledger.slideOrigin(v.dst, id)?.origin, { vault_id: v.source.id, vault_name: v.source.name, slide_id: 'abc12' })
+    }
+    assert.equal(store.get(v.target.id, savedIds[1]), null)
   })
 
   // The image drawer's import (review P1 on ticket 041): a picture for a talk in a second vault is copied into

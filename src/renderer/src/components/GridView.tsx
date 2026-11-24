@@ -1,3 +1,4 @@
+import RevealPreviewBadge from './RevealPreviewBadge'
 import { isEmptyAuthoringSlide } from '../../../shared/redesign-window-source'
 import { isWorkspaceCovered } from '../lib/workspaceCover'
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
@@ -42,6 +43,8 @@ interface Props {
   compiledSlides: ProjectionRow[] | null
   triggerFindings: readonly LayoutDoctorFinding[]
   thumbnails?: Record<string, string> | null
+  /** A pathway projection keeps the real outline indices for selection and editing. */
+  slideOrder?: readonly number[]
   pathwayIds?: readonly string[]
   onAddToPathway?: (ids: string[]) => void
   previewsPending?: boolean
@@ -214,6 +217,7 @@ const CellThumb = React.memo(function CellThumb({ row, thumbnailUrl, triggerFind
   const warnings = surfacedWarnings(row, 'strip-badge', triggerFindings)
   return (
     <div style={{ position: 'relative', paddingTop: '56.25%', background: 'var(--paper)' }}>
+      {row.reveal_enabled && <RevealPreviewBadge />}
       {warnings.length > 0 && (
         <span
           className={`tw-slide-warning ${warnings.some((warning) => warning.severity === 'error') ? 'tw-slide-warning--error' : ''}`}
@@ -548,6 +552,7 @@ export default function GridView({
   compiledSlides,
   triggerFindings,
   thumbnails,
+  slideOrder,
   pathwayIds,
   onAddToPathway,
   previewsPending = false,
@@ -586,16 +591,32 @@ export default function GridView({
   }
   // Include generated opening/closing cards; disambiguate malformed/legacy duplicate ids too.
   const cardKeys = useMemo(() => slideKeys(compiledSlides ?? [], () => true), [compiledSlides])
-  const groups = useMemo(() => (compiledSlides ? groupBySection(compiledSlides, cardKeys) : []), [compiledSlides, cardKeys])
+  const groups = useMemo(() => {
+    if (!compiledSlides) return []
+    if (!slideOrder) return groupBySection(compiledSlides, cardKeys)
+    return [{
+      key: 'pathway', section: '', title: '',
+      rows: slideOrder.map(globalIndex => ({ row: compiledSlides[globalIndex], globalIndex, blockIndex: null }))
+    }]
+  }, [compiledSlides, cardKeys, slideOrder])
   // Search (ticket 2): the outline's query, the same rule. Non-matching cards dim in place; drag and selection stay on.
   const [query, setQuery] = useSlideQuery(tk)
   const [hitIndex, setHitIndex] = useState<number | null>(null)
   const queryActive = !isEmptyQuery(parseQuery(query))
   const blocks = useMemo(() => (compiledSlides ?? []).map((r) => r.source_markdown ?? ''), [compiledSlides])
   const pictureText = usePictureText(tk || null, blocks, queryActive)
-  const run = useMemo(() => runSearch((compiledSlides ?? []).map((r, i) => ({
-    key: i, level: r.role === 'section-title' ? 2 : headingLevelOfSource(r.source_markdown ?? ''), title: `${r.nav_title || ''}\n${r.title || ''}`, body: r.source_markdown ?? '', image: pictureText.length === blocks.length ? pictureText[i] : ''
-  })), query, talk?.title ?? ''), [compiledSlides, query, pictureText, blocks, talk?.title])
+  const run = useMemo(() => {
+    const rows = compiledSlides ?? []
+    const order = slideOrder ?? rows.map((_, i) => i)
+    return runSearch(order.map(i => {
+      const r = rows[i]
+      return {
+        key: i, level: r.role === 'section-title' ? 2 : headingLevelOfSource(r.source_markdown ?? ''),
+        title: `${r.nav_title || ''}\n${r.title || ''}`, body: r.source_markdown ?? '',
+        image: pictureText.length === blocks.length ? pictureText[i] : ''
+      }
+    }), query, talk?.title ?? '')
+  }, [compiledSlides, slideOrder, query, pictureText, blocks, talk?.title])
   const searching = run.active
   const titleScope = run.query.scope === 'all' || run.query.scope === 'title'
   const hitsInGroup = useMemo(() => groups.map((g) => g.rows.filter((r) => run.isHit.has(r.globalIndex)).length), [groups, run])
@@ -782,7 +803,7 @@ export default function GridView({
     containerRef.current
       ?.querySelector(`[data-slide-index="${activeIndex}"]`)
       ?.scrollIntoView({ block: 'nearest' })
-  }, [activeIndex, revealTick])
+  }, [activeIndex, revealTick, slideOrder])
 
   // Roving selection: plain arrows move the active cell over VISIBLE cells only (cards in
   // a collapsed section have no DOM node — selecting them would give zero feedback, the
@@ -1284,7 +1305,7 @@ export default function GridView({
     return line == null ? undefined : structureDropLabel?.(line, boundary?.kind ?? (index > dragFrom ? 'after' : 'before'))
   }
 
-  if (!compiledSlides || compiledSlides.length === 0) {
+  if (!compiledSlides || compiledSlides.length === 0 || slideOrder?.length === 0) {
     return (
       <div
         className="grid-view"
@@ -1311,7 +1332,7 @@ export default function GridView({
         }}
       >
         <p style={{ fontSize: '12px', color: 'var(--muted)', margin: 0, textAlign: 'center' }}>
-          No slides to show.
+          {slideOrder ? 'No slides in this pathway.' : 'No slides to show.'}
         </p>
       </div>
     )

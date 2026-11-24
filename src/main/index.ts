@@ -19,6 +19,7 @@ import { preservationMessage, type PreservationReason } from './publication-pres
 import type { MediaPublishChoice } from '../shared/publish-status'
 import { publicationMediaReview, publicationBuildWarnings } from '../shared/publication-files'
 import { getLibraryFiles } from './publishing-library-sync'
+import { parseOutlineSaveIdentity, type OutlineSaveIdentity } from '../shared/outline-save-identity'
 import { createPublishHistory } from './publish-history'
 import type { PublishSiteCheck } from '../shared/publish-history'
 import { readPublishingInventory } from './publishing-inventory'
@@ -320,6 +321,7 @@ import { VAULTS_DIR, adoptLegacyThumbDirs, isPlainSegment, parseThumbUrl, talkTh
 import { createConfigFile, type ConfigFile } from './config-file'
 import type { ConfigOverlay } from './settings-overlay'
 import { settingsPageUrl, startSettingsHost, type TalkWeaverSettings } from './settings-host'
+import { insetWindowOptions } from '../shared/window-chrome'
 import { createSetupFolderEngine, lookAtSetupFolder, type SetupFolderEngine } from './setup-folder'
 import { startSetupFolderHost, type SetupFolderHost } from './setup-folder-host'
 import { OFFER_KINDS, SETUP_FOLDER_SETTING, type SuggestionKind } from '../shared/setup-folder'
@@ -1365,7 +1367,7 @@ function createWindow(): BrowserWindow {
     ...(E2E ? { show: false } : {}),
     minWidth: 800,
     minHeight: 600,
-    titleBarStyle: 'hiddenInset',
+    ...insetWindowOptions(process.platform),
     backgroundColor: '#f7f3ea',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -1581,6 +1583,7 @@ function installFallbackMenu(): void {
     items.push({
       label: command.label,
       accelerator: commandElectronAccelerator(command),
+      ...(command.toolbar?.menu === 'present' ? { registerAccelerator: false } : {}),
       click: () => command.id === 'tools-animated-video' ? showAnimatedVideoChoice() : targetEditorFor(null)?.webContents.send('app:command', command.handlerId)
     })
     customMenus.set(menuName, items)
@@ -1611,6 +1614,12 @@ function installFallbackMenu(): void {
 // Live deck windows opened by talk:present, so ⌘R (refresh-in-place) can recompile the right talk
 // and reload the deck at its current slide. wcId → { outlinePath, mode }.
 const presentWindows = new Map<number, { outlinePath: string; mode: string; pathwayId?: string; runId?: string; retake?: boolean }>()
+const presenterAudienceWindows = new WeakMap<BrowserWindow, BrowserWindow>()
+
+async function openDeckAudience(presenter: BrowserWindow): Promise<void> {
+  // Use the presenter's own open action so the audience joins its session at the current slide.
+  await presenter.webContents.executeJavaScript(OPEN_AUDIENCE_SCRIPT, true)
+}
 const livePresenterContexts = new Map<number, LivePresenterContext>()
 // A publication that succeeds reaches the presenter windows of that Talk or Run that are open by then
 // (presenter-publication.ts). Their link changes, and nothing else about them does.
@@ -1766,7 +1775,7 @@ function createToolsWindow(view: ToolsView, sessionId?: string, run?: ToolsRunRe
     minWidth: 1000,
     minHeight: 680,
     title: 'TalkWeaver Tools',
-    titleBarStyle: 'hiddenInset',
+    ...insetWindowOptions(process.platform),
     backgroundColor: '#f7f3ea',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -1813,8 +1822,7 @@ function createToolsWindow(view: ToolsView, sessionId?: string, run?: ToolsRunRe
 function openToolsWindow(view: ToolsView, sessionId?: string, run?: ToolsRunRef): void {
   const existing = toolsWindow && !toolsWindow.isDestroyed() ? toolsWindow : null
   const win = existing ?? createToolsWindow(view, sessionId, run)
-  if (win.isMinimized()) win.restore()
-  win.focus()
+  if (!E2E) bringToFront(win)
   if (existing) sendToolsShow(win, view, sessionId, run)
 }
 
@@ -5220,12 +5228,14 @@ ipcMain.handle('talk:extract-section', async (_event, sourceOutlinePath: string,
 // talk-writer.ts, which applies the same backstop to every other origin's writes.
 // Each editor window's last save: failed or not (an update's restart counts an editor as saved only if it did not).
 // Each save carries the revision of the text it sent (editor-revisions.ts): what a close confirms against.
-ipcMain.handle('talk:write-outline', async (event, outlinePath: string, content: string, opts?: { revision?: unknown; expectedDiskHash?: unknown }) => {
+ipcMain.handle('talk:write-outline', async (event, outlinePath: string, content: string, opts?: { revision?: unknown; expectedDiskHash?: unknown; identity?: unknown }) => {
   const finished = editorRevisions.writeStarted(event.sender.id, opts?.revision)
   try {
     await updateTestSaveDelay() // the update-test flavour's slow save, and a test run's from source; nothing in a release
     if (opts?.expectedDiskHash !== undefined && (typeof opts.expectedDiskHash !== 'string' || !/^[a-f0-9]{64}$/.test(opts.expectedDiskHash))) { lastSaveFailed.add(event.sender.id); finished(false); return { ok: false as const, refused: 'ownership' as const } }
-    const result = await writeOutlineFromEditor(event, outlinePath, content, opts?.expectedDiskHash as string | undefined)
+    const identity = parseOutlineSaveIdentity(opts?.identity)
+    if (opts?.identity !== undefined && !identity) { lastSaveFailed.add(event.sender.id); finished(false); return { ok: false as const, refused: 'ownership' as const } }
+    const result = await writeOutlineFromEditor(event, outlinePath, content, opts?.expectedDiskHash as string | undefined, identity)
     const ok = !!result && typeof result === 'object' && result.ok === true
     if (ok) lastSaveFailed.delete(event.sender.id)
     else lastSaveFailed.add(event.sender.id)
@@ -5233,7 +5243,7 @@ ipcMain.handle('talk:write-outline', async (event, outlinePath: string, content:
     return result
   } catch (error) { lastSaveFailed.add(event.sender.id); finished(false); throw error }
 })
-async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string, expectedDiskHash?: string) {
+async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string, expectedDiskHash?: string, identity?: OutlineSaveIdentity) {
   renewEstablishedGalleryClaims()
   const saveEpoch = galleryEpoch
   const saveOwner = editorWindows.get(_event.sender.id)
@@ -5283,13 +5293,8 @@ async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outli
   // above: a refused payload is never stamped, and stampMissingIds cannot manufacture content
   // (no headings in → no-op out), so the backstop's verdict is always on the caller's own bytes.
   //
-  // ID CHURN GUARD (two layers, both required):
-  //  1. `preferred` — ids the PREVIOUS save minted (read from the on-disk file, matched by
-  //     normalised heading + occurrence) are REUSED for still-unstamped headings, so a renderer
-  //     buffer that never adopted the last stamp converges on the same ids instead of re-minting
-  //     new ones every save (which would fragment each slide's ledger history).
-  //  2. The stamped text is returned to the caller (`content` field below) so the renderer can
-  //     adopt it into the editor buffer and stop sending unstamped text at all.
+  // The editor supplies the IDs of its actual historical heading owners. Authored saves without
+  // positional IDs (e.g. after normalising a brace-only title) and older callers use the disk fallback.
   let toWrite = content
   let stampedContent: string | null = null
   try {
@@ -5297,8 +5302,10 @@ async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outli
     if (compilerDir) {
       const mod = await import(pathToFileURL(join(compilerDir, 'lib/12-outline-edit.mjs')).href)
       let preferred: Map<string, string> | null = null
-      try { preferred = mod.preferredIdsFromText(readFileSync(outlinePath, 'utf8')) } catch { /* new file: nothing to reuse */ }
-      const stamped = mod.stampMissingIds(content, undefined, { preferred })
+      if (!identity || (!identity.replay && identity.ids.length === 0)) {
+        try { preferred = mod.preferredIdsFromText(readFileSync(outlinePath, 'utf8')) } catch { /* new file: nothing to reuse */ }
+      }
+      const stamped = mod.stampMissingIds(content, undefined, { preferred, identity })
       if (stamped?.text && stamped.stamped?.length) {
         toWrite = stamped.text
         stampedContent = stamped.text
@@ -6116,7 +6123,7 @@ function outlineUrlOnDisk(outlinePath: string): string | null {
   } catch { return null }
 }
 
-ipcMain.handle('talk:present', async (event, outlinePath: string, content: string, mode?: string, startSlideId?: string, pathwayId?: string, plannedRunId?: string, retakeRequest?: unknown) => {
+ipcMain.handle('talk:present', async (event, outlinePath: string, content: string, mode?: string, startSlideId?: string, pathwayId?: string, plannedRunId?: string, retakeRequest?: unknown, fromEditor?: boolean) => {
   // Record one slide again (the recording editor): a presenter view of its own, at that slide, recording a take.
   const asked = retakeRequest !== undefined && retakeRequest !== null
   const requested = asked ? parseRetake(retakeRequest) : null
@@ -6125,6 +6132,7 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
   // Only Studio (the Tools window) asks for a retake.
   if (asked && !isToolsWindowSender(event.sender, toolsWindow)) return { success: false, error: 'Invalid retake' }
   if (asked && (mode !== 'presenter' || !requested || (typeof plannedRunId === 'string' && plannedRunId) || pathwayId)) return { success: false, error: 'Invalid retake' }
+  const openAudience = fromEditor === true && mode === 'presenter' && !asked
   let retake: RetakeContext | null = null
   const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
   if (refusal) return { success: false, error: refusal }
@@ -6165,8 +6173,8 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
     const winTitle = `TalkWeaver ${roleLabel} — ${title}`
 
     // Reuse an existing deck window for this talk+mode instead of spawning a duplicate: focus it and
-    // refresh it in place with the freshly-compiled file. ⇧F5 (startSlideId set) jumps it to that
-    // slide; plain F5 keeps its current slide. If a recording is armed, DON'T reload (that would drop
+    // refresh it in place with the freshly-compiled file. An editor launch starts at the requested
+    // slide or at the start. If a recording is armed, don't reload (that would drop
     // it) — just focus and hint. Menu-launched audience windows dedupe the same way (repeated clicks
     // used to multiply them); the runtime-launched audience (F5 inside the presenter) is a child
     // window that never comes through this handler.
@@ -6181,7 +6189,7 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
           const s = await existing.webContents.executeJavaScript(
             "({ h: location.hash.startsWith('#') ? decodeURIComponent(location.hash.slice(1)) : '', r: ((document.getElementById('twrec-module')||{}).dataset||{}).rec || '' })"
           )
-          if (!hash) hash = s.h
+          if (!hash && fromEditor !== true) hash = s.h
           rec = s.r
         } catch { /* fall through: refresh from the top */ }
         if (existing.isMinimized()) existing.restore()
@@ -6205,11 +6213,13 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
           reuseQuery._r = String(++presentReloadNonce)
           const reuseOpts: { query: Record<string, string>; hash?: string } = { query: reuseQuery }
           if (hash) reuseOpts.hash = hash
-          existing.loadFile(presentPath, reuseOpts)
-          existing.webContents.once('did-finish-load', () => {
-            if (!existing.isDestroyed()) existing.webContents.send('present:hint', '✓ Refreshed with your latest edits')
-          })
+          await existing.loadFile(presentPath, reuseOpts)
+          if (!existing.isDestroyed()) existing.webContents.send('present:hint', '✓ Refreshed with your latest edits')
           void ledgerSeal(outlinePath, content, 'present')
+        }
+        if (openAudience && !existing.isDestroyed()) {
+          await openDeckAudience(existing)
+          if (!E2E && !existing.isDestroyed()) existing.focus()
         }
         return { success: true }
       }
@@ -6268,7 +6278,6 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
     if (query) loadOpts.query = query
     if (startSlideId) loadOpts.hash = startSlideId
     attachLivePageHost(win, mode === 'presenter' ? 'presenter' : mode === 'audience' ? 'audience' : 'window', outlinePath)
-    win.loadFile(presentPath, Object.keys(loadOpts).length ? loadOpts : undefined)
     // Track this deck for ⌘R refresh-in-place, and OWN ⌘R here: before-input-event preempts the
     // default menu's Reload accelerator (which would reload to slide 0 without recompiling).
     const deckWcId = win.webContents.id
@@ -6301,7 +6310,7 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
       event.preventDefault()
       // These keys never reach the page, so main reports them to the Guide itself (ticket 10).
       if (action === 'open-audience') {
-        win.webContents.executeJavaScript(OPEN_AUDIENCE_SCRIPT, true).catch((e) => console.warn('[present] F5 audience failed:', e))
+        openDeckAudience(win).catch((e) => console.warn('[present] F5 audience failed:', e))
         guideLearn.commandRan('presenter.audience', { inExample: false })
       } else {
         void refreshDeckFromEditor(win)
@@ -6358,6 +6367,15 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
         }
       }
       if (!details?.url || !details.url.includes('audience=1')) return
+      // A freshly loaded presenter has a new session. Replace the audience from its old session.
+      if (mode === 'presenter') {
+        const previous = presenterAudienceWindows.get(win)
+        presenterAudienceWindows.set(win, child)
+        child.once('closed', () => {
+          if (presenterAudienceWindows.get(win) === child) presenterAudienceWindows.delete(win)
+        })
+        if (previous && !previous.isDestroyed()) previous.close()
+      }
       // The presenter-spawned audience window gets its own role title too.
       child.on('page-title-updated', (e) => e.preventDefault())
       child.setTitle(`TalkWeaver Audience — ${title}`)
@@ -6370,6 +6388,11 @@ ipcMain.handle('talk:present', async (event, outlinePath: string, content: strin
         }
       } catch (e) { console.warn('[present] audience display placement failed:', e) }
     })
+    await win.loadFile(presentPath, loadOpts)
+    if (openAudience && !win.isDestroyed()) {
+      await openDeckAudience(win)
+      if (!E2E && !win.isDestroyed()) win.focus()
+    }
     void ledgerSeal(outlinePath, content, 'present')
     return { success: true }
   } catch (e) {
@@ -6567,6 +6590,10 @@ ipcMain.handle('present:rebuild', async (_event, deckWcId: number, outlinePath: 
     if (slideId) loadOpts.hash = slideId
     if (mode === 'presenter') await prepareRecordingRefresh(deck.webContents)
     try { await deck.loadFile(presentPath, loadOpts) } catch (error) { cancelRecordingRefresh(deck.webContents); throw error }
+    if (!deck.isDestroyed() && presenterAudienceWindows.has(deck)) {
+      await openDeckAudience(deck)
+      if (!E2E && !deck.isDestroyed()) deck.focus()
+    }
     // Confirm once the fresh page has loaded (the bridge re-mounts + registers its hint listener by then).
     if (!deck.isDestroyed()) deck.webContents.send('present:hint', '✓ Refreshed with your latest edits')
     return { ok: true }

@@ -13,6 +13,8 @@
 // checked: every heading outside the new lines keeps its level, the block opens no code fence or comment, and
 // no existing slide ends up under the new one.
 
+import { listSlideBlocks } from '../../compiler/scripts/lib/slide-blocks.mjs'
+import { slideIdsInPrelude } from '../../compiler/scripts/lib/slide-id.mjs'
 import { readOutline } from './insert-section.ts'
 
 // ── Visuals in a picked slide's snapshot ──────────────────────────────────────────────────────────
@@ -235,27 +237,41 @@ export function restampTakenIds(block: string, talkText: string, rng: () => numb
 }
 
 
+/** A cross-vault block already has destination IDs associated with its provenance. */
+export type ScratchSlideBlock = string | { markdown: string; idsAssigned: true }
+
 /** Plan the entire selection without writing. Each block uses the existing placement proof.
  * Place in reverse at the same anchor so a section keeps its children and the next card
  * remains its sibling. IDs are reserved in displayed order before any placement. */
-export function planScratchSlides(text: string, place: SlidePlace, blocks: readonly string[], placement: ScratchPlacement = 'slide'):
+export function planScratchSlides(text: string, place: SlidePlace, blocks: readonly ScratchSlideBlock[],
+  { placement = 'slide', freshIds = false }: { placement?: ScratchPlacement; freshIds?: boolean } = {}):
   { ok: true; text: string; lines: number[]; selectionLines: number[]; lastPlace: ScratchPlace } | { ok: false; error: string } {
   if (!blocks.length || blocks.length > 5000) return { ok: false, error: 'Choose slides to insert.' }
-  let reserved = text
-  const ready = blocks.map(block => {
-    const next = restampTakenIds(block, reserved)
+  // A copied batch gets its own identities, including when none of the source IDs collide.
+  const markdown = blocks.map(block => typeof block === 'string' ? block : block.markdown)
+  const assigned = new Set([...text.matchAll(ID_TOKEN)].map(match => match[1]))
+  let reserved = [text, ...markdown.filter((_, index) => freshIds || typeof blocks[index] !== 'string')].join('\n')
+  const ready: string[] = []
+  for (const [index, block] of markdown.entries()) {
+    const source = block.replace(/\r\n?/g, '\n')
+    const lines = source.split('\n')
+    const ids = listSlideBlocks(source).flatMap(slide => slideIdsInPrelude(lines, slide.start, slide.end))
+    if (new Set(ids.map(entry => entry.id)).size !== ids.length) return { ok: false, error: 'A selected snapshot contains duplicate slide identifiers. Nothing was inserted.' }
+    if (typeof blocks[index] !== 'string') {
+      if (ids.some(entry => assigned.has(entry.id))) return { ok: false, error: 'An imported slide identifier is already in use. Nothing was inserted.' }
+      ids.forEach(entry => assigned.add(entry.id))
+      ready.push(source)
+      continue
+    }
+    if (freshIds) {
+      // Only restamp the slide preludes. A literal ID example in the body travels as written.
+      const idLines = [...new Set(ids.map(entry => entry.line))]
+      const restamped = restampTakenIds(idLines.map(index => lines[index]).join('\n'), reserved).split('\n')
+      idLines.forEach((index, i) => { lines[index] = restamped[i] })
+    }
+    const next = freshIds ? lines.join('\n') : restampTakenIds(source, reserved)
     reserved += '\n' + next
-    return next
-  })
-  for (const block of ready) {
-    const source = block.replace(/\r\n?/g, '\n').split('\n')
-    const parsed = readOutline(source.join('\n')); const ids: string[] = []
-    source.forEach((line, index) => {
-      if (parsed.levels[index] < 2) return
-      const metadata = /^\s*\{[^}]+\}\s*$/.test(source[index + 1] ?? '') ? source[index + 1] : ''
-      ids.push(...[...`${line}\n${metadata}`.matchAll(ID_TOKEN)].map(match => match[1]))
-    })
-    if (new Set(ids).size !== ids.length) return { ok: false, error: 'A selected snapshot contains duplicate slide identifiers. Nothing was inserted.' }
+    ready.push(next)
   }
   let current = text
   let lines: number[] = []

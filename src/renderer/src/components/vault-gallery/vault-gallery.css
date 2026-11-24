@@ -1,6 +1,7 @@
 /* Vault browser: a normal file list and folder tree. Tokens and geometry translate the approved drawing
    (docs/design/2026-10-30-vault-gallery-redesign/prototype) and use the app's own palette. */
 .vault-gallery {
+  -webkit-app-region: no-drag;
   --chrome: var(--panel); --zebra: var(--hover); --quiet: var(--faint);
   --select: var(--accent-soft); --rust: var(--amber); --folder-fill: var(--amber-bg);
   --row:34px; --sidebar:272px; --details:288px;
@@ -21,18 +22,20 @@
 .vg-ic-doc, .vg-ic-folder { }
 
 /* Title bar */
-.vg-titlebar { grid-column:1 / -1; display:grid; grid-template-columns:var(--sidebar) minmax(0,1fr) auto; align-items:center; background:var(--chrome); border-bottom:1px solid var(--line); min-width:0; }
-.vault-gallery.vg-narrow .vg-titlebar { grid-template-columns:auto minmax(0,1fr) auto; }
-.vg-tbleft { display:flex; align-items:center; padding:0 10px; min-width:0; }
-.vg-tbleft .vg-return { /* R17: the shared .mode-back caps at 60% of this cell, which cut the title to about 12 characters; here it may use 46 characters (the cell, when narrower, still ends it in an ellipsis) */ max-width:46ch; display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 8px !important; border-radius:6px; font-weight:500; white-space:nowrap; }
+.vg-titlebar { grid-column:1 / -1; display:flex; gap:8px; align-items:center; padding-inline:max(6px, var(--tw-native-inline, 0px)) 10px; background:var(--chrome); border-bottom:1px solid var(--line); min-width:0; }
+.vg-tbleft { display:flex; align-items:center; min-width:0; flex:0 1 auto; max-width:min(31vw, 46ch); }
+.vg-tbleft .vg-return { max-width:min(46ch, 100%); display:inline-flex; align-items:center; gap:6px; height:30px; padding:0 8px !important; border-radius:6px; font-weight:500; white-space:nowrap; }
 .vg-return:hover:not(:disabled) { background:var(--hover); }
-.vg-crumbs { display:flex; align-items:center; gap:3px; min-width:0; padding:0 14px; font-size:14px; white-space:nowrap; }
+.vg-crumbs { display:flex; flex:1; align-items:center; gap:3px; min-width:0; overflow:hidden; font-size:14px; white-space:nowrap; }
 .vg-crumb { padding:3px 5px !important; border-radius:5px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; min-width:28px; flex:0 1 auto; }
 button.vg-crumb:hover { background:var(--hover); color:var(--ink); }
-.vg-crumb.here { color:var(--ink); font-weight:650; flex:0 0 auto; max-width:62%; }
-.vg-crumb.top { flex:none; } .vg-crumb.gap { flex:none; min-width:0; }
+.vg-crumb.here { color:var(--ink); font-weight:650; flex:0 1 auto; max-width:62%; }
+.vg-crumb.top { flex:none; }
+.vg-crumbs--overview { justify-content:center; }
+.vg-crumbs--overview .vg-crumb.top { flex:0 1 auto; min-width:0; max-width:100%; }
+.vg-crumb.gap { flex:none; min-width:0; }
 .vg-sep { color:var(--quiet); width:14px; height:14px; }
-.vg-search { display:flex; align-items:center; gap:7px; width:clamp(180px,24vw,300px); height:32px; margin-right:14px; padding:0 9px; background:var(--panel); border:1px solid var(--line); border-radius:7px; color:var(--muted); }
+.vg-search { display:flex; flex:none; align-items:center; gap:7px; width:clamp(96px,24vw,300px); height:32px; padding:0 9px; background:var(--panel); border:1px solid var(--line); border-radius:7px; color:var(--muted); }
 .vg-search input { flex:1; min-width:0; border:0; outline:0; background:none; color:var(--ink); }
 .vg-search input::placeholder { color:var(--quiet); }
 .vg-search:focus-within { border-color:var(--oxford); box-shadow:0 0 0 1px var(--oxford); }
@@ -242,4 +245,4 @@ button.vg-crumb:hover { background:var(--hover); color:var(--ink); }
 .vg-handout-sheet button:hover { background:var(--hover); }
 .vg-handout-address { overflow-wrap:anywhere; color:var(--muted); }
 
-.vault-gallery.vg-narrow .vg-crumb.top, .vault-gallery.vg-narrow .vg-crumb.top + .vg-sep { display:none; }
+.vault-gallery.vg-narrow .vg-crumbs:not(.vg-crumbs--overview) :is(.vg-crumb.top, .vg-crumb.top + .vg-sep) { display:none; }

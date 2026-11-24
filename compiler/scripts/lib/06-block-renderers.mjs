@@ -1147,6 +1147,12 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const bottomRight = [d.web, d.date].filter(Boolean).join(" \u00b7 ");
     const speaker = [d.author && `<span class="tp-name">${renderInline(String(d.author))}</span>`, d.affiliation && `<span class="tp-soft">${renderInline(String(d.affiliation))}</span>`].filter(Boolean).join(" \u00b7 ");
     const sub = d.subtitle ? `<p class="tp-sub">${renderInline(String(d.subtitle))}</p>` : "";
+    const contactLinks = Array.isArray(d.contacts) ? d.contacts.flatMap(contact => {
+      const url = typeof contact?.url === "string" ? contact.url.trim() : "";
+      if (!/^(https?|mailto):/i.test(url)) return [];
+      return [`<a href="${escapeHtml(url)}" target="_blank" rel="noopener">${escapeHtml(contact.label || url)}</a>`];
+    }) : [];
+    const contacts = contactLinks.length ? `<p class="tp-sub tp-contacts">${contactLinks.join(" · ")}</p>` : "";
     // ADR-0023 \u00a76: an AUTHORED {title}/{closing} slide keeps every block past its subtitle
     // paragraph. They ride here as `data.body` and render under the byline at byline type size \u2014
     // never dropped. The auto bookends carry no body, so their markup is unchanged.
@@ -1154,14 +1160,17 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const tpBody = bodyBlocks.length
       ? `<div class="tp-body">${renderBlocks(mapBlocksToLayout(block.variant === "closing" ? "closing" : "title", bodyBlocks), "", deckUsed, frameIcons)}</div>`
       : "";
-    if (block.variant === "banner") {
-      return `<div class="tp tp-banner"><div class="tp-main"><div class="tp-inner">${meta1 ? `<div class="tp-series">${escapeHtml(meta1)}</div>` : ""}<h2 class="tp-title">${withTitleIcon(renderInline(String(d.title || "")), d.titleIcon, d.titleIconAt)}</h2>${sub}${tpBody}</div></div><div class="tp-band"><span>${speaker}</span><span class="tp-mono">${escapeHtml(bottomRight)}</span></div></div>`;
-    }
-    if (block.variant === "split") {
-      return `<div class="tp tp-split"><div class="tp-side">${d.series ? `<div class="tp-series">${escapeHtml(String(d.series))}</div>` : ""}<div class="tp-event">${[d.event, d.date].filter(Boolean).map((x) => escapeHtml(String(x))).join("<br>")}</div></div><div class="tp-main-col"><h2 class="tp-title">${withTitleIcon(renderInline(String(d.title || "")), d.titleIcon, d.titleIconAt)}</h2>${sub}<p class="tp-author">${speaker}${d.web ? ` \u00b7 <span class="tp-web">${escapeHtml(String(d.web))}</span>` : ""}</p>${tpBody}</div></div>`;
-    }
     const logo = d.logo ? `<img class="tp-logo" src="${escapeHtml(String(d.logo))}" alt="">` : "";
     const qr = d.handoutUrl ? renderQr({ url: d.handoutUrl }, "tp-qr slide-qr") : "";
+    const bookendAssets = d.keepBookendAssets === true ? logo + qr : "";
+    if (block.variant === "banner") {
+      const side = bookendAssets ? `<div class="tp-side tp-bookend-assets">${bookendAssets}</div>` : "";
+      return `<div class="tp tp-banner"><div class="tp-main">${side}<div class="tp-inner">${meta1 ? `<div class="tp-series">${escapeHtml(meta1)}</div>` : ""}<h2 class="tp-title">${withTitleIcon(renderInline(String(d.title || "")), d.titleIcon, d.titleIconAt)}</h2>${sub}${contacts}${tpBody}</div></div><div class="tp-band"><span>${speaker}</span><span class="tp-mono">${escapeHtml(bottomRight)}</span></div></div>`;
+    }
+    if (block.variant === "split") {
+      const sideClass = bookendAssets ? " tp-bookend-assets" : "";
+      return `<div class="tp tp-split"><div class="tp-side${sideClass}">${d.series ? `<div class="tp-series">${escapeHtml(String(d.series))}</div>` : ""}${bookendAssets}<div class="tp-event">${[d.event, d.date].filter(Boolean).map((x) => escapeHtml(String(x))).join("<br>")}</div></div><div class="tp-main-col"><h2 class="tp-title">${withTitleIcon(renderInline(String(d.title || "")), d.titleIcon, d.titleIconAt)}</h2>${sub}${contacts}<p class="tp-author">${speaker}${d.web ? ` \u00b7 <span class="tp-web">${escapeHtml(String(d.web))}</span>` : ""}</p>${tpBody}</div></div>`;
+    }
     const closingClass = block.variant === "closing" ? " tp-closing" : "";
     const subtitle = d.subtitle
       ? `<p class="${block.variant === "closing" ? "tp-cta" : "tp-sub"}">${renderInline(String(d.subtitle))}</p>`
@@ -1170,7 +1179,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       d.web ? `<span class="tp-web">${escapeHtml(String(d.web))}</span>` : "",
       d.date ? escapeHtml(String(d.date)) : ""
     ].filter(Boolean).join("<br>");
-    return `<div class="tp tp-poster${closingClass}"><div class="tp-side">${logo}${qr}</div><div class="tp-main">${meta1 ? `<div class="tp-kicker">${escapeHtml(meta1)}</div>` : "<div></div>"}<div class="tp-mid"><h2 class="tp-title">${withTitleIcon(renderInline(String(d.title || "")), d.titleIcon, d.titleIconAt)}</h2>${subtitle}</div><div class="tp-foot"><div class="tp-who">${speaker}</div><div class="tp-whenweb">${rightMeta}</div></div>${tpBody}</div></div>`;
+    return `<div class="tp tp-poster${closingClass}"><div class="tp-side">${logo}${qr}</div><div class="tp-main">${meta1 ? `<div class="tp-kicker">${escapeHtml(meta1)}</div>` : "<div></div>"}<div class="tp-mid"><h2 class="tp-title">${withTitleIcon(renderInline(String(d.title || "")), d.titleIcon, d.titleIconAt)}</h2>${subtitle}${contacts}</div><div class="tp-foot"><div class="tp-who">${speaker}</div><div class="tp-whenweb">${rightMeta}</div></div>${tpBody}</div></div>`;
   }
   if (block.type === "stats") {
     // Big-number row. Each cell: huge accent value, label beneath, optional small caption from

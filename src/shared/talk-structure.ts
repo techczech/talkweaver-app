@@ -2,6 +2,7 @@
 // descendants are part of a slide. Editing structure changes heading markers only.
 import { readOutlineSlides } from './feedback-accept.ts'
 import { readOutline, readSlides } from './insert-section.ts'
+import { headingOrderFromLineOrder } from './outline-save-identity.ts'
 
 export type SectionKind = 'section' | 'subsection'
 export const NO_SECTION = 'Make a section first.'
@@ -249,5 +250,8 @@ export function reorderStructure(text: string, lines: readonly number[], targetL
           slide.content !== before.content || slide.notes !== before.notes || slide.level !== (changes.get(before.line) ?? before.level) ||
           (owner ? arranged[owner.line] : null) !== expectedParent(before)
       })) return { error: UNSAFE } as const
-  return { text: next, line: arranged.indexOf(ranges[0].start) + 1, label: destination.label } as const
+  return {
+    text: next, line: arranged.indexOf(ranges[0].start) + 1, label: destination.label,
+    headingOrder: headingOrderFromLineOrder(text, next, arranged)
+  } as const
 }

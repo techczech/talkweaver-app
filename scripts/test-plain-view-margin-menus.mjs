@@ -1,8 +1,8 @@
 // test:plain-view-margin-menus — plain editing view ticket 04 (spec T8, T9): the margin's buttons.
 //
 // The real plainView extension, bundled for chrome-headless-shell, in Plain mode over a sample outline:
-//   - the margin word (TALK / SECTION / SLIDE n) and, on slides, the layout name are buttons with
-//     aria-haspopup="menu", a pointer cursor and a hover pill; Section and Talk have no layout button;
+//   - the compact heading marker and, on slides, the layout name are buttons with
+//     aria-haspopup="menu", a pointer cursor and a hover or focus pill; Section and Talk have no layout button;
 //   - a click raises onLevelMenu / onLayoutMenu with the clicked heading's line and a rectangle, moves
 //     neither the caret nor the document; Enter and Space on a focused button do the same;
 //   - the label of the heading holding the caret is dark and bold, others grey, and it follows the caret;
@@ -94,7 +94,7 @@ try {
 
   // Roles.
   const b = await ev(() => window.buttons())
-  assert.deepEqual(b.map((x) => [x.kind, x.line, x.word]), [['talk', 1, 'Talk'], ['section', 3, '§1'], ['slide', 5, 'Slide 1'], ['slide', 10, 'Slide 2']])
+  assert.deepEqual(b.map((x) => [x.kind, x.line, x.word]), [['talk', 1, '#'], ['section', 3, '§1'], ['slide', 5, '1'], ['slide', 10, '2']])
   for (const x of b) assert.equal(x.wordPopup, 'menu', x.word + ' word is a menu button')
   // Slide one writes {iconlist} over one paragraph and no list: the compiler draws a Statement, and
   // the margin names the layout the slide is drawn in (it said Icon list before, which it is not).
@@ -105,17 +105,27 @@ try {
   assert.equal(look.type, 'button')
   assert.ok(look.tab >= 0, 'focusable')
 
-  // Hover pill.
-  const before = await ev(() => getComputedStyle(document.querySelector('[data-margin-line="5"] .cm-plain-margin-layout')).backgroundColor)
-  await page.hover('[data-margin-line="5"] .cm-plain-margin-layout')
-  const after = await ev(() => getComputedStyle(document.querySelector('[data-margin-line="5"] .cm-plain-margin-layout')).backgroundColor)
-  assert.notEqual(before, after, 'the layout name shows a pill on hover: ' + before + ' -> ' + after)
+  // The layout name is visible only while the marker or its menu control is hovered or focused.
+  const number = page.locator('[data-margin-line="5"] .cm-plain-margin-word')
+  const layout = page.locator('[data-margin-line="5"] .cm-plain-margin-layout')
+  const opacity = () => layout.evaluate(element => getComputedStyle(element).opacity)
+  assert.equal(await opacity(), '0')
+  await number.hover()
+  assert.equal(await opacity(), '1')
   await page.mouse.move(500, 400)
+  assert.equal(await opacity(), '0')
+  await number.focus()
+  assert.equal(await opacity(), '1')
+  await page.keyboard.press('Tab')
+  assert.equal(await layout.evaluate(element => element === document.activeElement), true)
+  assert.equal(await opacity(), '1')
+  await ev(() => window.__v.focus())
 
   // Click: callbacks with the clicked line; the caret and the text stay.
   const caretBefore = await ev(() => { window.caret(window.lineFrom(11)); return window.sel() })
   await page.click('[data-margin-line="5"] .cm-plain-margin-word')
-  await page.click('[data-margin-line="5"] .cm-plain-margin-layout')
+  await number.hover()
+  await layout.click()
   await page.click('[data-margin-line="3"] .cm-plain-margin-word')
   const calls = await ev(() => window.calls)
   assert.deepEqual(calls.map((c) => [c.menu, c.line]), [['level', 5], ['layout', 5], ['level', 3]], 'each click raises its menu with the clicked heading line, not the caret slide')

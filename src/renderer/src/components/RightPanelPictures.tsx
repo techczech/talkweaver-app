@@ -1,12 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { ImageOff } from 'lucide-react'
-import { createVariantPictureQueue, markSettled, type VariantPictureMarks } from '../../../shared/variant-picture-queue'
+import RevealPreviewBadge from './RevealPreviewBadge'
+import { createVariantPictureQueue, isRevealPicture, markSettled, pictureMarkUrl, type VariantPictureMarks } from '../../../shared/variant-picture-queue'
 import { LayoutVerbError, type SlideRef } from '../../../shared/layout-verbs'
 import { panelEdit, type Design } from './rightPanelDesigns'
 
 export interface PanelTry { text: string; label: string }
 
-export default function RightPanelPictures({ path, text, slide, layout, group, choices, columns = 3, onTry, onKeep, previewChoice, currentLabel = 'Current' }: {
+export default function RightPanelPictures({ path, text, slide, layout, group, choices, columns = 3, onTry, onKeep, previewChoice, pendingPicture, currentLabel = 'Current' }: {
   path: string
   text: string
   slide: SlideRef
@@ -17,6 +18,7 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
   onTry: (preview: PanelTry | null) => void
   onKeep: (design: Design) => void
   previewChoice?: (design: Design) => string
+  pendingPicture?: (design: Design) => ReactNode
   currentLabel?: string
 }) {
   const root = useRef<HTMLDivElement>(null)
@@ -28,7 +30,8 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
   const candidates = useMemo(() => choices.map(design => {
     if (design.unavailable) return { outline: null, reason: design.unavailable }
     try {
-      return { outline: design.current ? text : previewChoice ? previewChoice(design) : panelEdit(text, slide, design, layout, true) }
+      const unchanged = design.current && !design.reapply
+      return { outline: unchanged ? text : previewChoice ? previewChoice(design) : panelEdit(text, slide, design, layout, true) }
     } catch (error) {
       return { outline: null, reason: error instanceof LayoutVerbError ? error.reason ?? 'Unavailable for this slide' : 'Unavailable for this slide' }
     }
@@ -55,6 +58,7 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
     setMarks({})
     queue.reset(slideKey + text, candidates, slideKey)
     queue.want(candidates.flatMap((candidate, index) => candidate.outline === null ? [] : [String(index)]))
+    // Release the old batch when candidates or the slide change, as well as when the panel closes.
     return () => {
       queue.dispose()
       window.tw.talk.releaseLayoutVariantBatch?.(batchId)
@@ -71,6 +75,8 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
     {choices.map((design, index) => {
       const { outline: candidate, reason } = candidates[index]
       const mark = marks[String(index)]
+      const url = pictureMarkUrl(mark)
+      const reveal = isRevealPicture(mark) ? mark : undefined
       const tryIt = (): void => {
         stop()
         if (!design.current && candidate != null && candidate !== text) {
@@ -81,8 +87,9 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
         className="tw-right-picture" onPointerEnter={tryIt} onPointerLeave={stop} onFocus={tryIt} onBlur={stop}
         onClick={() => { stop(); if (!design.current || design.reapply) onKeep(design) }}>
         {design.current && <span className="tw-right-current">{currentLabel}</span>}
-        <span className="tw-right-picture-frame" aria-hidden>
-          {typeof mark === 'string' ? <img src={mark} alt="" draggable={false} /> : mark === null ? <ImageOff size={16} /> : null}
+        <span className="tw-right-picture-frame" aria-hidden={reveal ? undefined : true}>
+          {url ? <img src={url} alt="" draggable={false} /> : mark === null ? <ImageOff size={16} /> : pendingPicture?.(design)}
+          {reveal && <RevealPreviewBadge count={reveal.revealSteps} />}
         </span>
         <strong>{design.label}</strong>
         {(reason || mark === null || design.why) && <small>{reason ?? (mark === null ? 'Preview unavailable' : design.why)}</small>}

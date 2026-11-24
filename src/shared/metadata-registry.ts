@@ -271,7 +271,7 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     label: 'Automatic thanks slide',
     group: 'Opening & closing',
     explanation:
-      'Whether the compiler appends a closing slide built from the thanks text, call to action, author and event. A slide you mark {role=ending} already suppresses it without this key.',
+      'Whether the compiler appends a closing slide in the title slide’s style, built from the thanks text, call to action, author and event. A slide you mark {role=ending} already suppresses it without this key.',
     defaultable: true,
     ownership: 'user'
   },
@@ -284,6 +284,17 @@ export const METADATA_REGISTRY: MetadataEntry[] = [
     group: 'Opening & closing',
     explanation: 'The automatic closing slide’s headline. Defaults to “Thank you”.',
     defaultable: true,
+    ownership: 'user'
+  },
+  {
+    key: 'contact_links',
+    aliases: ['contacts'],
+    location: 'frontmatter',
+    type: 'map',
+    vocabulary: { kind: 'freeform' },
+    label: 'Closing contact links',
+    group: 'Opening & closing',
+    explanation: 'Web and e-mail links on the automatic closing slide. Use a URL or a map with url and label for each entry. Hide e-mail also hides e-mail contact links.',
     ownership: 'user'
   },
   {

@@ -5,7 +5,7 @@
 // where ⌘Z and ⇧⌘Z live), the token guards, Slide Focus's extension, the Markdown or the Plain view, the save's step
 // (savedTextAdoption.ts) and the state the save reads (saveTidyUp.ts). The save is the app's, in three parts:
 //   1. the text to write is textForSave of the editor's text (Editor.tsx: the autosave, flushSave, the replace seam);
-//   2. it is stamped as the main process stamps it (stampMissingIds, the ids on "disk" preferred) and written;
+//   2. it is stamped as the main process stamps it, using the editor's recorded heading owners;
 //   3. what was written is adopted from the text the save was made from (adoptSavedText).
 // Undo and redo are the ⌘Z and ⇧⌘Z keys.
 //
@@ -31,7 +31,7 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import { chromium } from 'playwright'
-import { preferredIdsFromText, stampMissingIds } from '../compiler/scripts/lib/12-outline-edit.mjs'
+import { stampMissingIds } from '../compiler/scripts/lib/12-outline-edit.mjs'
 
 const STEPS = Number(process.env.GEN_STEPS ?? 70)
 const SEEDS = process.env.GEN_SEEDS ? process.env.GEN_SEEDS.split(',').map(Number) : [201, 131, 7, 20261018]
@@ -51,14 +51,17 @@ import { tokenProtectExtension } from './src/renderer/src/extensions/idProtect.t
 import { focusScopeExtension } from './src/renderer/src/extensions/focusScope.ts'
 import { editorBaseKeymap } from './src/renderer/src/extensions/editorBaseKeymap.ts'
 import { buildEditorKeyBindings } from './src/renderer/src/keymap/store.ts'
-import { adoptSavedText, isSaveStep, savedTextAdoption } from './src/renderer/src/extensions/savedTextAdoption.ts'
+import { adoptSavedText, isSaveStep, savedTextAdoption, undoTransactions } from './src/renderer/src/extensions/savedTextAdoption.ts'
 import { saveTidyUp, textForSave } from './src/renderer/src/extensions/saveTidyUp.ts'
+import { captureOutlineIdentity, outlineSaveIdentity } from './src/renderer/src/extensions/outlineSaveIdentity.ts'
 import { appKeyState, failOnCaughtExceptions } from './scripts/lib/plain-view-test-mount.mjs'
 
 let view = null
+let acknowledged, receipt
 const T = window.T = {}
 T.mount = (doc, mode) => {
   if (view) view.destroy()
+  acknowledged = new WeakMap()
   T.log = []
   view = new EditorView({ parent: document.getElementById('host'), state: EditorState.create({
     doc, selection: EditorSelection.cursor(0),
@@ -68,7 +71,7 @@ T.mount = (doc, mode) => {
       keymap.of([...editorBaseKeymap]),
       Prec.highest(keymap.of(buildEditorKeyBindings())),
       viewModeExtension(mode),
-      savedTextAdoption(), saveTidyUp(),
+      savedTextAdoption(), saveTidyUp(), outlineSaveIdentity,
       // What happened, for GEN_DUMP: each change with its user event, whether it was a save's step, and the depths after it.
       EditorView.updateListener.of((u) => { for (const tr of u.transactions) if (tr.docChanged) T.log.push([tr.annotation(Transaction.userEvent) ?? '-', isSaveStep(tr) ? 'S' : '', undoDepth(tr.state), redoDepth(tr.state)].join(' ')) }),
       failOnCaughtExceptions()
@@ -78,6 +81,7 @@ T.mount = (doc, mode) => {
 }
 T.doc = () => view.state.doc.toString()
 T.depths = () => ({ undo: undoDepth(view.state), redo: redoDepth(view.state) })
+T.undoEffects = () => undoTransactions(view.state).flatMap(tr => tr.effects).length
 T.refocus = () => view.focus()
 // The user's own typing and pasting (input events), and a program's change (no user event: the token guards let it
 // into a protected token, as they do a whole-slide paste or a rewrite).
@@ -85,8 +89,16 @@ T.type = (at, text) => view.dispatch({ changes: { from: at, insert: text }, sele
 T.paste = (at, text) => view.dispatch({ changes: { from: at, insert: text }, selection: EditorSelection.cursor(at + text.length), userEvent: 'input.paste' })
 T.remove = (from, to) => view.dispatch({ changes: { from, to }, selection: EditorSelection.cursor(from) })
 // Parts 1 and 3 of the save (see the head of the file).
-T.saveText = () => { const source = view.state.doc.toString(); return { source, sent: textForSave(view.state, source) } }
-T.adopt = (source, saved) => adoptSavedText(view, source, saved)
+T.saveText = () => {
+  const source = view.state.doc.toString()
+  const sent = textForSave(view.state, source)
+  receipt = captureOutlineIdentity(view.state, sent, acknowledged)
+  return { source, sent, identity: receipt.options() }
+}
+T.adopt = (source, saved) => {
+  receipt.acknowledge(saved)
+  return adoptSavedText(view, source, saved)
+}
 T.caught = () => window.__caught
 T.logTail = (n) => T.log.slice(-n)
 `
@@ -159,8 +171,22 @@ try {
   const call = (name, ...args) => page.evaluate(([n, a]) => window.T[n](...a), [name, args])
   const doc = () => call('doc')
   const depths = () => call('depths')
-  const undoKey = async () => { await call('refocus'); await page.keyboard.press('Meta+z') }
-  const redoKey = async () => { await call('refocus'); await page.keyboard.press('Meta+Shift+z') }
+  const undoKey = async () => { await call('refocus'); await page.keyboard.press('ControlOrMeta+z') }
+  const redoKey = async () => { await call('refocus'); await page.keyboard.press(process.platform === 'darwin' ? 'ControlOrMeta+Shift+z' : 'ControlOrMeta+y') }
+
+  {
+    const source = '### First\n\nBody\n\n### Second\n\nText\n'
+    await call('mount', source, 'markdown')
+    await call('type', source.indexOf('Body') + 4, ' more')
+    assert.equal(await call('undoEffects'), 0, 'ordinary typing needs no heading snapshot even when it shifts a heading')
+    await undoKey()
+    assert.equal(await doc(), source)
+    await call('remove', 0, source.indexOf('### Second'))
+    assert.equal(await call('undoEffects'), 1, 'removing a heading stores its former owner')
+    await undoKey()
+    assert.equal(await doc(), source)
+    pass('ordinary typing maps heading positions and structural deletion retains a snapshot')
+  }
 
   /** One editor, its "disk", and the model of its history. */
   const session = async (start, mode) => {
@@ -192,10 +218,9 @@ try {
     }
     /** The app's save (the head of the file). Returns whether the editor adopted what was written. */
     const save = async (what = 'save') => {
-      const { source, sent } = await call('saveText')
-      let preferred = null
-      try { preferred = preferredIdsFromText(m.disk) } catch { /* nothing on disk */ }
-      m.disk = stampMissingIds(sent, undefined, { preferred }).text
+      const { source, sent, identity } = await call('saveText')
+      const noMint = () => { throw new Error('Undo/Redo attempted to mint an ID') }
+      m.disk = stampMissingIds(sent, identity.replay ? noMint : undefined, { identity }).text
       const depth = (await depths()).undo
       const adopted = await call('adopt', source, m.disk)
       m.saves += 1
@@ -372,9 +397,7 @@ try {
       await s.undo()
       assert.equal(await doc(), start, '⌘Z: the first text exactly')
       await s.save()
-      // The file between the ⌘Z and the redo: the main process reuses ids by heading text (src/main/index.ts, preferred),
-      // and the heading reads differently with its icon back on it. Reported, not asserted (issue 201, point 6).
-      if (mode === 'markdown') console.log(`NOTE review 2, the file after ⌘Z and a save: ${idsOf(s.m.disk)[0] === id ? 'the slide keeps its id' : `the slide has id ${idsOf(s.m.disk)[0]}, not ${id}, until the redo's save`}`)
+      assert.deepEqual(idsOf(s.m.disk), [id], 'the save keeps the ID even though Undo restored the heading icon')
       await s.redo()
       assert.equal(await doc(), stamped, 'redo: the id the slide was stamped with, not another')
       await s.save()
@@ -395,8 +418,7 @@ try {
       assert.equal(await doc(), start, '⌘Z: the first text exactly; no id moved to the other slide')
       assert.deepEqual(await depths(), { undo: 0, redo: 2 }, 'the redo steps are kept')
       await s.save()
-      // As in review 2, reported, not asserted: the file between the ⌘Z and the redo.
-      if (mode === 'markdown') console.log(`NOTE review 3, the file after ⌘Z and a save (ids reused by heading text): ${pairsOf(s.m.disk).join(' ; ')} (stamped before: ${pairs.join(' ; ')})`)
+      assert.deepEqual(idsOf(s.m.disk), idsOf(stamped), 'both headings keep their IDs even when Undo makes their titles equivalent')
       await s.redo()
       assert.equal(await doc(), stamped, 'redo: each slide with its own id')
       await s.save()

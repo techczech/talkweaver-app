@@ -12,6 +12,7 @@
 //      behind readConfig / writeConfig (index.ts).
 //   4. installSettings: shared Settings IPC, the window, the menu bar.
 import { Menu } from 'electron'
+import { insetWindowOptions } from '../shared/window-chrome'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { SettingsState } from '@app-patterns/settings'
@@ -21,6 +22,7 @@ import type { SecretSlots } from '@app-patterns/settings-electron'
 import { APP_ID, MENUS, appCommandIdOf, registry } from '../shared/bridle-commands'
 import { updateCheckMenuTemplate } from './settings-update-menu'
 import { schema } from '../shared/settings-schema'
+import { KEYMAP_SETTING } from '../shared/keymap-overrides'
 import type { MigrationOutcome } from './settings-migration'
 import type { ConfigOverlay, OverlayFile } from './settings-overlay'
 import { openSettings } from './settings-open'
@@ -98,7 +100,7 @@ export async function startSettingsHost(deps: SettingsHostDeps): Promise<TalkWea
       deps.runInEditor(appId)
     },
     // Keep the shared Settings window hidden alongside the app's other test windows.
-    window: { ...deps.window, showOnReady: process.env.TW_E2E !== '1' },
+    window: { ...deps.window, extra: insetWindowOptions(process.platform), showOnReady: process.env.TW_E2E !== '1' },
     ...(deps.slots ? { slots: deps.slots } : {}),
     extraSections: [...CUSTOM_PAGES],
     pathKind: (key) => (FILE_PATHS.has(key) ? 'file' : 'folder'),
@@ -149,8 +151,10 @@ function placeUpdateCheckInAppMenu(store: SettingsStore, deps: SettingsHostDeps,
     const appId = appCommandIdOf(commandId)
     if (!deps.runInMain(appId)) { deps.openMain(); deps.runInEditor(appId) }
   }
+  const { keys, settings } = store.view()
   const template = updateCheckMenuTemplate({
-    platform: process.platform, keys: store.view().keys, run, log: deps.log ?? ((line: string) => console.warn(line))
+    platform: process.platform, keys, editorKeys: settings[KEYMAP_SETTING], run,
+    log: deps.log ?? ((line: string) => console.warn(line))
   })
   if (template) Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }

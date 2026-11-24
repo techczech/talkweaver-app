@@ -8,8 +8,7 @@
 // Events in: a command ran, a chapter was opened, a topic was read (ticket 11). Every event returns
 // the same object when it changes nothing, so a caller can tell whether to save and broadcast.
 // Chapter rows and counts are derived elsewhere (guide-chapters.ts); this record holds only ids.
-import { TASK_GROUPS, type TaskGroup } from './task-groups.ts'
-import type { Chapter, ChapterRow } from './guide-chapters.ts'
+import { GUIDE_CHAPTERS, type Chapter, type ChapterRow, type GuideChapter } from './guide-chapters.ts'
 
 /** The config.json key holding the record. */
 export const GUIDE_LEARN_KEY = 'guideLearn'
@@ -19,10 +18,10 @@ export interface GuideLearn {
   version: typeof GUIDE_LEARN_VERSION
   /** Canonical command ids that have run at least once, in the order they first ran. */
   ran: string[]
-  /** Chapters (task group names) opened at least once. */
-  opened: TaskGroup[]
+  /** Practice chapters opened at least once. */
+  opened: GuideChapter[]
   /** Chapter name to the time (epoch ms) its last command was first run. */
-  finished: Partial<Record<TaskGroup, number>>
+  finished: Partial<Record<GuideChapter, number>>
   /** Topic ids opened at least once: the How it works and Features lists' Read (ticket 11 owns the ids). */
   read: string[]
 }
@@ -33,7 +32,7 @@ const MAX_READ = 200
 
 export const emptyGuideLearn = (): GuideLearn => ({ version: GUIDE_LEARN_VERSION, ran: [], opened: [], finished: {}, read: [] })
 
-const isChapter = (value: unknown): value is TaskGroup => typeof value === 'string' && (TASK_GROUPS as readonly string[]).includes(value)
+const isChapter = (value: unknown): value is GuideChapter => typeof value === 'string' && (GUIDE_CHAPTERS as readonly string[]).includes(value)
 const isId = (value: unknown): value is string => typeof value === 'string' && value !== '' && value.length <= MAX_ID
 
 /** Read what config holds. A missing, foreign or unreadable record is the empty one. */
@@ -131,7 +130,7 @@ export const finishedCountText = (chapters: readonly Chapter[], learn: GuideLear
 export const hasNoProgress = (learn: GuideLearn): boolean => learn.ran.length === 0 && learn.opened.length === 0 && Object.keys(learn.finished).length === 0
 
 /** The chapter after this one in the ten-group order, or null after the last. */
-export function nextChapter(chapters: readonly Chapter[], task: TaskGroup): Chapter | null {
+export function nextChapter(chapters: readonly Chapter[], task: GuideChapter): Chapter | null {
   const at = chapters.findIndex((chapter) => chapter.task === task)
   return at >= 0 && at + 1 < chapters.length ? chapters[at + 1] : null
 }

@@ -17,7 +17,7 @@ export function TopBar({ countLabel, density, onDensity, openPop: _openPop, setO
   onBack: () => void
 }) {
   return (
-    <header className="lt-topbar">
+    <header className="lt-topbar tw-window-drag">
       <ModeBack talkTitle={talkTitle} onBack={onBack} />
       <div className="lt-brand">
         <span className="lt-room">Slide Browser</span>

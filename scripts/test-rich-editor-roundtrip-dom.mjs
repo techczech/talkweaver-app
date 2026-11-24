@@ -7,6 +7,9 @@ import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { chromium } from 'playwright'
 import { normalizePositions } from '../src/shared/outline-normalize.ts'
+import { preferredIdsFromText, stampMissingIds } from '../compiler/scripts/lib/12-outline-edit.mjs'
+import { cutBlocks } from '../src/shared/slide-handling/blocks.ts'
+import { pasteSlides } from '../src/shared/slide-handling/slide-block-ops.ts'
 
 const root = resolve(import.meta.dirname, '..')
 const scratch = mkdtempSync(join(tmpdir(), 'tw-rich-roundtrip-'))
@@ -21,19 +24,20 @@ import {EditorView} from '@codemirror/view'
 import {StateEffect} from '@codemirror/state'
 import {useOutlineDiskChange} from './src/renderer/src/components/useOutlineDiskChange.ts'
 import {outlineDiskChanges} from './src/renderer/src/lib/outlineDiskChange.ts'
-let source='', mode='plain', serial=0, release
+let source='', mode='plain', serial=0, release, focusRange
 const root=createRoot(document.getElementById('root'))
-window.tw={talk:{readOutline:()=>window.delayed?new Promise(r=>release=()=>r(source)):Promise.resolve(source),writeOutline:async(p,text)=>{window.attempts++;if(window.attempts>(window.refuseAfter??Infinity))return false;if(window.failSave)return false;if(window.holdSave)await new Promise(r=>window.resumeSave=r);if(window.refuseHeldSave)return false;const saved=window.stampSave?text.replace("### Pending capture","### Pending capture {id=permanent}"):text;await window.persist(saved);return {ok:true,content:saved}},outlineDiskVersion:async()=>({text:window.diskText,hash:"changed"}),acceptOutlineDiskVersion:async()=>({ok:true}),discardOutlineRecovery:async()=>true,outlineRecovery:async()=>null,preserveOutlineMerge:async()=>'/fixture/recovery-copy.json'},vault:{onTalkMetaUpdated:()=>()=>{}},workFiles:{list:async()=>null},icons:{svg:async()=>null}}
+window.tw={talk:{readOutline:()=>window.delayed?new Promise(r=>release=()=>r(source)):Promise.resolve(source),writeOutline:async(p,text,opts)=>{window.attempts++;if(window.attempts>(window.refuseAfter??Infinity))return false;if(window.failSave)return false;if(window.holdSave)await new Promise(r=>window.resumeSave=r);if(window.refuseHeldSave)return false;const saved=window.stampFromDisk?await window.stampFromFixtureDisk(text,opts?.identity):window.stampSave?text.replace("### Pending capture","### Pending capture {id=permanent}"):text;await window.persist(saved);return {ok:true,content:saved}},outlineDiskVersion:async()=>({text:window.diskText,hash:"changed"}),acceptOutlineDiskVersion:async()=>({ok:true}),discardOutlineRecovery:async()=>true,outlineRecovery:async()=>null,preserveOutlineMerge:async()=>'/fixture/recovery-copy.json'},vault:{onTalkMetaUpdated:()=>()=>{}},workFiles:{list:async()=>null},icons:{svg:async()=>null}}
 function Fixture(){
  const read=useRef(null),replace=useRef(null)
  window.diskGuard=useOutlineDiskChange({activeOutlinePath:'/fixture.md',readDoc:()=>read.current?.()??null,replaceDoc:(text,opts)=>replace.current?.(text,opts)??null,saveBuffer:async()=>false,flush:async()=>window.cmd.flushSave(),onDiscardTalk:()=>{}})
- return <Editor talk={{outlinePath:'/fixture.md',path:'/',slug:'fixture',title:'Fixture'}} content={source} viewMode={mode} onContentChange={()=>{}} registerReadDoc={fn=>read.current=fn} registerReplaceDoc={fn=>replace.current=fn} registerEditorCommands={c=>window.cmd=c}/>
+ return <Editor talk={{outlinePath:'/fixture.md',path:'/',slug:'fixture',title:'Fixture'}} content={source} viewMode={mode==='slide'?'plain':mode} focusRange={mode==='slide'?focusRange:null} onContentChange={()=>{}} onDirty={dirty=>window.dirty=dirty} registerReadDoc={fn=>read.current=fn} registerReplaceDoc={fn=>window.replaceOutline=replace.current=fn} registerEditorCommands={c=>window.cmd=c}/>
 }
 const render=()=>flushSync(()=>root.render(<Fixture key={serial}/>))
 window.attempts=0
 window.externalChange=text=>{window.diskText=text;outlineDiskChanges.report({outlinePath:'/fixture.md',kind:'changed',hash:'changed',changedAt:Date.now()})}
 window.caught=[]
-window.mount=(text,nextMode,delayed=false)=>{source=text;mode=nextMode;serial++;window.delayed=delayed;render();window.view().dispatch({effects:StateEffect.appendConfig.of(EditorView.exceptionSink.of(e=>window.caught.push(String(e))))})}
+window.mount=(text,nextMode,delayed=false)=>{source=text;mode=nextMode;focusRange={from:0,to:source.indexOf('###',4)};serial++;window.delayed=delayed;render();window.view().dispatch({effects:StateEffect.appendConfig.of(EditorView.exceptionSink.of(e=>window.caught.push(String(e))))})}
+window.focusRemainingSlide=()=>{focusRange={from:0,to:window.view().state.doc.length};render()}
 window.mode=m=>{mode=m;render()}
 window.view=()=>EditorView.findFromDOM(document.querySelector('.cm-editor'))
 window.release=()=>release()
@@ -47,8 +51,152 @@ window.leave=()=>flushSync(()=>root.render(null))
   let writes = 0
   const disk = join(scratch, 'outline.md')
   await page.exposeFunction('persist', text => { writes++; writeFileSync(disk, text) })
+  await page.exposeFunction('stampFromFixtureDisk', (text, identity) =>
+    stampMissingIds(text, undefined, identity ? { identity } : { preferred: preferredIdsFromText(readFileSync(disk, 'utf8')) }).text)
   await page.goto(pathToFileURL(join(scratch, 'fixture.html')).href)
   let reviewCases = 0
+  if (!process.env.TW_RICH_REVIEW_CASE || ['undo-across-saves', 'undo-clipboard'].includes(process.env.TW_RICH_REVIEW_CASE)) {
+    const content = () => page.evaluate(() => window.view().state.doc.toString())
+    const mount = async (source, mode) => {
+      writeFileSync(disk, source)
+      await page.evaluate(({source, mode}) => {
+        window.leave(); window.attempts = 0; window.dirty = false; window.stampFromDisk = true
+        window.mount(source, mode)
+      }, {source, mode})
+      await page.waitForFunction(source => window.view()?.state.doc.toString() === source, source)
+    }
+    const saved = async count => {
+      await page.waitForFunction(count => window.attempts >= count && window.dirty === false, count)
+      return readFileSync(disk, 'utf8')
+    }
+    const replace = (from, to, insert) => page.evaluate(({from, to, insert}) => {
+      const view = window.view()
+      view.dispatch({changes: {from, to, insert}})
+      view.focus()
+    }, {from, to, insert})
+    const undo = () => page.keyboard.press('ControlOrMeta+z')
+    const redo = () => page.keyboard.press(process.platform === 'darwin' ? 'ControlOrMeta+Shift+z' : 'ControlOrMeta+y')
+    const modes = ['slide', 'plain', 'markdown']
+    if (process.env.TW_RICH_REVIEW_CASE !== 'undo-clipboard') for (const mode of modes) {
+      const original = '### First\n\n{pyramid}{id=first}\n\n- Alpha\n\n### Next\n{id=next}\n\n- Beta\n'
+      await mount(original, mode)
+      const end = original.indexOf('Alpha') + 'Alpha'.length
+      await replace(end, end, ' one')
+      const first = normalizePositions(original.replace('Alpha', 'Alpha one'))
+      assert.equal(await saved(1), first)
+      const next = first.indexOf('Alpha one') + 'Alpha one'.length
+      await replace(next, next, ' two')
+      const second = first.replace('Alpha one', 'Alpha one two')
+      assert.equal(await saved(2), second)
+      for (const [action, count, expected] of [[undo, 3, first], [undo, 4, original], [redo, 5, first], [redo, 6, second]]) {
+        await action()
+        assert.equal(await saved(count), expected, mode)
+        assert.equal(await content(), expected, mode)
+      }
+      console.log(`PASS ${mode}: one Undo per authored change, with byte-exact disk and buffer after each replay and autosave`)
+
+      const legacy = '### Same\n\n- Alpha\n\n### Same\n\n- Beta\n'
+      await mount(legacy, mode)
+      const cut = cutBlocks(legacy, [{ line: 1, headingText: '### Same' }])
+      assert.ok('text' in cut)
+      await page.evaluate(({text, headingOrder}) => {
+        window.replaceOutline(text, { ownUndoStep: true, headingOrder })
+        window.view().focus()
+      }, cut)
+      const retained = await saved(1)
+      const betaId = retained.match(/\{id=([^}]+)\}/)?.[1]
+      assert.ok(betaId)
+      await undo()
+      const restored = legacy.slice(0, legacy.lastIndexOf('### Same')) + retained
+      assert.equal(await saved(2), restored, `${mode}: Undo restores unstamped Alpha and keeps Beta's saved ID`)
+      assert.equal(await content(), legacy, `${mode}: save leaves history's buffer exact`)
+      await redo()
+      assert.equal(await saved(3), retained, `${mode}: Redo restores the saved Beta bytes`)
+      await undo()
+      assert.equal(await saved(4), restored, `${mode}: repeated Undo writes the same bytes`)
+      assert.equal(await content(), legacy)
+      console.log(`PASS ${mode}: Undo across autosaves keeps Beta's ID and leaves never-saved Alpha unstamped`)
+
+      await mount(legacy, mode)
+      const previousWrites = writes
+      await page.evaluate(() => { window.holdSave = true; window.resumeSave = null })
+      await replace(0, legacy.lastIndexOf('### Same'), '')
+      await page.waitForFunction(() => typeof window.resumeSave === 'function')
+      await undo()
+      assert.equal(await content(), legacy)
+      await page.evaluate(() => { window.holdSave = false; window.resumeSave() })
+      const lateWrite = await saved(2)
+      assert.equal(writes, previousWrites + 2)
+      const lateId = lateWrite.match(/\{id=([^}]+)\}/)?.[1]
+      assert.ok(lateId)
+      assert.equal(lateWrite, legacy.replace('### Same\n\n- Beta', `### Same\n{id=${lateId}}\n\n- Beta`))
+      await redo()
+      assert.equal(await saved(3), lateWrite.slice(lateWrite.lastIndexOf('### Same')))
+      await undo()
+      assert.equal(await saved(4), lateWrite)
+      console.log(`PASS ${mode}: a late save reply binds its ID to the original owner through Undo and Redo`)
+      reviewCases += 3
+
+      if (mode !== 'slide') {
+        const reorderSource = legacy.replace('### Same\n\n- Alpha', '### A\n\n- Alpha')
+        await mount(reorderSource, mode)
+        await page.evaluate(() => { window.cmd.move(1, 'down'); window.view().focus() })
+        const moved = await saved(1)
+        assert.ok(moved.indexOf('- Beta') < moved.indexOf('- Alpha'))
+        const ids = [...moved.matchAll(/\{id=([^}]+)\}/g)].map(match => match[1])
+        assert.equal(ids.length, 2)
+        await undo()
+        assert.equal(await saved(2), reorderSource
+          .replace('### A\n', `### A\n{id=${ids[1]}}\n`)
+          .replace('### Same\n', `### Same\n{id=${ids[0]}}\n`))
+        await redo()
+        assert.equal(await saved(3), moved)
+        console.log(`PASS ${mode}: moving a heading with the editor command retains both saved IDs through replay`)
+        reviewCases++
+      }
+    }
+    if (!process.env.TW_RICH_REVIEW_CASE || process.env.TW_RICH_REVIEW_CASE === 'undo-clipboard') {
+      for (const mode of modes) for (const stamped of [true, false]) {
+        const alpha = stamped ? '### Same\n{id=alpha1}\n\n- Alpha\n' : '### Same\n\n- Alpha\n'
+        const beta = '### Same\n{id=beta1}\n\n- Beta\n'
+        const original = alpha + '\n' + beta
+        await mount(original, mode)
+        const clip = await page.evaluate(() => {
+          window.view().focus()
+          return window.cmd.slides.cut(1)
+        })
+        assert.equal(clip?.trim(), alpha.trim(), `${mode}: the cut returns the first slide's bytes`)
+        assert.equal(await saved(1), beta, `${mode}: autosave after cutting keeps the second slide's ID`)
+        const planned = pasteSlides(beta, clip, { after: 1 }, () => { throw new Error('the paste has no ID collision') })
+        assert.ok(planned)
+        const landed = await page.evaluate(clip => {
+          // Slide view now shows the only remaining slide, the destination for the paste.
+          window.focusRemainingSlide()
+          return window.cmd.slides.paste(clip, 1)
+        }, clip)
+        assert.equal(landed, planned.line)
+        const pasted = await saved(2)
+        const ids = [...pasted.matchAll(/\{id=([^}]+)\}/g)].map(match => match[1])
+        assert.equal(ids.length, 2)
+        assert.equal(ids[0], 'beta1')
+        if (stamped) assert.equal(ids[1], 'alpha1')
+        const expectedPaste = stampMissingIds(planned.text, () => { throw new Error('the saved ID is known') },
+          { identity: { ids, replay: true } }).text
+        assert.equal(pasted, expectedPaste, `${mode}: paste saves the pasted slide with its own ID`)
+        let count = 2
+        for (let round = 0; round < 2; round++) {
+          for (const [action, expected] of [[undo, beta], [undo, original], [redo, beta], [redo, pasted]]) {
+            await action()
+            assert.equal(await saved(++count), expected, `${mode}: exact cut/paste replay bytes, round ${round + 1}`)
+            assert.equal(await content(), expected, `${mode}: exact history buffer, round ${round + 1}`)
+          }
+        }
+        console.log(`PASS ${mode}: cut and paste replay twice with exact autosave bytes (${stamped ? 'already stamped' : 'first stamped after paste'})`)
+        reviewCases++
+      }
+    }
+    await page.evaluate(() => { window.stampFromDisk = false; window.leave() })
+  }
   for (const scenario of ['retry','reload']) for (const mode of ['plain','markdown']) {
     if (process.env.TW_RICH_REVIEW_CASE && process.env.TW_RICH_REVIEW_CASE !== scenario) continue
     const source='### Review control\n\n{pyramid}{id=control}\n\n- One\n- Two\n'
@@ -254,6 +402,43 @@ window.leave=()=>flushSync(()=>root.render(null))
     await page.waitForFunction(()=>window.view()?.state.doc.toString().includes('Deferred'))
     await page.evaluate(()=>window.cmd.flushSave())
     assert.equal(writes,0,'load is not an edit')
+  }
+  if (!process.env.TW_RICH_REVIEW_CASE || process.env.TW_RICH_REVIEW_CASE === 'provisional-autosave') {
+    await page.evaluate(() => window.leave())
+    await page.clock.install()
+    for (const mode of ['plain', 'markdown']) {
+      const source = '### Save control\n{id=control}\n\nBody\n'
+      const authored = source.replace('Body', 'Body edited')
+      writeFileSync(disk, source)
+      writes = 0
+      await page.evaluate(({ source, mode }) => {
+        window.holdSave = false; window.failSave = false; window.attempts = 0
+        window.mount(source, mode)
+      }, { source, mode })
+      await page.waitForFunction(text => window.view()?.state.doc.toString() === text, source)
+      const pending = await page.evaluate(() => {
+        const view = window.view()
+        const pos = view.state.doc.toString().indexOf('Body') + 'Body'.length
+        view.dispatch({ changes: { from: pos, insert: ' edited' }, selection: { anchor: pos + 7 } })
+        const end = view.state.doc.length
+        view.dispatch({ changes: { from: end, insert: '{' }, selection: { anchor: end + 1 } })
+        view.focus()
+        return view.state.doc.toString()
+      })
+      assert.equal(pending, authored + '{')
+      // The first debounce expires while the unfinished layout token is still open.
+      await page.clock.runFor(1600)
+      assert.equal(writes, 0, `${mode}: the unfinished token is not persisted`)
+      await page.keyboard.press('Escape')
+      assert.equal(await page.evaluate(() => window.view().state.doc.toString()), authored)
+      await page.clock.runFor(1600)
+      await page.waitForFunction(() => window.attempts === 1 && window.dirty === false, null, { timeout: 3000 })
+      assert.equal(writes, 1)
+      assert.equal(readFileSync(disk, 'utf8'), authored, `${mode}: dismissing the token resumes the earlier autosave`)
+      console.log(`PASS ${mode}: provisional-token dismissal saves the preceding edit without another keystroke`)
+      await page.evaluate(() => window.leave())
+      reviewCases++
+    }
   }
   assert.deepEqual(await page.evaluate(()=>window.caught),[], 'CodeMirror caught no extension exceptions')
   assert.deepEqual(errors,[], 'actual editor has no runtime exceptions')

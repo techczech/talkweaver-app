@@ -25,11 +25,11 @@ export const OUT_ROOT = join(REPO, 'artefacts', 'journey')
 export const FFMPEG = createRequire(import.meta.url)('ffmpeg-static')
 export const pause = (ms) => new Promise((r) => setTimeout(r, ms))
 
-// The Present split button's alternate action opens the presenter, not the single slide window.
+// Open presenter view from the start, regardless of the current editor selection.
 export async function openPresenter(app, page, timeout) {
   const known = new Set(app.windows())
   await page.getByRole('button', { name: 'Other ways to present', exact: true }).click()
-  await page.getByRole('menuitem', { name: /^With my notes and a timer\b/ }).click()
+  await page.getByRole('menuitem', { name: /^Presenter view from the start\b/ }).click()
   const deadline = Date.now() + timeout
   while (Date.now() < deadline) {
     const presenter = app.windows().find(window => !known.has(window) && !window.isClosed() && window.url().includes('presenter=1'))

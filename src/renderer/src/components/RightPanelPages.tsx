@@ -1,5 +1,5 @@
-import { useMemo, useState, type MouseEvent, type ReactNode } from 'react'
-import { ChevronLeft, ChevronRight, Copy, Crop, Heading, Image, LayoutGrid, Link2, List, Palette, Pin, Replace, RotateCcw, SlidersHorizontal, SmilePlus, Trash2 } from 'lucide-react'
+import { Fragment, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
+import { ChevronLeft, ChevronRight, Copy, Crop, GalleryHorizontal, Heading, Image, Layers, LayoutGrid, Link2, List, ListOrdered, Palette, Pin, Replace, RotateCcw, SlidersHorizontal, SmilePlus, Trash2 } from 'lucide-react'
 import { GLOBAL_OPTION_GROUPS, LAYOUTS, sectionColourChoices } from '../../../shared/layout-registry/entries'
 import { parseFrontmatterPairs } from '../../../shared/frontmatter-editor'
 import { groupHasSelection, selectionForGroup } from '../../../shared/trigger-line'
@@ -12,10 +12,16 @@ import RightPanelPictures, { type PanelTry } from './RightPanelPictures'
 import { useLiveSlidePreview } from './useLiveSlidePreview'
 import FixedDeckPreview from './FixedDeckPreview'
 import { isPointListLayout, option, tableDesigns, TITLE_GROUPS, TITLE_PLACEMENT_GROUPS, TITLE_STYLES, titlePlace, type Design, type PanelEdit, type PictureSide } from './rightPanelDesigns'
-import { defaultTitlePlacementForLayout } from '../../../shared/deck-frame'
+import { deckClaimStyleForOutline, defaultTitlePlacementForLayout, statementTitleHidden } from '../../../shared/deck-frame'
+import { statementSelections } from '../../../shared/statement-options'
 
-export interface PanelPage { id: string; label: string; summary: string }
-const ICONS = { title: Heading, points: List, icons: SmilePlus, picture: Image, colour: Palette, own: LayoutGrid, table: LayoutGrid, more: SlidersHorizontal }
+export interface PanelPage {
+  id: string
+  label: string
+  summary: string
+  action?: { label: string; accessibleLabel: string; run: () => void }
+}
+const ICONS = { title: Heading, points: List, icons: SmilePlus, picture: Image, colour: Palette, own: LayoutGrid, table: LayoutGrid, steps: Layers, more: SlidersHorizontal }
 
 export interface PanelSurface {
   path: string
@@ -42,9 +48,13 @@ export function AdjustRows({ pages, choose }: { pages: PanelPage[]; choose: (pag
   return <><h3 className="tw-inspector-section-heading">Adjust one thing</h3><div className="tw-right-adjust">
     {pages.map(page => {
       const Icon = ICONS[page.id as keyof typeof ICONS] ?? LayoutGrid
-      return <button type="button" key={page.id} onClick={() => choose(page.id)}><Icon size={16} />
+      const row = <button type="button" onClick={() => choose(page.id)}><Icon size={16} />
         <span><strong>{page.label}</strong><small>{page.summary}</small></span><ChevronRight size={15} />
       </button>
+      return page.action ? <div className="tw-right-adjust-direct" key={page.id}>
+        {row}
+        <button type="button" className="toolbar-btn" aria-label={page.action.accessibleLabel} onClick={page.action.run}>{page.action.label}</button>
+      </div> : <Fragment key={page.id}>{row}</Fragment>
     })}
   </div></>
 }
@@ -66,7 +76,8 @@ export function DesignsBlock({ surface, designs, long, compact, section }: {
   return <div className="tw-right-designs">
     <PageHead label={section ? 'Slides in this section' : fit.length ? 'Designs for this slide' : 'Designs'} aspect="design" onCopy={fit.length ? surface.onCopy : undefined} />
     {!fit.length ? <p className="tw-right-origin">Designs appear here when the slide has a title and at least one point.</p> : <>
-      <RightPanelPictures {...surface} group="design" choices={shown} columns={2} />
+      <RightPanelPictures {...surface} group="design" choices={shown} columns={2}
+        pendingPicture={section ? sectionModePicture : undefined} />
       {(all || long || fit.length <= count) && unavailable.length > 0 && <ul className="tw-right-no-fit">
         {unavailable.map(design => <li key={design.label}><strong>{design.label}</strong> · {design.unavailable}</li>)}
       </ul>}
@@ -77,15 +88,16 @@ export function DesignsBlock({ surface, designs, long, compact, section }: {
   </div>
 }
 
-export function ResetOrigin({ changed, reset, talk, inherited }: {
+export function ResetOrigin({ changed, reset, talk, inherited, note }: {
   changed: boolean
   reset: () => void
   talk: () => void
   inherited?: string
+  note?: string
 }) {
   return <div className="tw-right-origin">
     {changed ? <Pin size={15} /> : <Link2 size={15} />}
-    <span>{changed ? 'Changed on this slide only.' : inherited ? `Follows the talk: ${inherited}.` : 'Follows the talk.'}</span>
+    <span>{changed ? 'Changed on this slide only.' : note ?? (inherited ? `Follows the talk: ${inherited}.` : 'Follows the talk.')}</span>
     <button type="button" className="toolbar-btn" onClick={changed ? reset : talk}>
       {changed && <RotateCcw size={14} />}{changed ? 'Reset to talk setting' : 'Change for the talk'}
     </button>
@@ -121,6 +133,13 @@ export function sectionDesigns({ modes, carousel, childCount, trigger }: { modes
     : { label, why, options: [option(group.key, token)], current: current === token })
 }
 
+function sectionModePicture(design: Design) {
+  const mode = design.options?.find(choice => choice.group === 'container-mode')?.token
+  const Icon = mode === 'contents' ? List : mode === 'carousel' ? GalleryHorizontal
+    : mode?.startsWith('grid-') ? LayoutGrid : ListOrdered
+  return <Icon size={24} className="tw-right-picture-placeholder" />
+}
+
 function IntroPicture({ surface }: { surface: PanelSurface }) {
   const picture = useMemo(() => {
     const { slides } = readOutlineSlides(surface.text)
@@ -152,7 +171,7 @@ function IntroPicture({ surface }: { surface: PanelSurface }) {
   </div><p>Every slide in this section follows the section slide without a title of its own. A slide before the section keeps a plain title.</p></>
 }
 
-export function TitlePage({ surface, where, trigger, inheritedLook, inheritedTone, onTalk, children, section = false, icon, pictureAbove }: {
+export function TitlePage({ surface, where: compiledWhere, trigger, inheritedLook, inheritedTone, onTalk, children, section = false, icon, pictureAbove, tokens, pointCount }: {
   surface: PanelSurface
   trigger: string
   where: string
@@ -163,6 +182,8 @@ export function TitlePage({ surface, where, trigger, inheritedLook, inheritedTon
   section?: boolean
   icon?: ReactNode
   pictureAbove: boolean
+  tokens: Readonly<Record<string, string>>
+  pointCount: number
 }) {
   const look = GLOBAL_OPTION_GROUPS.find(group => group.key === 'title-look')!
   const tone = GLOBAL_OPTION_GROUPS.find(group => group.key === 'title-look-tone')!
@@ -178,22 +199,41 @@ export function TitlePage({ surface, where, trigger, inheritedLook, inheritedTon
   const inherited = TITLE_STYLES.find(([, token, strength]) => token === (inheritedLook ? `titlelook=${inheritedLook}` : '') &&
     (token !== 'titlelook=tab' || (strength !== '') === (inheritedTone === 'soft')))
   if (section) return <>{children}<p>A section slide shows its name. Its colour is under Colour.</p></>
-  const defaultPlacement = defaultTitlePlacementForLayout(surface.text, heading == null ? null : heading + 1, surface.layout)
+  const headingLine = heading == null ? null : heading + 1
+  const defaultPlacement = defaultTitlePlacementForLayout(surface.text, headingLine, surface.layout)
   const inheritedPlacement = pictureAbove && defaultPlacement === 'left' ? 'top' : defaultPlacement
   const explicitPlacement = explicitGroups.some(group => TITLE_PLACEMENT_GROUPS.includes(group.key))
+  const statementSidebar = surface.layout === 'statement'
+    ? statementSelections(trigger, { deckClaimStyle: deckClaimStyleForOutline(surface.text) })['statement-sidebar'] : ''
+  const where = statementSidebar === 'statement-sidebar=on' && statementTitleHidden(surface.text, headingLine)
+    ? 'hidden' : compiledWhere
+  const listStyle = tokens['list-style']
+  const boxedPoints = surface.layout === 'list' && (listStyle === 'iconlist' || listStyle === 'logolist') &&
+    (tokens['iconlist-variant'] || (pointCount > 3 ? 'iconlist=list' : 'iconlist=boxes')) === 'iconlist=boxes'
+  const sideReason = pictureAbove ? 'The picture needs the full width above the points'
+    : statementSidebar === 'statement-sidebar=off' ? 'This statement’s design has no sidebar'
+      : surface.layout === 'cycle' ? 'The title would take room from the cycle and its labels'
+        : surface.layout === 'iconrow' || boxedPoints ? 'The points need the full width to keep their arrangement' : ''
   const placement = [['top', 'On top'], ['left', 'At the side'], ['hidden', 'Not shown']] as const
   return <>
     <ResetOrigin changed={changed} reset={() => surface.onKeep({ label: 'Talk title settings', reset: TITLE_GROUPS })} talk={onTalk}
+      note={defaultPlacement === 'left' && pictureAbove && where === 'top'
+        ? 'On top while the picture is above the points. The talk puts titles at the side.'
+        : undefined}
       inherited={where === 'left' ? 'at the side' : where === 'hidden' ? 'title hidden' : `on top, ${inherited?.[0] ?? 'Plain'}`} />
     <h4>Where</h4>
-    <RightPanelPictures {...surface} group="title-placement" choices={placement.map(([value, label]) => ({
-      label,
-      current: value === where,
-      reapply: value === inheritedPlacement && explicitPlacement,
-      ...(pictureAbove && value === 'left' ? { unavailable: 'The picture needs the full width above the points' }
-        : value === inheritedPlacement ? { reset: TITLE_PLACEMENT_GROUPS }
-          : { options: titlePlace(value === 'left' ? 'side' : value, surface.layout) })
-    }))} />
+    <RightPanelPictures {...surface} group="title-placement" choices={placement.map(([value, label]) => {
+      const unavailable = value === where ? '' : value === 'left' ? sideReason
+        : value === 'top' && statementSidebar === 'statement-sidebar=on' ? 'This statement’s design keeps its sidebar' : ''
+      return {
+        label,
+        current: value === where,
+        reapply: value === inheritedPlacement && explicitPlacement,
+        ...(unavailable ? { unavailable }
+          : value === inheritedPlacement ? { reset: TITLE_PLACEMENT_GROUPS }
+            : { options: titlePlace(value === 'left' ? 'side' : value) })
+      }
+    })} />
     {where === 'left' && <ChoiceRow label="Panel width" choice={selectionForGroup(trigger, GLOBAL_OPTION_GROUPS.find(group => group.key === 'title-placement')!) || 'sidebar'}
       options={([30, 35, 40, 50] as const).map(n => [`split=${n}`, `${n}%`])} onChoose={token => surface.onKeep({label: 'Panel width', options: [option('title-placement', token)]})} />}
     {where === 'hidden' && <p>The title still names the slide in the slide list, in your notes and in links.</p>}

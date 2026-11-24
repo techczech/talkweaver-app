@@ -6,6 +6,7 @@ import RecordingDeviceSettings from './components/RecordingDeviceSettings'
 import PreciseWordTimingSettings from './components/PreciseWordTimingSettings'
 import React, { useEffect, useState } from 'react'
 import ReactDOM from 'react-dom/client'
+import WindowChrome from './components/WindowChrome'
 import { SettingsWindow, type CustomPage, type RowHint, type SheetState } from '@app-patterns/settings-react'
 import type { SectionRequest, SettingsView } from '@app-patterns/settings-electron'
 import '@app-patterns/settings-react/settings.css'
@@ -162,6 +163,6 @@ function SettingsApp(): React.JSX.Element | null {
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
-    <SettingsApp />
+    <WindowChrome><SettingsApp /></WindowChrome>
   </React.StrictMode>
 )

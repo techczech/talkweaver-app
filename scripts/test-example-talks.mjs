@@ -105,8 +105,8 @@ await test('a command added to a task group without a line fails the check, nami
   const [title, section] = CHAPTER_TALK['Write the outline']
   const talk = byTitle.get(title)
   const text = sectionText(talk.text, section)
-  const keyless = { id: 'fold.invented', label: 'Fold everything but this', taskGroup: 'Write the outline', subgroup: 'Fold' }
-  const keyed = { id: 'fold.invented-key', label: 'Fold the rest', taskGroup: 'Write the outline', subgroup: 'Fold', shortcutId: 'invented.fold-rest' }
+  const keyless = { id: 'fold.invented', label: 'Fold everything but this', taskGroup: 'Outlining', subgroup: 'Fold' }
+  const keyed = { id: 'fold.invented-key', label: 'Fold the rest', taskGroup: 'Outlining', subgroup: 'Fold', shortcutId: 'invented.fold-rest' }
   const registry = [{ id: 'invented.fold-rest', keys: '⌃⌥⇧F9', codes: [], scope: 'editor', label: 'Fold the rest', explanation: '', group: '' }]
   const withAdded = deriveChapters([...commands, keyless, keyed]).find((c) => c.task === 'Write the outline')
   assert.equal(withAdded.rows.length, write.rows.length + 2)

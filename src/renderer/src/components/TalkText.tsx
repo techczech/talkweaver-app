@@ -1056,10 +1056,9 @@ export default function TalkText({
 
   return (
     <div className="lt tt-win" role="dialog" aria-label="Manage notes">
-      <header className="tt-topbar">
+      <header className="tt-topbar tw-window-drag">
         <ModeBack className="tt-back" talkTitle="Studio" onBack={() => onBackToStudio(active?.id)} />
-        <h2 className="tt-title">Manage notes</h2>
-        <span className="tt-spacer" />
+        <h2 className="tt-title tw-window-title" data-window-title>Manage notes</h2>
         <button className="tt-iconbtn tt-help" onClick={openHelp} aria-label="Keyboard cheat-sheet" title="Keyboard cheat-sheet (?)">?</button>
       </header>
 

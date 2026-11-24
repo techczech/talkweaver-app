@@ -18,7 +18,7 @@ html, body, #root { height: 100%; margin: 0; }
   --bsw-mono: var(--font-mono); --bsw-ink2: var(--muted); --bsw-line: var(--line);
   background: var(--paper); color: var(--ink); font-family: var(--font-ui);
 }
-.bsw-side { background: var(--panel); border-right-color: var(--line); padding-top: 28px; } /* the native close buttons (hiddenInset) sit over the top-left; keep the search field clear of them */
+.bsw-side { background: var(--panel); border-right-color: var(--line); padding-top: var(--tw-native-block, 0px); }
 .bsw-sidefoot { background: var(--paper); border-top-color: var(--line); }
 .bsw-pane { background: var(--paper); }
 .bsw-phead { background: var(--panel); border-bottom-color: var(--line); }

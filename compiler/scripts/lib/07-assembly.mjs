@@ -195,7 +195,8 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
       && slide.blocks.some((b) => b && typeof b === "object" && (b.type === "heading" || b.type === "title"));
     const slideTitle = String(slide.title ?? "");
     const showTitle = !usesHtmlBody && !blocksHaveHeading && slideTitle.trim() !== "";
-    const layout = layoutSlug;
+    // The generated closing shares the title's visual layout and keeps its closing identity.
+    const layout = slide.generatedClosing === true ? "title" : layoutSlug;
     // ADR-0023 §2: THE TITLE IS NEVER DEMOTED TO A KICKER. The compact eyebrow (SECTION · Title)
     // that cards, copy-visual and the carousel parent used to emit duplicated the slide title on
     // the kicker line — ADR-0005 "no duplicated information", and the mono kicker is reserved for
@@ -431,7 +432,7 @@ function renderSlideContent(slide, deckUsed, brandLogoColour = "unified") {
     const contentHtml = `<div class="slide-content layout-${escapeHtml(layout)}${statementVariantClass}${mediaStage ? " media-stage" : ""}"${mediaAttrs}>
 ${headHtml}${bodyHtml}
   </div>`;
-    return { contentHtml, cornerQrHtml, cornerSectionHtml, layout, titlePlacement, effectiveTitleStyle };
+    return { contentHtml, cornerQrHtml, cornerSectionHtml, layout: layoutSlug, titlePlacement, effectiveTitleStyle };
 }
 
 // ADR-0022 carousel: render one carousel sub-slide as a FULL-BLEED frame inside the existing

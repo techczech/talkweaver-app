@@ -1037,10 +1037,15 @@ function createSlideFit(options = {}) {
     const excess = carouselCardExcess(slide.querySelector(":scope > .slide-content"));
     if (excess > OCEAN_FIT_TOLERANCE && fault(tally, excess, "card", activeCarouselCard(slide.querySelector(":scope > .slide-content")))) return true;
     const t = OCEAN_FIT_TOLERANCE * scale;
+    const hasTitleStrip = slide.dataset.titleLayout === "top" && slide.dataset.titleLook === "tab-strip";
     // an element outside the stage counts once, not again for each of its children
     const outside = new Set();
     for (const el of slide.querySelectorAll(".slide-content *")) {
       if (el.closest(".notes, .sr-only, iframe, svg, .slide-qr-corner")) continue;
+      // The strip replaces the painted h1 and ellipsises its pills on purpose. The strip's
+      // own box still has to fit on the stage.
+      const strip = hasTitleStrip && el.closest(".slide-head > .title-strip");
+      if (hasTitleStrip && (el.closest(".slide-head:has(> .title-strip) > h1") || (strip && strip !== el))) continue;
       const cs = getComputedStyle(el);
       if (cs.display === "none" || cs.position === "fixed") continue; // hidden reveal steps still take their place
       const r = el.getBoundingClientRect();
@@ -1049,6 +1054,7 @@ function createSlideFit(options = {}) {
         if (!outside.has(el.parentElement) && fault(tally, Math.max(stage.left - r.left, stage.top - r.top, r.right - stage.right, r.bottom - stage.bottom) / scale, "stage", el)) return true;
         outside.add(el);
       }
+      if (strip) continue;
       if ((cs.overflowX === "hidden" || cs.overflowX === "clip") && el.scrollWidth > el.clientWidth + OCEAN_FIT_TOLERANCE && fault(tally, el.scrollWidth - el.clientWidth, "clip-x", el)) return true;
       if ((cs.overflowY === "hidden" || cs.overflowY === "clip") && el.scrollHeight > el.clientHeight + OCEAN_FIT_TOLERANCE && fault(tally, el.scrollHeight - el.clientHeight, "clip-y", el)) return true;
     }
@@ -1227,8 +1233,11 @@ function createSlideFit(options = {}) {
     const scale = canvasScale(content);
     const t = 2 * scale;
     const slide = content.closest(".slide");
-    const head = slide?.querySelector(".slide-head");
-    const title = head ? head.getBoundingClientRect() : null;
+    const head = content.querySelector(":scope > .slide-head:not(.slide-head-quiet)");
+    const strip = slide.dataset.titleLayout === "top" && slide.dataset.titleLook === "tab-strip";
+    // The head can occupy a whole grid track. Only its painted title and kicker can cover a label.
+    const titleBoxes = [...head?.querySelectorAll(strip ? ":scope > .title-strip, :scope > .kicker" : ":scope > h1, :scope > .kicker") ?? []]
+      .map(element => element.getBoundingClientRect()).filter(rect => rect.width > 0 && rect.height > 0);
     const box = slide.getBoundingClientRect();
     const pad = getComputedStyle(slide);
     // the top padding is the title's clearance (the title is checked on its own); a label keeps the bottom margin there
@@ -1261,7 +1270,9 @@ function createSlideFit(options = {}) {
       for (const { node, label } of labelled) {
         const out = Math.max(inside.left - label.left, label.right - inside.right, inside.top - label.top, label.bottom - inside.bottom);
         if (out > 0 && fault(tally, out / scale, "label-margin", node)) return true;
-        if (title && title.width > 0 && meet(label, title) && fault(tally, overlap(label, title) / scale, "label-title", node)) return true;
+        for (const title of titleBoxes) {
+          if (meet(label, title) && fault(tally, overlap(label, title) / scale, "label-title", node)) return true;
+        }
         // the gap is kept exactly: any overlap with a widened block is a fault
         for (const other of others) if (overlap(label, other) > 0 && fault(tally, overlap(label, other) / scale, "label-block", node, other.el)) return true;
         for (const stop of stops) {

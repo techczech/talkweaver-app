@@ -365,9 +365,9 @@ expectMove('a slide moved up out of its section, caret on its layout line',
   '## A\n{id=a}\n### a1\n## B\n{id=b}\n### b1\n|{statement}\nBody', 'up', '## A\n{id=a}\n### a1\n### b1\n{statement}\nBody\n## B\n{id=b}', '{statement}')
 check('moveHeadingBlock: one layout line under the receiving heading, as before the fix', () => {
   assert.deepEqual(moveHeadingBlock('## A\n### s1\n## B\n{section}\n### s2'.split('\n'), 1, 'down', 0),
-    { lines: '## A\n## B\n{section}\n### s1\n### s2'.split('\n'), caret: 3 })
+    { lines: '## A\n## B\n{section}\n### s1\n### s2'.split('\n'), caret: 3, removed: [1, 2], insertAt: 3 })
   assert.deepEqual(moveHeadingBlock('## A\n### s1\n## B\n### s2'.split('\n'), 1, 'down', 0),
-    { lines: '## A\n## B\n### s1\n### s2'.split('\n'), caret: 2 })
+    { lines: '## A\n## B\n### s1\n### s2'.split('\n'), caret: 2, removed: [1, 2], insertAt: 2 })
 })
 
 // ── 3. A selection that takes in a head line, with the caret in the body ─────────────────────

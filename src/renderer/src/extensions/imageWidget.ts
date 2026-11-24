@@ -6,6 +6,7 @@ import {
   WidgetType,
   type ViewUpdate
 } from '@codemirror/view'
+import { inSlideTextPanel } from './focusScope.ts'
 import { type Extension, RangeSetBuilder, StateEffect, type Text } from '@codemirror/state'
 import { placementLabel, type ImagePlacement, type PlacementKind } from '../../../shared/image-placement.ts'
 import { openFullScreenPreview } from './imageFullScreenPreview.ts'
@@ -172,12 +173,12 @@ export class ImageWidget extends WidgetType {
       // A clip's poster sits under a ▶ badge so it reads as motion, not a still (ADR-0028:
       // authoring previews never play — playback is present-mode only).
       const frame = document.createElement('span')
-      frame.style.cssText = ['position: relative', 'display: inline-block', 'line-height: 0'].join('; ')
+      frame.style.cssText = ['position: relative', 'display: inline-block', 'max-width: 100%', 'line-height: 0'].join('; ')
       const img = document.createElement('img')
       img.src = this.url
       img.alt = this.caption
       img.style.cssText = [
-        'max-width: 220px',
+        'max-width: min(220px, 100%)',
         'max-height: 130px',
         'object-fit: contain',
         'display: block',
@@ -197,7 +198,7 @@ export class ImageWidget extends WidgetType {
       wrap.appendChild(frame)
     } else if (this.isVideo) {
       const frame = document.createElement('span')
-      frame.style.cssText = ['position: relative', 'display: inline-block', 'line-height: 0'].join('; ')
+      frame.style.cssText = ['position: relative', 'display: inline-block', 'max-width: 100%', 'line-height: 0'].join('; ')
       frame.appendChild(makePlaceholder())
       frame.appendChild(makePlayBadge())
       wrap.appendChild(frame)
@@ -211,7 +212,7 @@ export class ImageWidget extends WidgetType {
       cap.style.cssText = [
         'font-size: 11px',
         'color: var(--caption-color, var(--faint))',
-        'max-width: 220px',
+        'max-width: min(220px, 100%)',
         'overflow: hidden',
         'text-overflow: ellipsis',
         'white-space: nowrap'
@@ -232,6 +233,7 @@ function makePlaceholder(): HTMLElement {
   box.style.cssText = [
     'display: block',
     'width: 160px',
+    'max-width: 100%',
     'height: 90px',
     'background: #c8c8c8',
     'border-radius: 2px'
@@ -291,6 +293,7 @@ const atomicMark = Decoration.mark({})
 // Every image line the widget hides is atomic too (ADR-0042, one object one delete): Backspace or Delete
 // beside any picture card takes its whole line, never a hidden `)` or `}`. One Undo restores it.
 function buildImageAtomicRanges(view: EditorView): DecorationSet {
+  if (inSlideTextPanel(view.state)) return Decoration.none
   const builder = new RangeSetBuilder<Decoration>()
   for (const { from, to } of view.visibleRanges) {
     let pos = from
@@ -319,6 +322,7 @@ function buildCaptureRanges(view: EditorView): DecorationSet {
 
 function buildDecorations(view: EditorView, opts: WidgetOpts): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>()
+  if (inSlideTextPanel(view.state)) return Decoration.none
   const talkDir = typeof opts.talkDir === 'function' ? opts.talkDir() : opts.talkDir
   for (const { from, to } of view.visibleRanges) {
     let pos = from
@@ -353,7 +357,7 @@ export function imageWidgetExtension(opts: WidgetOpts): Extension {
         this.atomic = buildImageAtomicRanges(view)
       }
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged || update.transactions.some((t) => t.effects.some((e) => e.is(imagePlacementsChanged)))) {
+        if (update.docChanged || update.viewportChanged || inSlideTextPanel(update.startState) !== inSlideTextPanel(update.state) || update.transactions.some((t) => t.effects.some((e) => e.is(imagePlacementsChanged)))) {
           this.decorations = buildDecorations(update.view, opts)
           this.atomic = buildImageAtomicRanges(update.view)
         }

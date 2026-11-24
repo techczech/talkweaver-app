@@ -171,8 +171,8 @@ try {
 
   const doc = () => page.evaluate(() => window.docText())
   const depths = () => page.evaluate(() => window.depths())
-  const undoKey = () => page.keyboard.press('Meta+z')
-  const redoKey = () => page.keyboard.press('Meta+Shift+z')
+  const undoKey = () => page.keyboard.press('ControlOrMeta+z')
+  const redoKey = () => page.keyboard.press(process.platform === 'darwin' ? 'ControlOrMeta+Shift+z' : 'ControlOrMeta+y')
   /** The app's save: tidy as the app's save decides, stamp that text (ids on disk preferred), write it, adopt what was written. */
   let disk = ''
   const save = async () => {
@@ -422,8 +422,9 @@ try {
     assert.deepEqual(idsOf(afterB), [])
     const editorSource = readFileSync(join(root, 'src/renderer/src/components/Editor.tsx'), 'utf8')
     assert.equal(editorSource.match(/historyCompartment\.reconfigure\(\[\]\)/g).length, 1, 'the history is dropped in one place only')
-    // The save simulated in this file decides on the tidy-up with the function every save of Editor.tsx calls.
-    assert.equal((editorSource.match(/textForSave\(/g) ?? []).length, 5, 'autosave, flushSave, acknowledged capture settleSave, a close\'s forced save and the replace seam each ask textForSave')
+    // The queued writes and the replace seam both prepare the exact state they send to disk.
+    assert.equal((editorSource.match(/await writeQueued\(/g) ?? []).length, 4, 'autosave, flush, capture and forced close all use the queued save')
+    assert.equal((editorSource.match(/textForSave\(/g) ?? []).length, 2, 'the queued save and the replace seam each ask textForSave')
     assert.ok(!editorSource.includes('normalizePositions('), 'and none of them calls the tidy-up directly')
     pass('a talk loaded into the same editor starts clean: an undo there undoes its own edit and brings nothing of the talk before')
   }

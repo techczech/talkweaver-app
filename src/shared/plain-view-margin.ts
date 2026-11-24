@@ -15,7 +15,7 @@
 // compiler gives the items no slide of their own, so each reads Slide n.k, n being the number of the
 // one slide that holds them.
 //
-// The layout name under a Slide is the layout the slide WRITES, as the compiler resolves it
+// The layout name revealed beside a slide number is the layout the slide WRITES, as the compiler resolves it
 // (plain-view-compiler-facts.ts `slideLayouts`, named by slide-authored-layout.ts): the tokens of
 // its heading line and of every layout line the compiler folds into it, in every form the compiler
 // accepts, with the compiler's own precedence between them. "Auto" when the slide writes none. The
@@ -51,7 +51,7 @@ export interface MarginLabel {
   layoutLabel?: string
 }
 
-/** The margin word of a label, as the gutter draws it ("§2.1", "Slide 3.1"; CSS upper-cases it). */
+/** The full heading description for the gutter controls ("§2.1", "Slide 3.1"). */
 export function marginWord(label: Pick<MarginLabel, 'kind' | 'number' | 'item' | 'sectionNumber'>): string {
   if (label.kind === 'talk') return 'Talk'
   if (label.kind === 'section') return label.sectionNumber ? `§${label.sectionNumber}` : 'Section'
@@ -59,7 +59,7 @@ export function marginWord(label: Pick<MarginLabel, 'kind' | 'number' | 'item' |
   return label.item != null ? `Slide ${label.number}.${label.item}` : `Slide ${label.number}`
 }
 
-/** The quiet second line of a section ("L1 · 3 slides"), or '' when the label has none. */
+/** Section details for the marker tooltip ("L1 · 3 slides"), or an empty string. */
 export function marginDetail(label: Pick<MarginLabel, 'kind' | 'level' | 'slideCount'>): string {
   if (label.kind !== 'section' || label.level == null || label.slideCount == null) return ''
   return `L${label.level} \u00b7 ${label.slideCount} ${label.slideCount === 1 ? 'slide' : 'slides'}`

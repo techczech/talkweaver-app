@@ -436,7 +436,9 @@ export function lexMarkdownBlocksWith(lines, normalizeIconKey) {
     const para = taken.parts;
     i = taken.end;
     if (para.length) {
-      const paraText = para.join(" ");
+      // Slide text escapes a leading hash to keep it out of the outline tree. Decode it only
+      // after choosing a prose block, while the original line boundaries are still available.
+      const paraText = para.map((line) => line.replace(/^\\(?=#)/, "")).join(" ");
       // AUTO-EMBED: a paragraph that is WHOLLY a single bare http(s) URL becomes an embed block
       // (iframe) — no `[Embed:]` needed. YouTube (watch/youtu.be/shorts) and Vimeo links are
       // converted to their player-embed form by normalizeEmbedUrl. A slide whose only content is

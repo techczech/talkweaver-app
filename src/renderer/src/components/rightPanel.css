@@ -3,15 +3,35 @@
 .tw-right-picture:hover { background: var(--hover); }
 .tw-right-picture[aria-pressed=true] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
 .tw-right-picture:disabled { cursor: default; color: var(--muted); }
-.tw-right-picture-frame { aspect-ratio: 16 / 9; display: grid; place-items: center; overflow: hidden; border-radius: 4px; border: 1px solid var(--line); background: var(--surface-2); }
+.tw-right-picture-frame { position: relative; aspect-ratio: 16 / 9; display: grid; place-items: center; overflow: hidden; border-radius: 4px; border: 1px solid var(--line); background: var(--surface-2); }
 .tw-right-picture-frame img { width: 100%; height: 100%; object-fit: contain; }
+.tw-right-picture-placeholder { color: var(--muted); }
 .tw-right-picture strong, .tw-right-picture small { overflow-wrap: anywhere; }
 .tw-right-picture small { color: var(--muted); }
-.tw-right-current { position: absolute; top: 8px; right: 8px; background: var(--accent); color: var(--accent-ink); padding: 1px 5px; border-radius: 9px; font-size: 10px; }
+.tw-right-current { position: absolute; z-index: 1; top: 8px; right: 8px; background: var(--accent); color: var(--on-accent); padding: 1px 5px; border-radius: 9px; font-size: 10px; }
+.tw-right-picture:has(.tw-reveal-badge) > .tw-right-current { top: 8px; inset-inline-start: 8px; inset-inline-end: auto; }
+.tw-right-picture:has(.tw-reveal-badge[data-counted]) > .tw-right-current { top: 27px; }
+.tw-right-picture-frame > .tw-reveal-badge { font-size: .5625rem; }
+[data-section="picture"] .tw-right-pictures { container: picture-placements / inline-size; }
+@container picture-placements (max-width: 320px) {
+  .tw-right-picture { grid-template-rows: 12px auto auto; }
+  .tw-right-picture-frame { grid-row: 2; }
+  .tw-right-picture strong { grid-row: 3; font-size: .6875rem; white-space: nowrap; }
+  .tw-right-current { position: static; grid-row: 1; justify-self: center; color: var(--on-accent); padding: 0 4px; font-size: .5625rem; line-height: 12px; }
+}
 .tw-right-adjust { display: grid; }
-.tw-right-adjust button { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 8px 5px; color: var(--ink); background: var(--panel); border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
+.tw-right-adjust > button, .tw-right-adjust-direct > button:first-child { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 9px; padding: 8px 5px; color: var(--ink); background: var(--panel); border: 0; border-bottom: 1px solid var(--line); text-align: left; cursor: pointer; }
 .tw-right-adjust button:hover { background: var(--hover); }
-.tw-right-adjust button > svg:first-child { box-sizing: content-box; padding: 6px; border-radius: 6px; background: var(--surface-2); color: var(--muted); }
+.tw-right-adjust :is(button) > svg:first-child { box-sizing: content-box; padding: 6px; border-radius: 6px; background: var(--surface-2); color: var(--muted); }
+.tw-right-adjust-direct, .tw-right-reveal-setting {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.tw-right-adjust-direct > button:first-child { flex: 1; min-width: 0; border-bottom: 0; }
+.tw-right-adjust-direct > .toolbar-btn, .tw-right-reveal-setting > .toolbar-btn { flex: none; white-space: nowrap; margin-inline-end: 4px; }
+.tw-right-reveal-setting { justify-content: space-between; padding-block: 8px; }
 .tw-right-adjust strong, .tw-right-adjust small { display: block; }
 .tw-right-adjust small { color: var(--muted); }
 .tw-right-page-head, .tw-right-bar, .tw-right-origin { display: flex; align-items: center; gap: 8px; }

@@ -216,7 +216,7 @@ export abstract class ObjectWidget extends WidgetType {
     return event.type !== 'mousedown' && event.type !== 'dblclick'
   }
 
-  destroy(): void {
+  destroy(_dom: HTMLElement): void {
     this.stopSizing?.()
     this.stopSizing = null
   }

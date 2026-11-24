@@ -1,6 +1,6 @@
 // The Guide's ten chapters (onboarding 0.38.1 ticket 08), derived from the registries and never
-// typed per chapter: a chapter is a task group, its rows are the commands in that group that exist
-// in this build (ticket 01's table), and a command that is not in the build never appears.
+// typed per chapter: each chapter draws its rows from the app's task groups. Outlining and
+// Formatting share one practice chapter and its saved progress.
 //
 // What counts:
 //   - every registry command that carries a task group (the 47 keys inside a surface carry none:
@@ -16,13 +16,13 @@
 // scripts/test-guide-chapters.mjs checks them against it, so a wording change happens there first.
 import { COMMAND_REGISTRY } from './command-registry.ts'
 import { PRESENTER_PALETTE } from './presenter-palette.ts'
-import { TASK_GROUPS, TASK_GROUP_TABLE, taskGroupFields, type TaskGroup } from './task-groups.ts'
+import { taskGroupFields, type TaskGroup } from './task-groups.ts'
 
 /** The two sub-groups whose commands need the live service (0.39): listed apart, never counted. */
 export const LIVE_SUBGROUPS: readonly string[] = ['Live audience, polls and questions', 'Live board (added)']
 
 /** CHAPTER_TALK in the drawing's text module: the practice talk and section of each chapter. */
-export const CHAPTER_TALK: Readonly<Record<TaskGroup, readonly [string, string]>> = {
+export const CHAPTER_TALK = {
   'Write the outline': ['The Saturday market', '01 Write the outline'],
   'Build a slide': ['The Saturday market', '02 Build a slide'],
   'Reuse slides': ['Garden notes', '03 Reuse slides'],
@@ -33,10 +33,17 @@ export const CHAPTER_TALK: Readonly<Record<TaskGroup, readonly [string, string]>
   'Manage talks': ['Harvest supper (draft)', '08 Manage talks'],
   'Check and repair': ['Harvest supper (draft)', '09 Check and repair'],
   'Set up TalkWeaver': ['Harvest supper (draft)', '10 Set up TalkWeaver']
+} as const satisfies Record<Exclude<TaskGroup, 'Outlining' | 'Formatting'> | 'Write the outline', readonly [string, string]>
+
+export type GuideChapter = keyof typeof CHAPTER_TALK
+export const GUIDE_CHAPTERS: readonly GuideChapter[] = Object.keys(CHAPTER_TALK) as GuideChapter[]
+
+function chapterForGroup(group: TaskGroup | null | undefined): GuideChapter | null {
+  return group === 'Outlining' || group === 'Formatting' ? 'Write the outline' : group ?? null
 }
 
 /** ICONS in the drawing's text module: the lucide icon of each chapter. */
-export const CHAPTER_ICONS: Readonly<Record<TaskGroup, string>> = {
+export const CHAPTER_ICONS: Readonly<Record<GuideChapter, string>> = {
   'Write the outline': 'pen-line',
   'Build a slide': 'layout-template',
   'Reuse slides': 'library',
@@ -54,13 +61,13 @@ export const CHAPTER_ICONS: Readonly<Record<TaskGroup, string>> = {
  * sub-groups ticket 01 added, in the order they came. A sub-group not named here is appended at the
  * end, in the order it is met.
  */
-export const SUBGROUP_ORDER: Readonly<Record<TaskGroup, readonly string[]>> = {
+export const SUBGROUP_ORDER: Readonly<Record<GuideChapter, readonly string[]>> = {
   'Write the outline': ['Format text', 'Fold', 'Headings and levels', 'Lists', 'Reorder slides and items', 'Undo and redo'],
   'Build a slide': ['Inspector', 'Layouts', 'Images and icons', 'Objects', 'Components'],
   'Reuse slides': ['Where used and versions', 'Find a talk', 'Slides from other talks', 'Tags'],
   'See the talk': ['Views', 'Focus on a slide', 'Sidebar and outline search'],
   'Shape the talk': ['Plan a Run', 'Pathways', 'Talk design', 'Metadata and abstract'],
-  'Present': ['Open presenter and audience', 'Live audience, polls and questions', 'Move through slides', 'Timer', 'Recording', 'Display modes', 'Speaker notes (added)', 'Live board (added)', 'Help and commands'],
+  'Present': ['Start presenting', 'Open presenter and audience', 'Live audience, polls and questions', 'Move through slides', 'Timer', 'Recording', 'Display modes', 'Speaker notes (added)', 'Live board (added)', 'Help and commands', 'Plan a session'],
   'Share': ['Handout', 'HTML presentation', 'Publish', 'Share for comments', 'Video'],
   'Manage talks': ['Importer, Studio, Runs', 'Windows', 'Talks panel', 'Vaults', 'Scripts and notes'],
   'Check and repair': ['Optimise images', 'Index image text', 'Check embeds', 'Layout Doctor'],
@@ -144,7 +151,13 @@ export interface ChapterCommand {
 export function chapterCommands(): ChapterCommand[] {
   const out: ChapterCommand[] = COMMAND_REGISTRY
     .filter((command) => command.taskGroup !== null)
-    .map((command) => ({ id: command.id, label: command.label, taskGroup: command.taskGroup, subgroup: command.subgroup, shortcutId: command.shortcutId, handlerId: command.handlerId }))
+    .map<ChapterCommand>(({ id, label, taskGroup, subgroup, shortcutId, handlerId }) => {
+      // The existing See the talk exercise teaches both heading jumps.
+      if (id === 'editor.jump-prev' || id === 'editor.jump-next') {
+        return { id, label, taskGroup: 'See the talk', subgroup: 'Sidebar and outline search', shortcutId, handlerId }
+      }
+      return { id, label, taskGroup, subgroup, shortcutId, handlerId }
+    })
   for (const [, entries] of PRESENTER_PALETTE) {
     for (const entry of entries) {
       if (entry.shortcut) continue
@@ -169,7 +182,7 @@ export interface ChapterRow {
 }
 export interface ChapterSubgroup { name: string; rows: ChapterRow[] }
 export interface Chapter {
-  task: TaskGroup
+  task: GuideChapter
   /** The counted rows, by sub-group, in list order. */
   subgroups: ChapterSubgroup[]
   /** The counted rows, flat. */
@@ -184,8 +197,8 @@ export const rowLabel = (label: string): string => label.replace(/ \(.*/, '')
 /** Derive every chapter, in the ten-group order, from a command list (this build's by default). */
 export function deriveChapters(commands: readonly ChapterCommand[] = chapterCommands(), merged: readonly MergedRow[] = MERGED_ROWS): Chapter[] {
   const byId = new Map(commands.map((command) => [command.id, command]))
-  return TASK_GROUPS.map((task) => {
-    const mine = commands.filter((command) => command.taskGroup === task && !CHAPTER_EXCLUDED.has(command.id))
+  return GUIDE_CHAPTERS.map((task) => {
+    const mine = commands.filter((command) => chapterForGroup(command.taskGroup) === task && !CHAPTER_EXCLUDED.has(command.id))
     const seen = new Set<string>()
     const counted: ChapterRow[] = []
     const live: ChapterRow[] = []
@@ -193,7 +206,7 @@ export function deriveChapters(commands: readonly ChapterCommand[] = chapterComm
       if (seen.has(command.id)) continue
       const set = merged.find((entry) => entry.ids.includes(command.id))
       // The members of a set that this build has, in the set's own order, and that are in this task.
-      const members = set ? set.ids.filter((id) => byId.get(id)?.taskGroup === task) : [command.id]
+      const members = set ? set.ids.filter((id) => chapterForGroup(byId.get(id)?.taskGroup) === task) : [command.id]
       members.forEach((id) => seen.add(id))
       const folded = set !== undefined && members.length > 1
       const row: ChapterRow = {

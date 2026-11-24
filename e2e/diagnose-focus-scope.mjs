@@ -5,7 +5,7 @@
 //
 // Checks, with focus set on the "Slide Two" block (doc lines 12-15):
 //   (a) lines OUTSIDE the range are not rendered/editable (Slide One, Slide Three, ## Section gone).
-//   (b) the gutter shows the TRUE outline line numbers of the visible band (12,13,14,15) — not 1-4.
+//   (b) Markdown keeps only the fold gutter while the slide is scoped.
 //   (c) typing INSIDE the band works and autosaves to the SAME on-disk file (proves shared doc).
 //   (d) an edit that would TOUCH OUTSIDE the band is blocked (forward-Delete at the band end that
 //       would merge the hidden line above Slide Three — file's blank line survives = guard held).
@@ -59,11 +59,6 @@ const FIX = LINES.join('\n')
 // Slide Two's block: from the start of its heading line to the end of its body line's content.
 const RANGE_FROM = FIX.indexOf('### Slide Two')
 const RANGE_TO = FIX.indexOf('Body of slide two beta.') + 'Body of slide two beta.'.length
-const START_LINE = FIX.slice(0, RANGE_FROM).split('\n').length // 12
-const END_LINE = FIX.slice(0, RANGE_TO).split('\n').length // 15
-const EXPECTED_GUTTER = []
-for (let n = START_LINE; n <= END_LINE; n += 1) EXPECTED_GUTTER.push(n)
-
 const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-fs-' + String(Date.now()) + '-'))
 const tempVault = join(tempRoot, 'vault')
 const userDataDir = join(tempRoot, 'userData')
@@ -88,17 +83,6 @@ async function visibleLines() {
     Array.from(document.querySelectorAll('.cm-content .cm-line')).map((l) => l.textContent)
   )
 }
-async function gutterNumbers() {
-  // CM's line-number gutter appends a hidden width-measurement spacer (an all-9s sample, e.g. "99")
-  // with inline `visibility: hidden` — exclude it so we read only the REAL, rendered line numbers.
-  return page.evaluate(() =>
-    Array.from(document.querySelectorAll('.cm-lineNumbers .cm-gutterElement'))
-      .filter((e) => window.getComputedStyle(e).visibility !== 'hidden')
-      .map((e) => (e.textContent || '').trim())
-      .filter((t) => /^\d+$/.test(t))
-      .map(Number)
-  )
-}
 async function setFocus(from, to) {
   await page.evaluate(
     ([f, t]) => window.dispatchEvent(new CustomEvent('tw-focus-scope', { detail: { from: f, to: t } })),
@@ -118,6 +102,7 @@ async function reset() {
   writeFileSync(fxPath, FIX)
   await selectTalk('Other')
   await selectTalk('FS Fixture')
+  await page.getByTestId('markdown-toggle').click()
   await clearFocus()
 }
 async function clickLine(text) {
@@ -127,7 +112,6 @@ async function clickLine(text) {
 function has(arr, needle) {
   return arr.some((l) => (l || '').includes(needle))
 }
-const sameArr = (a, b) => a.length === b.length && a.every((v, i) => v === b[i])
 
 try {
   await selectTalk('FS Fixture')
@@ -150,14 +134,12 @@ try {
     )
   }
 
-  // (b) the gutter shows the TRUE line numbers of the visible band (12-15), not renumbered 1-4.
+  // (b) The source view still only shows the fold gutter.
   {
-    const nums = await gutterNumbers()
-    record(
-      'focused: gutter shows the real outline line numbers of the band',
-      sameArr(nums, EXPECTED_GUTTER),
-      `got=${JSON.stringify(nums)} expected=${JSON.stringify(EXPECTED_GUTTER)}`
-    )
+    const gutters = await page.locator('.cm-editor .cm-gutter').evaluateAll(nodes => nodes.map(node => node.className))
+    record('focused: Markdown has only the fold gutter',
+      gutters.length === 1 && gutters[0].includes('cm-foldGutter'),
+      `got=${JSON.stringify(gutters)}`)
   }
 
   // (c) typing inside the band works and autosaves to the SAME file (shared doc, not a copy).

@@ -1,11 +1,11 @@
 // The ⌘/ keyboard sheet (onboarding 0.38.1 ticket 04). It opens on Here (the commands at the current
-// place, the same list Actions here shows), then the ten task groups with their counts and, when one
+// place, the same list Actions here shows), then the task groups with their counts and, when one
 // is chosen, its sub-groups; a filter searches every command. The data is generated from the
 // registries (shared/keyboard-sheet.ts); the sheet types no command.
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  Eye, FolderOpen, LayoutTemplate, Library, MapPin, PenLine, Play, Presentation, Search, Share2,
-  SlidersHorizontal, Stethoscope, Waypoints, X
+  Eye, FolderOpen, LayoutTemplate, Library, ListTree, MapPin, Play, Presentation, Search, Share2,
+  SlidersHorizontal, Stethoscope, Type, Waypoints, X
 } from 'lucide-react'
 import { listedPaletteCommands } from '../../../shared/command-registry'
 import { shortcutById } from '../../../shared/shortcut-registry'
@@ -34,7 +34,8 @@ interface Props {
 }
 
 const GROUP_ICONS: Readonly<Record<TaskGroup, JSX.Element>> = {
-  'Write the outline': <PenLine size={14} />,
+  'Outlining': <ListTree size={14} />,
+  'Formatting': <Type size={14} />,
   'Build a slide': <LayoutTemplate size={14} />,
   'Reuse slides': <Library size={14} />,
   'See the talk': <Eye size={14} />,

@@ -2,6 +2,7 @@ import './lib/appTheme'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
+import WindowChrome from './components/WindowChrome'
 import ErrorBoundary from './components/ErrorBoundary'
 import './styles.css'
 import './lighttable.css'
@@ -27,7 +28,7 @@ window.addEventListener('unhandledrejection', (e) => console.error('[TalkWeaver]
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
+      <WindowChrome><App /></WindowChrome>
     </ErrorBoundary>
   </React.StrictMode>
 )

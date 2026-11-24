@@ -381,8 +381,14 @@ const EFFECTS = {
   cta: {
     effect: 'the closing poster call to action',
     value: 'Write to me',
-    probe: ({ document }) => text(slideById(document, 'deck-thanks')?.querySelector('.tp-cta')),
+    probe: ({ document }) => text(slideById(document, 'deck-thanks')?.querySelector('.tp-sub')),
     assert: (got, value) => assert.equal(got, value)
+  },
+  contact_links: {
+    effect: 'an explicitly supplied contact link on the automatic closing slide',
+    value: '{notes: https://example.test/notes}',
+    probe: ({ document }) => slideById(document, 'deck-thanks')?.querySelector('.tp-contacts a')?.getAttribute('href'),
+    assert: got => assert.equal(got, 'https://example.test/notes')
   },
   duration: {
     effect: 'the presenter clock’s countdown length',

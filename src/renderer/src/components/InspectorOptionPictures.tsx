@@ -1,9 +1,10 @@
+import RevealPreviewBadge from './RevealPreviewBadge'
 import { useEffect, useRef, useState } from 'react'
 import type { SlideRef } from '../../../shared/layout-verbs'
 import type { OptionValue } from '../../../shared/layout-registry/entries'
 import { optionPictureRequest, type OptionPictureSet } from './inspectorModel'
 import {
-  VARIANT_PICTURE_POLICY, createVariantPictureQueue, isGreyMark, markSettled, marksForNewText,
+  VARIANT_PICTURE_POLICY, createVariantPictureQueue, isGreyMark, isRevealPicture, markSettled, marksForNewText, pictureMarkUrl,
   type VariantPictureMarks
 } from '../../../shared/variant-picture-queue'
 
@@ -122,7 +123,7 @@ export default function InspectorOptionPictures({
       {set.pictured.map((value, index) => {
         const selected = value.token === selectedToken
         const mark = marks[value.token]
-        const url = typeof mark === 'string' ? mark : undefined
+        const url = pictureMarkUrl(mark)
         const cannot = isGreyMark(mark) ? mark.reason : undefined
         return (
           <button
@@ -150,7 +151,10 @@ export default function InspectorOptionPictures({
               else moveWithin(event, index)
             }}
           >
-            {url && !cannot ? <img alt="" src={url} draggable={false} /> : <span className="opt-pic-blank" aria-hidden />}
+            <span className="tw-option-picture-frame">
+              {url && !cannot ? <img alt="" src={url} draggable={false} /> : <span className="opt-pic-blank" aria-hidden />}
+              {isRevealPicture(mark) && <RevealPreviewBadge />}
+            </span>
             <span>{value.label}</span>
             {showDescriptions && value.description && <small>{value.description}</small>}
           </button>

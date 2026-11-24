@@ -10,7 +10,7 @@
  * - `superseded`: dropped from the queue before its turn by a newer request. Ask again if still wanted.
  */
 export type VariantThumbnail =
-  | { status: 'ok'; slideId: string; url: string; cached: boolean }
+  | { status: 'ok'; slideId: string; url: string; cached: boolean; reveal?: true; revealSteps?: number }
   | { status: 'cannot-take'; slideId: string; reason: string }
   | { status: 'invalid'; slideId: string; reason: string }
   | { status: 'failed'; slideId: string }
@@ -18,7 +18,7 @@ export type VariantThumbnail =
 
 /** What a picture surface does with an answer (null = the IPC call itself failed). */
 export type VariantPictureAction =
-  | { kind: 'picture'; url: string }
+  | { kind: 'picture'; url: string; reveal?: true; revealSteps?: number }
   | { kind: 'grey'; reason: string }
   | { kind: 'sample' }
   | { kind: 'retry' }
@@ -27,7 +27,7 @@ export type VariantPictureAction =
 export function variantPictureAction(result: VariantThumbnail | null | undefined): VariantPictureAction {
   if (!result) return { kind: 'retry' }
   switch (result.status) {
-    case 'ok': return { kind: 'picture', url: result.url }
+    case 'ok': return { kind: 'picture', url: result.url, ...(result.reveal ? { reveal: true, revealSteps: result.revealSteps } : {}) }
     case 'cannot-take': return { kind: 'grey', reason: result.reason }
     case 'invalid': return { kind: 'sample' }
     case 'superseded': return { kind: 'ask-again' }

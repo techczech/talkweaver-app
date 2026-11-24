@@ -408,6 +408,7 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/vault-gallery/ManagementLayer.tsx', 'Local management dialog Tab wrap and Escape dismissal.'],
   ['src/renderer/src/components/vault-gallery/VaultGallery.tsx', 'Escape dismisses the gallery and Tab contains focus; local modal behaviour, no shortcut is bound'],
   ['src/renderer/src/components/scratchpad/ScratchpadInsert.tsx', 'Escape dismisses the open insertion menu and Enter chooses the first filtered destination; local menu behaviour, no shortcut is bound'],
+  ['src/renderer/src/components/StructureControls.tsx', 'Enter and Space use native button activation in the focused insert controls. Escape closes the choices and restores focus to Insert here. Arrow keys, Home and End are kept from the surrounding list’s key handler. No application shortcut is bound.'],
   ['src/main/settings-update-menu.ts', 'Uses the effective shared binding for app.check-for-updates while building the app-menu template; declares no shortcut.'],
   ['src/renderer/src/components/scratchpad/ScratchpadCard.tsx', 'Enter opens the big preview and Space selects while a Slide Scratchpad card has focus (native button-like card behaviour); no shortcut is bound'],
   ['src/renderer/src/components/scratchpad/ScratchpadPanel.tsx', 'Escape dismisses only the open docked options menu. It binds no application shortcut.'],
@@ -418,6 +419,7 @@ const SCAN_IGNORE = new Map([
   ['src/renderer/src/components/AbstractPanel.tsx', 'Escape-only modal dismissal and Enter on a native form control'],
   ['src/renderer/src/components/RemoveExampleConfirm.tsx', 'Escape-only dismissal of the Remove the example vault? confirmation (onboarding ticket 12, modal, local); no shortcut is bound'],
   ['src/renderer/src/components/InspectorBoard.tsx', 'The Board section’s fields keep their own typing (Enter stays in the one-line instructions; ↑ ↓ on a column’s handle moves that column, ADR-0032 round-3 A2); ⌥↑/⌥↓ still reach the Inspector’s slide navigation; no shortcut is bound'],
+  ['src/renderer/src/extensions/objectBlocks/notesDrag.ts', 'Up and Down move the current block only while its speaker-notes drag handle has focus, as with the Board column handle. No application shortcut is bound.'],
   ['src/renderer/src/components/ReactionsControl.tsx', 'Enter on the native custom-labels field commits it (ticket 04); no shortcut is bound'],
   ['src/renderer/src/components/RunAnswers.tsx', 'Escape-only dismissal of the open Copy and Export menu on a Run’s answers; no shortcut is bound'],
   ['src/renderer/src/components/EmbedCheckPanel.tsx', 'Escape-only panel dismissal'],
@@ -814,7 +816,7 @@ const SURFACE_KEY_IDS = Object.fromEntries(
   [...(surfaceKeysSource.match(/export const SURFACE_KEYS = \{([\s\S]*?)\}/)?.[1] ?? '').matchAll(/'([^']+)':\s*'([^']+)'/g)]
     .map((match) => [match[1], match[2]])
 )
-assert.equal(Object.keys(SURFACE_KEY_IDS).length, 43, 'the rebindable structure, view, talk-search and research keys are read from surfaceKeys.ts')
+assert.equal(Object.keys(SURFACE_KEY_IDS).length, 45, 'the rebindable structure, view, presentation, talk-search and research keys are read from surfaceKeys.ts')
 const SURFACE_KEY_COMPARISON = /\be\.key\s*[!=]==|\.includes\(e\.key\)|\.test\(e\.key\)|surfaceKey\(|findBoxOwnsKey\(e\.key/
 const PICKER_REGIONS = [
   ['picker', slideBrowserSource, 'function handleKey(e: KeyboardEvent): void {', "window.addEventListener('keydown', handleKey, { capture: true })"],

@@ -269,7 +269,7 @@
    "33717d1f60c138443742",
    "3ec046f6f11ac8dd8e36",
    "2f62c18a4f0b53e34b71",
-   "22cf19ef6e3d3b85e8f4"
+   "b4518a63851399d81243"
   ],
   "scripts/fixtures/ocean-look/ten-kinds-outline.md": [
    "975350a9a4f06ca73788",
@@ -289,7 +289,7 @@
    "77212a5033aaf39c7db5",
    "f8bc72cea64ddcc84067",
    "a4e0bf2b5a183d4a13d9",
-   "412eca9794313a05fa66"
+   "efa081f707b5e870b377"
   ],
   "scripts/fixtures/ocean-look/edge-cases-outline.md": [
    "62b5e11ba09276c3920d",
@@ -431,7 +431,7 @@
    "f58920bab4c6af10abba",
    "4e88f16fecaed912fde5",
    "38230dfcc3c926872105",
-   "cdb2e8c7cf5f69fdb67e"
+   "35872fcdf64afec6a52e"
   ]
  },
  "intentionalUpdates": [
@@ -439,6 +439,11 @@
    "date": "2026-11-21",
    "reason": "Preserve the title/media and address presentation changes over the shared HTML escape baseline.",
    "changedSlides": 16
+  },
+  {
+   "date": "2026-11-24",
+   "reason": "Generated closing slides adopt the selected opening treatment (issue #423)",
+   "changedSlides": 3
   }
  ]
 }

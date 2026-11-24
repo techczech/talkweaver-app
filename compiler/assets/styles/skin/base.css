@@ -81,7 +81,7 @@
     justify-content: space-between;
     padding: 3.66cqw 3cqw;
   }/* @order 1595 */
-  .tp-poster .tp-logo {
+  :is(.tp-poster, .tp-bookend-assets) .tp-logo {
     display: block;
     max-width: 18cqw;
     max-height: 4.5cqw;
@@ -90,10 +90,10 @@
     object-fit: contain;
     object-position: left top;
   }/* @order 1596 */
-  .tp-poster .tp-qr { display: flex; flex-direction: column; align-items: flex-start; gap: .56cqw; margin: auto 0 0; }/* @order 1598 */
-  .tp-poster .tp-qr .qr-code { width: 9.5cqw; height: 9.5cqw; padding: 0; border: 0; background: transparent; box-shadow: 0 1px 3px rgba(0,0,0,.14); cursor: pointer; }/* @order 1599 */
-  .tp-poster .tp-qr .qr-code svg { display: block; width: 100%; height: 100%; border-radius: .3em; }/* @order 1600 */
-  .tp-poster .tp-qr .qr-caption {
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr { display: flex; flex-direction: column; align-items: flex-start; gap: .56cqw; margin: auto 0 0; }/* @order 1598 */
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr .qr-code { width: 9.5cqw; height: 9.5cqw; padding: 0; border: 0; background: transparent; box-shadow: 0 1px 3px rgba(0,0,0,.14); cursor: pointer; }/* @order 1599 */
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr .qr-code svg { display: block; width: 100%; height: 100%; border-radius: .3em; }/* @order 1600 */
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr .qr-caption {
     font-family: var(--mono);
     font-size: 1.7cqw;
     letter-spacing: .05em;
@@ -101,8 +101,8 @@
     max-width: 20cqw;
     overflow-wrap: anywhere;
   }/* @order 1602 */
-  .tp-poster .tp-qr .qr-caption a { color: inherit; text-decoration: none; }/* @order 1604 */
-  .tp-poster .tp-qr.qr-too-long { color: var(--accent); font: 600 1.7cqw/1.35 var(--mono); overflow-wrap: anywhere; }/* @order 1606 */
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr .qr-caption a { color: inherit; text-decoration: none; }/* @order 1604 */
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr.qr-too-long { color: var(--accent); font: 600 1.7cqw/1.35 var(--mono); overflow-wrap: anywhere; }/* @order 1606 */
   .tp-poster .tp-main {
     flex: 1;
     display: grid;

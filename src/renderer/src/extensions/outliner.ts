@@ -13,6 +13,8 @@
 // logical line/column, so onContentChange + autosave stay in sync (ADR-0001 canonical).
 import { EditorView } from '@codemirror/view'
 import { isolateHistory } from '@codemirror/commands'
+import { headingOrderFromLineOrder } from '../../../shared/outline-save-identity'
+import { preserveHeadingOwners } from './outlineSaveIdentity'
 import { EditorSelection, Facet, StateEffect, type EditorState, type Transaction } from '@codemirror/state'
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language'
 import type { SyntaxNode } from '@lezer/common'
@@ -322,7 +324,7 @@ export function moveHeadingBlock(
   i: number,
   dir: 'up' | 'down',
   bs: number
-): { lines: string[]; caret: number } | null {
+): { lines: string[]; caret: number; removed: [number, number]; insertAt: number } | null {
   // Fence/comment mask, computed once per invocation: fenced lines are never block boundaries,
   // receivers, or re-level targets (reviewer scenarios (c)/(d) — live fence corruption otherwise).
   const fenced = fencedLineFlags(lines)
@@ -348,7 +350,7 @@ export function moveHeadingBlock(
     // id and layout line under it (headAt): the moved block is never wedged between them.
     const insertAt = logicalTriggerBlockAfterHeading(rest, block.start)?.end ?? block.start + 1
     const out = [...rest.slice(0, insertAt), ...moved, ...rest.slice(insertAt)]
-    return { lines: out, caret: insertAt + (i - block.start) }
+    return { lines: out, caret: insertAt + (i - block.start), removed: [block.start, block.end], insertAt }
   }
 
   // up: the block is the first child of its parent — leave the parent and become the LAST child of
@@ -375,7 +377,7 @@ export function moveHeadingBlock(
     ...lines.slice(p, block.start),
     ...lines.slice(block.end)
   ]
-  return { lines: out, caret: p + (i - block.start) }
+  return { lines: out, caret: p + (i - block.start), removed: [block.start, block.end], insertAt: p }
 }
 
 function offsetOfLine(lines: string[], lineIdx: number, col: number): number {
@@ -392,13 +394,15 @@ function offsetOfLine(lines: string[], lineIdx: number, col: number): number {
 export { minimalChange }
 
 // `typed`: the change is the direct result of a key press that types (see `keyTyped`).
-function applyDoc(view: EditorView, lines: string[], caretLine: number, caretCol: number, typed = false): boolean {
+function applyDoc(view: EditorView, lines: string[], caretLine: number, caretCol: number, typed = false, sourceLines?: readonly number[]): boolean {
   const newText = lines.join('\n')
   const pos = offsetOfLine(lines, Math.max(0, Math.min(caretLine, lines.length - 1)), caretCol)
-  const ch = minimalChange(view.state.doc.toString(), newText)
+  const before = view.state.doc.toString()
+  const ch = minimalChange(before, newText)
   view.dispatch({
     changes: { from: ch.from, to: ch.to, insert: ch.insert },
     selection: EditorSelection.cursor(pos),
+    effects: sourceLines && preserveHeadingOwners.of(headingOrderFromLineOrder(before, newText, sourceLines)),
     scrollIntoView: true,
     ...(typed ? typedByKey() : {})
   })
@@ -409,7 +413,7 @@ function applyDoc(view: EditorView, lines: string[], caretLine: number, caretCol
 // to go) when a line outside the focused band would change, or the band's first line (the focused
 // slide's heading) or a line put above it: the band is set when the slide is focused and is not
 // read again from the text, so a slide or a line moved across its edge left it on the wrong lines.
-function applyMove(view: EditorView, lines: string[], newLines: string[], caretLine: number, caretCol: number): boolean {
+function applyMove(view: EditorView, lines: string[], newLines: string[], caretLine: number, caretCol: number, sourceLines: readonly number[]): boolean {
   const focus = currentFocusRange(view.state)
   if (focus && newLines.length === lines.length) {
     let lo = 0
@@ -423,7 +427,7 @@ function applyMove(view: EditorView, lines: string[], newLines: string[], caretL
       if (lo <= first || hi > last) return false
     }
   }
-  return applyDoc(view, newLines, caretLine, caretCol)
+  return applyDoc(view, newLines, caretLine, caretCol, false, sourceLines)
 }
 
 export function moveNode(view: EditorView, dir: 'up' | 'down'): boolean {
@@ -469,7 +473,13 @@ export function moveNode(view: EditorView, dir: 'up' | 'down'): boolean {
     // container with uniform re-levelling (spec Q5). Sections travel with their subtree. A true
     // edge (document end / above the first section) returns null → consume the key, no-op.
     const crossed = moveHeadingBlock(lines, root, dir, bs)
-    if (crossed) return applyMove(view, lines, crossed.lines, crossed.caret + (i - root), col)
+    if (crossed) {
+      const order = lines.map((_, index) => index)
+      const [start, end] = crossed.removed
+      const moved = order.splice(start, end - start)
+      order.splice(crossed.insertAt, 0, ...moved)
+      return applyMove(view, lines, crossed.lines, crossed.caret + (i - root), col, order)
+    }
     return false
   }
   if (sib && block.kind === 'para') {
@@ -510,37 +520,32 @@ export function moveNode(view: EditorView, dir: 'up' | 'down'): boolean {
   // Gap-preserving swap: any blank lines BETWEEN the node and its sibling stay put (they end
   // up between the two after the swap). Same-level siblings are adjacent (empty gap); the
   // paragraph fallback may have a blank-line gap.
-  let newLines: string[]
+  const order = lines.map((_, index) => index)
+  let arranged: number[]
   let newBlockStart: number
   if (dir === 'up') {
     // doc order: sib, gap, block  →  block, gap, sib
-    const before = lines.slice(0, sib.start)
-    const gap = lines.slice(sib.end, block.start)
-    const after = lines.slice(block.end)
-    newLines = [
-      ...before,
-      ...lines.slice(block.start, block.end),
-      ...gap,
-      ...lines.slice(sib.start, sib.end),
-      ...after
+    arranged = [
+      ...order.slice(0, sib.start),
+      ...order.slice(block.start, block.end),
+      ...order.slice(sib.end, block.start),
+      ...order.slice(sib.start, sib.end),
+      ...order.slice(block.end)
     ]
     newBlockStart = sib.start
   } else {
     // doc order: block, gap, sib  →  sib, gap, block
-    const before = lines.slice(0, block.start)
-    const gap = lines.slice(block.end, sib.start)
-    const after = lines.slice(sib.end)
-    newLines = [
-      ...before,
-      ...lines.slice(sib.start, sib.end),
-      ...gap,
-      ...lines.slice(block.start, block.end),
-      ...after
+    arranged = [
+      ...order.slice(0, block.start),
+      ...order.slice(sib.start, sib.end),
+      ...order.slice(block.end, sib.start),
+      ...order.slice(block.start, block.end),
+      ...order.slice(sib.end)
     ]
-    newBlockStart = block.start + (sib.end - sib.start) + gap.length
+    newBlockStart = block.start + (sib.end - block.end)
   }
   const caretLine = newBlockStart + (i - block.start)
-  return applyMove(view, lines, newLines, caretLine, col)
+  return applyMove(view, lines, arranged.map(index => lines[index]), caretLine, col, arranged)
 }
 
 /** The title and level-two section headings cannot be promoted through the editor command. */
@@ -589,7 +594,7 @@ export function reLevel(
         changed = true
       }
     }
-    return changed ? applyDoc(view, lines, i, col) : false
+    return changed ? applyDoc(view, lines, i, col, false, lines.map((_, index) => index)) : false
   }
 
   // Non-heading lines (list item, > quote, plain paragraph, empty) promote/demote by

@@ -61,7 +61,7 @@ export interface VariantThumbnailDeps {
     /** sha256 of the marked deck, worked out where it was compiled: the document id without a pass here. */
     previewKey?: string
   } | null>
-  render(opts: { fullHtml: string; preview?: PreviewVariant; slides: IndexedThumbnailSlide[]; cacheDir: string; background?: boolean }): Promise<Record<string, string>>
+  render(opts: { fullHtml: string; preview?: PreviewVariant; slides: IndexedThumbnailSlide[]; cacheDir: string; background?: boolean; onRevealSteps?: (count: number) => void }): Promise<Record<string, string>>
   cacheDirFor(outlinePath: string, slug: string): string
   urlFor(slug: string, cacheName: string, outlinePath: string): string
   /** Document identity for the cache key (the deck's compiled HTML; `previewKey` saves hashing it). */
@@ -93,7 +93,7 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
   const fileExists = deps.fileExists ?? existsSync
   const fingerprint = deps.inputsFingerprint ?? ((outlinePath: string, outline: string) => mediaFingerprint(outlinePath, outline))
   // content hash → { url, png }: least recently used out.
-  const served = new Map<string, { url: string; png: string }>()
+  const served = new Map<string, { url: string; png: string; reveal?: true; revealSteps?: number }>()
 
   interface Job {
     hash: string
@@ -152,7 +152,7 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
     if (hit && fileExists(hit.png)) {
       served.delete(hash)
       served.set(hash, hit)
-      return { status: 'ok', slideId, url: hit.url, cached: true }
+      return { status: 'ok', slideId, url: hit.url, cached: true, ...(hit.reveal ? { reveal: true, revealSteps: hit.revealSteps } : {}) }
     }
     // The same try asked twice at once (a row and its neighbour) shares one job.
     const same = byHash.get(hash)
@@ -193,17 +193,23 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
       : selectedThumbnailSlide(rows, request.slideId, deps.documentId(fullHtml, prepared.previewKey))
     if (!selected) return failed
     const cacheDir = deps.cacheDirFor(request.outlinePath, prepared.slug)
-    const rendered = await deps.render({ fullHtml, preview: prepared.preview, slides: [selected], cacheDir, background: true })
+    const reveal = rows[selected.index]?.reveal_enabled
+    let revealSteps: number | undefined
+    const rendered = await deps.render({
+      fullHtml, preview: prepared.preview, slides: [selected], cacheDir, background: true,
+      onRevealSteps: reveal ? count => { revealSteps = count } : undefined
+    })
     const png = rendered[selected.key]
     if (!png) return failed
     const url = deps.urlFor(prepared.slug, pngName(png), request.outlinePath)
-    served.set(hash, { url, png })
+    const preview = reveal ? { reveal, revealSteps } : {}
+    served.set(hash, { url, png, ...preview })
     while (served.size > maxMemoryEntries) {
       const oldest = served.keys().next().value
       if (oldest === undefined) break
       served.delete(oldest)
     }
-    return { status: 'ok', slideId: request.slideId, url, cached: false }
+    return { status: 'ok', slideId: request.slideId, url, cached: false, ...preview }
   }
 
   return Object.assign(ask, {

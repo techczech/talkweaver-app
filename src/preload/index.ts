@@ -18,6 +18,7 @@ import type { RunAudioFields } from '../shared/run-audio'
 import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode, VaultPictureResult } from '../shared/image-search'
 import type { VariantThumbnail } from '../shared/variant-thumbnail-result'
 import type { EditorDocumentReply, EditorDocumentRequest } from '../shared/editor-document'
+import type { OutlineSaveIdentity } from '../shared/outline-save-identity'
 import type { RunQuestion, RunReaction } from '../shared/run-feedback'
 import type { RunBoard } from '../shared/run-board'
 import type { ExampleVaultResult } from '../shared/example-vault'
@@ -294,6 +295,8 @@ export type ProjectionRow = {
   image_count: number
   source_markdown: string
   triggers: Record<string, string>
+  /** Resolved authored reveal mode for Studio preview badges. */
+  reveal_enabled?: true
   /** Embed + video blocks on the slide (the projection counts the two together). Absent
    *  only on pre-v0.15 cached index rows. */
   embed_count?: number
@@ -1050,7 +1053,7 @@ const api = {
     writeOutline: (
       outlinePath: string,
       content: string,
-      opts?: { revision?: number; expectedDiskHash?: string }
+      opts?: { revision?: number; expectedDiskHash?: string; identity?: OutlineSaveIdentity }
     ): Promise<{ ok: true; collisions: string[]; content?: string } | { ok: false; refused: 'empty-over-nonempty' | 'ownership' } | { ok: false; refused: 'outside-vault'; error: string } | OutlineChangedOnDiskRefusal | false> =>
       ipcRenderer.invoke('talk:write-outline', outlinePath, content, opts),
     // `{ superseded: true }`: a newer live-preview compile of the same talk from this window replaced
@@ -1119,9 +1122,11 @@ const api = {
       startSlideId?: string,
       plannedRunId?: string,
       /** Record one slide again: the Run and the slide a new take is for (a presenter view of its own). */
-      retake?: { runId: string; change: number; slideId: string; slideN: number; camera: boolean }
+      retake?: { runId: string; change: number; slideId: string; slideN: number; camera: boolean },
+      /** The editor's Present commands start at the requested slide and pair the presenter with its audience. */
+      editorLaunch?: { pathwayId?: string }
     ): Promise<{ success: boolean; error?: string }> =>
-      ipcRenderer.invoke('talk:present', outlinePath, content, mode, startSlideId, undefined, plannedRunId, retake),
+      ipcRenderer.invoke('talk:present', outlinePath, content, mode, startSlideId, editorLaunch?.pathwayId, plannedRunId, retake, editorLaunch !== undefined),
     build: (outlinePath: string, content: string): Promise<{ success: boolean; outPath?: string; error?: string }> =>
       ipcRenderer.invoke('talk:build', outlinePath, content),
     buildVariants: (
@@ -1395,6 +1400,8 @@ const api = {
       | { ok: true; statuses: Array<{ ref: string; state: 'present' | 'missing' | 'outside' | 'remote' | 'invalid' | 'unchecked'; path?: string }> }
       | { ok: false; reason: string }
     > => ipcRenderer.invoke('object:status', outlinePath, refs),
+    staticPreview: (outlinePath: string, ref: string): Promise<string | null> =>
+      ipcRenderer.invoke('object:static-preview', outlinePath, ref),
     /** A web page's views saved before {capture} lines existed, for Place earlier views. */
     earlierViews: (outlinePath: string, pageUrl: string): Promise<
       | { ok: true; views: Array<{ image: string; capturedAt: string; mode?: 'page' }> }
@@ -2166,3 +2173,5 @@ declare global {
     tw: typeof api
   }
 }
+
+contextBridge.exposeInMainWorld('twMacInset', process.platform === 'darwin')

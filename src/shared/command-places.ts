@@ -55,7 +55,7 @@ const SLIDE_WIDE: readonly Place[] = ['slide-heading', 'layout-line', 'slide-tex
 
 /** Explicit declarations, in Actions-here order. */
 export const COMMAND_PLACES: Readonly<Record<string, PlaceDeclaration>> = {
-  // ── Write the outline ──
+  // ── Outline editing ──
   'promote-heading': ['slide-heading', 'list'],
   'demote-heading': ['slide-heading', 'list'],
   'editor.move-up': ['slide-heading', 'list'],

@@ -354,6 +354,25 @@ const STRIP_MANY = [['Long', 'Opening slide of a long section', '{titletop} {id=
   assert.deepEqual(pills(mixed.slide('x-1')).map((p) => p.textContent), ['Strip slide', 'Tab slide', 'Rail slide'], 'a slide-level tab strip names every slide of its section')
   assert.equal(pills(mixed.slide('x-2')).length, 0, 'a slide with another look draws no strip')
   assert.equal(pills(mixed.slide('x-3')).length, 0, 'a left-rail title draws no strip')
+  const bodies = [
+    ['Cycle', '{cycle}', '- Plan\n  - Collect the ideas\n- Build\n  - Try the new approach\n- Review\n  - Gather feedback'],
+    ['Boxed points', '{list}{iconlist}{iconlist=boxes}', '- Plan\n- Build\n- Review'],
+    ['Icon row', '{iconrow}', '- Plan {icon=lucide:list}\n- Build {icon=lucide:hammer}\n- Review {icon=lucide:check}'],
+    ['Statement', '{statement}{statement-sidebar=off}', 'A clear plan leaves more time for the work.']
+  ]
+  for (const [heading, trigger, body] of bodies) {
+    const content = []
+    for (const [option, id] of [['{titlelook=kicker}', 'kicker'], ['{titlelook=tab-strip}', 'strip'], ['{notitle}', 'hidden']]) {
+      content.push([id === 'kicker' ? 'Title examples' : null, heading, trigger + option + `{id=${id}}`, body])
+    }
+    const deck = await compile(['defaults: { title: top }'], content)
+    const renderedBody = id => [...deck.slide(id).querySelector('.slide-content').children]
+      .filter(child => !child.classList.contains('slide-head')).map(child => child.outerHTML)
+    assert.deepEqual(renderedBody('strip'), renderedBody('kicker'), `${heading}: the strip only changes the title`)
+    assert.deepEqual(renderedBody('hidden'), renderedBody('kicker'), `${heading}: hiding the title preserves the body`)
+    assert.equal(pills(deck.slide('strip')).length, 3)
+    assert(quiet(deck.slide('hidden')), `${heading}: the hidden h1 is still available to navigation`)
+  }
   // Two independently authored slides with the same title are two pills; the highlight moves between them.
   const twins = await compile(['title_look: tab-strip'], [['Data', 'Results', '{titletop} {id=r-1}'], [null, 'Results', '{titletop} {id=r-2}']])
   assert.deepEqual(pills(twins.slide('r-1')).map((p) => p.textContent), ['Results', 'Results'], 'two same-title slides, two pills')

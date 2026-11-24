@@ -99,6 +99,7 @@ for (let round = 0; round < 1800; round++) {
   if (!move.text) continue
   successes.moved++
   const slides = readSlides(move.text).slides
+  assert.deepEqual(move.headingOrder.map(index => before[index].id), ids(slides), context)
   assert.deepEqual(plainLines(move.text, slides).sort(), original.slice().sort(), context)
   assert.equal(crCount(move.text), crCount(text), context)
   const moves = new Set(ids(before.filter((slide, i) => picked.includes(i) || slide.ancestors.some(parent => picked.includes(parent)))))

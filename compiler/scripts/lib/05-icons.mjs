@@ -783,6 +783,7 @@ function tokenize(text) {
 // name/tag scoring. Returns an ordered array of {key, score} for items above threshold.
 // The Lucide catalogue and rules are fixed for the process. Repeated compiler passes and preview
 // variants can reuse the same exact item text. Bound both the entry count and the retained text.
+// Treat the returned array and its entries as read-only. Copy them before modifying either.
 const LUCIDE_CANDIDATE_MEMO_LIMIT = 512;
 const LUCIDE_CANDIDATE_TEXT_LIMIT = 512;
 const lucideCandidateMemo = new Map();

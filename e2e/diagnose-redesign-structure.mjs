@@ -95,8 +95,10 @@ async function capture(page, frame, hoveredAddLine) {
     }, { scroll, frames, thumbnails })
     if (hoveredAddLine !== undefined) {
       const add = copy.locator('.tw-structure-panel .tw-structure-add-line').nth(hoveredAddLine)
-      await add.hover({ force: true })
-      assert.ok(await add.getByRole('button', { name: 'Section', exact: true }).isVisible())
+      const trigger = add.getByRole('button', { name: 'Insert here', exact: true })
+      await trigger.hover({ force: true })
+      assert.equal(await trigger.evaluate(el => getComputedStyle(el, '::before').borderTopStyle), 'dotted')
+      assert.equal(await add.getByRole('button', { name: 'Section', exact: true }).count(), 0)
     }
     await copy.screenshot({ path: join(shots, `${frame}.png`), animations: 'disabled' })
   } finally { await copy.close() }
@@ -359,14 +361,17 @@ try {
         assert.ok(await footer.getByRole('button', { name: 'Section', exact: true }).locator('svg').first().isVisible(), tag)
         await capture(page, `${tag}-previews`)
         const add = panel.locator('.tw-structure-add-line').nth(1)
-        await add.hover()
+        const trigger = add.getByRole('button', { name: 'Insert here', exact: true })
+        await trigger.hover()
+        await capture(page, `${tag}-add-line`, 1)
+        await trigger.click()
         const addBounds = await panel.boundingBox()
         assert.ok(addBounds)
         for (const label of ['Slide', 'Section', 'Subsection']) {
           const box = await add.getByRole('button', { name: label, exact: true }).boundingBox()
           assert.ok(box && box.x >= addBounds.x - 1 && box.x + box.width <= addBounds.x + addBounds.width + 1, `${label} fits at ${tag}`)
         }
-        await capture(page, `${tag}-add-line`, 1)
+        await capture(page, `${tag}-add-choices`)
         await previewCard('Repair').click()
         await previewCard('Plant').click({ modifiers: ['Shift'] })
         await footer.getByRole('button', { name: 'Make a section', exact: true }).waitFor()

@@ -15,6 +15,8 @@ import {
   toggleRawObjectAtSelection
 } from '../src/renderer/src/extensions/objectBlocks/field.ts'
 import { ObjectWidget } from '../src/renderer/src/extensions/objectBlocks/widgets.ts'
+import { editNotesAsSource } from '../src/renderer/src/extensions/objectBlocks/effects.ts'
+import { insertSpeakerNotes } from '../src/renderer/src/extensions/objectBlocks/commands.ts'
 import { installTestDom, TestEvent } from './test-dom.mjs'
 
 function objectDecorations(state) {
@@ -605,5 +607,25 @@ try {
   console.error = originalConsoleError
   dom.restore()
 }
+
+const rawNotes = '### First slide\n\n:::notes\nKeep this private.  \nAnother line.\n:::\n\n### Second slide\n'
+const rawView = fakeView(EditorState.create({ doc: rawNotes, extensions: [objectBlocksExtension({}), editNotesAsSource.of(true)] }))
+assert.equal(objectDecorations(rawView.state).length, 0, 'Markdown notes are actual source, without replacement widgets')
+assert.equal(insertSpeakerNotes(rawView), true)
+const notesBody = rawNotes.indexOf('Keep this')
+assert.equal(rawView.state.selection.main.head, notesBody, 'the notes command puts the caret inside the raw block')
+assert.equal(openSelectedObject(rawView), false, 'Enter falls through to ordinary Markdown editing')
+assert.equal(inputText(rawView, notesBody, notesBody, 'Still '), false)
+assert.equal(rawView.state.doc.toString(), rawNotes.replace('Keep this', 'Still Keep this'))
+for (const unsafe of [':::\n', '### Unexpected heading\n', '~~~\n']) {
+  const result = rawView.state.update({ changes: { from: notesBody, insert: unsafe }, userEvent: 'input.paste' })
+  assert.equal(result.docChanged, false, 'partial source edits must preserve the private block')
+}
+const remapped = rawView.state.update({ changes: { from: rawNotes.indexOf(':::notes'), insert: '\n' }, userEvent: 'input' })
+assert.equal(remapped.docChanged, true, 'a blank line before the opener is allowed')
+const from = rawView.state.doc.toString().indexOf(':::notes')
+const to = rawView.state.doc.toString().indexOf('\n:::\n') + '\n:::\n'.length
+assert.equal(rawView.state.update({ changes: { from, to }, userEvent: 'delete' }).newDoc.toString(),
+  '### First slide\n\n\n### Second slide\n', 'a whole-block deletion is an ordinary source edit')
 
 console.log('test:object-block-field OK')

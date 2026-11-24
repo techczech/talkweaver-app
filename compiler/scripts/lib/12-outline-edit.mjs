@@ -209,19 +209,25 @@ export function preferredIdsFromText(text) {
 // elsewhere in this document (then a fresh id is minted, never a duplicate). Returns
 // { text, stamped: [{heading, occurrence, id}] } — stamped is [] (text unchanged, same reference)
 // when every heading is already id-ed.
-export function stampMissingIds(text, rng = Math.random, { preferred = null } = {}) {
+export function stampMissingIds(text, rng = Math.random, { preferred = null, identity = null } = {}) {
   const eol = dominantEol(text);
   const taken = new Set([...String(text).matchAll(new RegExp(ID_TOKEN_RE.source, "g"))].map((m) => m[1]));
   // The headings to stamp are read by slide-blocks.mjs, so a caller that must know beforehand
   // whether a save will stamp anything asks the same reading (headingsMissingIds).
   const targets = headingsMissingIds(text);
+  // Pre-reserve all acknowledged IDs before minting so an earlier new heading cannot
+  // take a later heading's ID. Replay only writes IDs supplied for its exact positions.
+  const ids = identity && identity.ids.length === listSlideBlocks(text).length ? identity.ids : undefined;
+  const reserved = new Set([...taken, ...(ids ?? []).filter(Boolean)]);
 
   let out = text;
   const stamped = [];
   for (const ref of targets) {
-    const pref = preferred?.get(ref.prefKey);
-    const id = pref && !taken.has(pref) ? pref : mintId(rng, taken);
+    const pref = ids ? ids[ref.index] : identity?.replay ? undefined : preferred?.get(ref.prefKey);
+    if (identity?.replay && (!pref || taken.has(pref))) continue;
+    const id = pref && !taken.has(pref) ? pref : mintId(rng, reserved);
     taken.add(id);
+    reserved.add(id);
     out = setSlideId(out, { heading: ref.heading, occurrence: ref.occurrence }, id, eol);
     stamped.push({ heading: ref.heading, occurrence: ref.occurrence, id });
   }

@@ -8,6 +8,7 @@ import { EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { readOutlineLines } from '../src/shared/plain-view-outline-lines.ts'
 import { readOutlineObjectRegions } from '../src/shared/objects/outline-object-regions.ts'
+import { planNotesMove } from '../src/shared/objects/notes-planner.ts'
 import { detectOutlineObjects } from '../src/renderer/src/extensions/objectBlocks/detect.ts'
 import {
   ObjectEditorWidget,
@@ -247,6 +248,30 @@ test('object.row.list and replace change one row only', () => {
   assert.equal(out.text, VTALK.replace('bot: Hello', 'bot: Changed'))
   assert.equal(rowReplace(VTALK, line, 1, listed.rows[1].hash, { content: 'a\n```' }).code, 'refused')
   assert.equal(segmentHash('a'), segmentHash('a'))
+})
+
+test('speaker notes move as one exact block and leave slide and fence boundaries intact', () => {
+  for (const eol of ['\n', '\r\n']) {
+    const heading = '### First {id=first}'
+    const notes = [':::NOTES  ', '  Private é  ', '', ':::\t']
+    const following = ['- Still public', '### Second {id=second}', '- Kept']
+    const source = [heading, '{list}', '- Point', ...notes, ...following].join(eol)
+    const block = detectOutlineObjects(source).blocks.find(block => block.kind === 'notes')
+    const move = beforeLine => planNotesMove(source, block.from, block.source, beforeLine)
+    const apply = (text, plan) => text.slice(0, plan.from) + plan.insert + text.slice(plan.to)
+    assert.equal(apply(source, move(2)), [heading, '{list}', ...notes, '- Point', ...following].join(eol))
+    assert.equal(apply(source, move(8)), [heading, '{list}', '- Point', following[0], ...notes, ...following.slice(1)].join(eol))
+    assert.equal(move(1), null, 'the notes cannot split the layout trigger from the heading')
+    assert.equal(move(10), null, 'the notes cannot leave their slide')
+    assert.equal(planNotesMove(source.replace('Private', 'New'), block.from, block.source, 2), null)
+    const finalLine = [heading, ...notes, 'No final newline'].join(eol)
+    const finalBlock = detectOutlineObjects(finalLine).blocks.find(block => block.kind === 'notes')
+    assert.equal(apply(finalLine, planNotesMove(finalLine, finalBlock.from, finalBlock.source, 6)),
+      [heading, 'No final newline', ...notes].join(eol))
+    const fenced = [heading, '~~~txt', 'Fence text', '~~~', ...notes].join(eol)
+    const fencedNote = detectOutlineObjects(fenced).blocks.find(block => block.kind === 'notes')
+    assert.equal(planNotesMove(fenced, fencedNote.from, fencedNote.source, 2), null, 'the notes cannot become code')
+  }
 })
 
 console.log(`\ntest-outline-objects: ${passed} passed.`)

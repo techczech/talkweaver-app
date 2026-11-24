@@ -17,7 +17,7 @@ async function test(name, fn) {
   try { await fn(); passed += 1; console.log(`PASS  ${name}`) } catch (error) { console.error(`FAIL  ${name}`); throw error }
 }
 
-// Execute Editor's real write callback with an undo buffer whose missing id main stamps again.
+// Execute Editor's write callback with an undo buffer whose acknowledged ID main restores.
 await test('save acknowledgement after undo is clean without adopting ids; a newer buffer stays dirty', async () => {
   const source = readFileSync(new URL('../src/renderer/src/components/Editor.tsx', import.meta.url), 'utf8')
   const start = source.indexOf('const writeQueued = useCallback(')
@@ -27,21 +27,31 @@ await test('save acknowledgement after undo is clean without adopting ids; a new
   const stamped = '### New slide\n{id=new}\n\nBody\n'
   for (const newer of [false, true]) {
     const baseline = { text: null, dirty: true }
-    let current = authored
-    const state = { doc: { toString: () => current }, toText: s => ({ toString: () => s }) }
+    const state = { doc: { toString: () => authored }, toText: s => ({ toString: () => s }) }
+    const view = { state }
+    const identity = { ids: ['new'], replay: true }
+    let acknowledged
     const wiring = {
       useCallback: fn => fn, saveTimerRef: { current: null }, cleanDocumentRef: { current: baseline },
       editorRevision: { current: () => 2 }, outlineDiskChanges: { isDiscarded: () => false },
       queueOutlineWrite: async (_path, work) => work(),
-      window: { tw: { talk: { writeOutline: async () => { if (newer) current += 'NEWER'; return { ok: true, content: stamped } } } } },
-      onSaved: undefined, loadedPathRef: { current: '/talk' }, viewRef: { current: { state } },
+      textForSave: (_state, text) => text, acknowledgedIds: { current: new WeakMap() },
+      captureOutlineIdentity: () => ({ options: () => identity, acknowledge: saved => { acknowledged = saved } }),
+      window: { tw: { talk: { writeOutline: async (_path, text, options) => {
+        assert.equal(text, authored)
+        assert.deepEqual(options.identity, identity)
+        if (newer) view.state = { ...state, doc: { toString: () => authored + 'NEWER' } }
+        return { ok: true, content: stamped }
+      } } } },
+      onSaved: undefined, loadedPathRef: { current: '/talk' }, viewRef: { current: view },
       // Real adoption intentionally does nothing after undo, preserving redo history.
       adoptStampedContent: () => {}, onDirtyRef: { current: () => {} },
     }
     const write = new Function(...Object.keys(wiring), js + '; return writeQueued')(...Object.values(wiring))
-    assert.equal(await write('/talk', authored, authored, 2), true)
+    assert.equal(await write('/talk', state, 2), true)
+    assert.equal(acknowledged, stamped)
     assert.equal(baseline.dirty, newer, 'only authored text changed since the acknowledged save is unsaved')
-    assert.equal(current, authored + (newer ? 'NEWER' : ''), 'the undo buffer and history need no adoption')
+    assert.equal(view.state.doc.toString(), authored + (newer ? 'NEWER' : ''), 'the undo buffer and history need no adoption')
   }
 })
 

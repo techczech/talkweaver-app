@@ -41,7 +41,7 @@ export async function pruneThumbnailArtwork(cacheDir: string, namespaceRoot: str
   if (!namespaceRoot || !await safeDirectory(cacheDir, namespaceRoot)) { refused(); return }
   const names = await readdir(cacheDir).catch(() => [])
   const candidates = names.filter(name => {
-    const match = /^[0-9a-f]{16}-(.+?)(?:__\d+)?\.png$/.exec(name)
+    const match = /^[0-9a-f]{16}-(.+?)(?:__\d+)?\.png(?:\.steps)?$/.exec(name)
     return match && !name.startsWith(currentPrefix) && verified.has(match[1])
   })
   for (const name of candidates) {

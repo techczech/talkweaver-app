@@ -7,7 +7,7 @@
 .image-drop-hint { position: absolute; right: 46px; top: 50%; transform: translateY(-50%); width: 300px; height: 210px; z-index: 5; pointer-events: none; border: 2px dashed var(--line-strong); border-radius: 6px; background: var(--panel); display: flex; align-items: center; justify-content: center; color: var(--faint); font-size: 13px; text-align: center; line-height: 1.5; }
 
 .image-drawer { width: 432px; flex: none; display: flex; flex-direction: column; min-height: 0; border-left: 1px solid var(--line); background: var(--panel); box-shadow: -8px 0 24px rgba(72, 58, 34, .08); font-family: var(--font-ui); color: var(--ink); }
-.image-drawer__head { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: 28px 16px 0; box-sizing: content-box; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
+.image-drawer__head { height: 52px; flex: none; display: flex; align-items: center; gap: 10px; padding: var(--tw-native-block, 0px) 16px 0; box-sizing: content-box; border-bottom: 1px solid var(--line); -webkit-app-region: drag; }
 .image-drawer__head b { font-weight: 600; font-size: 14.5px; }
 .image-drawer__shortcut { font: 11px var(--font-mono); color: var(--faint); }
 .image-drawer__close { -webkit-app-region: no-drag; margin-left: auto; width: 24px; height: 24px; border: 0; border-radius: 5px; background: none; color: var(--muted); font-size: 16px; line-height: 1; cursor: pointer; }

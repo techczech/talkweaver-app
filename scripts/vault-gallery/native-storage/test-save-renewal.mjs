@@ -4,7 +4,7 @@ import fs from 'node:fs'
 import ts from 'typescript'
 const src=readMainSource()
 const renew=src.slice(src.indexOf('function renewEstablishedGalleryClaims()'),src.indexOf('function renewEstablishedGalleryClaims()')+src.slice(src.indexOf('function renewEstablishedGalleryClaims()')).indexOf('\n}\n')+2)
-const pre=src.split("async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string, expectedDiskHash?: string) {")[1].split('  // An outline outside')[0]
+const pre=src.split(/^async function writeOutlineFromEditor\([^\n]*\) \{\n/m)[1].split('  // An outline outside')[0]
 const code=ts.transpileModule(renew+'\n'+pre+'\nreturn {ok:true,authorize,advance:n=>galleryEpoch=n};',{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText
 const claims=new Map([[1,{vaultId:'A',root:'root-A',path:'talk-A',dev:1,ino:2,revoked:false}]]),epochs=new Map([[1,0]]),reservations=new Map(),windows=new Map([[1,{win:{isDestroyed:()=>false},outlinePath:'talk-A'}]])
 let open=true,ino=2,destroyed=false,competing=false,canonical='root-A'

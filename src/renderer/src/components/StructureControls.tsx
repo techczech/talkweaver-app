@@ -1,4 +1,5 @@
 import { BookmarkPlus, Check, Copy, CornerDownRight, Plus, Trash2 } from 'lucide-react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import { liveShortcutLabel } from '../keymap/store'
 import ToolbarMenu, { type MenuItem } from './ToolbarMenu'
 import type { SectionKind } from '../../../shared/talk-structure'
@@ -61,14 +62,50 @@ export function StructureAddLine({ onAdd, subsectionReason, always = false }: {
   subsectionReason?: string
   always?: boolean
 }) {
-  return <div className="tw-structure-add-line" data-always={always || undefined} aria-label="Add here">
-    <i aria-hidden />
-    <div>
-      <button type="button" aria-label="Slide" title="New slide" onClick={() => onAdd('slide')}><Plus size={13} /><span>Slide</span></button>
-      <button type="button" aria-label="Section" title="New section" onClick={() => onAdd('section')}><BookmarkPlus size={13} /><span>Section</span></button>
-      <button type="button" aria-label="Subsection" disabled={!!subsectionReason} title={subsectionReason ?? 'New subsection'} onClick={() => onAdd('subsection')}>
+  const [open, setOpen] = useState(false)
+  const choicesId = useId()
+  const root = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const choices = useRef<HTMLDivElement>(null)
+
+  useLayoutEffect(() => {
+    if (open) choices.current?.scrollIntoView({ block: 'nearest', behavior: 'instant' })
+  }, [open])
+  useEffect(() => {
+    if (!open) return
+    // Dismiss after an outside click so the neighbouring row remains under the pointer.
+    function dismiss(event: MouseEvent): void {
+      if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false)
+    }
+    document.addEventListener('click', dismiss)
+    return () => document.removeEventListener('click', dismiss)
+  }, [open])
+
+  function choose(kind: SectionKind | 'slide'): void {
+    setOpen(false)
+    onAdd(kind)
+  }
+
+  return <div ref={root} className="tw-structure-add-line" data-always={always || undefined}
+    onKeyDown={event => {
+      if (event.key === 'Enter' || event.key === ' ' || event.key.startsWith('Arrow') ||
+          event.key === 'Home' || event.key === 'End') event.stopPropagation()
+      if (event.key === 'Escape' && open) {
+        event.preventDefault()
+        event.stopPropagation()
+        setOpen(false)
+        trigger.current?.focus({ preventScroll: true })
+      }
+    }}>
+    {!always && <button ref={trigger} className="tw-structure-insert-trigger" type="button"
+      aria-expanded={open} aria-controls={open ? choicesId : undefined} onClick={() => setOpen(value => !value)}>
+      <span>Insert here</span>
+    </button>}
+    {(always || open) && <div ref={choices} id={choicesId} className="tw-structure-insert-choices" role="group" aria-label="Insert here">
+      <button type="button" title="New slide" onClick={() => choose('slide')}><Plus size={13} /><span>Slide</span></button>
+      <button type="button" title="New section" onClick={() => choose('section')}><BookmarkPlus size={13} /><span>Section</span></button>
+      <button type="button" disabled={!!subsectionReason} title={subsectionReason ?? 'New subsection'} onClick={() => choose('subsection')}>
         <CornerDownRight size={13} /><span>Subsection</span></button>
-    </div>
-    <i aria-hidden />
+    </div>}
   </div>
 }

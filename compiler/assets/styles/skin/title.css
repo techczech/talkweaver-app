@@ -99,3 +99,11 @@
 /* @order 1807 */
   .slide-content.layout-title .tp .tp-body .feature-list > li,
   .slide-content.layout-closing .tp .tp-body .feature-list > li { padding: 0; gap: .6em; }
+
+/* A generated Split or Banner closing keeps its handout and logo in the composition. */
+.layout-title .tp-bookend-assets :is(.tp-logo, .tp-qr .qr-caption) { max-width: 100%; }
+.layout-title .tp-split .tp-bookend-assets .tp-qr { margin: 0; }
+.layout-title .tp-banner .tp-main:has(> .tp-bookend-assets) { gap: 4cqw; padding: 4cqw 6cqw; }
+.layout-title .tp-banner .tp-main > .tp-bookend-assets { display: grid; gap: 1.5cqw; flex: 0 0 20cqw; }
+.layout-title .tp-banner .tp-main:has(> .tp-bookend-assets) > .tp-inner { min-width: 0; }
+.layout-title .tp-contacts { overflow-wrap: anywhere; }

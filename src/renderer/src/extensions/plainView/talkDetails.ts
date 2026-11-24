@@ -188,7 +188,7 @@ const panelTheme = EditorView.theme({
   '.cm-td-toggle:focus-visible, .cm-td-raw:focus-visible': { outline: '2px solid var(--focus)', outlineOffset: '2px', borderRadius: '4px' },
   '.cm-td-title': { fontWeight: '700', flex: '0 0 auto' },
   '.cm-td-summary': { color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: '0' },
-  '.cm-td-go': { color: 'var(--accent-text)', fontSize: '13px', marginLeft: 'auto', flex: '0 0 auto' },
+  '.cm-td-go': { color: 'var(--accent-text)', fontSize: '13px', marginLeft: 'auto', minWidth: '0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   '.cm-td-raw': { all: 'unset', cursor: 'pointer', fontSize: '12px', color: 'var(--muted)', padding: '2px 6px', flex: '0 0 auto' }
 }, { dark: false })
 

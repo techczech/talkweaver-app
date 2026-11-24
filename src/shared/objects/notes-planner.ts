@@ -147,3 +147,57 @@ export function planNotesClose(text: string, start: number): NotesPlan {
   }
   return { ok: true, text: next, from: at, to: at, insert, start, close }
 }
+
+/** Move a closed notes block before a line on its own slide, preserving its authored bytes. */
+export function planNotesMove(text: string, from: number, source: string, beforeLine: number):
+  { from: number; to: number; insert: string; at: number } | null {
+  const regions = readOutlineObjectRegions(text)
+  const { lineStarts } = regions
+  const note = regions.notes.find(item => item.closed && lineStarts[item.start] === from)
+  if (!note || text.slice(from, lineStarts[note.end]) !== source) return null
+  const slide = slideAround(text, note.start, regions)
+  if (!slide || beforeLine <= slide.heading || beforeLine > slide.end) return null
+  if (beforeLine >= note.start && beforeLine <= note.end) return null
+
+  // Rotate the two adjacent ranges around their original separator. The separator at the
+  // far end stays put, including when the last line of the document is unterminated.
+  const endOfLine = (line: number) => Math.min(text.length, lineStarts[line + 1] - 1)
+  const contentEnd = (line: number) => {
+    const end = endOfLine(line)
+    return text[end] === '\n' && text[end - 1] === '\r' ? end - 1 : end
+  }
+  const noteEnd = contentEnd(note.close)
+  const up = beforeLine < note.start
+  const start = up ? lineStarts[beforeLine] : from
+  const end = up ? noteEnd : contentEnd(beforeLine - 1)
+  const split = up ? contentEnd(note.start - 1) : noteEnd
+  const right = up ? from : lineStarts[note.end]
+  const rightText = text.slice(right, end)
+  const separator = text.slice(split, right)
+  const insert = rightText + separator + text.slice(start, split)
+  const next = text.slice(0, start) + insert + text.slice(end)
+  const at = up ? start : start + rightText.length + separator.length
+  const newStart = up ? beforeLine : beforeLine - (note.end - note.start)
+  const moved = readOutlineObjectRegions(next)
+  if (!moved.notes.some(item => item.closed && item.start === newStart
+    && item.end - item.start === note.end - note.start)) return null
+
+  // Moving across a fence, or the slide's trigger prelude, can change the compiler's
+  // interpretation of unmoved bytes. Verify the exact rotation of private and visible lines.
+  const read = (value: string) => parseOutlineTree(outlineCompilerBody(value).body)
+  const previous = read(text)
+  const proposed = read(next)
+  const mapLine = (line: number): number => {
+    if (line >= note.start && line < note.end) return newStart + line - note.start
+    if (up && line >= beforeLine && line < note.start) return line + note.end - note.start
+    if (!up && line >= note.end && line < beforeLine) return line - (note.end - note.start)
+    return line
+  }
+  const mappedMatches = (old: number[], updated: number[]): boolean => {
+    const expected = new Set(old.map(mapLine))
+    return expected.size === updated.length && updated.every(line => expected.has(line))
+  }
+  if (!mappedMatches(previous.notesLineIndexes, proposed.notesLineIndexes)
+    || !mappedMatches([...previous.contentLineIndexes.values()].flat(), [...proposed.contentLineIndexes.values()].flat())) return null
+  return { from: start, to: end, insert, at }
+}

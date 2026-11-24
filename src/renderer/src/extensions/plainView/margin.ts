@@ -1,16 +1,5 @@
-// Plain view, ticket 03 (spec T7): the margin. A gutter that replaces the slide-number gutter in
-// Plain and names each heading line: TALK, SECTION, or SLIDE n with the layout's name under it.
-//
-// The labels come from `marginLabels` (shared/plain-view-margin.ts), computed from the compiled
-// rows in WorkspaceLayout and pushed in through an effect, as the slide-number gutter is fed. The
-// anchors ride document edits between compiles. A heading with no anchor (just typed, or nothing
-// compiled yet) is named by its depth and the layout its own Trigger lines write.
-//
-// Ticket 04 (spec T8, T9): the margin word and the layout name are buttons. They raise
-// `onLevelMenu(line, anchorRect)` and `onLayoutMenu(line, anchorRect)`; the React side draws the menu
-// and applies the change. The label of the heading that holds the caret is drawn darker and bold.
-// Each label carries `data-margin-kind` and `data-margin-line`. The slide-number gutter is not removed from the editor: the Plain
-// theme hides it, and this gutter takes the first place (Prec.high) so it sits at the left edge.
+// The compact Outline gutter. Numbers track the compiler's margin labels, and the
+// heading-level and layout menus act on the heading beside the clicked number.
 import { EditorView, GutterMarker, gutter } from '@codemirror/view'
 import { Prec, StateEffect, StateField, type EditorState, type Extension, type Text } from '@codemirror/state'
 import { isSectionHeading, marginDetail, marginWord, slideLayoutLabel, type MarginLabel } from '../../../../shared/plain-view-margin'
@@ -65,12 +54,14 @@ class MarginMarker extends GutterMarker {
     const word = document.createElement('button')
     word.type = 'button'
     word.className = 'cm-plain-margin-word'
-    word.textContent = marginWord(this.words)
-    // "Section 2.1" is longer than the column: the longer the word, the smaller it is set, never cut.
-    const size = word.textContent.length
-    if (size > 8) word.classList.add(size > 12 ? 'cm-plain-margin-word-3' : size > 10 ? 'cm-plain-margin-word-2' : 'cm-plain-margin-word-1')
+    const description = marginWord(this.words)
+    word.textContent = this.words.kind === 'talk' ? '#'
+      : this.words.kind === 'section' ? (this.words.sectionNumber ? `§${this.words.sectionNumber}` : '§')
+      : this.words.number == null ? '•'
+      : this.words.item == null ? String(this.words.number) : `${this.words.number}.${this.words.item}`
+    if (this.words.kind === 'section') word.title = [description, marginDetail(this.words)].filter(Boolean).join(' · ')
     word.setAttribute('aria-haspopup', 'menu')
-    word.setAttribute('aria-label', `${word.textContent}: change this heading's level`)
+    word.setAttribute('aria-label', `${description}: change this heading's level`)
     word.addEventListener('click', () => this.handlers.onLevelMenu?.(this.lineNo, this.anchorRect(box, word)))
     box.append(word)
     const layoutLabel = this.words.layoutLabel
@@ -82,7 +73,6 @@ class MarginMarker extends GutterMarker {
       layout.setAttribute('aria-label', `Layout: ${layoutLabel}. Change this slide's layout`)
       const name = document.createElement('span')
       name.textContent = layoutLabel
-      if (Math.max(...layoutLabel.split(/\s+/).map((part) => part.length)) > 9) layout.classList.add('cm-plain-margin-tight')
       const chevron = document.createElement('span')
       chevron.className = 'cm-plain-margin-chevron'
       chevron.setAttribute('aria-hidden', 'true')
@@ -90,13 +80,6 @@ class MarginMarker extends GutterMarker {
       layout.append(name, chevron)
       layout.addEventListener('click', () => this.handlers.onLayoutMenu?.(this.lineNo, this.anchorRect(box, layout)))
       box.append(layout)
-    }
-    const detail = marginDetail(this.words)
-    if (detail) {
-      const quiet = document.createElement('span')
-      quiet.className = 'cm-plain-margin-detail'
-      quiet.textContent = detail
-      box.append(quiet)
     }
     return box
   }
@@ -136,46 +119,39 @@ function markerFor(state: EditorState, from: number, to: number, handlers: Margi
   return new MarginMarker(section ? { kind: 'section' } : { kind: 'slide', layoutLabel: slideLayoutLabel(facts, lineNo - 1) }, lineNo, active, handlers)
 }
 
-// 84px with the fold chevron's 10px column beside it; the label's own column is 71px (the empty strip left of the labels is gone).
-const WIDTH = '74px'
+const WIDTH = '40px'
 
 const marginTheme = EditorView.theme({
-  '.cm-gutter.cm-plain-margin': { width: WIDTH, minWidth: WIDTH, maxWidth: WIDTH, boxSizing: 'border-box' },
-  '.cm-plain-margin .cm-gutterElement': { padding: '0 2px 0 1px', textAlign: 'right', boxSizing: 'border-box' },
+  '.cm-gutter.cm-plain-margin': { width: WIDTH, minWidth: WIDTH, maxWidth: WIDTH, boxSizing: 'border-box', overflow: 'visible' },
+  '.cm-plain-margin .cm-gutterElement': { padding: '0 2px 0 1px', boxSizing: 'border-box' },
   '.cm-plain-margin-label': {
-    display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'flex-end',
-    height: '100%', width: '100%', minWidth: '0', fontFamily: "-apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+    position: 'relative', display: 'flex', justifyContent: 'flex-end', width: '100%', marginTop: '3px',
+    fontFamily: "-apple-system, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+  },
+  '.cm-plain-margin-word, .cm-plain-margin-layout': {
+    appearance: 'none', background: 'transparent', border: '0', borderRadius: '5px',
+    cursor: 'pointer', fontFamily: 'inherit', lineHeight: '16px', padding: '0 4px'
   },
   '.cm-plain-margin-word': {
-    fontSize: '11.5px', lineHeight: '13px', fontWeight: '600', letterSpacing: '0.07em',
-    textTransform: 'uppercase', color: 'var(--faint)', whiteSpace: 'nowrap'
+    maxWidth: '100%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: 'var(--faint)', fontSize: '11.5px', fontWeight: '600', fontVariantNumeric: 'tabular-nums'
   },
-  // "Section 1", "Section 2.1", "Section 2.1.1": smaller as the number grows, so the word fits the column.
-  '.cm-plain-margin-word.cm-plain-margin-word-1': { fontSize: '10.5px', letterSpacing: '0.02em' },
-  '.cm-plain-margin-word.cm-plain-margin-word-2': { fontSize: '9.5px', letterSpacing: '0.01em' },
-  '.cm-plain-margin-word.cm-plain-margin-word-3': { fontSize: '8.5px', letterSpacing: '0' },
-  '.cm-activeLineGutter .cm-plain-margin-word, .cm-activeLineGutter .cm-plain-margin-detail': { color: 'var(--muted)' },
-  '.cm-plain-margin-word, .cm-plain-margin-layout': {
-    appearance: 'none', border: '0', background: 'transparent', margin: '0', cursor: 'pointer',
-    fontFamily: 'inherit', borderRadius: '5px', padding: '0 5px', marginRight: '-5px'
-  },
-  // A long layout name wraps (at a space, so "Image + claim" breaks after the plus) and the caret
-  // stays on its last line. A single word longer than the column is set smaller.
+  // A floating control keeps the layout available on hover and Tab without taking a row or column.
   '.cm-plain-margin-layout': {
-    display: 'block', maxWidth: '100%', fontSize: '12.5px', lineHeight: '15px', textAlign: 'right',
-    color: 'var(--accent-text)', whiteSpace: 'normal', overflowWrap: 'normal'
+    position: 'absolute', insetBlockStart: '100%', insetInlineStart: '0', zIndex: '1',
+    width: 'max-content', maxWidth: '9rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+    color: 'var(--accent-text)', background: 'var(--panel)', border: '1px solid var(--line-strong)',
+    fontSize: '12px', opacity: '0', pointerEvents: 'none'
   },
-  '.cm-plain-margin-layout.cm-plain-margin-tight': { fontSize: '11px' },
-  '.cm-plain-margin-chevron': { fontSize: '11px', lineHeight: '1', position: 'relative', top: '-2px', marginLeft: '2px' },
-  '.cm-plain-margin-detail': { fontSize: '10.5px', lineHeight: '13px', color: 'var(--faint)', whiteSpace: 'nowrap' },
+  '.cm-plain-margin-label:hover .cm-plain-margin-layout, .cm-plain-margin-label:focus-within .cm-plain-margin-layout': {
+    opacity: '1', pointerEvents: 'auto'
+  },
+  '.cm-plain-margin-chevron': { marginInlineStart: '3px' },
   '.cm-plain-margin-word:hover, .cm-plain-margin-layout:hover, .cm-plain-margin-word[aria-expanded="true"], .cm-plain-margin-layout[aria-expanded="true"]': {
-    background: 'var(--accent-soft)'
+    background: 'var(--accent-soft)', color: 'var(--accent-text)'
   },
-  '.cm-plain-margin-word:focus-visible, .cm-plain-margin-layout:focus-visible': { outline: '2px solid var(--focus)', outlineOffset: '1px' },
-  // The heading that holds the caret: blue and bold.
-  '.cm-plain-margin-active .cm-plain-margin-word': { color: 'var(--accent-text)', fontWeight: '800' },
-  // The slide-number gutter stays in the editor; Plain does not show it.
-  '.cm-gutter.cm-lineNumbers': { display: 'none !important' }
+  '.cm-plain-margin-word:focus-visible, .cm-plain-margin-layout:focus-visible': { outline: '2px solid var(--focus)', outlineOffset: '-1px' },
+  '.cm-plain-margin-active .cm-plain-margin-word': { color: 'var(--accent-text)', fontWeight: '800' }
 })
 
 function marginGutter(handlers: MarginMenuHandlers): Extension {

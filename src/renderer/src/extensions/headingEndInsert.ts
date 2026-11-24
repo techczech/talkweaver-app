@@ -32,6 +32,7 @@
 // the caret's heading, where a whole-slide paste "after this slide" lands (slideBlockOps.ts
 // pasteSlides). caretLineInsertion is the one place that decides between the two.
 // scripts/test-protected-lines.mjs tests it.
+import { inSlideTextPanel } from './focusScope'
 import { EditorSelection, Facet, type EditorState } from '@codemirror/state'
 import type { EditorView } from '@codemirror/view'
 import { isolateHistory } from '@codemirror/commands'
@@ -338,7 +339,9 @@ export function pasteAtHeadingEnd(view: EditorView, text: string): boolean {
 
 /** Pasted text replacing the selection: under the rules above when one applies, as CodeMirror's replaceSelection otherwise. */
 export function pasteTextAtSelection(view: EditorView, text: string): void {
-  if (!pasteAtHeadingEnd(view, text)) view.dispatch(view.state.replaceSelection(text))
+  if (!pasteAtHeadingEnd(view, text)) {
+    view.dispatch(view.state.replaceSelection(text), inSlideTextPanel(view.state) ? { userEvent: 'input.paste' } : {})
+  }
 }
 
 /** A pasted block (a fenced SVG, a table) replacing the selection: under the Trigger block at a heading end, as CodeMirror's replaceSelection otherwise. */

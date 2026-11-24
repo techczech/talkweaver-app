@@ -85,6 +85,7 @@
 }
 .slide .slot[data-slot-side="above"] .icon-row {
   grid-template-rows: auto;
+  align-items: stretch;
 }
 .slide .slot[data-slot-side="above"] .icon-row .ir-item {
   display: flex;

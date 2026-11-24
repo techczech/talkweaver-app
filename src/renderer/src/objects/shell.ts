@@ -50,6 +50,7 @@ export function mountShell(options: {
   editorDisabledTitle?: string
   parseEditor?(source: string): MountedEditor | null
   foot: string
+  disclosure?: string
   api: ObjectEditorApi
   cheatSheet?: ShellCheatSheet
 }): HTMLElement {
@@ -114,7 +115,28 @@ export function mountShell(options: {
     })
     tabs.append(editorTab, markupTab)
   }
-  head.append(kind, tabs)
+  if (options.disclosure) {
+    shell.classList.add('oe-notes')
+    const collapse = document.createElement('button')
+    collapse.type = 'button'
+    collapse.className = 'workspace-notes-toggle tw-notes-disclosure'
+    collapse.setAttribute('aria-label', options.disclosure)
+    collapse.setAttribute('aria-expanded', 'true')
+    const chevron = document.createElement('span')
+    chevron.className = 'tw-notes-chevron'
+    collapse.append(chevron, kind)
+    collapse.addEventListener('click', () => {
+      if (!hasDraft()) {
+        commit()
+        return
+      }
+      note.textContent = 'Choose Done to save your changes or Discard to close without saving.'
+      note.hidden = false
+    })
+    head.append(collapse)
+  } else {
+    head.append(kind, tabs)
+  }
   surfaces.append(active.element, note)
   const foot = document.createElement('div')
   foot.className = 'oe-foot'
@@ -169,7 +191,8 @@ export function mountShell(options: {
     __twRetargetApi?: (next: ObjectEditorApi) => void
     __twDiscard?: () => void
   }
-  controlledShell.__twHasDraft = () => !finished && (active.serialise() !== initialSource || JSON.stringify(commitOptions(active.serialise())) !== initialOptions)
+  const hasDraft = () => !finished && (active.serialise() !== initialSource || JSON.stringify(commitOptions(active.serialise())) !== initialOptions)
+  controlledShell.__twHasDraft = hasDraft
   controlledShell.__twCommit = (context = 'teardown') => commit(context)
   controlledShell.__twPreflightTeardown = preflightTeardown
   controlledShell.__twRetargetApi = (next) => { api = next }

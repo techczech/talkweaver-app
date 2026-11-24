@@ -649,6 +649,39 @@ check("recordOutlineSave: a save with an id-less #### heading stamps + versions 
 
 // ── stampMissingIds (save-path stamping, Task 8) ─────────────────────────────
 import { stampMissingIds, preferredIdsFromText, insertSlide, relevelBlock } from "../compiler/scripts/lib/12-outline-edit.mjs";
+import { parseOutlineSaveIdentity } from "../src/shared/outline-save-identity.ts";
+
+check("history replay stamps only the acknowledged owner of each structural heading", () => {
+  const alpha = "### Same\n\n- Alpha\n\n";
+  const beta = "### Same\n\n- Beta\n";
+  const text = alpha + beta;
+  const noMint = () => { throw new Error("replay must never mint"); };
+  const identity = { replay: true, ids: [null, "beta1"] };
+  const options = { identity, preferred: new Map([["### Same 1", "beta1"]]) };
+  const expected = alpha + beta.replace("### Same\n", "### Same\n{id=beta1}\n");
+  assert.equal(stampMissingIds(text, noMint, options).text, expected);
+  assert.equal(stampMissingIds(text, noMint, { identity: { ...identity, ids: ["beta1"] } }).text, text);
+  assert.equal(stampMissingIds(expected, noMint, { identity: { ...identity, ids: ["beta1", "beta1"] } }).text, expected);
+  const authored = stampMissingIds(text, () => 0.123456, { identity: { ...identity, replay: false } }).text;
+  assert.equal(extractIdSlides(authored).at(-1).id, "beta1");
+  assert.equal(extractIdSlides(authored).length, 2);
+});
+
+check("authored saves without positional IDs reuse the disk IDs; replay leaves them alone", () => {
+  const text = "### A\n\n- Alpha\n";
+  const disk = "### A\n{id=alpha1}\n\n- Alpha\n";
+  const preferred = preferredIdsFromText(disk);
+  const noMint = () => { throw new Error("an ID already exists on disk"); };
+  assert.equal(stampMissingIds(text, noMint, { preferred, identity: { ids: [], replay: false } }).text, disk);
+  assert.equal(stampMissingIds(text, noMint, { preferred, identity: { ids: [], replay: true } }).text, text);
+});
+
+check("outline save ID receipts enforce IPC bounds", () => {
+  const valid = { ids: ["slide_1", null], replay: true };
+  assert.deepEqual(parseOutlineSaveIdentity(valid), valid);
+  assert.equal(parseOutlineSaveIdentity({ ...valid, ids: ["x".repeat(257)] }), undefined);
+  assert.equal(parseOutlineSaveIdentity({ ...valid, ids: Array(10_001).fill(null) }), undefined);
+});
 
 check("stampMissingIds stamps every id-less heading at any depth, leaves stamped ones alone", () => {
   const text = [

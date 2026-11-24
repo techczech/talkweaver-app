@@ -55,7 +55,10 @@
 // (mirroring the KEYMAP_CHANGED_EVENT seam) until Task 9 builds the Slide Focus surface.
 
 import { EditorView, Decoration, type DecorationSet } from '@codemirror/view'
+import { foldEffect, foldedRanges, unfoldEffect } from '@codemirror/language'
+import { exactTextWrite } from './objectBlocks/effects.ts'
 import {
+  ChangeSet,
   EditorState,
   EditorSelection,
   Facet,
@@ -63,10 +66,15 @@ import {
   StateEffect,
   StateField,
   Transaction,
+  type ChangeSpec,
   type Text,
+  type TransactionSpec,
   type Extension
 } from '@codemirror/state'
 import { isKeyTyped } from './keyTypedMark.ts'
+import { focusRangeForSlideLine } from '../components/slideFocusModel.ts'
+import { headingBraceGroups } from '../../../shared/plain-view-icon-tokens.ts'
+import { readOutlineLinesOf } from '../../../shared/plain-view-outline-lines.ts'
 
 // Absolute document offsets bounding a focused slide's block. `from` inclusive, `to` the upper edge
 // (an insertion at `to` grows the block — see changesTouchOutside).
@@ -160,9 +168,12 @@ function withBegunEmptyLines(doc: Text, range: FocusRange | null): FocusRange | 
   return range
 }
 
-// A line that starts a slide, as slideFocusModel.ts bounds a slide's block (any `#` line, in a code
-// fence too: a line too many is taken for a title, never one too few).
-const TITLE_LINE = /^#{1,6}\s/
+const TITLE_MARK = /^#{1,6}\s/
+const HASH_MARK = /^#{1,6}(?=\s|$)/
+
+function isScopeHeading(doc: Text, line: ReturnType<Text['lineAt']>): boolean {
+  return TITLE_MARK.test(line.text) && readOutlineLinesOf(doc.toString()).kinds[line.number - 1] === 'outline'
+}
 
 // `range` with a `to` that a change left at the very start of a title line put at the end of the line
 // above, where the band ends. The line break in front of another slide's title is never inside the
@@ -170,7 +181,7 @@ const TITLE_LINE = /^#{1,6}\s/
 function offTitleLine(doc: Text, range: FocusRange): FocusRange {
   if (range.to <= range.from) return range
   const at = doc.lineAt(range.to)
-  return at.from === range.to && TITLE_LINE.test(at.text) ? { from: range.from, to: range.to - 1 } : range
+  return at.from === range.to && isScopeHeading(doc, at) ? { from: range.from, to: range.to - 1 } : range
 }
 
 // `range` mapped through the user's change `tr` (`from` left, `to` right), with `begun` set when the change left `to`
@@ -243,7 +254,7 @@ function throughProgramChange(tr: Transaction, range: FocusRange): FocusRange {
   let blank: ReturnType<Text['lineAt']> | null = null
   for (let n = doc.lineAt(to).number + 1; n <= lastNumber; n += 1) {
     const line = doc.line(n)
-    if (TITLE_LINE.test(line.text)) break
+    if (isScopeHeading(doc, line)) break
     if (line.text.trim() !== '') {
       end = line.to
       blank = null
@@ -253,10 +264,24 @@ function throughProgramChange(tr: Transaction, range: FocusRange): FocusRange {
   return { from, to: end }
 }
 
+// A command can append a new object after the old visible end. Include it if the same
+// authored heading still owns that line, leaving the usual mapping and begun lines intact.
+function extendSlideTextAfterCommand(tr: Transaction, before: FocusRange, mapped: FocusRange): FocusRange {
+  const oldTitle = tr.startState.doc.lineAt(before.from)
+  const title = tr.newDoc.lineAt(tr.changes.mapPos(oldTitle.from, 1))
+  if (title.from !== mapped.from) return mapped
+  // Saves can lift the identity and layout tokens off the heading before appending the object.
+  const wording = (line: string) => line.slice(0, headingBraceGroups(line)[0]?.start ?? line.length).trimEnd()
+  if (title.text !== oldTitle.text && wording(title.text) !== wording(oldTitle.text)) return mapped
+  const updated = focusRangeForSlideLine(tr.newDoc.toString(), title.number)
+  return updated && updated.to > mapped.to ? updated : mapped
+}
+
 // The [lo, hi] positions the caret may occupy: start of the first visible line to end of the last.
-function bandBounds(doc: Text, range: FocusRange): { lo: number; hi: number } {
+function bandBounds(doc: Text, range: FocusRange, slideText = false): { lo: number; hi: number } {
   const { startLine, endLine } = bandLines(doc, range)
-  return { lo: startLine.from, hi: endLine.to }
+  const marker = slideText ? TITLE_MARK.exec(startLine.text)?.[0].length ?? 0 : 0
+  return { lo: startLine.from + marker, hi: endLine.to }
 }
 
 // A zero-height block widget that swallows the lines it replaces. One instance, reused.
@@ -325,9 +350,12 @@ function makeField(getRange?: () => FocusRange | null): StateField<ScopeState> {
       // A blank line begun below `to` is then taken into the range (withBegunEmptyLines), so the guard
       // and the band agree on the slide's last line and on its end.
       if (!fromEffect && range && tr.docChanged) {
-        range = tr.isUserEvent('input') || tr.isUserEvent('delete') || isKeyTyped(tr)
-          ? offTitleLine(tr.newDoc, mapThroughUserChange(tr, range))
-          : throughProgramChange(tr, range)
+        if (tr.isUserEvent('input') || tr.isUserEvent('delete') || isKeyTyped(tr)) {
+          range = offTitleLine(tr.newDoc, mapThroughUserChange(tr, range))
+        } else {
+          const mapped = throughProgramChange(tr, range)
+          range = tr.startState.facet(slideTextInput) ? extendSlideTextAfterCommand(tr, range, mapped) : mapped
+        }
       }
       range = withBegunEmptyLines(tr.newDoc, range)
       if (range && !fromEffect && tr.isUserEvent('input.type.compose')) {
@@ -354,9 +382,46 @@ export function currentFocusRange(state: EditorState): FocusRange | null {
   return state.facet(focusRangeFacet)
 }
 
+// The legacy Slide Focus overlay also uses the range guard. The workspace's Slide text panel
+// opts into literal heading input separately, so sharing an editor never changes Outline/Markdown.
+export const slideTextInput = Facet.define<boolean, boolean>({ combine: values => values.some(Boolean) })
+
+export function inSlideTextPanel(state: EditorState): boolean {
+  return state.facet(slideTextInput) && currentFocusRange(state) !== null
+}
+
+function slideTextHeadingEscapes(tr: Transaction, range: FocusRange): ChangeSpec[] | null {
+  if (!tr.docChanged ||
+      !(tr.isUserEvent('input') || tr.isUserEvent('delete') || tr.isUserEvent('move') || isKeyTyped(tr)) ||
+      tr.isUserEvent('delete.slide') || tr.isUserEvent('delete.cut.slide') || tr.isUserEvent('delete.object')) return []
+
+  const doc = tr.newDoc
+  const title = tr.startState.doc.lineAt(range.from)
+  const titleMark = TITLE_MARK.exec(title.text)?.[0]
+  const candidateLines = new Set<number>()
+  let editsTitleMark = false
+  tr.changes.iterChangedRanges((fromA, _toA, fromB, toB) => {
+    // Its first line already names the slide. Only the wording of that line is editable here.
+    if (titleMark && fromA < title.from + titleMark.length) editsTitleMark = true
+    for (let n = doc.lineAt(fromB).number; n <= doc.lineAt(toB).number; n += 1) {
+      const line = doc.line(n)
+      if (line.from > title.from && HASH_MARK.test(line.text)) candidateLines.add(n)
+    }
+  })
+  if (editsTitleMark) return null
+  if (candidateLines.size === 0) return []
+  const { kinds } = readOutlineLinesOf(doc.toString())
+  const changes: ChangeSpec[] = []
+  for (const n of candidateLines) {
+    if (kinds[n - 1] === 'outline') changes.push({ from: doc.line(n).from, insert: '\\' })
+  }
+  return changes
+}
+
 function makeGuard(field: StateField<ScopeState>): Extension {
   return EditorState.transactionFilter.of((tr) => {
     const startRange = tr.startState.field(field, false)?.range ?? null
+    const slideText = tr.startState.facet(slideTextInput)
 
     // Resolve the POST-transaction range for caret containment: an explicit set wins; otherwise map
     // the start range through this transaction's changes.
@@ -386,33 +451,53 @@ function makeGuard(field: StateField<ScopeState>): Extension {
       if (interactive && !tr.isUserEvent('delete.slide')) {
         const spans: ChangeSpan[] = []
         tr.changes.iterChangedRanges((fromA, toA) => spans.push({ fromA, toA }))
-        if (changesTouchOutside(spans, startRange)) return [] // cancel the whole transaction
+        if (changesTouchOutside(spans, startRange)) {
+          // Removing the final card can consume its line ending and one blank separator.
+          // The planned deletion must start inside the slide and touch only line endings beyond it.
+          const trimsCardSeparator = slideText && tr.isUserEvent('delete.object') && tr.annotation(exactTextWrite) &&
+            spans.every(({ fromA, toA }) => fromA >= startRange.from && fromA < startRange.to &&
+              (toA <= startRange.to || /^\n{1,2}$/.test(tr.startState.doc.sliceString(startRange.to, toA))))
+          if (!trimsCardSeparator) return []
+        }
       }
     }
 
-    // (2) CARET CONTAINMENT — clamp the resulting selection into the band. Rebuild the transaction
-    // preserving its changes/effects/userEvent so history and the other filters see it unchanged.
+    // (2) CARET CONTAINMENT — clamp the resulting selection into the band. Compose the
+    // selection with the original transaction so the edit's annotations and effects are kept.
+    const adjustments: TransactionSpec[] = []
     if (postRange) {
-      const { lo, hi } = bandBounds(tr.newDoc, postRange)
+      const { lo, hi } = bandBounds(tr.newDoc, postRange, slideText)
       const sel = tr.newSelection
       let changed = false
       const ranges = sel.ranges.map((r) => {
         const anchor = clampNum(r.anchor, lo, hi)
         const head = clampNum(r.head, lo, hi)
-        if (anchor !== r.anchor || head !== r.head) changed = true
+        if (anchor === r.anchor && head === r.head) return r
+        changed = true
         return EditorSelection.range(anchor, head)
       })
-      if (changed) {
-        const userEvent = tr.annotation(Transaction.userEvent)
-        return {
-          changes: tr.changes,
-          selection: EditorSelection.create(ranges, sel.mainIndex),
-          effects: tr.effects,
-          scrollIntoView: tr.scrollIntoView,
-          ...(userEvent ? { userEvent } : {})
-        }
+      if (changed) adjustments.push({ selection: EditorSelection.create(ranges, sel.mainIndex), sequential: true })
+
+      // The rest of the outline may still be folded while this panel shows the whole slide.
+      if (slideText) {
+        const { from, to } = postRange
+        const effects = tr.effects.flatMap(effect => effect.is(foldEffect) &&
+          effect.value.from < to && effect.value.to > from ? [unfoldEffect.of(effect.value)] : [])
+        if (effects.length) adjustments.push({ effects, sequential: true })
       }
     }
+    if (slideText && startRange) {
+      const changes = slideTextHeadingEscapes(tr, startRange)
+      if (!changes) return []
+      // Compose with the original edit so the selection, effects and Undo history all map once.
+      if (changes.length) {
+        const escapes = ChangeSet.of(changes, tr.newDoc.length)
+        // Backspacing only the concealed escape would put the exact same bytes back.
+        if (escapes.apply(tr.newDoc).eq(tr.startState.doc)) return []
+        adjustments.push({ changes: escapes, sequential: true })
+      }
+    }
+    if (adjustments.length) return [tr, ...adjustments]
     return tr
   })
 }
@@ -431,7 +516,7 @@ function settleCaret(field: StateField<ScopeState>): Extension {
   const outside = (state: EditorState): boolean => {
     const range = state.field(field, false)?.range
     if (!range) return false
-    const { lo, hi } = bandBounds(state.doc, range)
+    const { lo, hi } = bandBounds(state.doc, range, state.facet(slideTextInput))
     return state.selection.ranges.some((r) => r.from < lo || r.to > hi)
   }
   return Prec.lowest(EditorView.updateListener.of((update) => {
@@ -467,5 +552,12 @@ export function focusScopeExtension(getRange?: () => FocusRange | null): Extensi
 // Imperative setter Task 9 (and the Editor prop effect + e2e seam) use to turn focus on/off or
 // switch the focused slide without remounting the editor. null exits focus.
 export function setFocusRange(view: EditorView, range: FocusRange | null): void {
-  view.dispatch({ effects: setFocusRangeEffect.of(range) })
+  const effects: StateEffect<unknown>[] = [setFocusRangeEffect.of(range)]
+  if (range && view.state.facet(slideTextInput)) {
+    // A fold created in the shared outline editor may cover the slide's body.
+    foldedRanges(view.state).between(range.from, range.to, (from, to) => {
+      if (from < range.to && to > range.from) effects.push(unfoldEffect.of({ from, to }))
+    })
+  }
+  view.dispatch({ effects })
 }

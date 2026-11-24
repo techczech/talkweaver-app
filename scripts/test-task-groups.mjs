@@ -1,5 +1,5 @@
 // Onboarding 0.38.1 ticket 01: every command has a task group and the palettes list every command.
-//   - each registry command (and each shortcut row) has exactly one of the ten task groups and a
+//   - each registry command (and each shortcut row) has exactly one of the current task groups and a
 //     sub-group, or is a key inside a surface (lock decision 13: 52 of them, in no group);
 //   - the command map (docs/design/2026-10-09-onboarding-and-command-help/command-map-talkweaver.json)
 //     matches the registries: same ids, labels, groups, sub-groups, except the listed placements;
@@ -18,7 +18,7 @@ const {
 } = await import(new URL('../src/shared/command-registry.ts', import.meta.url))
 const { SHORTCUT_REGISTRY, shortcutEventMatches } = await import(new URL('../src/shared/shortcut-registry.ts', import.meta.url))
 const { PRESENTER_PALETTE, KEYS_NOT_IN_PALETTE, presenterPaletteEntries, presenterPaletteData } = await import(new URL('../src/shared/presenter-palette.ts', import.meta.url))
-const { TASK_GROUPS, TASK_GROUP_TABLE, SURFACE_KEYS, taskGroupLabel } = await import(new URL('../src/shared/task-groups.ts', import.meta.url))
+const { TASK_GROUPS, TASK_GROUP_ICONS, TASK_GROUP_TABLE, SURFACE_KEYS, taskGroupLabel } = await import(new URL('../src/shared/task-groups.ts', import.meta.url))
 const { chordEventInit } = await import(new URL('../src/shared/chord-event.ts', import.meta.url))
 const map = JSON.parse(readFileSync(new URL('../docs/design/2026-10-09-onboarding-and-command-help/command-map-talkweaver.json', import.meta.url), 'utf8'))
 
@@ -27,11 +27,18 @@ const test = (name, fn) => { try { fn(); results.push([true, name]) } catch (err
 
 // Exceptions to the original design snapshot. New commands declare their group in task-groups.ts.
 const KNOWN_GROUP_DIFFERENCES = {
-  'undo': ['Write the outline', 'Undo and redo'],
-  'redo': ['Write the outline', 'Undo and redo'],
+  'undo': ['Outlining', 'Undo and redo'],
+  'redo': ['Outlining', 'Undo and redo'],
   'app.context-menu': ['Set up TalkWeaver', 'Command palette'],
+  'editor.jump-prev': ['Outlining', 'Headings and levels'],
+  'editor.jump-next': ['Outlining', 'Headings and levels'],
   'presenter.command-palette': ['Present', 'Help and commands'],
-  'presenter.help': ['Present', 'Help and commands']
+  'presenter.help': ['Present', 'Help and commands'],
+  'present-from-here': ['Present', 'Start presenting'],
+  'present-presenter': ['Present', 'Start presenting'],
+  'present-window': ['Present', 'Start presenting'],
+  'present-audience': ['Present', 'Start presenting'],
+  'plan-run': ['Present', 'Plan a session']
 }
 const CURRENT_SUBGROUP_NAMES = {
   'Views (slides, grid, strip)': 'Views',
@@ -43,7 +50,8 @@ const CURRENT_SUBGROUP_NAMES = {
 // Actions here, so the map's "Context menu" reads "Actions here" in the registry.
 // 'icon-picker': the palette names it "Insert icon…" since plain view ticket 13 (Command-I puts an
 // icon on the caret's line); the Insert menu still shows the map's "Icon…" (its toolbar menuLabel).
-// plan-run: R4, one word for the object (a Run). history: the old name of the Runs command, kept as an alias (R5).
+// The editor's Present menu renamed its launch and planning commands in November 2026.
+// history: the old name of the Runs command, kept as an alias (R5).
 const KNOWN_LABEL_DIFFERENCES = {
   'promote-heading': 'One level up',
   'demote-heading': 'One level down',
@@ -51,7 +59,12 @@ const KNOWN_LABEL_DIFFERENCES = {
   'editor.demote': 'One level down',
   'view-slides': 'View: Slide',
   'view-plain': 'View: Outline',
-  'view-markdown': 'View: Markdown', 'app.context-menu': 'Actions here', 'icon-picker': 'Insert icon…', 'plan-run': 'Plan a Run…', history: 'TalkWeaver Runs… (History)' }
+  'view-markdown': 'View: Markdown', 'app.context-menu': 'Actions here', 'icon-picker': 'Insert icon…', history: 'TalkWeaver Runs… (History)',
+  'present-from-here': 'Presenter view from this slide',
+  'present-presenter': 'Presenter view from the start',
+  'present-window': 'Present in single screen from the start',
+  'plan-run': 'Plan a session with an audience…'
+}
 
 const presenterNoKey = presenterPaletteEntries().filter((entry) => !entry.shortcut)
 const registryLabels = new Map([
@@ -59,11 +72,35 @@ const registryLabels = new Map([
   ...presenterNoKey.map((entry) => [`presenter-palette.${entry.id}`, entry.name])
 ])
 
-test('the ten task groups are the map\'s, in its order', () => {
-  assert.deepEqual([...TASK_GROUPS], map.tasks.map((task) => task.name))
+test('Outlining and Formatting replace Write the outline in the historical task order', () => {
+  const historicalOrder = map.tasks.map((task) => task.name)
+  assert.deepEqual([...TASK_GROUPS], historicalOrder.flatMap((task) =>
+    task === 'Write the outline' ? ['Outlining', 'Formatting'] : [task]))
+  assert.ok(TASK_GROUP_ICONS.Outlining && TASK_GROUP_ICONS.Formatting)
+  assert.notEqual(TASK_GROUP_ICONS.Outlining, TASK_GROUP_ICONS.Formatting)
 })
 
-test('every registry command has exactly one of the ten task groups and a sub-group, or is a key inside a surface', () => {
+const FORMATTING_COMMANDS = new Set([
+  'format-bold', 'editor.bold', 'format-italic', 'editor.italic',
+  'format-inline-code', 'editor.inline-code', 'format-highlight', 'editor.highlight',
+  'format-strikethrough', 'editor.strikethrough', 'format-underline', 'editor.underline',
+  'format-link', 'editor.link', 'bulleted-list', 'editor.bulleted-list',
+  'numbered-list', 'editor.numbered-list'
+])
+
+test('Formatting contains text styling, links and list styles', () => {
+  const formatting = Object.entries(TASK_GROUP_TABLE).filter(([, [group]]) => group === 'Formatting')
+  assert.deepEqual(new Set(formatting.map(([id]) => id)), FORMATTING_COMMANDS)
+})
+
+test('list structure, folding and heading navigation are in Outlining', () => {
+  for (const id of ['editor.list-continue', 'editor.quote-paragraph', 'editor.list-indent',
+    'editor.list-outdent', 'fold-all', 'unfold-all', 'editor.jump-prev', 'editor.jump-next']) {
+    assert.equal(TASK_GROUP_TABLE[id]?.[0], 'Outlining', id)
+  }
+})
+
+test('every registry command has exactly one of the current task groups and a sub-group, or is a key inside a surface', () => {
   let surfaceKeys = 0
   for (const command of COMMAND_REGISTRY) {
     if (command.surface) {
@@ -108,8 +145,11 @@ test('the map matches the registries: ids, labels, groups and sub-groups', () =>
     assert(registryLabels.has(record.id), `map record ${record.id} is in no registry`)
     const known = KNOWN_LABEL_DIFFERENCES[record.id]
     assert.equal(registryLabels.get(record.id), known ?? record.label, `label of ${record.id}`)
+    const group = record.task === 'Write the outline'
+      ? (FORMATTING_COMMANDS.has(record.id) ? 'Formatting' : 'Outlining')
+      : record.task
     const placement = KNOWN_GROUP_DIFFERENCES[record.id] ??
-      [record.task, CURRENT_SUBGROUP_NAMES[record.subgroup] ?? record.subgroup]
+      [group, CURRENT_SUBGROUP_NAMES[record.subgroup] ?? record.subgroup]
     assert.deepEqual(TASK_GROUP_TABLE[record.id], placement, `group of ${record.id}`)
   }
 })
@@ -189,7 +229,7 @@ try {
   const ui = await import(`${pathToFileURL(outfile).href}?t=${Date.now()}`)
 
   test('empty palette shows distinct task categories with icons instead of command rows', () => {
-    const html = ui.renderMenu([{ id: 'undo', title: 'Undo', hint: '⌘Z', group: 'Write the outline', run() {} }, { id: 'x', title: 'No group', run() {} }])
+    const html = ui.renderMenu([{ id: 'undo', title: 'Undo', hint: '⌘Z', group: 'Outlining', run() {} }, { id: 'x', title: 'No group', run() {} }])
     const doc = new JSDOM(html).window.document
     const rows = [...doc.querySelectorAll('.command-menu-item')]
     assert.equal(rows.length, TASK_GROUPS.length)

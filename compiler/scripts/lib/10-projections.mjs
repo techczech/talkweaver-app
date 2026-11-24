@@ -286,6 +286,7 @@ export function buildPerSlideProjections(model, deckSlug) {
       // lets the app map the editor cursor ↔ strip directly, with no heading-walk drift.
       source_line: typeof slide.sourceLine === "number" ? slide.sourceLine : null,
       triggers,
+      ...(slide.mode === "reveal" && !slide.noStep ? { reveal_enabled: true } : {}),
       // Curated slide tags (ADR-0037): the Trigger line's `tags=` token, lowercase-kebab
       // normalised, deduped; [] when absent. Search/vocabulary aggregation reads THIS field.
       tags: parseTagsValue(typeof triggers.tags === "string" ? triggers.tags : ""),

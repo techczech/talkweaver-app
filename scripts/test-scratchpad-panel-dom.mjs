@@ -23,8 +23,11 @@ try {
       contents: `import React from 'react'; import { createRoot } from 'react-dom/client'
 import './src/renderer/src/styles.css'
 import './src/renderer/src/image-drawer.css'
+import './src/renderer/src/guide.css'
+import './src/renderer/src/workspace-views.css'
 import RightColumnTabs from './src/renderer/src/components/RightColumnTabs.tsx'
 import ScratchpadPanel from './src/renderer/src/components/scratchpad/ScratchpadPanel.tsx'
+import { newestFirst, scratchOrder } from './src/shared/scratchpad.ts'
 import { useScratchpad } from './src/renderer/src/lib/useScratchpad.ts'
 import { useScratchpadLayout } from './src/renderer/src/lib/useScratchpadLayout.ts'
 const at = (m) => new Date(2026, 9, 27, 22, m).toISOString()
@@ -42,8 +45,16 @@ const reply = (extra = {}) => ({ ok: true, snapshot: snap, ...extra })
 window.tw = { scratchpad: {
   subscribe: async () => reply(), unsubscribe: async () => ({ ok: true }), load: async () => reply(),
   onChanged: (cb) => { listeners.add(cb); return () => listeners.delete(cb) },
-  setSort: async sort => { snap = { ...snap, sort, order: snap.order ?? [...snap.items].sort((a,b) => b.batch.at.localeCompare(a.batch.at) || b.addedAt.localeCompare(a.addedAt) || a.id.localeCompare(b.id)).map(i=>i.id) }; return reply() },
-  reorder: async (visible, next) => { let n=0; const order=snap.order ?? [...snap.items].sort((a,b)=>b.batch.at.localeCompare(a.batch.at)||b.addedAt.localeCompare(a.addedAt)||a.id.localeCompare(b.id)).map(i=>i.id); snap={...snap,sort:'manual',order:order.map(id=>visible.includes(id)?next[n++]:id)}; return reply() },
+  setSort: async sort => { snap = { ...snap, sort, order: scratchOrder(snap.items, snap.order ?? [...snap.items].sort(newestFirst).map(item => item.id)) }; return reply() },
+  reorder: async (visible, next) => {
+    const base = snap.sort === 'manual' ? scratchOrder(snap.items, snap.order) : [...snap.items].sort(newestFirst).map(item => item.id)
+    if (JSON.stringify(base.filter(id => visible.includes(id))) !== JSON.stringify(visible)) {
+      return { ok: false, error: 'The Slide Scratchpad order changed. Try the move again.' }
+    }
+    let n = 0
+    snap = { ...snap, sort: 'manual', order: base.map(id => visible.includes(id) ? next[n++] : id) }
+    return reply()
+  },
   setStatus: async (ids, status) => { window.calls.push('status:' + status + ':' + ids.join(',')); snap = { ...snap, items: snap.items.map((i) => ids.includes(i.id) ? { ...i, status } : i) }; return reply() },
   setGroup: async (ids, g) => { window.calls.push('group:' + g + ':' + ids.join(',')); snap = { ...snap, items: snap.items.map((i) => ids.includes(i.id) ? { ...i, group: g } : i) }; return reply() },
   createGroup: async (name) => { const group = { id: 'g' + (snap.groups.length + 1), name }; window.calls.push('new:' + name); snap = { ...snap, groups: [...snap.groups, group] }; return reply({ group }) },
@@ -69,6 +80,17 @@ window.selectionFixture = () => {
   ] }; window.calls = []; emit()
 }
 window.selectionState = () => snap.items.map(({ id, status, group }) => ({ id, status, group }))
+window.interleavedFixture = () => {
+  const picked = { source: 'slide-browser', at: at(59) }
+  snap = { groups: [], notices: [], items: [
+    slide('first', 'Run first', 'Talk', 58, { batch: picked }),
+    file('visual', 'run-visual.svg', 'svg', 50, { title: 'Run visual', batch: { source: 'agent', at: at(59) } }),
+    slide('hidden', 'Outside search', 'Talk', 48, { batch: picked }),
+    slide('last', 'Run last', 'Talk', 42, { batch: picked }),
+  ] }
+  emit()
+}
+window.savedOrder = () => snap.order
 // The workspace's side of inserting, faked: the talk's slides, the place (after the caret's slide 7 until one is
 // chosen), and an insert that only records what was asked and marks the item as main would.
 const ROWS = [{ line: 5, level: 2, title: 'Reading', no: 3 }, { line: 8, level: 3, title: 'Where AI helps in a research project', no: 7 }, { line: 20, level: 3, title: 'Where it does not help', no: 8 }]
@@ -559,6 +581,17 @@ createRoot(document.getElementById('root')).render(<App />)`,
 
 
   })
+  await step('moves from grouped newest order follow the visible cards and preserve hidden slots', async () => {
+    await page.evaluate(() => window.interleavedFixture())
+    await page.getByLabel('Search the Slide Scratchpad').fill('Run')
+    await page.getByLabel('Select Run last', { exact: true }).check()
+    const order = () => page.locator('.sp-card input[type=checkbox]').evaluateAll(nodes => nodes.map(node => node.getAttribute('aria-label')))
+    assert.deepEqual(await order(), ['Select Run first', 'Select Run last', 'Select Run visual'])
+    await page.getByRole('button', { name: 'Move selected items down', exact: true }).press('Enter')
+    await page.waitForFunction(() => document.querySelectorAll('.sp-card input')[1]?.getAttribute('aria-label') === 'Select Run visual')
+    assert.deepEqual(await order(), ['Select Run first', 'Select Run visual', 'Select Run last'])
+    assert.deepEqual(await page.evaluate(() => window.savedOrder()), ['first', 'visual', 'hidden', 'last'])
+  })
   await step('proposal cards show their points once and Compare omits notes syntax', async () => {
     await page.evaluate(() => window.proposedFixture())
     await page.locator('.sp-tabs button').first().click()
@@ -573,6 +606,76 @@ createRoot(document.getElementById('root')).render(<App />)`,
     assert.match(compared, /Visible point/)
     assert.doesNotMatch(compared, /:::|Notes only/)
     await page.getByRole('button', { name: /Back to the list/ }).click()
+  })
+  await step('the docked panel keeps selection and placement visible while arranging a batch', async () => {
+    await page.getByRole('button', { name: 'Dock to the right' }).click()
+    const dock = page.locator('.sp-panel--docked')
+    const search = dock.getByLabel('Search the Slide Scratchpad')
+    const options = dock.getByRole('button', { name: 'Scratchpad options' })
+    const order = dock.getByLabel('Slide Scratchpad sort order')
+    const insertBatch = dock.getByRole('button', { name: 'Insert 2 slides', exact: true })
+    const look = async (state, theme, width, height) => {
+      const name = `scratchpad-${state}-${theme}-${width}x${height}.jpg`
+      if (shots) await page.screenshot({ path: join(shots, name), quality: 85 })
+      if (process.env.TW_SCRATCHPAD_LOOK) {
+        console.log('SCRATCHPAD_LOOK ' + name + ' ' + (await page.screenshot({ type: 'jpeg', quality: 85 })).toString('base64'))
+      }
+    }
+    for (const { width, height } of [{ width: 1000, height: 631 }, { width: 1440, height: 900 }]) {
+      await page.setViewportSize({ width, height })
+      for (const theme of ['light', 'dark']) {
+        await page.evaluate(theme => {
+          document.documentElement.dataset.theme = theme
+          window.selectionFixture()
+          window.inserts = []
+        }, theme)
+        await search.fill('Run')
+        await options.click()
+        await order.selectOption('manual')
+        await options.click()
+        const firstChoice = dock.getByLabel('Select Run newest', { exact: true })
+        const secondChoice = dock.getByLabel('Select Run middle', { exact: true })
+        await secondChoice.check()
+        await firstChoice.check()
+        const insertBox = await insertBatch.boundingBox()
+        const changePlace = dock.getByRole('button', { name: 'Change place', exact: true })
+        const changeBox = await changePlace.boundingBox()
+        assert.ok(insertBox && changeBox && insertBox.x + insertBox.width <= width && changeBox.y + changeBox.height <= height)
+        assert.equal(await dock.locator('.sp-place-rule').count(), 0, 'the batch does not advertise inserting a visual at the cursor')
+        await changePlace.click()
+        const chooser = dock.getByRole('dialog', { name: 'Change place', exact: true })
+        const chooserBox = await chooser.boundingBox()
+        assert.ok(chooserBox && chooserBox.x >= 0 && chooserBox.y >= 0 && chooserBox.x + chooserBox.width <= width)
+        await chooser.getByRole('button', { name: /Where AI helps/ }).click()
+        await look('selected', theme, width, height)
+
+        const from = dock.getByRole('button', { name: 'Arrange Run newest', exact: true })
+        const to = dock.locator('.sp-order-card').filter({ has: page.getByLabel('Select Run oldest', { exact: true }) })
+        await to.scrollIntoViewIfNeeded()
+        const handle = await from.boundingBox()
+        const target = await to.boundingBox()
+        assert.ok(handle && target)
+        await page.mouse.move(handle.x + handle.width / 2, handle.y + handle.height / 2)
+        await page.mouse.down()
+        await page.mouse.move(target.x + 10, target.y + target.height - 10, { steps: 8 })
+        await page.mouse.move(target.x + 12, target.y + target.height - 12)
+        await dock.locator('[data-order-target="after"]').waitFor()
+        assert.equal(await to.getAttribute('data-order-target'), 'after')
+        await look('dragging', theme, width, height)
+        await page.mouse.up()
+        await dock.locator('[data-order-target]').waitFor({ state: 'detached' })
+        await page.waitForFunction(() => document.querySelector('.sp-card input')?.getAttribute('aria-label') === 'Select Run oldest')
+        assert.equal(await firstChoice.isChecked(), true)
+        assert.equal(await secondChoice.isChecked(), true)
+
+        await options.click()
+        await dock.getByRole('button', { name: 'Move selected items down', exact: true }).press('Enter')
+        await page.waitForFunction(() => document.querySelectorAll('.sp-card input')[1]?.getAttribute('aria-label') === 'Select Run tail')
+        await options.click()
+        await insertBatch.click()
+        assert.deepEqual(await inserts(), [['batch', 'new', 'middle']])
+      }
+    }
   })
   await step('empty state: the mockup wording, both starting points work', async () => {
     await page.evaluate(() => window.empty())

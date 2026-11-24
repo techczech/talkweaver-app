@@ -28,9 +28,8 @@ import { viewModeExtension } from './src/renderer/src/extensions/plainView/index
 import { inlineMarkExtension } from './src/renderer/src/extensions/inlineMark.ts'
 import { keyCapExtension } from './src/renderer/src/extensions/keyCap.ts'
 import { tokenProtectExtension } from './src/renderer/src/extensions/idProtect.ts'
-import { slideNumberGutterExtension, setSlideNumberLines } from './src/renderer/src/extensions/slideNumberGutter.ts'
 
-const common = () => [slideNumberGutterExtension, tokenProtectExtension(), history(), highlightActiveLine(), markdown({ base: markdownLanguage, codeLanguages: languages }), inlineMarkExtension, keyCapExtension, keymap.of(historyKeymap)]
+const common = () => [tokenProtectExtension(), history(), highlightActiveLine(), markdown({ base: markdownLanguage, codeLanguages: languages }), inlineMarkExtension, keyCapExtension, keymap.of(historyKeymap)]
 // The reference installs the Markdown look directly, without the view compartment.
 window.mountMarkdown = (doc, host) => {
   const view = new EditorView({ parent: host, state: EditorState.create({ doc, extensions: [...common(), markdownLookExtension()] }) })
@@ -41,7 +40,6 @@ window.mountNew = (doc, host, mode) => {
   const view = new EditorView({ parent: host, state: EditorState.create({ doc, extensions: [...common(), compartment.of(viewModeExtension(mode))] }) })
   return window.__new = view
 }
-window.numberBoth = (lines) => { setSlideNumberLines(window.__markdown, lines); setSlideNumberLines(window.__new, lines) }
 window.setMode = (mode) => window.__new.dispatch({ effects: compartment.reconfigure(viewModeExtension(mode)) })
 window.snapshot = (view) => {
   const content = view.contentDOM
@@ -83,6 +81,13 @@ try {
 
   // (a) Markdown mode equals today's editor.
   await page.evaluate((d) => { window.mountMarkdown(d, document.getElementById('a')); window.mountNew(d, document.getElementById('b'), 'markdown') }, doc)
+  // Markdown loads the fenced JavaScript parser asynchronously. Each editor
+  // applies that parse on its own update before the line DOM can be compared.
+  await page.waitForFunction(() => [window.__markdown, window.__new].every(view =>
+    Array.from(view.contentDOM.querySelectorAll('.cm-line'))
+      .find(line => line.textContent === 'const a = 1')
+      ?.querySelector('span')?.textContent === 'const'
+  ))
   const [oldSnap, newSnap] = await page.evaluate(() => [window.snapshot(window.__markdown), window.snapshot(window.__new)])
   assert.ok(oldSnap.lines.length > 10, 'sample rendered')
   assert.equal(newSnap.html, oldSnap.html, 'Markdown mode: same line DOM (decorations and highlight classes) as the direct Markdown editor')
@@ -90,15 +95,9 @@ try {
   assert.equal(newSnap.editor, oldSnap.editor, 'Markdown mode: same editor look')
   assert.equal(newSnap.content, oldSnap.content, 'Markdown mode: same content look')
   assert.match(oldSnap.editor, /JetBrains Mono/)
-  // The slide-number gutter, the chips and the layout lines are today's in Markdown mode.
-  await page.evaluate(() => window.numberBoth([1, 3, 6, 11]))
-  const [oldNum, newNum] = await page.evaluate(() => [window.snapshot(window.__markdown), window.snapshot(window.__new)])
-  assert.equal(newNum.gutters, oldNum.gutters, 'Markdown mode: same gutters (slide numbers) as the direct Markdown editor')
-  assert.match(newNum.gutters, />3</, 'the slide-number gutter shows its numbers')
-  assert.doesNotMatch(newNum.gutters, /cm-plain-margin/, 'Markdown mode has no margin gutter')
-  assert.equal(newNum.html, oldNum.html, 'Markdown mode: same line DOM after the numbers arrive')
-  for (const shown of ['{iconlist}', '{id=growth}', '{id=decade}', '{id=trips}', '{id=talk}']) assert.ok(newNum.html.includes(shown.replace('{', '{').replace('}', '}')) || newNum.html.includes(shown.slice(1, -1)), shown + ' is shown in Markdown mode')
-  assert.match(newNum.html, /cm-trigger-chip/, 'Markdown mode shows the chips')
+  assert.equal(newSnap.gutters, '', 'Markdown has no heading-number gutter')
+  for (const shown of ['{iconlist}', '{id=growth}', '{id=decade}', '{id=trips}', '{id=talk}']) assert.ok(newSnap.html.includes(shown.replace('{', '{').replace('}', '}')) || newSnap.html.includes(shown.slice(1, -1)), shown + ' is shown in Markdown mode')
+  assert.match(newSnap.html, /cm-trigger-chip/, 'Markdown mode shows the chips')
 
   // Plain look.
   await page.evaluate(() => window.setMode('plain'))

@@ -3,9 +3,8 @@
 .tt-win button, .tt-win input { font: inherit; color: inherit; }
 .tt-win button { border: 0; cursor: pointer; }
 .tt-win button:focus-visible, .tt-win input:focus-visible { outline: 2px solid var(--lt-oxford-mid); outline-offset: 2px; }
-.tt-topbar { display: flex; align-items: center; gap: 12px; height: 46px; padding: 0 12px 0 84px; flex: none; background: var(--lt-chrome); border-bottom: 1px solid var(--lt-hair); }
+.tt-topbar { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; height: 46px; padding: 0 12px 0 max(12px, var(--tw-native-inline, 0px)); flex: none; background: var(--lt-chrome); border-bottom: 1px solid var(--lt-hair); }
 .tt-title { margin: 0; font: 600 15px var(--font-ui); color: var(--ink); }
-.tt-spacer { flex: 1; }
 .tt-iconbtn { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; padding: 0; border-radius: 8px; color: var(--lt-ink-soft); background: transparent; }
 .tt-iconbtn:hover { background: var(--lt-paper-deep); color: var(--lt-ink); }
 .tt-iconbtn.active { color: var(--accent-text); }

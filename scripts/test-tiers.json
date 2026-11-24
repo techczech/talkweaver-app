@@ -39,6 +39,8 @@
     "test:normalize-keeps-compiled-output",
     "test:example-vault",
     "test:editor-view-mode",
+    "test:focus",
+    "test:focus-model",
     "test:plain-view-look",
     "test:example-vault-removal",
     "test:example-talks",
@@ -454,6 +456,7 @@
     "test:object-gap-entry-points:dom",
     "test:icon-svg-raster:dom",
     "test:object-guard-ranges:dom",
+    "test:object-previews:dom",
     "test:video-playback-dom",
     "test:audience-media:dom",
     "test:embed-quiet-header-dom",
@@ -464,11 +467,16 @@
     "test:slide-drag-dom",
     "test:grid-selection-dom",
     "test:slide-search-dom",
+    "test:editor-no-horizontal-scroll-dom",
     "test:outline-collapse-dom",
     "test:slide-move-to-dom",
     "test:saved-text-adoption-dom",
     "test:save-tidy-up-after-undo-dom",
+    "test:slide-text-panel:dom",
     "test:redesign-right-panel-dom",
+    "test:notes-in-place:dom",
+    "test:outline-preview-dom",
+    "test:sidebar-current-slide-dom",
     "test:picture-above-fit",
     "test:save-tidy-up-undo-generated",
     "test:quote-web-form-editor",
@@ -492,6 +500,7 @@
     "test:presenter-recording",
     "test:presenter-bottom-bar",
     "test:presenter-polls",
+    "test:reveal-preview-dom",
     "test:reveal-cross-runtime",
     "test:title-regime",
     "test:slide-foundations",
@@ -628,6 +637,7 @@
     "test:new-talk-dialog:dom",
     "test:cards:dom",
     "test:pathways-docked-dom",
+    "test:workspace-pathways-dom",
     "test:image-edit:dom",
     "test:local-page-preview:dom",
     "test:capture-network:dom",
@@ -653,7 +663,10 @@
     },
     "smoke": [
       "test:editor-title-enter-objects:dom",
+      "test:slide-text-panel:dom",
       "test:redesign-right-panel-dom",
+      "test:outline-preview-dom",
+      "test:sidebar-current-slide-dom",
       "test:scratchpad-panel:dom",
       "test:slide-set-aside-dom",
       "test:outline-merge:dom",
@@ -664,6 +677,7 @@
       "test:icon-picker-in-markdown",
       "test:plain-view-hidden-text-rules",
       "test:plain-view-guarded-keys",
+      "test:editor-no-horizontal-scroll-dom",
       "test:outline-collapse-dom",
       "test:grid-selection-dom",
       "test:new-talk-dialog:dom"
@@ -722,6 +736,7 @@
         "tests": [
           "test:slide-strip-follow",
           "test:pathways-docked-dom",
+          "test:workspace-pathways-dom",
           "test:overview-dom"
         ]
       },
@@ -896,8 +911,10 @@
     ]
   },
   "e2e": [
+    "test:window-chrome:e2e",
     "test:images:e2e",
     "test:media-permission:e2e",
+    "test:present-launch:e2e",
     "test:presenter-qol:e2e",
     "test:recording-countdown:e2e",
     "test:settings:e2e",
@@ -988,6 +1005,7 @@
     "test:published-pages:e2e"
   ],
   "e2eRelease": [
+    "test:window-chrome:e2e",
     "test:pages-upload-transport",
     "test:presenter-publication:e2e",
     "test:example-vault-removal:e2e",

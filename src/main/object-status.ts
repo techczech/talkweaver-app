@@ -22,7 +22,7 @@
 // shell:open-path / shell:show-item-in-folder, which check the path again at the moment of the operation.
 import { constants } from 'fs'
 import { lstat, open, opendir, realpath } from 'fs/promises'
-import { isAbsolute, join, resolve } from 'path'
+import { join, resolve } from 'path'
 import type { IpcMain } from 'electron'
 import { pathStaysInsideAsync, underStop } from './path-containment.ts'
 import { htmlPageImportSupportedOn } from './html-page-import-core.ts'
@@ -123,10 +123,8 @@ export async function objectRefStatus(ref: unknown, ctx: ObjectStatusContext, fs
     const file = await poolFile(ctx.vaultRoot, text, exts, fs, stop)
     return file ? { ref, state: 'present', path: file } : { ref, state: 'missing' }
   }
-  let decoded = text.replace(/[?#].*$/, '')
-  try { decoded = decodeURIComponent(decoded) } catch { /* keep as written, as the editor does */ }
-  if (!decoded || decoded.includes('\0')) return { ref, state: 'invalid' }
-  const candidate = isAbsolute(decoded) ? resolve(decoded) : resolve(ctx.talkDir, decoded)
+  const candidate = localRefPath(text, ctx.talkDir)
+  if (!candidate) return { ref, state: 'invalid' }
   // The resolved real path (links followed, each checked inside the root): only that entry is looked at.
   let real: string | null = null
   for (const root of ctx.roots) {
@@ -137,6 +135,42 @@ export async function objectRefStatus(ref: unknown, ctx: ObjectStatusContext, fs
   const isFile = await underStop(stop, () => fs.isFile(real))
   if (isFile === true) return { ref, state: 'present', path: candidate }
   return { ref, state: isFile === false ? 'invalid' : 'missing' }
+}
+
+function localRefPath(text: string, talkDir: string): string | null {
+  let decoded = text.replace(/[?#].*$/, '')
+  try { decoded = decodeURIComponent(decoded) } catch { /* keep as written, as the editor does */ }
+  if (!decoded || decoded.includes('\0')) return null
+  return resolve(talkDir, decoded)
+}
+
+const MAX_STATIC_PAGE_BYTES = 512 * 1024
+
+/** Read just the named HTML file, under the asking window's current talk's media roots. The same
+ *  bounded reader used for saved views refuses any symlink inserted after containment was checked. */
+async function answerStaticPage(
+  senderId: number, outlinePath: unknown, ref: unknown, deps: Omit<ObjectStatusDeps, 'ipcMain'>
+): Promise<string | null> {
+  if (typeof outlinePath !== 'string' || typeof ref !== 'string' || ref.length > MAX_STATUS_REF_LENGTH) return null
+  const text = ref.trim()
+  if (!text || /^[a-z][a-z0-9+.-]*:/i.test(text)) return null
+  if (deps.currentTalkOf(senderId) !== outlinePath || !htmlPageImportSupportedOn(process.platform)) return null
+  const ctx = deps.contextFor(outlinePath)
+  if (!ctx) return null
+  const candidate = localRefPath(text, ctx.talkDir)
+  if (!candidate || !/\.html?$/i.test(candidate)) return null
+  const budget = startBudget(deps.budgetMs ?? STATUS_BUDGET_MS)
+  try {
+    const read = async (): Promise<string | null> => {
+      for (const root of ctx.roots) {
+        const real = await pathStaysInsideAsync(root, candidate, false, budget.expired)
+        if (real && /\.html?$/i.test(real)) return nodeEarlierFs.read(real, MAX_STATIC_PAGE_BYTES, budget.expired)
+      }
+      return null
+    }
+    const source = await budget.race(read().catch(() => null))
+    return typeof source === 'string' && deps.currentTalkOf(senderId) === outlinePath ? source : null
+  } finally { budget.end() }
 }
 
 export interface ObjectStatusDeps {
@@ -309,6 +343,8 @@ async function readEarlierViews(ctx: ObjectStatusContext, page: string, fs: Earl
 export function registerObjectStatusIpc(deps: ObjectStatusDeps): void {
   deps.ipcMain.handle('object:status', (event, outlinePath: unknown, refs: unknown): Promise<ObjectStatusAnswer> =>
     answerObjectStatus(event.sender.id, outlinePath, refs, deps))
+  deps.ipcMain.handle('object:static-preview', (event, outlinePath: unknown, ref: unknown): Promise<string | null> =>
+    answerStaticPage(event.sender.id, outlinePath, ref, deps))
   deps.ipcMain.handle('object:earlier-views', (event, outlinePath: unknown, pageUrl: unknown): Promise<EarlierViewsAnswer> =>
     answerEarlierViews(event.sender.id, outlinePath, pageUrl, deps))
 }

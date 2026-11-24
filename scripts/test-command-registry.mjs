@@ -69,11 +69,11 @@ for (const shortcut of SHORTCUT_REGISTRY) {
 const expectedPaletteIds = [
   'research-panel', 'research-find', 'research-rename', 'research-change-kind', 'research-delete', 'research-move', 'research-copy', 'research-insert-here', 'research-insert', 'research-make-slide', 'research-open', 'research-previous', 'research-next', 'research-scope', 'research-close', 'research-copy-reference', 'research-reveal', 'research-source', 'research-used-in', 'research-scope-talk', 'research-scope-research', 'research-scope-everything', 'research-retry',
   'refresh', 'optimize-images', 'ocr-index', 'check-embeds', 'layout-doctor', 'research-capture', 'research-reveal-folder', 'new-sketch', 'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place', 'scratchpad-move-up', 'scratchpad-move-down', 'where-used', 'focus-slide',
-  'toggle-inspector', 'studio', 'runs', 'history', 'importer', 'plan-run', 'attach-prework', 'attach-postwork', 'pathways', 'add-to-pathway', 'present-pathway', 'new-window', 'open-in-new-window', 'new-talk', 'new-folder',
+  'toggle-inspector', 'studio', 'runs', 'history', 'importer', 'attach-prework', 'attach-postwork', 'pathways', 'add-to-pathway', 'present-pathway', 'new-window', 'open-in-new-window', 'new-talk', 'new-folder',
   'refresh-talks', 'change-vault', 'vault-gallery', 'search-talks',
   'find-talk', 'add-talk-beside', 'talk-beside', 'close-talk-beside', 'select-whole-section',
-  'present-slide-window', 'present-window', 'present-presenter',
-  'present-from-here', 'present-audience', 'handout', 'build', 'publish-handout', 'share-for-comments', 'copy-venue-screen-link', 'layout',
+  'present-from-here', 'present-presenter', 'present-slide-window', 'present-window',
+  'plan-run', 'present-audience', 'handout', 'build', 'publish-handout', 'share-for-comments', 'copy-venue-screen-link', 'layout',
   'quote-form-auto', 'quote-form-plain', 'quote-form-tweet', 'quote-form-video', 'quote-form-book', 'quote-form-paper', 'quote-form-web',
   'image', 'search', 'insert-board-slide', 'edit-image', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
   'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg',
@@ -227,7 +227,9 @@ assert.deepEqual(
   [
     ['Edit', 'split-pasted-picture-row'], ['Edit', 'paste-picture'], ['Edit', 'duplicate-slide'], ['Edit', 'move-current-slide-up'], ['Edit', 'move-current-slide-down'],
     ['File', 'welcome-slide'], ['File', 'welcome-outline'], ['File', 'welcome-markdown'],
-    ['Help', 'check-for-updates'], ['Help', 'whats-new'], ['Help', 'help'], ['Insert', 'edit-image'], ['Insert', 'new-sketch'], ['Present', 'present-slide-window'],
+    ['Help', 'check-for-updates'], ['Help', 'whats-new'], ['Help', 'help'], ['Insert', 'edit-image'], ['Insert', 'new-sketch'],
+    ['Present', 'present-from-here'], ['Present', 'present-presenter'], ['Present', 'present-slide-window'],
+    ['Present', 'present-window'], ['Present', 'plan-run'], ['Present', 'present-audience'],
     ['Slides', 'set-aside-slides'], ['Talk', 'toggle-inspector'], ['Talk', 'pathways'],
     ['Talk', 'new-section'], ['Talk', 'new-subsection'], ['Talk', 'make-section'], ['Talk', 'select-several-slides'],
     ['Tools', 'tools-animated-video'], ['View', 'vault-gallery'],
@@ -241,7 +243,7 @@ const expectedToolbarIds = {
   insert: ['layout', 'image', 'search', 'insert-board-slide', 'icon-picker', 'insert-object-table', 'insert-object-mindmap', 'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg', 'new-sketch', 'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-html-page', 'save-offline-page', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes'],
   deck: ['deck-design', 'pathways', 'metadata', 'abstract', 'refresh', 'normalize-triggers', 'delete-slide'],
   tools: ['studio', 'runs', 'importer', 'settings', 'app.command-palette', 'help', 'get-started-open-guide'],
-  present: ['present-slide-window', 'present-window', 'present-presenter', 'present-from-here', 'present-audience', 'plan-run']
+  present: ['present-from-here', 'present-presenter', 'present-slide-window', 'present-window', 'plan-run']
 }
 for (const [menu, expectedIds] of Object.entries(expectedToolbarIds)) {
   assert.deepEqual(toolbarCommands(menu).map((command) => command.id), expectedIds, `${menu} toolbar menu resolves from the command register`)
@@ -509,8 +511,8 @@ try {
   assert.deepEqual(
     surface.map((command) => [command.id, command.shortcutId, command.category]),
     [
-      ['new-section', 'editor.new-section', 'Write the outline'],
-      ['new-subsection', 'editor.new-subsection', 'Write the outline'],
+      ['new-section', 'editor.new-section', 'Outlining'],
+      ['new-subsection', 'editor.new-subsection', 'Outlining'],
       ['view-slides', 'app.view-slides', 'See the talk'],
       ['view-grid', 'app.view-grid', 'See the talk'],
       ['view-plain', 'app.view-plain', 'See the talk'],
@@ -521,8 +523,10 @@ try {
       ['research-find', 'app.research-find', 'Shape the talk'],
       ['pathways', 'app.pathways', 'Shape the talk'],
       ['add-to-pathway', 'app.add-to-pathway', 'Shape the talk'],
+      ['present-from-here', 'app.present-current', 'Present'],
+      ['present-presenter', 'app.present', 'Present'],
       ['present-pathway', 'app.present-pathway', 'Shape the talk'],
-      ['set-aside-slides', 'app.set-aside', 'Write the outline'],
+      ['set-aside-slides', 'app.set-aside', 'Outlining'],
       ['search-slides-grid', 'app.grid-search', 'See the talk'],
       ['search-next', 'app.search-next', 'See the talk'],
       ['search-previous', 'app.search-previous', 'See the talk'],

@@ -16,7 +16,7 @@ export type Design = PanelEdit & { label: string; why?: string; unavailable?: st
 export const option = (group: string, token: string): LayoutOptionChoice => ({ group, token })
 export type PictureSide = 'left' | 'right' | 'above'
 export const isPointListLayout = (layout: string): boolean => ['list', 'list-visual', 'copy-visual'].includes(layout)
-export const TITLE_PLACEMENT_GROUPS = ['title-placement', 'title-display', 'statement-sidebar']
+export const TITLE_PLACEMENT_GROUPS = ['title-placement', 'title-display']
 export const TITLE_GROUPS = [...TITLE_PLACEMENT_GROUPS, 'title-look', 'title-look-tone', 'font-title', 'title-icon']
 export const TITLE_STYLES = [
   ['Plain', '', ''], ['Tab', 'titlelook=tab', ''], ['Soft tab', 'titlelook=tab', 'titlelook-tone=soft'],
@@ -47,12 +47,7 @@ export function panelEdit(text: string, slide: SlideRef, edit: PanelEdit, layout
   return edited?.outline ?? text
 }
 
-export function titlePlace(where: 'top' | 'side' | 'hidden', layout: string): LayoutOptionChoice[] {
-  if (layout === 'statement') return [
-    option('title-display', where === 'hidden' ? '' : 'title=show'),
-    option('title-placement', where === 'hidden' ? 'notitle' : where === 'top' ? 'titletop' : 'sidebar'),
-    option('statement-sidebar', where === 'side' ? 'statement-sidebar=on' : 'statement-sidebar=off')
-  ]
+export function titlePlace(where: 'top' | 'side' | 'hidden'): LayoutOptionChoice[] {
   return [
     option('title-display', where === 'hidden' ? '' : 'title=show'),
     option('title-placement', where === 'top' ? 'titletop' : where === 'side' ? 'sidebar' : 'notitle')
@@ -104,7 +99,7 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
   const placement = (where: 'top' | 'side', target: string): LayoutOptionChoice[] => {
     const requested = where === 'side' ? 'left' : 'top'
     if (inheritedTitle(target) === requested) return [option('title-display', ''), option('title-placement', '')]
-    return target === layout && row.title_layout === requested ? [] : titlePlace(where, target)
+    return target === layout && row.title_layout === requested ? [] : titlePlace(where)
   }
   if (layout === 'table' || layout === 'table-outline') {
     const tables = tableDesigns(tokens)
@@ -114,7 +109,7 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
       current: row.title_layout === 'left',
       options: [...tables[1].options!, ...(inheritedTitle(layout) === 'left'
         ? placement('side', layout)
-        : [...titlePlace('side', layout), option('title-placement', 'split=30')])]
+        : [...titlePlace('side'), option('title-placement', 'split=30')])]
     }]
   }
   const own = model.board ? 'Board' : tokens['poll-type']?.startsWith('poll=') ? 'Poll' : DESIGN_PAGES[layout]
@@ -124,7 +119,7 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
   ]
   if (layout === 'carousel') return [
     { label: 'Carousel', why: 'One subslide at a time', current: row.title_layout !== 'left' },
-    { label: 'Title at the side', why: 'A coloured panel for the title', options: titlePlace('side', layout), current: row.title_layout === 'left' }
+    { label: 'Title at the side', why: 'A coloured panel for the title', options: titlePlace('side'), current: row.title_layout === 'left' }
   ]
   if (!block.split('\n').slice(1).some(line => line.trim() && !/^\s*\{/.test(line))) return []
 

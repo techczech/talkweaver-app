@@ -1,11 +1,11 @@
-import { GalleryThumbnails, LayoutGrid, Library, ListTree } from 'lucide-react'
+import { GalleryThumbnails, Layers, LayoutGrid, Library, ListTree } from 'lucide-react'
 import { NARROW_WINDOW_PX } from '../../shared/window-widths'
 import { flushSync } from 'react-dom'
 import ManagementLayer from './components/vault-gallery/ManagementLayer'
 import { isWorkspaceCovered } from './lib/workspaceCover'
 import { adoptMovedTalk, selectGuardedTalk, type GalleryOpenGuard } from './lib/talkSelection'
 import VaultGallery from './components/vault-gallery/VaultGallery'
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import type { TalkInfo, VaultView } from '../../preload/index'
 import WelcomeTalk from './components/WelcomeTalk'
 import { WELCOME_COMMANDS, type SlideTabView, type SlidesPanelView, type StartingView, type WorkspaceView } from '../../shared/workspace-view'
@@ -42,11 +42,10 @@ import RemoveExampleConfirm from './components/RemoveExampleConfirm'
 import { EXAMPLE_REMOVAL_TEXT, type ExampleRemovalPreview } from '../../shared/example-vault-removal'
 import { commandRan, onCommandTicked } from './commands/command-ran'
 import { liveShortcutLabel } from './keymap/store'
-import { CHAPTER_TALK, chapterOfCommand, deriveChapters } from '../../shared/guide-chapters'
+import { CHAPTER_TALK, chapterOfCommand, deriveChapters, type GuideChapter } from '../../shared/guide-chapters'
 import { emptyGuideLearn, guideLearnFrom, type GuideLearn } from '../../shared/guide-learn'
 import type { TopicTarget } from '../../shared/guide-topics'
 import type { ConnectionActionId, ConnectionRow } from '../../shared/guide-connections'
-import type { TaskGroup } from '../../shared/task-groups'
 import { rowChords, shortChord, type PracticeState } from './components/GuideChapters'
 import { GUIDE_DEFAULT_SEGMENT, GUIDE_TEXT, EMPTY_GUIDE_PROGRESS, firstSteps, type FirstStepId, type GuideProgress, type GuideSegment } from '../../shared/guide'
 import type { OpenInNewWindowTarget } from '../../shared/open-in-new-window'
@@ -56,8 +55,8 @@ import { armOutlineSwitch, consumeEditorEngagement } from './lib/outlineSwitch'
 import { effectiveKeys, eventToCMKey, KEYMAP_CHANGED_EVENT, startKeymapSync } from './keymap/store'
 
 // The flat "Outline" view was retired: every slide already lives in the file, and the Slides
-// view (now labelled "Slide outline") is the structure people actually want. Two sidebar tabs.
-type SidebarMode = 'talks' | 'slides'
+// view (now labelled "Slide outline") is the structure people actually want.
+type SidebarMode = 'talks' | 'slides' | 'pathways'
 type SidebarCommandId = 'sidebar.talks' | 'sidebar.outline' | 'sidebar.toggle'
 
 const SIDEBAR_STORAGE_KEY = 'tw-sidebar'
@@ -361,7 +360,7 @@ function MainApp() {
   // has been tried is app-wide, kept by main and heard from every window. The open chapter and the row
   // that has just ticked are this window's own.
   const [guideLearn, setGuideLearn] = useState<GuideLearn>(emptyGuideLearn)
-  const [guideChapter, setGuideChapter] = useState<TaskGroup | null>(null)
+  const [guideChapter, setGuideChapter] = useState<GuideChapter | null>(null)
   const [flashRow, setFlashRow] = useState<string | null>(null)
   const guideOpenRef = useRef(false)
   guideOpenRef.current = guideOpen
@@ -399,7 +398,7 @@ function MainApp() {
     else if (action === 'open-cloudflare') openSettingsWindow('cloudflare')
     else if (action === 'get-slidewell') void window.tw.guide.openLink('slidewell-download').catch(() => undefined)
   }, [])
-  const selectGuideChapter = useCallback((task: TaskGroup): void => {
+  const selectGuideChapter = useCallback((task: GuideChapter): void => {
     setGuideChapter(task)
     void window.tw.guide.chapterOpened(task).catch(() => { /* not recorded */ })
   }, [])
@@ -446,6 +445,8 @@ function MainApp() {
   // the live state for anything else that reads it).
   const [welcomeStart, setWelcomeStart] = useState<{ path: string; view: WorkspaceView } | null>(null)
   const [previewsHost, setPreviewsHost] = useState<HTMLDivElement | null>(null)
+  const [pathwaysHost, setPathwaysHost] = useState<HTMLDivElement | null>(null)
+  const outlineSwitchArmedRef = useRef<string | null>(null)
   const [slidesPanelView, setSlidesPanelView] = useState<SlidesPanelView>('previews')
   const [slideTabView, setSlideTabView] = useState<SlideTabView>('pages')
   const [openInView, setOpenInView] = useState<WorkspaceView>('slide')
@@ -460,6 +461,13 @@ function MainApp() {
   }, [])
   const [sidebarMode, setSidebarMode] = useState<SidebarMode>('talks')
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
+  const visibleSidebarMode = sidebarMode === 'pathways' && !activeTalk ? 'talks' : sidebarMode
+  const openPathwaysTab = useCallback(() => {
+    outlineSwitchArmedRef.current = null
+    setSidebarMode('pathways')
+    setSidebarCollapsed(false)
+  }, [])
+  const closePathwaysTab = useCallback(() => setSidebarMode(mode => mode === 'pathways' ? 'slides' : mode), [])
   const sidebarModeRef = useRef(sidebarMode)
   sidebarModeRef.current = sidebarMode
   // A narrow window collapses the talks list. The slides panel has its own compact layout.
@@ -497,7 +505,7 @@ function MainApp() {
   const [galleryOpen, setGalleryOpen] = useState(false)
   const leaveGuardRef = useRef<(() => Promise<boolean>) | null>(null)
   const activeTalkRef = useRef<TalkInfo | null>(activeTalk)
-  useEffect(() => { activeTalkRef.current = activeTalk }, [activeTalk])
+  useLayoutEffect(() => { activeTalkRef.current = activeTalk }, [activeTalk])
   // A talk's details live in the Talk tab of the right sidebar (house rule R11); the Talks list's Metadata… opens the
   // talk (any talk) and then the tab, through the same tw-open-metadata event the Talk menu uses. The tab's writes go
   // through the open talk's editor buffer (talk-writer.ts, the D1 seam), as the Metadata dialog's did.
@@ -525,10 +533,17 @@ function MainApp() {
     document.title = editWindowTitle(activeTalk?.title)
   }, [activeTalk])
   /** True when the window switched to `talk`; false when the switch was held (Stay here, or another window has it). */
-  const selectTalk = useCallback(async (talk: TalkInfo | null, gallery?: GalleryOpenGuard<TalkInfo> | string): Promise<boolean> => {
+  const selectTalk = useCallback(async (talk: TalkInfo | null, gallery?: GalleryOpenGuard<TalkInfo> | string, fromTalksPanel = false): Promise<boolean> => {
+    const adopt = (next: TalkInfo | null): void => {
+      // The outgoing editor can still receive clicks while the leave guard or window claim waits.
+      // Arm only when the panel's request has succeeded, including moved and same-talk reopens.
+      activeTalkRef.current = next
+      outlineSwitchArmedRef.current = armOutlineSwitch(fromTalksPanel ? next?.outlinePath ?? null : null)
+      setActiveTalk(next)
+    }
     if (typeof gallery === 'string') {
       if (!talk) return false
-      return new Promise<boolean>(done => window.dispatchEvent(new CustomEvent('tw-preserve-moved-editor', {detail:{from:gallery,done,adopt:(isCurrent:()=>boolean)=>adoptMovedTalk<TalkInfo>(talk, gallery, {current:()=>activeTalkRef.current,confirm:async(from,to)=>window.tw.windows.adoptMovedTalk(from,to),adopt:next=>flushSync(()=>setActiveTalk(next)),isCurrent})}})))
+      return new Promise<boolean>(done => window.dispatchEvent(new CustomEvent('tw-preserve-moved-editor', {detail:{from:gallery,done,adopt:(isCurrent:()=>boolean)=>adoptMovedTalk<TalkInfo>(talk, gallery, {current:()=>activeTalkRef.current,confirm:async(from,to)=>window.tw.windows.adoptMovedTalk(from,to),adopt:next=>flushSync(()=>adopt(next)),isCurrent})}})))
     }
     const previous = activeTalkRef.current
     if (previous) {
@@ -538,7 +553,7 @@ function MainApp() {
         return false
       }
       if (recovered.kind === 'recoverable' && recovered.talk.outlinePath !== previous.outlinePath) {
-        return new Promise<boolean>(done => window.dispatchEvent(new CustomEvent('tw-preserve-moved-editor', {detail:{from:previous.outlinePath,done,adopt:(isCurrent:()=>boolean)=>adoptMovedTalk<TalkInfo>(recovered.talk, previous.outlinePath, {current:()=>activeTalkRef.current,confirm:async(from,to)=>window.tw.windows.adoptMovedTalk(from,to),adopt:next=>flushSync(()=>setActiveTalk(next)),isCurrent})}})))
+        return new Promise<boolean>(done => window.dispatchEvent(new CustomEvent('tw-preserve-moved-editor', {detail:{from:previous.outlinePath,done,adopt:(isCurrent:()=>boolean)=>adoptMovedTalk<TalkInfo>(recovered.talk, previous.outlinePath, {current:()=>activeTalkRef.current,confirm:async(from,to)=>window.tw.windows.adoptMovedTalk(from,to),adopt:next=>flushSync(()=>adopt(next)),isCurrent})}})))
       }
     }
     return selectGuardedTalk<TalkInfo>(talk, {
@@ -548,7 +563,7 @@ function MainApp() {
       leave: async () => { const guard = leaveGuardRef.current; return guard ? await guard() : (await flushSaveRef.current?.(), true) },
       settle: gallery?.settle,
       claim: async path => gallery ? gallery.claim(path) : window.tw.windows?.claimTalk?.(path),
-      adopt: setActiveTalk,
+      adopt,
       refused: target => notify(`“${target.title}” is already open in another window — brought it to the front.`, 'info')
     })
   }, [])
@@ -566,16 +581,13 @@ function MainApp() {
 
   // T29b (2026-09-19): opening a talk from the Talks panel leaves the sidebar on Talks — the user
   // scrolls the editor to see if it is the right file — and the FIRST engagement with the editor
-  // (pointerdown inside it, or the first document-changing keydown) then switches the sidebar to
+  // (a click inside it, or the first document-changing keydown) then switches the sidebar to
   // the Slide outline, once per opened talk. Armed ONLY in this panel wrapper: the shared
   // selectTalk above serves every open route (launch restore, deep links, History/Studio, ⌘N
   // windows, new-talk creation) and none of those may arm. Keyed by outlinePath, so an arm goes
   // stale (and is dropped) if a non-panel route changes the active talk before engagement.
-  const outlineSwitchArmedRef = useRef<string | null>(null)
-  const selectTalkFromPanel = useCallback((talk: TalkInfo | null, movedFrom?: string) => {
-    outlineSwitchArmedRef.current = armOutlineSwitch(talk?.outlinePath ?? null)
-    return selectTalk(talk, movedFrom)
-  }, [selectTalk])
+  const selectTalkFromPanel = useCallback((talk: TalkInfo | null, movedFrom?: string) =>
+    selectTalk(talk, movedFrom, true), [selectTalk])
   // A window opened by the file list's "Open in new window" asks main once what it was opened for.
   // A talk is selected through the same selectTalk as any open (claim, guard) once the talk list holds
   // it; a folder scopes the new window's file list to that folder (TalkList drill-in).
@@ -609,8 +621,9 @@ function MainApp() {
   // WorkspaceLayout calls this on the editor's two engagement triggers (see Editor.onEditorEngaged).
   // Talks-panel folder position is untouched: the panel unmounts on the switch and talkFocusPathRef
   // restores it when the user comes back via the tab or sidebar.talks.
-  const onEditorEngaged = useCallback(() => {
-    const result = consumeEditorEngagement(outlineSwitchArmedRef.current, activeTalkRef.current?.outlinePath ?? null)
+  const onEditorEngaged = useCallback((path: string) => {
+    if (path !== activeTalkRef.current?.outlinePath) return
+    const result = consumeEditorEngagement(outlineSwitchArmedRef.current, path)
     outlineSwitchArmedRef.current = result.armed
     if (result.switchToOutline) {
       setSidebarMode('slides')
@@ -623,7 +636,7 @@ function MainApp() {
     window.localStorage.setItem('tw-sidebar-collapsed', sidebarCollapsed ? '1' : '0')
   }, [sidebarCollapsed])
 
-  const focusSidebarSearch = useCallback((mode: SidebarMode): void => {
+  const focusSidebarSearch = useCallback((mode: 'talks' | 'slides'): void => {
     setSidebarMode(mode)
     setSidebarCollapsed(false)
     requestAnimationFrame(() => {
@@ -633,7 +646,7 @@ function MainApp() {
 
   const toggleSidebar = useCallback((focusMode: SidebarMode): void => {
     setSidebarCollapsed((collapsed) => {
-      if (collapsed) {
+      if (collapsed && focusMode !== 'pathways') {
         requestAnimationFrame(() => {
           window.dispatchEvent(new Event(focusMode === 'talks' ? 'tw-search-talks' : 'tw-search-slides'))
         })
@@ -1035,7 +1048,7 @@ function MainApp() {
   exampleListedRef.current = state.phase === 'ready' && state.vaults.some((v) => v.example === true)
 
   if (state.phase === 'setup') {
-    return <div className="tw-welcome-window"><div className="tw-welcome-titlebar" />{welcomeContent()}</div>
+    return <div className="tw-welcome-window"><div className="tw-welcome-titlebar tw-window-drag" />{welcomeContent()}</div>
   }
 
   // The vault a talk is in decides which root the editor and panels work against; with no talk open, the
@@ -1066,7 +1079,7 @@ function MainApp() {
   // that window forward) and never replaces the person's own talk (lock decision 10).
   const exampleVaultIds = new Set(state.vaults.filter((v) => v.example).map((v) => v.id))
   const exampleVault = state.vaults.find((v) => v.example) ?? null
-  const practiceOf = (task: TaskGroup): PracticeState => {
+  const practiceOf = (task: GuideChapter): PracticeState => {
     const [talk, section] = CHAPTER_TALK[task]
     const openNow = activeTalk !== null && activeTalk.title === talk && !!activeTalk.vaultId && exampleVaultIds.has(activeTalk.vaultId)
     return { talk, section, openNow }
@@ -1078,7 +1091,7 @@ function MainApp() {
       .then((res) => { if (!res?.ok) notify('Couldn’t open a new window.', 'error') })
       .catch(() => notify('Couldn’t open a new window.', 'error'))
   }
-  const openPractice = (task: TaskGroup): void => openExampleTalk(CHAPTER_TALK[task][0])
+  const openPractice = (task: GuideChapter): void => openExampleTalk(CHAPTER_TALK[task][0])
   // Try it on a How it works topic: an example talk in its own window, or a command that needs no talk open.
   const runTopicTry = (target: TopicTarget): void => {
     if (target.kind === 'talk') { openExampleTalk(target.talk); return }
@@ -1104,7 +1117,8 @@ function MainApp() {
 
   const modes: Array<{ id: SidebarMode; label: string }> = [
     { id: 'slides', label: 'Slides' },
-    { id: 'talks', label: 'Talks' }
+    { id: 'talks', label: 'Talks' },
+    { id: 'pathways', label: 'Pathways' }
   ]
 
   return (
@@ -1132,21 +1146,24 @@ function MainApp() {
         <div
           className="sidebar-wrap"
           data-sidebar
-          data-slides-mode={sidebarMode === 'slides' ? slidesPanelView : undefined}
+          data-slides-mode={visibleSidebarMode === 'slides' ? slidesPanelView : undefined}
           style={{ width: `min(${sidebarWidth}px, ${SIDEBAR_MAX_SHARE_VW}vw)`, ['--sidebar-width' as string]: `min(${sidebarWidth}px, ${SIDEBAR_MAX_SHARE_VW}vw)` }}
         >
           <div className="sidebar-modebar">
             <div className="sidebar-modes" role="tablist">
-              {modes.map((m) => (
+              {modes.filter(m => activeTalk || m.id !== 'pathways').map((m) => (
                 <button
                   key={m.id}
                   role="tab"
                   aria-label={m.label}
-                  aria-selected={sidebarMode === m.id}
-                  className={`sidebar-mode-btn ${sidebarMode === m.id ? 'sidebar-mode-btn--active' : ''}`}
-                  onClick={() => setSidebarMode(m.id)}
+                  aria-selected={visibleSidebarMode === m.id}
+                  title={m.label}
+                  className={`sidebar-mode-btn ${visibleSidebarMode === m.id ? 'sidebar-mode-btn--active' : ''}`}
+                  onClick={() => m.id === 'pathways'
+                    ? window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail: 'pathways' }))
+                    : setSidebarMode(m.id)}
                 >
-                  {m.id === 'slides' ? <GalleryThumbnails size={15} /> : <Library size={15} />}
+                  {m.id === 'slides' ? <GalleryThumbnails size={15} /> : m.id === 'talks' ? <Library size={15} /> : <Layers size={15} />}
                   <span>{m.label}</span>
                 </button>
               ))}
@@ -1171,7 +1188,7 @@ function MainApp() {
             </button>
           </div>
 
-          {sidebarMode === 'talks' && (
+          {visibleSidebarMode === 'talks' && (
             <TalkList
               talks={state.talks}
               foldersByVault={state.foldersByVault}
@@ -1197,7 +1214,8 @@ function MainApp() {
               guideButton={guideButton}
             />
           )}
-          {sidebarMode === 'slides' && <div className="sidebar-nav-body" ref={setPreviewsHost} />}
+          {visibleSidebarMode === 'slides' && <div className="sidebar-nav-body" ref={setPreviewsHost} />}
+          {visibleSidebarMode === 'pathways' && <div className="sidebar-nav-body" ref={setPathwaysHost} />}
 
           <div
             className="sidebar-resizer"
@@ -1271,6 +1289,9 @@ function MainApp() {
         defaultView={openInView}
         welcome={welcomeContent(firstUsableVault ?? undefined)}
         leftPreviewsHost={sidebarMode === 'slides' && !sidebarCollapsed ? previewsHost : null}
+        leftPathwaysHost={visibleSidebarMode === 'pathways' && !sidebarCollapsed ? pathwaysHost : null}
+        onOpenPathways={openPathwaysTab}
+        onClosePathways={closePathwaysTab}
         slideTabView={slideTabView}
         onChooseSlideTabView={view => { void window.tw.settings.setSlideTab(view).catch(() => notify('The Slide tab setting could not be saved.', 'warning')) }}
         slidesPanelView={slidesPanelView}

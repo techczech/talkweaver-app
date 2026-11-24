@@ -1,5 +1,5 @@
 import ModeBack from './ModeBack'
-import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { PathwaySnapshot, ProjectionRow, TalkInfo } from '../../../preload/index'
 import { addPathwaySlides, insertPathwaySlides, movePathwaySlide, removePathwaySlides } from '../../../shared/slide-handling/pathway-list'
 import { notify } from '../lib/notify'
@@ -12,103 +12,163 @@ import '../pathways.css'
 
 export const PATHWAY_GRID_DRAG = 'application/x-tw-slides'
 const LIST_DRAG = 'application/x-tw-pathway-slide'
-type GridProps = { pathwayIds?: readonly string[]; onAddToPathway?: (ids: string[]) => void }
 type Dialog = { kind: 'new' | 'rename' | 'delete'; name: string; add?: string[] }
-type Props = {
-  talk: TalkInfo; content: string; slides: ProjectionRow[] | null; thumbnails: Record<string, string> | null
-  docked: boolean; children: (props: GridProps) => ReactNode
-  /** The one back control (house rule R16): "Back to <talk>", and Esc, return to the Slides view. */
-  onBack?: () => void
+const initialView = {
+  snapshot: null as PathwaySnapshot | null,
+  pathwayId: null as string | null,
+  busy: false,
+  error: null as string | null,
+  conflictFile: null as string | null,
+  dialog: null as Dialog | null,
+  adding: null as string[] | null
 }
 
-// The grid remains the outline surface; the dock only writes manifest lists. Serialize reads and
-// writes together so a change notification cannot overwrite a later edit with an older snapshot.
-export default function PathwaysView({ talk, content, slides, thumbnails, docked, children, onBack }: Props): JSX.Element {
-  const [snapshot, setSnapshot] = useState<PathwaySnapshot | null>(null)
-  const [pathwayId, setPathwayId] = useState<string | null>(null)
-  const [matrix, setMatrix] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  /** The manifest holds a Git conflict (0.45): the file Show in Finder reveals. */
-  const [conflictFile, setConflictFile] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [dialog, setDialog] = useState<Dialog | null>(null)
-  const [adding, setAdding] = useState<string[] | null>(null)
-  const [marker, setMarker] = useState<number | null>(null)
-  const current = useRef({ snapshot, content, slides, pathwayId })
-  current.current = { snapshot, content, slides, pathwayId }
-  const queue = useRef(Promise.resolve())
-  const alive = useRef(true)
-  useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
+// The dock and the workspace read the same selected pathway. Each talk owns its read/write
+// queue so already accepted edits can finish against that talk after the editor moves on.
+export function usePathways(outlinePath: string | undefined, content: string | null, slides: ProjectionRow[] | null, docked: boolean) {
+  const session = useMemo(() => ({
+    content, slides, snapshot: null as PathwaySnapshot | null,
+    queue: Promise.resolve(), alive: true
+  }), [outlinePath])
+  session.content = content
+  session.slides = slides
+  const [stored, setStored] = useState(() => ({ session, ...initialView }))
+  const view = stored.session === session ? stored : { session, ...initialView }
+  const { snapshot, pathwayId, busy, error, conflictFile, dialog, adding } = view
+  const update = (patch: Partial<typeof initialView>): void => {
+    if (session.alive) setStored(previous => ({
+      ...(previous.session === session ? previous : { session, ...initialView }), ...patch
+    }))
+  }
+  useLayoutEffect(() => {
+    session.alive = true
+    return () => { session.alive = false }
+  }, [session])
   const enqueue = (work: () => Promise<void>): void => {
-    queue.current = queue.current.then(async () => {
-      if (alive.current) setBusy(true)
-      try { await work(); if (alive.current) { setError(null); setConflictFile(null) } }
+    session.queue = session.queue.then(async () => {
+      update({ busy: true })
+      try { await work(); update({ error: null, conflictFile: null }) }
       catch (e) {
         const message = e instanceof Error ? e.message : String(e)
-        if (alive.current) { setError(message); setConflictFile((e as { conflictFile?: string } | null)?.conflictFile ?? null) }
+        if (session.alive) update({ error: message, conflictFile: (e as { conflictFile?: string } | null)?.conflictFile ?? null })
         else notify(message, 'error', 'pathway-edit')
       }
-      finally { if (alive.current) setBusy(false) }
+      finally { update({ busy: false }) }
     })
   }
   const accept = (next: PathwaySnapshot | { error: string; conflictFile?: string }): PathwaySnapshot => {
     if ('error' in next) throw Object.assign(new Error(next.error), { conflictFile: next.conflictFile })
-    current.current.snapshot = next
-    if (alive.current) setSnapshot(next)
+    session.snapshot = next
+    if (session.alive) setStored(previous => ({
+      ...(previous.session === session ? previous : { session, ...initialView }),
+      snapshot: next,
+      pathwayId: previous.session === session && next.pathways.some(p => p.id === previous.pathwayId) ? previous.pathwayId : null
+    }))
     return next
   }
-  const refresh = (): void => enqueue(async () => { accept(await window.tw.pathways.read(talk.outlinePath, current.current.content)) })
-  useEffect(() => { refresh() }, [talk.outlinePath]) // current editor buffer, never re-read disk over unsaved text
-  const refreshInputs = useRef({ content, docked, adding: false })
+  const ready = content !== null && !!outlinePath && !!window.tw.pathways
+  const refresh = (): void => {
+    if (ready) enqueue(async () => {
+      if (session.alive) accept(await window.tw.pathways.read(outlinePath, session.content!))
+    })
+  }
+  useEffect(() => { refresh() }, [session, ready])
+  const refreshInputs = useRef({ session, content, docked, adding: false })
   const choosing = adding !== null
   useEffect(() => {
     const before = refreshInputs.current
-    refreshInputs.current = { content, docked, adding: choosing }
+    refreshInputs.current = { session, content, docked, adding: choosing }
+    if (before.session !== session) return
     if ((docked && !before.docked) || (choosing && !before.adding)) { refresh(); return }
     if (content === before.content || (!docked && !choosing)) return
     const timer = window.setTimeout(refresh, 300)
     return () => window.clearTimeout(timer)
-  }, [talk.outlinePath, content, docked, choosing])
-  useEffect(() => window.tw.pathways.onChanged(({ outlinePath }) => { if (outlinePath === talk.outlinePath) refresh() }), [talk.outlinePath])
+  }, [session, content, docked, choosing])
+  useEffect(() => ready ? window.tw.pathways.onChanged(({ outlinePath: changed }) => { if (changed === outlinePath) refresh() }) : undefined, [session, ready])
   useEffect(() => {
     if (!docked && !choosing) return
     const focus = (): void => refresh()
     window.addEventListener('focus', focus)
     return () => window.removeEventListener('focus', focus)
-  }, [talk.outlinePath, docked, choosing])
+  }, [session, ready, docked, choosing])
 
-  const pathway = snapshot?.pathways.find(p => p.id === pathwayId) ?? snapshot?.pathways[0] ?? null
+  const pathway = snapshot?.pathways.find(p => p.id === pathwayId) ?? null
   const rows = slides ?? snapshot?.slides ?? []
-  const byId = new Map(rows.map(r => [r.slide_id, r]))
-  const ids = pathway?.slideIds ?? []
-  const missing = pathway?.missing ?? []
-  const keys = useMemo(() => ids.map(id => `pathway:${pathway?.id}:${id}`), [pathway?.id, ids])
-  const selection = useSlideSelection(keys)
-  const title = (id: string): string => plainInlineText(byId.get(id)?.title || byId.get(id)?.nav_title) || id
-  const writeIds = (id: string, change: (before: string[]) => string[]): void => enqueue(async () => {
-    const before = current.current.snapshot?.pathways.find(p => p.id === id)
+  const writeIds = (id: string, change: (before: string[], missing: string[]) => string[]): void => enqueue(async () => {
+    const before = session.snapshot?.pathways.find(p => p.id === id)
     if (!before) throw new Error('That pathway no longer exists.')
-    const next = change(before.slideIds)
+    const next = change(before.slideIds, before.missing)
     if (next.length === before.slideIds.length && next.every((value, i) => value === before.slideIds[i])) return
-    accept(await window.tw.pathways.setSlideIds(talk.outlinePath, current.current.content, id, next))
+    accept(await window.tw.pathways.setSlideIds(outlinePath!, session.content!, id, next))
   })
   const add = (id: string, chosen: string[]): void => {
-    writeIds(id, before => addPathwaySlides(before, chosen, (current.current.slides ?? []).map(r => r.slide_id)))
-    setAdding(null)
+    writeIds(id, before => addPathwaySlides(before, chosen, (session.slides ?? []).map(r => r.slide_id)))
+    update({ adding: null })
     commandRan('add-to-pathway')
   }
   const present = (): void => {
     if (!pathway) return
     const id = pathway.id
     enqueue(async () => {
-      const source = current.current.content
+      const source = session.content!
       const blocked = unresolvedTriggerBlock(source)
       if (blocked) throw new Error(blocked.message)
-      const result = await window.tw.pathways.present(talk.outlinePath, source, id)
+      const result = await window.tw.pathways.present(outlinePath!, source, id)
       if (!result.success) throw new Error(result.error || 'The pathway could not be presented.')
       commandRan('present-pathway')
     })
   }
+  const submit = (typed?: string): void => {
+    if (!dialog) return
+    const name = (typed ?? dialog.name).trim()
+    if (dialog.kind !== 'delete' && !name) return
+    const choice = { ...dialog, name }
+    const selected = pathway?.id
+    update({ dialog: null })
+    enqueue(async () => {
+      if (choice.kind === 'new') {
+        const old = new Set(session.snapshot?.pathways.map(p => p.id))
+        const next = accept(await window.tw.pathways.create(outlinePath!, session.content!, choice.name.trim()))
+        const created = next.pathways.find(p => !old.has(p.id))
+        if (created) {
+          update({ pathwayId: created.id })
+          // New-with-selection is a create action followed by the single membership edit.
+          if (choice.add?.length) add(created.id, choice.add)
+        }
+      } else if (selected) {
+        accept(await (choice.kind === 'rename'
+          ? window.tw.pathways.rename(outlinePath!, session.content!, selected, choice.name.trim())
+          : window.tw.pathways.delete(outlinePath!, session.content!, selected)))
+      }
+      commandRan(choice.kind === 'delete' ? 'pathway.delete' : `pathway.${choice.kind}`)
+    })
+  }
+  return {
+    snapshot, pathway, rows, busy, error, conflictFile, dialog, adding,
+    refresh, writeIds, add, present, submit,
+    setPathwayId: (id: string | null) => update({ pathwayId: id }),
+    setDialog: (dialog: Dialog | null) => update({ dialog }),
+    setAdding: (adding: string[] | null) => update({ adding })
+  }
+}
+
+export default function PathwaysView({ talk, model, thumbnails, docked, onBack }: {
+  talk: TalkInfo
+  model: ReturnType<typeof usePathways>
+  thumbnails: Record<string, string> | null
+  docked: boolean
+  onBack?: () => void
+}) {
+  const { snapshot, pathway, rows, busy, error, conflictFile, dialog, adding,
+    refresh, writeIds, add, present, submit, setPathwayId, setDialog, setAdding } = model
+  const [matrix, setMatrix] = useState(false)
+  const [marker, setMarker] = useState<number | null>(null)
+  const byId = new Map(rows.map(r => [r.slide_id, r]))
+  const ids = pathway?.slideIds ?? []
+  const missing = pathway?.missing ?? []
+  const keys = useMemo(() => ids.map(id => `pathway:${pathway?.id}:${id}`), [pathway?.id, ids])
+  const selection = useSlideSelection(keys)
+  const title = (id: string): string => plainInlineText(byId.get(id)?.title || byId.get(id)?.nav_title) || id
   useEffect(() => {
     if (!docked) return
     const onCommand = (event: Event): void => { if ((event as CustomEvent).detail === 'present') present() }
@@ -139,31 +199,6 @@ export default function PathwaysView({ talk, content, slides, thumbnails, docked
     window.addEventListener('keydown', leave)
     return () => window.removeEventListener('keydown', leave)
   }, [docked, onBack, dialog, adding])
-  const submit = (typed?: string): void => {
-    if (!dialog) return
-    const name = (typed ?? dialog.name).trim()
-    if (dialog.kind !== 'delete' && !name) return
-    const choice = { ...dialog, name }
-    const selected = pathway?.id
-    setDialog(null)
-    enqueue(async () => {
-      if (choice.kind === 'new') {
-        const old = new Set(current.current.snapshot?.pathways.map(p => p.id))
-        const next = accept(await window.tw.pathways.create(talk.outlinePath, current.current.content, choice.name.trim()))
-        const created = next.pathways.find(p => !old.has(p.id))
-        if (created) {
-          setPathwayId(created.id)
-          // New-with-selection is a create action followed by the single membership edit.
-          if (choice.add?.length) add(created.id, choice.add)
-        }
-      } else if (selected) {
-        accept(await (choice.kind === 'rename'
-          ? window.tw.pathways.rename(talk.outlinePath, current.current.content, selected, choice.name.trim())
-          : window.tw.pathways.delete(talk.outlinePath, current.current.content, selected)))
-      }
-      commandRan(choice.kind === 'delete' ? 'pathway.delete' : `pathway.${choice.kind}`)
-    })
-  }
   const readDrop = (event: React.DragEvent): string[] | null => {
     try {
       const list = event.dataTransfer.getData(LIST_DRAG)
@@ -185,23 +220,23 @@ export default function PathwaysView({ talk, content, slides, thumbnails, docked
     }
   })
   const image = (id: string): string | undefined => { const row = byId.get(id); return row ? thumbnails?.[row.render_hash || row.content_hash || id] : undefined }
-  return <div className={`pathways-layout${docked ? ' pathways-layout--docked' : ''}`}>
-    <div className="pathways-grid">{docked && onBack && <div className="mode-back-bar" data-pathways-back><ModeBack talkTitle={talk.title} onBack={onBack} /></div>}{children({ pathwayIds: docked ? ids : undefined, onAddToPathway: docked ? setAdding : undefined })}</div>
+  return <>
     {docked && <aside className={`pathway-dock${matrix ? ' pathway-dock--matrix' : ''}`} aria-label="Pathway" data-pathway-dock>
-      <header><h3>Pathway <small>The outline never changes</small></h3>
-        <select aria-label="Pathway" value={pathway?.id ?? ''} onChange={e => { setPathwayId(e.target.value); selection.clear() }}>
-          {!pathway && <option value="">Choose or create a pathway</option>}
+      <header>
+        {onBack && <div className="pathways-back" data-pathways-back><ModeBack talkTitle={talk.title} onBack={onBack} /></div>}
+        <select aria-label="Pathway" value={pathway?.id ?? ''} onChange={e => { setPathwayId(e.target.value || null); selection.clear() }}>
+          <option value="">Full talk</option>
           {snapshot?.pathways.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <div className="pathway-actions"><button onClick={() => setDialog({ kind: 'new', name: '' })}>New</button><button disabled={!pathway} onClick={() => setDialog({ kind: 'rename', name: pathway?.name ?? '' })}>Rename</button><button disabled={!pathway} onClick={() => setDialog({ kind: 'delete', name: pathway?.name ?? '' })}>Delete</button></div>
-        <div className="pathway-actions"><span>{ids.length} slides</span><button aria-pressed={!matrix} onClick={() => setMatrix(false)}>List</button><button aria-pressed={matrix} onClick={() => setMatrix(true)}>Matrix</button></div>
+        <div className="pathway-actions"><button disabled={!snapshot} onClick={() => setDialog({ kind: 'new', name: '' })}>New</button><button disabled={!pathway} onClick={() => setDialog({ kind: 'rename', name: pathway?.name ?? '' })}>Rename</button><button disabled={!pathway} onClick={() => setDialog({ kind: 'delete', name: pathway?.name ?? '' })}>Delete</button></div>
+        <div className="pathway-actions"><span>{pathway ? ids.length : rows.length} slides</span><button aria-pressed={!matrix} onClick={() => setMatrix(false)}>List</button><button aria-pressed={matrix} onClick={() => setMatrix(true)}>Matrix</button></div>
       </header>
       {error && <p role="alert" data-pathway-error>{error} {conflictFile && <button onClick={() => { void window.tw.shell.showInFolder(conflictFile) }}>Show in Finder</button>} <button onClick={refresh}>Try again</button></p>}
-      {missing.length > 0 && <p role="status" data-pathway-warning>{missing.length} slides no longer in the talk. <button onClick={() => pathway && writeIds(pathway.id, before => removePathwaySlides(before, current.current.snapshot?.pathways.find(p => p.id === pathway.id)?.missing ?? []))}>Drop missing</button></p>}
+      {missing.length > 0 && <p role="status" data-pathway-warning>{missing.length} slides no longer in the talk. <button onClick={() => pathway && writeIds(pathway.id, removePathwaySlides)}>Drop missing</button></p>}
       {matrix ? <div className="pathway-matrix-scroll"><table data-pathway-matrix><thead><tr><th>Talk order</th>{snapshot?.pathways.map(p => <th key={p.id}><button onClick={() => setPathwayId(p.id)} aria-pressed={pathway?.id === p.id}>{p.name}</button></th>)}</tr></thead><tbody>
         {[...rows.map(r => r.slide_id), ...new Set(snapshot?.pathways.flatMap(p => p.slideIds.filter(id => !byId.has(id))) ?? [])].map(id => <tr key={id}><td>{title(id)}{snapshot?.pathways.some(p => p.missing.includes(id)) && ' — missing'}</td>{snapshot?.pathways.map(p => <td key={p.id}><button aria-label={`${p.slideIds.includes(id) ? 'Remove' : 'Add'} ${title(id)} ${p.slideIds.includes(id) ? 'from' : 'to'} ${p.name}`} onClick={() => writeIds(p.id, before => before.includes(id) ? removePathwaySlides(before, [id]) : addPathwaySlides(before, [id], rows.map(r => r.slide_id)))}>{p.slideIds.includes(id) ? p.slideIds.indexOf(id) + 1 : '+'}</button></td>)}</tr>)}
       </tbody></table></div> : <div className="pathway-list" data-pathway-list onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setMarker(null) }}>
-        {!ids.length && <p>Empty. Drag slides here, or select slides and use Add to pathway.</p>}
+        {!ids.length && <p>{pathway ? 'Empty. Drag slides here, or select slides and use Add to pathway.' : 'Choose or create a pathway to edit its slides.'}</p>}
         {ids.map((id, i) => <Fragment key={id}>
           {marker === i && <div className="pathway-insertion-marker" data-pathway-insertion-marker />}
           <div className={`pathway-row${selection.focusedIndex === i ? ' pathway-row--focused' : ''}`} data-pathway-row={id} role="listitem" tabIndex={0} draggable
@@ -224,11 +259,10 @@ export default function PathwaysView({ talk, content, slides, thumbnails, docked
         </Fragment>)}
         <div className="pathway-drop-end" data-pathway-drop-end {...dropProps(ids.length)}>{marker === ids.length && <div className="pathway-insertion-marker" data-pathway-insertion-marker />}</div>
       </div>}
-      <footer><button disabled={!pathway || !ids.some(id => byId.has(id)) || busy} onClick={present}>Present this pathway</button></footer>
+      <footer><button disabled={!pathway || !pathway.present.length || busy} onClick={present}>Present this pathway</button></footer>
     </aside>}
-    {!docked && error && <p role="alert" data-pathway-error>{error}{conflictFile && <> <button onClick={() => { void window.tw.shell.showInFolder(conflictFile) }}>Show in Finder</button></>}</p>}
     {adding && <div className="pathway-dialog-backdrop" onMouseDown={() => setAdding(null)}><section role="dialog" aria-label="Add to pathway" className="pathway-dialog" onMouseDown={e => e.stopPropagation()}><h3>Add {adding.length} slides in talk order</h3>{snapshot?.pathways.map(p => <button key={p.id} onClick={() => add(p.id, adding)}>{p.name} ({p.slideIds.length} slides)</button>)}<button onClick={() => { setDialog({ kind: 'new', name: '', add: adding }); setAdding(null) }}>New pathway…</button><button onClick={() => setAdding(null)}>Cancel</button></section></div>}
     {dialog?.kind === 'delete' && <ConfirmCard title="Delete this pathway?" itemName={dialog.name} consequence="The pathway is removed from this talk. The talk's slides are not affected." recovery="A deleted pathway cannot be recovered." cta="Delete" onCancel={() => setDialog(null)} onConfirm={() => submit()} />}
     {dialog && dialog.kind !== 'delete' && <NameCard kind="pathway" mode={dialog.kind} initial={dialog.name} cta={dialog.kind === 'new' ? 'Create' : 'Rename'} onCancel={() => setDialog(null)} onSubmit={(value) => submit(value)} />}
-  </div>
+  </>
 }

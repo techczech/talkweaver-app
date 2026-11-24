@@ -503,23 +503,23 @@
 .lt input{font:inherit; color:inherit}
 
 /* ---------- top chrome (mockup 70-124) ---------- */
-/* Gate-4: the Browser overlays a hiddenInset window, so the macOS traffic lights float over
-   the top-left corner — 78px of left padding clears them (the app's own toolbar clears them
-   vertically instead, but the 46px bar can't grow without leaving the locked design). */
 .lt .lt-topbar{
   display:flex; align-items:center; gap:14px;
-  height:46px; padding:0 16px 0 78px; flex:none;
+  height:46px; padding:0 16px 0 max(12px, var(--tw-native-inline, 0px)); flex:none;
   background:var(--lt-chrome);
   border-bottom:1px solid var(--lt-hair);
 }
-/* Gate-4: at narrow widths the topbar must never push the density steps / settings / ? past
-   the window edge — the right-side controls are rigid (flex:none) and the squeeze lands on
-   the brand + view tabs instead (min-width:0 lets them shrink and clip quietly). */
-.lt .lt-topbar .lt-density, .lt .lt-topbar .lt-steps, .lt .lt-topbar .lt-steps button,
-.lt .lt-topbar .lt-tool-btn{flex:none}
-.lt .lt-topbar .lt-brand{min-width:0; overflow:hidden}
-.lt .lt-topbar .lt-brand .lt-wordmark{white-space:nowrap}
-.lt .lt-topbar .lt-viewtabs{min-width:0; overflow:hidden}
+/* Keep the controls at useful widths. The long Back label, title and count can shrink. */
+.lt .lt-topbar .mode-back { max-width: min(31vw, 46ch); }
+.lt .lt-topbar :is(.lt-density, .lt-steps, .lt-steps button, .lt-tool-btn, .lt-viewtabs) { flex: none; }
+.lt .lt-topbar :is(.lt-brand, .lt-result-count) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.lt .lt-topbar .lt-room { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1000px) {
+  .lt .lt-topbar { gap: 8px; }
+  .lt .lt-topbar .lt-viewtabs { margin-left: 0; }
+  .lt .lt-topbar .lt-viewtabs button { padding-inline: 8px; }
+  .lt .lt-topbar .lt-viewtabs kbd { display: none; }
+}
 .lt .lt-brand{display:flex; align-items:baseline; gap:8px}
 .lt .lt-brand .lt-room{font:600 15px var(--lt-sans); color:var(--lt-ink); letter-spacing:0; text-transform:none; white-space:nowrap}
 .lt .lt-viewtabs{
@@ -939,11 +939,9 @@
 }
 .lt-focus *{box-sizing:border-box}
 
-/* the window is titleBarStyle:hiddenInset — mirror the workspace toolbar's 28px traffic-light inset
-   and make the bar draggable so Focus moves the window like the normal chrome (controls opt out). */
 .lt-focus-top{
   flex:none; display:flex; align-items:center; gap:14px;
-  height:calc(44px + 28px); padding:28px 18px 0;
+  height:calc(44px + var(--tw-native-block, 0px)); padding:var(--tw-native-block, 0px) 18px 0;
   background:var(--lt-chrome); border-bottom:1px solid var(--lt-hair);
   -webkit-app-region:drag;
 }
@@ -1555,12 +1553,13 @@ button.lt-rghead:hover{background:var(--lt-paper-deep); color:var(--lt-ink-soft)
 
 /* ---------- the viewer shell: a layer INSIDE the Browser root ---------- */
 .lt .lt-viewer{
+  -webkit-app-region:no-drag;
   position:absolute; inset:0; z-index:80; display:flex; flex-direction:column;
   background:var(--lt-paper); outline:none;
   animation:lt-viewIn .22s var(--lt-ease);
 }
 .lt .lt-iv-top{
-  flex:none; display:flex; align-items:center; gap:12px; padding:10px 20px;
+  flex:none; display:flex; align-items:center; gap:12px; padding:10px 20px 10px max(20px, var(--tw-native-inline, 0px));
   border-bottom:1px solid var(--lt-hair); background:var(--lt-chrome);
 }
 .lt .lt-iv-room{

@@ -22,17 +22,20 @@ import {
   keymap,
   type DecorationSet
 } from '@codemirror/view'
-import { currentFocusRange } from '../focusScope.ts'
+import { currentFocusRange, inSlideTextPanel, slideTextInput } from '../focusScope.ts'
 import { parseTriggerLine } from '../../../../shared/trigger-line.ts'
 import { notify } from '../../lib/notify.ts'
+import { compilerNotesLines } from '../../../../shared/objects/notes-planner.ts'
+import { readOutlineObjectRegions } from '../../../../shared/objects/outline-object-regions.ts'
 import {
   detectObjectBlocks,
   detectOutlineObjects,
   type ObjectBlock,
   type OutlineObjects
 } from './detect.ts'
-import { exactTextWrite, setExpandedObjectBlock, setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
+import { editNotesAsSource, exactTextWrite, setExpandedObjectBlock, setOpenObjectBlock, setRawObjectBlock } from './effects.ts'
 import { widgetForObjectBlock } from './widgets.ts'
+import { SlideTextObjectWidget } from './slideTextObject.ts'
 import { deleteObjectBlock } from './remove.ts'
 import { AddNotesCloseWidget, CommentChipWidget, cardWidgetFor } from './cardWidgets.ts'
 import { objectStatusField, type CardFileStatus } from './status.ts'
@@ -63,10 +66,13 @@ export type ObjectBlocksOptions = {
 // Parsing depends on the immutable document, not the cursor or object UI state. Share one
 // index across all fields so a single edit cannot trigger several complete outline scans.
 const objectIndex = StateField.define<OutlineObjects>({
-  create: (state) => detectOutlineObjects(state.doc.toString()),
-  update: (objects, transaction) => transaction.docChanged
-    ? detectOutlineObjects(transaction.newDoc.toString())
-    : objects
+  create: (state) => detectOutlineObjects(state.doc.toString(), state.facet(slideTextInput)),
+  update: (objects, transaction) => {
+    const pictures = transaction.state.facet(slideTextInput)
+    return transaction.docChanged || pictures !== transaction.startState.facet(slideTextInput)
+      ? detectOutlineObjects(transaction.newDoc.toString(), pictures)
+      : objects
+  }
 })
 
 /** The block objects of the shared index (the field name every reader below used before cards). */
@@ -74,12 +80,20 @@ const objectBlockIndex = {
   read: (state: EditorState): ObjectBlock[] => state.field(objectIndex).blocks
 }
 
+function cardsIn(state: EditorState): ObjectBlock[] {
+  const blocks = state.field(objectIndex, false)?.blocks ?? []
+  return state.facet(editNotesAsSource) ? blocks.filter(block => block.kind !== 'notes') : blocks
+}
+
 const openBlockField = StateField.define<{ from: number; to: number } | null>({
   create: () => null,
   update(value, transaction) {
     const effect = transaction.effects.find((candidate) => candidate.is(setOpenObjectBlock))
     if (effect) return effect.value
-    if (!value || !transaction.docChanged) return value
+    if (!value) return value
+    if (transaction.reconfigured && transaction.state.facet(editNotesAsSource)
+      && objectBlockIndex.read(transaction.startState).some(block => block.kind === 'notes' && block.from === value.from)) return null
+    if (!transaction.docChanged) return value
     // WriteFlex walk finding: edge association grows an open object when a new row/node is typed
     // at either edge instead of silently dropping out of edit mode.
     const from = transaction.changes.mapPos(value.from, -1)
@@ -178,6 +192,10 @@ const insertFenceField = StateField.define<{ from: number; to: number } | null>(
   }
 })
 
+export const sourceObjectPreviews = Facet.define<boolean, boolean>({
+  combine: (values) => values[0] ?? false
+})
+
 const objectBlocksOptions = Facet.define<ObjectBlocksOptions, ObjectBlocksOptions>({
   combine: (values) => values[0] ?? {}
 })
@@ -231,7 +249,7 @@ function gapAfterWith(state: EditorState, block: ObjectBlock, objectStartsAt: (p
 
 /** This object (by its start) has a gap after it. */
 function blockHasGap(state: EditorState, from: number): boolean {
-  const blocks = objectBlockIndex.read(state)
+  const blocks = cardsIn(state)
   const block = blocks.find((candidate) => candidate.from === from)
   return Boolean(block && hasGapAfter(state, block, blocks))
 }
@@ -261,7 +279,7 @@ export function insertionCaret(state: EditorState): number {
 /** A place a block goes in after (a drop point): on a closed object's lines it is the end of the object's
  *  last line, so the block goes after the object, never into it. */
 export function insertionPlace(state: EditorState, pos: number): number {
-  const blocks = state.field(objectIndex, false)?.blocks ?? []
+  const blocks = cardsIn(state)
   const open = state.field(openBlockField, false)
   for (const block of blocks) {
     if (block.from > pos) break
@@ -463,7 +481,7 @@ export class ObjectEditorWidget extends WidgetType {
  * require block Decoration.replace ranges to come from a StateField, never a ViewPlugin.
  */
 function buildObjectBlockState(state: EditorState): ObjectBlockState {
-  const blocks = objectBlockIndex.read(state)
+  const blocks = cardsIn(state)
   const open = state.field(openBlockField)
   const raw = state.field(rawBlockField)
   const expanded = state.field(expandedBlockField)
@@ -473,7 +491,9 @@ function buildObjectBlockState(state: EditorState): ObjectBlockState {
   const ranges: Array<Range<Decoration>> = []
   const atomicRanges: Array<Range<Decoration>> = []
   const gapHolder = caretGapBlock(state)
+  const slideTextRange = inSlideTextPanel(state) ? currentFocusRange(state) : null
   const starts = new Set(blocks.map((block) => block.from))
+  const previews = state.facet(sourceObjectPreviews)
 
   for (const block of blocks) {
     if (!blockIsInsideFocus(block, state)) continue
@@ -491,9 +511,11 @@ function buildObjectBlockState(state: EditorState): ObjectBlockState {
       continue
     }
     const selected = blockIsSelected(state, block, gapHolder)
-    const widget = isCardBlock(block)
-      ? cardWidgetFor(block, selected, raw.has(block.from), expanded.has(block.from), statuses)
-      : widgetForObjectBlock(block, selected, raw.has(block.from), options.onZoom)
+    const widget = slideTextRange
+      ? new SlideTextObjectWidget(block, selected, blocks, slideTextRange)
+      : isCardBlock(block)
+        ? cardWidgetFor(block, selected, raw.has(block.from), expanded.has(block.from), statuses, previews)
+        : widgetForObjectBlock(block, selected, raw.has(block.from), options.onZoom)
     // WriteFlex C1: selection is a widget class. The visual replacement ends at the final line's
     // END and never consumes its newline, which keeps CM6's tile geometry valid.
     const replacement = Decoration.replace({ widget, block: true })
@@ -546,10 +568,11 @@ export function outlineObjectsIn(state: EditorState): OutlineObjects | undefined
   return state.field(objectIndex, false)
 }
 
-/** Toggle the expanded preview of the card at the caret (session chrome; writes nothing). */
+/** Expand the card at the caret. Notes open directly in their editor. */
 export function toggleExpandedObjectAtSelection(view: EditorView): boolean {
   const block = activeBlock(view.state)
   if (!block || blockIsOpen(view.state, block) || !isCardBlock(block)) return false
+  if (block.kind === 'notes') return openSelectedObject(view)
   const expanded = view.state.field(expandedBlockField).has(block.from)
   view.dispatch({ effects: setExpandedObjectBlock.of({ from: block.from, expanded: !expanded }) })
   return true
@@ -564,7 +587,7 @@ function commitFacts(view: EditorView): ObjectCommitFacts {
 const objectBlocksField = StateField.define<ObjectBlockState>({
   create: buildObjectBlockState,
   update(value, transaction) {
-    if (!transaction.docChanged && !transaction.selection && transaction.effects.length === 0) {
+    if (!transaction.docChanged && !transaction.selection && transaction.effects.length === 0 && !transaction.reconfigured) {
       return value
     }
     return buildObjectBlockState(transaction.state)
@@ -846,6 +869,7 @@ const objectSourceChangeGuard = EditorState.changeFilter.of((tr) => {
       const block = blocks[at]
       const end = objectEnd(start, block)
       if (end < fromA && at <= index) break
+      if (block.kind === 'notes' && start.facet(editNotesAsSource)) continue
       if (open?.from === block.from) continue
       if (!breaksObjectMarker(start, block, end, fromA, toA, inserted)) continue
       // A pure insertion is suppressed by a range around it (CodeMirror keeps an insertion at a range's edge).
@@ -917,6 +941,7 @@ const objectSourceGuard = EditorState.transactionFilter.of((tr) => {
     if (!block || open?.from === block.from) return
     const end = objectEnd(start, block)
     if (fromA === end) {
+      // The closing line keeps its after-block insertion rule even when notes show as source.
       // The first characters say all the rule needs (a large paste is not copied out).
       const text = inserted.sliceString(0, 4)
       const typedHere = gap?.from === block.from && fromA === toA && newHead > fromB && newHead <= toB
@@ -924,6 +949,7 @@ const objectSourceGuard = EditorState.transactionFilter.of((tr) => {
       if (lead) fixes.push({ from: fromB, insert: lead })
       return
     }
+    if (block.kind === 'notes' && start.facet(editNotesAsSource)) return
     if (fromA === block.from && fromA === toA && inserted.length > 0 && end > fromA) {
       const text = inserted.toString()
       if (/[\r\n]$/.test(text)) return
@@ -945,6 +971,43 @@ const objectSourceGuard = EditorState.transactionFilter.of((tr) => {
   }]
 })
 
+// Editing raw source may change a note's contents, or replace its entire marked block. A partial
+// edit must keep the existing delimiters paired and every line between them private.
+const refusedRawNotesEdit = StateEffect.define<string>()
+const rawNotesGuard = EditorState.transactionFilter.of(tr => {
+  const start = tr.startState
+  if (!tr.docChanged || !start.facet(editNotesAsSource) || tr.isUserEvent('undo')
+    || tr.isUserEvent('redo') || tr.annotation(exactTextWrite)) return tr
+  const blocks = objectBlockIndex.read(start).filter(block => block.kind === 'notes')
+  const partial = blocks.filter(block => {
+    const end = objectEnd(start, block)
+    let touched = false
+    let replaced = false
+    tr.changes.iterChangedRanges((from, to) => {
+      if (from <= block.from && to >= end) replaced = true
+      if (from <= end && to >= block.from) touched = true
+    })
+    return touched && !replaced
+  })
+  if (!partial.length) return tr
+  const text = tr.newDoc.toString()
+  const regions = readOutlineObjectRegions(text)
+  const privateLines = compilerNotesLines(text)
+  const stillPrivate = partial.every(block => {
+    const close = start.doc.lineAt(objectEnd(start, block)).from
+    const openingLine = tr.newDoc.lineAt(tr.changes.mapPos(block.from, 1)).number - 1
+    const closingLine = tr.newDoc.lineAt(tr.changes.mapPos(close, 1)).number - 1
+    if (!regions.notes.some(note => note.closed && note.start === openingLine && note.close === closingLine)) return false
+    for (let line = openingLine; line <= closingLine; line += 1) {
+      if (!privateLines.has(line)) return false
+    }
+    return true
+  })
+  if (stillPrivate) return tr
+  const message = 'Paste the whole block to add a code fence, comment or ::: line inside notes.'
+  return { effects: [EditorView.announce.of(message), refusedRawNotesEdit.of(message)] }
+})
+
 /** The object that typed text at the caret must go after: the one whose gap holds the caret, or the
  *  closed object the caret selects (the browser's own caret sits beside its block, so its text would
  *  land on the line above). */
@@ -962,9 +1025,17 @@ function typingTarget(state: EditorState): ObjectBlock | null {
  *  the object's last line. The composed text then joins this change's undo step (CodeMirror joins
  *  composition to the step before it), so one Undo restores the text as it was. */
 export function materialiseGapLine(view: EditorView): boolean {
-  const block = typingTarget(view.state)
+  const { state } = view
+  let block = typingTarget(state)
+  const { main, ranges } = state.selection
+  if (!block && state.facet(editNotesAsSource) && ranges.length === 1 && main.empty) {
+    // Start composition below the visible closer even if a later line already exists.
+    // Redirecting each provisional IME edit separately can leave extra composed characters.
+    const candidate = objectAtOrBefore(objectBlockIndex.read(state), main.head)
+    if (candidate?.kind === 'notes' && main.head === objectEnd(state, candidate)) block = candidate
+  }
   if (!block) return false
-  const end = objectEnd(view.state, block)
+  const end = objectEnd(state, block)
   view.dispatch({
     changes: { from: end, insert: '\n\n' },
     selection: EditorSelection.cursor(end + 2),
@@ -999,7 +1070,7 @@ export function lineCommandUnavailable(state: EditorState): boolean {
 /** With one empty caret: at the end of a closed object's last line (the gap under it, or the end of
  *  that line when a line follows), or on a selected closed object. One lookup, no scan. */
 function lineCommandTarget(state: EditorState): { at: 'gap'; end: number } | { at: 'object' } | null {
-  const blocks = state.field(objectIndex, false)?.blocks
+  const blocks = cardsIn(state)
   const sel = state.selection
   if (!blocks?.length || sel.ranges.length !== 1 || !sel.main.empty) return null
   const head = sel.main.head
@@ -1336,7 +1407,16 @@ export function objectBlocksExtension(options: ObjectBlocksOptions): Extension {
   return [
     typeEscape,
     objectSourceChangeGuard,
+    // CodeMirror applies transaction filters in reverse order. Validate the raw note
+    // after the closing-line insertion has been placed next to it.
+    rawNotesGuard,
     objectSourceGuard,
+    EditorView.updateListener.of(update => {
+      for (const transaction of update.transactions) {
+        const refusal = transaction.effects.find(effect => effect.is(refusedRawNotesEdit))
+        if (refusal) notify(refusal.value, 'warning', 'notes-source-boundary')
+      }
+    }),
     objectKeys,
     fenceTrigger,
     insertFenceField,

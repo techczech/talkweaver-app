@@ -124,6 +124,21 @@ try {
         : new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: data }))
     }, { bytes: [...picture], drop, selector, plain, html })
   }
+  const beforeHashPaste = readFileSync(outline, 'utf8')
+  await editor.getByText('Share the tools', { exact: false }).click()
+  await page.keyboard.press('End')
+  await addPicture({ plain: '\n\n# A literal line\n### Another literal line' })
+  const withHashPaste = beforeHashPaste.replace('Share the tools', 'Share the tools\n\n\\# A literal line\n\\### Another literal line')
+  await until('heading paste did not save as literal slide body text', () => readFileSync(outline, 'utf8') === withHashPaste)
+  await slide.getByText(/# A literal line/).waitFor()
+  const crumb = page.locator('.workspace-slide-crumb strong')
+  await crumb.filter({ hasText: 'Slide 2 of 3' }).waitFor()
+  await page.keyboard.press(`${meta}+z`)
+  await until('Undo did not restore the outline byte for byte', () => readFileSync(outline, 'utf8') === beforeHashPaste)
+  await editor.getByText('Share the tools', { exact: false }).click()
+  await page.keyboard.press('End')
+  console.log('Slide text paste saved two literal hash lines, and Undo restored the file byte for byte.')
+
   const stage = '.workspace-slide-stage'
   await editor.focus()
   await addPicture({ plain: ' and seedlings', html: '<strong>unused HTML</strong>' })
@@ -149,6 +164,17 @@ try {
   const firstWriteTime = statSync(join(assets, first), { bigint: true }).mtimeNs
   assert.equal(firstBytes.toString('ascii', 8, 12), 'WEBP')
   await page.screenshot({ path: join(output, 'PA1-picture.png') })
+  const pastedSource = readFileSync(outline, 'utf8')
+  const pictureCard = page.locator('.workspace-slide-text [data-slide-text-object="picture"]')
+  await pictureCard.click()
+  await page.keyboard.press('Delete')
+  await until('Deleting the picture card did not remove its source reference', () =>
+    !readFileSync(outline, 'utf8').includes('![](assets/pasted-'))
+  assert.deepEqual(readFileSync(join(assets, first)), firstBytes)
+  await page.keyboard.press(meta + '+z')
+  await until('Picture Undo did not restore the source byte for byte', () => readFileSync(outline, 'utf8') === pastedSource)
+  await pictureCard.waitFor()
+  console.log('Picture card Delete removed its reference, kept the native asset and took one byte-exact Undo.')
   await page.getByRole('button', { name: /Speaker notes/ }).click()
   const notes = page.getByRole('textbox', { name: 'Speaker notes' })
   await editor.locator('.cm-line').filter({ hasText: 'Share the tools and seedlings tomorrow' }).click()
@@ -181,7 +207,11 @@ try {
     await key(page, number)
     await page.locator(`[data-view="${view}"]`).first().waitFor()
     if (view === 'grid') {
-      assert.equal(await page.locator('[data-right-column]').count(), 0)
+      const inspector = page.locator('[data-right-column] .tw-inspector')
+      await inspector.waitFor()
+      const activeCard = page.locator('[data-view="grid"] [data-slide-index][data-active="true"]')
+      const activeNumber = Number(await activeCard.getAttribute('data-slide-index')) + 1
+      await inspector.locator('.tw-right-who small').filter({ hasText: new RegExp('slide ' + activeNumber + ' of ', 'i') }).waitFor()
       assert.equal(await page.locator('[data-grid-toolbar]').count(), 0)
       assert.equal(await page.getByText('(no section)', { exact: true }).count(), 0)
     }
@@ -211,7 +241,7 @@ try {
   await page.getByRole('button', { name: 'Show slides as previews' }).click()
   await page.locator('[data-slides-mode="previews"] .tw-slide-card').first().waitFor()
   await page.getByRole('button', { name: 'Present', exact: true }).click()
-  const isDeck = window => window !== page && /\/garden-rota-present\.html(?:[?#]|$)/.test(window.url())
+  const isDeck = window => window !== page && /\/garden-rota-present\.html(?:[?#]|$)/.test(window.url()) && new URL(window.url()).searchParams.has('presenter')
   await until('presentation window did not open', () => app.windows().some(isDeck), 25000)
   const deck = app.windows().find(isDeck)
   assert.equal(decodeURIComponent(new URL(deck.url()).hash.slice(1)), readFileSync(outline, 'utf8').match(/\{id=([^}]+)\}/)?.[1])

@@ -185,8 +185,8 @@ try {
 
   const doc = () => page.evaluate(() => window.docText())
   const depths = () => page.evaluate(() => window.depths())
-  const undoKey = async () => { await page.evaluate(() => window.refocus()); await page.keyboard.press('Meta+z') }
-  const redoKey = async () => { await page.evaluate(() => window.refocus()); await page.keyboard.press('Meta+Shift+z') }
+  const undoKey = async () => { await page.evaluate(() => window.refocus()); await page.keyboard.press('ControlOrMeta+z') }
+  const redoKey = async () => { await page.evaluate(() => window.refocus()); await page.keyboard.press(process.platform === 'darwin' ? 'ControlOrMeta+Shift+z' : 'ControlOrMeta+y') }
   const pause = () => page.waitForTimeout(GROUPING)
 
   let disk = ''

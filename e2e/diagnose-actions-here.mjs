@@ -59,7 +59,7 @@ try {
     `rows=${headingRows.length}`)
   record('the chip count is the number of rows listed', expected === headingRows.length, `chip=${expected} rows=${headingRows.length}`)
   const groups = await page.$$eval('.actions-here-group', (nodes) => nodes.map((node) => node.textContent))
-  record('rows sit under task-group headings in order', groups[0] === 'Write the outline' && groups.includes('Build a slide') && groups.indexOf('Build a slide') < groups.indexOf('Reuse slides'), groups.join(' | '))
+  record('rows sit under task-group headings in order', groups[0] === 'Outlining' && groups.includes('Build a slide') && groups.indexOf('Build a slide') < groups.indexOf('Reuse slides'), groups.join(' | '))
   const lastLabel = await page.locator('[data-actions-here-all]').innerText()
   record('the last row is "All commands… ⇧⌘P"', /All commands…\s*⇧⌘P/.test(lastLabel.replace(/\s+/g, ' ')), JSON.stringify(lastLabel))
   const small = await panel.evaluate((node, caret) => {

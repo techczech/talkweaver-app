@@ -11,8 +11,10 @@
 import { EditorView } from '@codemirror/view'
 import { EditorSelection, type Extension } from '@codemirror/state'
 import { isolateHistory } from '@codemirror/commands'
+import { preserveHeadingOwners } from './outlineSaveIdentity'
 import { notify } from '../lib/notify'
 import { moveMessage } from '../lib/moveDestinations'
+import { inSlideTextPanel } from './focusScope'
 import { mintEditorSlideId } from './inlineTriggerCommitModel'
 import { deleteSlideAtCursor } from './outliner'
 import { slideRows } from './slideOutline'
@@ -128,6 +130,7 @@ export function pasteSlidesAfter(view: EditorView, clip: string, afterLine: numb
  * `text` is that text rewritten (image references materialised for this talk).
  */
 export function pasteSlideTextAtCaret(view: EditorView, text: string, clipboardText: string = text): boolean {
+  if (inSlideTextPanel(view.state)) return false
   const sel = view.state.selection
   if (sel.ranges.length !== 1 || !sel.main.empty || !isOwnSlideClip(clipboardText) || !isSlideClip(text)) return false
   const place = caretPastePlace(view.state.doc.toString(), view.state.doc.lineAt(sel.main.head).number)
@@ -137,6 +140,7 @@ export function pasteSlideTextAtCaret(view: EditorView, text: string, clipboardT
 }
 /** Whether pasteSlideTextAtCaret would take this text (asked before the text is fetched or rewritten). */
 export function wouldPasteAsSlides(view: EditorView, text: string): boolean {
+  if (inSlideTextPanel(view.state)) return false
   const sel = view.state.selection
   if (sel.ranges.length !== 1 || !sel.main.empty || !isOwnSlideClip(text)) return false
   return caretPastePlace(view.state.doc.toString(), view.state.doc.lineAt(sel.main.head).number) != null
@@ -168,6 +172,7 @@ export function moveSlideTo(view: EditorView, fromLine: number, target: MoveTarg
   view.dispatch({
     changes: { from: ch.from, to: ch.to, insert: ch.insert },
     selection: EditorSelection.cursor(headingFrom),
+    effects: preserveHeadingOwners.of(moved.headingOrder),
     annotations: ownStep(),
     scrollIntoView: true
   })

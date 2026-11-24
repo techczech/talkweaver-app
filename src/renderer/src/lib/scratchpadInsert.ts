@@ -11,7 +11,7 @@ import { HTML_PAGE_INSERT_TEXT } from './insertHtmlPage.ts'
 import type { ScratchItem, ScratchReply, ScratchSnapshot, ScratchVisualImport } from '../../../shared/scratchpad.ts'
 import {
   placeRows, planScratchSlides, caretInSlideBody, headingTitle, insertSlideAt, placeForLine, restampTakenIds, visualNeedsCopy, visualSlide, scratchVisuals,
-  type ScratchPlace, type ScratchVisual
+  type ScratchPlace, type ScratchSlideBlock, type ScratchVisual
 } from '../../../shared/scratchpad-insert.ts'
 
 type NotifyKind = 'info' | 'success' | 'warning' | 'error'
@@ -172,7 +172,24 @@ async function visualOnly(host: ScratchInsertHost, talk: string, request: Extrac
 }
 
 
-export type ScratchBatchHost = Pick<ScratchInsertHost, 'talk' | 'editor' | 'apply' | 'prepareSlide' | 'notify'> & {
+type ScratchBatchSlideApi = Pick<Window['tw']['talk'], 'insertFromVault' | 'materializeSlideAssets'>
+
+export async function prepareScratchBatchSlide(
+  api: ScratchBatchSlideApi, markdown: string, source: string, talk: string, text: string
+): Promise<ScratchSlideBlock> {
+  if (source === talk) return markdown
+  // Reserve source IDs as well so main gives the copies fresh IDs before recording their origins.
+  const reservedIds = [...(text + '\n' + markdown).matchAll(/\{id=([A-Za-z0-9_-]+)\}/g)].map(match => match[1])
+  const copied = await api.insertFromVault(source, talk, markdown, reservedIds)
+  if (!copied.ok) throw new Error(copied.error)
+  if (copied.crossVault) return { markdown: copied.markdown, idsAssigned: true }
+  const materialized = await api.materializeSlideAssets(source, markdown)
+  if (!materialized?.success) throw new Error('The selected slide media could not be prepared.')
+  return materialized.markdown
+}
+
+export type ScratchBatchHost = Pick<ScratchInsertHost, 'talk' | 'editor' | 'apply' | 'notify'> & {
+  prepareSlide(markdown: string, sourceOutlinePath: string): Promise<ScratchSlideBlock | null>
   api: {
     prepareInsert(ids: string[], expectedOutline: string): Promise<ScratchReply<{ entries: import('../../../shared/scratchpad.ts').ScratchPreparedInsert[] }>>
     markInsertedMany(records: import('../../../shared/scratchpad.ts').ScratchInsertedRecord[], expectedOutline: string): Promise<ScratchReply<{ snapshot: ScratchSnapshot }>>
@@ -190,7 +207,7 @@ export async function runScratchBatch(host: ScratchBatchHost, ids: string[], pla
     const prepared = await host.api.prepareInsert(ids, talk)
     if (!prepared.ok) throw new Error(prepared.error)
     if (prepared.entries.length !== ids.length || prepared.entries.some((item, i) => item.id !== ids[i])) throw new Error('The selection changed. Nothing was inserted.')
-    const blocks: string[] = []
+    const blocks: ScratchSlideBlock[] = []
     for (const item of prepared.entries) {
       if (!unchanged()) throw new Error('The talk changed while preparing the selection. Nothing was inserted.')
       const block = 'markdown' in item ? await host.prepareSlide(item.markdown, item.sourceOutlinePath) : visualSlide(item.title, item.line)
@@ -198,7 +215,7 @@ export async function runScratchBatch(host: ScratchBatchHost, ids: string[], pla
       blocks.push(block)
     }
     if (!unchanged()) throw new Error('The talk changed while preparing the selection. Nothing was inserted.')
-    const planned = planScratchSlides(editor.text, place, blocks)
+    const planned = planScratchSlides(editor.text, place, blocks, { freshIds: true })
     if (!planned.ok) throw new Error(planned.error)
     const result = await host.apply(talk, current => {
       if (!unchanged() || current !== editor.text) throw new Error('The talk changed. Nothing was inserted.')

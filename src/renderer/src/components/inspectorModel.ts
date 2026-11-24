@@ -1,3 +1,4 @@
+import { readOutlineSlides } from '../../../shared/feedback-accept.ts'
 import { isEmptyAuthoringSlide } from '../../../shared/redesign-window-source.ts'
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import type { ProjectionRow } from '../../../preload/index.ts'
@@ -48,20 +49,10 @@ export function resolveInspectedSlide(
   return { id: rows[index]?.slide_id ?? null, index }
 }
 
-/** Follow genuine editor navigation while preserving Inspector identity during an option write. */
-export function inspectedSlideIdAfterCursorChange(
-  rows: readonly Partial<ProjectionRow>[] | null,
-  activeIndex: number,
-  currentId: string | null,
-  commitInProgress: boolean
-): string | null {
-  if (commitInProgress) return currentId
-  return rows?.[activeIndex]?.slide_id ?? currentId
-}
-
 export function headingLineForSlideId(
   content: string,
-  slideId: string | null
+  slideId: string | null,
+  allowInlineId = false
 ): number | null {
   if (!slideId) return null
   const lines = content.split('\n')
@@ -73,7 +64,10 @@ export function headingLineForSlideId(
       if (/^#{1,6}\s/.test(lines[heading])) return heading + 1
     }
   }
-  return null
+  if (!allowInlineId) return null
+  // A legacy heading can still carry a stamped id before its first normalised save.
+  const matches = readOutlineSlides(content).slides.filter(slide => slide.id === slideId)
+  return matches.length === 1 ? matches[0].line : null
 }
 
 /** Live source for one rendered slide under the heading-is-slide model. */

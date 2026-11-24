@@ -29,6 +29,8 @@ import {
   parseMarkdownFenceOpeningLine
 } from '../../../../../compiler/scripts/lib/03-object-token.mjs'
 
+import { IMAGE_SYNTAX_RE, imageSyntaxIsAudio, imageSyntaxIsVideo } from '../../../../../compiler/scripts/lib/image-line-rules.mjs'
+
 export type ObjectBlockKind =
   | 'gfm-table'
   | 'trigger-table'
@@ -51,6 +53,7 @@ export type ObjectBlockKind =
   // A page, simulation or video line (`[Embed: …]`, `[Simulation: …]`, `[Video: …]`, a bare address
   // paragraph). A web page's saved-views marker and saved views belong to its card.
   | 'embed'
+  | 'picture'
 
 /** The compiler's simulation designs a session fence can carry. */
 export type SimulationDesign = 'chat' | 'chat-lanes' | 'terminal' | 'terminal-agent'
@@ -82,6 +85,8 @@ export type ObjectBlock = {
   comment?: CommentDescription
   /** An embed card: what its first line names, and the saved views grouped under a web page. */
   embed?: EmbedFacts
+  /** A media reference written with image syntax. */
+  media?: { kind: 'picture' | 'video' | 'audio'; alt: string; src: string }
 }
 
 export type EmbedFacts = {
@@ -215,8 +220,8 @@ function triggerObject(
  * resolver; trigger-line charts remain a compatibility reading only when no block token competes.
  * Fences deliberately diverge for unterminated runs: unfinished source stays editable.
  */
-export function detectObjectBlocks(doc: string): ObjectBlock[] {
-  return detectOutlineObjects(doc).blocks
+export function detectObjectBlocks(doc: string, includePictures = false): ObjectBlock[] {
+  return detectOutlineObjects(doc, includePictures).blocks
 }
 
 const SIMULATION_DESIGNS = new Set<SimulationDesign>(['chat', 'chat-lanes', 'terminal', 'terminal-agent'])
@@ -227,7 +232,7 @@ const SIMULATION_DESIGNS = new Set<SimulationDesign>(['chat', 'chat-lanes', 'ter
  * comment chips, and the warnings for constructs left as text. Opaque regions (fence bodies, notes
  * bodies, comments, front matter) are never read for other objects, as the compiler never reads them.
  */
-export function detectOutlineObjects(doc: string): OutlineObjects {
+export function detectOutlineObjects(doc: string, includePictures = false): OutlineObjects {
   const lines = sourceLines(doc)
   const rawLines = lines.map((line) => line.text)
   const regions = readOutlineObjectRegions(doc)
@@ -419,6 +424,23 @@ export function detectOutlineObjects(doc: string): OutlineObjects {
   const embedBlocks = embedObjects(doc, rawLines, lines, fenced, [...blocks, ...notesBlocks])
   const { commentBlocks, inline } = commentObjects(doc, rawLines, lines, regions, [...blocks, ...notesBlocks, ...embedBlocks])
   const all = [...blocks, ...notesBlocks, ...embedBlocks, ...commentBlocks].sort((a, b) => a.from - b.from)
+  if (includePictures) {
+    let occupied = 0
+    const pictures: ObjectBlock[] = []
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index]
+      if (fenced[index]) continue
+      const match = IMAGE_SYNTAX_RE.exec(line.text.trim())
+      if (!match) continue
+      while (occupied < all.length && all[occupied].to <= line.from) occupied += 1
+      if (occupied < all.length && all[occupied].from < line.to) continue
+      const [, alt, src] = match
+      const kind = imageSyntaxIsAudio(src) ? 'audio' : imageSyntaxIsVideo(src) || /^vid-[a-f0-9]{7}$/.test(src) ? 'video' : 'picture'
+      pictures.push({ kind: 'picture', from: line.from, to: line.to, source: doc.slice(line.from, line.to), media: { kind, alt, src } })
+    }
+    all.push(...pictures)
+    all.sort((a, b) => a.from - b.from)
+  }
   return { blocks: all, inline, warnings: regionWarnings(doc, lines, regions) }
 }
 

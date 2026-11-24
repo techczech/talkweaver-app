@@ -2,26 +2,26 @@
 // Poster parity (ADR-0015 + ADR-0023 §6, Ticket 2b)
 //
 // The contract this guards:
-//   1. an AUTHORED {title} / {closing} slide renders through the SAME poster as the auto
-//      deck-title / auto closing — same variant, same class set, same slots;
+//   1. an authored {title} shares the opening treatment, and an authored {closing} keeps
+//      the original closing treatment; the generated closing uses the opening treatment;
 //   2. the poster's subtitle slot is the slide's FIRST body paragraph, falling back to the deck's
 //      own subtitle for that bookend — `subtitle` for an opening, `cta` for an ending;
 //   3. EVERY further authored block rides in `.tp-body` — nothing authored is ever dropped;
 //   4. `title_style` still picks the opening's variant, authored or auto;
-//   5. the AUTO bookends are byte-identical to the pre-§6 build (frozen markup below).
+//   5. the generated opening keeps its frozen markup.
 //
 // It compiles real decks (prepareSource → buildDeckHtmlFromModel), never a stubbed renderer.
 // =============================================================================
 import { strict as assert } from 'node:assert'
-import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { statSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { JSDOM } from 'jsdom'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
+import { DECK_PALETTES, modelPaletteFor } from '../compiler/scripts/lib/deck-settings.mjs'
 
-const dir = mkdtempSync(join(tmpdir(), 'tw-poster-parity-'))
-let probe = 0
+const fixturePath = fileURLToPath(import.meta.url).replace(/\.mjs$/, ".md")
+const fixtureStat = statSync(fileURLToPath(import.meta.url))
 
 const FRONTMATTER = [
   'title: "Poster **Parity**"',
@@ -35,11 +35,9 @@ const FRONTMATTER = [
   'colour: cobalt'
 ]
 
-async function compileDeck(bodyLines, extraMeta = []) {
-  const source = ['---', ...FRONTMATTER, ...extraMeta, '---', '', '# Poster Parity', '', ...bodyLines].join('\n')
-  const path = join(dir, `${++probe}.md`)
-  writeFileSync(path, source, 'utf8')
-  const model = await prepareSource(path, source, 'Poster Parity', statSync(path))
+async function compileDeck(bodyLines, extraMeta = [], heading = '# Poster Parity') {
+  const source = ['---', ...FRONTMATTER, ...extraMeta, '---', '', heading, '', ...bodyLines].join('\n')
+  const model = await prepareSource(fixturePath, source, 'Poster Parity', fixtureStat)
   const html = await buildDeckHtmlFromModel(model)
   const { document } = new JSDOM(html).window
   return { model, html, document, slides: [...document.querySelectorAll('section.slide')] }
@@ -65,15 +63,15 @@ const autoClosing = autoOnly.slides[autoOnly.slides.length - 1]
 assert(posterIn(autoTitle), 'the auto deck-title renders a poster')
 assert(posterIn(autoClosing), 'the auto closing renders a poster')
 assert.equal(classSet(posterIn(autoTitle)), 'tp tp-poster')
-assert.equal(classSet(posterIn(autoClosing)), 'tp tp-closing tp-poster')
+assert.equal(classSet(posterIn(autoClosing)), 'tp tp-poster')
 assert.equal(posterIn(autoTitle).querySelector('.tp-body'), null, 'an auto poster emits no .tp-body')
 assert.equal(posterIn(autoClosing).querySelector('.tp-body'), null, 'an auto poster emits no .tp-body')
 
-// 5 — the auto bookends must not have moved a byte. Frozen from the pre-§6 build.
+// The generated opening is frozen from the pre-§6 build.
 const FROZEN_AUTO_TITLE = '<div class="tp tp-poster"><div class="tp-side"></div><div class="tp-main"><div class="tp-kicker">TalkWeaver · Parity fixture</div><div class="tp-mid"><h2 class="tp-title">Poster <strong>Parity</strong></h2><p class="tp-sub">The deck subtitle</p></div><div class="tp-foot"><div class="tp-who"><span class="tp-name">Dominik Lukeš</span> · <span class="tp-soft">University of Oxford</span></div><div class="tp-whenweb"><span class="tp-web">dominiklukes.net</span><br>11 September 2026</div></div></div></div>'
-const FROZEN_AUTO_CLOSING = '<div class="tp tp-poster tp-closing"><div class="tp-side"></div><div class="tp-main"><div class="tp-kicker">TalkWeaver · Parity fixture</div><div class="tp-mid"><h2 class="tp-title">Thank you</h2></div><div class="tp-foot"><div class="tp-who"><span class="tp-name">Dominik Lukeš</span> · <span class="tp-soft">University of Oxford</span></div><div class="tp-whenweb"><span class="tp-web">dominiklukes.net</span><br>11 September 2026</div></div></div></div>'
+const THEMED_AUTO_CLOSING = '<div class="tp tp-poster"><div class="tp-side"></div><div class="tp-main"><div class="tp-kicker">TalkWeaver · Parity fixture</div><div class="tp-mid"><h2 class="tp-title">Thank you</h2></div><div class="tp-foot"><div class="tp-who"><span class="tp-name">Dominik Lukeš</span> · <span class="tp-soft">University of Oxford</span></div><div class="tp-whenweb"><span class="tp-web">dominiklukes.net</span><br>11 September 2026</div></div></div></div>'
 assert.equal(posterIn(autoTitle).outerHTML, FROZEN_AUTO_TITLE, 'the auto deck-title poster is unchanged')
-assert.equal(posterIn(autoClosing).outerHTML, FROZEN_AUTO_CLOSING, 'the auto closing poster is unchanged')
+assert.equal(posterIn(autoClosing).outerHTML, THEMED_AUTO_CLOSING, 'the auto closing uses the opening poster')
 
 // -----------------------------------------------------------------------------
 // Fixture 2 — authored {title} + one paragraph.
@@ -130,7 +128,7 @@ const authoredClosingDeck = await compileDeck([
 const closingSlide = slideTitled(authoredClosingDeck.slides, 'Thanks for listening')
 const closingPoster = posterIn(closingSlide)
 assert(closingPoster, 'an authored {closing} slide renders through the poster')
-assert.equal(classSet(closingPoster), classSet(posterIn(autoClosing)), 'authored closing keeps the auto closing’s variant')
+assert.equal(classSet(closingPoster), 'tp tp-closing tp-poster', 'authored closing keeps its original variant')
 assert.equal(text(closingPoster.querySelector('.tp-title')), 'Thanks for listening')
 assert.equal(text(closingPoster.querySelector('.tp-cta')), 'Thank you', 'paragraph 1 fills the closing subtitle slot')
 const closingBody = closingPoster.querySelector('.tp-body')
@@ -204,7 +202,82 @@ assert.equal(classSet(bannerAuto), 'tp tp-banner', 'title_style picks the auto o
 assert.equal(classSet(bannerAuthored), classSet(bannerAuto), 'title_style picks the authored opening variant too')
 assert.equal(text(bannerAuthored.querySelector('.tp-sub')), 'Banner subtitle.')
 assert(text(bannerAuthored.querySelector('.tp-body')).includes('Banner body paragraph.'), 'banner keeps the further paragraph')
-// The banner's closing is still the closing poster — `title_style` never reaches an ending.
-assert.equal(classSet(posterIn(banner.slides[banner.slides.length - 1])), 'tp tp-closing tp-poster')
+// A generated closing shares the selected opening treatment.
+assert.equal(classSet(posterIn(banner.slides[banner.slides.length - 1])), 'tp tp-banner')
 
-console.log('poster parity: 7 fixtures OK')
+const palettes = ['ocean', ...DECK_PALETTES]
+for (const palette of palettes) {
+  const extraMeta = palette === 'ocean' ? [] : [`palette: ${palette}`]
+  const content = ['## Talk content', '', '### A body slide', '', 'Body copy.']
+  const { slides, model } = await compileDeck(content, [...extraMeta,
+    'thanks: See you **soon**',
+    'cta: "[Read the notes](https://example.com/notes)"',
+    'handout_url: https://example.com/handout',
+    'contact_links:',
+    '  contact: {url: https://example.com/contact, label: Contact page}',
+    '  email: mailto:hello@example.com',
+    '  invalid: ftp://example.com/file',
+    'hide-email: true',
+  ], '# Poster Parity {icon=lucide:book-open title-icon=above}')
+  const opening = slides.find(slide => slide.dataset.id === 'deck-title')
+  const closing = slides.find(slide => slide.dataset.id === 'deck-thanks')
+  const openingIcon = opening.querySelector('.tp-title .title-icon svg')
+  const closingIcon = closing.querySelector('.tp-title .title-icon svg')
+  assert(openingIcon, palette)
+  if (palette === 'classic' || palette === 'green') {
+    assert.equal(closingIcon, null, palette)
+  } else {
+    assert.equal(closingIcon?.outerHTML, openingIcon.outerHTML, palette)
+    assert.equal(closingIcon?.closest('.title-with-icon').dataset.titleIcon, 'above', palette)
+    const noIcon = await compileDeck(content, extraMeta)
+    assert.equal(noIcon.slides.at(-1).querySelector('.tp-title .title-icon'), null, palette)
+  }
+  assert.equal(model.palette, modelPaletteFor(palette), palette)
+  assert.equal(closing.dataset.role, 'ending', palette)
+  assert.equal(closing.dataset.layout, 'closing', palette)
+  assert.equal(closing.querySelector('.slide-content').className, opening.querySelector('.slide-content').className, palette)
+  for (const field of ['look', 'palette', 'companion', 'lead', 'titleLayout']) {
+    assert.equal(closing.dataset[field], opening.dataset[field], `${palette} ${field}`)
+  }
+  for (const slot of ['.tp-kicker', '.tp-foot', '.tp-qr']) {
+    assert.equal(closing.querySelector(slot)?.outerHTML, opening.querySelector(slot)?.outerHTML, `${palette} ${slot}`)
+  }
+  assert.equal(closing.querySelector('.tp-title strong')?.textContent, 'soon', palette)
+  assert.equal(closing.querySelector('.tp-sub a')?.href, 'https://example.com/notes', palette)
+  assert.equal(closing.querySelector('a[href="https://example.com/contact"]')?.textContent, 'Contact page', palette)
+  assert(!closing.querySelector('a[href^="mailto:"], a[href^="ftp:"]'), palette)
+}
+for (const variant of ['split', 'banner']) {
+  const { slides } = await compileDeck(['### A slide', '', 'Body copy.'], [
+    `title_style: ${variant}`,
+    'logo: https://example.com/logo.png',
+    'handout_url: https://example.com/handout',
+  ], '# Poster Parity {icon=lucide:book-open}')
+  const closing = slides.find(slide => slide.dataset.id === 'deck-thanks')
+  const poster = posterIn(closing)
+  assert.equal(classSet(poster), `tp tp-${variant}`)
+  assert.equal(poster.querySelector('.tp-title .title-icon'), null, variant)
+  assert.equal(poster.querySelector('.tp-side .tp-logo')?.src, 'https://example.com/logo.png')
+  assert.equal(poster.querySelector('.tp-side .qr-caption a')?.href, 'https://example.com/handout')
+  assert(!closing.querySelector('.slide-qr-corner'))
+}
+for (const iconAttr of ['', ' icon=lucide:leaf']) {
+  const { slides } = await compileDeck([
+    `### Welcome {title role=opening${iconAttr}} {id=welcome}`, '', 'Workshop details.',
+  ], ['palette: forest'], '# Poster Parity {icon=lucide:book-open}')
+  const opening = slides.find(slide => slide.dataset.id === 'welcome')
+  const closing = slides.find(slide => slide.dataset.id === 'deck-thanks')
+  const openingIcon = opening.querySelector('.tp-title .title-icon svg')
+  assert.equal(Boolean(openingIcon), Boolean(iconAttr), 'authored opening fixture')
+  assert.equal(closing.querySelector('.tp-title .title-icon svg')?.outerHTML, openingIcon?.outerHTML, 'follow the authored opening')
+}
+const emailDeck = await compileDeck(['### A slide', '', 'Body copy.'], [
+  'contacts: {email: mailto:hello@example.com}',
+])
+assert.equal(emailDeck.slides.at(-1).querySelector('.tp-contacts a')?.href, 'mailto:hello@example.com')
+const privateDeck = await compileDeck(['### A slide', '', 'Body copy.'], [
+  'contacts: {email: mailto:hello@example.com}',
+  'hide_email: yes',
+])
+assert.equal(privateDeck.slides.at(-1).querySelector('.tp-contacts'), null)
+console.log(`poster parity: 7 bookend fixtures and ${palettes.length} palette fixtures OK`)

@@ -3,8 +3,8 @@
 //
 // ADR-0015 locked the 30/70 sidebar Poster as the title slide's default rendering
 // (docs/design/2026-07-18-title-slide/corrected-poster.html). ADR-0023 §6 extends it: an
-// AUTHORED `{title}` or `{closing}` slide renders through the SAME poster as the synthesised
-// deck-title and deck-thanks, so the two can never drift apart.
+// authored `{title}` or `{closing}` slide uses this same emitter. The generated closing
+// takes the opening variant and an authored closing keeps its original variant.
 //
 // Every `title-poster` block in the model is built here — the auto bookends in 08-source-adapters
 // (E7) and the authored conversion below both call `posterBlockFor`. `06-block-renderers`
@@ -17,7 +17,7 @@
 //   byline    frontmatter author/affiliation/web/date/series/event/logo/accent + handout QR
 //   body      EVERY further authored block → div.tp-body under the byline (nothing is dropped)
 //
-// The auto slides carry no `body`, so their emitted HTML is byte-identical to the pre-§6 build.
+// The auto slides carry no `body`.
 // =============================================================================
 
 /** Poster variants `title_style` may select for an opening (ADR-0015). */
@@ -27,9 +27,8 @@ export const TITLE_STYLES = ["poster", "split", "banner"];
 export const POSTER_LAYOUT_ROLES = new Map([["title", "opening"], ["closing", "ending"]]);
 
 /**
- * The poster variant for a bookend. An ending always uses the `closing` variant — the auto
- * closing has never taken `title_style`, and ADR-0023 §6 keeps authored and auto closings on the
- * same variant. An opening takes frontmatter `title_style`, defaulting to the locked Poster.
+ * The opening treatment takes frontmatter `title_style`, defaulting to Poster.
+ * The ending treatment is reserved for authored closings.
  */
 export function posterVariantFor(meta, role) {
   if (role === "ending") return "closing";

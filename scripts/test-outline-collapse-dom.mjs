@@ -61,6 +61,9 @@ import GridView from './src/renderer/src/components/GridView.tsx'
 import { moveBlockTo, moveBlockInto } from './src/renderer/src/extensions/outliner.ts'
 import { publishOutline, revealLine, resetOutlineCollapseForTests, collapseAllSections, expandAllSections } from './src/renderer/src/lib/outlineCollapseStore.ts'
 
+// Search can finish its debounced picture-text query in this browser-only fixture.
+window.tw = { talk: { slidePictureText: async (_path, refs) => refs.map(() => '') } }
+
 // A storage that survives "restarting the app" (resetting the module state) inside the page.
 window.fakeStorage = window.fakeStorage || (() => { const m = new Map(); return { getItem: (k) => m.get(k) ?? null, setItem: (k, v) => { m.set(k, v) }, size: () => m.size } })()
 
@@ -182,7 +185,7 @@ try {
   browser = await chromium.launch()
   const page = await browser.newPage({ viewport: { width: 1100, height: 700 } })
   const errors = []
-  page.on('pageerror', (e) => errors.push(String(e)))
+  page.on('pageerror', (e) => errors.push(e.stack ?? String(e)))
   page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()) })
   await page.setContent('<!doctype html><html><body style="margin:0"><div id="stage" style="padding:20px 0 0 20px"></div></body></html>')
   await page.addStyleTag({ content: readFileSync(join(root, 'src/renderer/src/styles.css'), 'utf8') })

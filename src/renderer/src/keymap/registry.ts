@@ -392,6 +392,8 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   surfaceCommand('research-find', 'app.research-find'),
   surfaceCommand('pathways', 'app.pathways'),
   surfaceCommand('add-to-pathway', 'app.add-to-pathway'),
+  surfaceCommand('present-from-here', 'app.present-current'),
+  surfaceCommand('present-presenter', 'app.present'),
   surfaceCommand('present-pathway', 'app.present-pathway'),
   surfaceCommand('set-aside-slides', 'app.set-aside'),
   surfaceCommand('search-slides-grid', 'app.grid-search'),

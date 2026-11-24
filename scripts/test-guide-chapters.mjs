@@ -20,10 +20,10 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { COMMAND_REGISTRY } from '../src/shared/command-registry.ts'
-import { TASK_GROUPS, SURFACE_KEYS } from '../src/shared/task-groups.ts'
+import { SURFACE_KEYS } from '../src/shared/task-groups.ts'
 import { PRESENTER_PALETTE } from '../src/shared/presenter-palette.ts'
 import {
-  CHAPTER_EXCLUDED, CHAPTER_ICONS, CHAPTER_TALK, DELETING_COMMANDS, LIVE_SUBGROUPS, MERGED_ROWS, SUBGROUP_ORDER, chapterCommands, chapterOfCommand, deriveChapters,
+  CHAPTER_EXCLUDED, CHAPTER_ICONS, CHAPTER_TALK, GUIDE_CHAPTERS, DELETING_COMMANDS, LIVE_SUBGROUPS, MERGED_ROWS, SUBGROUP_ORDER, chapterCommands, chapterOfCommand, deriveChapters,
   isLiveCommand, resolveCommandId
 } from '../src/shared/guide-chapters.ts'
 import {
@@ -74,15 +74,19 @@ try {
     assert.equal(GUIDE_TEXT.chapters.ticked, 'Ticked')
   })
 
-  await test('ten chapters, one per task group, in the drawn order', () => {
-    assert.deepEqual(chapters.map((c) => c.task), [...TASK_GROUPS])
+  await test('ten practice chapters keep the drawn order after the task split', () => {
+    assert.deepEqual(chapters.map((c) => c.task), [...GUIDE_CHAPTERS])
     assert.deepEqual(chapters.map((c) => c.task), MAP.tasks.map((t) => t.name))
-    for (const task of TASK_GROUPS) assert.deepEqual(DRAWN_TALK[task], CHAPTER_TALK[task])
+    for (const task of GUIDE_CHAPTERS) assert.deepEqual(DRAWN_TALK[task], CHAPTER_TALK[task])
+    assert.ok(rowOf('Write the outline', 'format-bold'))
+    assert.ok(rowOf('Write the outline', 'new-slide'))
+    assert.ok(rowOf('See the talk', 'editor.jump-prev'))
+    assert.ok(rowOf('See the talk', 'editor.jump-next'))
   })
 
   await test('sub-groups come in the command map’s order; a sub-group the build added comes after them', () => {
     const live = new Set(LIVE_SUBGROUPS)
-    for (const task of TASK_GROUPS) {
+    for (const task of GUIDE_CHAPTERS) {
       const drawn = []
       for (const r of MAP.records) if (r.class === 'command' && r.task === task && !live.has(r.subgroup) && !drawn.includes(r.subgroup)) drawn.push(r.subgroup)
       const got = byTask[task].subgroups.map((g) => g.name).filter((n) => drawn.includes(n))
@@ -128,7 +132,7 @@ try {
     }
     // Live: only Present has any, and the drawn 23 are among them.
     assert.ok(byTask['Present'].live.length > 0)
-    for (const task of TASK_GROUPS.filter((t) => t !== 'Present')) assert.equal(byTask[task].live.length, 0, `${task} has no live commands`)
+    for (const task of GUIDE_CHAPTERS.filter((t) => t !== 'Present')) assert.equal(byTask[task].live.length, 0, `${task} has no live commands`)
   })
 
   await test('recording, the Studio editor and export: every registry command is a row of its chapter; export has none', () => {
@@ -402,7 +406,7 @@ try {
   await test('render, the list: ten rows with their history; Start here on the first for a person with no progress (state 04)', () => {
     const fresh = m.render(base)
     const rows = [...fresh.matchAll(/data-chapter-row="([^"]+)" data-chapter-state="([^"]+)"/g)].map((x) => [x[1], x[2]])
-    assert.deepEqual(rows, TASK_GROUPS.map((t) => [t, 'not-opened']))
+    assert.deepEqual(rows, GUIDE_CHAPTERS.map((t) => [t, 'not-opened']))
     const t = text(fresh)
     assert.ok(t.startsWith('Chapters 0 of 10 finished'))
     assert.ok(t.includes('Write the outline Start here Not opened'))
@@ -474,7 +478,7 @@ try {
     assert.ok(html.includes('data-chapter-finished') && t.includes('Finished 6 Oct'))
     assert.ok(t.includes(`This chapter ${share.rows.length} of ${share.rows.length}`))
     assert.ok(html.includes('data-chapter-next') && t.includes('Next chapter: Manage talks'))
-    const last = TASK_GROUPS.at(-1)
+    const last = GUIDE_CHAPTERS.at(-1)
     const lastDone = withChapterFinished(withRan(byTask[last].rows.map((r) => r.ids[0])), last, 1)
     assert.ok(!m.render({ ...base, learn: lastDone, selected: last }).includes('data-chapter-next'), 'nothing after the last')
     assert.ok(!m.render({ ...base, learn: withRan(share.rows.slice(0, 2).map((r) => r.ids[0])), selected: 'Share' }).includes('data-chapter-finished'))

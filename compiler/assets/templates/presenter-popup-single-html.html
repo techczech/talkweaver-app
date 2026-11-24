@@ -5423,7 +5423,7 @@
     justify-content: space-between;
     padding: 3.66cqw 3cqw;
   }
-  .tp-poster .tp-logo {
+  :is(.tp-poster, .tp-bookend-assets) .tp-logo {
     display: block;
     max-width: 18cqw;
     max-height: 4.5cqw;
@@ -5432,11 +5432,11 @@
     object-fit: contain;
     object-position: left top;
   }
-  .tp-poster .tp-qr { display: flex; flex-direction: column; align-items: flex-start; gap: .56cqw; margin: auto 0 0; }
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr { display: flex; flex-direction: column; align-items: flex-start; gap: .56cqw; margin: auto 0 0; }
   /* V2 · Split card */
-  .tp-poster .tp-qr .qr-code { width: 9.5cqw; height: 9.5cqw; padding: 0; border: 0; background: transparent; box-shadow: 0 1px 3px rgba(0,0,0,.14); cursor: pointer; }
-  .tp-poster .tp-qr .qr-code svg { display: block; width: 100%; height: 100%; border-radius: .3em; }
-  .tp-poster .tp-qr .qr-caption {
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr .qr-code { width: 9.5cqw; height: 9.5cqw; padding: 0; border: 0; background: transparent; box-shadow: 0 1px 3px rgba(0,0,0,.14); cursor: pointer; }
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr .qr-code svg { display: block; width: 100%; height: 100%; border-radius: .3em; }
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr .qr-caption {
     font-family: var(--mono);
     font-size: 1.7cqw;
     letter-spacing: .05em;
@@ -5445,9 +5445,9 @@
     overflow-wrap: anywhere;
   }
   .tp-split .tp-side { width: 22cqw; flex: none; background: var(--tint); display: flex; flex-direction: column; justify-content: space-between; padding: 3.38cqw 2.2cqw; }
-  .tp-poster .tp-qr .qr-caption a { color: inherit; text-decoration: none; }
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr .qr-caption a { color: inherit; text-decoration: none; }
   .tp-split .tp-side .tp-event { font-size: max(22px, .85em); color: var(--muted); line-height: 1.5; }
-  .tp-poster .tp-qr.qr-too-long { color: var(--accent); font: 600 1.7cqw/1.35 var(--mono); overflow-wrap: anywhere; }
+  :is(.tp-poster, .tp-bookend-assets) .tp-qr.qr-too-long { color: var(--accent); font: 600 1.7cqw/1.35 var(--mono); overflow-wrap: anywhere; }
   .tp-split .tp-main-col { flex: 1; display: flex; flex-direction: column; justify-content: center; padding: 0 5cqw; }
   .tp-poster .tp-main {
     flex: 1;
@@ -11170,6 +11170,14 @@ body.presenter-mode.tw-predrawing .deck { display: block !important; position: f
   .slide[data-title-layout="top"][data-title-look="tab"] > .slide-content:not(.layout-title):not(.layout-section-title) > .slide-head:not(.slide-head-quiet) > h1 { filter: none; }
 }
 
+
+/* A generated Split or Banner closing keeps its handout and logo in the composition. */
+.layout-title .tp-bookend-assets :is(.tp-logo, .tp-qr .qr-caption) { max-width: 100%; }
+.layout-title .tp-split .tp-bookend-assets .tp-qr { margin: 0; }
+.layout-title .tp-banner .tp-main:has(> .tp-bookend-assets) { gap: 4cqw; padding: 4cqw 6cqw; }
+.layout-title .tp-banner .tp-main > .tp-bookend-assets { display: grid; gap: 1.5cqw; flex: 0 0 20cqw; }
+.layout-title .tp-banner .tp-main:has(> .tp-bookend-assets) > .tp-inner { min-width: 0; }
+.layout-title .tp-contacts { overflow-wrap: anywhere; }
 /* Cards adopt the animated-scene drawing (ADR-0039, 0.41 ticket 09).
    Values from docs/design/2026-10-16-slide-scene-formatting/after/14-cards.html and 14-cards-long.html
    (drawn at 1920 x 1080, written here in cqw = px / 19.2). Unmarked block: it sorts after every migrated block and,

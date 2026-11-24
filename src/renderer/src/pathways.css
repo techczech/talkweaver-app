@@ -1,21 +1,45 @@
-.pathways-layout { display:flex; height:100%; min-height:0; width:100%; min-width:0; }
-.pathways-grid { flex:1; min-width:0; height:100%; display:flex; flex-direction:column; }
-.pathways-grid > :not(.mode-back-bar) { flex:1 1 auto; min-height:0; }
-.pathway-dock { width:340px; min-width:280px; max-width:55%; border-left:1px solid var(--line); background:var(--paper, #fff); display:flex; flex-direction:column; font-size:13px; }
-.pathway-dock--matrix { width:480px; }
+/* The sidebar supplies width and owns the boundary next to the grid. */
+.pathway-dock { flex: 1; min-width: 0; min-height: 0; border-inline-end: 1px solid var(--line); background: var(--paper); display: flex; flex-direction: column; font-size: .8125rem; }
+.pathways-back { margin-bottom: 8px; }
+.pathways-back .mode-back { max-width: 100%; }
+.workspace-pathway-switch { flex: none; min-width: 0; max-width: min(18vw, 180px); }
+.workspace-pathway-switch > div, .workspace-pathway-switch .toolbar-btn { max-width: 100%; }
+.workspace-pathway-switch .toolbar-btn-content { min-width: 0; }
+.workspace-pathway-switch .toolbar-btn-content > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workspace-pathway-switch .toolbar-menu { right: auto; left: 0; max-width: min(55vw, 360px); max-height: min(60vh, 420px); overflow: auto; }
+.workspace-pathway-switch .toolbar-menu-item > span:first-of-type { white-space: normal; overflow-wrap: anywhere; }
+.workspace-pathway-add.toolbar-btn { flex: none; color: var(--muted); background: transparent; border-color: transparent; }
+.workspace-pathway-add.toolbar-btn:hover { color: var(--ink); background: var(--hover); }
+/* The selected pathway is title-bar context and keeps its label at minimum width. */
+.app-shell .workspace-toolbar.workspace-view-titlebar[data-density]
+  :is(.workspace-pathway-switch .toolbar-btn, .workspace-pathway-add)
+  .toolbar-btn-content > :nth-child(n+2) { display: inline; }
+.workspace-slide-crumb:has(.pathway-slide-nav) { display: flex; align-items: baseline; gap: 4px; }
+.pathway-slide-nav { display: flex; gap: 2px; margin-inline-start: auto; }
+.pathway-slide-nav button:disabled { opacity: .45; cursor: default; }
+
+@container (max-width: 300px) {
+  [data-slides-mode="outline"] .sidebar-mode-btn svg { display: none; }
+}
+@container (max-width: 220px) {
+  [data-sidebar]:not([data-slides-mode="previews"]) .sidebar-mode-btn svg { display: none; }
+  [data-sidebar]:not([data-slides-mode="previews"]) .sidebar-mode-btn { padding-inline: 3px; }
+}
+@container (max-width: 185px) {
+  [data-slides-mode="outline"] .sidebar-mode-btn svg { display: block; }
+  [data-slides-mode="outline"] .sidebar-mode-btn span { display: none; }
+}
 .pathway-dock header { padding:16px; border-bottom:1px solid var(--line); }
-.pathway-dock h3 { margin:0 0 12px; display:flex; align-items:center; justify-content:space-between; }
-.pathway-dock h3 small { font-size:10px; font-weight:400; color:var(--muted); }
 .pathway-dock select { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink); font:inherit; }
 .pathway-dock button, .pathway-dialog button { cursor:pointer; border:1px solid var(--line); border-radius:5px; background:var(--panel); color:var(--ink); padding:5px 8px; font:inherit; }
 .pathway-dock button:disabled { opacity:.45; cursor:default; }
-.pathway-actions { display:flex; gap:6px; margin-top:10px; align-items:center; }
+.pathway-actions { display:flex; flex-wrap: wrap; gap:6px; margin-top:10px; align-items:center; }
 .pathway-actions span { flex:1; color:var(--muted); }
 .pathway-list, .pathway-matrix-scroll { flex:1; min-height:0; overflow:auto; padding:10px; }
 .pathway-row { display:flex; gap:7px; align-items:center; min-height:58px; border:1px solid var(--line); border-radius:6px; margin-bottom:6px; padding:7px; cursor:grab; background:var(--panel); }
 .pathway-row--focused { border-color:var(--oxford); background:var(--accent-soft); }
 .pathway-row:focus-visible { outline:2px solid var(--focus); }
-.pathway-row img { width:56px; height:36px; object-fit:contain; }
+.pathway-row img { width:min(56px, 24%); height:36px; object-fit:contain; }
 .pathway-grip { color:var(--muted); }
 .pathway-number { color:var(--accent-text); font-weight:700; min-width:16px; }
 .pathway-row-title { flex:1; min-width:0; overflow-wrap:anywhere; }

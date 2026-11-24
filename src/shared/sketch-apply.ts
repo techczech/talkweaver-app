@@ -79,7 +79,7 @@ export function planSketchApply(text: string, place: ScratchPlace, review: Sketc
   if (!blocks.length) return proposals.length
     ? { ok: true, text, ids, firstSlide, count: 0, proposals }
     : { ok: false, error: 'Choose at least one slide to add or keep in the Scratchpad.' }
-  const result = planScratchSlides(text, place, blocks, addsSections ? 'section-boundary' : 'slide')
+  const result = planScratchSlides(text, place, blocks, { placement: addsSections ? 'section-boundary' : 'slide' })
   if (!result.ok) return result
   // Verify what the compiler read. Any hidden heading or structural capture is a refusal, never a partial edit.
   const inserted = new Set(ids)

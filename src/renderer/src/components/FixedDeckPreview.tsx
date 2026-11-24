@@ -1,18 +1,51 @@
-import { useLayoutEffect, useRef, useState, type Ref } from 'react'
+import { useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import { FIXED_DECK_HEIGHT, FIXED_DECK_SANDBOX, FIXED_DECK_WIDTH, fixedDeckScale } from './fixedDeckPreviewModel'
+
+import RevealPreviewBadge from './RevealPreviewBadge'
+
+export interface RevealPreviewStep {
+  src: string
+  count: number
+  step: number
+}
 
 interface Props {
   src?: string
   title: string
   className?: string
-  iframeRef?: Ref<HTMLIFrameElement>
+  iframeRef?: RefObject<HTMLIFrameElement>
+  onOpenReveal?: () => void
+  onRevealStep?: (step: RevealPreviewStep) => void
   readOnly?: boolean
 }
 
 /** A physical 16:9 stage containing one fixed 1280×720 logical deck viewport. */
-export default function FixedDeckPreview({ src, title, className = '', iframeRef, readOnly = false }: Props) {
+export default function FixedDeckPreview({ src, title, className = '', iframeRef, onRevealStep, onOpenReveal, readOnly = false }: Props) {
   const stageRef = useRef<HTMLDivElement | null>(null)
+  const localFrame = useRef<HTMLIFrameElement>(null)
+  const frame = iframeRef ?? localFrame
   const [scale, setScale] = useState(0)
+  const [reveal, setReveal] = useState<RevealPreviewStep>()
+
+  useLayoutEffect(() => {
+    if (!src) return
+    const expected = new URL(src, location.href)
+    const receive = (event: MessageEvent): void => {
+      const data = event.data
+      if (event.source !== frame.current?.contentWindow || data?.type !== 'tw-preview-reveal' ||
+          typeof data.url !== 'string' || typeof data.slideId !== 'string' ||
+          data.url.split('#')[0] !== expected.href.split('#')[0] ||
+          (expected.hash && expected.hash !== '#' + encodeURIComponent(data.slideId))) return
+      if (data.enabled === true && Number.isSafeInteger(data.count) && data.count >= 0 &&
+          Number.isSafeInteger(data.step) && data.step >= 0 && data.step <= data.count) {
+        const status = { src, count: data.count, step: data.step }
+        setReveal(status)
+        onRevealStep?.(status)
+      } else setReveal(undefined)
+    }
+    window.addEventListener('message', receive)
+    return () => window.removeEventListener('message', receive)
+  }, [frame, src, onRevealStep])
 
   useLayoutEffect(() => {
     const stage = stageRef.current
@@ -35,7 +68,7 @@ export default function FixedDeckPreview({ src, title, className = '', iframeRef
         style={{ width: FIXED_DECK_WIDTH, height: FIXED_DECK_HEIGHT }}
       >
         <iframe
-          ref={iframeRef}
+          ref={frame}
           title={title}
           src={src}
           // The deck is served from twpresent:, already a different origin from the editor, so
@@ -50,6 +83,7 @@ export default function FixedDeckPreview({ src, title, className = '', iframeRef
           height={FIXED_DECK_HEIGHT}
         />
       </div>
+      {reveal && reveal.src === src && <RevealPreviewBadge count={onOpenReveal ? reveal.count : undefined} onOpen={onOpenReveal} />}
     </div>
   )
 }

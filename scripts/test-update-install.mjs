@@ -509,7 +509,7 @@ await test('the app wires the restart\'s close through the editor\'s own close r
   const editor = fs.readFileSync(new URL('../src/renderer/src/components/Editor.tsx', import.meta.url), 'utf8')
   assert.match(editor, /closeFrozenRef\.current && !tr\.annotation\(savedTextAdopted\) && !tr\.annotation\(closeFreezeExempt\)\)\) && tr\.docChanged \? \[\] : tr/, 'the freeze refuses every edit but Reload and a save\'s ids')
   assert.match(editor, /EditorView\.editable\.of\(false\),\n    EditorState\.readOnly\.of\(true\),/)
-  assert.match(editor, /window\.tw\.talk\.writeOutline\(outlinePath, text, \{ revision, expectedDiskHash: baseline\.diskHash \}\)/, 'every editor save carries its revision and adopted disk version')
+  assert.match(editor, /window\.tw\.talk\.writeOutline\(outlinePath, text, \{\s*revision, expectedDiskHash: baseline\.diskHash, identity: identity\.options\(\)\s*\}\)/, 'every editor save carries its revision, adopted disk version and exact heading ownership')
 })
 
 console.log(`update install: ${passed} checks passed`)

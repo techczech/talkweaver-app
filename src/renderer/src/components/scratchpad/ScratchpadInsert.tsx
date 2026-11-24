@@ -75,9 +75,10 @@ export function placeHeadline(api: ScratchpadInsertApi): string {
   return `Inserts after ${no != null ? `slide ${no} · ` : ''}${quoted(api.place.title)}`
 }
 
-export function ScratchpadPlaceNote({ api, item, open, onOpenChange }: {
+export function ScratchpadPlaceNote({ api, item, open, onOpenChange, batch = false }: {
   api: ScratchpadInsertApi
   item: ScratchItem | null
+  batch?: boolean
   /** Change place is open (the panel holds this, so the command can open it too). */
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -95,7 +96,7 @@ export function ScratchpadPlaceNote({ api, item, open, onOpenChange }: {
         </span>
         {api.chosen && <button type="button" className="sp-link" onClick={() => api.choose(null)}>Follow the cursor</button>}
       </div>
-      <div className="sp-place-rule">{placeRule(api, item)}</div>
+      {!batch && <div className="sp-place-rule">{placeRule(api, item)}</div>}
     </div>
   )
 }

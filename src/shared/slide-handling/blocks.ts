@@ -29,6 +29,7 @@ import { blockAt, copyBlock, cutBlock, moveBlock, startOfTalkPlace, type MoveTar
 import { relocateBlockAfter, relocateBlockBefore, relocateBlockInto } from './slide-outline.ts'
 import { headingLevelsOfText } from '../heading-lines.ts'
 import { headingTitle, resolvePlace, type SlidePlace } from './place.ts'
+import { listSlideBlocks } from '../../../compiler/scripts/lib/slide-blocks.mjs'
 
 export { blockAt, type SlideBlock }
 
@@ -44,6 +45,8 @@ export type MoveBlocksResult =
     changes: TextChange
     /** Each moved block's lines in the new text, talk order: [line, endLine), 1-based. */
     movedRanges: Array<{ line: number; endLine: number }>
+    /** The old index of each structural heading in the new order. */
+    headingOrder: number[]
   }
   | { refused: string }
 
@@ -170,7 +173,22 @@ export function moveBlocks(text: string, refs: readonly SlideRef[], place: Slide
     : place.kind === 'before' ? targetLine0
       : (blockAt(text, targetLine0 + 1)?.endLine ?? lines.length + 1) - 1
   if (!isSoundMove(text, out, blocks, before0, heads)) return { refused: MOVE_UNSAFE }
-  return { text: out, changes: minimalChange(text, out), movedRanges }
+  const oldHeadings = listSlideBlocks(text)
+  const newHeadings = listSlideBlocks(out)
+  const inRange = (line: number, range: { line: number; endLine: number }) =>
+    line + 1 >= range.line && line + 1 < range.endLine
+  const movedIndices = blocks.map(block => oldHeadings.flatMap(({ start }, index) => inRange(start, block) ? [index] : []))
+  const unmoved = oldHeadings.flatMap(({ start }, index) => blocks.some(block => inRange(start, block)) ? [] : [index])
+  let nextUnmoved = 0
+  const headingOrder = newHeadings.map(({ start }) => {
+    const range = movedRanges.findIndex(block => inRange(start, block))
+    return range < 0 ? unmoved[nextUnmoved++] : movedIndices[range].shift()
+  })
+  // The source scanner can disagree with the display scanner around structural syntax.
+  // In that case the move still has its original text checks, with no positional receipt.
+  const mapped = new Set(headingOrder)
+  const complete = mapped.size === oldHeadings.length && headingOrder.length === oldHeadings.length && !mapped.has(undefined)
+  return { text: out, changes: minimalChange(text, out), movedRanges, headingOrder: complete ? headingOrder as number[] : [] }
 }
 
 const isBlank = (line: string): boolean => /^\s*$/.test(line)
@@ -302,6 +320,8 @@ export type CutBlocksResult =
     /** How many whole blocks went (nested selections count once). */
     count: number
     titles: string[]
+    /** The old index of each retained heading, in order. */
+    headingOrder: number[]
   }
   | { refused: string }
 
@@ -356,5 +376,10 @@ export function cutBlocks(text: string, refs: readonly SlideRef[]): CutBlocksRes
   const clip = clips.join('\n')
   if (nonBlank(work + '\n' + clip) !== nonBlank(text)) return { refused: MOVE_UNSAFE }
   if (!isSoundCut(text, work, blocks)) return { refused: MOVE_UNSAFE }
-  return { text: work, changes: minimalChange(text, work), clip, count: blocks.length, titles: blocks.map((b) => b.title) }
+  const headingOrder = listSlideBlocks(text).flatMap(({ start }, index) =>
+    blocks.some(block => start + 1 >= block.line && start + 1 < block.endLine) ? [] : [index])
+  return {
+    text: work, changes: minimalChange(text, work), clip, count: blocks.length, titles: blocks.map((b) => b.title),
+    headingOrder: headingOrder.length === listSlideBlocks(work).length ? headingOrder : []
+  }
 }

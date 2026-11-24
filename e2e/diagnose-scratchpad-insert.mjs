@@ -25,6 +25,7 @@ writeFileSync(outline, original)
 const picked = '### What is an agent?\n{id=agent}\n\nAn agent is a model in a loop.\n'
 writeFileSync(join(sourceDir, 'source-outline.md'), `${front('Source talk')}${picked}`)
 const at = new Date().toISOString()
+const older = new Date(Date.parse(at) - 1000).toISOString()
 writeFileSync(join(talkDir, 'scratchpad', 'chart.svg'), '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect width="40" height="20" fill="#0b3a6b"/></svg>')
 // Two agent pages that try to send their own frame away: one to another twpresent:// page (refused by the scratch
 // frame rule, navigation-guard frameRule), one to a vault file through twfile:// (Chromium raises no
@@ -38,17 +39,27 @@ writeFileSync(join(talkDir, 'scratchpad', 'scratchpad-state.json'), JSON.stringi
   version: 1, groups: [],
   items: [{ id: 'sp-agent', kind: 'slide', addedAt: at, batch: { source: 'slide-browser', at }, group: null, status: 'active',
     slide: { talkPath: 'source/source-outline.md', talkTitle: 'Source talk', slideId: 'agent', title: 'What is an agent?', markdown: picked, thumbKey: 'k-agent' } },
-  { id: 'sp-chart', kind: 'file', file: 'chart.svg', addedAt: at, batch: { source: 'agent', at }, group: null, status: 'active' }]
+  { id: 'sp-chart', kind: 'file', file: 'chart.svg', addedAt: at, batch: { source: 'agent', at }, group: null, status: 'active' },
+  ...['probe-deck.html', 'probe-file.html'].map((file, i) => ({
+    id: `sp-probe-${i}`, kind: 'file', file, addedAt: older, batch: { source: 'agent', at: older }, group: null, status: 'active'
+  }))]
 }, null, 2))
 const mode = process.env.TW_TEST_EDITOR_MODE ?? 'plain'
 writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: mode === 'plain' ? 'outline' : mode }))
 
+const scratchFolder = join(talkDir, 'scratchpad')
+const statePath = join(scratchFolder, 'scratchpad-state.json')
+const candidateFiles = () => Object.fromEntries(readdirSync(scratchFolder).filter(name => name !== 'scratchpad-state.json')
+  .map(name => [name, readFileSync(join(scratchFolder, name))]))
+const candidateOrder = (page) => page.locator('.sp-card input[type=checkbox]').evaluateAll(
+  boxes => boxes.map(box => box.getAttribute('aria-label')))
 const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 delete env.ELECTRON_RUN_AS_NODE
+const launch = () => electron.launch({ args: ['.', `--user-data-dir=${userData}`, '--use-mock-keychain'], cwd: repo, env })
 let app
 try {
   await ensureFreshBuild(repo)
-  app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`, '--use-mock-keychain'], cwd: repo, env })
+  app = await launch()
   assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every((w) => !w.isVisible())), true, 'windows stay hidden')
   const page = await app.firstWindow()
   page.setDefaultTimeout(15000)
@@ -60,11 +71,11 @@ try {
     assert.ok(pred(saved()), what)
   }
   // The Slide outline list (sidebar): each row carries its number in .so-slide-no.
-  // Plain view's margin: the slide labels in order ("Slide 1", "Slide 2", …); empty in the Markdown view.
+  // Plain view's margin: the slide numbers in order ("1", "2", …); empty in the Markdown view.
   const marginSlides = () => page.evaluate(() => [...document.querySelectorAll('.cm-plain-margin-slide .cm-plain-margin-word')].map((w) => w.textContent.trim().toLowerCase()))
   const settledMargin = async (n, what) => {
     if (mode !== 'plain') return
-    const want = Array.from({ length: n }, (_, k) => `slide ${k + 1}`)
+    const want = Array.from({ length: n }, (_, k) => String(k + 1))
     await page.waitForFunction((w) => JSON.stringify([...document.querySelectorAll('.cm-plain-margin-slide .cm-plain-margin-word')].map((x) => x.textContent.trim().toLowerCase())) === JSON.stringify(w), want, { timeout: 15000 })
       .catch(async () => { throw new Error(`${what}: the margin labels read ${JSON.stringify(await marginSlides())}`) })
   }
@@ -84,15 +95,8 @@ try {
   await page.locator('.so-slide-no').first().waitFor()
 
   await page.getByTitle('Show the Slide Scratchpad', { exact: true }).click()
-  // The panel floats (it opens beside the right sidebar, over the editor); drag it to the far right so the editor lines this walk clicks stay clear.
-  {
-    const head = await page.locator('.sp-head').boundingBox()
-    const width = (await page.evaluate(() => window.innerWidth))
-    await page.mouse.move(head.x + 120, head.y + 15)
-    await page.mouse.down()
-    await page.mouse.move(head.x + 120 + width, head.y + 15, { steps: 6 })
-    await page.mouse.up()
-  }
+  await page.getByRole('button', { name: 'Dock to the right' }).click()
+  await page.locator('.sp-panel--docked').waitFor()
   await page.locator('.sp-card', { hasText: 'What is an agent?' }).click()
 
   // Change place: pick "Opening"; the list closes on the pick.
@@ -142,18 +146,47 @@ try {
   // The chosen place had moved on to the added slide; with that slide undone, the earlier place is back.
   await page.waitForFunction(() => document.querySelector('.sp-place-where')?.textContent === 'Inserts after slide 1 · ‘Opening’')
 
+  // Arrange a card with the keyboard. The result must reach disk without a watch notification.
+  const originalCandidates = candidateFiles()
+  const originalOutlineBytes = readFileSync(outline)
+  const originalSourceBytes = readFileSync(join(sourceDir, 'source-outline.md'))
+  assert.deepEqual((await candidateOrder(page)).slice(0, 2), ['Select What is an agent?', 'Select Chart'])
+  await page.getByLabel('Select Chart', { exact: true }).check()
+  const options = page.getByRole('button', { name: 'Scratchpad options' })
+  await options.click()
+  await page.getByRole('button', { name: 'Move selected items up', exact: true }).press('Enter')
+  await page.waitForFunction(() => document.querySelector('.sp-card input')?.getAttribute('aria-label') === 'Select Chart')
+  const arranged = await candidateOrder(page)
+  const state = JSON.parse(readFileSync(statePath, 'utf8'))
+  assert.equal(state.sort, 'manual')
+  assert.deepEqual(state.order.slice(0, 2), ['sp-chart', 'sp-agent'])
+  assert.ok(readFileSync(outline).equals(originalOutlineBytes), 'arranging candidates leaves the outline untouched')
+  assert.deepEqual(candidateFiles(), originalCandidates, 'arranging candidates leaves their filenames and bytes untouched')
+  await options.click()
+  await page.getByLabel('Select Chart', { exact: true }).uncheck()
+
   // Mixed selected candidates: reverse tick order, one transaction, exact Undo/Redo.
+  // Grid view hides the right column, so float the Scratchpad for this part of the journey.
+  await page.getByRole('button', { name: 'Float', exact: true }).click()
   await page.getByTestId('grid-toggle').click()
   await page.locator('.grid-view').waitFor()
-  await page.getByLabel('Select Chart', { exact: true }).check()
   await page.getByLabel('Select What is an agent?', { exact: true }).check()
+  await page.getByLabel('Select Chart', { exact: true }).check()
   await page.getByRole('button', { name: 'Insert selection as slides', exact: true }).dblclick()
   await waitSaved(t => t.includes('### Chart') && t.includes('What is an agent?'), 'the whole batch is saved')
   const batchText = saved()
   assert.equal([...batchText.matchAll(/^#{2,6} What is an agent\?/gm)].length, 1, 'a double-click inserts the batch only once')
   assert.equal([...batchText.matchAll(/^#{2,6} Chart/gm)].length, 1)
-  assert.ok(batchText.indexOf('What is an agent?') < batchText.indexOf('### Chart'), 'display order wins over tick order')
+  assert.ok(batchText.indexOf('### Opening') < batchText.indexOf('### Chart') &&
+    batchText.indexOf('### Chart') < batchText.indexOf('What is an agent?') &&
+    batchText.indexOf('What is an agent?') < batchText.indexOf('### Middle'), 'manual order wins over tick order at the chosen place')
+  const ids = [...batchText.matchAll(/\{id=([^}]+)\}/g)].map(match => match[1])
+  assert.equal(ids.length, 5)
+  assert.equal(new Set(ids).size, ids.length)
+  assert.ok(!ids.includes('agent'), 'the copied slide gets a fresh ID')
   await page.waitForFunction(() => document.querySelectorAll('.sp-card input:checked').length === 0)
+  assert.deepEqual(candidateFiles(), originalCandidates, 'batch insertion leaves candidate files byte for byte')
+  assert.ok(readFileSync(join(sourceDir, 'source-outline.md')).equals(originalSourceBytes), 'the picked slide source is untouched')
   assert.equal(await page.locator('.sp-card input:checked').count(), 0)
   await page.waitForFunction(() => document.querySelectorAll('.grid-cell[data-selected="true"]').length === 2).catch(async error => { console.log('batch grid diagnostic', await page.locator('.grid-cell').evaluateAll(nodes => nodes.map(node=>({selected:node.getAttribute('data-selected'),active:node.getAttribute('data-active'),title:node.textContent.trim().slice(0,90)})))); throw error })
   const selected = await page.locator('.grid-cell[data-selected="true"]').allTextContents()
@@ -162,6 +195,8 @@ try {
   await page.locator('.grid-view').focus()
   await page.keyboard.press('ControlOrMeta+z')
   await waitSaved(t => t === original, 'one Undo restores the exact original after a batch')
+  assert.ok(readFileSync(outline).equals(originalOutlineBytes), 'one Undo restores the outline byte for byte')
+  assert.deepEqual(candidateFiles(), originalCandidates, 'Undo leaves candidate files untouched')
   await page.keyboard.press('ControlOrMeta+Shift+z')
   await waitSaved(t => t === batchText, 'one Redo restores the exact batch')
   await page.keyboard.press('ControlOrMeta+z')
@@ -230,7 +265,18 @@ try {
 
   assert.deepEqual(errors, [])
   if (process.env.SHOTS) await page.screenshot({ path: join(resolve(process.env.SHOTS), 'talkweaver-scratchpad-insert-undo.png') })
-  console.log(`PASS (${mode} view) Slide Scratchpad: Change place closes on a pick; Insert whole slide lands, saves, counts; one Undo removes exactly it, saves, counts, labels; mixed batch selects its new grid cards and has exact one-step Undo/Redo; the card and the place follow; an SVG visual goes in as a new slide; an agent page cannot leave its preview or show a vault file`)
+
+  await page.getByRole('button', { name: 'Dock to the right' }).click()
+  await page.locator('.sp-panel--docked').waitFor()
+  await app.close()
+  app = await launch()
+  assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(w => !w.isVisible())), true)
+  const reopened = await app.firstWindow()
+  await reopened.locator('[data-talk-slug="target"]').first().dblclick()
+  await reopened.getByRole('tab', { name: 'Scratchpad', exact: true }).click()
+  await reopened.getByLabel('Select Chart', { exact: true }).waitFor()
+  assert.deepEqual(await candidateOrder(reopened), arranged, 'the docked Scratchpad restores manual order after an app relaunch')
+  console.log(`PASS (${mode} view) Slide Scratchpad: chosen placement, saved manual order after relaunch, fresh batch IDs, unchanged sources, byte-exact one-step Undo/Redo, inserted grid selection, SVG copy, and sandboxed HTML preview`)
 } catch (error) {
   if (process.env.SHOTS && app) await (await app.firstWindow()).screenshot({ path: join(resolve(process.env.SHOTS), 'talkweaver-scratchpad-insert-failed.png') }).catch(() => {})
   throw error

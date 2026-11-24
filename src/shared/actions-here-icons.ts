@@ -38,7 +38,7 @@ export const ROW_ICONS = {
 
 /** A row with no entry above takes its task group's icon. */
 export const GROUP_ICONS = {
-  'Write the outline': 'AlignLeft', 'Build a slide': 'LayoutTemplate', 'Reuse slides': 'Layers', 'See the talk': 'Focus',
+  'Outlining': 'AlignLeft', 'Formatting': 'Type', 'Build a slide': 'LayoutTemplate', 'Reuse slides': 'Layers', 'See the talk': 'Focus',
   'Shape the talk': 'FileText', Present: 'Presentation', Share: 'Share2', 'Manage talks': 'FolderOpen',
   'Check and repair': 'Wrench', 'Set up TalkWeaver': 'Settings2'
 } as const satisfies Record<TaskGroup, string>

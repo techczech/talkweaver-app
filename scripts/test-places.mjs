@@ -145,9 +145,9 @@ test('deck-wide commands are not offered by place (lock decision 11)', () => {
 
 // The drawing's Actions here at a slide heading (state 12), in its order.
 const DRAWN_SLIDE_HEADING = [
-  ['Write the outline', 'promote-heading'], ['Write the outline', 'demote-heading'], ['Write the outline', 'editor.move-up'],
-  ['Write the outline', 'editor.move-down'], ['Write the outline', 'delete-slide'], ['Write the outline', 'editor.heading-same'],
-  ['Write the outline', 'editor.heading-sub'], ['Build a slide', 'layout'], ['Build a slide', 'image'], ['Build a slide', 'icon-picker'],
+  ['Outlining', 'promote-heading'], ['Outlining', 'demote-heading'], ['Outlining', 'editor.move-up'],
+  ['Outlining', 'editor.move-down'], ['Outlining', 'delete-slide'], ['Outlining', 'editor.heading-same'],
+  ['Outlining', 'editor.heading-sub'], ['Build a slide', 'layout'], ['Build a slide', 'image'], ['Build a slide', 'icon-picker'],
   ['Build a slide', 'toggle-inspector'], ['Reuse slides', 'where-used'], ['Reuse slides', 'tag-slide'], ['See the talk', 'focus-slide']
 ]
 test('on a slide heading: the drawn 14, in the drawn order', () => {
@@ -155,7 +155,7 @@ test('on a slide heading: the drawn 14, in the drawn order', () => {
 })
 
 test('every place offers at least one command, grouped in task-group order', () => {
-  const groups = ['Write the outline', 'Build a slide', 'Reuse slides', 'See the talk', 'Shape the talk', 'Present', 'Share', 'Manage talks', 'Check and repair', 'Set up TalkWeaver']
+  const groups = ['Outlining', 'Formatting', 'Build a slide', 'Reuse slides', 'See the talk', 'Shape the talk', 'Present', 'Share', 'Manage talks', 'Check and repair', 'Set up TalkWeaver']
   for (const place of PLACES) {
     const list = actionsAt(place)
     assert.ok(list.length > 0, place)

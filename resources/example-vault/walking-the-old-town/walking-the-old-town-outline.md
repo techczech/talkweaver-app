@@ -132,7 +132,7 @@ Every walk is led by a volunteer.
 
 This talk runs an hour. Its pathway, Ten minutes, keeps eight slides for a short version.
 
-> **Try it.** In All commands (<kbd>⌘⇧P</kbd>), **Plan a Run…** plans a date to give this talk. <kbd>⌘⌥P</kbd> opens the talk grid with a docked Pathways list.
+> **Try it.** <kbd>⌘⌥P</kbd> opens the talk grid with a docked Pathways list.
 
 ### In the Pathways dock
 {id=w23}

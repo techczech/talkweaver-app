@@ -113,7 +113,7 @@ export function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   )
 }
 
-export type MenuItem = { icon: IconName; label: string; onClick: () => void; danger?: boolean; hint?: string; separatorBefore?: boolean; disabled?: boolean; title?: string; note?: string }
+export type MenuItem = { icon: IconName; label: string; onClick: () => void; checked?: boolean; danger?: boolean; hint?: string; separatorBefore?: boolean; disabled?: boolean; title?: string; note?: string }
 
 // A toolbar button that opens a polished popup menu of icon+label items.
 export default function ToolbarMenu({
@@ -155,7 +155,8 @@ export default function ToolbarMenu({
         <Fragment key={i}>
           {it.separatorBefore && <div className="toolbar-menu-separator" role="separator" />}
           <button
-            role="menuitem"
+            role={it.checked === undefined ? 'menuitem' : 'menuitemradio'}
+            aria-checked={it.checked}
             className={`toolbar-menu-item ${it.danger ? 'is-danger' : ''}`}
             disabled={it.disabled}
             title={it.title}
@@ -164,6 +165,7 @@ export default function ToolbarMenu({
           >
             <Icon name={it.icon} size={15} />
             <span>{it.label}</span>
+            {it.checked && <span className="toolbar-menu-hint" aria-hidden>✓</span>}
             {it.hint && <span className="toolbar-menu-hint">{it.hint}</span>}
           </button>
           {it.note && <div className="toolbar-menu-note">{it.note}</div>}

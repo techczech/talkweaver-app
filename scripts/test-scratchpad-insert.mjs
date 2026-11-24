@@ -46,6 +46,7 @@ await test('batch flow prepares every candidate before one exact-buffer apply an
   assert.ok(out.ok); assert.equal(applies, 1); assert.equal(marks, 1)
   assert.equal(out.sourceText, text, 'selection follows the canonical text returned by the save')
   assert.deepEqual(headings(text).map(headingTitle), ['Talk', 'A', 'B', 'Anchor'])
+  assert.match(headings(text)[1], /\{id=[a-z0-9]{5}\}/, 'the batch gives a copied slide a fresh ID even when its source ID is free')
   const before = text
   host.prepareSlide = async markdown => { text += '\nEdited while preparing'; return markdown }
   assert.equal((await runScratchBatch(host, ['a', 'b'], { kind: 'start' })).ok, false)
@@ -68,6 +69,12 @@ await test('batch planning preserves source order, section children and IDs with
   assert.equal(result.selectionLines.length, 3)
   assert.equal(planScratchSlides(original, { kind: 'start' }, ['## Duplicate {id=dup}\n\n### Child {id=dup}']).ok, false)
   assert.equal(result.lastPlace.title, 'Next')
+  const copied = planScratchSlides(original, { kind: 'start' }, [
+    '## Sample\n\n{layout=statement} {id=source}\n\n`{id=source}` in body.',
+  ], { freshIds: true })
+  assert.ok(copied.ok)
+  assert.match(copied.text, /\{layout=statement\} \{id=[a-z0-9]{5}\}/)
+  assert.ok(copied.text.includes('`{id=source}` in body.'))
   assert.equal(original, '# Talk\n\n## Anchor {id=anchor}\n\nBody.\n')
   assert.equal(planScratchSlides(original, { kind: 'start' }, ['### Good', 'not a slide']).ok, false)
   const sectionLast = planScratchSlides(original, { kind: 'after', line: 3, title: 'Anchor' }, ['## Section\n\n### Child\n\nBody.'])

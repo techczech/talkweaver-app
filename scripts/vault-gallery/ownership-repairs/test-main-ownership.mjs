@@ -72,7 +72,7 @@ const {configureTalkWriter,writeTalkOutline,withTalkFileLock}=await import('../.
 const root=resolve('scripts/vault-gallery/ownership-repairs/main-write-fixture');mkdirSync(root,{recursive:true});const path=resolve(root,'outline.md');
 try {
 writeFileSync(path,'# Original');windows.set(1,{win:{id:1,isDestroyed:()=>false},outlinePath:path});epochs.set(1,epoch);
-const save=src.split("async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string, expectedDiskHash?: string) {")[1].split('  const claimEpoch =')[0];
+const save=src.split(/^async function writeOutlineFromEditor\([^\n]*\) \{\n/m)[1].split('  const claimEpoch =')[0];
 const saveJS=ts.transpileModule(save,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
 const authority=Function('movedEditorReceipts','retiredMovePaths','renewEstablishedGalleryClaims','establishedGalleryClaims','_event','outlinePath','galleryEpoch','editorWindows','galleryReservations','galleryClaimEpochs','outlineIdentity','otherEditorHolding',saveJS+';return authorize')(receipts,new Map(),()=>{},new Map(),{sender:{id:1,isDestroyed:()=>false}},path,epoch,windows,reservations,epochs,p=>({key:p}),holding);
 configureTalkWriter({editorBufferFor:()=>null});let release,entered;const ready=new Promise(r=>entered=r);const lock=withTalkFileLock(path,async()=>{entered();await new Promise(r=>release=r)});await ready;

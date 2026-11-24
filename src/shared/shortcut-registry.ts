@@ -95,8 +95,8 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.view-grid', '⌘2', ['Mod-2'], 'Grid', 'Switches the workspace to the slide grid view.', 'View'],
     ['app.view-plain', '⌘3', ['Mod-3'], 'Outline', 'Shows the talk as a clean text outline.', 'View'],
     ['app.view-markdown', '⌘4', ['Mod-4'], 'Markdown', 'Shows the whole Markdown source.', 'View'],
-    ['app.present', 'F5', ['F5'], 'Present from the top', 'Opens presenter view at the first slide.', 'Present'],
-    ['app.present-current', '⇧F5', ['Shift-F5'], 'Present from current slide', 'Opens presenter view at the selected slide.', 'Present'],
+    ['app.present', 'F5', ['F5'], 'Presenter view from the start', 'Opens presenter and audience windows at the first slide.', 'Present'],
+    ['app.present-current', '⇧F5', ['Shift-F5'], 'Presenter view from this slide', 'Opens presenter and audience windows at the selected slide.', 'Present'],
     ['app.add-to-pathway', '⌘⌥A', ['Mod-Alt-a'], 'Add to pathway…', 'Adds the selected grid slides to a chosen pathway in talk order.', 'Slides'],
     ['app.present-pathway', '⌘⌥↵', ['Mod-Alt-Enter'], 'Present this pathway', 'Presents the selected pathway from the docked main-window view.', 'Present'],
     ['app.pathways', '⌘⌥P', ['Mod-Alt-p'], 'Open Pathway view', 'Shows the talk grid and docked pathway list in the main window.', 'Present']

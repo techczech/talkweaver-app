@@ -1,5 +1,5 @@
 // Onboarding 0.38.1 ticket 04, in the real app: ⌃/ opens the keyboard sheet on Here, and Here is the
-// list ⌘K shows at the same place; the ten task groups follow with counts; the filter searches every
+// list ⌘K shows at the same place; the task groups follow with counts; the filter searches every
 // command; Escape closes it.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
@@ -8,6 +8,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import { tmpdir } from 'os'
+import { TASK_GROUPS } from '../src/shared/task-groups.ts'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -57,13 +58,13 @@ try {
   const title = await page.locator('.kbd-sheet-pane-title').innerText()
   record('⌃/ on a heading opens the sheet on "Here: on a slide heading"', pane === 'here' && title === 'Here: on a slide heading', `pane=${pane} title=${JSON.stringify(title)}`)
   const first = await page.$$eval('[data-sheet-section]', (nodes) => nodes.slice(0, 2).map((node) => node.getAttribute('data-sheet-section')))
-  record('Here is the first item, then the first task group', first[0] === 'here' && first[1] === 'Write the outline', first.join(','))
+  record('Here is the first item, then the first task group', first[0] === 'here' && first[1] === 'Outlining', first.join(','))
   const sheetKeys = await page.$$eval('[data-sheet-row]', (nodes) => nodes.map((node) => node.getAttribute('data-sheet-row')))
   record('the Here rows are the ⌘K list', JSON.stringify(sheetKeys) === JSON.stringify(actionKeys), `sheet=${sheetKeys.length} actions=${actionKeys.length}`)
   const count = Number(await page.locator('[data-sheet-count="here"]').innerText())
   record('the count shown equals the list', count === sheetKeys.length, `count=${count} rows=${sheetKeys.length}`)
   const counts = await page.$$eval('[data-sheet-count]', (nodes) => nodes.map((node) => [node.getAttribute('data-sheet-count'), Number(node.textContent)]))
-  record('the ten task groups follow with counts', counts.filter(([name]) => name !== 'here').length === 10 && counts.every(([, n]) => n > 0), JSON.stringify(counts))
+  record('the task groups follow with counts', counts.filter(([name]) => name !== 'here').length === TASK_GROUPS.length && counts.every(([, n]) => n > 0), JSON.stringify(counts))
 
   // Choosing a group shows its sub-groups.
   await page.locator('[data-sheet-section="Manage talks"]').click()

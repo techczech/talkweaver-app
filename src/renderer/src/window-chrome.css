@@ -1,0 +1,20 @@
+.tw-window-shell {
+  display: contents;
+  /* Electron reports the usable title bar after the Mac buttons, including their margins.
+     On native-framed Windows and in a browser both contributions are zero. */
+  --tw-native-inline: max(var(--tw-native-fallback-inline, 0px), env(titlebar-area-x, 0px));
+  --tw-native-block: max(var(--tw-native-fallback-block, 0px), env(titlebar-area-height, 0px));
+}
+
+.tw-window-drag { -webkit-app-region: drag; }
+.tw-window-drag :is(button, input, select, textarea, a, summary, [role="button"], [role="menu"], [contenteditable]) {
+  -webkit-app-region: no-drag;
+}
+
+.tw-window-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
+}

@@ -1,3 +1,4 @@
+import RevealPreviewBadge from './RevealPreviewBadge'
 import { isEmptyAuthoringSlide } from '../../../shared/redesign-window-source'
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
 import { Bookmark, ChevronDown, ChevronRight, Ellipsis } from 'lucide-react'
@@ -6,7 +7,7 @@ import { slideRows } from '../extensions/slideOutline'
 import type { SlideSelection } from '../lib/useSlideSelection'
 import type { SlideBlockOps } from './Editor'
 import SlideRowMenus, { type SlideMenuRequest, type StructureRowItems } from './SlideRowMenus'
-import React, { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { TalkInfo, ProjectionRow } from '../../../preload/index'
 import { layoutDisplayName } from '../../../shared/layout-registry/options'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
@@ -18,10 +19,12 @@ import { placeAtHeading, type SlidePlace } from '../../../shared/slide-handling/
 import { sectionDropBoundary } from '../lib/sectionDrop'
 import { getOutlineMarks, subscribeStripNumbers } from '../lib/stripNumbers'
 import { createFocusReporter, thumbnailFocusOrder, visibleCardIndices } from '../lib/thumbnailFocus'
+import { createSidebarSlideScroll } from '../lib/sidebarSlideScroll'
 
 export type SurfaceWarningBadge = ReturnType<typeof warningBadgesForSurface>[number]
 
 interface Props {
+  sidebarFollow?: boolean
   structure?: ReturnType<typeof structureOf>
   selection?: SlideSelection
   onPickStructure?: (index: number, event: React.MouseEvent) => void
@@ -488,6 +491,7 @@ function SlideCard({
       data-block-index={slide.blockIndex ?? ''}
       data-selected={selected || undefined}
       data-active={isActive ? 'true' : 'false'}
+      title={title}
       onClick={onClick}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
@@ -515,6 +519,7 @@ function SlideCard({
       {dropLabel && <span className="tw-structure-drop" data-drop-side={dropEdge === 'below' ? 'after' : 'before'}>{dropLabel}</span>}
       {/* 16:9 thumbnail */}
       <div className="tw-strip-thumbnail" style={{ position: 'relative' as const, paddingTop: '56.25%', background: 'var(--paper)' }}>
+        {slide.row?.reveal_enabled && <RevealPreviewBadge />}
         {marker && <FeedbackBadge marker={marker} onClick={onMarker} />}
         {warnings.length > 0 && (
           <span
@@ -552,8 +557,8 @@ function SlideCard({
       </div>
       {/* Caption below thumbnail */}
       <div className="tw-strip-caption" style={{ padding: '4px 6px', borderTop: '1px solid var(--line)', display: 'flex', gap: '6px', alignItems: 'center' }}>
-        <span style={{ fontSize: '9px', color: 'var(--faint)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>{String(slide.index + 1).padStart(2, '0')}</span>
-        <span style={{ fontSize: '10px', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{title}</span>
+        <span className="tw-strip-number" style={{ fontSize: '9px', color: 'var(--faint)', fontFamily: 'var(--font-mono)', flexShrink: 0 }}>{String(slide.index + 1).padStart(2, '0')}</span>
+        <span className="tw-sidebar-row-title" style={{ fontSize: '10px', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const }}>{title}</span>
         {layout !== 'default' && (
           <span
             className="tw-strip-layout"
@@ -664,7 +669,7 @@ function SectionHeader({ title, count, collapsed, onToggle }: SectionHeaderProps
 }
 
 export default function SlideStrip({
-  structure, selection, onPickStructure, renderAddLine, rowStructureItems, onStructureMove, onSubslideSelect, slideOps,
+  structure, selection, onPickStructure, renderAddLine, rowStructureItems, onStructureMove, onSubslideSelect, slideOps, sidebarFollow = false,
   talk,
   compiledSlides,
   outlineContent,
@@ -692,8 +697,8 @@ export default function SlideStrip({
     }
     return lines
   }, [structure])
-  const structureRef = useRef({ structure, sourceAt, sourceLineById, selection, onPickStructure, onStructureMove, outlineContent, compiledSlides })
-  structureRef.current = { structure, sourceAt, sourceLineById, selection, onPickStructure, onStructureMove, outlineContent, compiledSlides }
+  const structureRef = useRef({ structure, sourceAt, sourceLineById, selection, onPickStructure, onStructureMove, outlineContent, compiledSlides, sidebarFollow, activeIndex })
+  structureRef.current = { structure, sourceAt, sourceLineById, selection, onPickStructure, onStructureMove, outlineContent, compiledSlides, sidebarFollow, activeIndex }
   const menuSource = useRef<string | null>(null)
   const menuOutline = menuSource.current
   function headingForCard(slide: SlidePreview): number | null {
@@ -877,12 +882,52 @@ export default function SlideStrip({
   // leaves activeIndex unchanged. It cannot leak into a later editor-follow change.
   const [smoothClick, setSmoothClick] = useState<number | null>(null)
   const followedRef = useRef<{ index: number; count: number; talk: string } | null>(null)
+  const [sidebarScroll] = useState(createSidebarSlideScroll)
+  const sidebarCurrent = useRef<{ talk: string; key: string } | null>(null)
+  const clickedIndex = useRef<number | null>(null)
+  function storeSidebarClick(index: number): void {
+    clickedIndex.current = index === structureRef.current.activeIndex ? null : index
+  }
   function selectByClick(index: number) {
-    setSmoothClick(index)
+    if (structureRef.current.sidebarFollow) storeSidebarClick(index)
+    else setSmoothClick(index)
     onSelectSlideRef.current(index)
   }
+  // A memoised card can still hold its earlier click handler.
+  function pickCard(index: number, event: React.MouseEvent): void {
+    const current = structureRef.current
+    if (current.onPickStructure) {
+      if (current.sidebarFollow) storeSidebarClick(index)
+      current.onPickStructure(index, event)
+    } else selectByClick(index)
+  }
+
+  useLayoutEffect(() => {
+    if (!sidebarFollow || !listRef.current) return
+    const active = slides[activeIndex]
+    if (!active) return
+    const key = active.row?.slide_id ?? String(activeIndex)
+    const previous = sidebarCurrent.current
+    if (previous?.talk === talk.outlinePath && previous.key === key) return
+    const isClick = previous?.talk === talk.outlinePath && clickedIndex.current === activeIndex
+    clickedIndex.current = null
+    sidebarCurrent.current = { talk: talk.outlinePath, key }
+    if (isClick) return
+    const line = headingForCard(active)
+    const ancestors = (line === null ? undefined : sourceAt.get(line)?.ancestors)?.map(index => structure!.nodes[index]) ?? []
+    const collapsedAncestor = ancestors.find(node => collapsedSections.has(node.id || String(node.line + 1)))
+    const visibleAncestors = collapsedAncestor ? ancestors.slice(0, ancestors.indexOf(collapsedAncestor)) : ancestors
+    const owner = visibleAncestors.findLast(node => node.section)
+    const cardAt = (line: number): HTMLElement | null => {
+      const slide = slides.find(candidate => headingForCard(candidate) === line)
+      return slide ? cardRefs.current[slide.index] ?? null : null
+    }
+    const card = collapsedAncestor ? cardAt(collapsedAncestor.line + 1) : cardRefs.current[activeIndex]
+    if (card) sidebarScroll.align(listRef.current, card, owner ? cardAt(owner.line + 1) : null)
+  }, [sidebarFollow, activeIndex, slides, talk.outlinePath, sourceAt, collapsedSections, structure, sidebarScroll])
 
   useEffect(() => {
+    if (sidebarFollow) return
     const previous = followedRef.current
     followedRef.current = { index: activeIndex, count: slides.length, talk: talk.outlinePath }
     if (smoothClick !== null) setSmoothClick(null)
@@ -907,7 +952,7 @@ export default function SlideStrip({
         return () => cancelAnimationFrame(frame)
       }
     }
-  }, [activeIndex, slides.length, talk.outlinePath, smoothClick])
+  }, [activeIndex, slides.length, talk.outlinePath, smoothClick, sidebarFollow])
 
   // Tell main which slides are on screen (active first, then the visible range) so this talk's
   // thumbnails are captured in that order. Only once compiled: the deck indices are the compiled
@@ -933,12 +978,13 @@ export default function SlideStrip({
   }, [activeIndex, slides, usingCompiler, collapsedSections, talk.outlinePath])
 
   useEffect(() => {
+    if (sidebarFollow) return
     const list = listRef.current
     return () => {
       // Do not leave an old talk's animation running through replacement/unmount.
       list?.scrollTo?.({ top: list.scrollTop, behavior: 'instant' })
     }
-  }, [talk.outlinePath, slides.length])
+  }, [talk.outlinePath, slides.length, sidebarFollow])
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (slides.length === 0) return
@@ -1064,6 +1110,7 @@ export default function SlideStrip({
       <div className="tw-structure-row-wrap" ref={(el) => { cardRefs.current[slide.index] = el }}>
         {sectionRow && line !== null ? <div className="tw-structure-section-band" data-slide-index={slide.index}
           data-active={activeIndex === slide.index} data-selected={selection?.isSelected(slide.index) || undefined}
+          title={sourceTitle}
           data-subsection={node.level > 2 || undefined} draggable={cardDraggable}
           onDragStart={e => startStructureDrag(e, line, slide)}
           onDragOver={e => { const target = chooseDrop(e, line, node); if (target) { e.preventDefault(); setNamedDrop(target) } }}
@@ -1074,8 +1121,8 @@ export default function SlideStrip({
             onClick={() => toggleSection(node.id || String(line))}>{sectionFolded ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</button>
           <Bookmark size={13} />
           <button type="button" className="tw-structure-section-name" aria-label={sourceTitle} title={sourceTitle}
-            onClick={e => onPickStructure ? onPickStructure(slide.index, e) : selectByClick(slide.index)}>
-            <span className="tw-structure-section-title">{sourceTitle}</span>
+            onClick={e => pickCard(slide.index, e)}>
+            <span className="tw-structure-section-title tw-sidebar-row-title">{sourceTitle}</span>
             <span className="tw-structure-section-mark" aria-hidden>§{sectionNumber}</span>
           </button>
           <small>{structure?.nodes.filter(child => !child.section && !child.folded && child.ancestors.includes(structure.nodes.indexOf(node))).length ?? 0}</small>
@@ -1090,7 +1137,7 @@ export default function SlideStrip({
           thumbnailUrl={thumbnailUrl}
           draggable={cardDraggable}
           dropEdge={dropEdge}
-          onClick={(event) => structureRef.current.onPickStructure ? structureRef.current.onPickStructure(slide.index, event) : selectByClick(slide.index)}
+          onClick={event => pickCard(slide.index, event)}
           onDoubleClick={onEdit ? () => onEditRef.current?.(slide.index) : undefined}
           onContextMenu={rowStructureItems ? (e) => menuAt(e, headingForCard(slide)) : onExplain ? (e) => { e.preventDefault(); onExplainRef.current?.(slide.index) } : undefined}
           onDragStart={(e) => {
@@ -1176,10 +1223,13 @@ export default function SlideStrip({
         onDragOver={event => { const target = chooseDrop(event, child.line + 1); if (target) { event.preventDefault(); setNamedDrop(target) } }}
         onDrop={event => landStructureDrag(event, child.line + 1)} onDragEnd={resetDrag}>
         <button type="button" aria-label={child.title || 'New subslide'} title={child.title || 'New subslide'}
-          onClick={() => onSubslideSelect?.(child.line + 1, { takeFocus: false })}>
+          onClick={() => {
+            if (structureRef.current.sidebarFollow) storeSidebarClick(slide.index)
+            onSubslideSelect?.(child.line + 1, { takeFocus: false })
+          }}>
           {subUrls[index] ? <img className="tw-structure-subslide-picture" src={subUrls[index]} alt="" draggable={false} />
             : <span className="tw-structure-subslide-picture tw-structure-subslide-waiting" aria-hidden />}
-          <span className="tw-structure-subslide-text">{child.title || 'New subslide'}<small>Subslide</small></span>
+          <span className="tw-structure-subslide-text"><span className="tw-sidebar-row-title">{child.title || 'New subslide'}</span><small>Subslide</small></span>
         </button>
         {namedDrop?.line === child.line + 1 && <span className="tw-structure-drop" data-drop-side={namedDrop.side}>{namedDrop.label}</span>}
         {rowStructureItems && <button type="button" className="tw-structure-row-more" aria-label="More for this row" onClick={e => menuAt(e, child.line + 1)}><Ellipsis size={14} /></button>}
@@ -1242,8 +1292,9 @@ export default function SlideStrip({
       {/* Scrollable slide list */}
       <div
         ref={listRef}
+        data-sidebar-follow-list={sidebarFollow ? '' : undefined}
         style={{ overflowY: 'auto', flex: 1, paddingBottom: '8px' }}
-        onScroll={() => reportFocusRef.current()}
+        onScroll={event => { sidebarScroll.onScroll(event.currentTarget); reportFocusRef.current() }}
         onDragLeave={(e) => {
           // Only clear the target when the pointer leaves the whole list, not when
           // it crosses between two cards inside it.
@@ -1278,6 +1329,7 @@ export default function SlideStrip({
             </div>
           )
         })}
+        {sidebarFollow && <div className="tw-sidebar-follow-tail" aria-hidden />}
       </div>
     </div>
     <SlideRowMenus request={rowMenu} rows={outlineRows} ops={slideOps ?? null}

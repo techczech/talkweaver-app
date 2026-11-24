@@ -30,7 +30,8 @@ import {
   withRenderVerdicts
 } from './layoutPickerColumnModel'
 import { useOwnSlidePictures } from './useOwnSlidePictures'
-import { isGreyMark, type VariantPictureMarks } from '../../../shared/variant-picture-queue'
+import RevealPreviewBadge from './RevealPreviewBadge'
+import { isGreyMark, isRevealPicture, pictureMarkUrl, type VariantPictureMarks } from '../../../shared/variant-picture-queue'
 
 /** Column width under which the Suggested row wraps to three across (S12). */
 const NARROW_BELOW_PX = 470
@@ -66,10 +67,11 @@ function greyReasons(marks: VariantPictureMarks): Record<string, string> {
   return reasons
 }
 
-function Picture({ entry, src, pending, showName = true }: { entry: PickerEntry; src: string | undefined; pending: boolean; showName?: boolean }): React.JSX.Element {
+function Picture({ entry, src, pending, reveal, showName = true }: { entry: PickerEntry; src: string | undefined; pending: boolean; reveal: boolean; showName?: boolean }): React.JSX.Element {
   return (
-    <span className={`lp-picture${pending ? ' is-pending' : ''}`} aria-hidden>
-      {src ? <img src={src} alt="" data-layout-thumb={entry.name} draggable={false} /> : showName ? <span className="lp-picture-name">{entry.label}</span> : null}
+    <span className={`lp-picture${pending ? ' is-pending' : ''}`}>
+      {src ? <img src={src} alt="" data-layout-thumb={entry.name} draggable={false} /> : showName ? <span className="lp-picture-name" aria-hidden>{entry.label}</span> : null}
+      {reveal && <RevealPreviewBadge />}
     </span>
   )
 }
@@ -231,11 +233,11 @@ export default function LayoutPickerColumn({ outlinePath, outline, slide, initia
     // The author's own slide wherever the layout can take it; the registry sample otherwise, and when the render fails.
     const wantsOwn = entry.usable
     const mark = own[entry.name]
-    const ownUrl = wantsOwn ? (typeof mark === 'string' || mark === null ? mark : undefined) : null
+    const ownUrl = wantsOwn ? (mark === null ? null : pictureMarkUrl(mark)) : null
     const drawing = wantsOwn && ownUrl === undefined
     const src = ownUrl ?? (drawing ? undefined : samples?.[entry.name])
     const pending = drawing || (!wantsOwn && samples === undefined)
-    return <Picture entry={entry} src={src ?? undefined} pending={pending} showName={!(group === 'suggested' && drawing)} />
+    return <Picture entry={entry} src={src ?? undefined} pending={pending} reveal={wantsOwn && isRevealPicture(mark)} showName={!(group === 'suggested' && drawing)} />
   }
 
   const stopProps = (stop: PickerStop, extra = ''): React.HTMLAttributes<HTMLElement> & { 'data-stop': string } => ({

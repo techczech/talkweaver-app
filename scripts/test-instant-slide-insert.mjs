@@ -8,6 +8,7 @@ import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import ts from 'typescript'
 import {
   addInstantSlideToTalk, addRunInstantSlide, fileOutlineDocument, loadOutlineTools, resolveInstantAnchors,
 } from '../src/main/instant-slide-insert.ts'
@@ -643,9 +644,21 @@ for (const fence of [['~~~', '## Fake inside tilde {id=ff66}', '~~~'], ['````md'
       const full = join(d, name)
       if (statSync(full).isDirectory()) { walk(full); continue }
       if (!/\.(ts|tsx)$/.test(name) || name === 'tw-mock.ts') continue
-      readFileSync(full, 'utf8').split('\n').forEach((line, i) => {
-        if (/\.talk\.writeOutline\(/.test(line) && !/queueOutlineWrite\(/.test(line)) offenders.push(`${relative(REPO, full)}:${i + 1}`)
-      })
+      const source = ts.createSourceFile(full, readFileSync(full, 'utf8'), ts.ScriptTarget.Latest, true)
+      const queued = node => {
+        for (let at = node.parent; at; at = at.parent) {
+          if (ts.isArrowFunction(at) && ts.isCallExpression(at.parent) &&
+              at.parent.expression.getText(source) === 'queueOutlineWrite' && at.parent.arguments.includes(at)) return true
+        }
+        return false
+      }
+      const visit = node => {
+        if (ts.isCallExpression(node) && /\.talk\.writeOutline$/.test(node.expression.getText(source)) && !queued(node)) {
+          offenders.push(`${relative(REPO, full)}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}`)
+        }
+        ts.forEachChild(node, visit)
+      }
+      visit(source)
     }
   }
   walk(join(REPO, 'src/renderer/src'))

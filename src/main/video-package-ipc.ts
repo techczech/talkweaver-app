@@ -98,7 +98,7 @@ export function registerVideoPackageIpc(host: VideoPackHost) {
         signal.addEventListener('abort',cancel,{once:true})
         try {
           if (signal.aborted) throw new Error('Package cancelled.')
-          return await renderThumbnails({fullHtml,beforeWrite,cacheDir:directory,requestKey:key,shouldYield:()=>signal.aborted,slides:selected.map(s=>({key:s.id,cacheKey:createHash('sha256').update(s.id).digest('hex'),index:slides.findIndex(row=>row.id===s.id),layout:s.layout}))})
+          return await renderThumbnails({fullHtml,authoring:false,beforeWrite,cacheDir:directory,requestKey:key,shouldYield:()=>signal.aborted,slides:selected.map(s=>({key:s.id,cacheKey:createHash('sha256').update(s.id).digest('hex'),index:slides.findIndex(row=>row.id===s.id),layout:s.layout}))})
         } finally {signal.removeEventListener('abort',cancel)}
       }
     }

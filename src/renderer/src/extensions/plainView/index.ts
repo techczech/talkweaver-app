@@ -15,6 +15,7 @@ import { guardKeysExtension } from './guardKeys'
 import { settleCaretExtension } from './settleCaret'
 import type { EditorViewMode } from '../../../../shared/editor-view-mode'
 import { markdownHeadingEnter, titleStartPastMarks } from '../outliner'
+import { editNotesAsSource } from '../objectBlocks/effects'
 
 export interface PlainViewOptions extends MarginMenuHandlers {
   hideLayoutCodes?: boolean
@@ -29,5 +30,5 @@ export function plainViewExtension(options: PlainViewOptions = {}): Extension {
 
 /** What the view compartment holds for a mode. Markdown = exactly today's editor. */
 export function viewModeExtension(mode: EditorViewMode, options: PlainViewOptions = {}): Extension {
-  return mode === 'plain' ? plainViewExtension(options) : [markdownLookExtension(), markdownHeadingEnter.of(true)]
+  return mode === 'plain' ? plainViewExtension(options) : [markdownLookExtension(), markdownHeadingEnter.of(true), editNotesAsSource.of(true)]
 }

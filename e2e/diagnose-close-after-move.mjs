@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
+import { resolveSlideId } from '../compiler/scripts/lib/slide-id.mjs'
 
 const repo = resolve('.')
 const scratch = mkdtempSync(join(tmpdir(), 'tw-close-after-move-'))
@@ -84,9 +85,22 @@ try {
     const disk = () => readFileSync(outline, 'utf8')
     await waitFor(() => disk().indexOf('### Where the plot is') > disk().indexOf('### What we grow'), 'the move was saved')
     if (scenario.undo) {
+      const moved = disk()
+      const idOfMovedSlide = text => {
+        const lines = text.split('\n')
+        return resolveSlideId(lines, lines.findIndex(line => line.startsWith('### Where the plot is')))?.id
+      }
+      const id = idOfMovedSlide(moved)
+      assert.ok(id, 'the first save assigned the moved slide an ID')
       await page.locator('.grid-view').focus()
       await page.keyboard.press('Meta+z')
       await waitFor(() => disk().indexOf('### Where the plot is') < disk().indexOf('### What we grow'), 'the undo was saved')
+      const undone = disk()
+      assert.equal(idOfMovedSlide(undone), id, 'autosave after Undo retains the moved slide ID')
+      await page.keyboard.press('Meta+Shift+z')
+      await waitFor(() => disk() === moved, 'redo saves the exact moved bytes')
+      await page.keyboard.press('Meta+z')
+      await waitFor(() => disk() === undone, 'undo again saves the exact undone bytes')
     } else {
       await page.getByTestId('outline-toggle').click()
       if (scenario.slow) writeFileSync(delay, '1500')
@@ -118,8 +132,23 @@ try {
     let closed = false
     page.once('close', () => { closed = true })
     const started = Date.now()
-    if (scenario.quit) await app.evaluate(({ app: a }) => { a.quit() })
-    else await (await app.browserWindow(page)).evaluate(w => w.close())
+    let quitResult
+    if (scenario.quit) {
+      // Electron may already have completed its normal Quit while the Node process waits for
+      // Playwright's debugger. Observe both so a debugger wait cannot hide a product hang.
+      let stderr = ''
+      quitResult = new Promise(resolve => proc.stderr.on('data', bytes => {
+        stderr += String(bytes)
+        if (stderr.includes('Waiting for the debugger to disconnect...')) {
+          const code = /TALKWEAVER_QUIT_RESULT=(\d+)/.exec(stderr)?.[1]
+          if (code !== undefined) resolve({ code: Number(code), signal: null })
+        }
+      }))
+      await app.evaluate(({ app: a }) => {
+        a.once('quit', (_event, code) => process.stderr.write(`TALKWEAVER_QUIT_RESULT=${code}\n`))
+        a.quit()
+      })
+    } else await (await app.browserWindow(page)).evaluate(w => w.close())
     if (scenario.stall) {
       await page.getByText('The talk could not finish saving, so this window stayed open.', { exact: false }).waitFor({ timeout: 12000 })
       assert.equal(closed, false, 'a timed-out save keeps the work open')
@@ -136,8 +165,9 @@ try {
     if (scenario.quit) {
       let timer
       try {
-        const result = await Promise.race([exited, new Promise(r => { timer = setTimeout(() => r(null), 8000) })])
-        assert.deepEqual(result, { code: 0, signal: null }, 'ordinary quit finishes with a normal process exit')
+        const result = await Promise.race([exited, quitResult, new Promise(r => { timer = setTimeout(() => r(null), 8000) })])
+        assert.deepEqual(result, { code: 0, signal: null }, 'ordinary quit completes with exit code zero')
+        await waitFor(() => closed || page.isClosed(), 'ordinary quit closes the editor window')
       }
       finally { clearTimeout(timer) }
     } else await waitFor(() => closed, 'ordinary window close finishes')
@@ -155,4 +185,7 @@ try {
   try { await cleanup() }
   finally { rmSync(scratch, { recursive: true, force: true }) }
 }
-console.log(`close after move: ${checks} checks passed`)
+// Both the owned app and its private vault are gone. A Playwright connection can
+// still hold the test's Node process open after Electron's debugger teardown.
+await new Promise(resolve => process.stdout.write(`close after move: ${checks} checks passed\n`, resolve))
+process.exit(0)

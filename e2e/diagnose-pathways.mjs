@@ -53,11 +53,12 @@ try {
     assert.deepEqual(manifest().pathways[0].slideIds, ids)
   }
   await page.waitForFunction(()=>document.querySelector('[data-pathway-dock] select')?.textContent.includes('Short probe'))
+  await page.getByRole('tab', {name:'Talks',exact:true}).click()
   const badge=page.getByRole('button',{name:'Open pathways for Garden notes',exact:true})
   await badge.waitFor()
   assert.equal(await badge.textContent(),'1'); pass('pathway mutation pushes the talk badge count')
   assert.equal(await badge.getAttribute('title'),'Pathways: Short probe'); pass('talk badge tooltip lists the manifest name')
-  await page.getByTestId('grid-toggle').click(); await badge.click(); await dock.waitFor()
+  await badge.click(); await dock.waitFor()
   assert.equal((await app.windows()).length,oldCount); pass('talk badge navigates to that talk’s main-window dock')
   sameOutline(); pass('create stores a manifest pathway without touching the outline')
   const names = ['Where the plot is','What we grow','Seedlings in May','The plant stall']

@@ -199,7 +199,8 @@ async function tryEntry(mode, [objectName, kind, object], [placeName, place], [e
     // library's message, not this test's.)
     assert.deepEqual(h.errors.filter((message) => !/SVGLength': Could not resolve relative length/.test(message)), [])
   } catch (error) {
-    failures.push(`${mode}: ${objectName} · ${placeName} · ${entryName}\n    ${String(error.message).split('\n').join('\n    ')}`)
+    const label = selected ? `${mode} · object selected` : mode
+    failures.push(`${label}: ${objectName} · ${placeName} · ${entryName}\n    ${String(error.message).split('\n').join('\n    ')}`)
   }
 }
 
@@ -212,7 +213,7 @@ try {
   // With the object selected (the caret at its start), text never goes into it either: it goes after it.
   for (const object of fixtures) {
     for (const entry of ENTRY_POINTS.filter(([name]) => /^(typing|input method|paste event|Paste command|replace the selection|insert at the caret|insert an object)/.test(name))) {
-      await tryEntry('plain · object selected', object, PLACES[0], entry, true)
+      await tryEntry('plain', object, PLACES[0], entry, true)
     }
   }
   // Line commands at the gap: the command's effect on a new line under the object, the object's text

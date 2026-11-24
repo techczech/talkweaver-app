@@ -4,7 +4,7 @@
 // 2026-07-08 (28ed6ca) the deck window's before-input-event refreshed on F5 in every deck window,
 // so the presenter page's F5 (presenter.audience) never ran.
 // Usage: node scripts/test-deck-window-keys.mjs
-import { readMainSource } from './lib/read-source.mjs'
+import { functionBody, readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 
@@ -56,7 +56,8 @@ const main = readMainSource()
 const handler = /win\.webContents\.on\('before-input-event', \(event, input\) => \{([\s\S]*?)\n    \}\)/.exec(main)
 assert.ok(handler, 'the deck window has a before-input-event handler')
 assert.match(handler[1], /deckWindowKeyAction\(deckWindowMode\(mode\), input\)/, 'the deck window asks deckWindowKeyAction with its mode')
-assert.match(handler[1], /executeJavaScript\(OPEN_AUDIENCE_SCRIPT, true\)/, 'open-audience runs the Audience button with a user gesture')
+assert.match(handler[1], /openDeckAudience\(win\)/, 'the presenter F5 action opens the paired audience')
+assert.match(functionBody(main, 'openDeckAudience'), /executeJavaScript\(OPEN_AUDIENCE_SCRIPT, true\)/, 'the paired audience opens through the Audience button')
 const inlineKeys = readMainSource((code, file) => file === 'src/main/deck-window-keys.ts'
   ? code.replace("if (input.key === 'F5' && !input.meta && !input.control && !input.alt) {", '')
   : code)

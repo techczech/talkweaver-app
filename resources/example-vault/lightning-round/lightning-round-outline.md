@@ -12,9 +12,9 @@ outline_version: 2
 ### Move through the talk
 {id=s21}
 
-Open the presenter with <kbd>F5</kbd>, or from this slide with <kbd>⇧F5</kbd>.
+Open the presenter and audience from the start with <kbd>F5</kbd>, or from this slide with <kbd>⇧F5</kbd>.
 
-> **Try it.** There, <kbd>F5</kbd> opens the audience window, <kbd>⌘E</kbd> goes back to the slide in the editor, <kbd>⌘R</kbd> brings in edits. <kbd>⌘⇧P</kbd> opens All commands, which lists every presenter command, key or no key.
+> **Try it.** In presenter view, <kbd>F5</kbd> opens the audience window, <kbd>⌘E</kbd> goes back to the slide in the editor, <kbd>⌘R</kbd> brings in edits. <kbd>⌘⇧P</kbd> opens All commands, which lists every presenter command, key or no key.
 
 > **Try it.** Press <kbd>→</kbd> for the next slide, <kbd>←</kbd> to go back, and <kbd>O</kbd> for the outline.
 
@@ -69,7 +69,7 @@ Freeze a page with Pointer or Pen, then return to the live page.
 
 > **Try it.** <kbd>J</kbd> scrolls these notes. In the list (<kbd>⌘⇧P</kbd>), **Notes: bottom** moves them; **Notes scroll automatically**, **Notes scroll faster** and **Notes scroll slower** run them.
 
-> **Try it.** <kbd>?</kbd> shows the keys, <kbd>⌘⇧P</kbd> lists every command, <kbd>⌘⇧,</kbd> gives the highlighted one a new key, <kbd>C</kbd>, or the Guide button at the left of the bottom bar, shows this chapter beside the notes.
+> **Try it.** <kbd>?</kbd> shows keys, <kbd>⌘⇧P</kbd> lists commands, <kbd>⌘⇧,</kbd> rebinds, and <kbd>C</kbd> opens the Guide. In the editor, choose **Plan a session with an audience…** to set a date.
 
 :::notes
 These notes are only for you. The audience never sees them. Read the first line, look up, and say the rest in your own words.

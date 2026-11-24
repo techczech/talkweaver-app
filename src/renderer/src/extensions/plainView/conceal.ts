@@ -14,6 +14,7 @@ import { Decoration, EditorView, ViewPlugin, type DecorationSet, type ViewUpdate
 import type { Extension } from '@codemirror/state'
 import { inlineMarkRanges } from '../inlineMark'
 import { HEADING_STEPS } from './theme'
+import { inSlideTextPanel } from '../focusScope'
 
 interface Span { from: number; to: number }
 interface Element extends Span {
@@ -69,6 +70,7 @@ function build(view: EditorView): DecorationSet {
   const state = view.state
   const doc = state.doc
   const tree = syntaxTree(state)
+  const slideText = inSlideTextPanel(state)
   const out: Range<Decoration>[] = []
   const seenMarker = new Set<string>()
   const seenLine = new Set<number>()
@@ -100,6 +102,9 @@ function build(view: EditorView): DecorationSet {
               markers: marks.map((m, i) => i === 0 ? trailingSpace(doc, m) : { from: m.from, to: m.to })
             })
           }
+        } else if (slideText && name === 'Escape' && ref.from === doc.lineAt(ref.from).from &&
+                   doc.sliceString(ref.from, ref.to) === '\\#') {
+          out.push(hidden.range(ref.from, ref.from + 1))
         } else if (INLINE_MARK_NAMES[name]) {
           const marks = node.getChildren(INLINE_MARK_NAMES[name])
           if (marks.length) elements.push({ from: ref.from, to: ref.to, markers: marks.map((m) => ({ from: m.from, to: m.to })) })
@@ -168,7 +173,7 @@ const concealPlugin = ViewPlugin.fromClass(class {
   decorations: DecorationSet
   constructor(view: EditorView) { this.decorations = build(view) }
   update(u: ViewUpdate): void {
-    if (u.docChanged || u.selectionSet || u.viewportChanged || syntaxTree(u.startState) !== syntaxTree(u.state)) {
+    if (u.docChanged || u.selectionSet || u.viewportChanged || inSlideTextPanel(u.startState) !== inSlideTextPanel(u.state) || syntaxTree(u.startState) !== syntaxTree(u.state)) {
       this.decorations = build(u.view)
     }
   }

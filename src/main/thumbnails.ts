@@ -6,8 +6,8 @@ import { helperWindowsAllowed, markHiddenRenderer } from './window-kinds'
 import type { NativeImage } from 'electron'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs'
-import { rename, unlink, writeFile } from 'fs/promises'
+import { constants, existsSync, mkdirSync, unlinkSync, writeFileSync } from 'fs'
+import { open, rename, unlink, writeFile } from 'fs/promises'
 import { randomBytes, webcrypto } from 'crypto'
 import { createThumbnailQueue } from './thumbnail-queue'
 import { cleanThumbnailFocus, createCapturePlan } from './thumbnail-plan'
@@ -20,6 +20,10 @@ export interface RenderThumbnailsOptions {
   beforeWrite?: () => void
   /** Full compiled single-file presentation HTML (the presenter-popup runtime). */
   fullHtml: string
+  /** Video packages use the presentation step when capturing their stills. */
+  authoring?: boolean
+  /** A single design tile can request the resolved step count with its picture. */
+  onRevealSteps?: (count: number) => void
   /** Legacy conservative preview hint. Kept for callers; live-widget identity hashes preserved HTML. */
   deckKey?: string
   /** The deck already marked, hashed and written to a file where it was compiled (preview-variant.ts),
@@ -169,7 +173,22 @@ async function writePicture(path: string, bytes: Buffer, beforeWrite?:()=>void):
   }
 }
 
-async function ensureDeckLoaded(deck: string | PreviewVariant, signal: AbortSignal, shouldYield?: () => boolean): Promise<BrowserWindow> {
+async function readRevealSteps(path: string): Promise<number | undefined> {
+  // A count is small even if the generated metadata file has been replaced.
+  const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK).catch(() => null)
+  if (!file) return undefined
+  try {
+    const stats = await file.stat()
+    if (!stats.isFile() || stats.size > 8) return undefined
+    const buffer = Buffer.alloc(8)
+    const { bytesRead } = await file.read(buffer)
+    const value = buffer.toString('utf8', 0, bytesRead)
+    return /^\d+$/.test(value) ? Number(value) : undefined
+  } catch { return undefined }
+  finally { await file.close().catch(() => {}) }
+}
+
+async function ensureDeckLoaded(deck: string | PreviewVariant, signal: AbortSignal, authoring: boolean, shouldYield?: () => boolean): Promise<BrowserWindow> {
   const checkCancelled = (): void => {
     if (signal.aborted || !helperWindowsAllowed() || shouldYield?.()) throw new Error('Thumbnail render cancelled')
   }
@@ -178,7 +197,7 @@ async function ensureDeckLoaded(deck: string | PreviewVariant, signal: AbortSign
   let key: string
   if (typeof deck === 'string') {
     // knownKey strips widget documents and cannot identify the live local-page render.
-    const marked = markSlidePreviewHtml(deck, { localPages: true })
+    const marked = markSlidePreviewHtml(deck, { localPages: true, authoring })
     await nextTurn()
     ;({ bytes, key } = await deckBytesAndKey(marked))
   } else {
@@ -382,10 +401,10 @@ async function renderThumbnailsInWindow(
   superseded: AbortSignal,
   yieldToVariant: () => boolean
 ): Promise<Record<string, string>> {
-  const { slides, cacheDir } = opts
+  const { slides, cacheDir, authoring = true } = opts
   // A prepared variant exists only for a deck with no remote page: no artwork to fetch or name.
   // Its file may have been pruned since (preview-variant.ts): then mark fullHtml here, as before.
-  const given = usablePreviewVariant(opts.preview)
+  const given = authoring ? usablePreviewVariant(opts.preview) : undefined
   const preview = given && regularVariantFile(given) ? given : undefined
   const fullHtml = preview ? opts.fullHtml : await withRemoteEmbedArtwork(opts.fullHtml, signal, opts.shouldYield)
   // Public-page pictures can refresh without a compiler model change. Preserve the model-key
@@ -402,11 +421,14 @@ async function renderThumbnailsInWindow(
 
   // Decide up front which slides actually need rendering; if all are cached, skip the window.
   const pending: Array<{ index: number; key: string; cacheKey: string; layout?: string; pngPath: string }> = []
-  slides.forEach((slide, arrayIndex) => {
+  for (const [arrayIndex, slide] of slides.entries()) {
     const baseKey = slide.cacheKey ?? slide.key
     const cacheKey = artworkKey ? artworkKey + baseKey.replace(/^[0-9a-f]{16}-/, '') : baseKey
     const pngPath = join(cacheDir, `${cacheKey}.png`)
-    if (existsSync(pngPath)) {
+    const cached = existsSync(pngPath)
+    const steps = cached && opts.onRevealSteps ? await readRevealSteps(pngPath + '.steps') : undefined
+    if (cached && (!opts.onRevealSteps || steps !== undefined)) {
+      if (steps !== undefined) opts.onRevealSteps?.(steps)
       result[slide.key] = pngPath
       // Re-attach any cached sub-thumbnails (subslides) for this slide.
       let i = 0
@@ -417,7 +439,7 @@ async function renderThumbnailsInWindow(
     } else {
       pending.push({ index: slide.index ?? arrayIndex, key: slide.key, cacheKey, layout: slide.layout, pngPath })
     }
-  })
+  }
 
   if (!signal.aborted && Object.keys(result).length) opts.onProgress?.({ ...result })
   const pruneOlderArtwork = async (): Promise<void> => {
@@ -432,13 +454,13 @@ async function renderThumbnailsInWindow(
   try {
     let win: BrowserWindow
     try {
-      win = await ensureDeckLoaded(preview ?? fullHtml, signal, opts.shouldYield)
+      win = await ensureDeckLoaded(preview ?? fullHtml, signal, authoring, opts.shouldYield)
     } catch (error) {
       // The variant's file was pruned or refused between the check above and the load: load the deck
       // from fullHtml instead, as without a variant (no remote page on it, so it is the same document).
       if (!preview || signal.aborted || !helperWindowsAllowed() || opts.shouldYield?.()) throw error
       console.warn('[thumbnails] the preview variant could not be loaded; loading the deck itself', error)
-      win = await ensureDeckLoaded(fullHtml, signal, opts.shouldYield)
+      win = await ensureDeckLoaded(fullHtml, signal, authoring, opts.shouldYield)
     }
 
     // Still one slide at a time in this one window; only the choice of the next slide changes: the
@@ -478,8 +500,8 @@ async function renderThumbnailsInWindow(
         // capture has loaded images, so the "don't cache blank" guard above does NOT catch it, and it
         // got cached → the scrambled strip with no recovery. We re-toggle + verify; if the target is
         // not the sole active slide we DON'T cache (skip), so a wrong capture can never persist.
-        const onTarget = await rendererWork(forceActiveSlide(win, item.index), signal)
-        if (!onTarget) {
+        const target = await rendererWork(forceActiveSlide(win, item.index), signal)
+        if (!target?.ok) {
           console.warn(`[thumbnails] slide ${item.index} (${item.key}): could not isolate it as the active slide — NOT caching (will retry)`)
           continue
         }
@@ -487,6 +509,10 @@ async function renderThumbnailsInWindow(
         if (signal.aborted || opts.shouldYield?.()) break
         await writePicture(item.pngPath, await encodePng(img),opts.beforeWrite)
         result[item.key] = item.pngPath
+        if (opts.onRevealSteps && typeof target.revealSteps === 'string' && /^\d{1,8}$/.test(target.revealSteps)) {
+          opts.onRevealSteps(Number(target.revealSteps))
+          await writePicture(item.pngPath + '.steps', Buffer.from(target.revealSteps), opts.beforeWrite).catch(() => {})
+        }
         capturedThisTurn = true
 
         // ADR-0022: ONLY a carousel (the active slide carries .card-gallery[data-exclusive]) gets
@@ -554,17 +580,17 @@ async function navigateToSlide(win: BrowserWindow, index: number): Promise<void>
  * hashchange (so the runtime isn't re-triggered), waits a frame, and returns true only when the
  * target is the single active slide. A false result tells the caller to skip caching.
  */
-async function forceActiveSlide(win: BrowserWindow, index: number): Promise<boolean> {
+async function forceActiveSlide(win: BrowserWindow, index: number): Promise<{ ok: boolean; revealSteps?: string }> {
   return win.webContents.executeJavaScript(
     `new Promise((resolve) => {
       const stage = document.getElementById('stage');
       const slides = stage ? Array.from(stage.querySelectorAll('.slide')) : [];
       const target = slides[${index}];
-      if (!target) { resolve(false); return; }
+      if (!target) { resolve({ ok: false }); return; }
       slides.forEach((s, i) => s.classList.toggle('active', i === ${index}));
       requestAnimationFrame(() => requestAnimationFrame(() => {
         const active = stage.querySelectorAll('.slide.active');
-        resolve(active.length === 1 && active[0] === target);
+        resolve({ ok: active.length === 1 && active[0] === target, revealSteps: target.dataset.twRevealSteps });
       }));
     })`,
     true

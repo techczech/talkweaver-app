@@ -27,17 +27,8 @@ export const twTheme = EditorView.theme({
     borderRight: '1px solid var(--line)',
     color: 'var(--faint)'
   },
-  '.cm-lineNumbers': { flex: '0 0 110px', width: '110px' },
-  '.cm-lineNumbers .cm-gutterElement': { boxSizing: 'border-box', width: '100%', overflow: 'hidden', color: 'var(--accent-text)', fontSize: '0.6875rem' },
-  '.cm-md-heading-marker': { display: 'block', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' },
-  '.cm-md-heading-number': { marginInlineStart: '0.5ch' },
-  '.cm-md-heading-abbreviation': { display: 'none' },
   '.cm-scroller::-webkit-scrollbar-corner': { backgroundColor: 'var(--panel)' },
   '@media (max-width: 1199px)': {
-    '.cm-lineNumbers': { flex: '0 0 39px', width: '39px' },
-    '.cm-md-heading-name': { display: 'none' },
-    '.cm-md-heading-abbreviation': { display: 'inline' },
-    '.cm-md-heading-number': { marginInlineStart: '0' },
     '.cm-fm-header': { flexWrap: 'wrap', gap: '4px' },
     '.cm-fm-label': { flexBasis: 'min(110px, 35%)' },
     '.cm-fm-add': { maxWidth: 'calc(100% - 20px)' }

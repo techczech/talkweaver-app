@@ -168,3 +168,5 @@ type SetupFolderStatus = import('../shared/setup-folder').SetupFolderStatus
 type SetupFolderReply = { ok: boolean; error?: string; status: SetupFolderStatus | null }
 
 contextBridge.exposeInMainWorld('tw', tw)
+
+contextBridge.exposeInMainWorld('twMacInset', process.platform === 'darwin')

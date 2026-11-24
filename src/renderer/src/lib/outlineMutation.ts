@@ -32,7 +32,7 @@ export interface OutlineEditorBuffer {
   /** Puts `next` into the buffer as one minimal change, supersedes the pending debounced autosave (the
    *  caller saves the whole buffer at once) and returns the buffer text to save, or null when the
    *  editor is not ready. */
-  apply(outlinePath: string, next: string, opts?: { ownUndoStep?: boolean }): string | null
+  apply(outlinePath: string, next: string, opts?: { ownUndoStep?: boolean; headingOrder?: readonly number[] }): string | null
   /** After a save of `sent`: adopts `saved` (what was written: tidied, ids stamped) only while the buffer
    *  is still the text `sent` was made from. */
   adopt(outlinePath: string, sent: string, saved: string): void
@@ -58,7 +58,8 @@ export interface OutlineMutatorDeps<R extends OutlineSaveReply> {
 }
 
 /** Works out the new outline from the buffer's current text. A thrown error refuses the change. */
-export type OutlineMutate = (current: string) => string | Promise<string>
+type OutlineEdit = string | { text: string; headingOrder: readonly number[] }
+export type OutlineMutate = (current: string) => OutlineEdit | Promise<OutlineEdit>
 
 export interface OutlineMutationOptions {
   /** Save even when `mutate` returns its input (a forced save of the buffer as it stands). */
@@ -134,13 +135,16 @@ export function createOutlineMutator<R extends OutlineSaveReply>(deps: OutlineMu
       const base = buffer.read(outlinePath)
       if (base == null) return notOpen
       if (opts.base !== undefined && base !== opts.base) return { ok: false, reason: 'moved', error: KEPT_MOVING, applied: false, base }
-      let next: string
-      try { next = await mutate(base) } catch (error) { return { ok: false, reason: 'refused', error: message(error), applied: false, base } }
+      let edit: OutlineEdit
+      try { edit = await mutate(base) } catch (error) { return { ok: false, reason: 'refused', error: message(error), applied: false, base } }
+      const next = typeof edit === 'string' ? edit : edit?.text
       if (typeof next !== 'string') return { ok: false, reason: 'refused', error: 'The change could not be worked out. Nothing was changed.', applied: false, base }
       // Typed while the change was being worked out: never apply a result computed from an older buffer.
       if (buffer.read(outlinePath) !== base) continue
       if (next === base && !opts.force) return { ok: true, changed: false, base, text: base }
-      const text = buffer.apply(outlinePath, next, opts.ownUndoStep ? { ownUndoStep: true } : undefined)
+      const headingOrder = typeof edit === 'string' ? undefined : edit.headingOrder
+      const applyOpts = headingOrder ? { ownUndoStep: opts.ownUndoStep, headingOrder } : opts.ownUndoStep ? { ownUndoStep: true } : undefined
+      const text = buffer.apply(outlinePath, next, applyOpts)
       if (text == null) return notOpen
       const saved = await deps.write(outlinePath, text)
       if (!saved || saved.ok !== true) {

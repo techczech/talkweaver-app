@@ -122,7 +122,7 @@ export function headingsMissingIds(text) {
   const lines = scanLines(text);
   const normCounts = new Map();
   const targets = [];
-  for (const block of listSlideBlocks(text)) {
+  for (const [index, block] of listSlideBlocks(text).entries()) {
     const key = headingIdKey(block.heading);
     const occ = (normCounts.get(key) || 0) + 1;
     normCounts.set(key, occ);
@@ -130,7 +130,7 @@ export function headingsMissingIds(text) {
     const window = preContentWindow(lines, block.start, block.end);
     const isMidTyping = lines.slice(window.start, window.end).some(lineHasUnclosedBrace);
     if (!hasId && !isMidTyping) {
-      targets.push({ heading: block.heading, occurrence: block.occurrence, prefKey: `${key} ${occ}` });
+      targets.push({ heading: block.heading, occurrence: block.occurrence, prefKey: `${key} ${occ}`, index });
     }
   }
   return targets;

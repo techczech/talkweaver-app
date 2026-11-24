@@ -45,7 +45,7 @@ import React, { useCallback, useState } from 'react'; import { createRoot } from
 import Inspector from './src/renderer/src/components/Inspector'
 import {selectOfflinePage,offlinePageReplacement,type OfflinePageSelection} from './src/renderer/src/lib/offlinePage'
 let buffer='', messages=[], captures=0, fixtureId=0
-const activeTalkRef={current:{outlinePath:'/fixture/outline.md'}}, inspectedNowRef={current:0}, slideLinesRef={current:[1]}, offlineSavingRef={current:false}, inspectorCommitInProgressRef={current:false}
+const activeTalkRef={current:{outlinePath:'/fixture/outline.md'}}, activeSlideRef={current:0}, slideLinesRef={current:[1]}, offlineSavingRef={current:false}, inspectorCommitInProgressRef={current:false}
 const editorReadRef={current:()=>({text:buffer})}, editorReplaceRef={current:text=>{buffer=text;return text}}
 const notify=message=>messages.push(message), setOfflineSaving=()=>{}
 window.tw={vault:{talkDefaults:async()=>null,onVaultsChanged:()=>()=>{},talkActivity:async()=>[],onTalkActivityChanged:()=>()=>{}},slide:{renderPreview:async()=>null},htmlPage:{saveOffline:async()=>{captures++;return {ok:true,embedPath:'assets/offline.html',images:0,dataFiles:0,omitted:0}}}}
@@ -63,6 +63,11 @@ window.result=()=>({buffer,messages,captures})
   const caller = await browser.newPage()
   const callerErrors = []
   caller.on('pageerror', error => callerErrors.push(error.message))
+  const waitForOfflineCopy = () => caller.waitForFunction(() => window.result().captures === 1 &&
+    window.result().buffer.includes('assets/offline.html')).catch(error => {
+    assert.deepEqual(callerErrors, [], 'Inspector save callback raised a page error')
+    throw error
+  })
   await caller.addStyleTag({content:harness.outputFiles.find(file=>file.path.endsWith('.css')).text})
   await caller.addScriptTag({content:harness.outputFiles.find(file=>file.path.endsWith('.js')).text})
   const url = 'https://example.org/page'
@@ -72,18 +77,18 @@ window.result=()=>({buffer,messages,captures})
   await caller.evaluate(text=>window.fixture(text),first)
   await caller.getByRole('button',{name:/^Web page/}).click()
   await caller.getByRole('button',{name:'Save offline copy',exact:true}).first().click()
-  await caller.waitForFunction(()=>window.result().captures===1 && window.result().buffer.includes('assets/offline.html'))
+  await waitForOfflineCopy()
   assert.equal((await caller.evaluate(()=>window.result())).buffer,`### A\n${url}\n${copied}\n${embed}`)
   const mixed = `### A\n${simulation}\n${embed}`
   await caller.evaluate(text=>window.fixture(text),mixed)
   await caller.getByRole('button',{name:/^Web page/}).click()
   await caller.getByRole('button',{name:'Save offline copy',exact:true}).nth(1).click()
-  await caller.waitForFunction(()=>window.result().buffer.includes('assets/offline.html'))
+  await waitForOfflineCopy()
   assert.equal((await caller.evaluate(()=>window.result())).buffer,`### A\n${simulation}\n${copied}`)
   await caller.evaluate(text=>window.fixture(text),mixed)
   await caller.getByRole('button',{name:/^Web page/}).click()
   await caller.getByRole('button',{name:'Save offline copy',exact:true}).first().click()
-  await caller.waitForFunction(()=>window.result().buffer.includes('assets/offline.html'))
+  await waitForOfflineCopy()
   assert.equal((await caller.evaluate(()=>window.result())).buffer,`### A\n[Simulation: assets/offline.html]\n\n[Original page](<${url}>)\n${embed}`)
   const duplicate = `### A\n${embed}\n${embed}`
   await caller.evaluate(text=>window.fixture(text),duplicate)

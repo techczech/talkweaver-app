@@ -11,7 +11,7 @@ try {
   await build({ stdin: { contents: `
 import React from 'react'
 import {createRoot} from 'react-dom/client'
-import PathwaysView from './src/renderer/src/components/PathwaysView.tsx'
+import PathwaysView, {usePathways} from './src/renderer/src/components/PathwaysView.tsx'
 import GridView from './src/renderer/src/components/GridView.tsx'
 import PlanRunSheet from './src/renderer/src/components/PlanRunSheet.tsx'
 window.mountReviewProbe=(initial={})=>{
@@ -23,8 +23,14 @@ window.mountReviewProbe=(initial={})=>{
   window.tw.pathways.onChanged=handler=>{window.reviewChanged=handler;return ()=>{window.reviewChanged=null}};
   window.tw.pathways.setSlideIds=async(path,content,id,ids)=>{window.reviewWrites.push(ids);return {...snapshot(),pathways:[{...snapshot().pathways[0],slideIds:ids,missing:[]}]}};
   window.tw.pathways.present=async(...args)=>{window.reviewPresents.push(args);return {success:true}};
+  function Probe({docked,content,slides}) {
+    const talk = {outlinePath:'/review.md',title:'Review'};
+    const model = usePathways(talk.outlinePath, content, slides, docked);
+    window.reviewGridHasAdd = docked && typeof model.setAdding === 'function';
+    return <PathwaysView talk={talk} model={model} thumbnails={{}} docked={docked}/>;
+  }
   const probeRoot=createRoot(document.getElementById('root'));
-  const render=()=>probeRoot.render(<PathwaysView talk={{outlinePath:'/review.md',title:'Review'}} {...state} thumbnails={{}}>{props=>{window.reviewGridHasAdd=typeof props.onAddToPathway==='function';return null}}</PathwaysView>);
+  const render=()=>probeRoot.render(<Probe {...state} />);
   window.updateReviewProbe=patch=>{state={...state,...patch};render()};
   window.unmountReviewProbe=()=>probeRoot.unmount();render();
 };
@@ -43,7 +49,14 @@ let pathways=[{id:'short',name:'Short',slideIds:['c','a']}]
 window.writes=[];window.outlineSteps=0
 const snap=()=>({slides,pathways:pathways.map(p=>({...p,present:p.slideIds.filter(id=>slides.some(s=>s.slide_id===id)).map(id=>slides.find(s=>s.slide_id===id)),missing:p.slideIds.filter(id=>!slides.some(s=>s.slide_id===id))}))})
 window.tw={pathways:{read:async()=>{if(window.deferRead){window.readStarted=true;await new Promise(resolve=>window.releaseRead=resolve)}return snap()},onChanged:()=>()=>{},present:async(...args)=>{window.presented=args;return {success:true}},setSlideIds:async(path,content,id,ids)=>{window.writes.push([...ids]);pathways=pathways.map(p=>p.id===id?{...p,slideIds:ids}:p);return snap()},create:async(path,content,name)=>{pathways.push({id:'new',name,slideIds:[]});return snap()},rename:async()=>snap(),delete:async()=>snap()},talk:{present:async(...args)=>{window.presented=args;return {success:true}},slidePictureText:async()=>[]},commands:{ran:()=>{}}}
-const root=createRoot(document.getElementById('root'));window.unmount=()=>root.unmount();root.render(<PathwaysView talk={talk} content={'# Probe'} slides={slides} thumbnails={{}} docked={true}>{props=><GridView talk={talk} compiledSlides={slides} triggerFindings={[]} activeIndex={0} columns={2} onSelectSlide={()=>{}} slideRefOf={i=>({line:i+1,headingText:'### '+slides[i].title})} onMoveSlides={()=>{}} onStepSlide={()=>{window.outlineSteps++}} onCutSlides={async()=>true} onCopySlides={()=>''} {...props}/>}</PathwaysView>)
+function DockFixture() {
+  const model = usePathways(talk.outlinePath, '# Probe', slides, true);
+  return <div style={{display:'flex',height:'100%'}}>
+    <div style={{width:'280px',display:'flex'}}><PathwaysView talk={talk} model={model} thumbnails={{}} docked /></div>
+    <div style={{flex:1,minWidth:0}}><GridView talk={talk} compiledSlides={slides} triggerFindings={[]} activeIndex={0} columns={2} onSelectSlide={()=>{}} slideRefOf={i=>({line:i+1,headingText:'### '+slides[i].title})} onMoveSlides={()=>{}} onStepSlide={()=>{window.outlineSteps++}} onCutSlides={async()=>true} onCopySlides={()=>''} pathwayIds={model.pathway?.slideIds} onAddToPathway={model.setAdding}/></div>
+  </div>
+}
+const root=createRoot(document.getElementById('root'));window.unmount=()=>root.unmount();root.render(<DockFixture />)
 `, resolveDir: process.cwd(), loader: 'tsx' }, bundle: true, jsx:'automatic', format:'iife', outfile:join(dir,'bundle.js'), logLevel:'silent' })
   browser = await chromium.launch({headless:true})
   const page = await browser.newPage({viewport:{width:1200,height:850}})
@@ -54,9 +67,10 @@ const root=createRoot(document.getElementById('root'));window.unmount=()=>root.u
   await page.addStyleTag({path:join(dir,'bundle.css')})
   await page.addScriptTag({path:join(dir,'bundle.js')})
   const check = async (label, fn) => { await fn(); checks++; console.log('PASS '+label) }
+  await page.getByRole('combobox', {name:'Pathway'}).selectOption('short')
   await page.locator('[data-pathway-row="c"]').waitFor()
   const order=()=>page.locator('[data-pathway-row]').evaluateAll(es=>es.map(e=>e.dataset.pathwayRow))
-  await check('locked layout places the numbered dock to the right of the talk grid',async()=>{const grid=await page.locator('.pathways-grid').boundingBox(),dock=await page.locator('[data-pathway-dock]').boundingBox();assert(dock.x>=grid.x+grid.width-1);assert(dock.width>=280)})
+  await check('the numbered dock fits before the talk grid',async()=>{const grid=await page.locator('.grid-view').boundingBox(),dock=await page.locator('[data-pathway-dock]').boundingBox();assert(grid.x>=dock.x+dock.width-1);assert(dock.width>=280)})
   await check('docked list follows manifest order', async()=>assert.deepEqual(await order(),['c','a']))
   await check('badges show pathway numbers only on members', async()=>{
     assert.deepEqual(await page.locator('[data-pathway-badge]').allTextContents(),['2','1'])
@@ -80,7 +94,7 @@ const root=createRoot(document.getElementById('root'));window.unmount=()=>root.u
   await page.locator('[data-pathway-row="e"]').waitFor()
   await check('grid drop inserts at the numbered list position',async()=>assert.deepEqual(await order(),['c','e','a','b','d']))
   await page.locator('[data-pathway-row="d"]').focus()
-  await page.keyboard.press('Meta+ArrowUp')
+  await page.keyboard.press('ControlOrMeta+ArrowUp')
   await page.waitForFunction(()=>Array.from(document.querySelectorAll('[data-pathway-row]')).map(e=>e.dataset.pathwayRow).join(',')==='c,e,a,d,b')
   await check('command-up moves focused row immediately',async()=>assert.deepEqual(await order(),['c','e','a','d','b']))
   await drag(page.locator('[data-pathway-row="b"]'),page.locator('[data-pathway-row="c"]'))
@@ -179,6 +193,7 @@ const root=createRoot(document.getElementById('root'));window.unmount=()=>root.u
   })
   await page.evaluate(()=>window.unmountReviewProbe())
   await mountReview({docked:true,slides:[{slide_id:'live',title:'live'}]})
+  await page.getByRole('combobox', {name:'Pathway'}).selectOption('picked')
   await reviewCheck('docked Pathways retains its add callback',async()=>assert.equal(await page.evaluate(()=>window.reviewGridHasAdd),true))
   await reviewCheck('stale renderer rows do not mark backend-resolved live members missing',async()=>{
     assert.match(await page.locator('[data-pathway-warning]').textContent(),/^1 slides no longer/)

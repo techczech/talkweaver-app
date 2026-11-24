@@ -60,3 +60,8 @@ Local change authorised for the authoring speed round. `scripts/lib/05-icons.mjs
 the ordered Lucide candidates for the same item text. The process-local memo holds up
 to 512 entries and accepts text up to 512 characters. The scoring rules, ordering,
 projections and rendered output retain their existing contracts.
+
+## Generated closing treatment (2026-11-24)
+
+The generated closing uses the opening poster variant and presentation layout while retaining
+its closing role and layout in the model. Authored bookends still use their existing variants.

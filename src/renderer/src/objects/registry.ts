@@ -72,7 +72,7 @@ function planWholeBlockCommit(block: ObjectBlock, currentDoc: string, wholeBlock
     return { ok: false, reason: 'the editor shell was stale and no longer matched the active document' }
   }
   const nextDoc = `${currentDoc.slice(0, block.from)}${wholeBlock}${currentDoc.slice(block.to)}`
-  const parsed = detectObjectBlocks(nextDoc).find((candidate) => candidate.from === block.from)
+  const parsed = detectObjectBlocks(nextDoc, block.kind === 'picture').find((candidate) => candidate.from === block.from)
   if (!parsed || parsed.source !== wholeBlock || typeof parsed.bodyFrom !== 'number') {
     return { ok: false, reason: 'the new fence lines could not be read back as one closed block without changing its bytes' }
   }
@@ -155,7 +155,7 @@ export function objectEditorCommitRefusal(
     return 'the editor shell was stale and no longer matched the active document'
   }
   const nextDoc = `${currentDoc.slice(0, block.from)}${replacement}${currentDoc.slice(block.to)}`
-  const parsed = detectObjectBlocks(nextDoc).find((candidate) => candidate.from === block.from)
+  const parsed = detectObjectBlocks(nextDoc, block.kind === 'picture').find((candidate) => candidate.from === block.from)
   if (
     !parsed
     || parsed.kind !== block.kind
