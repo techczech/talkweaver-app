@@ -59,6 +59,8 @@ const generated = (name) => { const m = TEMPLATE.match(new RegExp(`const ${name}
 const PRESENTER_COMMAND_KEYS = generated('PRESENTER_COMMAND_KEYS')
 const PRESENTER_CONTROL_COMMANDS = generated('PRESENTER_CONTROL_COMMANDS')
 const PRESENTER_PALETTE_DATA = generated('PRESENTER_PALETTE')
+const paletteRunMap = TEMPLATE.match(/const PRESENTER_PALETTE_RUN = \{([\s\S]*?)\n  \};/)?.[1] ?? ''
+const directPaletteRuns = new Set(Array.from(paletteRunMap.matchAll(/^\s*"([^"]+)": \{ run:/gm), match => match[1]))
 const PRELOAD_BOUND = {
   'presenter.record': 'src/preload/present-rec-ui.ts', 'presenter.record-pause': 'src/preload/present-rec-ui.ts',
   'presenter.save-run-as': 'src/preload/present-rec-ui.ts', 'presenter.save-run': 'src/preload/present-rec-ui.ts',
@@ -76,7 +78,9 @@ function presenterRoute(id) {
   }
   const key = PRESENTER_COMMAND_KEYS.find((c) => c.id === id && c.codes.length)
   const control = Object.values(PRESENTER_CONTROL_COMMANDS).includes(id)
-  return key || control ? [key && 'key', control && 'control'].filter(Boolean).join(' + ') : null
+  const palette = PRESENTER_PALETTE_DATA.some(([, entries]) =>
+    entries.some(entry => entry.shortcut === id && directPaletteRuns.has(entry.id)))
+  return [key && 'key', control && 'control', palette && 'palette'].filter(Boolean).join(' + ') || null
 }
 
 const SRC = join(REPO, 'src')
@@ -174,7 +178,7 @@ await test('the presenter template reports through one function, from its four r
   assert.ok(PRESENTER_COMMAND_KEYS && PRESENTER_CONTROL_COMMANDS && PRESENTER_PALETTE_DATA, 'the generated blocks are read')
   assert.equal((TEMPLATE.match(/new CustomEvent\("tw-guide-command-ran"/g) ?? []).length, 1, 'one dispatch site')
   assert.ok(TEMPLATE.includes('if (!isPresenter || isReplay || typeof id !== "string" || !id || guideReported.has(id)) return;'), 'presenter only, once per id')
-  assert.ok(TEMPLATE.includes('if (isPresenter && !acted && event.defaultPrevented && !shortcutForwarded.has(event)) reportGuideCommand(guideKeyCommand(event));'), 'a default key that acted')
+  assert.ok(TEMPLATE.includes('if (isPresenter && !acted && event.defaultPrevented && !shortcutForwarded.has(event)) reportGuideCommand(guideKeyCommand(event, gridBeat));'), 'a default key that acted')
   assert.ok(TEMPLATE.includes('reportGuideCommand(guideIdOfOverride(match.id));'), 'a rebound key')
   assert.ok(TEMPLATE.includes('if (action) reportGuideCommand(guideIdOfEntry(entry));'), 'the palette, when the entry applies')
   assert.ok(TEMPLATE.includes('document.addEventListener("click", (event) => reportGuideCommand(guideControlCommand(event.target)), true);'), 'a press on a control')

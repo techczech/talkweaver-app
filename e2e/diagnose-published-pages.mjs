@@ -12,11 +12,11 @@
 //   (f) the only published outline unreadable: the error with Retry (never "Nothing is published"); Retry lists it;
 //   (e) the site's copy there but unreadable: a loading error with Retry, never "Nothing is published"; Retry lists it.
 // TW_SHOTS_DIR saves one screenshot per drawn state.
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
-import { tmpdir } from 'node:os'
+
+await using appScratch = createAppScratch()
 
 const shotsDir = process.env.TW_SHOTS_DIR || ''
 if (shotsDir) mkdirSync(shotsDir, { recursive: true })
@@ -25,7 +25,6 @@ const rec = (name, ok, detail) => {
   if (!ok) failures += 1
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`)
 }
-await ensureFreshBuild(process.cwd())
 
 const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
 const pad = (n) => String(n).padStart(2, '0')
@@ -64,7 +63,7 @@ const SITE_FILES = {
 const outline = (title, url) => `---\ntitle: ${title}\n${url ? `handout_url: ${url}\n` : ''}auto_title_slide: false\nauto_thanks_slide: false\n---\n\n### Opening\n{id=open}\n\nHello.\n`
 
 function seed({ runs, talks, site }) {
-  const root = mkdtempSync(join(tmpdir(), 'tw-published-pages-e2e-'))
+  const root = mkdtempSync(join(appScratch.root, 'case-'))
   const vault = join(root, 'vault'); const ud = join(root, 'userData')
   mkdirSync(ud, { recursive: true })
   for (const [slug, title, url] of talks) {
@@ -84,7 +83,7 @@ async function launch(world) {
   const seeded = seed(world)
   const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try { return { app: await electron.launch({ args: ['.', '--user-data-dir=' + seeded.ud], cwd: process.cwd(), env, timeout: 60_000 }), ...seeded } }
+    try { return { app: (await launchApp({ scratch: appScratch, userData: seeded.ud, env, timeout: 60_000 })).app, ...seeded } }
     catch (error) { if (attempt === 3) throw error; await new Promise((r) => setTimeout(r, 15_000)) }
   }
 }
@@ -160,7 +159,7 @@ const rows = (tools) => tools.evaluate(() => [...document.querySelectorAll('[dat
     rec('the Run row stays', (await rows(tools)).includes(`${vaultId}|run|ai-research/said:found`))
     const notice = await tools.locator('[data-published-notice]').count()
     rec('no notice: it went through', notice === 0)
-  } finally { await app.close().catch(() => {}) }
+  } finally { await appScratch.closeApp(app).catch(() => {}) }
 }
 
 // ---- (d) the empty state
@@ -171,7 +170,7 @@ const rows = (tools) => tools.evaluate(() => [...document.querySelectorAll('[dat
     const body = (await tools.locator('[data-tools-view="published"]').textContent()) ?? ''
     rec('nothing published: the empty state', body.includes('Nothing is published') && body.includes('No page selected'), body.trim().slice(0, 80))
     await shot(tools, '8-empty')
-  } finally { await app.close().catch(() => {}) }
+  } finally { await appScratch.closeApp(app).catch(() => {}) }
 }
 
 // ---- (e) a listing that fails: the error and Retry, never the empty state
@@ -186,7 +185,7 @@ const rows = (tools) => tools.evaluate(() => [...document.querySelectorAll('[dat
     await tools.locator('[data-published-retry]').click()
     await tools.waitForSelector('[data-published-row]', { timeout: 10_000 }).catch(() => {})
     rec('Retry lists the pages once the site can be read', (await rows(tools)).length === 1 && await tools.locator('[data-published-error]').count() === 0, (await rows(tools)).join(' '))
-  } finally { try { chmodSync(siteDir, 0o755) } catch { /* gone */ } await app.close().catch(() => {}) }
+  } finally { try { chmodSync(siteDir, 0o755) } catch { /* gone */ } await appScratch.closeApp(app).catch(() => {}) }
 }
 
 // ---- (f) the only published outline cannot be read: the error and Retry, never the empty state
@@ -202,8 +201,8 @@ const rows = (tools) => tools.evaluate(() => [...document.querySelectorAll('[dat
     await tools.locator('[data-published-retry]').click()
     await tools.waitForSelector('[data-published-row]', { timeout: 10_000 }).catch(() => {})
     rec('Retry lists it once it can be read', (await rows(tools)).length === 1, (await rows(tools)).join(' '))
-  } finally { try { chmodSync(file, 0o644) } catch { /* gone */ } await app.close().catch(() => {}) }
+  } finally { try { chmodSync(file, 0o644) } catch { /* gone */ } await appScratch.closeApp(app).catch(() => {}) }
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
-process.exit(failures ? 1 : 0)
+process.exitCode = failures ? 1 : 0

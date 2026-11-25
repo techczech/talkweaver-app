@@ -6,12 +6,10 @@
 // transitions on #twClock / #twClockBtn and that the old #bigTimer is gone.
 //
 // Run: cd talk-weaver && node e2e/diagnose-presenter-qol.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
-import { mkdtempDisposableSync, mkdirSync, writeFileSync, statSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdirSync, writeFileSync, statSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -27,8 +25,8 @@ const record = (name, pass, detail) => {
 const { prepareSource } = await import(
   pathToFileURL(join(compilerDir, 'lib/08-source-adapters.mjs')).href
 )
-using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-qol-'))
-const root = fixture.path
+await using fixture = createAppScratch()
+const root = fixture.root
 const ud = join(root, 'ud')
 mkdirSync(ud, { recursive: true })
 const outlinePath = join(root, 'qol-outline.md')
@@ -80,9 +78,7 @@ const standaloneUrl = pathToFileURL(presentPath).href
 console.log('present file: ' + presentPath)
 
 // ── Launch Electron and drive its window straight to the compiled present HTML ──
-await ensureFreshBuild(REPO)
-await using app = await electron.launch({ args: ['.', '--user-data-dir=' + ud, '--use-mock-keychain'], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
-const page = await app.firstWindow()
+const { app, page } = await launchApp({ scratch: fixture, userData: ud, args: ['.', '--use-mock-keychain'] })
 const consoleErrors = []
 page.on('console', (m) => { if (m.type() === 'error') consoleErrors.push(m.text()) })
 page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message))

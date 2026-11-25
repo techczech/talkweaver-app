@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from '../e2e/lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from '../e2e/lib/launch-app.mjs'
 import { fileURLToPath } from 'node:url'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 
-const scratch = await mkdtemp(join(tmpdir(), 'talkweaver-outline-follow-'))
+await using appScratch = createAppScratch()
+const scratch = appScratch.root
 const source = ['---', 'title: Outline follow', 'auto_title_slide: false', 'auto_thanks_slide: false', '---',
   ...Array.from({ length: 45 }, (_, i) => `\n### Slide ${i + 1} {id=slide-${i + 1}}\n\nText ${i + 1}.`)].join('\n')
 const sourcePath = join(scratch, 'outline-follow.md')
@@ -18,8 +17,7 @@ const model = await prepareSource(sourcePath, source, 'outline-follow', statSync
 const htmlPath = join(scratch, 'outline-follow.html')
 await writeFile(htmlPath, model.fullHtml)
 const repo = fileURLToPath(new URL('..', import.meta.url))
-await ensureFreshBuild(repo)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + join(scratch, 'user-data')], cwd: repo, env: { ...process.env, TW_E2E: '1' } })
+const app = (await launchApp({ scratch: appScratch, userData: join(scratch, 'user-data') })).app
 try {
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
@@ -65,6 +63,5 @@ try {
   await assertFollowing('Slide 45')
   console.log('PASS reopening and switching to thumbnail previews retain the current position')
 } finally {
-  await app.close()
-  await rm(scratch, { recursive: true, force: true })
+  await appScratch.closeApp(app)
 }

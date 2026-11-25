@@ -17,6 +17,7 @@ import {
 } from './03-object-token.mjs'
 import { parseOutlineTree } from './14-outline-tree.mjs'
 import { blankHtmlComments } from './html-comments.mjs'
+import { readVideoMarker } from "./video-markers.mjs";
 import { IMAGE_SYNTAX_RE, imageSyntaxIsAudio } from './image-line-rules.mjs'
 import { audioChipTitle } from './audio-chip-title.mjs'
 import { shownReference } from './shown-reference.mjs'
@@ -98,7 +99,7 @@ export function parseSlideScript(sourceMarkdown, { simulationTranscript = false 
       else codeFence.lines.push(raw.replace(/\r$/, '').replace(codeFence.indent, ''))
       return
     }
-    if (!line) return
+    if (!line || readVideoMarker(line)) return
     if (chartFenceOpening) {
       if (isMarkdownFenceClosingLine(line, chartFenceOpening)) {
         chartFenceOpening = null

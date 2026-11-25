@@ -1,3 +1,5 @@
+import type { SlideMergeChoices } from '../shared/outline-merge'
+import type { SlideMergeApplyReply, SlideMergeReviewReply } from '../shared/outline-slide-merge'
 import type { PublishHistoryAttempt, PublishSiteCheck } from '../shared/publish-history'
 import type { SlideTabView, SlidesPanelView, WorkspaceView } from '../shared/workspace-view'
 import type { ImageEditPreview, ImageEditRecipe, ImageEditResult } from '../shared/image-edit'
@@ -16,6 +18,7 @@ export type { RecordingRecovery } from '../shared/recording-recovery'
 import type { InkStroke } from '../../worker/protocol'
 import type { RunAudioFields } from '../shared/run-audio'
 import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode, VaultPictureResult } from '../shared/image-search'
+import type { LayoutPreviewCheck } from '../shared/list-layout-suggestions'
 import type { VariantThumbnail } from '../shared/variant-thumbnail-result'
 import type { EditorDocumentReply, EditorDocumentRequest } from '../shared/editor-document'
 import type { OutlineSaveIdentity } from '../shared/outline-save-identity'
@@ -989,6 +992,11 @@ const api = {
         if (reply && 'error' in reply) throw new Error(reply.error)
         return reply
       }),
+    // Review the live editor against the exact acknowledged and on-disk versions.
+    planSlideMerge: (outlinePath: string): Promise<SlideMergeReviewReply> =>
+      ipcRenderer.invoke('talk:outline-plan-slide-merge', outlinePath),
+    applySlideMerge: (outlinePath: string, generation: string, choices: SlideMergeChoices): Promise<SlideMergeApplyReply> =>
+      ipcRenderer.invoke('talk:outline-apply-slide-merge', outlinePath, generation, choices),
     // `keepPending`: a save follows. `revision`: captured immediately after a no-write adoption,
     // acknowledging that revision only, not typing made while the acknowledgement was pending.
     acceptOutlineDiskVersion: (outlinePath: string, hash: string, opts?: { keepPending?: boolean; revision?: number }): Promise<OutlineDiskAccept> =>
@@ -1053,7 +1061,7 @@ const api = {
     writeOutline: (
       outlinePath: string,
       content: string,
-      opts?: { revision?: number; expectedDiskHash?: string; identity?: OutlineSaveIdentity }
+      opts?: { revision?: number; expectedDiskHash?: string; identity?: OutlineSaveIdentity; slideMergeGeneration?: string }
     ): Promise<{ ok: true; collisions: string[]; content?: string } | { ok: false; refused: 'empty-over-nonempty' | 'ownership' } | { ok: false; refused: 'outside-vault'; error: string } | OutlineChangedOnDiskRefusal | false> =>
       ipcRenderer.invoke('talk:write-outline', outlinePath, content, opts),
     // `{ superseded: true }`: a newer live-preview compile of the same talk from this window replaced
@@ -1077,9 +1085,10 @@ const api = {
       layout: string,
       options?: Array<{ group: string; token: string }>,
       requestKey?: string,
-      batchId?: string
+      batchId?: string,
+      check?: LayoutPreviewCheck
     ): Promise<VariantThumbnail> =>
-      ipcRenderer.invoke('layout:variant-thumbnail', outlinePath, outline, slide, layout, options, requestKey, batchId),
+      ipcRenderer.invoke('layout:variant-thumbnail', outlinePath, outline, slide, layout, options, requestKey, batchId, check),
     releaseLayoutVariantBatch: (batchId: string): void => ipcRenderer.send('layout:release-variant-batch', batchId),
     // Embed preflight: per embed, whether it will actually display when presenting (catches
     // embedding-disabled YouTube videos, private/deleted videos, and sites that refuse framing).

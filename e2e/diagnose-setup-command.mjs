@@ -13,11 +13,10 @@
 // live service on loopback too (live-worker-double.mjs over HTTP, answering from the fake API's model;
 // src/main/live-service-stand-in.ts). A packaged build ignores both. A throwaway user-data folder and
 // vault, made-up secrets. Nothing here contacts Cloudflare, the installed app or its data.
-import { _electron as electron } from 'playwright'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { spawn, spawnSync } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { createHash } from 'node:crypto'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
@@ -27,12 +26,12 @@ import { REPLY_TEXT_MARK, startCloudflareApiStub } from '../scripts/lib/cloudfla
 import { S3_REPLY_TEXT_MARK, startS3Stub } from '../scripts/lib/s3-stub.mjs'
 import { liveWorkerDouble } from '../scripts/lib/live-worker-double.mjs'
 import { createServer } from 'node:http'
-import { testProfileEnv } from './lib/test-profile.mjs'
 
 const root = process.cwd()
 const require = createRequire(import.meta.url)
 const electronPath = require('electron')
-const scratch = mkdtempSync(join(tmpdir(), 'tw-setup-command-'))
+await using appScratch = createAppScratch()
+const scratch = appScratch.root
 const userData = join(scratch, 'userData')
 const vault = join(scratch, 'vault')
 const slug = 'setup-probe'
@@ -132,10 +131,16 @@ try {
   // Only what the app needs from this shell: no credential of the person running the test goes in.
   // The S3 stand-in's loopback address is not an R2 endpoint: the unpackaged test app accepts this one
   // exact address as well (TW_E2E_RECORDING_ENDPOINT), as it accepts the fake Cloudflare API.
-  const env = { TW_E2E: '1', ...testProfileEnv(userData), TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl, TW_E2E_RECORDING_ENDPOINT: s3.endpoint, TW_E2E_LIVE_SERVICE_URL: `http://127.0.0.1:${liveServer.address().port}` }
+  const inherited = {}
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
-    if (process.env[name] !== undefined) env[name] = process.env[name]
+    if (process.env[name] !== undefined) inherited[name] = process.env[name]
   }
+  const env = appScratch.env(userData, {
+    ...inherited,
+    TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl,
+    TW_E2E_RECORDING_ENDPOINT: s3.endpoint,
+    TW_E2E_LIVE_SERVICE_URL: `http://127.0.0.1:${liveServer.address().port}`,
+  })
 
   /** Run `setup …` as the app's executable. `stdin`: what is piped in (null: nothing, closed at once).
    *  `holdStdin`: standard input is left open with nothing written until the command exits. */
@@ -267,7 +272,7 @@ try {
     `launch: exit ${launched?.code} after ${launched?.ms} ms · setup: ${describe(during)} · windows ${during.windows}`)
 
   // ── TalkWeaver open on the same folder ─────────────────────────────────────────────────────────
-  app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: root, env })
+  app = (await launchApp({ scratch: appScratch, userData, env })).app
   app.process().stdout.on('data', (chunk) => { appOutput += chunk })
   app.process().stderr.on('data', (chunk) => { appOutput += chunk })
   const hidden = process.env.TW_E2E_SHOW !== '1'
@@ -336,7 +341,7 @@ try {
     `${refused.map((run) => `exit ${run.code} in ${run.ms} ms`).join(' · ')} · changed files: ${changedFiles.join(', ') || 'none'} · app windows visible ${JSON.stringify(windowsBefore)} → ${JSON.stringify(windowsAfter)}`)
 
   const windowText = await page.evaluate(() => document.documentElement.outerHTML) + await settingsWindow.evaluate(() => document.documentElement.outerHTML).catch(() => '')
-  await app.close()
+  await appScratch.closeApp(app)
   app = null
 
   // 13. Disconnect, TalkWeaver closed again.
@@ -370,11 +375,10 @@ try {
   exitCode = 1
 } finally {
   const pid = app?.process().pid
-  try { await app?.close() } catch { /* already closed */ }
+  try { await appScratch.closeApp(app) } catch { /* already closed */ }
   if (pid) { try { process.kill(pid) } catch { /* gone, as it should be */ } }
   await api?.close()
   await s3?.close()
   liveServer?.close()
-  rmSync(scratch, { recursive: true, force: true, maxRetries: 3 })
 }
-process.exit(exitCode)
+process.exitCode = exitCode

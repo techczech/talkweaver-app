@@ -92,7 +92,7 @@ const PRESENTER_KEY_CLAIMS = [
   // Esc puts the slide back when its embedded page is full screen and not in use (ticket 13).
   ['template handleKey', /key === "Escape" && embedFullScreenOn\(\)/, ['presenter.close']],
   ['template handleKey', /key === "e" \|\| key === "E"/, ['presenter.embed']],
-  ['template handleKey', /\/\^\[1-9\]\$\/\.test\(key\)/, ['presenter.grid-child']],
+  ['template handleKey', /\/\^\[1-9\]\$\/\.test\(key\)/, ['presenter.grid-child', 'presenter.video-marker']],
   ['template handleKey', /isPresenter && key === "Escape"/, ['presenter.close']],
   ['template handleKey', /key === "j" \|\| key === "J"/, ['presenter.notes-scroll']],
   ['template handleKey', /\.presenter-notes-more/, ['presenter.notes-scroll']],
@@ -117,6 +117,8 @@ const PRESENTER_KEY_CLAIMS = [
   ['template handleKey', /penArmed && \(event\.metaKey \|\| event\.ctrlKey\).*event\.key\.toLowerCase\(\) === 'z'/, ['presenter.ink-undo']],
   ['template handleKey', /key === "h" \|\| key === "H"/, ['presenter.highlight']],
   ['template handleKey', /key === "m" \|\| key === "M"/, ['presenter.media']],
+  ['template handleKey', /const offset = event\.key === "," \? -5 : event\.key === "\." \? 5 : undefined;/, ['presenter.video-back', 'presenter.video-forward']],
+  ['template handleKey', /event\.key === "0" \|\| offset !== undefined\) && seekPresenterVideo\(offset\)/, ['presenter.video-restart']],
   ['template handleKey', /isPresenter && \(key === "z" \|\| key === "Z"\)/, ['presenter.gallery', 'presenter.embed-fullscreen']],
   ['template handleKey', /isPresenter && \(key === "v" \|\| key === "V"\)/, ['presenter.video-fullscreen']],
   ['template handleKey', /key === "s" \|\| key === "S"/, ['presenter.skip']],

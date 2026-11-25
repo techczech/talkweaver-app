@@ -1,7 +1,7 @@
 // ADR-0044 §6, rules B and D: the editor's close for every close (lib/closeFreeze.ts) and main's record of saves by
 // revision (src/main/editor-revisions.ts). Plain Node. The windows end to end are in scripts/test-update-install.mjs
 // and scripts/test-update-engine.mjs (stand-ins with these real modules); the real editor in e2e/diagnose-close-freeze.mjs.
-import { readMainSource } from './lib/read-source.mjs'
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
 import assert from 'node:assert/strict'
 import { createEditorRevisions } from '../src/main/editor-revisions.ts'
 import { CLOSE_CONFIRM_ATTEMPTS, closeFrozen } from '../src/renderer/src/lib/closeFreeze.ts'
@@ -221,8 +221,7 @@ await test('update restart: retained Details and design, Advanced and live objec
     assert.deepEqual(calls, ['ordinary close'])
 
     // Main's real handler must keep a restart window even if the outline revision itself is saved.
-    const index = readMainSource()
-    const handler = index.slice(index.indexOf("ipcMain.handle('window:confirm-close'"), index.indexOf('// Insert section (talk search 07'))
+    const handler = readIpcRegistration('window:confirm-close')
     let confirm
     const editorSketchDrafts = new Set()
     const main = { ipcMain: { handle: (_name, fn) => { confirm = fn } },

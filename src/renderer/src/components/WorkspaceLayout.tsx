@@ -1,3 +1,6 @@
+import { editVideoMarker, scanOutlineVideos, type AuthoredVideo, type VideoMarkerEdit } from '../../../shared/video-marker-edits'
+import type { VideoMarkerPanel } from './VideoMarkerPage'
+import { useMarkerPreview } from './useMarkerPreview'
 import { NARROW_WINDOW_PX } from '../../../shared/window-widths'
 import { withOutlineEditReplay } from '../extensions/savedTextAdoption'
 import { requestSlideThumbnails } from '../lib/slideThumbnails'
@@ -24,7 +27,7 @@ import { marginLabels, MARGIN_LAYOUT_NAMES } from '../../../shared/plain-view-ma
 import { levelMenuFor, setHeadingKind, type HeadingKind } from '../../../shared/heading-kind.ts'
 import { dismissToast, notify } from '../lib/notify'
 import type { HeadingCompletionSource } from '../extensions/triggerComplete'
-import Editor, { type HeadingTools, type ObjectInsertHandler, type PlainIconTools, type ReadEditorDoc, type ReplaceEditorDoc, type SlideBlockOps } from './Editor'
+import Editor, { type CommitSlideMerge, type HeadingTools, type ObjectInsertHandler, type PlainIconTools, type ReadEditorDoc, type ReplaceEditorDoc, type SlideBlockOps } from './Editor'
 import MarginMenu, { MORE_IN_INSPECTOR_KEY } from './MarginMenu'
 import { slideSelectionControls } from '../lib/slideSelectionBus'
 import { rememberSlideClip } from '../extensions/slideBlockOps'
@@ -995,6 +998,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     flushSave: () => Promise<void>
     settleSave: (signal?: AbortSignal) => Promise<void>
     forceSave: (signal?: AbortSignal) => Promise<boolean>
+    commitSlideMerge: CommitSlideMerge
     scrollCursorIntoView: () => void
     cursorCoords: () => { x: number; y: number } | null
     placeCursorAtCoords: (x: number, y: number) => void
@@ -1095,7 +1099,17 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     // A quote-only slide with no `{quote}` token is drawn with the quote layout too: the compiled row says so.
     return line != null && isQuoteSlide(outlineContent, { headingLine: line }, compiledSlides?.[activeSlide]?.layout)
   }, [outlineContent, slideLines, activeSlide, compiledSlides])
-  const placeCount = useMemo(() => actionRowsAt(place, { row: placeRow, quoteSlide: quoteSlideAtCaret }).length, [place, placeRow, quoteSlideAtCaret])
+  const authoredVideos = useMemo(() => scanOutlineVideos(outlineContent).videos, [outlineContent])
+  function videosAt(headingLine: number | null): AuthoredVideo[] {
+    if (headingLine == null) return []
+    const next = structure.nodes.find(node => node.line >= headingLine)?.line ?? Infinity
+    return authoredVideos.filter(video => video.line >= headingLine && video.line < next)
+  }
+  const hasFileVideo = videosAt(slideLines[activeSlide] ?? null).some(video => !video.player)
+  const markerCommandAvailableRef = useRef(hasFileVideo)
+  markerCommandAvailableRef.current = hasFileVideo
+  const placeCount = useMemo(() => actionRowsAt(place, { row: placeRow, quoteSlide: quoteSlideAtCaret, fileVideo: hasFileVideo }).length,
+    [place, placeRow, quoteSlideAtCaret, hasFileVideo])
   const placeChip = { place, count: placeCount, chord: liveShortcutLabel('app.context-menu'), visible: placeChipVisible, onActivate: activatePlace }
 
   // Mirror the strip's current-slide mapping into refs so the (deps-[]) global key handler can
@@ -2013,6 +2027,9 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         return ok ? { ok: true } : { ok: false, error: 'Research could not be inserted. Check the active talk.' }
       }
       if (request.kind === 'read') return mutator.readForMain(request.outlinePath)
+      if (request.kind === 'slide-merge') {
+        return editorCmdsRef.current?.commitSlideMerge(request) ?? { ok: false, error: 'The editor is no longer open.' }
+      }
       return mutator.applyFromMain(request.outlinePath, request.base, request.next, request.origin)
     })
   }, [])
@@ -2214,6 +2231,13 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         e.stopPropagation()
         if (e.shiftKey) { editorCmdsRef.current?.redo(); commandRan('redo') }
         else { editorCmdsRef.current?.undo(); commandRan('undo') }
+        return
+      }
+      if (!e.isComposing && !overlayOpenRef.current && eventMatchesEffectiveShortcut(e, 'app.video-marker-add', 'video-marker-add') &&
+          markerCommandAvailableRef.current) {
+        e.preventDefault()
+        e.stopPropagation()
+        runRegisteredCommand('video-marker-add')
         return
       }
       if (eventMatchesEffectiveShortcut(e, 'editor.new-slide', 'new-slide')) {
@@ -4081,6 +4105,61 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     : undefined
   const currentSlideLine = paneNode ? paneNode.line + 1 : liveSlideNode ? liveSlideNode.line + 1
     : selectedRow && selectedRow.slide_id !== 'deck-title' ? slideLines[activeSlide] ?? null : null
+  const videoOwner = JSON.stringify([activeTalk?.outlinePath, selectedRow?.slide_id, paneNode?.id ?? paneNode?.line])
+  const [videoChoice, chooseVideo] = useState<{ owner: string; index: number }>()
+  const [videoNaming, setVideoNaming] = useState<{ owner: string; t: number }>()
+  const [videoPlayback, setVideoPlayback] = useState<{ owner: string; ref: string; duration: number }>()
+  const ownerVideos = videosAt(currentSlideLine)
+  const markerPreview = useMarkerPreview(selectedRow?.slide_id ?? null, scopeOnSlide, ownerVideos)
+  const video = ownerVideos[videoChoice?.owner === videoOwner ? videoChoice.index : 0] ?? ownerVideos[0]
+  const liveVideo = video && markerPreview.playback(video, ownerVideos)
+  useEffect(() => {
+    if (video && liveVideo?.duration != null) setVideoPlayback({ owner: videoOwner, ref: video.ref, duration: liveVideo.duration })
+  }, [videoOwner, video?.ref, liveVideo?.duration])
+  const lastDuration = videoPlayback?.owner === videoOwner && videoPlayback.ref === video?.ref ? videoPlayback.duration : null
+  const markerSourceDuration = useMemo(() => video && lastDuration !== null
+    ? { ref: video.ref, seconds: lastDuration } : undefined, [video?.ref, lastDuration])
+
+  async function writeVideoMarker(target: AuthoredVideo, edit: VideoMarkerEdit): Promise<void> {
+    const path = activeTalk?.outlinePath
+    if (!path) return
+    const result = await applyOutlineMutation(path, text => {
+      const plan = editVideoMarker(text, target, edit)
+      if ('error' in plan) throw new Error(plan.error)
+      return plan.text
+    }, { base: outlineContent, ownUndoStep: true })
+    if (!result.ok) notify(result.error, 'warning', 'video-marker-edit')
+    if (edit.action === 'add' && (result.ok ? result.changed : result.applied)) {
+      // The save can move heading attributes and shift marker lines.
+      setVideoNaming({ owner: videoOwner, t: edit.t })
+    }
+  }
+
+  function addCurrentVideoMarker() {
+    const target = video && !video.player ? video : ownerVideos.find(candidate => !candidate.player)
+    if (!target) return
+    const index = ownerVideos.indexOf(target)
+    const t = Math.floor(markerPreview.playback(target, ownerVideos)?.t ?? 0)
+    if (target.markers.some(marker => marker.t === t)) return
+    if (!scopeOnSlide) selectWorkspaceView('slide')
+    if (layoutPicker) closeLayoutPicker()
+    showTab('inspector')
+    setPanelOpened({ slide: currentCompiledSlideId, page: 'video' })
+    chooseVideo({ owner: videoOwner, index })
+    void writeVideoMarker(target, { action: 'add', t })
+  }
+
+  const videoPanel: VideoMarkerPanel | undefined = video ? {
+    selected: video,
+    videos: ownerVideos,
+    choose: index => chooseVideo({ owner: videoOwner, index }),
+    playback: liveVideo ?? (lastDuration === null ? undefined : { t: 0, duration: lastDuration }),
+    namingT: videoNaming?.owner === videoOwner ? videoNaming.t : null,
+    clearNaming: () => setVideoNaming(undefined),
+    add: addCurrentVideoMarker,
+    edit: edit => { void writeVideoMarker(video, edit) },
+    seek: t => markerPreview.seek(video, ownerVideos, t)
+  } : undefined
   // CodeMirror maps the band through edits, including a blank body line begun with Enter. Only
   // selecting a different slide, or a compile moving its heading, should replace that band.
   const scopeKey = compiledSlides?.[activeSlide]?.slide_id
@@ -4371,6 +4450,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     'insert-html-page': () => { void insertHtmlPageRef.current?.() },
     'capture-embed': () => captureEmbed(),
     'save-offline-page': () => { void saveOffline() },
+    'video-marker-add': addCurrentVideoMarker,
     'format-bold': () => editorCmdsRef.current?.runFormat('bold'),
     'format-italic': () => editorCmdsRef.current?.runFormat('italic'),
     'format-inline-code': () => editorCmdsRef.current?.runFormat('inline-code'),
@@ -4839,6 +4919,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       onPlanRun={() => setPlanSheet({ run: null })}
       textFitNotes={textFitNotes}
       markdownHeadings={markdownHeadings}
+      markerSourceDuration={markerSourceDuration}
       pictureProgress={pictureProgress?.path === activeTalk.outlinePath ? pictureProgress : undefined}
       pictureDropLines={pictureDropLines}
       marginLabels={marginLabelList}
@@ -4980,6 +5061,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const editorColumn = scopeOnSlide ? (
     <WorkspaceSlideView
       key={activeTalk.outlinePath} path={activeTalk.outlinePath} outline={ownsOutline ? outlineContent : ''} row={activeRow}
+      markerPreview={ownerVideos.some(candidate => !candidate.player) ? markerPreview : undefined}
       trying={activePanelTry}
       applied={activePanelApplied?.label}
       onUndoDesign={undoPanelEdit}
@@ -5174,6 +5256,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         onSaveOffline={saveOffline}
         offlineSaving={offlineSaving}
         onRemoveSavedView={removeSavedView}
+        videoMarkers={videoPanel}
         onCommitOption={applyInspectorOption}
         onBoardEdit={applyInspectorBoardEdit}
         long={slideTabView === 'list' && panelPage !== 'steps'}
@@ -5890,6 +5973,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         place={place}
         placeRow={placeRow}
         quoteSlide={quoteSlideAtCaret}
+        fileVideo={hasFileVideo}
         onRun={runSheetRow}
         canRunCarried={sheetCanRunCarried}
       />
@@ -6032,7 +6116,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
           id: command.id,
           title: command.label,
           hint: liveCommandShortcutLabel(command),
-          disabled: (command.id === 'previous-slide' || command.id === 'next-slide') && !slideNavigationActive,
+          disabled: (command.id === 'previous-slide' || command.id === 'next-slide') && !slideNavigationActive ||
+            command.id === 'video-marker-add' && !hasFileVideo,
           group: command.taskGroup ?? undefined,
           subgroup: command.subgroup ?? undefined,
           keywords: command.palette.keywords,
@@ -6051,7 +6136,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         <ActionsHerePanel
           x={actionsHere.x}
           y={actionsHere.y}
-          rows={actionRowsAt(actionsHere.place, { quoteSlide: quoteSlideAtCaret })}
+          rows={actionRowsAt(actionsHere.place, { quoteSlide: quoteSlideAtCaret, fileVideo: hasFileVideo })}
           chordOf={liveShortcutLabel}
           paletteChord={paletteChordText(liveShortcutLabel('app.command-palette'))}
           onRun={runActionRow}

@@ -155,6 +155,7 @@
 @media (max-width: 1199px) {
   .app-shell:has(.workspace-view-titlebar) .sidebar-wrap[data-slides-mode="previews"] { width: 86px !important; }
   [data-slides-mode="previews"] .sidebar-modebar { flex-wrap: wrap; gap: 0; padding-inline: 4px; justify-content: center; }
+  [data-slides-mode="previews"] .sidebar-modes { flex-basis: 100%; }
   [data-slides-mode="previews"] .sidebar-mode-btn { padding: 2px 4px; }
   [data-slides-mode="previews"] .sidebar-mode-btn span,
   [data-slides-mode="previews"] :is(.vault-gallery-entry, [data-sidebar-collapse]) { display: none; }
@@ -350,3 +351,22 @@
 .workspace-slide-text .oe-media-fields { display: grid; gap: 8px; padding: 8px; }
 .workspace-slide-text .oe-media-field { display: grid; gap: 4px; }
 .workspace-slide-text .oe-media-field input { min-height: 28px; }
+
+.workspace-slide-text .tw-video-marker-chip {
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.tw-video-marker-chip .tw-obj-head { min-height: 28px; padding: 0 5px; }
+.tw-video-marker-chip .tw-obj-step { font: inherit; }
+.tw-video-marker-chip-icon {
+  color: var(--accent-text);
+  background: var(--accent-soft);
+  padding: 2px 7px;
+  border-radius: 10px;
+}
+.tw-video-marker-chip .tw-slide-text-object-actions .toolbar-btn {
+  background: transparent;
+  border: 0;
+}

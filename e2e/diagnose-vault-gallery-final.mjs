@@ -1,33 +1,34 @@
 // Hidden Electron qualification with production IPC and a disposable vault. Set SHOTS to keep readback evidence.
 import assert from 'node:assert/strict'
-import {_electron as electron} from 'playwright'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { typeAtOutlineLineEnd } from './lib/outline-typing.mjs'
 import * as fs from 'node:fs'
 import {resolve,join} from 'node:path'
 import {createHash} from 'node:crypto'
-import {tmpdir} from 'node:os'
 const repo=resolve('.')
 if(process.platform!=='darwin'||!fs.existsSync(join(repo,'native','vault-gallery'))){
  console.log('TEST NOT RUN: macOS and the native Gallery helper are required (npm run build:gallery-native).')
  process.exit(0)
 }
-const fixture=fs.mkdtempSync(join(tmpdir(),'tw-gallery-final-'))
+await using appScratch = createAppScratch()
+const fixture=appScratch.root
 const out=process.env.SHOTS ? resolve(process.env.SHOTS) : fixture
 fs.mkdirSync(out,{recursive:true})
 const vault=join(fixture,'vault'),home=join(fixture,'home'),ud=join(fixture,'userData'),trash=join(fixture,'trash');let app,page;const rows=[]
 for(const p of [vault,home,ud,trash,join(fixture,'tmp')])fs.mkdirSync(p,{recursive:true})
 fs.cpSync(join(repo,'e2e/fixtures/slide-set-aside'),join(vault,'target'),{recursive:true})
-fs.writeFileSync(join(ud,'config.json'),JSON.stringify({vaultRoot:vault,editorViewMode:'markdown'}))
+fs.writeFileSync(join(ud,'config.json'),JSON.stringify({vaultRoot:vault,openInView:'outline',editorViewMode:'markdown'}))
 const record=async(name,fn)=>{try{const detail=await fn();rows.push({name,state:'pass',detail});console.log('PASS',name)}catch(e){rows.push({name,state:'failed',error:String(e),stack:e.stack});console.error('FAIL',name,e)}}
 const recovery=path=>{const dir=join(ud,'recovery'),index=JSON.parse(fs.readFileSync(join(dir,'index.json'),'utf8')),entry=Object.values(index).find(e=>e.path===path);return entry?{text:fs.readFileSync(join(dir,entry.file),'utf8'),file:entry.file}:null}
 const invoke=(group,method,...args)=>page.evaluate(({group,method,args})=>window.tw[group][method](...args),{group,method,args})
 try{
  const env={...process.env,HOME:home,CFFIXED_USER_HOME:home,TMPDIR:join(fixture,'tmp'),TMP:join(fixture,'tmp'),TEMP:join(fixture,'tmp'),XDG_CACHE_HOME:join(fixture,'cache'),XDG_CONFIG_HOME:join(fixture,'config'),NODE_COMPILE_CACHE:join(fixture,'compile-cache'),TW_E2E:'1',TW_REC_TEST:'1',TW_E2E_TRASH_DIR:trash};delete env.ELECTRON_RUN_AS_NODE
- app=await electron.launch({args:['.',`--user-data-dir=${ud}`,'--use-mock-keychain'],cwd:repo,env});page=await app.firstWindow();page.setDefaultTimeout(12000)
+ app=(await launchApp({ scratch: appScratch, userData: ud, env, args: ['.', '--use-mock-keychain'] })).app;page=await app.firstWindow();page.setDefaultTimeout(12000)
  assert.equal(await app.evaluate(({app})=>app.getPath('userData')),ud);assert(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().every(w=>!w.isVisible())))
  await app.evaluate(async ({shell},{vault,trash})=>{const fs=process.getBuiltinModule('fs');shell.trashItem=async path=>{if(!path.startsWith(vault+'/'))throw Error('Fixture Trash boundary');fs.renameSync(path,trash+'/'+Date.now()+'-'+path.split('/').pop())}},{vault,trash})
  await page.route('http://**',route=>route.abort());await page.route('https://**',route=>route.abort())
  await page.locator('[data-talk-slug="target"]').first().dblclick();await page.locator('.cm-content').waitFor()
- await page.locator('.cm-content').click();await page.keyboard.press('Meta+End');await page.keyboard.type(' FINAL LATEST TYPED TEXT');
+ await typeAtOutlineLineEnd(page, 'Gamma body.', ' FINAL LATEST TYPED TEXT')
  const from=join(vault,'target/target-outline.md');let moved
  await record('actual active move produces recoverable receipt and preserves current editor via production recovery event',async()=>{
   assert(await invoke('vault','createFolder','Destination'));moved=await invoke('vault','moveTalk',from,'Destination');assert(moved?.outlinePath)
@@ -57,10 +58,20 @@ try{
  })
  await record('empty folder and narrow keyboard gallery focus',async()=>{
   assert(await invoke('vault','createFolder','Empty qualification'));assert((await invoke('vault','listFolders')).includes('Empty qualification'))
-  await page.evaluate(()=>window.dispatchEvent(new Event('tw-vault-gallery')));await page.getByRole('dialog',{name:'Vault Gallery',exact:true}).waitFor();await page.setViewportSize({width:390,height:844});await page.keyboard.press('Tab');const focus=await page.evaluate(()=>({tag:document.activeElement.tagName,text:document.activeElement.textContent?.slice(0,120),inside:!!document.activeElement.closest('.vault-gallery')}));assert(focus.inside);assert(await page.locator('.vault-gallery').evaluate(e=>e.scrollWidth<=e.clientWidth));return focus
+  await page.evaluate(()=>window.dispatchEvent(new Event('tw-vault-gallery')))
+  const gallery=page.getByRole('dialog',{name:'Vault Gallery',exact:true})
+  await gallery.waitFor()
+  await page.setViewportSize({width:390,height:844})
+  // Wait for ResizeObserver to switch the grid before checking focus and overflow.
+  await gallery.and(page.locator('.vg-narrow')).waitFor()
+  await page.keyboard.press('Tab')
+  const focus=await page.evaluate(()=>({tag:document.activeElement.tagName,text:document.activeElement.textContent?.slice(0,120),inside:!!document.activeElement.closest('.vault-gallery')}))
+  assert(focus.inside)
+  assert(await gallery.evaluate(e=>e.scrollWidth<=e.clientWidth))
+  return focus
  })
 }finally{
  // Preserve every recovery file and its hash before deleting this run's fixture.
- const snapshots=[];const walk=p=>{if(!fs.existsSync(p))return;for(const e of fs.readdirSync(p,{withFileTypes:true})){const f=join(p,e.name);if(e.isDirectory())walk(f);else snapshots.push({path:f.slice(fixture.length+1),sha256:createHash('sha256').update(fs.readFileSync(f)).digest('hex'),content:fs.readFileSync(f,'utf8')})}};walk(join(ud,'recovery'));fs.writeFileSync(join(out,'all-recovery-readback.json'),JSON.stringify(snapshots,null,2));fs.writeFileSync(join(out,'electron-results.json'),JSON.stringify(rows,null,2));if(app)await app.evaluate(({app})=>app.exit(0)).catch(()=>{});await app?.close().catch(()=>{});fs.rmSync(fixture,{recursive:true,force:true})
+ const snapshots=[];const walk=p=>{if(!fs.existsSync(p))return;for(const e of fs.readdirSync(p,{withFileTypes:true})){const f=join(p,e.name);if(e.isDirectory())walk(f);else snapshots.push({path:f.slice(fixture.length+1),sha256:createHash('sha256').update(fs.readFileSync(f)).digest('hex'),content:fs.readFileSync(f,'utf8')})}};walk(join(ud,'recovery'));fs.writeFileSync(join(out,'all-recovery-readback.json'),JSON.stringify(snapshots,null,2));fs.writeFileSync(join(out,'electron-results.json'),JSON.stringify(rows,null,2));if(app)await app.evaluate(({app})=>app.exit(0)).catch(()=>{});await appScratch.closeApp(app).catch(()=>{})
 }
 if(rows.some(r=>r.state==='failed'))process.exitCode=1

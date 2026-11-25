@@ -1,13 +1,14 @@
 // Hidden source Electron; every runtime write is confined to the integration fixture.
 import assert from 'node:assert/strict'
-import {_electron as electron} from 'playwright'
-import {mkdirSync,mkdtempSync,cpSync,writeFileSync,readFileSync,rmSync} from 'node:fs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import {mkdirSync, cpSync, writeFileSync, readFileSync} from 'node:fs'
 import {resolve,join} from 'node:path'
 // Screenshots and results go to the git-ignored artefacts/ folder, never over tracked files; to refresh the
 // recorded evidence (evidence/vault-gallery/redesign-repairs/e2e), name it: VAULT_GALLERY_EVIDENCE=<folder>.
 const repo=resolve('.'),evidence=process.env.VAULT_GALLERY_EVIDENCE?resolve(process.env.VAULT_GALLERY_EVIDENCE):join(repo,'artefacts/vault-gallery-e2e')
 mkdirSync(evidence,{recursive:true})
-const fixture=mkdtempSync(join(evidence,'fixture-')),vault=join(fixture,'vault'),userData=join(fixture,'userData'),home=join(fixture,'home')
+await using appScratch = createAppScratch()
+const fixture=appScratch.root,vault=join(fixture,'vault'),userData=join(fixture,'userData'),home=join(fixture,'home')
 let app
 const results=[]
 const pass=name=>{results.push(name);console.log('PASS '+name)}
@@ -17,7 +18,7 @@ try {
  writeFileSync(join(userData,'config.json'),JSON.stringify({vaultRoot:vault,openInView:'markdown'}))
  assert.equal(JSON.parse(readFileSync(join(userData,'config.json'))).vaultRoot,vault)
  const env={...process.env,HOME:home,TMPDIR:join(fixture,'tmp'),NODE_COMPILE_CACHE:join(fixture,'compile-cache'),TW_E2E:'1',TW_REC_TEST:'1',TW_E2E_TRASH_DIR:join(fixture,'trash')};delete env.ELECTRON_RUN_AS_NODE
- app=await electron.launch({args:['.',`--user-data-dir=${userData}`,'--use-mock-keychain'],cwd:repo,env})
+ app=(await launchApp({ scratch: appScratch, userData, env, args: ['.', '--use-mock-keychain'] })).app
  assert.equal(await app.evaluate(({app})=>app.getPath('userData')),userData);assert(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().every(w=>!w.isVisible())));pass('fixture config confirmed before launch; actual userData path and hidden windows confirmed')
  const page=await app.firstWindow();await page.locator('.vault-gallery-entry').waitFor()
  const menuEntry=await app.evaluate(({Menu})=>{const find=items=>{for(const item of items){if(item.label==='Vault Gallery')return item;const nested=item.submenu&&find(item.submenu.items);if(nested)return nested}};const item=find(Menu.getApplicationMenu().items);if(!item)return false;item.click();return true});assert(menuEntry);await page.getByRole('dialog',{name:'Vault Gallery',exact:true}).waitFor();await page.getByRole('button',{name:/^Back( to .+)?$/}).click();pass('actual registry-derived native menu opens gallery before a talk is selected')
@@ -61,4 +62,4 @@ try {
  const inventory=await page.evaluate(vaultId=>window.tw.vault.galleryInventory({vaultId,relativePath:'',generation:Date.now()+10000,recursive:true,confirmedRoot:true}),id)
  writeFileSync(join(evidence,'electron-inventory.json'),JSON.stringify(inventory,null,2));assert(['complete','partial'].includes(inventory.state));assert(inventory.counted>0);pass('actual Electron IPC and native utility complete explicit fixture-root inventory with nonzero checked entries')
 
-}catch(error){console.error(error);throw error}finally {if(app)await app.evaluate(({app})=>app.exit(0)).catch(()=>{});await app?.close().catch(()=>{});rmSync(fixture,{recursive:true,force:true});writeFileSync(join(evidence,'electron-results.json'),JSON.stringify(results,null,2))}
+}catch(error){console.error(error);throw error}finally {if(app)await app.evaluate(({app})=>app.exit(0)).catch(()=>{});await appScratch.closeApp(app).catch(()=>{});writeFileSync(join(evidence,'electron-results.json'),JSON.stringify(results,null,2))}

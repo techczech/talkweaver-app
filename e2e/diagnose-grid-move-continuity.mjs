@@ -38,6 +38,7 @@ try {
       return pending
     })
     ipcMain._invokeHandlers.set('talk:compile',async (...args)=>{
+      if(globalThis.__gridCompileGate) await globalThis.__gridCompileGate.promise
       if(globalThis.__delayCompile) await new Promise(r=>setTimeout(r,globalThis.__delayCompile))
       const rows=await compile(...args);globalThis.__probeRows=rows;globalThis.__probeSource=args[2];(globalThis.__rowHistory??=[]).push(rows?.map(({slide_id,source_line,source_markdown,section,role,render_hash,thumbnail_hash})=>({slide_id,source_line,source_markdown,section,role,render_hash,thumbnail_hash})));return rows
     })
@@ -91,6 +92,10 @@ try {
       for(const [el,type] of [[s,'dragstart'],[d,'dragover'],[d,'drop'],[s,'dragend']])el.dispatchEvent(new DragEvent(type,{bubbles:true,cancelable:true,dataTransfer:dt}))
     },to)
     await page.waitForFunction(({from,to,offset})=>{const t=[...document.querySelectorAll('.grid-cell img')].map(i=>i.alt);return t.indexOf(from)===t.indexOf(to)+offset},{from,to:landAfter,offset})
+    if(settleMs<1600) {
+      // The grid projects the new order before the write acknowledges the move and sets the active card.
+      await page.waitForFunction(title=>document.querySelector('.grid-cell[data-active="true"] img')?.alt===title,from)
+    }
     await page.waitForTimeout(settleMs)
     if(settleMs>=1600) {
       await app.evaluate(async()=>{await Promise.all([...globalThis.__thumbnailWork])})
@@ -174,12 +179,21 @@ try {
   assert.equal(section.frames.filter(f=>f.blank>0).length,0)
   assert.equal(section.active,'Section 1')
   await restore()
-  // Three more moves before ANY of their delayed compiles can return, then shared Undo/Redo.
-  for(const target of [72,73,74]) {
-    const rapid=await probe(65,target,1200,target,40)
-    assert.equal(rapid.retained,rapid.total)
-    assert.equal(rapid.frames.filter(f=>f.blank>0).length,0)
-    assert.ok(rapid.firstRelocationMs<100)
+  // Keep all three rapid moves ahead of the compiler even if Studio takes longer to acknowledge a write.
+  await app.evaluate(()=>{globalThis.__gridCompileGate=Promise.withResolvers()})
+  try {
+    for(const target of [72,73,74]) {
+      const rapid=await probe(65,target,0,target,40)
+      assert.equal(rapid.retained,rapid.total)
+      assert.equal(rapid.frames.filter(f=>f.blank>0).length,0)
+      assert.ok(rapid.firstRelocationMs<100)
+    }
+  } finally {
+    await app.evaluate(()=>{
+      const gate=globalThis.__gridCompileGate
+      globalThis.__gridCompileGate=null
+      gate.resolve()
+    })
   }
   await page.locator('.grid-view').focus()
   for(let i=0;i<3;i++)await page.keyboard.press('Meta+z')

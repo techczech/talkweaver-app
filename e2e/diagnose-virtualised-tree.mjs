@@ -1,11 +1,9 @@
 // Host verification for the virtualised Talks tree: 900-talk vault, real Electron.
 // HOST-RUN ONLY (launches Electron): node e2e/diagnose-virtualised-tree.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempDisposableSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdirSync, writeFileSync } from 'fs'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -15,8 +13,8 @@ function record(name, pass, detail) {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`)
 }
 
-using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-vtree-'))
-const tempRoot = fixture.path
+await using fixture = createAppScratch()
+const tempRoot = fixture.root
 const vault = join(tempRoot, 'vault')
 const ud = join(tempRoot, 'userData')
 mkdirSync(ud, { recursive: true })
@@ -36,9 +34,7 @@ for (let f = 0; f < 3; f++) {
 const opened = { 'topic-0': true, 'topic-1': true, 'topic-2': true }
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, talkListFolders: { [vault]: opened } }, null, 2))
 
-await ensureFreshBuild(REPO)
-await using app = await electron.launch({ args: ['.', '--use-mock-keychain', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
-const page = await app.firstWindow()
+const { app, page } = await launchApp({ scratch: fixture, userData: ud, args: ['.', '--use-mock-keychain'] })
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(3000)
 

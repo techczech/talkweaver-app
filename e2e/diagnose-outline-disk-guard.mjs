@@ -19,13 +19,11 @@
 // All file assertions read the real files; editor assertions read CodeMirror's own document.
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-outline-disk-guard.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openTalkByTitle, waitForTalkList } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs'
-import { scratchVault } from './lib/scratch-vault.mjs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -46,7 +44,7 @@ const TITLE = 'Guard Talk'
 const OTHER = 'Other Talk'
 const FOLDER_TITLE = 'Folder Talk'
 
-using fixture = scratchVault('tw-e2e-disk-guard-')
+await using fixture = createAppScratch()
 const tempRoot = fixture.root
 const vault = join(tempRoot, 'vault')
 const userDataDir = join(tempRoot, 'userData')
@@ -70,11 +68,10 @@ const review = () => page.getByTestId('outline-merge-sheet')
 const testTrash = join(tempRoot, 'trash')
 const recoveryCopies = () => { try { return readdirSync(recoveryDir).filter((f) => f.endsWith('-outline.md')) } catch { return [] } }
 
-await ensureFreshBuild(REPO)
 let app
 let page
 async function launch() {
-  app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir, '--use-mock-keychain'], cwd: REPO, env: { ...process.env, TW_E2E: '1', TW_E2E_TRASH_DIR: testTrash } })
+  app = (await launchApp({ scratch: fixture, userData: userDataDir, env: { ...process.env, TW_E2E_TRASH_DIR: testTrash }, args: ['.', '--use-mock-keychain'] })).app
   page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
   await page.waitForTimeout(1200)
@@ -84,7 +81,7 @@ async function launch() {
 async function closeApp() {
   if (!app) return
   const proc = app.process()
-  await Promise.race([app.close().catch(() => undefined), sleep(8000)])
+  await Promise.race([fixture.closeApp(app).catch(() => undefined), sleep(8000)])
   try { proc.kill('SIGKILL') } catch { /* already gone */ }
   app = null
 }

@@ -401,23 +401,28 @@ try {
         await presenter.keyboard.press('Meta+Shift+p');
         await presenter.locator('#presenterCommandSearch').fill('Spotlight');
         await presenter.keyboard.press('Meta+Shift+,');
-        await presenter.keyboard.press(',');
+        const rebindStatus = presenter.locator('#presenterRebind [role="status"]');
+        for (const [key, owner] of [[',', 'Skip video back 5 seconds'], ['.', 'Skip video forward 5 seconds']]) {
+            await presenter.keyboard.press(key);
+            await rebindStatus.filter({ hasText: `That key is already used by ${owner}. Choose another.` }).waitFor();
+        }
+        await presenter.keyboard.press(';');
         await presenter.waitForSelector('#presenterRebind', { state: 'detached' });
-        assert.equal(await presenter.locator('#palette-focus').getAttribute('data-keys'), ', / F');
+        assert.equal(await presenter.locator('#palette-focus').getAttribute('data-keys'), '; / F');
         await presenter.keyboard.press('Escape');
-        await presenter.keyboard.press(',');
+        await presenter.keyboard.press(';');
         assert.equal(await presenter.locator('#presenterFocus').getAttribute('aria-pressed'), 'true');
-        await presenter.keyboard.press(',');
+        await presenter.keyboard.press(';');
         assert.equal(await presenter.locator('#presenterFocus').getAttribute('aria-pressed'), 'false');
         await presenter.keyboard.press('f');
         assert.equal(await presenter.locator('#presenterFocus').getAttribute('aria-pressed'), 'true');
         await presenter.keyboard.press('f');
         await presenter.keyboard.press('?');
-        assert.match(await presenter.locator('.tw-shortcuts-row').filter({ hasText: 'Spotlight' }).innerText(), /,/);
+        assert.match(await presenter.locator('.tw-shortcuts-row').filter({ hasText: 'Spotlight' }).innerText(), /;/);
         await presenter.keyboard.press('Escape');
         await presenter.keyboard.press('k');
         await presenter.locator('#quickPollQuestion').fill('Select this whole question');
-        await presenter.keyboard.press('Meta+a');
+        await presenter.keyboard.press('ControlOrMeta+a');
         assert.equal(await presenter.locator('#quickPollQuestion').evaluate(el => el.selectionEnd - el.selectionStart),
             'Select this whole question'.length);
         assert.equal(await presenter.locator('#presenterPointer').getAttribute('aria-pressed'), 'false');

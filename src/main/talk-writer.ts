@@ -27,8 +27,8 @@
 // refused because the buffer moved (the person typed between the read and the apply) is worked out
 // again against a fresh read, at most ROUTED_RETRIES more times; a whole-text `next` is never re-applied
 // over a buffer that moved (it would overwrite the typing), so it refuses.
-import { randomBytes } from 'crypto'
-import { constants as fsConstants, closeSync, fstatSync, fsyncSync, ftruncateSync, linkSync, openSync, writeSync, type Stats } from 'fs'
+import { createHash, randomBytes } from 'crypto'
+import { constants as fsConstants, closeSync, fstatSync, fsyncSync, ftruncateSync, linkSync, openSync, readFileSync, statSync, writeSync, type Stats } from 'fs'
 import { access, chmod, lstat, open, readFile, stat, unlink, type FileHandle } from 'fs/promises'
 import { basename, dirname, join } from 'path'
 import { canonicalOutlinePath, outlineIdentity, type OutlineIdentity } from './outline-identity.ts'
@@ -53,7 +53,7 @@ export type TalkWriteResult =
    *  change and no byte reached the file (a caller may then undo its own side effects, e.g. the move to a
    *  work file removes the file it made). Absent: the change may be in the editor (its save failed or was
    *  not confirmed) or partly on disk. */
-  | { ok: false; error: string; changedOnDisk?: OutlineDiskChange; untouched?: true }
+  | { ok: false; error: string; changedOnDisk?: OutlineDiskChange; untouched?: true; staleDisk?: true }
 
 /** The external-change guard (outline-disk-guard.ts), as the writer sees it. Every call runs under the
  *  file's lock. */
@@ -100,7 +100,19 @@ export interface TalkWriterRoutes {
   afterTruncate?(realPath: string): Promise<void>
 }
 
+export interface ObservedOutlineDisk {
+  readonly hash: string
+  readonly mtime: number
+  readonly key: string
+}
+
+class StaleOutlineDisk extends Error {
+  constructor() { super('The talk changed on disk after this review. Nothing was saved; review it again.') }
+}
+
 export interface TalkWriteOptions {
+  /** A slide merge may replace only its reviewed disk generation, even if the new text equals disk. */
+  observedDisk?: ObservedOutlineDisk
   /** The raw disk version the buffer adopted; compare under the write lock, even after a revert. */
   expectedDiskHash?: string
   /** Synchronous live authority, checked after all staging/locking awaits at the destructive boundary:
@@ -245,7 +257,7 @@ export async function readTalkOutline(outlinePath: string): Promise<string> {
 export async function writeTalkFileInPlace(
   realPath: string,
   text: string,
-  hooks: { recreateRemoved?: boolean; authorize?: () => void; beforeCopy?: () => Promise<boolean>; expectKey?: string; afterCopy?: () => Promise<void>; afterTruncate?: () => Promise<void> } = {},
+  hooks: { recreateRemoved?: boolean; authorize?: () => void; beforeCopy?: () => Promise<boolean>; expectKey?: string; observedDisk?: ObservedOutlineDisk; afterCopy?: () => Promise<void>; afterTruncate?: () => Promise<void> } = {},
 ): Promise<'written' | 'aborted'> {
   let previous: Stats | null = null
   try { previous = await lstat(realPath) } catch (error) {
@@ -314,8 +326,15 @@ export async function writeTalkFileInPlace(
       opened = `${st.dev}:${st.ino}`
       if (previous && hooks.expectKey && opened !== hooks.expectKey) throw replaced()
       hooks.authorize?.()
+      if (hooks.observedDisk) {
+        const seen = hooks.observedDisk
+        const hash = createHash('sha256').update(readFileSync(target.fd)).digest('hex')
+        const latest = statSync(realPath, { throwIfNoEntry: false })
+        if (!latest || opened !== seen.key || `${latest.dev}:${latest.ino}` !== seen.key ||
+            latest.mtimeMs !== seen.mtime || hash !== seen.hash) throw new StaleOutlineDisk()
+      }
       // No event-loop turn between live authority and the first destructive operation.
-      if (hooks.authorize) ftruncateSync(target.fd, 0)
+      if (hooks.authorize || hooks.observedDisk) ftruncateSync(target.fd, 0)
       else await target.truncate(0)
       truncated = true
       await hooks.afterTruncate?.()
@@ -414,7 +433,7 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
   // stands now, under the lock, so it can never overwrite what it has not seen (tags and frontmatter
   // from the talk list). The open-time migration is exempt (it re-reads the fresh bytes itself, before
   // the editor has them).
-  if (opts.expectedDiskHash && (!tracked || origin !== 'editor' || typeof next === 'function')) {
+  if ((opts.expectedDiskHash || opts.observedDisk) && (!tracked || origin !== 'editor' || typeof next === 'function')) {
     return { ok: false, error: 'The talk is no longer tracked in its editor. Nothing was saved; reopen it to continue.', untouched: true }
   }
   const guarded = tracked && typeof next !== 'function' && origin !== 'migration'
@@ -438,7 +457,11 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
       }
     }
   }
-  if (guarded) {
+  if (opts.observedDisk && (absent || held.key !== opts.observedDisk.key ||
+      createHash('sha256').update(current, 'utf8').digest('hex') !== opts.observedDisk.hash)) {
+    return { ok: false, error: new StaleOutlineDisk().message, untouched: true, staleDisk: true }
+  }
+  if (guarded && !opts.observedDisk) {
     let change: OutlineDiskChange | null = null
     try { change = await guard!.conflict(realPath, absent ? null : current, text, opts.expectedDiskHash) } catch {
       if (opts.expectedDiskHash) return { ok: false, error: 'The observed disk version could not be checked. Nothing was saved.', untouched: true }
@@ -457,11 +480,17 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
       // Exclusive creation below refuses any occupant that appeared after the guard's read.
       recreateRemoved: origin === 'create-talk' || guarded && absent && origin === 'editor' && guard!.canRecreate?.(realPath) === true,
       expectKey: held.key,
+      observedDisk: opts.observedDisk,
       authorize: opts.authorize,
       ...(routes.afterTruncate ? { afterTruncate: () => routes.afterTruncate!(realPath) } : {}),
     })
   } catch (error) {
     const partialTemp = (error as Partial<PartialWriteError>)?.partialTemp
+    if (opts.observedDisk && !partialTemp && !(error as Partial<LandedWriteError>)?.landed &&
+        (error instanceof StaleOutlineDisk || (error as NodeJS.ErrnoException)?.code === 'ENOENT' ||
+          outlineIdentity(outlinePath).key !== opts.observedDisk.key)) {
+      return { ok: false, error: new StaleOutlineDisk().message, untouched: true, staleDisk: true }
+    }
     if (partialTemp && tracked) {
       // Failed halfway: the bar says so (never offering a Reload of the partial text) until Save again.
       let change: OutlineDiskChange | null = null

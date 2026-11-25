@@ -5,11 +5,11 @@
 // This gate builds the layout sampler (real compiler) and, in a hidden Chromium, for the 4:3
 // fixture video on BOTH hosts (media-only row `media-row-measured-video`, slot column
 // `media-slot-list-video-and-image`) asserts:
-//   1. the compiled figure carries the enlarge affordance and the slot-column video keeps its
-//      native controls at slide size;
+//   1. the compiled figure carries the legacy enlarge affordance and the live video shows one
+//      custom bar with a fullscreen button;
 //   2. clicking the affordance opens the lightbox holding the SAME <video> element — same
 //      currentTime (±0.25s) and the same paused state — and its box is ≥ 90% of the stage in one
-//      dimension, with native controls on;
+//      dimension, with the same transport;
 //   3. Escape puts the element back into its figure (no placeholder left) with its position kept;
 //   4. V calls requestFullscreen on that element (stubbed: headless Chromium refuses real
 //      element full screen without a trusted gesture, so the call is asserted, not the state),
@@ -86,21 +86,22 @@ try {
       try { await video.play() } catch {}
       await new Promise((r) => setTimeout(r, 150))
       const rect = video.getBoundingClientRect()
-      const button = video.parentElement.querySelector('.video-enlarge')
+      const button = video.parentElement.querySelector('.tw-video-seek button[aria-label="Video full screen"]')
+      const legacy = video.parentElement.querySelector('.video-enlarge')
       const br = button.getBoundingClientRect()
       return {
         controls: video.hasAttribute('controls'), width: rect.width, height: rect.height,
         currentTime: video.currentTime, paused: video.paused, inFigure: video.parentElement.classList.contains('slide-video'),
-        buttonVisible: br.width > 0 && br.height > 0 && getComputedStyle(button).display !== 'none'
+        buttonVisible: br.width > 0 && br.height > 0 && getComputedStyle(legacy).display === 'none'
       }
     }, testCase.videoSelector)
     assert(before.inFigure, `${testCase.id}: video starts inside its figure`)
-    assert(before.controls, `${testCase.id}: the manual clip keeps native controls at slide size (${testCase.host})`)
+    assert(!before.controls, `${testCase.id}: the manual clip shows custom controls only (${testCase.host})`)
     assert(before.height >= 60, `${testCase.id}: slide-size video is tall enough for a control bar (${before.height.toFixed(0)}px)`)
     assert(before.buttonVisible, `${testCase.id}: the enlarge affordance renders`)
     if (shots) await page.screenshot({ path: join(shots, `${testCase.id}-1-slide.png`) })
 
-    await page.click(`.slide.active figure.slide-video .video-enlarge`)
+    await page.locator('.slide.active figure.slide-video').getByRole('button', { name: 'Video full screen' }).click()
     const enlarged = await page.evaluate(() => {
       const lightbox = document.getElementById('lightbox')
       const video = lightbox.querySelector('video')
@@ -109,6 +110,7 @@ try {
       return {
         open: lightbox.classList.contains('open') && !lightbox.hidden,
         same: video?.dataset.t24 === 'the-one', controls: video?.hasAttribute('controls'),
+        bars: lightbox.querySelectorAll('.tw-video-seek').length,
         currentTime: video?.currentTime, paused: video?.paused,
         widthShare: rect ? rect.width / stage.width : 0, heightShare: rect ? rect.height / stage.height : 0,
         imgHidden: document.getElementById('lightboxImg').hidden,
@@ -118,7 +120,7 @@ try {
     })
     assert(enlarged.open, `${testCase.id}: the lightbox opens on the affordance click`)
     assert(enlarged.same, `${testCase.id}: the lightbox holds the SAME <video> element`)
-    assert(enlarged.controls, `${testCase.id}: the enlarged video shows native controls`)
+    assert(!enlarged.controls && enlarged.bars === 1, `${testCase.id}: the enlarged video shows one custom bar`)
     assert(enlarged.imgHidden, `${testCase.id}: the lightbox image steps aside for the video`)
     assert(enlarged.placeholderInFigure, `${testCase.id}: the figure keeps a placeholder while the video is enlarged`)
     assert.equal(enlarged.paused, before.paused, `${testCase.id}: play state survives the move (paused=${before.paused})`)
@@ -129,7 +131,7 @@ try {
     // V from the lightbox: requestFullscreen on that element.
     await page.keyboard.press('v')
     const fsFromLightbox = await page.evaluate(() => window.__fsCalls.map((el) => el.dataset.t24))
-    assert.deepEqual(fsFromLightbox, ['the-one'], `${testCase.id}: V in the lightbox requests full screen on the enlarged video`)
+    assert.deepEqual(fsFromLightbox, ['the-one', 'the-one'], `${testCase.id}: V in the lightbox requests full screen on the enlarged video`)
 
     await page.keyboard.press('Escape')
     const restored = await page.evaluate((sel) => {
@@ -147,7 +149,7 @@ try {
     assert(restored.closed, `${testCase.id}: Escape closes the lightbox`)
     assert(restored.back, `${testCase.id}: Escape returns the same element to its figure`)
     assert(restored.lightboxEmpty && restored.placeholders === 0, `${testCase.id}: no video or placeholder is left behind`)
-    assert(restored.controls && !restored.lightboxClass, `${testCase.id}: the restored video keeps its controls and sheds the lightbox class`)
+    assert(!restored.controls && !restored.lightboxClass, `${testCase.id}: the restored video keeps its controls and sheds the lightbox class`)
     assert.equal(restored.paused, enlarged.paused, `${testCase.id}: play state survives the return`)
     assert(restored.currentTime >= enlarged.currentTime - 0.25, `${testCase.id}: position survives the return`)
     if (shots) await page.screenshot({ path: join(shots, `${testCase.id}-3-restored.png`) })
@@ -160,7 +162,7 @@ try {
       calls: window.__fsCalls.length
     }))
     assert(fromClosed.open && fromClosed.same, `${testCase.id}: V from the slide opens the lightbox on the video`)
-    assert.equal(fromClosed.calls, 2, `${testCase.id}: V from the slide also requests full screen`)
+    assert.equal(fromClosed.calls, 3, `${testCase.id}: V from the slide also requests full screen`)
     await page.keyboard.press('Escape')
     await page.close()
 
@@ -219,7 +221,8 @@ try {
   })
   assert.equal(played.paused, false, 't24-playing: the VP9 clip plays in headless Chromium (precondition)')
   assert(played.currentTime > 0.2, `t24-playing: playback advanced before the move (${played.currentTime.toFixed(2)}s)`)
-  await playing.click('.slide.active figure.slide-video .video-enlarge')
+  await playing.evaluate(() => { HTMLMediaElement.prototype.requestFullscreen = () => Promise.resolve() })
+  await playing.locator('.slide.active figure.slide-video').getByRole('button', { name: 'Video full screen' }).click()
   const stillPlaying = await playing.evaluate(async () => {
     const video = document.getElementById('lightbox').querySelector('video')
     const at = video.currentTime

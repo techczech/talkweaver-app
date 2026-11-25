@@ -50,10 +50,17 @@ export interface OutlineDiskGuardDeps {
   notify(owner: string, outlinePath: string, change: OutlineDiskChange | null): void
 }
 
+export interface AcknowledgedOutline {
+  readonly text: string
+  readonly savedAt: number
+}
+
 export interface OutlineDiskGuard {
   /** The editor window `owner` has loaded `text` from `outlinePath`: the baseline. Any other file
    *  `owner` had is released. */
-  track(owner: string, outlinePath: string, text: string): void
+  track(owner: string, outlinePath: string, text: string, savedAt?: number): void
+  /** Exact acknowledged source, also used as a generation fence across saves and reloads. */
+  acknowledged(owner: string, outlinePath: string): AcknowledgedOutline | null
   /** `owner` no longer has a talk open (switch, close): its entries are dropped and unwatched. */
   release(owner: string): void
   /** The app itself moves or deletes `path` (a file or a folder): every entry at or under it is dropped
@@ -86,7 +93,7 @@ export interface OutlineDiskGuard {
   /** Re-reads the file (under the lock) and reports a new difference / a cleared one to the owners. */
   check(outlinePath: string): Promise<OutlineDiskChange | null>
   /** The file's text and version as it stands on disk (under the lock), or null when missing. */
-  diskVersion(outlinePath: string): Promise<{ text: string; hash: string } | null>
+  diskVersion(outlinePath: string, includeMtime?: boolean): Promise<{ text: string; hash: string; mtime?: number | null } | null>
   /** The person chose having seen version `hash`: it becomes the baseline, unless the file changed again
    *  (then the newer change, reported to the owners too). `keepPending` (Keep mine, Save it again, Save
    *  again — a save follows): the difference stays reported until that save lands. Bound to the owner's
@@ -117,6 +124,7 @@ async function metadataStamp(realPath: string): Promise<string | null | undefine
 
 interface Entry {
   baseline: string
+  acknowledged: AcknowledgedOutline | null
   /** A fresh record per editor load: identity fences queued requests across a reopen. */
   owners: Map<string, { path: string }>
   /** The difference last reported (so one version is reported once), or null. */
@@ -233,21 +241,26 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
   }
 
   return {
-    track(owner, outlinePath, text) {
+    track(owner, outlinePath, text, savedAt = Date.now()) {
       const realPath = deps.canonical(outlinePath)
       releaseFrom(owner, realPath)
       let entry = entries.get(realPath)
       if (!entry) {
-        entry = { baseline: '', owners: new Map(), reported: null, awaitingSave: false, partial: null, watching: false }
+        entry = { baseline: '', acknowledged: null, owners: new Map(), reported: null, awaitingSave: false, partial: null, watching: false }
         entries.set(realPath, entry)
       }
       entry.baseline = hashOutlineText(text)
+      entry.acknowledged = { text, savedAt }
       entry.partial = null
       entry.awaitingSave = false
       entry.owners.set(owner, { path: outlinePath })
       report(entry, null)
       if (!entry.watching) startWatching(realPath, entry)
       if (deps.ownerIsVisible && !entry.metadataTimer) startMetadataChecks(realPath, entry, deps.ownerIsVisible)
+    },
+    acknowledged(owner, outlinePath) {
+      const entry = entries.get(deps.canonical(outlinePath))
+      return entry?.owners.has(owner) ? entry.acknowledged : null
     },
     release(owner) { releaseFrom(owner) },
     forget(path) {
@@ -316,6 +329,7 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
       const entry = entries.get(realPath)
       if (!entry) return
       entry.baseline = hashOutlineText(text)
+      entry.acknowledged = { text, savedAt: Date.now() }
       entry.partial = null
       entry.awaitingSave = false
       report(entry, null)
@@ -333,7 +347,7 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
       if (!entries.has(realPath)) return Promise.resolve(null)
       return deps.withLock(outlinePath, () => recheck(realPath))
     },
-    async diskVersion(outlinePath) {
+    async diskVersion(outlinePath, includeMtime) {
       const realPath = deps.canonical(outlinePath)
       const sample = () => deps.withLock(outlinePath, async () => {
         const text = await deps.readText(realPath)
@@ -348,7 +362,7 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
         const after = await sample()
         matching = before.text === after.text && before.mtime === after.mtime ? matching + 1 : 1
         if (matching >= 3) {
-          return after.text === null ? null : { text: after.text, hash: hashOutlineText(after.text) }
+          return after.text === null ? null : { text: after.text, hash: hashOutlineText(after.text), ...(includeMtime ? { mtime: after.mtime } : {}) }
         }
         before = after
       }
@@ -367,6 +381,7 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
         try { text = await deps.readText(realPath) } catch (error) {
           return { ok: false, change: null, error: error instanceof Error ? error.message : String(error) }
         }
+        const savedAt = text !== null && !opts.keepPending ? await deps.mtime(realPath).catch(() => null) : null
         if (!current()) return refused()
         const token = versionOf(text)
         if (entry.partial) {
@@ -388,6 +403,8 @@ export function createOutlineDiskGuard(deps: OutlineDiskGuardDeps): OutlineDiskG
         if (token === ABSENT && opts.keepPending && entry.reported?.kind !== 'removed') {
           report(entry, { outlinePath: firstPath(entry, realPath), kind: 'removed', hash: ABSENT, changedAt: Date.now() })
         }
+        // A reload acknowledges the disk bytes; a Keep mine decision only grants permission to save.
+        if (!opts.keepPending) entry.acknowledged = text === null ? null : { text, savedAt: savedAt ?? Date.now() }
         entry.baseline = token
         if (opts.keepPending && entry.reported) entry.awaitingSave = true
         else { entry.awaitingSave = false; report(entry, null) }

@@ -1,13 +1,13 @@
 // J1 through the real hidden Studio, package IPC, compiler and ffmpeg. Disposable author data only.
 import assert from 'node:assert/strict'
-import { _electron as electron } from 'playwright'
-import { mkdirSync,mkdtempSync,writeFileSync,readFileSync,readdirSync,rmSync,realpathSync } from 'node:fs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { mkdirSync, writeFileSync, readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { createRequire } from 'node:module'
 import { spawnSync } from 'node:child_process'
 import { shutdownApp } from './lib/settings-window.mjs'
-const root=process.cwd(),scratch=mkdtempSync(join(tmpdir(),'tw-video-j1-'))
+await using appScratch = createAppScratch()
+const root=process.cwd(),scratch=appScratch.root
 const userData=join(scratch,'userData'), vault=join(scratch,'vault'), second=join(scratch,'secondary')
 const slug='video-fixture',sid='sess-video-j1',noAudioId='sess-video-noaudio'
 const outlineText='---\ntitle: Recorded voice fixture\noutline_version: 2\n---\n\n## Opening\n\n### One\n{id=one}\n\n- A spoken point\n\n## Demo\n\n### Two {code}\n{id=two}\n\n```js\nconst voice = "real"\n```\n'
@@ -25,7 +25,7 @@ const ok=name=>console.log(`PASS ${++count}. ${name}`)
 try{
  const env={TW_E2E:'1'}
  for(const name of ['PATH','HOME','USER','LOGNAME','TMPDIR','LANG','SHELL','DISPLAY','SystemRoot','SYSTEMROOT','windir','TEMP','TMP','USERPROFILE','APPDATA','LOCALAPPDATA','USERNAME','PATHEXT','ComSpec'])if(process.env[name]!==undefined)env[name]=process.env[name]
- app=await electron.launch({args:['.','--use-mock-keychain',`--user-data-dir=${userData}`],cwd:root,env})
+ app=(await launchApp({ scratch: appScratch, userData, env, args: ['.', '--use-mock-keychain'] })).app
  app.process().stderr?.on('data', chunk => { processLog += chunk.toString() })
  const page=await app.firstWindow();await page.waitForFunction(()=>Boolean(window.tw?.tools))
  assert.equal(realpathSync(await app.evaluate(({app})=>app.getPath('userData'))),realpathSync(userData))
@@ -105,4 +105,4 @@ try{
  const visible=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().some(w=>w.isVisible()))
  assert.equal(visible,false,'all test windows stay hidden');ok('all app and renderer windows remain hidden')
  console.log(`PASS animated video J1: ${count} checks`)
-}catch(error){console.error(processLog);throw error}finally{await shutdownApp(app);rmSync(scratch,{recursive:true,force:true})}
+}catch(error){console.error(processLog);throw error}finally{await shutdownApp(app);}

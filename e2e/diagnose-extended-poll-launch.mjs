@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict'
-import { _electron as electron } from 'playwright'
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createServer } from 'node:net'
 
 // Drive the real presenter preload, main IPC, WebSocket client and local Worker.
 // No production credentials, remote session or user vault are used.
-const root = mkdtempSync(join(tmpdir(), 'tw-poll-launch-'))
+await using appScratch = createAppScratch()
+const root = appScratch.root
 const ud = join(root, 'userData'), vault = join(root, 'vault'), deck = join(vault, 'poll-launch')
 mkdirSync(ud, { recursive: true }); mkdirSync(deck, { recursive: true })
 const server = createServer()
@@ -45,11 +45,12 @@ const outlinePath = join(deck, 'poll-launch-outline.md')
 writeFileSync(outlinePath, source)
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, liveWorkerBaseUrl: `http://127.0.0.1:${port}` }))
 const executablePath = process.env.TW_TEST_APP_EXECUTABLE
-const app = await electron.launch({
-  ...(executablePath ? { executablePath } : {}),
-  args: [...(executablePath ? [] : ['.']), '--user-data-dir=' + ud],
-  cwd: resolve('.'), env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1', TW_LIVE_LOCAL: '1' }
-})
+const app = (await launchApp({
+  scratch: appScratch,
+  userData: ud,
+  executablePath,
+  env: { ...process.env, TW_REC_TEST: '1', TW_LIVE_LOCAL: '1' },
+})).app
 try {
   await app.evaluate(({ app, BrowserWindow }) => {
     const hide = win => { win.setPosition(-20000, -20000); win.hide() }
@@ -87,6 +88,5 @@ try {
 } finally {
   // This fixture tests poll delivery, not the interactive recording/close workflow.
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach(win => win.destroy())).catch(() => {})
-  await app.close()
-  rmSync(root, { recursive: true, force: true })
+  await appScratch.closeApp(app)
 }

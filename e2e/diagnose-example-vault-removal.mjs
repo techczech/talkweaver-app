@@ -16,14 +16,13 @@
 //       chapters show the earlier counts.
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-example-vault-removal.mjs
-import { _electron as electron } from 'playwright'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openSettingsWindow, closeSettingsWindow } from './lib/settings-window.mjs'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs'
-import { homedir, tmpdir } from 'os'
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'fs'
+import { homedir } from 'os'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const SHOTS = process.env.TW_E2E_SHOTS || ''
@@ -37,7 +36,8 @@ function record(name, pass, detail) {
 }
 
 const TITLES = ['The Saturday market', 'Garden notes', 'Walking the old town', 'Lightning round', 'Harvest supper (draft)']
-const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), 'tw-e2e-example-removal-')))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const realExample = join(homedir(), 'Documents', 'TalkWeaver', 'Example vault')
 const realExampleBefore = existsSync(realExample) ? lstatSync(realExample).mtimeMs : null
 const LEARN = { version: 1, ran: ['promote-heading', 'demote-heading'], opened: ['Write the outline'], finished: {}, read: [] }
@@ -60,8 +60,7 @@ function profile(name) {
 const config = (p) => JSON.parse(readFileSync(join(p.userData, 'config.json'), 'utf8'))
 
 async function launch(p) {
-  const app = await electron.launch({ args: ['.', '--user-data-dir=' + p.userData], cwd: REPO, env: { ...process.env, TW_E2E: '1', TW_E2E_HOME: p.home, TW_E2E_BIN: p.bin } })
-  const page = await app.firstWindow()
+  const { app, page } = await launchApp({ scratch: appScratch, userData: p.userData, env: { ...process.env, TW_E2E_HOME: p.home, TW_E2E_BIN: p.bin } })
   await page.waitForLoadState('domcontentloaded')
   await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
   return { app, page }
@@ -133,7 +132,6 @@ async function cancelConfirm(page) {
   await page.locator('[data-remove-example]').waitFor({ state: 'detached', timeout: 5000 })
 }
 
-await ensureFreshBuild(REPO)
 let exitCode = 0
 try {
   // ── (A) remove from the ⋯ menu ──
@@ -241,7 +239,7 @@ try {
     record('app config: the record is cleared, progress as it was', config(a).exampleVaultRemoved === false && JSON.stringify(config(a).guideLearn) === learnBeforeRestore)
     await shot(page, '12-restored.png')
   } finally {
-    await app.close()
+    await appScratch.closeApp(app)
   }
 
   const realAfter = existsSync(realExample) ? lstatSync(realExample).mtimeMs : null
@@ -252,6 +250,5 @@ try {
   const failed = results.filter((r) => !r.pass)
   console.log(`\n${results.length - failed.length}/${results.length} passed`)
   if (failed.length) exitCode = 1
-  rmSync(tempRoot, { recursive: true, force: true })
 }
-process.exit(exitCode)
+process.exitCode = exitCode

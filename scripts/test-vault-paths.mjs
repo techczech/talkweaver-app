@@ -3,7 +3,7 @@
 // function each handler calls (src/main/vault-paths.ts, resolveThumbFile) with hostile and
 // legitimate input, act on every answer the way the handler does, and prove that nothing outside
 // the scratch vault / userData changes — the "outside" sibling is listed before and after.
-import { readMainSource } from './lib/read-source.mjs'
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
 import assert from 'node:assert/strict'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 
@@ -522,11 +522,9 @@ for (const [slug, topic, expected] of [
 
 // ── vault:set-root: refused outside the E2E test mode; in it, an absolute existing folder only ──
 {
-  // The registered handler, lifted from src/main/index.ts and run with spies for the registry
+  // The main-process registration and run with spies for the registry
   // adoption (the only way a root is written) and for any direct config write (never).
-  const source = readMainSource()
-  const start = source.indexOf("ipcMain.handle('vault:set-root'")
-  const code = ts.transpileModule(source.slice(start, source.indexOf('\n})', start) + 3), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
+  const code = ts.transpileModule(readIpcRegistration('vault:set-root'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
   const setRootWith = (testMode) => {
     const writes = []
     const adopted = []

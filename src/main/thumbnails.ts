@@ -15,7 +15,11 @@ import { markSlidePreviewHtml } from '../shared/slide-preview'
 import { regularVariantFile, usablePreviewVariant, type PreviewVariant } from './preview-variant'
 import { pruneThumbnailArtwork, thumbnailArtworkNamespace } from './thumbnail-artwork-prune'
 
+import { measureLayoutPreview } from '../shared/layout-preview-measurement'
+import type { LayoutPreviewCheck, LayoutPreviewEvidence } from '../shared/list-layout-suggestions'
+
 export interface RenderThumbnailsOptions {
+  inspect?: { check: LayoutPreviewCheck; accepts: (evidence: LayoutPreviewEvidence) => boolean }
   /** A caller-owned staging folder must still have its original identity before each write. */
   beforeWrite?: () => void
   /** Full compiled single-file presentation HTML (the presenter-popup runtime). */
@@ -427,7 +431,7 @@ async function renderThumbnailsInWindow(
     const pngPath = join(cacheDir, `${cacheKey}.png`)
     const cached = existsSync(pngPath)
     const steps = cached && opts.onRevealSteps ? await readRevealSteps(pngPath + '.reveal-steps') : undefined
-    if (cached && (!opts.onRevealSteps || steps !== undefined)) {
+    if (cached && !opts.inspect && (!opts.onRevealSteps || steps !== undefined)) {
       if (steps !== undefined) opts.onRevealSteps?.(steps)
       result[slide.key] = pngPath
       // Re-attach any cached sub-thumbnails (subslides) for this slide.
@@ -504,6 +508,14 @@ async function renderThumbnailsInWindow(
         if (!target?.ok) {
           console.warn(`[thumbnails] slide ${item.index} (${item.key}): could not isolate it as the active slide — NOT caching (will retry)`)
           continue
+        }
+        if (opts.inspect) {
+          const { layout, selector, title } = opts.inspect.check
+          const input = JSON.stringify({ layout, selector, title })
+          const evidence: LayoutPreviewEvidence = await rendererWork(win.webContents.executeJavaScript(
+            `(async () => { await document.fonts.ready; return (${measureLayoutPreview.toString()})(${input}); })()`
+          ), signal)
+          if (!opts.inspect.accepts(evidence)) continue
         }
         const img: NativeImage = await rendererWork(win.webContents.capturePage(), signal)
         if (signal.aborted || opts.shouldYield?.()) break

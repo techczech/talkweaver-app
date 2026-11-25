@@ -1,3 +1,4 @@
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
 // Publishing handouts (src/main/handout-publishing.ts, src/shared/publish-status.ts and the publish
 // side of src/main/cloudflare-connection.ts; spec "Cloudflare set-up in the app", D7, D8, D12 and
 // the "not ready" table). No network: the REAL connection and the REAL publishing sequence, the
@@ -301,7 +302,7 @@ async function connected(overrides = {}, token = TOKEN) {
   const main = readMainSource()
   const between = (from, to) => { const start = main.indexOf(from); assert.ok(start >= 0, `${from} is in the main process`); return main.slice(start, main.indexOf(to, start + from.length)) }
   const BODIES = {
-    talk: between("ipcMain.handle('talk:publish-handout'", '\n})\n'),
+    talk: readIpcRegistration('talk:publish-handout'),
     run: between("ipcMain.handle('run:publish-handout'", '\n})\n'),
     'run-unpublish': between("ipcMain.handle('run:unpublish-handout'", '\n})\n'),
     'talk-unpublish': between("ipcMain.handle('published:unpublish-talk'", '\n})\n'),

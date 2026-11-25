@@ -4,10 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
 import { join, resolve } from 'node:path'
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { scratchVault } from './lib/scratch-vault.mjs'
-import { testProfileEnv } from './lib/test-profile.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { chromeCollisions } from './lib/window-chrome-geometry.mjs'
 
 const repo = resolve(import.meta.dirname, '..')
@@ -16,7 +13,7 @@ const shots = process.env.TW_WINDOW_CHROME_SHOTS
 const mac = process.platform === 'darwin'
 const title = 'Ideas as experiments: AI for exploring research questions'
 const content = `---\ntitle: "${title}"\nauto_title_slide: false\nauto_thanks_slide: false\n---\n\n## Talk\n\n### A question\n{id=question poll=board}\n\nWhat should we keep, change or try?\n\n- Keep\n- Change\n- Try\n\n### Closing {id=closing}\n\nA synthetic slide.\n`
-const scratch = scratchVault('tw-window-chrome-')
+await using scratch = createAppScratch()
 const vault = join(scratch.root, 'vault')
 const outline = join(vault, 'fixture', 'fixture-outline.md')
 mkdirSync(join(vault, 'fixture'), { recursive: true })
@@ -49,12 +46,16 @@ async function startSite() {
 }
 async function launch(name, withVault) {
   const ud = join(scratch.root, name)
-  const env = { ...process.env, ...testProfileEnv(ud), TW_E2E: '1', TW_REC_TEST: '1' }
+  mkdirSync(ud, { recursive: true })
+  const env = { ...process.env, TW_REC_TEST: '1' }
   if (site) env.TW_E2E_LIVE_PAGE_ALLOW = new URL(site).host
-  delete env.ELECTRON_RUN_AS_NODE
   if (withVault) writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, editorViewMode: 'markdown', recordingDiscardMs: 800 }))
-  app = await electron.launch({ cwd: repo, args: ['.', '--user-data-dir=' + ud, '--use-mock-keychain', '--mute-audio', '--use-fake-device-for-media-stream'], env })
-  const page = await app.firstWindow()
+  const run = await launchApp({
+    scratch, userData: ud, env,
+    args: ['.', '--use-mock-keychain', '--mute-audio', '--use-fake-device-for-media-stream'],
+  })
+  app = run.app
+  const { page } = run
   page.setDefaultTimeout(15000)
   await page.waitForLoadState('domcontentloaded')
   if (!baseline) assert.equal(await page.evaluate(() => window.twMacInset), mac, 'editor preload and native chrome flag')
@@ -64,7 +65,7 @@ async function launch(name, withVault) {
 async function closeApp() {
   if (!app) return
   await app.evaluate(({ app }) => app.exit(0)).catch(() => {})
-  await app.close().catch(() => {})
+  await scratch.closeApp(app).catch(() => {})
   app = undefined
 }
 
@@ -183,7 +184,6 @@ async function openWindow(action, urlMatches) {
 }
 
 try {
-  await ensureFreshBuild(repo)
   if (!baseline) {
     await startSite()
     const setup = await launch('setup', false)
@@ -312,7 +312,23 @@ try {
         await audience.close()
 
         // An authored board can be popped out before it opens to submissions.
-        const board = await openWindow(() => deck.locator('#boardPopOut').click(), /^about:blank$/)
+        const openBoard = async () => {
+          try { await deck.locator('#boardPopOut').click() }
+          catch (error) {
+            const geometry = await deck.evaluate(() => {
+              const bounds = selector => document.querySelector(selector)?.getBoundingClientRect().toJSON()
+              return {
+                viewport: [innerWidth, innerHeight],
+                visibleViewport: [visualViewport.width, visualViewport.height, visualViewport.offsetLeft, visualViewport.offsetTop],
+                root: bounds('#presenterRoot'), divider: bounds('#presenterDivider'),
+                board: bounds('#presenterBoardPanel'), popOut: bounds('#boardPopOut'),
+              }
+            })
+            console.error('Board pop-out geometry', JSON.stringify(geometry))
+            throw error
+          }
+        }
+        const board = await openWindow(openBoard, /^about:blank$/)
         await board.locator('#boardWindowPanel .bp-title').waitFor()
         await inspect(board, 'board-popup', { custom: false, titles: '#boardWindowPanel .bp-title b' })
         await board.locator('#boardPutBack').click()
@@ -341,7 +357,6 @@ try {
 } finally {
   await closeApp()
   if (server) await new Promise(resolve => server.close(resolve))
-  scratch[Symbol.dispose]()
 }
 assert.deepEqual(failures, [], failures.length + ' collisions across ' + checks + ' geometry checks')
 console.log('PASS ' + checks + ' window chrome geometry checks')

@@ -25,13 +25,11 @@
 //                   nothing is replaced); vault:choose-root still adopts a folder (first-run path).
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && TW_E2E=1 node e2e/diagnose-vault-menu.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { existsSync, mkdirSync, mkdtempDisposableSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -46,8 +44,8 @@ function record(name, pass, detail) {
 const outline = (title, slide) => ['---', `title: ${title}`, 'outline_version: 2', '---', '', '## Section', '',
   `### ${slide} {id=${slide.toLowerCase().replace(/\W+/g, '')}}`, '', 'Body one.', ''].join('\n')
 
-using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-vault-menu-'))
-const tempRoot = realpathSync(fixture.path)
+await using fixture = createAppScratch()
+const tempRoot = realpathSync(fixture.root)
 const personal = join(tempRoot, 'Personal')
 const wsLocal = join(tempRoot, 'local', 'Workshops')
 const wsGit = join(tempRoot, 'git', 'Workshops')
@@ -65,8 +63,7 @@ mkdirSync(join(wsGit, '.git'), { recursive: true })
 mkdirSync(userData, { recursive: true })
 writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: personal, openInView: 'outline' }, null, 2))
 
-await ensureFreshBuild(REPO)
-await using app = await electron.launch({ args: ['.', '--use-mock-keychain', '--user-data-dir=' + userData], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
+const app = (await launchApp({ scratch: fixture, userData, args: ['.', '--use-mock-keychain'] })).app
 let page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })

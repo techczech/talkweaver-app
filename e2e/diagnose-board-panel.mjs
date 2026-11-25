@@ -11,16 +11,15 @@
 // closing the board window does the same; closing the presenter window closes the board window.
 // Screenshots: TW_SHOTS (defaults to the disposable fixture).
 // Run: npm run build && node e2e/diagnose-board-panel.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { startLiveWorker } from '../scripts/lib/live-worker-harness.mjs'
 
 const repo = process.cwd()
-const tempRoot = mkdtempSync(join(tmpdir(), 'talkweaver-board-panel-'))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const shots = process.env.TW_SHOTS || join(tempRoot, 'shots')
 const vault = join(tempRoot, 'vault')
 const userData = join(tempRoot, 'userData')
@@ -55,9 +54,11 @@ writeFileSync(outlinePath, source, 'utf8')
 
 const worker = await startLiveWorker()
 writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, liveWorkerBaseUrl: worker.baseUrl }, null, 2), 'utf8')
-await ensureFreshBuild(repo)
-const app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: repo,
-  env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1', TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: worker.adminSecret } })
+const app = (await launchApp({
+  scratch: appScratch,
+  userData,
+  env: { ...process.env, TW_REC_TEST: '1', TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: worker.adminSecret },
+})).app
 const phones = []
 try {
   await app.evaluate(({ app: electronApp, BrowserWindow, shell }) => {
@@ -204,9 +205,8 @@ try {
 } finally {
   for (const socket of phones) { try { socket.close() } catch { /* closed */ } }
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((win) => win.destroy())).catch(() => {})
-  await app.close().catch(() => {})
+  await appScratch.closeApp(app).catch(() => {})
   await worker.stop()
-  rmSync(tempRoot, { recursive: true, force: true })
 }
 console.log(failures ? `\n${failures} failure(s)` : '\nboard panel e2e: all checks passed')
-process.exit(failures ? 1 : 0)
+process.exitCode = failures ? 1 : 0

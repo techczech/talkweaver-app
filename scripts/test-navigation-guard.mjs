@@ -436,12 +436,13 @@ await test('wiring: the hand-out rule is for every window; the thumbnail window 
   assert.match(thumbnails, /disableDialogs: true/)
   assert.match(thumbnails, /'will-prevent-unload', \(event\) => event\.preventDefault\(\)/)
   assert.match(thumbnails, /setWindowOpenHandler\(\(\) => \(\{ action: 'deny' \}\)\)/)
-  // Four windows in index.ts: editor (including the Pathways dock), Tools, deck and Capture embed.
+  // Three windows in index.ts: editor (including the Pathways dock), Tools and Capture embed.
+  // The deck window is created in talk-ipc.ts.
   // Pathways no longer creates a window; both hidden capture renderers remain classified below.
   const mainDir = fileURLToPath(new URL('../src/main/', import.meta.url))
   const made = []
   for (const name of readdirSync(mainDir)) if (/\.ts$/.test(name)) for (const _ of readFileSync(join(mainDir, name), 'utf8').matchAll(/new BrowserWindow\(/g)) made.push(name)
-  assert.deepEqual(made.sort(), ['embed-preview-artwork.ts', 'index.ts', 'index.ts', 'index.ts', 'index.ts', 'offline-page-capture.ts', 'presenter-layers-ipc.ts', 'scratchpad-html-capture.ts', 'thumbnails.ts'], 'a new window: decide whether it is an app window, a deck window or a hidden renderer')
+  assert.deepEqual(made.sort(), ['embed-preview-artwork.ts', 'index.ts', 'index.ts', 'index.ts', 'offline-page-capture.ts', 'presenter-layers-ipc.ts', 'scratchpad-html-capture.ts', 'talk-ipc.ts', 'thumbnails.ts'], 'a new window: decide whether it is an app window, a deck window or a hidden renderer')
   const recordingSource = readFileSync(join(mainDir, 'presenter-layers-ipc.ts'), 'utf8')
   assert.match(recordingSource, /markHiddenRenderer\(source, 'presenter-layers-source'\)/)
   assert.match(recordingSource, /show: false/)

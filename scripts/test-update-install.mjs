@@ -1,3 +1,4 @@
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
 // Updates in place (ADR-0044): the states of the one click, what holds a restart back, when a copy cannot
 // replace itself, how failures are read, and the work a restart waits for (src/shared/update-install.ts,
 // src/main/restart-holds.ts). Plain Node, no Electron, no network.
@@ -244,7 +245,9 @@ await test('restart holds on IPC channels: a publish handler counts while it run
   const index = (await import('node:fs')).readFileSync(new URL('../src/main/index.ts', import.meta.url), 'utf8')
   const call = index.indexOf("holdOnChannels(ipcMain, restartHolds, { 'talk:publish-handout': 'publishing', 'run:publish-handout': 'publishing', 'talk:export-handout': 'exporting' })")
   assert.ok(call > 0, 'the app counts its handout publishes and exports')
-  for (const ch of ['talk:publish-handout', 'run:publish-handout', 'talk:export-handout']) assert.ok(index.indexOf(`ipcMain.handle('${ch}'`) > call, `${ch} is registered after the wrapping is in place`)
+  for (const ch of ['talk:publish-handout', 'talk:export-handout']) assert.match(readIpcRegistration(ch), /ipcMain\.handle/)
+  assert.ok(index.indexOf('\nregisterTalkIpc(') > call, 'talk publishes and exports register after the wrapping is in place')
+  assert.ok(index.indexOf("ipcMain.handle('run:publish-handout'") > call, 'Run publishes register after the wrapping is in place')
 })
 
 // ── An update's restart closes only the editor windows (ADR-0044 §6, restart-windows.ts) ─────────────────────────

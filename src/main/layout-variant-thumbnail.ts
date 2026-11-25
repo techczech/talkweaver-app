@@ -30,6 +30,7 @@ import { createHash } from 'crypto'
 import { existsSync, statSync } from 'fs'
 import { dirname, isAbsolute, resolve } from 'path'
 import { LayoutVerbError, previewLayout, type LayoutOptionChoice } from '../shared/layout-verbs.ts'
+import { layoutPreviewRefusal, type LayoutPreviewCheck, type LayoutPreviewEvidence } from '../shared/list-layout-suggestions.ts'
 import type { PreviewVariant } from './preview-variant.ts'
 import type { VariantThumbnail } from '../shared/variant-thumbnail-result.ts'
 import { selectedThumbnailSlide, selectedThumbnailSlideAtLine, type IndexedThumbnailSlide, type ThumbnailProjectionRow } from '../shared/slide-preview.ts'
@@ -47,6 +48,7 @@ export interface VariantThumbnailRequest {
   requestKey?: string
   /** Main's window id and the panel's batch id. A request without a batch stays wanted until answered. */
   batchScope?: string
+  check?: LayoutPreviewCheck
 }
 
 export type { VariantThumbnail }
@@ -61,7 +63,7 @@ export interface VariantThumbnailDeps {
     /** sha256 of the marked deck, worked out where it was compiled: the document id without a pass here. */
     previewKey?: string
   } | null>
-  render(opts: { fullHtml: string; preview?: PreviewVariant; slides: IndexedThumbnailSlide[]; cacheDir: string; background?: boolean; onRevealSteps?: (count: number) => void }): Promise<Record<string, string>>
+  render(opts: { fullHtml: string; preview?: PreviewVariant; slides: IndexedThumbnailSlide[]; cacheDir: string; background?: boolean; onRevealSteps?: (count: number) => void; inspect?: { check: LayoutPreviewCheck; accepts: (evidence: LayoutPreviewEvidence) => boolean } }): Promise<Record<string, string>>
   cacheDirFor(outlinePath: string, slug: string): string
   urlFor(slug: string, cacheName: string, outlinePath: string): string
   /** Document identity for the cache key (the deck's compiled HTML; `previewKey` saves hashing it). */
@@ -147,6 +149,7 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
     const hash = createHash('sha256')
       .update(request.outlinePath).update('\0').update(modified).update('\0').update(slideId)
       .update('\0').update(fingerprint(request.outlinePath, modified))
+      .update('\0').update(JSON.stringify(request.check ?? null))
       .digest('hex')
     const hit = served.get(hash)
     if (hit && fileExists(hit.png)) {
@@ -195,10 +198,23 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
     const cacheDir = deps.cacheDirFor(request.outlinePath, prepared.slug)
     const reveal = rows[selected.index]?.reveal_enabled
     let revealSteps: number | undefined
+    let refusal: string | undefined
+    let inspected = false
+    const warnings = prepared.rows[selected.index]?.warnings
+    const inspect = request.check ? {
+      check: request.check,
+      accepts: (evidence: LayoutPreviewEvidence): boolean => {
+        inspected = true
+        refusal = layoutPreviewRefusal(request.check!, evidence, Array.isArray(warnings) ? warnings : [])
+        return !refusal
+      }
+    } : undefined
     const rendered = await deps.render({
-      fullHtml, preview: prepared.preview, slides: [selected], cacheDir, background: true,
+      fullHtml, preview: prepared.preview, slides: [selected], cacheDir, background: true, inspect,
       onRevealSteps: reveal ? count => { revealSteps = count } : undefined
     })
+    if (refusal) return { status: 'cannot-take', slideId: request.slideId, reason: refusal }
+    if (inspect && !inspected) return failed
     const png = rendered[selected.key]
     if (!png) return failed
     const url = deps.urlFor(prepared.slug, pngName(png), request.outlinePath)
@@ -232,6 +248,13 @@ export function variantThumbnailBatchScope(senderId: number | undefined, batchId
     ? `${senderId}:${batchId}` : undefined
 }
 
+function isPreviewCheck(value: unknown): value is LayoutPreviewCheck {
+  if (!value || typeof value !== 'object') return false
+  const check = value as Partial<LayoutPreviewCheck>
+  return Array.isArray(check.words) && check.words.every(word => typeof word === 'string')
+    && [check.layout, check.selector, check.title].every(part => part === undefined || (typeof part === 'string' && part.length <= 200))
+}
+
 /**
  * `layout:variant-thumbnail`'s handler, built from its gate and its renderer so it runs under test
  * exactly as main registers it. The gate refuses an outline outside the vault: the compile reads the
@@ -251,7 +274,8 @@ export function createVariantThumbnailHandler(
     layout: unknown,
     options?: unknown,
     requestKey?: unknown,
-    batchId?: unknown
+    batchId?: unknown,
+    check?: unknown
   ): Promise<VariantThumbnail> => {
     // A slide is named by its `{id=…}` (a string) or, while it has none, by its heading line (`{ headingLine }`).
     const line = slide && typeof slide === 'object' && Number.isInteger((slide as { headingLine?: unknown }).headingLine) && (slide as { headingLine: number }).headingLine > 0
@@ -263,6 +287,7 @@ export function createVariantThumbnailHandler(
     if (typeof outline !== 'string' || !id || typeof layout !== 'string') {
       return { status: 'invalid', slideId: id, reason: 'outline, slide and layout are required' }
     }
+    if (check !== undefined && !isPreviewCheck(check)) return { status: 'invalid', slideId: id, reason: 'Invalid preview check' }
     try {
       return await renderVariant({
         outlinePath: outlinePath as string,
@@ -272,7 +297,8 @@ export function createVariantThumbnailHandler(
         layout,
         options: options as readonly LayoutOptionChoice[] | undefined,
         requestKey: typeof requestKey === 'string' && REQUEST_KEY_RE.test(requestKey) ? requestKey : undefined,
-        batchScope: variantThumbnailBatchScope(event?.sender?.id, batchId)
+        batchScope: variantThumbnailBatchScope(event?.sender?.id, batchId),
+        check
       })
     } catch (error) {
       log(error)

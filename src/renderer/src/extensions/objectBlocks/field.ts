@@ -1,3 +1,5 @@
+import { formatMarkerTime } from '../../../../../compiler/scripts/lib/video-markers.mjs'
+import { markerCountLabel, ORPHAN_VIDEO_MARKER, videoFileName } from '../../../../shared/video-marker-edits.ts'
 import { isolateHistory } from '@codemirror/commands'
 import {
   ChangeSet,
@@ -82,7 +84,7 @@ const objectBlockIndex = {
 
 function cardsIn(state: EditorState): ObjectBlock[] {
   const blocks = state.field(objectIndex, false)?.blocks ?? []
-  return state.facet(editNotesAsSource) ? blocks.filter(block => block.kind !== 'notes') : blocks
+  return state.facet(editNotesAsSource) ? blocks.filter(block => block.kind !== 'notes' && !block.video?.markers.length) : blocks
 }
 
 const openBlockField = StateField.define<{ from: number; to: number } | null>({
@@ -92,7 +94,7 @@ const openBlockField = StateField.define<{ from: number; to: number } | null>({
     if (effect) return effect.value
     if (!value) return value
     if (transaction.reconfigured && transaction.state.facet(editNotesAsSource)
-      && objectBlockIndex.read(transaction.startState).some(block => block.kind === 'notes' && block.from === value.from)) return null
+      && objectBlockIndex.read(transaction.startState).some(block => (block.kind === 'notes' || block.video?.markers.length) && block.from === value.from)) return null
     if (!transaction.docChanged) return value
     // WriteFlex walk finding: edge association grows an open object when a new row/node is typed
     // at either edge instead of silently dropping out of edit mode.
@@ -190,6 +192,11 @@ const insertFenceField = StateField.define<{ from: number; to: number } | null>(
     const to = tr.changes.mapPos(value.to, -1)
     return to - from === 3 && tr.newDoc.sliceString(from, to) === '```' ? { from, to } : null
   }
+})
+
+export interface VideoSourceDuration { ref: string; seconds: number }
+export const videoSourceDuration = Facet.define<VideoSourceDuration, VideoSourceDuration | null>({
+  combine: values => values[0] ?? null
 })
 
 export const sourceObjectPreviews = Facet.define<boolean, boolean>({
@@ -476,6 +483,28 @@ export class ObjectEditorWidget extends WidgetType {
   }
 }
 
+class VideoMarkerSourceNote extends WidgetType {
+  private readonly message: string
+  private readonly warning: boolean
+
+  constructor(message: string, warning: boolean) {
+    super()
+    this.message = message
+    this.warning = warning
+  }
+
+  eq(other: VideoMarkerSourceNote): boolean {
+    return this.message === other.message && this.warning === other.warning
+  }
+
+  toDOM(view: EditorView): HTMLElement {
+    const node = view.dom.ownerDocument.createElement(this.warning ? 'span' : 'div')
+    node.className = this.warning ? 'tw-video-source-warning' : 'tw-video-source-note'
+    node.textContent = this.message
+    return node
+  }
+}
+
 /**
  * Build block replacements from state. WriteFlex C1 and TalkWeaver frontmatterTable.ts:247-249
  * require block Decoration.replace ranges to come from a StateField, never a ViewPlugin.
@@ -540,7 +569,32 @@ function buildObjectBlockState(state: EditorState): ObjectBlockState {
     atomicRanges.push(chip.range(comment.from, comment.to))
   }
   // Constructs left as text: a warning mark, never a fold (an unclosed `<!--` or `:::notes`).
+  const markdown = state.facet(editNotesAsSource)
+  if (markdown) {
+    const playback = state.facet(videoSourceDuration)
+    for (const block of objects.blocks) {
+      const video = block.video
+      if (!video?.markers.length) continue
+      const line = state.doc.line(video.markers.at(-1)!.line + 1)
+      const detail = [
+        videoFileName(video.ref),
+        playback?.ref === video.ref ? formatMarkerTime(playback.seconds) : '',
+        markerCountLabel(video.markers.length),
+        !video.player && !/^(?:[a-z]+:|[\\/]|\.\.[\\/])/i.test(video.ref) ? 'in this talk’s media folder' : ''
+      ].filter(Boolean).join(' · ')
+      ranges.push(Decoration.widget({
+        widget: new VideoMarkerSourceNote(detail, false),
+        block: true, side: 1
+      }).range(line.to))
+    }
+  }
   for (const warning of objects.warnings) {
+    if (warning.kind === 'orphan-video-marker') {
+      if (markdown) ranges.push(Decoration.widget({
+        widget: new VideoMarkerSourceNote(ORPHAN_VIDEO_MARKER, true), side: 1
+      }).range(warning.to))
+      continue
+    }
     if (focus && (warning.from < focus.from || warning.to > focus.to)) continue
     if (warning.to <= warning.from) continue
     ranges.push(Decoration.mark({
@@ -869,7 +923,7 @@ const objectSourceChangeGuard = EditorState.changeFilter.of((tr) => {
       const block = blocks[at]
       const end = objectEnd(start, block)
       if (end < fromA && at <= index) break
-      if (block.kind === 'notes' && start.facet(editNotesAsSource)) continue
+      if ((block.kind === 'notes' || block.video?.markers.length) && start.facet(editNotesAsSource)) continue
       if (open?.from === block.from) continue
       if (!breaksObjectMarker(start, block, end, fromA, toA, inserted)) continue
       // A pure insertion is suppressed by a range around it (CodeMirror keeps an insertion at a range's edge).
@@ -949,7 +1003,7 @@ const objectSourceGuard = EditorState.transactionFilter.of((tr) => {
       if (lead) fixes.push({ from: fromB, insert: lead })
       return
     }
-    if (block.kind === 'notes' && start.facet(editNotesAsSource)) return
+    if ((block.kind === 'notes' || block.video?.markers.length) && start.facet(editNotesAsSource)) return
     if (fromA === block.from && fromA === toA && inserted.length > 0 && end > fromA) {
       const text = inserted.toString()
       if (/[\r\n]$/.test(text)) return

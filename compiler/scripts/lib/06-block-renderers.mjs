@@ -529,6 +529,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     if (!f.autoplay) attrs.push('preload="metadata"');
     const attrStr = attrs.length ? " " + attrs.join(" ") : "";
     const videoRef = typeof block.videoRef === "string" && block.videoRef ? ` data-video-ref="${escapeHtml(block.videoRef)}"` : "";
+    const markers = block.markers?.length ? ` data-video-markers="${escapeHtml(JSON.stringify(block.markers))}"` : "";
     const poster = block.poster ? ` poster="${escapeHtml(block.poster)}"` : "";
     const assetOnly = block.assetOnly ? ` data-video-asset-only data-video-name="${escapeHtml(block.videoName || referenceFileName(block.src))}"` : "";
     const caption = block.caption ? `<figcaption>${shortenAddressLinks(renderInline(block.caption))}</figcaption>` : "";
@@ -539,7 +540,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     const enlarge = `<button class="video-enlarge" type="button" title="Enlarge video (v)" aria-label="Enlarge video">\u2922</button>`;
     // 0.38 ticket 05: {play-on-next} — the figure is a step of its slide (lib/media-steps.mjs).
     const playOnNext = f.playOnNext ? " data-play-on-next" : "";
-    return `<figure class="slide-figure slide-video"${playOnNext}${mediaAspectAttrs(block)}${assetOnly}><video${attrStr}${poster} src="${escapeHtml(block.src)}"${videoRef}></video>${enlarge}${caption}</figure>`;
+    return `<figure class="slide-figure slide-video"${playOnNext}${mediaAspectAttrs(block)}${assetOnly}><video${attrStr}${poster} src="${escapeHtml(block.src)}"${videoRef}${markers}></video>${enlarge}${caption}</figure>`;
   }
   if (block.type === "audio") return renderAudioChip(block);
   if (block.type === "qr") {

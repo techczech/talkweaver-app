@@ -13,17 +13,14 @@
 // finishes, the restart waits ("Restart to finish updating", Restart disabled while presenting) → presenting ends:
 // Restart restarts (logged) → the alpha switch offers the alpha and switching it off never offers a downgrade.
 // On Windows there is no in-place update in this release: the popover says so and offers the download page.
-import { _electron as electron } from 'playwright'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { createHash, randomBytes } from 'node:crypto'
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openSettingsWindow, closeSettingsWindow } from './lib/settings-window.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
-import { testProfileEnv } from './lib/test-profile.mjs'
 import { makeUpdateZip, sizeLabel } from '../scripts/lib/update-test-zip.mjs'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -93,7 +90,8 @@ await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 base = `http://127.0.0.1:${server.address().port}`
 const feedUrl = `${base}/updates.json`
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-in-place-'))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const vault = join(tempRoot, 'vault')
 const td = join(vault, 'update-fixture')
 mkdirSync(td, { recursive: true })
@@ -133,8 +131,7 @@ const partials = () => cacheLeftovers().filter((f) => /temp-/.test(f))
 
 let app
 try {
-  await ensureFreshBuild(REPO)
-  app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1', ...testProfileEnv(ud), TW_E2E_UPDATES_SOURCE: 'website', TW_E2E_UPDATES_FEED: feedUrl } })
+  app = (await launchApp({ scratch: appScratch, userData: ud, env: { ...process.env, TW_E2E_UPDATES_SOURCE: 'website', TW_E2E_UPDATES_FEED: feedUrl } })).app
   const out = []
   app.process().stdout?.on('data', (chunk) => out.push(String(chunk)))
   const page = await app.firstWindow()
@@ -251,12 +248,30 @@ try {
   holdNext()
   await openPopover(page)
   await page.locator('[data-update-popover] [data-update-retry]').click()
-  await waitMark(page, /^Downloading/)
+  // The Downloading mark starts at 0%, before the GET. Dropping then can reset a reused
+  // HTTP socket before Chromium sees the headers, which can make it resend the request.
+  // Prove the client has received bytes before simulating a mid-body connection loss.
+  const partialBytes = () => partials().some(file => {
+    const size = statSync(file, { throwIfNoEntry: false })?.size ?? 0
+    return size > 0 && size < BODY.length
+  })
+  const partialDeadline = Date.now() + 10000
+  while (!partialBytes() && Date.now() < partialDeadline) await pause(50)
+  const receivedPartial = partialBytes()
   releaseHold()
   const dropped = await waitMark(page, /failed$/, 30000)
   await openPopover(page)
+  const dropFailure = await visible(page, '[data-update-popover] [data-update-failed="network"]')
   const droppedText = await popText(page)
-  record('the network dropping mid-download is reported in plain words and changes nothing', dropped && /The download stopped/.test(droppedText), droppedText.slice(0, 200))
+  const { install: droppedInstall } = await page.evaluate(() => window.tw.updates.get())
+  const versionAfterDrop = await app.evaluate(({ app: a }) => a.getVersion())
+  const dropLeftovers = cacheLeftovers()
+  const dropHandedOver = /restart into|handing \S+ to Squirrel\.Mac|preparing \S+ \(Squirrel\.Mac/.test(out.join(''))
+  record('the network dropping mid-download is reported, leaves no file and installs nothing',
+    receivedPartial && dropped && dropFailure && droppedInstall.phase === 'failed' && droppedInstall.reason === 'network' &&
+    /The download stopped/.test(droppedText) && versionAfterDrop === CURRENT_VERSION && !page.isClosed() &&
+    !dropHandedOver && dropLeftovers.length === 0,
+    `partial=${receivedPartial} phase=${droppedInstall.phase} cache files=${dropLeftovers.length} native hand-over=${dropHandedOver} version=${versionAfterDrop} — ${droppedText.slice(0, 200)}`)
 
   // ── 5. The restart waits while presenting ──────────────────────────────────────────────────────────
   mode = 'good'
@@ -308,7 +323,9 @@ try {
   await page.locator('[data-update-popover] [data-update-restart]').click()
   record('Restart restarts into the new version (a run from source logs it instead of installing)', await waitMark(page, /^Restarting into/) && (await page.locator('[data-update-popover] [data-update-cancel]').count()) === 0 && await (async () => { for (let i = 0; i < 40; i++) { if (out.join('').includes(`restart into ${NEXT} (test run from source): not installed`)) return true; await pause(100) } return false })(), out.join('').split('\n').filter((l) => l.includes('[updates]')).slice(-2).join(' | '))
   record('the write queues were waited for before the restart (rule C: "write queues: every one drained")', out.join('').includes('[update] write queues: every one drained'), out.join('').split('\n').filter((l) => l.includes('write queues')).slice(-1).join(''))
-  record('the file was downloaded only on clicks (six starts: cancelled, cancelled from the note, corrupt, another version, dropped, good)', assetRequests.length === 6, `file requests=${assetRequests.length}, responses=${assetRequests.map((request) => request.mode).join(', ')}`)
+  const requestedModes = assetRequests.map(request => request.mode)
+  record('the file was downloaded only on clicks (one GET per attempt)',
+    requestedModes.join(',') === 'good,good,corrupt,old,drop,good', `file requests=${assetRequests.length}, responses=${requestedModes.join(', ')}`)
 
   // ── 6. The alpha switch ───────────────────────────────────────────────────────────────────────────
   const settings = await openSettingsWindow(app, page, 'updates')
@@ -329,10 +346,9 @@ try {
 } catch (error) {
   if (!error?.done) record('the run finished', false, String(error?.stack ?? error))
 } finally {
-  try { await app?.close() } catch { /* already closed */ }
+  try { await appScratch.closeApp(app) } catch { /* already closed */ }
   server.close()
-  rmSync(tempRoot, { recursive: true, force: true })
 }
 const failed = results.filter((r) => !r.pass)
 console.log(`\nin-place update: ${results.length - failed.length}/${results.length} passed`)
-process.exit(failed.length ? 1 : 0)
+process.exitCode = failed.length ? 1 : 0

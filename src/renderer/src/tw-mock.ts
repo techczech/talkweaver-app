@@ -241,6 +241,8 @@ export function installMock() {
       readOutline: async (_path: string) => MOCK_OUTLINE,
       writeOutline: async (_path: string, _content: string) => true,
       outlineDiskVersion: async (_path: string) => ({ text: MOCK_OUTLINE, hash: 'mock' }),
+      planSlideMerge: async () => ({ ok: false as const, reason: 'no-conflict' as const, error: 'No changed file in the browser mock.' }),
+      applySlideMerge: async () => ({ ok: false as const, reason: 'stale-plan' as const, error: 'No merge review in the browser mock.' }),
       acceptOutlineDiskVersion: async (_path: string, _hash: string) => ({ ok: true as const }),
       onOutlineChangedOnDisk: (_cb: unknown) => () => {},
       outlineRecovery: async (_path: string) => null,

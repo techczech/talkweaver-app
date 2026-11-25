@@ -1,13 +1,12 @@
 // A real editor action queues thumbnail work; native Quit must save it, destroy every helper,
 // and reach normal process exit after one request. TW_QUIT_REPEATS=10 TW_QUIT_MATRIX=1 runs the release matrix.
 import assert from 'node:assert/strict'
-import { _electron as electron } from 'playwright'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { cpSync, mkdirSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { typeAtOutlineLineEnd } from './lib/outline-typing.mjs'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { buildNativeQuitMenu } from './lib/native-quit-menu.mjs'
 import { quitProcessTree, readQuitProcesses, sampleQuitProcesses } from '../scripts/lib/quit-process-samples.mjs'
 
@@ -19,7 +18,8 @@ const repeats = Number(process.env.TW_QUIT_REPEATS ?? 1)
 assert.ok(Number.isInteger(repeats) && repeats > 0)
 const scenarios = (process.env.TW_QUIT_SCENARIOS ?? (process.env.TW_QUIT_MATRIX === '1' ? 'typing,move,move-undo,autosave,browser' : 'move,edit,browser')).split(',')
 const routes = (process.env.TW_QUIT_ROUTES ?? (process.env.TW_QUIT_MATRIX === '1' ? 'quit,close' : 'quit')).split(',')
-const scratch = mkdtempSync(join(evidence, 'runtime-'))
+await using appScratch = createAppScratch({ profilePrefix: join(evidence, 'runtime-') })
+const scratch = appScratch.root
 const report = { head: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim(), cases: [], cleanup: [] }
 const reportPath = join(evidence, `shutdown${process.env.TW_QUIT_LABEL ?? ''}.json`)
 const save = () => writeFileSync(reportPath, JSON.stringify(report, null, 2))
@@ -77,7 +77,6 @@ async function cleanup() {
 }
 
 try {
-  await ensureFreshBuild(repo)
   const addon = buildNativeQuitMenu(scratch)
   for (const scenario of scenarios) for (const route of routes) for (let repeat = 1; repeat <= repeats; repeat++) {
     const root = join(scratch, String(report.cases.length))
@@ -94,8 +93,12 @@ try {
     report.cases.push(record)
     let expectedOutline, samplingTimer, samples, saveBegan = null
     try {
-      app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`, '--use-mock-keychain'], cwd: repo,
-        env: { ...env, TW_UPDATE_TEST_SAVE_DELAY_FILE: delay } })
+      app = (await launchApp({
+        scratch: appScratch,
+        userData,
+        env: { ...env, TW_UPDATE_TEST_SAVE_DELAY_FILE: delay },
+        args: ['.', '--use-mock-keychain'],
+      })).app
       proc = app.process(); record.pid = proc.pid
       let exitedAt = null
       proc.once('exit', () => { exitedAt = Date.now() })
@@ -250,8 +253,8 @@ try {
   }
 } finally {
   await cleanup()
-  rmSync(scratch, { recursive: true, force: true })
   for (const socket of sockets) rmSync(socket, { recursive: true, force: true })
+  await appScratch.close()
   report.scratchRemoved = true
   save()
 }

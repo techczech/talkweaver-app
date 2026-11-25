@@ -1,3 +1,5 @@
+import { markerCountLabel } from '../../../shared/video-marker-edits'
+import { VideoMarkerPage, type VideoMarkerPanel } from './VideoMarkerPage'
 import { offlinePageCandidates, type OfflinePageSelection } from '../lib/offlinePage'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, ChevronDown, ChevronUp, Undo2 } from 'lucide-react'
@@ -59,6 +61,7 @@ interface Props {
   offlineSaving?: boolean
   /** Remove from slide: takes one saved view's {capture} line out of the slide (the picture stays in the
    *  talk folder). `embed`: which embed of that address on the slide it is listed under (index of `of`). */
+  videoMarkers?: VideoMarkerPanel
   onRemoveSavedView?: (pageUrl: string, image: string, embed: { index: number; of: number }) => void
   /** The layout section's "Change ⌘L": opens the layout picker (what ⌘L runs). */
   onOpenLayoutPicker?: () => void
@@ -101,7 +104,7 @@ function triggerLineOf(outline: string, headingLine: number | null): string {
 
 export default function Inspector({
   talk, compiledSlides, outlineContent, triggerFindings, activeIndex, headingLine,
-  onPrev, onNext, navigationShortcuts, onEdit, onExplain, onOpenLayoutDoctor, onCaptureEmbed, onSaveOffline, offlineSaving, onRemoveSavedView, onCommitOption, onBoardEdit, picker = null,
+  onPrev, onNext, navigationShortcuts, onEdit, onExplain, onOpenLayoutDoctor, onCaptureEmbed, onSaveOffline, offlineSaving, onRemoveSavedView, videoMarkers, onCommitOption, onBoardEdit, picker = null,
   long = false, centrePreview = false, multiCount = 0, preview, applied, onTry, onKeep, onUndo, onTalk, onCopy, onIcon, onMarkdown, structure,
   onCropPicture, onReplacePicture, onRemovePicture, page, onPageChange
 }: Props) {
@@ -390,6 +393,7 @@ export default function Inspector({
     ] : []),
     ...(!section && !!row?.image_count ? [{ id: 'picture', label: 'Picture', summary: pictureSide === 'left' ? 'On the left'
       : pictureSide === 'right' ? 'On the right' : pictureSide === 'above' ? 'Above the points' : 'Placement and editing' }] : []),
+    ...(videoMarkers ? [{ id: 'video', label: 'Video', summary: markerCountLabel(videoMarkers.selected.markers.length) }] : []),
     ...(arrival && (revealSelected || page === 'steps') ? [{
       id: 'steps', label: 'Steps', summary: revealSummary,
       action: { ...revealAction, run: toggleReveal }
@@ -565,6 +569,7 @@ export default function Inspector({
               }}>
               {pageGroups('picture', ['media-placement'])}
             </PicturePage>}
+            {item.id === 'video' && videoMarkers && <VideoMarkerPage key={slideKey} panel={videoMarkers} />}
             {item.id === 'table' && <TablePage surface={surface} tokens={model.selectedTokens}>
               {bindings.filter(binding => binding.group.key === 'font-body').map(binding => renderGroup(binding))}
             </TablePage>}

@@ -7,13 +7,17 @@ const { dom, prDom } = readJson('./test-tiers.json')
 const { scripts } = readJson('../package.json')
 const changed = new Set(readFileSync(0, 'utf8').split('\0').filter(Boolean))
 
-for (const name of [...dom, ...prDom.smoke, ...prDom.poppler, ...prDom.owners.flatMap(owner => owner.tests)]) {
+for (const name of [...dom, ...prDom.smoke, ...prDom.poppler, ...prDom.coreFonts, ...prDom.owners.flatMap(owner => owner.tests)]) {
   if (!/^test:[\w:-]+$/.test(name) || !dom.includes(name) || typeof scripts[name] !== 'string') {
     throw new Error(`Unknown DOM script in prDom: ${name}`)
   }
 }
 
 const selected = new Set(prDom.smoke)
+// Exercise the layout scripts when their hosted dependency wiring changes.
+if (['.github/workflows/pr-dom.yml', 'scripts/select-pr-dom.mjs', 'scripts/test-tiers.json'].some(file => changed.has(file))) {
+  for (const name of prDom.coreFonts) selected.add(name)
+}
 for (const { paths, tests } of prDom.owners) {
   if ([...changed].some(file => paths.some(pattern => matchesGlob(file, pattern)))) {
     for (const name of tests) selected.add(name)
@@ -34,16 +38,9 @@ for (const [name, parts] of Object.entries(shards)) {
   }
 }
 
-const ubuntuExclusions = new Map(Object.entries(prDom.ubuntuExclusions ?? {}))
-for (const [name, reason] of ubuntuExclusions) {
-  if (!dom.includes(name) || typeof reason !== 'string' || !reason.trim() || /[\r\n]/.test(reason)) {
-    throw new Error(`Invalid hosted Ubuntu DOM exclusion for ${name}`)
-  }
-  if (selected.has(name)) console.log(`Excluded from Ubuntu PR DOM: ${name}. ${reason}`)
-}
-
-const affected = dom.filter(name => selected.has(name) && !ubuntuExclusions.has(name))
+const affected = dom.filter(name => selected.has(name))
 const ordered = affected.flatMap(name => shards[name] ?? [name])
 const needsPoppler = affected.some(name => prDom.poppler.includes(name))
+const needsCoreFonts = affected.some(name => prDom.coreFonts.includes(name))
 console.log(`Selected ${affected.length} of ${dom.length} DOM scripts (${ordered.length} runs): ${ordered.join(' ')}`)
-appendFileSync(process.env.GITHUB_OUTPUT, `scripts=${ordered.join(' ')}\npoppler=${needsPoppler}\n`)
+appendFileSync(process.env.GITHUB_OUTPUT, `scripts=${ordered.join(' ')}\npoppler=${needsPoppler}\ncore_fonts=${needsCoreFonts}\n`)

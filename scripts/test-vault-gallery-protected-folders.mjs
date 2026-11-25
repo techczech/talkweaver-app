@@ -1,9 +1,10 @@
 // The folder-management guard: assets, research, system folders, links, plain files and the insides of a
 // talk are inspect-only to the vault:* management handlers, however the request reaches them, and ordinary
-// category work and the app's own writers carry on. The handlers below are the real source of index.ts on
+// category work and the app's own writers carry on. The handlers below are the real main-process registrations on
 // real files; the only stand-ins are the Trash transport, the outline writer (the real one where a case says
 // so) and the window bookkeeping, so Electron and the OS Trash are never touched. A direct call stands for a
 // renderer that offered the action. Every fixture lives under one per-run folder, removed in finally.
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
 import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { createHash, randomBytes } from 'node:crypto'
@@ -32,11 +33,6 @@ const fnSource = (name) => {
   const start = source.search(new RegExp(`^(async )?function ${name}\\(`, 'm'))
   assert.ok(start >= 0, `function ${name} is in index.ts`)
   return source.slice(start, source.indexOf('\n}\n', start) + 3)
-}
-const handlerSource = (name) => {
-  const start = source.indexOf(`ipcMain.handle('${name}'`)
-  assert.ok(start >= 0, `handler ${name} is in index.ts`)
-  return source.slice(start, source.indexOf('\n})', start) + 3)
 }
 
 const OUTLINE = (title) => `---\ntitle: ${title}\nhandout_url: https://fixture.invalid/x\n---\n\n## One\n\nBody of ${title}\n`
@@ -126,7 +122,7 @@ function loadHandlers(fixture, hooks = {}) {
     vm.runInContext(code(fnSource(name)), context)
   }
   for (const name of ['create-talk', 'clone-talk', 'rename-talk', 'create-folder', 'rename-folder', 'move-talk', 'list-folders', 'delete-talk', 'delete-folder']) {
-    vm.runInContext(code(handlerSource(`vault:${name}`)), context)
+    vm.runInContext(code(readIpcRegistration(`vault:${name}`)), context)
   }
   const event = { sender: { id: 1 } }
   const call = (name, ...args) => handlers.get(`vault:${name}`)(event, ...args)

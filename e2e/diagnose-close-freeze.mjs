@@ -9,14 +9,12 @@
 // Editor assertions read CodeMirror's own document; file assertions read the real file.
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-close-freeze.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { typeAtOutlineLineEnd } from './lib/outline-typing.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const results = []
@@ -28,7 +26,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const outline = (title, id) => ['---', `title: ${title}`, 'outline_version: 2', '---', '', `## Opening {id=${id}0sec}`, '', `### First slide {id=${id}1}`, '', 'First slide body text.', ''].join('\n')
 const TITLE = 'Freeze Talk'
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-close-freeze-'))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const vault = join(tempRoot, 'vault')
 const userDataDir = join(tempRoot, 'userData')
 const DELAY_FILE = join(tempRoot, 'save-delay-ms')
@@ -40,11 +39,10 @@ writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: vaul
 const disk = () => readFileSync(OUTLINE_PATH, 'utf8')
 const slowSaves = (ms) => { if (ms) writeFileSync(DELAY_FILE, String(ms)); else rmSync(DELAY_FILE, { force: true }) }
 
-await ensureFreshBuild(REPO)
 let app
 let page
 async function launch() {
-  app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1', TW_UPDATE_TEST_SAVE_DELAY_FILE: DELAY_FILE } })
+  app = (await launchApp({ scratch: appScratch, userData: userDataDir, env: { ...process.env, TW_UPDATE_TEST_SAVE_DELAY_FILE: DELAY_FILE } })).app
   page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
   await page.waitForTimeout(1200)
@@ -52,7 +50,7 @@ async function launch() {
 async function closeApp() {
   if (!app) return
   const proc = app.process()
-  await Promise.race([app.close().catch(() => undefined), sleep(8000)])
+  await Promise.race([appScratch.closeApp(app).catch(() => undefined), sleep(8000)])
   try { proc.kill('SIGKILL') } catch { /* gone */ }
   app = null
 }
@@ -152,9 +150,8 @@ try {
   record('the run finished', false, String(error?.stack ?? error).slice(0, 1500))
 } finally {
   await closeApp().catch(() => {})
-  rmSync(tempRoot, { recursive: true, force: true })
 }
 
 const failed = results.filter((r) => !r.pass)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)
-process.exit(failed.length ? 1 : 0)
+process.exitCode = failed.length ? 1 : 0

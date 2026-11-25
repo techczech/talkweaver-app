@@ -1,14 +1,12 @@
 // Host gate for ADR-0038 parcel 2. Runs against an isolated temp Vault/userData only.
 // TW_REC_TEST stubs the Cloudflare deploy seam; no network request is made.
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { testScratchDir } from '../scripts/lib/test-scratch.mjs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 
 const repo = process.cwd()
-const tempRoot = testScratchDir(join(tmpdir(), 'talkweaver-runs-'))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const vault = join(tempRoot, 'vault')
 const userData = join(tempRoot, 'userData')
 const talkSlug = 'run-probe'
@@ -38,9 +36,7 @@ const record = (label, pass, detail = '') => {
   if (!pass) failures += 1
 }
 
-await ensureFreshBuild(repo)
-const app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: repo, env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' } })
-const editor = await app.firstWindow()
+const { app, page: editor } = await launchApp({ scratch: appScratch, userData, env: { ...process.env, TW_REC_TEST: '1' } })
 await editor.waitForLoadState('domcontentloaded')
 await editor.getByText('Run probe', { exact: true }).first().click()
 await editor.waitForSelector('.workspace')
@@ -138,7 +134,7 @@ const afterUnpublish = JSON.parse(readFileSync(plannedPath, 'utf8'))
 record('Run handout can be unpublished', unpublished.success && !afterUnpublish.handoutUrl, unpublished.error || '')
 record('evergreen outline frontmatter is byte-identical through the Run publish cycle', readFileSync(outlinePath, 'utf8') === originalOutline)
 
-await app.close()
+await appScratch.closeApp(app)
 if (failures) {
   console.error(`Runs gate failed: ${failures} assertion${failures === 1 ? '' : 's'}`)
   process.exitCode = 1

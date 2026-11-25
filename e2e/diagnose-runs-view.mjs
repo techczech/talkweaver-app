@@ -8,17 +8,14 @@
 //   (d) Studio's left list ("Recorded Runs") shows the same Runs as the Recorded filter, and "Open in Studio" lands on that Run;
 //   (e) the old names still open the one view (tools.open('history'), tools.open('sessions')), and no list is called Sessions.
 // Run: node e2e/diagnose-runs-view.mjs   (TW_SHOTS_DIR=<dir> saves a screenshot of each state)
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 
 const shotsDir = process.env.TW_SHOTS_DIR || ''
 if (shotsDir) mkdirSync(shotsDir, { recursive: true })
 let failures = 0
 const rec = (name, ok, detail) => { if (!ok) failures += 1; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`) }
-await ensureFreshBuild(process.cwd())
 
 const DAY = 86_400_000
 const dayOf = (n) => { const d = new Date(Date.now() + n * DAY); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
@@ -39,7 +36,8 @@ const given = {
 const silent = { ...base, id: 'rv-silent', status: 'delivered', eventTitle: 'Silent seminar', startedAt: new Date(Date.now() - 5 * DAY).toISOString(), endedAt: new Date(Date.now() - 5 * DAY + 3_600_000).toISOString(), recordingMs: 0, wallClockMs: 30 * 60_000, timerTargetMin: 30, audio: null, context: null, slideTimeIndex: [], polls: [], pollResponses: [] }
 const planned = { ...base, id: 'rv-planned', status: 'planned', eventTitle: 'Planned workshop', plannedDate: dayOf(5), startTime: '14:00', startedAt: '', endedAt: '', recordingMs: 0, wallClockMs: 0, timerTargetMin: 0, audio: null, context: null, slideTimeIndex: [] }
 
-const root = mkdtempSync(join(tmpdir(), 'tw-runs-view-e2e-'))
+await using appScratch = createAppScratch()
+const root = appScratch.root
 const vault = join(root, 'vault'); const ud = join(root, 'userData')
 mkdirSync(join(vault, slug), { recursive: true }); mkdirSync(join(ud, 'recordings'), { recursive: true })
 writeFileSync(join(vault, slug, `${slug}-outline.md`), ['---', `title: ${talkTitle}`, '---', '', '## Talk', '', '### Opening', '{id=opening}', '', 'Welcome.'].join('\n'))
@@ -50,7 +48,7 @@ for (const run of [planned, given, silent]) {
 writeFileSync(join(ud, 'recordings', 'rv-given.webm'), 'mock-webm-data')
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, recordingDiscardMs: 800 }, null, 2))
 
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: process.cwd(), env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }, timeout: 60_000 })
+const app = (await launchApp({ scratch: appScratch, userData: ud, env: { ...process.env, TW_REC_TEST: '1' }, timeout: 60_000 })).app
 try {
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
@@ -123,7 +121,7 @@ try {
     await tools.waitForSelector('[data-tools-view="runs"]', { timeout: 5000 }).catch(() => {})
     rec(`tools.open('${old}') opens the Runs view`, opened.success && await tools.locator('[data-tools-view="runs"]').count() === 1)
   }
-} finally { await app.close().catch(() => {}) }
+} finally { await appScratch.closeApp(app).catch(() => {}) }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
-process.exit(failures ? 1 : 0)
+process.exitCode = failures ? 1 : 0

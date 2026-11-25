@@ -7,17 +7,16 @@
 // the PUT) sends the close at once, closes the sheet, and leaves the talk unshared with no share_url.
 // No production credentials, remote Worker or user vault are used.
 import assert from 'node:assert/strict'
-import { _electron as electron } from 'playwright'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { connect } from 'node:net'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { startLiveWorker } from '../scripts/lib/live-worker-harness.mjs'
 
 const root = process.cwd()
-const scratch = mkdtempSync(join(tmpdir(), 'tw-shared-talk-e2e-'))
+await using appScratch = createAppScratch()
+const scratch = appScratch.root
 const userData = join(scratch, 'userData')
 const vault = join(scratch, 'vault')
 const slug = 'share-probe'
@@ -103,7 +102,6 @@ let app
 let worker
 let proxy
 try {
-  await ensureFreshBuild(root)
   worker = await startLiveWorker()
   proxy = await startHoldingProxy(worker.baseUrl)
   writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'outline', liveWorkerBaseUrl: proxy.baseUrl }))
@@ -112,10 +110,11 @@ try {
     return response.ok ? response.json() : null
   }
 
-  app = await electron.launch({
-    args: ['.', `--user-data-dir=${userData}`], cwd: root,
-    env: { ...process.env, TW_E2E: '1', TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: worker.adminSecret }, // TW_LIVE_LOCAL: a live service on this computer only when asked for (spec D8)
-  })
+  app = (await launchApp({
+    scratch: appScratch,
+    userData,
+    env: { ...process.env, TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: worker.adminSecret },
+  })).app
   await app.evaluate(({ app, BrowserWindow }) => {
     const hide = (win) => { win.setPosition(-20000, -20000); win.hide() }
     BrowserWindow.getAllWindows().forEach(hide)
@@ -253,8 +252,7 @@ try {
   assert.deepEqual(errors, [], 'no renderer errors')
 } finally {
   await app?.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().forEach((win) => win.destroy())).catch(() => {})
-  await app?.close().catch(() => {})
+  await appScratch.closeApp(app).catch(() => {})
   await proxy?.stop()
   await worker?.stop()
-  rmSync(scratch, { recursive: true, force: true })
 }

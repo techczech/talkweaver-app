@@ -3,18 +3,15 @@
 // answered or not) and "Reactions by slide" (each slide's net counts, slides with none left out).
 // Audience text renders as text only. Viewing never rewrites the Run file; an old Run without the
 // fields shows neither section. Isolated temp vault and userData; no network. Screenshots go to
-// TW_SHOTS (default <OS temp>/tw-r06-shots).
+// the disposable fixture. Set TW_SHOTS to retain them at a chosen location.
 // Run: npm run test:run-feedback:e2e
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { testScratchDir } from '../scripts/lib/test-scratch.mjs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 
-const repo = process.cwd()
-const shots = process.env.TW_SHOTS || join(tmpdir(), 'tw-r06-shots')
-const tempRoot = testScratchDir(join(tmpdir(), 'talkweaver-run-feedback-'))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
+const shots = process.env.TW_SHOTS || join(tempRoot, 'shots')
 const vault = join(tempRoot, 'vault')
 const userData = join(tempRoot, 'userData')
 const talkSlug = 'feedback-probe'
@@ -74,8 +71,7 @@ const record = (label, pass, detail = '') => {
 }
 const text = async (locator) => ((await locator.textContent().catch(() => '')) || '').replace(/\s+/g, ' ').trim()
 
-await ensureFreshBuild(repo)
-const app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`], cwd: repo, env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' } })
+const app = (await launchApp({ scratch: appScratch, userData, env: { ...process.env, TW_REC_TEST: '1' } })).app
 try {
   const editor = await app.firstWindow()
   await editor.waitForLoadState('domcontentloaded')
@@ -149,7 +145,7 @@ try {
 
   record('viewing the Run never rewrites it', readFileSync(runPath, 'utf8') === runBytes && readFileSync(oldPath, 'utf8') === oldBytes)
 } finally {
-  await app.close()
+  await appScratch.closeApp(app)
 }
 if (failures) {
   console.error(`Run feedback gate failed: ${failures} assertion${failures === 1 ? '' : 's'}`)

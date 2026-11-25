@@ -1,7 +1,9 @@
-import { _electron as electron } from 'playwright'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, readdirSync, rmSync, chmodSync, existsSync } from 'node:fs'
 import {join,resolve} from 'node:path'
+await using appScratch = createAppScratch()
+
 const repo=resolve(import.meta.dirname,'..')
 const recordEvidence = process.argv.includes('--record-evidence') || process.env.TW_RECORD_EVIDENCE === '1'
 const shots = join(repo, recordEvidence ? 'docs/design/2026-11-10-record-and-edit-video/built/slice-1' : 'artefacts/diagnose-saved-words')
@@ -12,7 +14,7 @@ async function snapshot(page, name) {
  await page.screenshot({path:join(shots,name)})
 }
 for (const scenario of ['ready','video-failed','dismiss','unavailable','retry'].filter(s=>!process.env.TW_SAVED_WORDS_SCENARIO||s===process.env.TW_SAVED_WORDS_SCENARIO)) {
- const root=mkdtempSync(join(repo,'saved-words-')),vault=join(root,'vault'),data=join(root,'data'),talk=join(vault,'fixture'),helper=join(root,'speech'),fail=join(root,'fail')
+ const root=mkdtempSync(join(appScratch.root, 'case-')),vault=join(root,'vault'),data=join(root,'data'),talk=join(vault,'fixture'),helper=join(root,'speech'),fail=join(root,'fail')
  mkdirSync(talk,{recursive:true});mkdirSync(data,{recursive:true})
  const outline=join(talk,'fixture-outline.md'),content='---\ntitle: Saved words\n---\n\n## Talk\n\n### Opening {id=opening}\n\nVoice and slides.\n'
  writeFileSync(outline,content);writeFileSync(join(data,'config.json'),JSON.stringify({vaultRoot:vault,recordingDiscardMs:500}))
@@ -20,7 +22,12 @@ for (const scenario of ['ready','video-failed','dismiss','unavailable','retry'].
  writeFileSync(helper,`#!${process.execPath}\nif(process.argv.includes('--route'))console.log(JSON.stringify({engine:'apple-speech-transcriber',locale:'en-US'}));else{console.error('Preparing this Mac speech model');setTimeout(()=>{if(require('fs').existsSync(${JSON.stringify(fail)}))process.exit(1);console.log(JSON.stringify({engine:'apple-speech-transcriber',locale:'en-US',words:[{text:'Hello.',startMs:0,endMs:700}],segments:[{text:'Hello.',startMs:0,endMs:700}],sentenceEnds:[0],silence:[]}))},2500)}`);chmodSync(helper,0o755)
  let app
  try {
-  app=await electron.launch({cwd:repo,args:['.','--user-data-dir='+data,'--use-fake-device-for-media-stream'],env:{...process.env,TW_E2E:'1',TW_REC_TEST:'1',TW_E2E_SPEECH_HELPER:scenario==='unavailable'?'unavailable':helper}})
+  app=(await launchApp({
+    scratch: appScratch,
+    userData: data,
+    env: { ...process.env, TW_REC_TEST:'1', TW_E2E_SPEECH_HELPER:scenario==='unavailable'?'unavailable':helper },
+    args: ['.', '--use-fake-device-for-media-stream'],
+  })).app
   app.process().stderr.on('data',bytes=>{const note=String(bytes);if(/transcription|speech/i.test(note))console.error(note)})
   const main=await app.firstWindow();await main.waitForLoadState('domcontentloaded');const opened=app.waitForEvent('window');await main.evaluate(({outline,content})=>window.tw.talk.present(outline,content,'presenter'),{outline,content});const page=await opened;page.on('pageerror',error=>console.error('presenter error',error.message))
   await page.waitForSelector('#twrec-primary');await page.evaluate(()=>{window.fixtureWords=[];new MutationObserver(()=>{const text=document.querySelector('#twrec-words')?.textContent;if(text&&window.fixtureWords.at(-1)?.text!==text)window.fixtureWords.push({at:Date.now(),text})}).observe(document.querySelector('#twrec-words'),{childList:true,subtree:true})});await page.locator('#twrec-primary').click();await page.waitForSelector('.twrec-device-check');await page.waitForFunction(()=>!document.querySelector('[data-continue]').disabled);await page.locator('[data-continue]').click();await page.waitForFunction(()=>document.querySelector('#twrec-module').dataset.rec==='recording');await page.waitForTimeout(1800)
@@ -45,6 +52,6 @@ for (const scenario of ['ready','video-failed','dismiss','unavailable','retry'].
   if(scenario!=='dismiss')assert.ok(await page.locator('.twrec-saved-note').evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&r.bottom<=innerHeight}),'saved offer fits the presenter viewport')
   assert.ok(JSON.parse(readFileSync(join(folder,run.id+'.json'))).audio)
   console.log(`PASS ${++count} saved words ${scenario}`)
- }catch(error){if(app){for(const page of app.windows()){console.error('fixture status',scenario,await page.locator('#twrec-words').textContent({timeout:1000}).catch(()=>''),await page.evaluate(()=>window.fixtureWords).catch(()=>[]));await page.screenshot({path:join(shots,'words-failure-'+scenario+'-'+app.windows().indexOf(page)+'.png')}).catch(()=>{})}const folder=join(vault,'_PRESENTATIONS','fixture');console.error('fixture saved files',readdirSync(folder))}throw error}finally{if(app)await app.close();rmSync(root,{recursive:true,force:true})}
+ }catch(error){if(app){for(const page of app.windows()){console.error('fixture status',scenario,await page.locator('#twrec-words').textContent({timeout:1000}).catch(()=>''),await page.evaluate(()=>window.fixtureWords).catch(()=>[]));await page.screenshot({path:join(shots,'words-failure-'+scenario+'-'+app.windows().indexOf(page)+'.png')}).catch(()=>{})}const folder=join(vault,'_PRESENTATIONS','fixture');console.error('fixture saved files',readdirSync(folder))}throw error}finally{if(app)await appScratch.closeApp(app);rmSync(root,{recursive:true,force:true})}
 }
 console.log(`${count} saved words journeys passed`)

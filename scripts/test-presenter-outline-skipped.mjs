@@ -1,14 +1,13 @@
 import assert from 'node:assert/strict'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { writeFile } from 'node:fs/promises'
 import { statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from '../e2e/lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from '../e2e/lib/launch-app.mjs'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 
-const scratch = await mkdtemp(join(tmpdir(), 'talkweaver-outline-skipped-'))
+await using appScratch = createAppScratch()
+const scratch = appScratch.root
 const source = ['---', 'title: Outline skipped filter', 'auto_title_slide: false', 'auto_thanks_slide: false', '---',
   ...Array.from({ length: 8 }, (_, i) => `\n### Slide ${i + 1} {id=slide-${i + 1}}\n\nText ${i + 1}.`)].join('\n')
 const sourcePath = join(scratch, 'outline-skipped.md')
@@ -17,8 +16,7 @@ const model = await prepareSource(sourcePath, source, 'outline-skipped', statSyn
 const htmlPath = join(scratch, 'outline-skipped.html')
 await writeFile(htmlPath, model.fullHtml)
 const repo = fileURLToPath(new URL('..', import.meta.url))
-await ensureFreshBuild(repo)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + join(scratch, 'user-data')], cwd: repo, env: { ...process.env, TW_E2E: '1' } })
+const app = (await launchApp({ scratch: appScratch, userData: join(scratch, 'user-data') })).app
 try {
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
@@ -111,6 +109,5 @@ try {
   assert.match(await list.locator('.current.tw-highlight').innerText(), /Slide 8$/)
   console.log('PASS returning to the full outline resumes current-slide tracking in grid and list views')
 } finally {
-  await app.close()
-  await rm(scratch, { recursive: true, force: true })
+  await appScratch.closeApp(app)
 }

@@ -529,7 +529,7 @@ try {
   // ── the wiring ──
   await test('main: no path crosses; only app windows ask; the trash is shell.trashItem through the harness guard; open windows are named from main’s bookkeeping and none is closed', () => {
     const main = readMainSource()
-    const block = main.slice(main.indexOf('// ── Remove the example vault and bring it back'), main.indexOf("ipcMain.handle('vault:add'"))
+    const block = main.slice(main.indexOf('// ── Remove the example vault and bring it back'), main.indexOf("vaultRegistry.onChange(() =>", main.indexOf("// ── Remove the example vault and bring it back")))
     for (const needle of ["'example:state'", "'example:removal-preview'", "'example:remove'", "'example:restore'", "'example:changed'", 'isAppWindow(event.sender.id)', 'exampleRemoval.preview(event.sender.id)', 'exampleRemoval.remove(token, event.sender.id)', 'resolveExampleTrash(', 'shell.trashItem(path)', 'openWindows: windowsShowingExample', 'windowsOnExample(', 'editorWindows.values()', 'presentWindows.get(id)', 'toolsWindow', 'isHiddenRenderer(id)']) {
       assert.ok(block.includes(needle), needle)
     }

@@ -1,3 +1,4 @@
+import { readIpcRegistration } from '../../lib/read-ipc-registration.mjs'
 import { readMainSource } from '../../lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import {readFileSync} from 'node:fs'
@@ -13,8 +14,8 @@ const receipts=new Map();
 let commitFault=null;
 const env={slidePreviewRequests:new Map(),cancelThumbnailRender(){},cancelEditorThumbnails(){},latestThumbnailRequest:{cancel(){}},movedEditorReceipts:receipts,managementMutations:new Map(),mutationBlocks:()=>false,validMoveReceipt:()=>null,retiredMovePaths:new Map(),outlineRecovery:{save:async()=>{}},talkInfoFor:()=>null,dirname:p=>p,establishedGalleryClaims:established,vaultRegistry:{resolve:()=>commitFault==='unregistered'?null:({vault:{id:'fixture',root:'fixture',open:commitFault!=='closed'}})},vaultAvailability:{isUnavailable:()=>commitFault==='unavailable'},statSync:()=>{if(commitFault==='stat')throw Object.assign(new Error('Root disappeared'),{code:'ENOENT'});return {dev:1,ino:2}},editorWindows:windows,galleryReservations:reservations,galleryClaimEpochs:epochs,openRequests:{claimed(){}},noteAppOpen(){},otherEditorHolding:holding,bringToFront(){},outlineDiskGuard:{release(){}},ipcMain:{handle:(k,v)=>handlers.set(k,v)},createGalleryClaim,resolveGalleryTalk:async(_id,p)=>({outlinePath:p}),watchGallerySender(){}};
 env.abortSlidePreviews = () => {}
-const js=ts.transpileModule(claims+'\n'+gallery,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
-const run=Function(...Object.keys(env),'getEpoch', 'let galleryEpoch=getEpoch();'+js+'; return {setEpoch:e=>galleryEpoch=e}')(...Object.values(env),()=>epoch);
+const js=ts.transpileModule([claims, gallery, readIpcRegistration('vault:gallery-claim'), readIpcRegistration('vault:gallery-settle')].join('\n'),{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.CommonJS}}).outputText;
+const run=Function(...Object.keys(env),'getEpoch', 'let galleryEpoch=getEpoch();const host={get galleryEpoch(){return galleryEpoch}};'+js+'; return {setEpoch:e=>galleryEpoch=e}')(...Object.values(env),()=>epoch);
 const event=id=>{const mainFrame={};return {sender:{id,mainFrame},senderFrame:mainFrame}};
 const claim=(id,p)=>handlers.get('vault:gallery-claim')(event(id),'v',p,epoch);const settle=(id,c)=>handlers.get('vault:gallery-settle')(event(id),c);const ordinary=(id,p)=>handlers.get('window:claim-talk')(event(id),p);
 assert.equal((await claim(1,'B')).ok,true);assert.equal(reservations.get(1),'A');assert.equal(ordinary(2,'A').ok,false);assert.equal(ordinary(1,'C').ok,false,'generic claim must not discard pending reservation');

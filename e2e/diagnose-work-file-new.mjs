@@ -5,20 +5,18 @@
 //   (d) the file shows in the list and opens; a preset fills steps only when chosen;
 //   (e) a title that collides with an existing file is refused with a reason, and nothing is overwritten;
 //   (f) adding a step to the open file bumps its revision on disk.
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { readWorkFile } from '../src/shared/work-file.ts'
 
 const shotsDir = process.env.TW_SHOTS_DIR || ''
 if (shotsDir) mkdirSync(shotsDir, { recursive: true })
 let failures = 0
 const rec = (name, ok, detail) => { if (!ok) failures += 1; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`) }
-await ensureFreshBuild(process.cwd())
 
-const root = mkdtempSync(join(tmpdir(), 'tw-work-file-new-e2e-'))
+await using appScratch = createAppScratch()
+const root = appScratch.root
 const vault = join(root, 'vault'); const ud = join(root, 'userData')
 mkdirSync(join(vault, 'Work files'), { recursive: true }); mkdirSync(ud, { recursive: true })
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
@@ -29,7 +27,7 @@ const dir = join(vault, 'Work files')
 const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 let app
 for (let attempt = 1; attempt <= 3; attempt += 1) {
-  try { app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: process.cwd(), env, timeout: 60_000 }); break }
+  try { app = (await launchApp({ scratch: appScratch, userData: ud, env, timeout: 60_000 })).app; break }
   catch (error) { if (attempt === 3) throw error; await new Promise((r) => setTimeout(r, 15_000)) }
 }
 try {
@@ -106,7 +104,7 @@ try {
     await tools.waitForTimeout(800)
     return !existsSync(join(root, 'outside.md')) && !existsSync(join(vault, 'outside.md'))
   })())
-} finally { await app.close().catch(() => {}) }
+} finally { await appScratch.closeApp(app).catch(() => {}) }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
-process.exit(failures ? 1 : 0)
+process.exitCode = failures ? 1 : 0

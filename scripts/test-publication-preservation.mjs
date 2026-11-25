@@ -3,6 +3,7 @@ import { publicationOutcome } from '../src/main/publication-preservation.ts'
 import { readPublishingInventory } from '../src/main/publishing-inventory.ts'
 import ts from 'typescript'
 import { LiveServiceError } from '../src/main/live-service-deploy.ts'
+import childProcess from 'node:child_process'
 import policyPromises from 'node:fs/promises'
 import policyFs, { symlinkSync } from 'node:fs'
 import { syncBuiltinESMExports } from 'node:module'
@@ -17,6 +18,40 @@ import { createFakeCloudflare, fakeCloudflareFetch, pagesFileHash, startCloudfla
 import { loadWranglerBlake3, pagesAssetHash } from '../src/main/pages-direct-upload.ts'
 import { NO_PRODUCTION_REVISION } from '../src/main/publishing-inventory.ts'
 import { wranglerContentType, writePublicationRecord } from './lib/publishing-fakes.mjs'
+
+test('cold Windows process identity can outlast the former 15-second deadline', async t => {
+  const { beginPublication: beginColdPublication } = await import('../src/main/publication-preservation.ts?cold-windows-identity')
+  const storageRoot = mkdtempSync(join(tmpdir(), 'tw-policy-'))
+  t.after(() => rmSync(storageRoot, { recursive: true, force: true }))
+  const site = 'cf-pages:cold-windows-identity'
+  const lock = join(storageRoot, publicationBinding(site) + '.lock')
+  const started = '2026-11-25T04:03:22.7248890Z'
+  const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+  const inspect = t.mock.method(childProcess, 'execFile', (_command, _args, options, callback) => {
+    // Model the subprocess deadline without sleeping on the test runner.
+    if (options.timeout < 16_000) callback(Object.assign(new Error('timed out'), { killed: true, signal: 'SIGTERM' }), '')
+    else callback(null, started + '\n')
+  })
+  Object.defineProperty(process, 'platform', { ...platform, value: 'win32' })
+  syncBuiltinESMExports()
+  try {
+    const options = { site, storageRoot, candidateDigest: null, binding: () => 'same', approvedBinding: 'same',
+      inventory: async () => ({ complete: true, site, revision: 'baseline', paths: [] }) }
+    const attempt = await beginColdPublication(options)
+    try {
+      assert.equal(JSON.parse(readFileSync(join(lock, 'owner.json'), 'utf8')).started, started)
+      await assert.rejects(beginColdPublication(options), { reason: 'PUBLISH_BUSY' })
+    } finally { attempt.close() }
+    assert.equal(existsSync(lock), false)
+    const next = await beginColdPublication(options)
+    next.close()
+    assert.equal(inspect.mock.callCount(), 1, 'later attempts use the verified process identity')
+  } finally {
+    Object.defineProperty(process, 'platform', platform)
+    inspect.mock.restore()
+    syncBuiltinESMExports()
+  }
+})
 
 // Per-talk publishing: the service merges one change into the live
 // manifest and sends it with Cloudflare's API. These fixtures give it the fake Cloudflare model in memory

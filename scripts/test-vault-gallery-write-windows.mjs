@@ -4,6 +4,7 @@
 // and rendering, an editor window's buffer, and each swap, which stands for another local process acting at a fixed
 // moment. A swap is snapshotted as it happens, so "the disk did not change" means nothing was written after it.
 // Every fixture lives under one per-run folder in the checkout, ignored by Git and removed in finally.
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
 import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
@@ -30,11 +31,6 @@ const fnSource = (name) => {
   const start = source.search(new RegExp(`^(async )?function ${name}\\(`, 'm'))
   assert.ok(start >= 0, `function ${name} is in index.ts`)
   return source.slice(start, source.indexOf('\n}\n', start) + 3)
-}
-const handlerSource = (name) => {
-  const start = source.indexOf(`ipcMain.handle('${name}'`)
-  assert.ok(start >= 0, `handler ${name} is in index.ts`)
-  return source.slice(start, source.indexOf('\n})', start) + 3)
 }
 
 const OUTLINE = (title) => `---\ntitle: ${title}\nhandout_url: https://fixture.invalid/x\n---\n\n## One\n\nBody of ${title}\n`
@@ -108,7 +104,7 @@ function loadHandlers(fixture, hooks = {}) {
     'mkdirInVault', 'vaultRel', 'otherEditorUnder', 'slugifyTalk', 'renameSlugFiles', 'retitleOutline', 'stripPublishedFields', 'findOutlineIn', 'talkInfoFor', 'transferMovedEditor']) {
     vm.runInContext(code(fnSource(name)), context)
   }
-  for (const name of ['clone-talk', 'rename-talk', 'move-talk', 'delete-talk']) vm.runInContext(code(handlerSource(`vault:${name}`)), context)
+  for (const name of ['clone-talk', 'rename-talk', 'move-talk', 'delete-talk']) vm.runInContext(code(readIpcRegistration(`vault:${name}`)), context)
   const event = { sender: { id: 1 } }
   return { call: (name, ...args) => handlers.get(`vault:${name}`)(event, ...args), trash, invalidated, context }
 }

@@ -7,6 +7,7 @@
 export type EditorDocumentRequestBody =
   | { kind: 'research-insert'; outlinePath: string; file: string; slide: boolean }
   | { kind: 'read'; outlinePath: string }
+  | { kind: 'slide-merge'; outlinePath: string; base: string; next: string; generation: string }
   | { kind: 'apply'; outlinePath: string; base: string; next: string; origin?: string }
 export type EditorDocumentRequest = EditorDocumentRequestBody & { requestId: string }
 // `text` on an ok reply: for `read`, the buffer; for `apply`, the exact text the editor's save wrote

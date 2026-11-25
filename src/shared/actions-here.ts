@@ -115,6 +115,7 @@ export interface ActionsContext {
   vault?: VaultState
   /** The slide at the caret (or the selected strip slide) is a quote slide; the Quote form commands are offered only then. */
   quoteSlide?: boolean
+  fileVideo?: boolean
 }
 
 export interface ActionGroup {
@@ -181,6 +182,9 @@ export function actionRowsAt(place: Place, context: ActionsContext = {}, registr
     // The Quote form commands: a quote slide's own rows, at the slide-wide places, after the drawn rows of their group.
     ...(context.quoteSlide === true && QUOTE_FORM_PLACES.includes(place)
       ? registry.filter((command) => (QUOTE_FORM_COMMAND_IDS as readonly string[]).includes(command.id)).map((command, order) => ({ row: rowOfCommand(command, false), rank: 0.5, order }))
+      : []),
+    ...(context.fileVideo && QUOTE_FORM_PLACES.includes(place)
+      ? registry.filter(command => command.id === 'video-marker-add').map(command => ({ row: rowOfCommand(command, false), rank: 0.5, order: 0 }))
       : []),
     // Move slide to… / Move section to…: after the drawn rows of Outlining, on a slide.
     ...(!ownRowsOnly && MOVE_TO_PLACES.includes(place)

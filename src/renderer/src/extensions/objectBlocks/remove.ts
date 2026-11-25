@@ -9,6 +9,8 @@
 // line goes (and the lines between it and the list, which are blank); on a line it shares with other
 // tokens (the slide's id, a layout line under the title) only that token goes and the rest of the line
 // stays as it was.
+import { closedHtmlComments } from '../../../../../compiler/scripts/lib/outline-regions.mjs'
+import type { AuthoredVideo } from '../../../../shared/video-marker-edits.ts'
 import { isolateHistory } from '@codemirror/commands'
 import type { EditorView } from '@codemirror/view'
 import { locateCard, planCardRemoval } from '../../../../shared/objects/card-actions.ts'
@@ -18,7 +20,7 @@ import { minimalChange } from '../../lib/minimalChange.ts'
 import { detectObjectBlocks, type ObjectBlock } from './detect.ts'
 import { exactTextWrite } from './effects.ts'
 
-type RemovableObject = Pick<ObjectBlock, 'from' | 'to' | 'source'>
+type RemovableObject = Pick<ObjectBlock, 'from' | 'to' | 'source' | 'video'>
 type Edit = { from: number; to: number; insert: string }
 
 export type ObjectRemovalPlan =
@@ -54,14 +56,35 @@ export function lineWithoutTriggerToken(line: string, token: string): string | n
   return rest.trim() === '' ? '' : rest
 }
 
+function markedVideoRemoval(card: RemovableObject, video: AuthoredVideo): ObjectRemovalPlan {
+  const markerLines = new Set(video.markers.map(marker => marker.line - video.line))
+  const last = video.markers.at(-1)!.line - video.line
+  const lines = card.source.split('\n')
+  const comments = closedHtmlComments(card.source)
+  const changes: Edit[] = []
+  let from = 0
+  for (let index = 0; index <= last; index += 1) {
+    const line = lines[index]
+    const to = Math.min(card.source.length, from + line.length + 1)
+    // A blank line inside a multiline comment is part of the comment's bytes.
+    const blankBetween = !line.trim() && !comments.some(comment => from < comment.to && to > comment.from)
+    if (index === 0 || markerLines.has(index) || blankBetween) {
+      changes.push({ from: card.from + from, to: card.from + to, insert: '' })
+    }
+    from = to
+  }
+  return { ok: true, changes, caret: card.from }
+}
+
 /** The changes that delete `block` from `text`: its lines, and its trigger token when it has one. */
 export function planObjectRemoval(text: string, block: RemovableObject): ObjectRemovalPlan {
   const body = planCardRemoval(text, block)
   if (!body.ok) return body
-  // Where the object is now (the planner found it, so this does too).
   const at = locateCard(text, block) ?? block
-  // The trigger as the text reads now (the caller's copy of the object may be older than the text).
+  // Read the object's current ownership from the outline, including a card that moved.
   const current = detectObjectBlocks(text).find((candidate) => candidate.from === at.from && candidate.to === at.to)
+  if (current?.video?.markers.length) return markedVideoRemoval(at, current.video)
+  if (block.video?.markers.length) return { ok: false, reason: 'The video or its markers changed. Try again.' }
   if (!current?.triggerLine || !current.triggerToken) return { ok: true, changes: [body.change], caret: body.change.from }
   const lines = text.split('\n')
   const index = current.triggerLine - 1

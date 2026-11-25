@@ -1,12 +1,10 @@
 // Real-Electron harness for the Settings window (⌘,): the Shortcuts page + live shortcut customisation in the editor.
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { openSettingsWindow, closeSettingsWindow, findSettingsWindow } from './lib/settings-window.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempDisposableSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdirSync, writeFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -19,8 +17,8 @@ function record(name, pass, detail) {
 
 const FIX = ['---', 'title: Settings Fixture', '---', '', '### Slide', '', 'Bold me line', ''].join('\n')
 
-using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-set-'))
-const tempRoot = fixture.path
+await using fixture = createAppScratch()
+const tempRoot = fixture.root
 const vault = join(tempRoot, 'vault')
 const ud = join(tempRoot, 'userData')
 const td = join(vault, 'settings-fixture')
@@ -28,9 +26,7 @@ mkdirSync(td, { recursive: true }); mkdirSync(ud, { recursive: true })
 writeFileSync(join(td, 'settings-fixture-outline.md'), FIX)
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
 
-await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--use-mock-keychain', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
-const page = await app.firstWindow()
+const { app, page } = await launchApp({ scratch: fixture, userData: ud, args: ['.', '--use-mock-keychain'] })
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
 
@@ -102,7 +98,7 @@ try {
   const failed = results.filter((r) => !r.pass)
   const pid = app.process().pid
   console.log(`\n=== SETTINGS SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
-  await Promise.race([app.close().catch(() => {}), new Promise((r) => setTimeout(r, 8000))])
+  await Promise.race([fixture.closeApp(app).catch(() => {}), new Promise((r) => setTimeout(r, 8000))])
   try { process.kill(pid) } catch { /* gone */ }
   process.exitCode = failed.length === 0 ? 0 : 1
 }

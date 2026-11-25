@@ -19,13 +19,11 @@
 //                   it is scanned then.
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && TW_E2E=1 node e2e/diagnose-conflict-copies.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join, relative } from 'path'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, statSync, symlinkSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -59,7 +57,8 @@ function snap(root) {
   return out
 }
 
-const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), 'tw-e2e-conflicts-')))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const personal = join(tempRoot, 'Personal')
 const closed = join(tempRoot, 'Closed')
 const away = join(tempRoot, 'Away')
@@ -110,9 +109,7 @@ writeFileSync(join(userData, 'config.json'), JSON.stringify({
 const personalBefore = snap(personal)
 const closedBefore = snap(closed)
 
-await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userData], cwd: REPO, env: { ...process.env, TW_E2E: '1', TW_E2E_TRASH_DIR: trash } })
-const page = await app.firstWindow()
+const { app, page } = await launchApp({ scratch: appScratch, userData, env: { ...process.env, TW_E2E_TRASH_DIR: trash } })
 await page.waitForLoadState('domcontentloaded')
 await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
 await page.waitForTimeout(1200)
@@ -220,11 +217,15 @@ try {
   const linkedBadge = await until(async () => (await chip('Linked talk').count()) === 1 && await pill.isVisible(), folderEventTimeout)
   record('symlinked vault: a differing copy that arrives while the talk is open raises the badge', linkedBadge)
   record('…and the status bar pill', (await page.locator('.tw-status-conflict').innerText().catch(() => '')) === '1 conflict copy · Compare…')
-  writeFileSync(join(linkedReal, 'linked-talk', 'linked-talk-outline-MacBook-Air.md'), linkedTalk.text)
+  const linkedCopy = join(linkedReal, 'linked-talk', 'linked-talk-outline-MacBook-Air.md')
+  const linkedActivity = activityFile('vault-linked', 'linked-talk')
+  const linkedCanonicalMatched = readFileSync(linkedTalk.outlinePath, 'utf8') === linkedTalk.text
+  writeFileSync(linkedCopy, linkedTalk.text)
   const linkedGone = await until(() =>
     trashed().some((n) => n.endsWith('linked-talk-outline-MacBook-Air.md')) &&
-    existsSync(activityFile('vault-linked', 'linked-talk')), folderEventTimeout)
-  record('symlinked vault: an identical copy that arrives is trashed, with an Activity line', linkedGone)
+    existsSync(linkedActivity), folderEventTimeout)
+  record('symlinked vault: an identical copy that arrives is trashed, with an Activity line', linkedGone,
+    `copy still present=${existsSync(linkedCopy)}, canonical matched when copied=${linkedCanonicalMatched}, canonical matches now=${readFileSync(linkedTalk.outlinePath, 'utf8') === linkedTalk.text}, Activity=${existsSync(linkedActivity)}, status=${await pill.innerText({ timeout: 1000 }).catch(() => 'none')}`)
 
   // ── (E) the unavailable vault comes back: now it is scanned ──
   renameSync(awayMoved, away)
@@ -235,9 +236,9 @@ try {
 } catch (error) {
   record('harness ran to the end', false, error?.stack ?? String(error))
 } finally {
-  await app.close().catch(() => {})
+  await appScratch.closeApp(app).catch(() => {})
 }
 
 const failed = results.filter((r) => !r.pass)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)
-process.exit(failed.length ? 1 : 0)
+process.exitCode = failed.length ? 1 : 0

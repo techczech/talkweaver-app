@@ -26,11 +26,11 @@ import { closeSettingsWindow, findSettingsWindow, gotoSection } from './lib/sett
 //
 // TW_SHOTS_DIR=<dir> saves pictures of each stage.
 // Run: npm run test:core-journey:e2e
-import { _electron as electron, chromium } from 'playwright'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { chromium } from 'playwright'
+import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { extname, join, relative, resolve } from 'node:path'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { PRE_WORK, TASK_PICTURE } from '../scripts/lib/work-page-fixture.mjs'
@@ -39,10 +39,10 @@ import { startLiveWorker } from '../scripts/lib/live-worker-harness.mjs'
 import { appWrittenLoopback } from '../src/main/handout-publishing.ts'
 import { loadWranglerBlake3, pagesAssetHash } from '../src/main/pages-direct-upload.ts'
 import { SITE_RECORD_PATH, serialiseSiteRecord } from '../src/main/site-record.ts'
-import { testProfileEnv } from './lib/test-profile.mjs'
 
 const root = process.cwd()
-const scratch = mkdtempSync(join(tmpdir(), 'tw-core-journey-'))
+await using appScratch = createAppScratch()
+const scratch = appScratch.root
 const userData = join(scratch, 'userData')
 const vault = join(scratch, 'vault')
 const site = join(userData, 'cloudflare-pages-site')
@@ -138,7 +138,6 @@ let browser
 let output = ''
 let exitCode = 1
 try {
-  await ensureFreshBuild(root)
   api = await startCloudflareApiStub({
     sites: [], accounts: [ADA], accountSites: { [ADA.id]: [SITE] },
     tokens: { [TOKEN]: { accounts: [ADA.id] } },
@@ -150,12 +149,12 @@ try {
 
   // Only what the app needs from this shell: no credential of the person running the test goes in.
   // No TW_LIVE_LOCAL and no TW_REC_TEST: the publish is the real one, as in an installed app.
-  const env = { TW_E2E: '1', ...testProfileEnv(userData), TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl, TW_SHIM_HOST: LIVE_HOST, TW_SHIM_BASE: worker.baseUrl, TW_SHIM_ADMIN: worker.adminSecret }
+  const env = { TW_E2E_CLOUDFLARE_API_BASE_URL: api.baseUrl, TW_SHIM_HOST: LIVE_HOST, TW_SHIM_BASE: worker.baseUrl, TW_SHIM_ADMIN: worker.adminSecret }
   for (const name of ['PATH', 'HOME', 'USER', 'LOGNAME', 'TMPDIR', 'LANG', 'SHELL', 'DISPLAY', 'SystemRoot', 'SYSTEMROOT', 'windir', 'TEMP', 'TMP', 'USERPROFILE', 'APPDATA', 'LOCALAPPDATA', 'USERNAME', 'PATHEXT', 'ComSpec']) {
     if (process.env[name] !== undefined) env[name] = process.env[name]
   }
   for (let attempt = 1; attempt <= 3 && !app; attempt += 1) {
-    try { app = await electron.launch({ args: ['-r', join(root, 'e2e/lib/local-live-address-shim.cjs'), '.', `--user-data-dir=${userData}`], cwd: root, env, timeout: 60_000 }) }
+    try { app = (await launchApp({ scratch: appScratch, userData, env, timeout: 60_000, args: ['-r', join(root, 'e2e/lib/local-live-address-shim.cjs'), '.'] })).app }
     catch (error) { if (attempt === 3) throw error; await new Promise((r) => setTimeout(r, 15_000)) }
   }
   app.process().stdout.on('data', (chunk) => { output += chunk })
@@ -440,10 +439,9 @@ try {
 } finally {
   const pid = app?.process().pid
   await browser?.close().catch(() => {})
-  try { await app?.close() } catch { /* already closed */ }
+  try { await appScratch.closeApp(app) } catch { /* already closed */ }
   if (pid) { try { process.kill(pid) } catch { /* gone, as it should be */ } }
   await worker?.stop().catch(() => {})
   await api?.close().catch(() => {})
-  rmSync(scratch, { recursive: true, force: true, maxRetries: 3 })
 }
-process.exit(exitCode)
+process.exitCode = exitCode

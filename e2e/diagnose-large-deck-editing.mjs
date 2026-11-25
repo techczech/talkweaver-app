@@ -1,11 +1,9 @@
 import assert from 'node:assert/strict'
-import { _electron as electron } from 'playwright'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
-import { scratchVault } from './lib/scratch-vault.mjs'
 import { join } from 'node:path'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
-using fixture = scratchVault('tw-large-edit-')
+await using fixture = createAppScratch()
 const root = fixture.root
 const ud = join(root, 'userData'), vault = join(root, 'vault'), dir = join(vault, 'large')
 mkdirSync(ud, {recursive:true}); mkdirSync(dir, {recursive:true})
@@ -13,9 +11,7 @@ const path = join(dir, 'large-outline.md')
 const source = '---\noutline_version: 2\ntitle: Large deck\n---\n\n' + Array.from({length:160},(_,i)=>`### Slide ${i} {#slide-${i}}\n\nBody ${i}\n`).join('\n')
 writeFileSync(path, source)
 writeFileSync(join(ud, 'config.json'), JSON.stringify({vaultRoot:vault,openInView:'outline'}))
-await ensureFreshBuild(process.cwd())
-await using app = await electron.launch({args:['.', '--user-data-dir='+ud, '--use-mock-keychain'], cwd:process.cwd(), env:{...process.env,TW_E2E:'1'}})
-const page = await app.firstWindow()
+const { app, page } = await launchApp({ scratch: fixture, userData: ud, args: ['.', '--use-mock-keychain'] })
 await page.waitForLoadState('domcontentloaded')
 const round = async text => page.evaluate(async ({path,text})=> {
   const start=performance.now()

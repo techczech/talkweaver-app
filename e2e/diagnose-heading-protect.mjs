@@ -8,13 +8,11 @@
 //   • Re-levelling (⌘⇧→) and ordinary title editing are unaffected.
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-heading-protect.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, writeFileSync } from 'fs'
-import { scratchVault } from './lib/scratch-vault.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -54,7 +52,7 @@ const FIX = [
   ''
 ].join('\n')
 
-using fixture = scratchVault('tw-e2e-hp-')
+await using fixture = createAppScratch()
 const tempRoot = fixture.root
 const tempVault = join(tempRoot, 'vault')
 const userDataDir = join(tempRoot, 'userData')
@@ -68,9 +66,7 @@ const fxPath = join(fxDir, 'hp-fixture-outline.md')
 writeFileSync(fxPath, FIX)
 writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault, openInView: 'markdown' }, null, 2))
 
-await ensureFreshBuild(REPO)
-await using app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir, '--use-mock-keychain'], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
-const page = await app.firstWindow()
+const { app, page } = await launchApp({ scratch: fixture, userData: userDataDir, args: ['.', '--use-mock-keychain'] })
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
 

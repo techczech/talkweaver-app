@@ -1,4 +1,5 @@
 // Execute the actual main-process cancellation and confirm-close routes without Electron.
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
 import { functionBody, readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { EventEmitter } from 'node:events'
@@ -11,7 +12,7 @@ import { createQuitSequence } from '../src/main/quit-sequence.ts'
 
 const source = readMainSource()
 const attemptCode = source.slice(source.indexOf('let quitAttempt:'), source.indexOf('function holdRenderHelpers()'))
-const confirmCode = source.slice(source.indexOf("ipcMain.handle('window:confirm-close'"), source.indexOf('// Insert section (talk search 07'))
+const confirmCode = readIpcRegistration('window:confirm-close')
 const quitCode = ['recordQuitAttempt', 'captureQuitVeto'].map(name => functionBody(source, name)).join('\n')
 let passed = 0
 async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name) }
@@ -33,7 +34,7 @@ function harness() {
     const quitSequence = createQuitSequence(app, (_name, error) => { throw error }, captureQuitVeto)
     quitSequence.add({ name: 'Record quit attempt', stage: 'before-quit', timeoutMs: 0, run: recordQuitAttempt })
   `
-  const api = new Function(...Object.keys(deps), stripTypeScriptTypes(boot + attemptCode + confirmCode + quitCode) +
+  const api = new Function(...Object.keys(deps), stripTypeScriptTypes([boot, attemptCode, confirmCode, quitCode].join('\n')) +
     '; return { beginQuitAttempt, cancelQuitAttempt, editorQuitAttempts, active: () => quitAttempt }')(...Object.values(deps))
   return { ...api, app, sent, editorWindows, editorSketchDrafts, checkedOutlineRevisions, held: () => held, releases: () => releases,
     confirm: (id = 1) => confirm({ sender: { id } }, { quit: true, revision: 1 }) }

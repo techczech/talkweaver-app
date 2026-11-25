@@ -12,6 +12,7 @@
     "test:command-task-menus",
     "test:object-removal",
     "test:video-playback",
+    "test:video-markers",
     "test:agent-skill",
     "test:section-colours",
     "test:consistency-words",
@@ -68,6 +69,7 @@
     "test:live-service-keys",
     "test:live-ipc",
     "test:preferences-ipc",
+    "test:editor-file-ipc",
     "test:worker-dist",
     "test:secrets-store",
     "test:atomic-file",
@@ -476,6 +478,9 @@
     "test:save-tidy-up-after-undo-dom",
     "test:slide-text-panel:dom",
     "test:redesign-right-panel-dom",
+    "test:video-markers-dom",
+    "test:video-markers-presenter-dom",
+    "test:list-layout-suggestions-dom",
     "test:notes-in-place:dom",
     "test:outline-preview-dom",
     "test:sidebar-current-slide-dom",
@@ -658,12 +663,13 @@
     "test:typeface-widths"
   ],
   "prDom": {
-    "ubuntuExclusions": {
-      "test:presenter-teleprompter": "Linux font metrics differ. Covered by the nightly Studio DOM tier.",
-      "test:ocean-look-dom": "Linux font metrics differ. Covered by the nightly Studio DOM tier.",
-      "test:section-colours-views-dom": "Linux font metrics differ. Covered by the nightly Studio DOM tier.",
-      "test:ocean-loop-and-many-items": "Linux font metrics differ. Covered by the nightly Studio DOM tier."
-    },
+    "coreFonts": [
+      "test:presenter-teleprompter",
+      "test:ocean-look-dom",
+      "test:section-colours-views-dom",
+      "test:ocean-loop-and-many-items",
+      "test:typeface-widths"
+    ],
     "shards": {
       "test:object-gap-entry-points:dom": [
         "test:object-gap-entry-points:dom:shard-1",
@@ -1003,6 +1009,8 @@
     "test:outline-disk-guard:e2e",
     "test:large-deck:e2e",
     "test:audience-widgets:e2e",
+    "test:slide-video-seek:e2e",
+    "test:video-markers-presenter:e2e",
     "test:board-panel:e2e",
     "test:browser-thumbnails:e2e",
     "test:conflict-copies:e2e",

@@ -1,3 +1,4 @@
+import { readVideoMarker } from "./video-markers.mjs";
 // Saved views of a live web page, as SLIDE MARKUP: the one definition the compiler's lexer, the
 // editor's inspector and the capture writer's outline edit share (owner request 2026-10-27:
 // "insert the screenshots in the slide with markup to show that they're capture alternatives").
@@ -57,11 +58,12 @@ export function isCaptureViewsMarker(line) {
 export function blankHtmlCommentsKeepingCaptureMarkers(text) {
   const source = String(text ?? "");
   return source.replace(/<!--[\s\S]*?-->/g, (m, at) => {
-    if (m === CAPTURE_VIEWS_MARKER) {
+    if (!m.includes("\n")) {
       const start = source.lastIndexOf("\n", at - 1) + 1;
       const nl = source.indexOf("\n", at);
-      const line = source.slice(start, nl < 0 ? source.length : nl);
-      if (line.replace(/\r$/, "").trim() === CAPTURE_VIEWS_MARKER) return m;
+      const line = source.slice(start, nl < 0 ? source.length : nl).trim();
+      // A video marker name is plain text, including a literal comment on that line.
+      if (line === CAPTURE_VIEWS_MARKER || readVideoMarker(line)) return m;
     }
     return m.replace(/[^\n]/g, "");
   });

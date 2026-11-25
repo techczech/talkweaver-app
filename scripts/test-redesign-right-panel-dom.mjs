@@ -6,18 +6,21 @@ import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { chromium } from 'playwright'
+import { markSlidePreviewHtml } from '../src/shared/slide-preview.ts'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildPerSlideProjections } from '../compiler/scripts/lib/10-projections.mjs'
 import { normalizePositions } from '../src/shared/outline-normalize.ts'
+import { measureLayoutPreview } from '../src/shared/layout-preview-measurement.ts'
 import { preferredIdsFromText, stampMissingIds } from '../compiler/scripts/lib/12-outline-edit.mjs'
 
 const root = join(import.meta.dirname, '..')
 const polish = process.argv.includes('--polish')
+const videoMarkers = process.argv.includes('--video-markers')
 const slideText = process.argv.includes('--slide-text')
 const notes = process.argv.includes('--notes')
 const outlinePreview = process.argv.includes('--outline-preview')
 const sidebarFollow = process.argv.includes('--sidebar-follow')
-const checkResearch = !polish && !slideText && !notes && !outlinePreview && !sidebarFollow
+const checkResearch = !videoMarkers && !polish && !slideText && !notes && !outlinePreview && !sidebarFollow
 const scratch = mkdtempSync(join(tmpdir(), 'tw-right-panel-dom-'))
 const outline = join(scratch, 'garden-outline.md')
 const followTitle = number => ({
@@ -34,7 +37,12 @@ const followSlides = Array.from({ length: 50 }, (_, i) => {
 const source = sidebarFollow ? [
   '---\noutline_version: 2\ntitle: Garden meeting\nauto_title_slide: false\nauto_thanks_slide: false\n---\n\n',
   ...followSlides
-].join('') : (slideText ? [
+].join('') : (videoMarkers ? [
+  '---', 'outline_version: 2', 'title: Community garden update', 'auto_title_slide: false', 'auto_thanks_slide: false', '---',
+  '', '### How the watering rota works', '{id=watering}', '',
+  '![Watering rota demo](watering-rota-demo.webm)', '', '### Three priorities', '{id=priorities}', '',
+  'Set the watering rota.', '[Marker: 0:04 Orphan]', ''
+] : slideText ? [
   '---', 'outline_version: 2', 'title: Slide text fixture', 'auto_title_slide: false', 'auto_thanks_slide: false', '---',
   '', '### A definition', '{layout=statement}{id=sample-statement}', '',
   'An agent uses tools in a loop.', '',
@@ -71,6 +79,8 @@ const source = sidebarFollow ? [
 writeFileSync(outline, source)
 copyFileSync(join(root, 'demo-vault/layout-sampler/assets/sample-image.png'), join(scratch, 'beds.png'))
 
+if (videoMarkers) copyFileSync(join(root, 'e2e/fixtures/video-playback-12s.webm'), join(scratch, 'watering-rota-demo.webm'))
+
 let browser
 try {
   await build({
@@ -101,7 +111,7 @@ ${publish}`) }
 import React, { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { EditorView } from '@codemirror/view'
-import { GalleryThumbnails, Library, ListTree } from 'lucide-react'
+import { GalleryThumbnails, LayoutGrid, Library, ListTree, Route } from 'lucide-react'
 import { installMock } from './src/renderer/src/tw-mock.ts'
 import WorkspaceLayout from './src/renderer/src/components/WorkspaceLayout.tsx'
 import WelcomeTalk from './src/renderer/src/components/WelcomeTalk.tsx'
@@ -130,9 +140,9 @@ Object.assign(window.tw.talk, {
   },
   // This fixture tests the workspace UI without launching the native thumbnail renderer.
   thumbnails: async () => null,
-  layoutVariantThumbnail: async (_path, text, _slide, _layout, _width, key) => {
+  layoutVariantThumbnail: async (_path, text, _slide, _layout, _width, key, _batch, check) => {
     if (key?.startsWith('panel:title-')) (window.titleVariantInputs ??= {})[key] = text
-    return key?.startsWith('panel:picture:') ? { status: 'ok', slideId: 'p3', url: new URL('beds.png', location.href).href, cached: false } : null
+    return check || key?.startsWith('panel:picture:') ? { status: 'ok', slideId: 'p3', url: new URL('beds.png', location.href).href, cached: false } : null
   },
   onOutlineChangedOnDisk: empty,
 })
@@ -163,25 +173,29 @@ window.centerFixtureCaret = () => {
   const view = window.editorView()
   view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head, { y: 'center' }) })
 }
-function Fixture({ path, outlinePath, polish, slideText, outlinePreview, checkResearch }) {
+function Fixture({ path, outlinePath, polish, slideText, videoMarkers, outlinePreview, checkResearch }) {
   const [hasTalk, setHasTalk] = useState(!checkResearch)
   const [outlineHost, setOutlineHost] = useState(null)
   const [slidesPanelView, setSlidesPanelView] = useState(outlinePreview ? 'previews' : 'outline')
   const [slideTabView, setSlideTabView] = useState('pages')
   const welcomeSearchRef = useRef(null)
-  const talk = { name: 'Garden', path, outlinePath, slug: 'garden', title: 'Garden meeting', vaultId: 'fixture' }
+  const talk = { name: 'Garden', path, outlinePath, slug: 'garden', title: videoMarkers ? 'Community garden update' : 'Garden meeting', vaultId: 'fixture' }
   return <div className="app-shell">
+    {videoMarkers && <aside ref={setOutlineHost} style={{ width: "clamp(85px, 15vw, 230px)", minWidth: 0 }} />}
     {(polish || slideText) && <div ref={setOutlineHost} style={{ flex: "0 0 190px", minWidth: 0 }} />}
     {outlinePreview && <aside className="sidebar-wrap" data-slides-mode={slidesPanelView} style={{ width: 262, '--sidebar-width': '262px' }}>
       <div className="sidebar-modebar">
         <div className="sidebar-modes">
           <button className="sidebar-mode-btn sidebar-mode-btn--active"><GalleryThumbnails size={15} /><span>Slides</span></button>
           <button className="sidebar-mode-btn"><Library size={15} /><span>Talks</span></button>
+          <button className="sidebar-mode-btn"><Route size={15} /><span>Pathways</span></button>
         </div>
         <div className="tw-slides-switch" role="group" aria-label="Show slides as">
           <button aria-label="Show slides as previews" aria-pressed={slidesPanelView === 'previews'} onClick={() => setSlidesPanelView('previews')}><GalleryThumbnails size={15} /></button>
           <button aria-label="Show slides as an outline" aria-pressed={slidesPanelView === 'outline'} onClick={() => setSlidesPanelView('outline')}><ListTree size={15} /></button>
         </div>
+        <button className="icon-btn vault-gallery-entry" aria-label="Vault Gallery"><LayoutGrid size={15} /></button>
+        <button className="icon-btn" data-sidebar-collapse aria-label="Hide sidebar">⟨</button>
       </div>
       <div className="sidebar-nav-body" ref={setOutlineHost} />
     </aside>}
@@ -223,14 +237,14 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     buildPerSlideProjections(await prepareSource(outline, text, 'Garden meeting', statSync(outline)), 'garden'))
   let renderSequence = 0
   await page.exposeFunction('renderFixture', async text => {
-    if (!slideText && !notes && !outlinePreview && !/image=above|table-bands=on|id=title-loop/.test(text)) return 'about:blank'
+    if (!videoMarkers && !slideText && !notes && !outlinePreview && !/image=above|table-bands=on|id=title-loop|\{[^}]*\bannotated\b/.test(text)) return 'about:blank'
     const model = await prepareSource(outline, text, 'Garden meeting', statSync(outline))
     const file = join(scratch, `preview-${++renderSequence}.html`)
-    writeFileSync(file, model.fullHtml)
+    writeFileSync(file, videoMarkers ? markSlidePreviewHtml(model.fullHtml) : model.fullHtml)
     return pathToFileURL(file).href
   })
   await page.goto(pathToFileURL(html).href)
-  const props = { path: scratch, outlinePath: outline, polish, slideText, outlinePreview: outlinePreview || sidebarFollow, checkResearch }
+  const props = { path: scratch, outlinePath: outline, polish, slideText, videoMarkers, outlinePreview: outlinePreview || sidebarFollow, checkResearch }
   await page.evaluate(props => window.mountFixture(props), props)
 
   if (checkResearch) {
@@ -265,7 +279,185 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     console.log('Research is absent on the welcome screen and opens with a talk via the shortcut, sidebar and palette.')
   }
 
-  if (slideText) {
+  if (videoMarkers) {
+    const sourceLine = '![Watering rota demo](watering-rota-demo.webm)'
+    const command = detail => page.evaluate(detail => window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail })), detail)
+    const waitForText = text => page.waitForFunction(expected => window.editorView()?.state.doc.toString() === expected, text)
+    await command('view-slides')
+    await command('view-slide-panel')
+    const stage = page.frameLocator('.workspace-slide-stage iframe')
+    const player = stage.locator('.slide.active video')
+    await player.waitFor()
+    await player.evaluate(video => {
+      if (Number.isFinite(video.duration)) return
+      return new Promise(resolve => video.addEventListener('loadedmetadata', resolve, { once: true }))
+    })
+    await page.locator('.tw-right-adjust').getByRole('button', { name: /Video.*No markers/ }).click()
+    const panel = page.getByRole('region', { name: 'Video', exact: true })
+    const add = panel.getByRole('button', { name: 'Add marker at 0:03', exact: true })
+    await player.evaluate(video => { video.currentTime = 3.75 })
+    await add.waitFor()
+
+    async function look(state) {
+      if (process.env.TW_VIDEO_MARKER_LOOK !== '1') return
+      for (const [width, height] of [[1440, 900], [1000, 631]]) {
+        await page.setViewportSize({ width, height })
+        for (const colorScheme of ['light', 'dark']) {
+          await page.emulateMedia({ colorScheme })
+          await page.waitForFunction(theme => document.documentElement.dataset.theme === theme, colorScheme)
+          const shot = await page.screenshot({ type: 'jpeg', quality: 85, animations: 'disabled' })
+          console.log(`VIDEO_MARKER_LOOK ${state}-${width}-${colorScheme} ${shot.toString('base64')}`)
+        }
+      }
+    }
+
+    await look('slide-none')
+    await add.click()
+    const added = source.replace(sourceLine, sourceLine + '\n[Marker: 0:03]')
+    await waitForText(added)
+    const name = panel.getByRole('textbox', { name: 'Marker name' })
+    await name.waitFor()
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Marker name')
+    assert.equal(await player.evaluate(video => video.currentTime), 3.75, 'adding a marker preserves playback time')
+    await stage.getByRole('button', { name: 'Jump to 0:03', exact: true }).waitFor()
+    assert.equal(await panel.getByRole('button', { name: 'A marker is already at 0:03' }).isDisabled(), true)
+    await look('slide-naming')
+    await name.press('Escape')
+    await name.waitFor({ state: 'detached' })
+    await page.keyboard.press('ControlOrMeta+z')
+    await waitForText(source)
+    await add.click()
+    await name.fill('The demo')
+    await name.press('Enter')
+    const named = added.replace('[Marker: 0:03]', '[Marker: 0:03 The demo]')
+    await waitForText(named)
+    await player.evaluate(video => { video.currentTime = 0 })
+    await panel.getByRole('button', { name: 'Jump to 0:03 The demo' }).click()
+    await player.evaluate(video => {
+      if (video.currentTime === 3) return
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Marker did not seek')), 3000)
+        video.addEventListener('seeked', () => { clearTimeout(timeout); resolve() }, { once: true })
+      })
+    })
+    assert.equal(await player.evaluate(video => video.currentTime), 3)
+    assert.equal(await player.evaluate(video => video.paused), true)
+    await panel.getByTitle('Change the time').click()
+    const time = panel.getByRole('textbox', { name: 'Marker time' })
+    await time.fill('0:60')
+    await time.press('Enter')
+    await panel.getByText('Use minutes and seconds, like 1:23.', { exact: true }).waitFor()
+    await time.fill('0:04')
+    await time.press('Enter')
+    const moved = named.replace('[Marker: 0:03 The demo]', '[Marker: 0:04 The demo]')
+    await waitForText(moved)
+    await page.locator('[data-slide-text-object="picture"]').getByText('watering-rota-demo.webm · 1 marker').waitFor()
+    await panel.getByRole('button', { name: 'Remove marker at 0:04' }).click()
+    await waitForText(source)
+    await page.keyboard.press('ControlOrMeta+z')
+    await waitForText(moved)
+
+    await page.getByRole('button', { name: 'Remove video and its markers', exact: true }).click()
+    await page.waitForFunction(() => !/watering-rota-demo|The demo/.test(window.editorView().state.doc.toString()))
+    await page.keyboard.press('ControlOrMeta+z')
+    await waitForText(moved)
+
+    await command('view-plain')
+    await page.locator('.tw-video-card-markers').getByText('The demo').waitFor()
+    await look('outline')
+    await command('view-markdown')
+    await page.locator('.cm-line').filter({ hasText: sourceLine }).waitFor()
+    await page.locator('.cm-line').filter({ hasText: '[Marker: 0:04 The demo]' }).waitFor()
+    await page.getByText('watering-rota-demo.webm · 0:12 · 1 marker · in this talk’s media folder', { exact: true }).waitFor()
+    await page.getByText('No video above this marker. Move it under a video line.', { exact: true }).waitFor()
+    await waitForText(moved)
+    await look('markdown')
+    async function loadMarkerRows(markers) {
+      const text = source.replace(sourceLine, [sourceLine, ...markers].join('\n'))
+      writeFileSync(outline, text)
+      await page.reload()
+      await page.evaluate(props => window.mountFixture(props), props)
+      await command('view-slides')
+      await command('view-slide-panel')
+      await player.waitFor()
+      const count = markers.length
+      await page.locator('.tw-right-adjust').getByRole('button', { name: new RegExp(`Video.*${count} markers`) }).click()
+      await panel.getByRole('list', { name: 'Video markers' }).waitFor()
+      assert.equal(await panel.getByRole('listitem').count(), count)
+      return text
+    }
+    if (process.env.TW_VIDEO_MARKER_LOOK === '1') {
+      await loadMarkerRows(['[Marker: 0:00 Intro]', '[Marker: 0:03 The demo]', '[Marker: 0:08 Result]'])
+      await player.evaluate(video => { video.currentTime = 4 })
+      await panel.getByRole('button', { name: 'Add marker at 0:04' }).waitFor()
+      await look('slide-three')
+    }
+    const many = Array.from({ length: 11 }, (_, second) => `[Marker: 0:${String(second).padStart(2, '0')} Part ${second + 1}]`)
+    const manyText = await loadMarkerRows([...many, '[Marker: 0:13 Credits]'])
+    await panel.getByText('Past the end of the video (0:12)', { exact: true }).waitFor()
+    assert.equal(await panel.getByRole('button', { name: 'Jump to 0:13 Credits' }).isDisabled(), true)
+    await waitForText(manyText)
+    await player.evaluate(video => { video.currentTime = 11 })
+    await panel.getByRole('button', { name: 'Add marker at 0:11', exact: true }).waitFor()
+    await look('slide-many')
+    const comment = '  <!-- Keep the marker context. -->  '
+    const marker = '[Marker: 0:03 Across the comment]'
+    const textWithComment = source.replace(sourceLine, [sourceLine, comment, marker].join('\n')).replace('[Marker: 0:04 Orphan]\n', '')
+    const withoutVideo = textWithComment.replace(sourceLine + '\n', '').replace(marker + '\n', '')
+    writeFileSync(outline, textWithComment)
+    await page.reload()
+    await page.evaluate(props => window.mountFixture(props), props)
+    await command('view-slides')
+    await command('view-slide-panel')
+    await page.locator('.tw-right-adjust').getByRole('button', { name: /Video.*1 marker/ }).click()
+    await panel.getByRole('button', { name: 'Jump to 0:03 Across the comment' }).waitFor()
+    assert.equal(await panel.getByRole('listitem').count(), 1)
+    await command('view-markdown')
+    await page.locator('.cm-line').filter({ hasText: marker }).waitFor()
+    assert.equal(await page.locator('.tw-video-source-warning').count(), 0)
+    await command('view-slides')
+    const removeVideo = page.getByRole('button', { name: 'Remove video and its markers', exact: true })
+    await removeVideo.click()
+    await waitForText(withoutVideo)
+    await page.keyboard.press('ControlOrMeta+z')
+    await waitForText(textWithComment)
+    await removeVideo.waitFor()
+    await page.evaluate(line => {
+      const view = window.editorView()
+      view.dispatch({ selection: { anchor: view.state.doc.toString().indexOf(line) } })
+      view.focus()
+    }, sourceLine)
+    await page.keyboard.press('Backspace')
+    await waitForText(withoutVideo)
+    await page.keyboard.press('ControlOrMeta+z')
+    await waitForText(textWithComment)
+    console.log('PASS the marker stays associated across a comment, and both removal paths preserve its exact bytes in one undo step')
+    console.log('PASS video playback position, exact add and undo, name focus, seek, time edit, remove and round trip through all three views')
+
+    const intro = '[Marker: 0:00 Intro]'
+    const inlineIdSource = source
+      .replace('### How the watering rota works\n{id=watering}', '### How the watering rota works {id=watering}')
+      .replace('### Three priorities\n{id=priorities}', '### Three priorities {id=priorities}')
+      .replace(sourceLine, sourceLine + '\n' + intro)
+    writeFileSync(outline, inlineIdSource)
+    await page.reload()
+    await page.evaluate(props => window.mountFixture(props), props)
+    await waitForText(inlineIdSource)
+    await command('view-slides')
+    await command('view-slide-panel')
+    await page.locator('.tw-right-adjust').getByRole('button', { name: /Video.*1 marker/ }).click()
+    await player.evaluate(video => { video.currentTime = 5 })
+    assert.equal(await page.evaluate(() => window.fixtureWrites), 0, 'adding the marker is the first edit')
+    await panel.getByRole('button', { name: 'Add marker at 0:05', exact: true }).click()
+    const savedAdd = source.replace(sourceLine, sourceLine + '\n' + intro + '\n[Marker: 0:05]')
+    await page.waitForFunction(text => window.savedFixture === text, savedAdd)
+    await name.fill('Swapping a slot')
+    await name.press('Enter')
+    await page.waitForFunction(text => window.savedFixture !== text, savedAdd)
+    assert.equal(readFileSync(outline, 'utf8'), savedAdd.replace('[Marker: 0:05]', '[Marker: 0:05 Swapping a slot]'),
+      'the first edit normalises the slide IDs, names the new marker and preserves the existing marker bytes')
+    console.log('PASS the first edit names the new video marker after inline slide IDs move')
+  } else if (slideText) {
     const panel = page.locator('.workspace-slide-text')
     const buffer = () => page.evaluate(() => window.editorView().state.doc.toString())
     const waitForBuffer = text => page.waitForFunction(expected => window.editorView()?.state.doc.toString() === expected, text)
@@ -1055,6 +1247,21 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     await sidebar.locator('.tw-inspector-stage').waitFor()
     await page.waitForFunction(text => window.compiledFixture === text && window.editorView()?.state.doc.toString() === text, source)
     assert.equal(await organizer.count(), 0, 'Previews mode is the initial sidebar mode')
+    const checkSidebarHitTargets = async (state) => {
+      const blockedControls = await page.locator('.sidebar-modebar').evaluate(bar => {
+        const bounds = bar.getBoundingClientRect()
+        return Array.from(bar.querySelectorAll('button')).flatMap(button => {
+          const rect = button.getBoundingClientRect()
+          if (rect.width === 0 || rect.height === 0) return []
+          const hit = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+          if (rect.left >= bounds.left && rect.right <= bounds.right && rect.bottom <= bounds.bottom && button.contains(hit)) return []
+          return [{ name: button.getAttribute('aria-label') ?? button.textContent, bounds: bounds.toJSON(),
+            button: rect.toJSON(), hit: hit?.closest('button')?.getAttribute('aria-label') ?? hit?.className }]
+        })
+      })
+      assert.deepEqual(blockedControls, [], `${state}: sidebar controls fit the mode bar and receive pointer input`)
+    }
+    await checkSidebarHitTargets('initial previews')
     await outlineMode.click()
     await shifts.click()
     await organizer.locator('.so-row--current').filter({ hasText: 'Volunteer shifts' }).waitFor()
@@ -1115,6 +1322,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
         await previewsMode.click()
         await organizer.waitFor({ state: 'detached' })
         assert.equal(await pinned.count(), 0)
+        await checkSidebarHitTargets(name + ' previews')
         await outlineMode.click()
         assert.equal(await header.getAttribute('aria-expanded'), 'false')
         await header.press('Enter')
@@ -1619,6 +1827,43 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     const seedlings = readFileSync(outline, 'utf8').split('### Seedlings')[1].split('### Harvest counts')[0]
     assert.match(seedlings, /\{[^}]*\blist\b/)
     assert.doesNotMatch(seedlings, /\b(?:titletop|sidebar|title=show)\b/)
+    const originalList = await page.evaluate(() => window.editorView().state.doc.toString())
+    const allDesigns = inspector.getByRole('button', { name: /^Show all(?: \d+)? designs$/ })
+    await allDesigns.click()
+    const addNotes = inspector.getByRole('button', { name: /Add notes to points/ })
+    await addNotes.hover()
+    await page.waitForFunction(() => {
+      const url = document.querySelector('.tw-inspector-stage iframe')?.src.split('#')[0]
+      return /\n  -  (?:\n|$)/.test(window.fixturePreviewText.get(url) ?? '')
+    })
+    const tried = await page.evaluate(() => {
+      const url = document.querySelector('.tw-inspector-stage iframe').src.split('#')[0]
+      return window.fixturePreviewText.get(url)
+    })
+    const annotated = inspector.frameLocator('.tw-inspector-stage iframe').locator('.slide.active .fl-annotated')
+    await annotated.waitFor()
+    const measured = await annotated.evaluate(`(() => {
+      const list = document.querySelector('.slide.active .fl-annotated');
+      const measure = (${measureLayoutPreview.toString()});
+      const input = { layout: 'list', selector: '.fl-annotated' }
+      const fits = measure(input)
+      list.style.transform = 'translateY(200vh)'
+      const overflows = measure(input).overflows
+      list.style.removeProperty('transform')
+      return { fits, overflows }
+    })()`)
+    assert.equal(measured.fits.matches, true)
+    assert.equal(measured.fits.overflows, false)
+    assert(measured.fits.words.includes('Water'))
+    assert.equal(measured.overflows, true)
+    assert.equal(await page.evaluate(() => window.editorView().state.doc.toString()), originalList)
+    await addNotes.click()
+    await waitForBuffer(tried)
+    await page.locator('.tw-right-bar').getByRole('button', { name: 'Undo', exact: true }).click()
+    await waitForBuffer(originalList)
+    await page.waitForFunction(text => window.savedFixture === text && window.compiledFixture === text, originalList)
+    await inspector.getByRole('button', { name: 'Show fewer' }).click()
+    console.log('A structure tile previews the exact text it writes, and one Undo restores the outline.')
     await home.getByRole('button', { name: /^Title\b/ }).click()
     await inspector.getByText(/Follows the talk: on top/).waitFor()
     console.log('Switching from Row to Title and points clears the old sidebar and inherits the target section’s top title.')
@@ -1668,7 +1913,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     }
     await page.emulateMedia({ colorScheme: 'light' })
     await back.click()
-    await inspector.getByRole('button', { name: /Show all .* designs/ }).click()
+    await inspector.getByRole('button', { name: /^Show all(?: \d+)? designs$/ }).click()
     const designs = inspector.locator('[data-section="designs"]')
     const aboveDesign = designs.getByRole('button', { name: /Picture above/ })
     const stage = inspector.locator('.tw-inspector-stage')
@@ -1857,7 +2102,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     await page.emulateMedia({ colorScheme: 'light' })
     console.log('Title tiles keep the cycle, boxed list, icon row and statement in light and dark; thumbnail inputs match the saved outline.')
   }
-  if (!polish && !slideText && !notes && !outlinePreview && !sidebarFollow) {
+  if (checkResearch) {
     const sidebar = page.getByRole('tablist', { name: 'Sidebar' })
     const talkTab = page.locator('[data-talk-tab]')
     const theme = name => talkTab.locator('.tw-right-picture').filter({ has: page.getByText(name, { exact: true }) })

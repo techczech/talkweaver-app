@@ -16,7 +16,7 @@
 //     every refused reference NOTHING outside the talk's folder is created, changed or removed.
 //  6. The outline rewrite touches only references that were converted.
 //  7. The handler acts only through the plan.
-import { readMainSource } from './lib/read-source.mjs'
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
 import { strict as assert } from 'node:assert'
 import { mkdtemp, mkdir, writeFile, readFile, readdir, symlink, link, lstat, rename, realpath, rm, utimes } from 'node:fs/promises'
 import { existsSync, readFileSync } from 'node:fs'
@@ -160,7 +160,7 @@ await check('with no allowed folder, or one that is not there, nothing is conver
 })
 
 // ── As the handler runs it ──────────────────────────────────────────────────────────────────
-// The same loop as `talk:optimize-images` in src/main/index.ts, with sharp for real and a folder
+// The same loop as `talk:optimize-images` in main, with sharp for real and a folder
 // for the Trash.
 async function runOptimise(content, containment = contain) {
   const plan = await planOptimisation(convertibleImageRefs(content), talk, containment)
@@ -313,9 +313,7 @@ await check('the rewrite changes an image link only when its whole target was co
 })
 
 await check('the handler acts only through the plan', () => {
-  const source = readMainSource()
-  const start = source.indexOf("ipcMain.handle('talk:optimize-images'")
-  const handler = source.slice(start, source.indexOf('\n})', start))
+  const handler = readIpcRegistration('talk:optimize-images')
   assert.match(handler, /createAssetContainment\(assetRootsFor\(outlinePath\)\)/, 'the talk\'s allowed folders, by the compiler\'s containment')
   assert.match(handler, /const plan = await planOptimisation\(convertibleImageRefs\(content\), talkDir, containment\)/, 'every reference is decided before anything is converted')
   // Every call in the handler that opens, reads, writes, moves or removes a file, with its first argument.

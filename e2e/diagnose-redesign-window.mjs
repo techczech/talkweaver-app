@@ -241,12 +241,20 @@ try {
   await page.getByRole('button', { name: 'Show slides as previews' }).click()
   await page.locator('[data-slides-mode="previews"] .tw-slide-card').first().waitFor()
   await page.getByRole('button', { name: 'Present', exact: true }).click()
-  const isDeck = window => window !== page && /\/garden-rota-present\.html(?:[?#]|$)/.test(window.url()) && new URL(window.url()).searchParams.has('presenter')
-  await until('presentation window did not open', () => app.windows().some(isDeck), 25000)
-  const deck = app.windows().find(isDeck)
-  assert.equal(decodeURIComponent(new URL(deck.url()).hash.slice(1)), readFileSync(outline, 'utf8').match(/\{id=([^}]+)\}/)?.[1])
-  await deck.locator('.slide.active').waitFor()
-  assert.ok(!(await deck.locator('.slide.active').innerText()).includes('Mention the late delivery.'))
+  const deckFor = role => app.windows().find(window => window !== page &&
+    /\/garden-rota-present\.html(?:[?#]|$)/.test(window.url()) && new URL(window.url()).searchParams.has(role))
+  await until('Present did not open a presenter and audience', () => deckFor('presenter') && deckFor('audience'), 25000)
+  const deck = deckFor('presenter')
+  const audience = deckFor('audience')
+  const slideId = readFileSync(outline, 'utf8').match(/\{id=([^}]+)\}/)?.[1]
+  assert.equal(decodeURIComponent(new URL(deck.url()).hash.slice(1)), slideId)
+  const currentPreview = deck.frameLocator(`#currentPreview > iframe[data-slide-id="${slideId}"]:not(.preview-incoming):not(.preview-outgoing)`)
+  await currentPreview.getByText('Watering rota', { exact: true }).waitFor()
+  // The presenter hides the source deck. The paired audience renders the active slide directly.
+  const presentedSlide = audience.locator('.deck .slide.active')
+  await presentedSlide.getByText('Watering rota', { exact: true }).waitFor()
+  assert.equal(await presentedSlide.getAttribute('data-id'), slideId)
+  assert.ok(!(await presentedSlide.innerText()).includes('Mention the late delivery.'))
   await deck.screenshot({ path: join(output, 'FR6-present.png') })
   const legacyOutlines = [
     ['garden-archive', 'Garden Archive', '', '## The garden {id=sec1}\n\n### Archive {id=sub1}\n\n- Earlier notes\n'],
@@ -300,12 +308,14 @@ try {
   await page.screenshot({ path: join(output, 'WN1-1000x631.png') })
 
   // A second window uses the established vault and the same welcome entry point.
-  const newWindow = app.waitForEvent('window', candidate => candidate !== page && candidate !== deck)
+  const newWindow = app.waitForEvent('window', candidate => candidate !== page && candidate !== deck && candidate !== audience)
   assert.equal((await page.evaluate(() => window.tw.windows.open())).ok, true)
   const outlinePage = await newWindow
   const outlineWelcome = outlinePage.locator('.tw-welcome')
   await outlineWelcome.waitFor()
-  await outlineWelcome.getByText('Saved in Documents/TalkWeaver.', { exact: true }).waitFor()
+  const savedIn = outlineWelcome.getByText('Saved in Documents/TalkWeaver', { exact: true })
+  await savedIn.waitFor()
+  assert.equal(await savedIn.getAttribute('title'), vault, 'the new window uses the established vault')
   await outlinePage.getByLabel('Name of the talk').fill('Neighbour checklist')
   await outlinePage.getByRole('button', { name: /Start with an outline/ }).click()
   const sketchEditor = outlinePage.getByRole('textbox', { name: 'Sketch text' })

@@ -9,13 +9,12 @@
 // Never the owner's data: the vault and the profile are fresh temp folders.
 //
 //   env -u ELECTRON_RUN_AS_NODE npm run test:thumbnail-prewarm:e2e
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync, readFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync, readFileSync } from 'fs'
 import { createRequire } from 'module'
+import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url)); const REPO = join(__dirname, '..')
 const require = createRequire(join(REPO, 'package.json'))
@@ -28,7 +27,8 @@ const results = []
 const record = (n, p, d) => { results.push({ n, p }); console.log(`${p ? 'PASS' : 'FAIL'}  ${n}${d ? '  — ' + d : ''}`) }
 const MB = (b) => Math.round(b / 1048576)
 
-const root = mkdtempSync(join(tmpdir(), 'tw-e2e-prewarm-')); const vault = join(root, 'v'); const ud = join(root, 'ud')
+await using appScratch = createAppScratch()
+const root = appScratch.root; const vault = join(root, 'v'); const ud = join(root, 'ud')
 mkdirSync(ud, { recursive: true })
 
 // Photographs: noise compresses badly, so each is a few MB, as camera pictures are.
@@ -72,12 +72,13 @@ console.log(`[fixture] ${TALKS} talks, ${expected} slides, ${PHOTOS} photographs
 
 await ensureFreshBuild(REPO)
 const t0 = Date.now()
-const app = await electron.launch({
-  args: ['.', '--user-data-dir=' + ud], cwd: REPO,
-  env: { ...process.env, TW_E2E: '1', TW_E2E_PREWARM: '1', TW_E2E_PREWARM_DELAY_MS: '3000', TW_E2E_PREWARM_QUIET_MS: '2000',
-    // A shared test machine may be busy; the load gate is covered by the unit tests. Set to measure it.
-    TW_E2E_PREWARM_MAX_LOAD: process.env.TW_PREWARM_MAX_LOAD || '1000' }
-})
+const app = (await launchApp({
+  scratch: appScratch,
+  userData: ud,
+  env: { ...process.env, TW_E2E_PREWARM: '1', TW_E2E_PREWARM_DELAY_MS: '3000', TW_E2E_PREWARM_QUIET_MS: '2000',
+    // Busy-runner load gating is covered by the unit tests. Set this to measure it.
+    TW_E2E_PREWARM_MAX_LOAD: process.env.TW_PREWARM_MAX_LOAD || '1000' },
+})).app
 if (process.env.TW_E2E_LOG) {
   app.process().stdout.on('data', (d) => process.stdout.write('[main] ' + d))
   app.process().stderr.on('data', (d) => process.stdout.write('[main:err] ' + d))
@@ -172,10 +173,15 @@ try {
   record('harness completed without an exception', false, e?.stack || String(e))
 } finally {
   closing = true
-  await app.close().catch(() => {})
-  // The photographs make the fixture about half a gigabyte: removed unless asked to keep it.
-  if (!process.env.TW_PREWARM_KEEP) rmSync(root, { recursive: true, force: true })
+  await appScratch.closeApp(app).catch(() => {})
+  if (process.env.TW_PREWARM_KEEP) {
+    const evidence = join(REPO, 'artefacts/thumbnail-prewarm')
+    mkdirSync(evidence, { recursive: true })
+    const saved = mkdtempSync(join(evidence, 'fixture-'))
+    cpSync(vault, join(saved, 'vault'), { recursive: true })
+    console.log('[fixture] vault saved in ' + saved)
+  }
 }
 const failed = results.filter((r) => !r.p)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)
-process.exit(failed.length ? 1 : 0)
+process.exitCode = failed.length ? 1 : 0

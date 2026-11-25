@@ -22,9 +22,10 @@
 //   itemRows     list only: one entry per TOP-LEVEL row, aligned with `items`:
 //                { line, indentLength, markLength } (issue #120: the outline verb that writes an
 //                item's icon finds the item's source line here, outline-list-item-icon.mjs).
-import { isImageBlockLine, IMAGE_SYNTAX_RE, imageSyntaxIsVideo, imageSyntaxIsAudio } from "./image-line-rules.mjs";
+import { isImageBlockLine, IMAGE_SYNTAX_RE, VIDEO_DIRECTIVE_RE, imageSyntaxIsVideo, imageSyntaxIsAudio } from "./image-line-rules.mjs";
 export { isImageBlockLine };
 import { isVideoEmbedUrl, normalizeEmbedUrl, isBareUrl, timelineBlockFields, claimFromBoldParagraph, parseTrace } from "./02-triggers-layout.mjs";
+import { readVideoMarker, videoMarkersAfter } from "./video-markers.mjs";
 import { hasCaptureToken, isCaptureViewsMarker } from "./live-page-capture-markup.mjs";
 import {
   chartObjectTokenAt,
@@ -148,6 +149,14 @@ export function lexMarkdownBlocksWith(lines, normalizeIconKey) {
     if (turn) for (let b = turn.at; b < blocks.length; b += 1) hidden(blocks[b], "sourceLines", [turn.first, Math.max(turn.first, i - 1)]);
     turn = null;
   };
+  function takeVideo(block) {
+    const markers = videoMarkersAfter(lines, i);
+    i = (markers.at(-1)?.line ?? i) + 1;
+    if (block.type === "video" && markers.length) {
+      block.markers = markers.sort((a, b) => a.t - b.t).map(({ t, time, name }) => ({ t, name: name || time }));
+    }
+    blocks.push(block);
+  }
   const peek = () => (i < lines.length ? lines[i].trim() : null);
   // H1 — list reader now PRESERVES indentation so feature lists can carry nested children
   // (LearnWeaver pattern). BACKWARD COMPAT is the contract: the returned block keeps
@@ -306,6 +315,7 @@ export function lexMarkdownBlocksWith(lines, normalizeIconKey) {
     if (!t) { i += 1; continue; }
     turn = { at: blocks.length, first: i };
     let m;
+    if (readVideoMarker(t)) { i += 1; continue; }
     // The saved-views marker (live-page-capture-markup.mjs): the embed above's saved views are its
     // {capture} lines. Kept through comment blanking only when exact and alone on its line.
     if (isCaptureViewsMarker(t)) { blocks.push({ type: "capture-views", capture: true }); i += 1; continue; }
@@ -345,18 +355,18 @@ export function lexMarkdownBlocksWith(lines, normalizeIconKey) {
     }
     // `[Video: …]` takes one trailing token, {play-on-next}: a file plays as a step; a YouTube or
     // Vimeo player cannot, and the block carries the token only so the compiler can say so.
-    if ((m = t.match(/^\[Video:\s*(.+?)\]\s*(\{\s*play-on-next\s*\})?$/i))) {
+    if ((m = t.match(VIDEO_DIRECTIVE_RE))) {
       const rawSrc = m[1].trim();
       const playOnNext = Boolean(m[2]);
       // A YouTube/Vimeo link is a live PLAYER, not a media file — route it to an iframe embed
       // (which plays in the standalone HTML from file://), not an HTML5 <video> that cannot load
       // a YouTube page. Real video file URLs / local assets stay as a <video> element.
       if (isVideoEmbedUrl(rawSrc)) {
-        blocks.push({ type: "embed", variant: "video", src: normalizeEmbedUrl(rawSrc), resourceUrl: rawSrc, ...(playOnNext ? { playOnNext: true } : {}) });
+        takeVideo({ type: "embed", variant: "video", src: normalizeEmbedUrl(rawSrc), resourceUrl: rawSrc, ...(playOnNext ? { playOnNext: true } : {}) });
       } else {
-        blocks.push({ type: "video", src: rawSrc, ...(playOnNext ? { flags: { playOnNext: true } } : {}) });
+        takeVideo({ type: "video", src: rawSrc, ...(playOnNext ? { flags: { playOnNext: true } } : {}) });
       }
-      i += 1; continue;
+      continue;
     }
     // QR directive (own line). `[QR: url]` or `[QR: url | Caption label]`. The url is encoded
     // into a build-time QR SVG; the caption (or, absent one, the url) renders beneath. The
@@ -378,7 +388,8 @@ export function lexMarkdownBlocksWith(lines, normalizeIconKey) {
       // is the natural authoring form next to images; [Video:] remains equivalent. Trailing curly
       // tokens (group 4) carry playback intent for videos (ADR-0028); images ignore them.
       if (imageSyntaxIsVideo(m[2])) {
-        blocks.push({ type: "video", src: m[2], alt: m[1] || "", caption: m[3] || "", flags: parseMediaFlags(m[4]) });
+        takeVideo({ type: "video", src: m[2], alt: m[1] || "", caption: m[3] || "", flags: parseMediaFlags(m[4]) });
+        continue;
       } else if (imageSyntaxIsAudio(m[2])) {
         // An audio FILE in image syntax is an `audio` block: a speaker chip that sits in the slide's
         // text flow. {autoplay} and {loop} carry over from video; the alt text is the chip's title.

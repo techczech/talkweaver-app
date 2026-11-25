@@ -7,12 +7,11 @@
 //   (d) a vault with post-work open: the delivered Run sits under Past with "post-work 5/18";
 //   (e) a vault with no Runs shows the empty state.
 // TW_SHOTS_DIR saves one screenshot per drawn state.
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { mkdirSync, writeFileSync } from 'node:fs'
-import { testScratchDir } from '../scripts/lib/test-scratch.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+
+await using appScratch = createAppScratch()
 
 const shotsDir = process.env.TW_SHOTS_DIR || ''
 if (shotsDir) mkdirSync(shotsDir, { recursive: true })
@@ -21,7 +20,6 @@ const rec = (name, ok, detail) => {
   if (!ok) failures += 1
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`)
 }
-await ensureFreshBuild(process.cwd())
 
 const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
 const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
@@ -45,11 +43,11 @@ function seed(root, runs) {
 }
 
 async function launch(runs) {
-  const root = testScratchDir(join(tmpdir(), 'tw-sessions-e2e-'))
+  const root = mkdtempSync(join(appScratch.root, 'case-'))
   const ud = seed(root, runs)
   const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try { return await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: process.cwd(), env, timeout: 60_000 }) }
+    try { return (await launchApp({ scratch: appScratch, userData: ud, env, timeout: 60_000 })).app }
     catch (error) { if (attempt === 3) throw error; await new Promise((r) => setTimeout(r, 15_000)) }
   }
 }
@@ -137,7 +135,7 @@ const FOUR = [
     const asked = await (await app.firstWindow()).evaluate(() => window.tw.tools.openRun('ai-teaching', 'itlc'))
     await tools.waitForSelector('[data-sessions-row="ai-teaching/itlc"][aria-current="true"]', { timeout: 5000 }).catch(() => {})
     rec('asking for a Run selects its row', asked.success && await tools.locator('[data-sessions-row="ai-teaching/itlc"][aria-current="true"]').count() === 1)
-  } finally { await app.close().catch(() => {}) }
+  } finally { await appScratch.closeApp(app).catch(() => {}) }
 }
 
 // ---- (d) post-work open
@@ -157,7 +155,7 @@ const FOUR = [
     const text = await rowText(tools, 'ai-research/said')
     rec('row reads "post-work 5/18"', text.includes('post-work 5/18') && text.includes('Delivered'), text)
     await shot(tools, 'post-work-open')
-  } finally { await app.close().catch(() => {}) }
+  } finally { await appScratch.closeApp(app).catch(() => {}) }
 }
 
 // ---- (e) empty
@@ -169,8 +167,8 @@ const FOUR = [
     const body = await tools.locator('[data-tools-view="runs"]').innerText()
     rec('empty state', body.includes('No Runs yet') && body.includes('No Run selected') && await tools.locator('[data-sessions-filter]').count() === 0, body.replace(/\s+/g, ' '))
     await shot(tools, 'empty')
-  } finally { await app.close().catch(() => {}) }
+  } finally { await appScratch.closeApp(app).catch(() => {}) }
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
-process.exit(failures ? 1 : 0)
+process.exitCode = failures ? 1 : 0

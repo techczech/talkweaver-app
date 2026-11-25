@@ -1,3 +1,4 @@
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
 import { readMainSource } from './lib/read-source.mjs'
 import { tmpdir as fixtureTmpdir } from 'node:os'
 import assert from 'node:assert/strict'
@@ -17,7 +18,7 @@ try{
  const claimStart=source.indexOf("function claimTalkForWindow(");vm.runInContext(transformSync(source.slice(claimStart,source.indexOf("\nipcMain.handle('window:claim-talk'",claimStart)),{loader:"ts"}).code,context)
  const transferStart=source.indexOf("function transferMovedEditor(");vm.runInContext(transformSync(source.slice(transferStart,source.indexOf("// Vault-relative path",transferStart)),{loader:"ts"}).code,context);context.establishedGalleryClaims=new Map();context.galleryClaimEpochs=new Map();
  const strip=source.slice(source.indexOf('async function stripPublishedFields('),source.indexOf('\nfunction findOutlineIn('));vm.runInContext(transformSync(strip,{loader:'ts'}).code,context)
- for(const name of ['clone-talk','rename-talk','move-talk','delete-talk']){const start=source.indexOf("ipcMain.handle('vault:"+name+"'");const end=source.indexOf('\n})',start)+3;vm.runInContext(transformSync(source.slice(start,end),{loader:'ts'}).code,context)}
+ for(const name of ['clone-talk','rename-talk','move-talk','delete-talk']) vm.runInContext(transformSync(readIpcRegistration('vault:'+name),{loader:'ts'}).code,context)
  const event={sender:{id:1}}
  held=true;assert.equal((await handlers.get('vault:rename-talk')(event,outline,'Renamed')).error,'open-elsewhere');assert.equal(await handlers.get('vault:clone-talk')(event,outline,'Copy'),null);assert.equal(await handlers.get('vault:move-talk')(event,outline,'nested'),null);assert.equal(await handlers.get('vault:delete-talk')(event,outline),false);assert.equal(fs.existsSync(outline),true)
  held=false;fs.mkdirSync(path.join(root,'taken'));assert.equal((await handlers.get('vault:rename-talk')(event,outline,'Taken')).error,'target-exists');assert.equal(fs.existsSync(outline),true);const copy=await handlers.get('vault:clone-talk')(event,outline,'Copy');assert.ok(copy);assert.notEqual(copy.outlinePath,outline);assert.doesNotMatch(fs.readFileSync(copy.outlinePath,'utf8'),/handout_url/);assert.match(fs.readFileSync(outline,'utf8'),/handout_url/)

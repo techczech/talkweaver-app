@@ -3,13 +3,11 @@
 // (assets/pic.png via twfile://). Isolated temp vault + userData.
 //
 // Run after building: node e2e/diagnose-images.mjs (optional SHOTS=<directory>).
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempDisposableSync, writeFileSync, copyFileSync, existsSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdirSync, writeFileSync, copyFileSync, existsSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -25,8 +23,8 @@ function record(name, pass, detail) {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`)
 }
 
-using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-img-'))
-const tempRoot = fixture.path
+await using fixture = createAppScratch()
+const tempRoot = fixture.root
 const tempVault = join(tempRoot, 'vault')
 const userDataDir = join(tempRoot, 'userData')
 const talkDir = join(tempVault, 'img-fixture')
@@ -36,9 +34,7 @@ const outlinePath = join(talkDir, 'img-fixture-outline.md')
 writeFileSync(outlinePath, '---\ntitle: Img Fixture\n---\n\n## S\n\n### Slide\n\nplaceholder\n')
 writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault, openInView: 'outline' }, null, 2))
 
-await ensureFreshBuild(REPO)
-await using app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
-const page = await app.firstWindow()
+const { app, page } = await launchApp({ scratch: fixture, userData: userDataDir })
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
 

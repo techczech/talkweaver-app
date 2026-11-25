@@ -1,5 +1,5 @@
-import { Fragment, useMemo, useState, type MouseEvent, type ReactNode } from 'react'
-import { ChevronLeft, ChevronRight, Copy, Crop, GalleryHorizontal, Heading, Image, Layers, LayoutGrid, Link2, List, ListOrdered, Palette, Pin, Replace, RotateCcw, SlidersHorizontal, SmilePlus, Trash2 } from 'lucide-react'
+import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
+import { ChevronLeft, ChevronRight, Copy, Crop, Film, GalleryHorizontal, Heading, Image, Layers, LayoutGrid, Link2, List, ListOrdered, Palette, Pin, Replace, RotateCcw, SlidersHorizontal, SmilePlus, Trash2 } from 'lucide-react'
 import { GLOBAL_OPTION_GROUPS, LAYOUTS, sectionColourChoices } from '../../../shared/layout-registry/entries'
 import { parseFrontmatterPairs } from '../../../shared/frontmatter-editor'
 import { groupHasSelection, selectionForGroup } from '../../../shared/trigger-line'
@@ -11,7 +11,8 @@ import PlainIconPicker, { type IconAnchor } from './PlainIconPicker'
 import RightPanelPictures, { type PanelTry } from './RightPanelPictures'
 import { useLiveSlidePreview } from './useLiveSlidePreview'
 import FixedDeckPreview from './FixedDeckPreview'
-import { isPointListLayout, option, tableDesigns, TITLE_GROUPS, TITLE_PLACEMENT_GROUPS, TITLE_STYLES, titlePlace, type Design, type PanelEdit, type PictureSide } from './rightPanelDesigns'
+import { isPointListLayout, option, panelEdit, tableDesigns, TITLE_GROUPS, TITLE_PLACEMENT_GROUPS, TITLE_STYLES, titlePlace, type Design, type PanelEdit, type PictureSide } from './rightPanelDesigns'
+import { createVariantPictureQueue, markSettled, pictureMarkUrl, type VariantPictureMarks, type VariantPictureQueue } from '../../../shared/variant-picture-queue'
 import { deckClaimStyleForOutline, defaultTitlePlacementForLayout, statementTitleHidden } from '../../../shared/deck-frame'
 import { statementSelections } from '../../../shared/statement-options'
 
@@ -21,7 +22,7 @@ export interface PanelPage {
   summary: string
   action?: { label: string; accessibleLabel: string; run: () => void }
 }
-const ICONS = { title: Heading, points: List, icons: SmilePlus, picture: Image, colour: Palette, own: LayoutGrid, table: LayoutGrid, steps: Layers, more: SlidersHorizontal }
+const ICONS = { title: Heading, points: List, icons: SmilePlus, picture: Image, video: Film, colour: Palette, own: LayoutGrid, table: LayoutGrid, steps: Layers, more: SlidersHorizontal }
 
 export interface PanelSurface {
   path: string
@@ -59,6 +60,82 @@ export function AdjustRows({ pages, choose }: { pages: PanelPage[]; choose: (pag
   </div></>
 }
 
+// Each check can compile the whole talk. Wait for the selected slide and text to settle.
+// Expanding Designs is an explicit request and can start the batch immediately.
+const FIT_PREVIEW_SETTLE_MS = 500
+
+function useCheckedDesignPictures(surface: PanelSurface, designs: Design[], automaticCount: number) {
+  const { path, text, slide, layout } = surface
+  const slideKey = typeof slide === 'string' ? slide : `line:${slide.headingLine}`
+  const candidates = useMemo(() => designs.filter(design => design.check), [designs])
+  const [result, setResult] = useState<{ path: string; text: string; slide: string; candidates: Design[]; marks: VariantPictureMarks }>()
+  const startNow = useRef<(() => void) | undefined>(undefined)
+  const showAllRef = useRef(false)
+  useEffect(() => {
+    if (!candidates.length || !window.tw?.talk?.layoutVariantThumbnail) return
+    const batchId = crypto.randomUUID()
+    const keys = candidates.map((_, index) => String(index))
+    let next = 0
+    let needed = automaticCount
+    let expanded = false
+    let queue: VariantPictureQueue<Design[]> | undefined
+    // Check only as many pictures as the compact panel can show. A refusal moves on
+    // to the next candidate. Expanding the panel asks for the rest in the same batch.
+    const askNext = () => {
+      if (needed > 0 && next < keys.length) queue?.want([keys[next++]])
+    }
+    const start = () => {
+      window.clearTimeout(timer)
+      expanded ||= showAllRef.current || automaticCount >= candidates.length
+      if (queue) {
+        if (expanded) queue.want(keys)
+        return
+      }
+      if (!expanded && needed <= 0) return
+      queue = createVariantPictureQueue<Design[]>(
+        (key, options) => {
+          const design = options[Number(key)]
+          const outline = panelEdit(text, slide, design, layout, true)
+          return window.tw.talk.layoutVariantThumbnail(path, outline, slide, '', undefined, `panel:check:${key}`, batchId, design.check)
+        },
+        (key, mark) => {
+          setResult(previous => ({
+            path, text, slide: slideKey, candidates, marks: markSettled(
+              previous?.path === path && previous.text === text && previous.slide === slideKey && previous.candidates === candidates
+                ? previous.marks : {}, candidates[Number(key)].label, mark
+            )
+          }))
+          if (!expanded) {
+            if (pictureMarkUrl(mark)) needed--
+            askNext()
+          }
+        }
+      )
+      queue.reset(slideKey + text, candidates, slideKey)
+      if (expanded) queue.want(keys)
+      else askNext()
+    }
+    const timer = window.setTimeout(start, FIT_PREVIEW_SETTLE_MS)
+    startNow.current = start
+    return () => {
+      startNow.current = undefined
+      window.clearTimeout(timer)
+      if (!queue) return
+      queue.dispose()
+      window.tw.talk.releaseLayoutVariantBatch?.(batchId)
+    }
+  }, [path, text, slideKey, layout, candidates, automaticCount]) // eslint-disable-line react-hooks/exhaustive-deps
+  const marks = result?.path === path && result.text === text && result.slide === slideKey && result.candidates === candidates ? result.marks : {}
+  return {
+    marks,
+    pending: candidates.filter(design => !(design.label in marks)).length,
+    setExpanded: (expanded: boolean) => {
+      showAllRef.current = expanded
+      if (expanded) startNow.current?.()
+    }
+  }
+}
+
 export function DesignsBlock({ surface, designs, long, compact, section }: {
   surface: PanelSurface
   designs: Design[]
@@ -67,9 +144,12 @@ export function DesignsBlock({ surface, designs, long, compact, section }: {
   section: boolean
 }) {
   const [all, setAll] = useState(false)
-  const fit = designs.filter(design => !design.unavailable)
-  const unavailable = designs.filter(design => design.unavailable)
   const count = compact ? 2 : 4
+  const readyWithoutCheck = designs.filter(design => !design.unavailable && !design.check).length
+  const { marks: checkedPictures, pending, setExpanded } = useCheckedDesignPictures(surface, designs,
+    long ? designs.length : Math.max(0, count - readyWithoutCheck))
+  const fit = designs.filter(design => !design.unavailable && (!design.check || pictureMarkUrl(checkedPictures[design.label])))
+  const unavailable = designs.filter(design => design.unavailable)
   const current = fit.find(design => design.current)
   const shown = long || all ? fit : current && fit.indexOf(current) >= count
     ? [current, ...fit.slice(0, count - 1)] : fit.slice(0, count)
@@ -77,12 +157,16 @@ export function DesignsBlock({ surface, designs, long, compact, section }: {
     <PageHead label={section ? 'Slides in this section' : fit.length ? 'Designs for this slide' : 'Designs'} aspect="design" onCopy={fit.length ? surface.onCopy : undefined} />
     {!fit.length ? <p className="tw-right-origin">Designs appear here when the slide has a title and at least one point.</p> : <>
       <RightPanelPictures {...surface} group="design" choices={shown} columns={2}
-        pendingPicture={section ? sectionModePicture : undefined} />
+        pendingPicture={section ? sectionModePicture : undefined} checkedPictures={checkedPictures} />
       {(all || long || fit.length <= count) && unavailable.length > 0 && <ul className="tw-right-no-fit">
         {unavailable.map(design => <li key={design.label}><strong>{design.label}</strong> · {design.unavailable}</li>)}
       </ul>}
-      {!long && fit.length > count && <button type="button" className="toolbar-btn" onClick={() => { surface.onTry(null); setAll(!all) }}>
-        <LayoutGrid size={14} />{all ? 'Show fewer' : `Show all ${fit.length} designs`}
+      {!long && (all || fit.length + pending > count) && <button type="button" className="toolbar-btn" onClick={() => {
+        surface.onTry(null)
+        setExpanded(!all)
+        setAll(!all)
+      }}>
+        <LayoutGrid size={14} />{all ? 'Show fewer' : pending ? 'Show all designs' : `Show all ${fit.length} designs`}
       </button>}
     </>}
   </div>

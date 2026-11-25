@@ -1,17 +1,19 @@
 import type { ProjectionRow } from '../../../preload'
 import { LAYOUTS } from '../../../shared/layout-registry/entries'
 import {
-  canTakeAllLayouts, clearPointRow, previewLayout, resetLayoutOptions, setLayout, setLayoutOptions, setQuoteForm, suggestLayouts,
+  canTakeAllLayouts, clearPointRow, previewLayout, resetLayoutOptions, setLayout, setListLayout, setLayoutOptions, setQuoteForm, suggestLayouts,
   type LayoutOptionChoice, type QuoteFormChoice, type SlideRef
 } from '../../../shared/layout-verbs'
+import { listLayoutCandidates, type LayoutPreviewCheck } from '../../../shared/list-layout-suggestions'
+import type { ListLayoutStructure } from '../../../shared/list-layout-structure'
 import type { InspectorBindingModel, InspectorModel } from './inspectorModel'
 import { clearLineIcon, lineIconState } from '../../../shared/icon-verbs'
 import { readOutlineSlides } from '../../../shared/feedback-accept'
 import { reportTriggerMergeWarnings } from '../../../shared/trigger-line'
 import { defaultTitlePlacementForLayout } from '../../../shared/deck-frame'
 
-export type PanelEdit = { layout?: string; options?: readonly LayoutOptionChoice[]; reset?: readonly string[]; clearRow?: boolean }
-export type Design = PanelEdit & { label: string; why?: string; unavailable?: string; current?: boolean; reapply?: boolean }
+export type PanelEdit = { layout?: string; options?: readonly LayoutOptionChoice[]; reset?: readonly string[]; clearRow?: boolean; structure?: ListLayoutStructure }
+export type Design = PanelEdit & { label: string; why?: string; unavailable?: string; current?: boolean; reapply?: boolean; check?: LayoutPreviewCheck }
 
 export const option = (group: string, token: string): LayoutOptionChoice => ({ group, token })
 export type PictureSide = 'left' | 'right' | 'above'
@@ -25,6 +27,11 @@ export const TITLE_STYLES = [
 ] as const
 
 export function panelEdit(text: string, slide: SlideRef, edit: PanelEdit, layout: string, preview = false): string {
+  if (edit.layout && (edit.structure || ['2col', '3col', 'annotated'].includes(edit.layout))) {
+    const written = setListLayout(text, slide, { layout: edit.layout, structure: edit.structure, options: edit.options })
+    if (!preview) reportTriggerMergeWarnings(written.warnings)
+    return written.outline
+  }
   if (edit.clearRow) text = clearPointRow(text, slide)
   if (edit.reset) {
     const result = resetLayoutOptions(text, slide, edit.reset).outline
@@ -113,7 +120,9 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
     }]
   }
   const own = model.board ? 'Board' : tokens['poll-type']?.startsWith('poll=') ? 'Poll' : DESIGN_PAGES[layout]
-  if (own && layout !== 'carousel') return [
+  const candidates = !model.board && !tokens['poll-type'] && layout !== 'carousel'
+    ? listLayoutCandidates(text, slide, hasLogos) : null
+  if (own && !candidates && layout !== 'carousel') return [
     { label: own, why: 'What this slide is now', current: true },
     { label: 'Title and points', unavailable: 'Would lose what makes this a ' + own.toLowerCase() }
   ]
@@ -123,8 +132,6 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
   ]
   if (!block.split('\n').slice(1).some(line => line.trim() && !/^\s*\{/.test(line))) return []
 
-  const fits = canTakeAllLayouts(text, slide)
-  const suggested = suggestLayouts(text, slide)
   const hasPicture = row.image_count > 0
   const pictureAbove: Design = {
     label: 'Picture above', why: 'A wide picture, points in a row',
@@ -163,6 +170,46 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
     ...(!hasPicture ? [{ label: 'Row of icons', why: 'Light, no boxes', layout: 'iconrow', current: layout === 'iconrow' }] : []),
     list('Title at the side', 'A coloured panel for the title', 'plainlist', '', 'side')
   ]
+  if (candidates) {
+    const byName = new Map(designs.map(design => [design.label, design]))
+    const pointChecks: Record<string, { layout: string; selector?: string; title?: 'top' | 'left' }> = {
+      'Title and points': { layout: 'list', selector: '.fl-plain', title: 'top' },
+      'Icon boxes': { layout: 'list', selector: '.fl-cards:not(.fl-numbered)', title: 'top' },
+      'Icon list': { layout: 'list', selector: '.fl-iconlist-list', title: 'top' },
+      'Icon bands, picture right': { layout: 'list', selector: '.fl-cards:not(.fl-numbered)', title: 'top' },
+      'Picture on the left': { layout: 'list', selector: '.fl-iconlist-list', title: 'top' },
+      'Picture above': { layout: 'iconrow' },
+      'Logo list': { layout: 'list', selector: '.feature-list:not(.fl-plain)' },
+      'Logo boxes': { layout: 'list', selector: '.fl-cards:not(.fl-numbered)' },
+      Numbered: { layout: 'list', selector: '.fl-numbered', title: 'top' },
+      'Title at the side': { layout: 'list', selector: '.fl-plain', title: 'left' }
+    }
+    const words = candidates[0].check.words
+    const refused = new Set(candidates.filter(candidate => candidate.reason).map(candidate => candidate.label))
+    const inherited = designs.filter(design => pointChecks[design.label] && !refused.has(design.label)).map(design => ({
+      ...design, check: design.current ? undefined : { ...pointChecks[design.label], words }
+    }))
+    const other = candidates.flatMap((candidate): Design[] => {
+      if (candidate.reason || (byName.has(candidate.label) && candidate.layout !== 'iconrow') || candidate.layout === 'plainlist') return []
+      const current = candidate.layout === layout && !candidate.structure
+        && (candidate.options ?? []).every(choice => choice.token === (tokens[choice.group] ?? ''))
+        && (candidate.layout !== 'annotated' || listStyle === 'annotated')
+      return [{ label: candidate.label, layout: candidate.layout, options: candidate.options,
+        structure: candidate.structure, why: candidate.whatChanges, current, check: current ? undefined : candidate.check }]
+    })
+    const all = [...inherited, ...other]
+    if (!all.some(design => design.current)) {
+      const entry = LAYOUTS.find(item => item.name === layout)
+      const label = own ?? entry?.label ?? 'Current design'
+      const existing = all.find(design => design.label === label)
+      if (existing) all.splice(all.indexOf(existing), 1)
+      all.unshift({ label, why: 'What this slide is now', current: true })
+    }
+    return all
+  }
+
+  const fits = canTakeAllLayouts(text, slide)
+  const suggested = suggestLayouts(text, slide)
   const represented = new Set(['list', 'numbered', 'iconlist', 'iconrow', 'logolist'])
   for (const candidate of suggested) {
     if (represented.has(candidate.layout)) continue

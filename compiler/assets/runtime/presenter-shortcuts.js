@@ -48,7 +48,7 @@ export function createPresenterShortcuts({ document, storage, commands, onChange
     '⌘/': 'Keyboard shortcuts', '⌘⇧P': 'All commands', '⌘⇧K': 'Navigation', '⌘⇧,': 'Rebind command',
     '-': 'Slide text smaller', '=': 'Slide text larger', '?': 'Keyboard shortcuts', '⇧?': 'Keyboard shortcuts'
   };
-  for (let i = 0; i <= 9; i++) extra[String(i)] = 'Card on a grid slide';
+  for (let i = 1; i <= 9; i++) extra[String(i)] = 'Card on a grid slide';
   const navigationKeys = ['Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End',
     'Enter', 'Tab', 'Escape', 'Backspace', 'Delete'];
   function taken(chord, id) {

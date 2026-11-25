@@ -12,12 +12,10 @@
 //   (e) One tap restores the segment and removes trims from disk/UI.
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-transcript.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdirSync, readFileSync, writeFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -40,7 +38,8 @@ async function waitFor(pred, timeoutMs, stepMs = 150) {
 
 const slug = 'transcript-fixture'
 const sessionId = 'transcript-session'
-const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-transcript-' + String(Date.now()) + '-'))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const tempVault = join(tempRoot, 'vault')
 const userDataDir = join(tempRoot, 'userData')
 const recordingsDir = join(userDataDir, 'recordings')
@@ -90,13 +89,11 @@ writeFileSync(sessionPath, JSON.stringify(session, null, 2), 'utf8')
 
 const readSession = () => JSON.parse(readFileSync(sessionPath, 'utf8'))
 
-await ensureFreshBuild(REPO)
-const app = await electron.launch({
-  args: ['.', '--user-data-dir=' + userDataDir],
-  cwd: REPO,
-  env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
+const { app, page } = await launchApp({
+  scratch: appScratch,
+  userData: userDataDir,
+  env: { ...process.env, TW_REC_TEST: '1' },
 })
-const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
 
@@ -172,6 +169,6 @@ try {
 } finally {
   const failed = results.filter((r) => !r.pass)
   console.log(`\n=== TRANSCRIPT SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
-  await app.close()
-  process.exit(failed.length === 0 ? 0 : 1)
+  await appScratch.closeApp(app)
+  process.exitCode = failed.length === 0 ? 0 : 1
 }

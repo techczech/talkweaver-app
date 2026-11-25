@@ -6,27 +6,24 @@ import { transcriptPath as transcriptPathForAlignment } from './recording-paths'
 import { modelPin as modelPinForAlignment } from './alignment-models'
 import { createAlignmentService } from './alignment-service'
 import { alignmentUtility } from './alignment-utility'
-import { RECORD_AGAIN_ENV, TAKES_OFF_ERROR, takesEnabled } from '../shared/recording-takes'
+import { RECORD_AGAIN_ENV, takesEnabled } from '../shared/recording-takes'
 import { isGitConflictError } from '../shared/git-conflict'
 import { AlignmentModels, readAlignmentManifests } from './alignment-models'
 import { cancelRecordingRefresh, prepareRecordingRefresh, registerPresenterRefresh } from './presenter-refresh'
 import { ImageEditRecipeSizeError, readImageEdit, saveImageEdit } from './image-edit'
-import { artwork as embedPreviewArtwork } from './embed-preview-artwork'
-import { saveOfflinePage } from './offline-page'
 import { captureOfflinePage, offlineSource } from './offline-page-capture'
+import { artwork as embedPreviewArtwork } from './embed-preview-artwork'
 import { scratchSnapshotUrl, scratchSnapshotFileFor } from './scratchpad-disk'
 import { preservationMessage, type PreservationReason } from './publication-preservation'
 import type { MediaPublishChoice } from '../shared/publish-status'
 import { publicationMediaReview, publicationBuildWarnings } from '../shared/publication-files'
 import { getLibraryFiles } from './publishing-library-sync'
-import { parseOutlineSaveIdentity, type OutlineSaveIdentity } from '../shared/outline-save-identity'
+import type { OutlineSaveIdentity } from '../shared/outline-save-identity'
 import { createPublishHistory } from './publish-history'
 import type { PublishSiteCheck } from '../shared/publish-history'
 import { readPublishingInventory } from './publishing-inventory'
 import { relative } from 'node:path'
 import { acquireGallerySite, gallerySiteScope } from './gallery-site'
-import { collectGalleryHandouts } from './gallery-handouts'
-import { inventoryFilesystem as handoutInventoryFilesystem } from './vault-gallery-inventory-fs'
 import { galleryCoverFile } from './vault-gallery-cover'
 import { readGallerySource } from './vault-gallery-read'
 import { createGalleryAdmission } from './vault-gallery-admission'
@@ -42,7 +39,7 @@ import { RESEARCH_INSERT_VERB, RESEARCH_MAKE_SLIDE_VERB } from './agent-verbs'
 import { revealResearchSource } from './research-reader'
 import { createLatestThumbnailRequestHandler } from './thumbnail-queue'
 import { app, BrowserWindow, clipboard, ipcMain, dialog, Menu, net, protocol, shell, session, screen, powerMonitor, nativeTheme, WebContentsView, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron'
-import { join, basename, dirname, extname } from 'path'
+import { join, basename, dirname } from 'path'
 import { readPresenterTemplate } from '../../compiler/scripts/lib/presenter-template.mjs'
 
 // EPIPE guard: when the packaged binary is launched with stdout/stderr piped and the pipe
@@ -206,7 +203,7 @@ import { createPressLedger, installPressLedger } from './recent-press'
 import { registerLiveIpc } from './live-ipc'
 import { appLocalHostOf, installLocalAddressFilter } from './local-address-filter'
 import { createOpenRequests, refuseOpenTarget } from './open-requests'
-import { decideOpenInNewWindow, parseOpenInNewWindowTarget, type OpenInNewWindowTarget } from '../shared/open-in-new-window'
+import { decideOpenInNewWindow, parseOpenInNewWindowTarget } from '../shared/open-in-new-window'
 import { canonicalOutlinePath, editorEntryForOutline, outlineIdentity, type EditorWindowEntry } from './outline-identity'
 import {
   configureTalkWriter, emptyOverNonemptyMessage, flushTalkForPublish, isStructurallyEmptyOutline, readTalkOutline, withTalkFileLock, writeTalkOutline,
@@ -220,11 +217,12 @@ import { createHtmlThumbnailer } from './scratchpad-html-thumb'
 import { createHtmlCapture } from './scratchpad-html-capture'
 import { researchCaptureHandler, researchRevealHandler, researchReadHandler } from './agent-verbs'
 import { createOutlineDiskGuard } from './outline-disk-guard'
+import { createOutlineSlideMerge } from './outline-slide-merge'
 import { createOutlineRecovery } from './outline-recovery'
 import { createDirectoryWatcherRegistry } from './talkTextWatchers'
 import type { PresenterShareLinkUpdate } from '../preload/index'
 import type { OutlineDiskChange } from '../shared/outline-disk-change'
-import { type Dirent, linkSync, fstatSync, existsSync, lstatSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, constants as fsConstants, mkdtempSync, openSync, readSync, closeSync, appendFileSync, writeSync } from 'fs'
+import { type Dirent, fstatSync, existsSync, lstatSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, realpathSync, cpSync, rmSync, renameSync, createReadStream, constants as fsConstants, mkdtempSync, openSync, readSync, closeSync, writeSync } from 'fs'
 import { createHash, randomBytes, randomUUID } from 'crypto'
 import { execFile, execFileSync, spawn, type ChildProcessByStdio } from 'child_process'
 import type { Readable } from 'stream'
@@ -235,19 +233,8 @@ import { thumbKeysIn } from './thumb-key-resolution'
 import { createVariantThumbnailHandler, createVariantThumbnailRenderer, mediaFingerprint, variantThumbnailBatchScope } from './layout-variant-thumbnail'
 import {
   assetSidecarPath,
-  createFolderTarget,
-  deleteFolderTarget,
-  folderSlugFor,
-  inspectOnlyFolderName,
-  moveTalkTargets,
-  newTalkFolder,
   outlineRefusal,
   outlineSaveRefusal,
-  renameFolderTargets,
-  setRootRefusal,
-  siblingTalkFolder,
-  talkFolderOfOutline,
-  talkPlace,
   thumbCacheDir
 } from './vault-paths'
 import { pathStaysInside } from './path-containment'
@@ -261,25 +248,21 @@ import { createOcrIndex, type OcrIndex, type OcrPicture } from './ocr-index'
 import { createSlideSearch, normalizeSearchQuery, type ImageTextSource, type SearchQuery } from './slide-search'
 import { compactSlideSearchReply } from '../shared/slide-search-reply'
 import { currentSearchTalks, scanWithStartStamp, searchIndexStamp } from './search-index-stamp'
-import { OCR_PICTURE_EXTS, deckPicturesOf, extractImageRefs, resolveImagePaths, rowImageRefs, slideImagePaths, talkImagePaths, type DeckPictures, type ImageRef } from './slide-image-refs'
+import { OCR_PICTURE_EXTS, deckPicturesOf, resolveImagePaths, rowImageRefs, slideImagePaths, talkImagePaths, type DeckPictures, type ImageRef } from './slide-image-refs'
 import { createSupersedeTracker } from './search-supersede'
 import { importImageForTalk, talkVaultWriteRoot, type ImageImportDeps } from './image-search/image-import'
 import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode, VaultPictureResult } from '../shared/image-search'
 import { decideShellPath } from './shell-path-policy'
 import { resolveImageRefs } from './image-refs'
 import { assetRootsForTalk, talkVaultRoot } from './asset-roots'
-import { convertibleImageRefs, planOptimisation, rewriteConvertedRefs, writeNewFile, type AssetContainment } from './optimise-images'
+import { writeNewFile } from './optimise-images'
 import { isSearchIndexEntryFresh } from './search-index-freshness'
 import { sweepOrphanedThumbCaches } from './thumbnail-cache-gc'
 import { createPreparationRoute, createPreparedTalkCache, memoiseUntilFailure, preparedTalkGroup, type PreparationLane } from './prepared-talk-cache'
 import { preparePass, setPreparationReleaseHook, withPrewarmYield } from './preparation-gate'
-import { isSuperseded } from './single-flight'
 import {
   BROWSER_THUMBNAIL_LANE,
-  THUMBNAIL_HEAP_WAIT_MAX_MS,
   heapGuardDecision,
-  thumbnailMediaOptions,
-  waitForHeap
 } from './thumbnail-media-policy'
 import { createAppendLog, createErrorLog } from './main-log'
 import { createQuitSequence } from './quit-sequence'
@@ -307,18 +290,17 @@ import { createTalkSearch, handleTalkSearchRequest } from './talk-search'
 import { emptyTalkSearchResult, mergeTalkSearchResults } from '../shared/talk-search'
 import { createTalkFolderStateStore, type StoredFolderStates } from './talk-folder-state'
 import { createVaultRegistry, resolveInVaults, type Vault, type VaultPersonal } from './vault-registry'
-import { viewVaults, refusalMessage, serviceFor, type AddVaultOutcome, type VaultService } from './vault-view'
-import { createVaultAvailability, nodeAvailabilityProbe, SERVICE_APPS, mkdirBelowRoot, writableRoot, type LastGood } from './vault-availability'
+import { viewVaults, serviceFor } from './vault-view'
+import { createVaultAvailability, nodeAvailabilityProbe, mkdirBelowRoot, writableRoot, type LastGood } from './vault-availability'
 import { createVaultFileStore, fileText } from './vault-file'
-import { registerVaultSettingsIpc, refusalOutcome, talkFolderRelOf } from './vault-settings-ipc'
+import { registerVaultSettingsIpc } from './vault-settings-ipc'
 import { HTML_PAGE_TEXT, createHtmlPageImportRunner, importHtmlPage, registerHtmlPageImportIpc } from './html-page-import'
 import { registerObjectStatusIpc } from './object-status'
 import { ExampleVault, resolveExampleHome } from './example-vault'
 import { ExampleVaultRemoval, windowsOnExample, type OpenAppWindow } from './example-vault-removal'
 import { resolveExampleTrash } from './example-trash-harness'
-import { resolveNewTalkDefaults } from '../shared/vault-defaults'
 import { pathsInVault, pathsOutsideOpenVaults, searchVaults } from './vault-scope'
-import { VAULTS_DIR, adoptLegacyThumbDirs, isPlainSegment, parseThumbUrl, talkThumbDir, thumbFileFor, thumbLookupDirs, thumbUrl, touchNamespace } from './thumb-cache-dirs'
+import { adoptLegacyThumbDirs, parseThumbUrl, talkThumbDir, thumbFileFor, thumbUrl, touchNamespace } from './thumb-cache-dirs'
 import { createConfigFile, type ConfigFile } from './config-file'
 import type { ConfigOverlay } from './settings-overlay'
 import { settingsPageUrl, startSettingsHost, type TalkWeaverSettings } from './settings-host'
@@ -339,7 +321,6 @@ import {
   markSlidePreviewHtml,
   slidePreviewIdFromUrl,
   slidePreviewUrl,
-  selectedThumbnailSlide,
   thumbnailSlides,
   SLIDE_PREVIEW_SURFACES,
   type SlidePreviewSurface
@@ -354,7 +335,6 @@ import { savedRecordingHome,
   registerRecordingContext,
   parseRetake,
   verifyRetake,
-  type RetakeContext,
   unregisterRecordingContext,
   shouldOfferRunSave,
   recordingAudioArmed,
@@ -375,7 +355,7 @@ import {
   registerTranscriptionIpc, stopActiveTranscription, sweepTranscriptionTemps, nativeLocaleAvailable, transcribeSavedRun as runSavedTranscription
 } from './transcription'
 import { defaultWordsEngine } from '../shared/transcript-contract'
-import { recordedSegmentPaths, readRecordingSource, runAtHome } from './recording-paths'
+import { recordedSegmentPaths, readRecordingSource } from './recording-paths'
 import { createTranscriptionSetup, type TranscriptionSetup } from './transcription-setup'
 import { resolveFfmpeg, shippedFfmpegCandidates, systemFfmpegCandidates } from './ffmpeg-path'
 import { registerTalkTextIpc } from './talkTextIpc'
@@ -385,15 +365,14 @@ import { playbackFile, removePlaybackCopies } from './recording-video'
 import { createTranscription as createRecordingTranscription } from './transcription'
 import { registeredKeyNames, openVocabularyFrontmatterKeys, METADATA_REGISTRY } from '../shared/metadata-registry'
 import {
-  applyMetadataDefaults,
   normaliseMetadataDefaults,
   type MetadataDefaults
 } from '../shared/metadata-surfaces'
 import { WORKSPACE_VIEWS, type SlideTabView, type SlidesPanelView, type WorkspaceView } from '../shared/workspace-view'
-import { newTalkSource } from '../shared/redesign-window-source'
-import { editFrontmatterText, parseFrontmatterPairs } from '../shared/frontmatter-editor'
-import { extractSection, type SectionLocation } from '../shared/insert-section'
+import { editFrontmatterText } from '../shared/frontmatter-editor'
 import { commandElectronAccelerator, menuCommands } from '../shared/command-registry'
+import { registerVaultIpc } from './vault-ipc'
+import { registerTalkIpc } from './talk-ipc'
 import { registerPreferencesIpc } from './preferences-ipc'
 import type { EditorViewMode } from '../shared/editor-view-mode'
 import { actionBarVisibleFrom } from '../shared/action-bar-settings'
@@ -425,7 +404,6 @@ import {
   invalidatePathwaySummary,
   readPathwayManifest,
   pathwayManifestPath,
-  readPathwaySummary,
   renamePathwayInManifest,
   resolvePathways,
   setPathwaySlideIdsInManifest,
@@ -437,7 +415,6 @@ import {
 } from './pathways'
 import { authoredTalkTitle, withTalkTitle } from './present-title'
 import {
-  injectRunCoverMetadata,
   listRuns,
   persistRun,
   readRun,
@@ -468,10 +445,9 @@ import { endAllWranglerRuns, prepareWranglerRun, type WranglerInstall, type Wran
 import { liveWorkerDeployConfig } from './live-worker-deploy-config'
 import { blockingFileText, brokenJsonFileInOutput } from './wrangler-failures'
 import { isTerminalLiveStatus, type LiveStatus } from './live-presenter-client'
-import { createLiveSessionManager, livePresenterContext, type LivePresenterContext } from './live-session-manager'
-import { createPresenterPublications, liveLinkFolder, presenterLink } from './presenter-publication'
+import { createLiveSessionManager, type LivePresenterContext } from './live-session-manager'
+import { createPresenterPublications, liveLinkFolder } from './presenter-publication'
 import { presentedTalkVault, type PresentedVaultDeps } from './presented-vault'
-import { isToolsWindowSender } from './talkTextSender'
 import { createLiveSessionStore, type SessionRecoveryRecord } from './live-session-store'
 import { secretsSlot, type SecretSlot, type SecretsStore } from './secrets-store'
 import { openSecretsStore } from './secrets-store-electron'
@@ -530,14 +506,13 @@ import { preworkTrayForLiveSession } from './prework-tray'
 import type { PollDefinition } from '../../worker/protocol'
 import type { PreworkFeed } from '../../compiler/scripts/lib/prework.mjs'
 import { createRunPrework, registerRunPreworkIpc, startRunPreworkTimer, type RunPreworkService } from './run-prework'
-import { withoutPreworkSlides, type CompiledPrework } from '../shared/run-prework'
 import { buildRunWorkPreview, planRunWork, runLineFor, sendRunWork, writeRunWorkPages, type SentWork } from './run-work-publish'
 import { RUN_FOLDER_UNCLEAR, RUN_FOLDER_UNPROVEN, legacyRunUnproven, runPublishFolder, runSiteFolder, runUnpublishJob, sentPhases } from './run-unpublish'
 import { createPostWorkOpener, startPostWorkOpenTimer, type PostWorkOpener } from './post-work-open'
 import { buildNotAvailablePage } from './work-page'
 import { LIVE_WORKER_BUILD } from '../../worker/recovery-protocol'
 import { decodeToWebp, storePastedImage } from './pasted-image-asset'
-import { prepareCrossVaultInsert, type CrossVaultTools, type SlideOrigin } from './cross-vault-insert'
+import { type CrossVaultTools, type SlideOrigin } from './cross-vault-insert'
 import { createProvenanceStore, originHintsFor } from './provenance-store'
 import {
   addRunInstantSlide, fileOutlineDocument, loadOutlineTools, OutlineRefusal, resolveInstantAnchors,
@@ -553,11 +528,9 @@ import { parseAcceptRecord, type FeedbackStatus } from '../shared/feedback'
 const RAIL_STATUSES: readonly FeedbackStatus[] = ['done', 'dismissed', 'accepted', 'new']
 import { buildInGate, buildSharedTalkPayload, ownerNameFrom } from './shared-talk-build'
 import { isSharedTalkStopped, isValidShareDomain } from '../shared/shared-talk'
-import { deckWindowKeyAction, deckWindowMode, OPEN_AUDIENCE_SCRIPT } from './deck-window-keys'
+import { OPEN_AUDIENCE_SCRIPT } from './deck-window-keys'
 import { appWindowOpenHandler, guardDeckWindowTree, isAppAudienceUrl } from './present-window-open'
-import { presentWindowPreferences } from './present-window-prefs'
-import { followRemotePages } from './remote-page-follow'
-import { createLivePageHost, disposeAllLivePageHosts, isLivePageContents, pairLivePageHosts, type DeckWindow, type LivePageHost, type LivePageRole, type LivePageSession, type LiveView } from './live-page-host'
+import { createLivePageHost, disposeAllLivePageHosts, isLivePageContents, type DeckWindow, type LivePageHost, type LivePageRole, type LivePageSession, type LiveView } from './live-page-host'
 import { testLoopbackAllowance } from './live-page-policy'
 import { handoutHomeDetails, handoutHomePostwork, handoutHomePrework } from '../shared/handout-home'
 import { canonicalToolsView, historyResultsRefusal, isOpenableToolsView, parseToolsRunRef, type ToolsRunRef, type ToolsView } from '../shared/tools-views'
@@ -1855,61 +1828,11 @@ function notifyTalkMetaUpdated(): void {
   }
 }
 
-// ── Vault IPC ──────────────────────────────────────────────────────────────
+// ── Vault list and availability ──────────────────────────────────────────────────────────────
 
-// vault:get-root / set-root / choose-root are single-vault shims over the registry (several vaults,
-// ticket 01): get answers the first open vault; set and choose make the folder the first open vault
-// (reusing its id when it is already a vault) and close the previous one — today's "change vault".
-ipcMain.handle('vault:get-root', () => currentVaultRoot() ?? null)
 
-// Test-only (TW_E2E=1): the vault root bounds every containment guard, so a renderer-supplied
-// root is refused in the app itself (no config write); Settings and first-run setup use
-// vault:choose-root, a dialog in the main process. In test mode the folder must be an existing
-// absolute directory, and it is adopted through the vault registry.
-ipcMain.handle('vault:set-root', (_event, path: string) => {
-  const refusal = setRootRefusal(E2E, path)
-  if (refusal) {
-    console.warn('[vault:set-root] refused:', refusal)
-    return { success: false, error: refusal }
-  }
-  vaultRegistry.adoptRoot(path)
-  searchCache.clear()
-  invalidateTalkCache()
-  scheduleVaultWarm()
-  return { success: true }
-})
 
-ipcMain.handle('vault:use-default-root', () => {
-  const configured = vaultRegistry.primary()
-  if (configured) return writableVaultRoot() ?? null
-  try {
-    const documents = realpathSync(app.getPath('documents'))
-    const candidate = join(documents, 'TalkWeaver')
-    if (!pathStaysInside(documents, candidate)) return null
-    mkdirInVault(documents, candidate)
-    const root = writableRoot(candidate, rootFs)
-    if (!root) return null
-    vaultRegistry.adoptRoot(root)
-    invalidateTalkCache()
-    scheduleVaultWarm()
-    return root
-  } catch { return null }
-})
 
-ipcMain.handle('vault:choose-root', async () => {
-  const result = await dialog.showOpenDialog({
-    title: 'Choose Vault Root',
-    message: 'Select the folder containing your Talk folders',
-    properties: ['openDirectory']
-  })
-  if (result.canceled || !result.filePaths.length) return null
-  const chosen = result.filePaths[0]
-  vaultRegistry.adoptRoot(chosen)
-  searchCache.clear()
-  invalidateTalkCache()
-  scheduleVaultWarm()
-  return chosen
-})
 
 // The Talks panel's vault list (ticket 03): every vault, open or closed, with a name, badge and
 // service label derived locally. Adding checks the folder here; the registry refuses nesting and
@@ -1972,32 +1895,6 @@ async function checkVaultAvailability(force = false): Promise<boolean> {
   }
   return changed
 }
-// vault:list waits for the (asynchronous, time-limited) folder check; it never stats a folder itself.
-ipcMain.handle('vault:list', async () => {
-  await checkVaultAvailability().catch(() => false)
-  return vaultViews({ fresh: true })
-})
-// The unavailable section's "Check again": look at every open vault's folder now.
-ipcMain.handle('vault:recheck', () => checkVaultAvailability(true).catch(() => false))
-// ⋯ › Reveal in Finder (ticket 07): the folder comes from the registry by vault id, never from the
-// renderer. An unknown id, or a folder that is not there, is refused.
-ipcMain.handle('vault:reveal', (_event, vaultId: unknown): { ok: boolean; reason?: 'unknown-vault' | 'unavailable' } => {
-  const vault = typeof vaultId === 'string' ? vaultRegistry.get(vaultId) : null
-  if (!vault) return { ok: false, reason: 'unknown-vault' }
-  if (vaultAvailability.isUnavailable(vault.id)) return { ok: false, reason: 'unavailable' }
-  shell.showItemInFolder(vault.root)
-  return { ok: true }
-})
-// The unavailable section's one action when the cloud service is not signed in: open that service's
-// app (a fixed list of apps, never a renderer-supplied path).
-ipcMain.handle('vault:open-service', async (_event, vaultId: unknown): Promise<boolean> => {
-  const vault = typeof vaultId === 'string' ? vaultRegistry.get(vaultId) : null
-  if (!vault) return false
-  const service = vaultAvailability.lastGood(vault.id)?.service ?? vaultAvailability.service(vault)
-  const app = SERVICE_APPS[service]
-  if (!app || !existsSync(app)) return false
-  return (await shell.openPath(app)) === ''
-})
 registerVaultSettingsIpc({
   ipcMain,
   dialog,
@@ -2028,15 +1925,6 @@ registerObjectStatusIpc({
 // The copy runs in its own process, started in the talk folder (html-page-import-worker.ts). The Slide Scratchpad's
 // Insert visual only uses the same copy for an agent's page or SVG (scratchpad-visual-import.ts).
 const htmlPageRunImport = createHtmlPageImportRunner(join(__dirname, 'html-page-import-worker.js'), forkHtmlPageImportChild)
-ipcMain.handle('talk:save-offline-page', (_event, input: unknown) => saveOfflinePage(input, {
-  writableTalkRoot,
-  runImport: htmlPageRunImport,
-  capture: async (input, target) => {
-    const source = offlineSource(target, input.source, livePageAllowance)
-    if (!source) throw Error('Page refused')
-    return captureOfflinePage(source, livePageAllowance)
-  }
-}))
 
 registerHtmlPageImportIpc({
   ipcMain,
@@ -2074,11 +1962,6 @@ async function afterExampleVaultChange(): Promise<void> {
     try { if (!win.isDestroyed()) win.webContents.send('vault:vaults-changed') } catch { /* window closing */ }
   }
 }
-ipcMain.handle('vault:open-example', async () => {
-  const result = await exampleVault.open()
-  if (result.ok) await afterExampleVaultChange()
-  return result
-})
 
 // ── Remove the example vault and bring it back (onboarding ticket 12) ──
 // The rules are in example-vault-removal.ts. The renderer never passes a path: preview takes nothing,
@@ -2156,49 +2039,6 @@ ipcMain.handle('example:restore', async (event) => {
   return result
 })
 
-ipcMain.handle('vault:add', async (event, path?: unknown): Promise<AddVaultOutcome | null> => {
-  let chosen: string
-  if (E2E && typeof path === 'string' && path) chosen = path
-  else {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    const options: Electron.OpenDialogOptions = {
-      title: 'Add a vault',
-      message: 'Choose the folder that holds the talks',
-      properties: ['openDirectory', 'createDirectory']
-    }
-    const result = win ? await dialog.showOpenDialog(win, options) : await dialog.showOpenDialog(options)
-    if (result.canceled || !result.filePaths.length) return null
-    chosen = result.filePaths[0]
-  }
-  try {
-    if (!statSync(chosen).isDirectory()) return { ok: false, reason: 'not-a-folder', message: refusalMessage('not-a-folder', null) }
-  } catch {
-    return { ok: false, reason: 'not-a-folder', message: refusalMessage('not-a-folder', null) }
-  }
-  try {
-    const added = vaultRegistry.add(chosen)
-    const view = vaultViews().find((v) => v.id === added.id)
-    return view ? { ok: true, vault: view } : null
-  } catch (error) {
-    return refusalOutcome(error, vaultViews)
-  }
-})
-
-// Open or close one vault. Closing hides its talks everywhere; nothing in the folder changes. The
-// last open vault stays open (the app needs a vault to work in).
-ipcMain.handle('vault:set-open', (_event, vaultId: unknown, open: unknown): AddVaultOutcome => {
-  if (typeof vaultId !== 'string') return { ok: false, reason: 'unknown-vault', message: refusalMessage('unknown-vault', null) }
-  try {
-    if (open !== true && vaultRegistry.list().filter((v) => v.open && v.id !== vaultId).length === 0 && vaultRegistry.get(vaultId)?.open) {
-      return { ok: false, reason: 'last-open', message: refusalMessage('last-open', null) }
-    }
-    vaultRegistry.setOpen(vaultId, open === true)
-    const view = vaultViews().find((v) => v.id === vaultId)
-    return view ? { ok: true, vault: view } : { ok: false, reason: 'unknown-vault', message: refusalMessage('unknown-vault', null) }
-  } catch (error) {
-    return refusalOutcome(error, vaultViews)
-  }
-})
 vaultRegistry.onChange(() => {
   for (const win of BrowserWindow.getAllWindows()) {
     try { if (!win.isDestroyed()) win.webContents.send('vault:vaults-changed') } catch { /* window closing */ }
@@ -2688,14 +2528,6 @@ const vaultIndex = createVaultListHandler({
     return found ? found.conflicts : null
   }
 })
-// The talk's Activity lines (Inspector), newest first. The talk is named by its outline path; its
-// vault and slug key the local file. A path in no vault has no Activity.
-ipcMain.handle('talk:activity', async (_event, outlinePath: unknown) => {
-  if (typeof outlinePath !== 'string' || !outlinePath.endsWith('-outline.md')) return []
-  const hit = vaultRegistry.resolve(outlinePath)
-  if (!hit) return []
-  return talkActivity.list(hit.vault.id, basename(outlinePath).replace(/-outline\.md$/, ''))
-})
 // The open talk's folder changed (the external-change guard's watcher, or the talk was just opened):
 // scan that one folder, debounced, and tell every window the talk's new count.
 const conflictScanTimers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -2926,20 +2758,6 @@ function scanTalks(root: string): TalkInfo[] {
   return talks.sort((a, b) => a.title.localeCompare(b.title))
 }
 
-// The talks of one vault: vaultId names it; without one, the first open vault (today's single list).
-// A closed or unknown vault lists nothing and is not scanned. Batches carry the vault id.
-ipcMain.handle('vault:list-talks', async (event, vaultId?: unknown) => {
-  const vault = typeof vaultId === 'string' ? vaultRegistry.get(vaultId) : primaryVault()
-  if (!vault || !vault.open) return []
-  if (vaultAvailability.isUnavailable(vault.id)) return [] // unmounted: not listed, not scanned (ticket 07)
-  const cached = await vaultIndex.handle(vault, (batch, reset, done) => {
-    if (!event.sender.isDestroyed()) event.sender.send('vault:talks-batch', { vaultId: vault.id, batch, reset, done })
-  })
-  void vaultIndex.refreshDone(vault.id).then((talks) => {
-    talkCache.set(vault.root, { at: Date.now(), talks })
-  }).catch((error) => console.error('[vault-index]', error))
-  return cached
-})
 
 const galleryAdmission = createGalleryAdmission()
 const gallerySenders = new WeakSet<Electron.WebContents>()
@@ -2989,12 +2807,6 @@ const galleryCatalogue = createGalleryCatalogue({
   unavailable: (id) => vaultAvailability.isUnavailable(id),
   cached: (vault) => vaultIndex.cachedState(vault)
 })
-ipcMain.handle('vault:gallery-catalogue', (event, generation: unknown) => {
-  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error('Main frame required')
-  watchGallerySender(event.sender)
-  galleryAdmission.cancel(event.sender.id)
-  return galleryCatalogue(generation)
-})
 
 async function resolveGalleryTalk(id: unknown, path: unknown, expectedEpoch?:unknown): Promise<(TalkInfo & {vaultId:string})|null> {
   if (expectedEpoch !== undefined && expectedEpoch !== galleryEpoch) return null
@@ -3012,10 +2824,6 @@ async function resolveGalleryTalk(id: unknown, path: unknown, expectedEpoch?:unk
   return talk ? { ...talk, vaultId: id } : null
 }
 
-ipcMain.handle('vault:gallery-talk', (event, id:unknown, path:unknown, epoch:unknown) => {
-  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error('Main frame required')
-  return resolveGalleryTalk(id,path,epoch)
-})
 const claimGalleryTalk = createGalleryClaim({epoch:()=>galleryEpoch,resolve:resolveGalleryTalk,claim:(senderId, path) => {
   const sender = editorWindows.get(senderId)
   if (!sender || sender.win.isDestroyed()) return {ok:false, reason:'closed'}
@@ -3028,11 +2836,6 @@ const claimGalleryTalk = createGalleryClaim({epoch:()=>galleryEpoch,resolve:reso
   }
   return result
 }})
-ipcMain.handle('vault:gallery-claim', (event, id:unknown, path:unknown, epoch:unknown) => {
-  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error('Main frame required')
-  watchGallerySender(event.sender)
-  return claimGalleryTalk(event.sender.id,id,path,epoch)
-})
 
 // This demand route never calls listTalks, refresh or conflict processing.
 // Search rows certify outline freshness only. Gallery artwork is certified by its own
@@ -3101,46 +2904,6 @@ const galleryFacts = createGalleryFacts({
   }
 })
 const galleryHandoutSites=gallerySiteScope(acquireGallerySite)
-ipcMain.handle('vault:gallery-cancel-facts', event => {
-  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error('Main frame required')
-  galleryHandoutSites.cancel(event.sender.id); galleryAdmission.cancel(event.sender.id); revokeGalleryReads()
-})
-ipcMain.handle('vault:gallery-handouts', (event, id:unknown, path:unknown) => {
-  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error('Main frame required')
-  if (typeof id !== 'string' || typeof path !== 'string') return null
-  watchGallerySender(event.sender)
-  return galleryAdmission.run(event.sender.id, async live => {
-    const epoch=galleryEpoch, vault=vaultRegistry.get(id)
-    if(!vault?.open || vaultAvailability.isUnavailable(id))return null
-    const root=vault.root
-    const current=()=>live() && epoch===galleryEpoch && vaultRegistry.get(id)?.root===root && !!vaultRegistry.get(id)?.open && !vaultAvailability.isUnavailable(id)
-    const known=await galleryCatalogue(0)
-    const talk=known.vaults.find(v=>v.id===id)?.talks.find(t=>t.relativeOutline===path)
-    if(!talk || !current())return null
-    const identity=statSync(root), executable=app.isPackaged ? join(process.resourcesPath,'vault-gallery') : join(app.getAppPath(),'native/vault-gallery')
-    const deadline=Date.now()+10000
-    const active=()=>current() && Date.now()<deadline
-    return collectGalleryHandouts(talk,root,{
-      current:active,
-      read:p=>readGallerySource(root,join(root,p),active,identity,executable),
-      list:async p=>{
-        if(!active())throw Error('Cancelled')
-        const fs=handoutInventoryFilesystem(root,executable,`${identity.dev}:${identity.ino}`,{deadline})
-        const names:string[]=[]
-        const cancelled=setInterval(()=>{if(!active())void fs.close()},25)
-        try {for await(const name of await fs.children(p)){if(!active() || names.length>=128)throw Error('Run index limit');names.push(name)}}finally{clearInterval(cancelled);await fs.close()}
-        if(!active())throw Error('Cancelled')
-        return names
-      }
-    },{siteDir:()=>publishSiteDir(),readRegistry:readHandoutRegistry,acquireSite:folders=>galleryHandoutSites.read(event.sender.id,`${epoch}:${root}:${publishSiteDir()}`,publishSiteDir(),folders,active,executable)}).catch(()=>null)
-  })
-})
-ipcMain.handle('vault:gallery-facts', (event, id:unknown, path:unknown, preview:unknown) => {
-  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame) throw new Error('Main frame required')
-  if (typeof id !== 'string' || typeof path !== 'string') return null
-  watchGallerySender(event.sender)
-  return galleryAdmission.run(event.sender.id, live => galleryFacts(id,path,preview === true,live))
-})
 
 // Warning types an author must act on (mirrors the renderer's SURFACED_WARNINGS filter —
 // hints like icon-suggested would make every talk look broken).
@@ -3154,53 +2917,6 @@ function surfacedWarningCount(rows: ProjectionRowMain[]): number {
   return n
 }
 
-// Outline paths distinguish talks with the same slug in different vaults. Existing slug readers
-// retain the first-open-vault entry.
-ipcMain.handle('vault:talk-meta', async () => {
-  try {
-    type Meta = {
-      slideCount: number | null
-      createdMs: number
-      editedMs: number
-      // First slide's thumb-cache key → the talk's cover (twthumb://slug/coverKey); null until indexed.
-      coverKey: string | null
-      // Slides with actionable compiler warnings (0 until indexed).
-      warningCount: number
-      // Frontmatter context lines (mtime-cached parse shared with scanTalks); null when absent.
-      subtitle: string | null
-      event: string | null
-      pathwayCount: number
-      pathwayNames: string[]
-    }
-    const out: Record<string, Meta> = Object.create(null)
-    for (const vault of availableVaults()) {
-      const root = vault.root
-      const persisted = await vaultIndex.metadata(vault)
-      for (const talk of await vaultIndex.cached(vault)) {
-        const cached = searchCache.get(talk.outlinePath)
-        const first = cached?.rows?.[0] as (ProjectionRowMain & { render_hash?: string }) | undefined
-        const meta = persisted[talk.slug]
-        const pathwaySummary = readPathwaySummary(root, talk.slug)
-        const facts: Meta = {
-          slideCount: cached ? cached.rows.length : null,
-          createdMs: meta?.createdMs ?? 0,
-          editedMs: meta?.editedMs ?? 0,
-          coverKey: first ? (first.render_hash || first.content_hash || first.slide_id || null) : null,
-          warningCount: cached ? surfacedWarningCount(cached.rows) : 0,
-          subtitle: meta?.subtitle ?? null,
-          event: meta?.event ?? null,
-          pathwayCount: pathwaySummary.count,
-          pathwayNames: pathwaySummary.names
-        }
-        out[talk.outlinePath] = facts
-        out[talk.slug] ??= facts
-      }
-    }
-    return out
-  } catch {
-    return {}
-  }
-})
 
 // ── Compiler ───────────────────────────────────────────────────────────────
 
@@ -3796,42 +3512,7 @@ function thumbnailDocumentId(html: string, previewKey?: string): string {
   return createHash('sha256').update(markSlidePreviewHtml(html)).digest('hex').slice(0, 16)
 }
 
-// The editor's live preview. Keyed by window + talk, so a newer revision from the same window drops an
-// older one still waiting on the preparation gate; that caller gets `{ superseded: true }`, which the
-// renderer ignores (a newer reply for the same talk is on its way). Nothing else is ever dropped.
-ipcMain.handle('talk:compile', async (event, outlinePath: string, content: string) => {
-  try {
-    const prepared = await prepareTalk(outlinePath, content, undefined, undefined, 'live', `${event.sender.id}\0${outlinePath}`)
-    return prepared?.rows ?? null
-  } catch (e) {
-    if (isSuperseded(e)) return { superseded: true as const }
-    console.error('[compile]', e)
-    return null
-  }
-})
 
-ipcMain.handle('talk:selected-thumbnail', async (_event, outlinePath: string, content: string, slideId: string) => {
-  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
-  if (refusal) return null
-  try {
-    const prepared = await prepareTalk(outlinePath, content)
-    if (!prepared) return null
-    const fullHtml = prepared.model.fullHtml
-    if (typeof fullHtml !== 'string' || !prepared.rows) return null
-    const documentId = thumbnailDocumentId(fullHtml, prepared.previewKey)
-    const selected = selectedThumbnailSlide(prepared.rows, String(slideId), documentId)
-    if (!selected) return null
-    const cacheDir = talkThumbCacheDir(outlinePath, prepared.slug)
-    const rendered = await renderThumbnails({ fullHtml, deckKey: prepared.previewKey, preview: prepared.preview, slides: [selected], cacheDir })
-    const renderedPath = rendered[selected.key]
-    return renderedPath
-      ? { slideId: String(slideId), url: thumbUrl(prepared.slug, basename(renderedPath, '.png'), vaultIdOf(outlinePath)) }
-      : null
-  } catch (e) {
-    console.error('[selected-thumbnail]', e)
-    return null
-  }
-})
 
 // ADR-0032 §6 (own slide over sample): the author's CURRENT slide, rendered from outline text with
 // another layout (and options) on it, for the picker's pictures and the Inspector's option pictures.
@@ -4014,73 +3695,7 @@ async function checkEmbedUrl(
   }
 }
 
-ipcMain.handle('talk:check-embeds', async (_event, outlinePath: string, content: string): Promise<EmbedStatus[]> => {
-  const compilerDir = getCompilerPath()
-  if (!compilerDir) return []
-  try {
-    const { parseVideoEmbed } = await import(pathToFileURL(join(compilerDir, 'lib/02-triggers-layout.mjs')).href)
-    const prepared = await prepareTalk(outlinePath, content, undefined, undefined, 'variant', undefined, { preview: false })
-    if (!prepared) return []
-    const embeds = extractDeckEmbeds(String(prepared.model.fullHtml ?? ''))
-    if (!embeds.length) return []
-    // Check each unique URL once, then map the result back to every slide that uses it.
-    const uniqueUrls = Array.from(new Set(embeds.map((e) => e.url)))
-    const results = await Promise.all(uniqueUrls.map((u) => checkEmbedUrl(u, parseVideoEmbed)))
-    const byUrl = new Map(uniqueUrls.map((u, i) => [u, results[i]]))
-    return embeds.map((e) => {
-      const r = byUrl.get(e.url)!
-      return { slideId: e.slideId, title: e.title, url: e.url, kind: r.kind, status: r.status, detail: r.detail }
-    })
-  } catch (e) {
-    console.error('[check-embeds]', e)
-    return []
-  }
-})
 
-// ── Explain rendering (the per-slide decision trace, ADR-0024) ───────────────
-// Reads the ACTUAL compiled decisions off the rendered <section> for one slide — not a guess.
-// The engine stamps every render decision as a data-* attribute on the slide's <section>
-// (data-layout / data-title-layout / data-role / data-mode / data-split),
-// plus the trigger tokens the author wrote. We return those verbatim so the renderer can show
-// "why did this slide look like this" on right-click. Index = the slide's position in the deck
-// (same order as compile()'s projection rows).
-ipcMain.handle('talk:explain-slide', async (_event, outlinePath: string, content: string, index: number) => {
-  try {
-    const prepared = await prepareTalk(outlinePath, content, undefined, undefined, 'variant', undefined, { preview: false })
-    if (!prepared) return null
-    const rows = (prepared.rows ?? []) as ProjectionRowMain[]
-    const fullHtml = String(prepared.model.fullHtml ?? '')
-    // The Nth `<section class="slide" …>` opening tag is this slide's render decisions.
-    const tags = fullHtml.match(/<section class="slide"[^>]*>/g) ?? []
-    if (index < 0 || index >= tags.length) return null
-    const tag = tags[index]
-    const attr = (name: string): string => {
-      const m = tag.match(new RegExp(`data-${name}="([^"]*)"`))
-      return m ? m[1] : ''
-    }
-    const row = rows[index] ?? ({} as ProjectionRowMain)
-    // Trigger tokens the author wrote on the slide's Trigger line (the {…}-only line after the heading).
-    const src = String(row.source_markdown ?? '')
-    const triggerLine = src.split('\n').slice(1).find((l) => /^\s*(\{[^}]*\}\s*)+$/.test(l)) ?? ''
-    const triggers = (triggerLine.match(/\{[^}]*\}/g) ?? [])
-    return {
-      navTitle: row.nav_title || row.title || '',
-      layout: attr('layout'),
-      titleLayout: attr('title-layout'), // 'left' | 'top' | '' (none/nav-only)
-      role: attr('role'),
-      mode: attr('mode'),
-      split: attr('split'),
-      triggers,
-      wordCount: row.word_count ?? 0,
-      bulletCount: (row as { bullet_count?: number }).bullet_count ?? 0,
-      imageCount: (row as { image_count?: number }).image_count ?? 0,
-      warnings: Array.isArray(row.warnings) ? row.warnings : []
-    }
-  } catch (e) {
-    console.error('[explain-slide]', e)
-    return null
-  }
-})
 
 // ── Cross-talk search (cached index, ADR-0019) ───────────────────────────────
 // Recompiling every talk per keystroke is wasteful. Cache compiled projection rows
@@ -4548,35 +4163,7 @@ function pictureTextForCompile(outlinePath: string, outlineText: string): Record
 const slideImageText: ImageTextSource = { generation: () => ocrIndex.generation(), textLower: (p) => ocrIndex.textLower(p) }
 const slideSearch = createSlideSearch({ imageText: slideImageText })
 
-// The text read from the pictures each slide block names (the same picture text the Slide Browser's search reads),
-// one string per block, '' when none. The grid and the outline search it for "in picture:" hits (ticket 2).
-// Rises whenever the OCR index changes (a picture read later in the background), so the renderer cache refetches.
-ipcMain.handle('talk:slide-picture-generation', (): number => ocrIndex.generation())
-ipcMain.handle('talk:slide-picture-text', (_event, outlinePath: unknown, blocks: unknown): string[] => {
-  if (typeof outlinePath !== 'string' || !Array.isArray(blocks)) return []
-  const vaultRoot = vaultRootFor(outlinePath)
-  if (!vaultRoot) return blocks.map(() => '')
-  const talkDir = dirname(outlinePath)
-  return blocks.map((block) => {
-    if (typeof block !== 'string' || !block) return ''
-    let text = ''
-    for (const path of resolveImagePaths(extractImageRefs(block), talkDir, vaultRoot)) {
-      const entry = ocrIndex.entry(path)
-      if (entry && !entry.failed && !entry.skipped && entry.text) text += (text ? '\n' : '') + entry.text
-    }
-    return text
-  })
-})
 
-// Manual trigger for the OCR index (command palette): runs whatever the setting says and reports
-// what really happened.
-ipcMain.handle('talk:ocr-index', async () => {
-  if (!currentVaultRoot()) return { success: false, error: 'No vault root' }
-  if (!resolveOcrBin()) return { success: false, error: 'OCR helper not found (rebuild the app)' }
-  const counts = await ocrIndex.runNow(ocrCandidates())
-  ocrIndex.flush()
-  return { success: true, total: counts.total, read: counts.read, known: counts.known, failed: counts.failed, skipped: counts.skipped, cached: ocrIndex.size(), added: counts.read }
-})
 
 // Talk search over IPC (ADR-0029 §1): the Talks browser today, the picker's "Find a talk" next.
 // options.vaultIds (a list) searches those vaults, merged in that order; an empty list searches
@@ -4821,107 +4408,7 @@ async function maybeOfferOutlineMigration(outlinePath: string, text: string): Pr
   }
 }
 
-// `forEditor`: the editor window is loading this talk (Editor.tsx) — the text it gets is the external-
-// change guard's baseline for the file (outline-disk-guard.ts). Every other reader leaves it alone.
-ipcMain.handle('talk:read-outline', async (event, outlinePath: string, opts?: { forEditor?: boolean; revision?: unknown }) => {
-  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
-  if (refusal) return null
-  try {
-    const text = await readFileAsync(outlinePath, 'utf8')
-    const loaded = await maybeOfferOutlineMigration(outlinePath, text)
-    if (opts?.forEditor === true && typeof loaded === 'string') {
-      // Only the window that has claimed this talk (window:claim-talk) becomes its guard owner.
-      const claimed = editorWindows.get(event.sender.id)?.outlinePath
-      if (claimed && outlineIdentity(claimed).key === outlineIdentity(outlinePath).key) {
-        outlineDiskGuard.track(String(event.sender.id), outlinePath, loaded)
-        // The text loaded is the file's, at the editor's revision now (editor-revisions.ts).
-        editorRevisions.loaded(event.sender.id, opts.revision)
-      } else {
-        console.warn(`[outline-guard] an editor load of ${outlinePath} from a window that has not claimed it was not tracked`)
-      }
-    }
-    return loaded
-  } catch (e) {
-    return null
-  }
-})
 
-// External-change guard (shared-talk ticket 01): the file's text and version as it stands on disk
-// (Reload), and accepting the version the person saw (Keep mine, and Reload once the text is in the
-// editor). See outline-disk-guard.ts.
-// Every request must come from the window that has the talk open (the guard's owner for that file).
-ipcMain.handle('talk:outline-disk-version', async (event, outlinePath: unknown) => {
-  if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return null
-  try { return await outlineDiskGuard.diskVersion(outlinePath) } catch (error) {
-    // Electron decorates thrown IPC errors with a remote-method prefix; keep UI wording as data.
-    return { error: error instanceof Error ? error.message : String(error) }
-  }
-})
-ipcMain.handle('talk:outline-accept-disk', async (event, outlinePath: unknown, hash: unknown, opts?: { keepPending?: boolean; revision?: unknown }) => {
-  if (typeof outlinePath !== 'string' || !outlinePath || typeof hash !== 'string') return { ok: false, change: null, error: 'Nothing to accept.' }
-  const owner = String(event.sender.id), session = outlineDiskGuard.session(owner, outlinePath)
-  if (!session) {
-    return { ok: false, change: null, error: 'This window does not have that talk open, so nothing was accepted.' }
-  }
-  try {
-    const accepted = await outlineDiskGuard.accept(owner, outlinePath, hash, { keepPending: opts?.keepPending === true })
-    // Reopening the same talk is a new session too; owns() alone cannot fence its save state.
-    if (outlineDiskGuard.session(owner, outlinePath) !== session) {
-      return { ok: false, change: null, error: 'The talk was closed or reloaded before acceptance finished, so nothing was acknowledged.' }
-    }
-    const revision = opts?.revision
-    if (accepted.ok && opts?.keepPending !== true && typeof revision === 'number' && Number.isSafeInteger(revision) && revision >= 0) {
-      editorRevisions.loaded(event.sender.id, revision)
-      lastSaveFailed.delete(event.sender.id)
-      lastUnsavedText.delete(canonicalOutlinePath(outlinePath))
-    }
-    return accepted
-  } catch (e) {
-    return { ok: false, change: null, error: e instanceof Error ? e.message : String(e) }
-  }
-})
-// Recovery copies (outline-recovery.ts): the text a refused save kept, for the talk this window has
-// open (the bar's "Restore my unsaved text"), and dropping it (restored and saved, or Discard).
-// Merge inputs are durable before the renderer accepts a disk version or replaces dirty text.
-ipcMain.handle('talk:outline-preserve-merge', async (event, outlinePath: unknown, snapshot: unknown) => {
-  if (typeof outlinePath !== 'string' || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return null
-  if (!snapshot || typeof snapshot !== 'object') return null
-  const value = snapshot as Record<string, unknown>
-  if (typeof value.base !== 'string' || typeof value.mine !== 'string' || typeof value.disk !== 'string' ||
-      (value.draft !== undefined && typeof value.draft !== 'string')) return null
-  try {
-    const real = canonicalOutlinePath(outlinePath)
-    const file = await outlineRecovery.preserveMerge(real, {
-      base: value.base, mine: value.mine, disk: value.disk, ...(typeof value.draft === 'string' ? { draft: value.draft } : {}),
-    })
-    // A crash before autosave first refuses still offers the local text on the next open.
-    if (value.draft === undefined && value.mine !== value.base) {
-      const previous = await outlineRecovery.read(real)
-      if (previous && previous.text !== value.mine && previous.text !== value.base) {
-        await outlineRecovery.preserveMerge(real, { base: value.base, mine: previous.text, disk: value.disk })
-      }
-      await outlineRecovery.save(real, value.mine)
-    }
-    return file
-  } catch { return null }
-})
-ipcMain.handle('talk:outline-recovery', async (event, outlinePath: unknown) => {
-  if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return null
-  try { return await outlineRecovery.read(canonicalOutlinePath(outlinePath)) } catch { return null }
-})
-ipcMain.handle('talk:outline-recovery-discard', async (event, outlinePath: unknown) => {
-  if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return false
-  try { await outlineRecovery.clear(canonicalOutlinePath(outlinePath)); return true } catch { return false }
-})
-// The talk was removed on disk and the person chose Discard: the window lets the talk go without
-// saving it again, and its recovery copy is dropped. The guard keeps the file tracked (every save still
-// refused, so nothing recreates it) until the window releases the talk.
-ipcMain.handle('talk:outline-discard', async (event, outlinePath: unknown) => {
-  if (typeof outlinePath !== 'string' || !outlinePath || !outlineDiskGuard.owns(String(event.sender.id), outlinePath)) return false
-  editorRevisions.discarded(event.sender.id)
-  try { await outlineRecovery.clear(canonicalOutlinePath(outlinePath)) } catch { /* best effort */ }
-  return true
-})
 // The renderer resolved the close sheet (Reload or Keep mine completed): close for real, and finish
 // the quit that asked for it.
 // The renderer received outline:close-requested (its sheet is up): the 5-second fallback is off.
@@ -5039,40 +4526,9 @@ ipcMain.handle('window:confirm-close', (event, opts?: { quit?: boolean; revision
   return true
 })
 
-// Insert section (talk search 07; ADR-0029 §5): the section a picker heading names, read from its
-// talk as it stands now (the open editor's buffer when a window has it, else the file — readTalkOutline,
-// the one writer's read) and cut by the shared headless operation. Read-only: the insert itself happens
-// in the target talk's editor buffer (renderer, lib/outlineMutation) and is saved from there.
-ipcMain.handle('talk:extract-section', async (_event, sourceOutlinePath: string, at: SectionLocation) => {
-  let text: string
-  try {
-    text = await readTalkOutline(sourceOutlinePath)
-  } catch (e) {
-    return { ok: false, error: `The talk the section comes from could not be read (${e instanceof Error ? e.message : String(e)}). Nothing was inserted.` }
-  }
-  return extractSection(text, at)
-})
 
-// Data-loss backstop (2026-07-05): isStructurallyEmptyOutline and its refusal message live in
-// talk-writer.ts, which applies the same backstop to every other origin's writes.
-// Each editor window's last save: failed or not (an update's restart counts an editor as saved only if it did not).
-// Each save carries the revision of the text it sent (editor-revisions.ts): what a close confirms against.
-ipcMain.handle('talk:write-outline', async (event, outlinePath: string, content: string, opts?: { revision?: unknown; expectedDiskHash?: unknown; identity?: unknown }) => {
-  const finished = editorRevisions.writeStarted(event.sender.id, opts?.revision)
-  try {
-    await updateTestSaveDelay() // the update-test flavour's slow save, and a test run's from source; nothing in a release
-    if (opts?.expectedDiskHash !== undefined && (typeof opts.expectedDiskHash !== 'string' || !/^[a-f0-9]{64}$/.test(opts.expectedDiskHash))) { lastSaveFailed.add(event.sender.id); finished(false); return { ok: false as const, refused: 'ownership' as const } }
-    const identity = parseOutlineSaveIdentity(opts?.identity)
-    if (opts?.identity !== undefined && !identity) { lastSaveFailed.add(event.sender.id); finished(false); return { ok: false as const, refused: 'ownership' as const } }
-    const result = await writeOutlineFromEditor(event, outlinePath, content, opts?.expectedDiskHash as string | undefined, identity)
-    const ok = !!result && typeof result === 'object' && result.ok === true
-    if (ok) lastSaveFailed.delete(event.sender.id)
-    else lastSaveFailed.add(event.sender.id)
-    finished(ok)
-    return result
-  } catch (error) { lastSaveFailed.add(event.sender.id); finished(false); throw error }
-})
-async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string, expectedDiskHash?: string, identity?: OutlineSaveIdentity) {
+type EditorSlideMergeWrite = NonNullable<ReturnType<typeof outlineSlideMerge.takeWrite>>
+async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string, expectedDiskHash?: string, identity?: OutlineSaveIdentity, merge?: EditorSlideMergeWrite) {
   renewEstablishedGalleryClaims()
   const saveEpoch = galleryEpoch
   const saveOwner = editorWindows.get(_event.sender.id)
@@ -5109,7 +4565,9 @@ async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outli
     let existing = ''
     try { existing = readFileSync(outlinePath, 'utf8') } catch { /* absent = nothing to protect */ }
     if (existing.trim() !== '') {
-      console.warn(emptyOverNonemptyMessage(outlinePath, content, existing))
+      const error = emptyOverNonemptyMessage(outlinePath, content, existing)
+      console.warn(error)
+      merge?.finish({ ok: false, error })
       return { ok: false as const, refused: 'empty-over-nonempty' as const }
     }
   }
@@ -5128,7 +4586,8 @@ async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outli
   let stampedContent: string | null = null
   try {
     const compilerDir = getCompilerPath()
-    if (compilerDir) {
+    // The merge engine already validated these exact bytes and allocated any Keep both IDs.
+    if (compilerDir && !merge) {
       const mod = await import(pathToFileURL(join(compilerDir, 'lib/12-outline-edit.mjs')).href)
       let preferred: Map<string, string> | null = null
       if (!identity || (!identity.replay && identity.ids.length === 0)) {
@@ -5142,7 +4601,16 @@ async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outli
     }
   } catch { /* stamping must never block a save */ }
   // The editor's own queued save: written by the guarded writer under the file's lock, never routed.
-  const written = await writeTalkOutline(outlinePath, toWrite, 'editor', {authorize, expectedDiskHash})
+  const written = await writeTalkOutline(outlinePath, toWrite, 'editor', {
+    authorize: merge ? () => { authorize(); merge.authorize() } : authorize,
+    expectedDiskHash, observedDisk: merge?.disk,
+  })
+  merge?.finish(written)
+  // The renderer rolls back a refused merge. Its original buffer already has an immutable archive.
+  if (merge && !written.ok) {
+    if (written.staleDisk) void outlineDiskGuard.check(outlinePath).catch(() => undefined)
+    return false
+  }
   if (!written.ok && written.changedOnDisk) {
     // External-change guard: the file differs from what the editor holds. Nothing was written; the
     // renderer shows the bar (the change is named by the path this window uses). The editor's text is
@@ -5952,283 +5420,6 @@ function outlineUrlOnDisk(outlinePath: string): string | null {
   } catch { return null }
 }
 
-ipcMain.handle('talk:present', async (event, outlinePath: string, content: string, mode?: string, startSlideId?: string, pathwayId?: string, plannedRunId?: string, retakeRequest?: unknown, fromEditor?: boolean) => {
-  // Record one slide again (the recording editor): a presenter view of its own, at that slide, recording a take.
-  const asked = retakeRequest !== undefined && retakeRequest !== null
-  const requested = asked ? parseRetake(retakeRequest) : null
-  // Refuse a retake in a development build with the feature switched off.
-  if (asked && !TAKES_ENABLED) return { success: false, error: TAKES_OFF_ERROR }
-  // Only Studio (the Tools window) asks for a retake.
-  if (asked && !isToolsWindowSender(event.sender, toolsWindow)) return { success: false, error: 'Invalid retake' }
-  if (asked && (mode !== 'presenter' || !requested || (typeof plannedRunId === 'string' && plannedRunId) || pathwayId)) return { success: false, error: 'Invalid retake' }
-  const openAudience = fromEditor === true && mode === 'presenter' && !asked
-  let retake: RetakeContext | null = null
-  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
-  if (refusal) return { success: false, error: refusal }
-  const blocked = unresolvedOutboundFailure(content)
-  if (blocked) return blocked
-  try {
-    const build = await buildTalkPresentFile(outlinePath, content, true, pathwayId, startSlideId, typeof plannedRunId === 'string' ? plannedRunId : undefined)
-    const { slug, title, presentPath } = build
-    startSlideId = build.startSlideId
-    if (requested) {
-      // The request is checked against the Run on disk, in the presented talk's vault: the Run, the slide
-      // and the camera choice are the Run's own, never the renderer's word for them.
-      const picked = presentedTalkVault(presentedVaultDeps, outlinePath)
-      const root = !picked ? currentVaultRoot() ?? null : 'error' in picked ? null : picked.root
-      // The Run at exactly the home the take will be saved in (recording:save uses the same vault), never a
-      // Run of that id kept elsewhere: the take is then found beside its Run.
-      const verified = verifyRetake(requested, runAtHome(root, app.getPath('userData'), slug, requested.runId), slug)
-      if (!verified.ok) return { success: false, error: verified.error }
-      if (startSlideId !== requested.slideId) return { success: false, error: 'Invalid retake' }
-      retake = verified.retake
-    }
-    // Read here, after the compile and with no await before the window's context is set: a publication
-    // that finished meanwhile is in the file, the Run or the successful-publication cache by now.
-    // Earlier renderer text can contain a withdrawn link, so it never restores publication identity.
-    const sourceOutline = await verifiedRunSource(outlinePath, slug)
-    const presenterContext = (): LivePresenterContext => {
-      const localHandoutPath = join(dirname(outlinePath), 'dist', `${slug}-handout.html`)
-      const link = presenterLink({
-        run: typeof plannedRunId === 'string' && plannedRunId ? plannedRunOf(outlinePath, plannedRunId) : null,
-        outlineUrl: outlineUrlOnDisk(outlinePath),
-        localUrl: existsSync(localHandoutPath) ? pathToFileURL(localHandoutPath).href : null,
-      })
-      return livePresenterContext(vaultRegistry, outlinePath, slug, link.shortUrl, link.runLink, sourceOutline)
-    }
-    // Window title by role + talk (e.g. "TalkWeaver Presenter — AI 2026 Agents") so ⌘` / Mission
-    // Control / the Window menu name each deck by what's in it. Kept via page-title-updated below.
-    const roleLabel = mode === 'presenter' ? 'Presenter' : mode === 'audience' ? 'Audience' : 'Presentation'
-    const winTitle = `TalkWeaver ${roleLabel} — ${title}`
-
-    // Reuse an existing deck window for this talk+mode instead of spawning a duplicate: focus it and
-    // refresh it in place with the freshly-compiled file. An editor launch starts at the requested
-    // slide or at the start. If a recording is armed, don't reload (that would drop
-    // it) — just focus and hint. Menu-launched audience windows dedupe the same way (repeated clicks
-    // used to multiply them); the runtime-launched audience (F5 inside the presenter) is a child
-    // window that never comes through this handler.
-    if ((mode === 'presenter' || mode === 'window' || mode === 'audience') && !retake) {
-      for (const [wcId, info] of presentWindows) {
-        if (info.outlinePath !== outlinePath || info.mode !== mode || info.pathwayId !== pathwayId || info.retake) continue
-        const existing = BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.id === wcId)
-        if (!existing) continue
-        let hash = startSlideId || ''
-        let rec = ''
-        try {
-          const s = await existing.webContents.executeJavaScript(
-            "({ h: location.hash.startsWith('#') ? decodeURIComponent(location.hash.slice(1)) : '', r: ((document.getElementById('twrec-module')||{}).dataset||{}).rec || '' })"
-          )
-          if (!hash && fromEditor !== true) hash = s.h
-          rec = s.r
-        } catch { /* fall through: refresh from the top */ }
-        if (existing.isMinimized()) existing.restore()
-        existing.setTitle(winTitle)
-        existing.focus()
-        const recordingArmed = rec && rec !== 'idle' && rec !== 'saved' && rec !== 'error'
-        if (recordingArmed) {
-          existing.webContents.send('present:hint', 'Already presenting — stop the recording (⇧R) to refresh this deck.')
-        } else {
-          // The page is being replaced, so only now is the window this Run's: its publications are this
-          // Run's from here on. Refused above, it stays the Run it is recording, with the link it has.
-          if (mode === 'presenter') {
-            livePresenterContexts.set(wcId, presenterContext())
-            const { runId: _previous, ...rest } = info
-            presentWindows.set(wcId, typeof plannedRunId === 'string' && plannedRunId ? { ...rest, runId: plannedRunId } : rest)
-          }
-          // Cache-bust (_r) so the reused window truly reloads the freshly-compiled file.
-          const reuseQuery: Record<string, string> =
-            mode === 'presenter' ? { presenter: '1', session: randomUUID() } : mode === 'audience' ? { audience: '1' } : {}
-          reuseQuery.livepage = '1'
-          reuseQuery._r = String(++presentReloadNonce)
-          const reuseOpts: { query: Record<string, string>; hash?: string } = { query: reuseQuery }
-          if (hash) reuseOpts.hash = hash
-          await existing.loadFile(presentPath, reuseOpts)
-          if (!existing.isDestroyed()) existing.webContents.send('present:hint', '✓ Refreshed with your latest edits')
-          void ledgerSeal(outlinePath, content, 'present')
-        }
-        if (openAudience && !existing.isDestroyed()) {
-          await openDeckAudience(existing)
-          if (!E2E && !existing.isDestroyed()) existing.focus()
-        }
-        return { success: true }
-      }
-    }
-    // Recording lives in the presenter view only: attach the opt-in recorder bridge preload there.
-    // The recorder bridge ALSO mounts the ⌘E "edit this slide" bridge. A plain presentation window
-    // gets the edit-only bridge; the audience view stays preload-less + portable. (These windows are
-    // opened BY TalkWeaver, so a preload here never touches the exported portable artifact.)
-    // Preload and sandbox per mode: present-window-prefs.ts (only the recorder's window is unsandboxed).
-    const recording = mode === 'presenter'
-    const deckPrefs = presentWindowPreferences(mode, join(__dirname, '../preload'))
-    const win = new BrowserWindow({
-      width: 1440, height: 900, fullscreen: false,
-      ...(E2E ? { show: false } : {}),
-      title: winTitle,
-      backgroundColor: '#f7f3ea',
-      webPreferences: {
-        nodeIntegration: false,
-        contextIsolation: true,
-        // macOS treats covered audience windows as hidden; keep slide updates drawing.
-        backgroundThrottling: false,
-        ...deckPrefs
-      }
-    })
-    registerWindowKind(win, 'deck')
-    // Keep our role+talk title — the deck HTML sets its own <title>, which would otherwise replace it.
-    win.on('page-title-updated', (e) => e.preventDefault())
-    win.setTitle(winTitle)
-    if (recording) {
-      // Grant the mic (bridge getUserMedia) and register this window's context so the bridge's
-      // recording:context call returns the right talk. Clean up when the window closes.
-      setupRecordingPermissions(win)
-      const wcId = win.webContents.id
-      // timerTargetMin: pacing reference (the presenter clock's warn threshold today; the real
-      // talk-length target is refined when Studio surfaces it — Plans 2–3). Not load-bearing here.
-      const sourceOutline = await verifiedRunSource(outlinePath, slug)
-      registerRecordingContext(wcId, {
-        sourceOutline,
-        talkSlug: slug,
-        talkTitle: title,
-        timerTargetMin: timerSettings().warnAtMinutes,
-        pathwayId: pathwayId ?? null,
-        preferredPlannedRunId: plannedRunId ?? null,
-        ...(retake ? { retake } : {})
-      })
-      win.on('closed', () => unregisterRecordingContext(wcId))
-    }
-    // mode: 'presenter' → presenter view (notes + controls); 'audience' → chromeless audience view;
-    // anything else → the plain presentation window. The deck runtime reads ?presenter=1 / ?audience=1.
-    // livepage=1: this deck shows a slide's web page live, in a view of its own (live-page-host.ts).
-    const query: Record<string, string> = { ...(mode === 'presenter' ? { presenter: '1', session: randomUUID() } : mode === 'audience' ? { audience: '1' } : {}), livepage: '1' }
-    // ⇧F5 present-from-here: the runtime reads location.hash on init and starts on the slide whose
-    // dataset.id matches the id (09-output-builders.mjs). An unknown/empty id falls back to slide 0.
-    const loadOpts: { query?: Record<string, string>; hash?: string } = {}
-    if (retake) query.retake = '1'
-    if (query) loadOpts.query = query
-    if (startSlideId) loadOpts.hash = startSlideId
-    attachLivePageHost(win, mode === 'presenter' ? 'presenter' : mode === 'audience' ? 'audience' : 'window', outlinePath)
-    // Track this deck for ⌘R refresh-in-place, and OWN ⌘R here: before-input-event preempts the
-    // default menu's Reload accelerator (which would reload to slide 0 without recompiling).
-    const deckWcId = win.webContents.id
-    presentWindows.set(deckWcId, { outlinePath, mode: mode ?? 'window', pathwayId, ...(retake ? { retake: true } : {}), ...(typeof plannedRunId === 'string' && plannedRunId ? { runId: plannedRunId } : {}) })
-    updateChecker?.busyChanged()
-    if (mode === 'presenter') livePresenterContexts.set(deckWcId, presenterContext())
-    win.on('close', (event) => {
-      const record = attachLiveWindow(deckWcId)
-      const live = !!record && !['ended', 'expired'].includes(record.status)
-      const offerRunSave = shouldOfferRunSave(deckWcId)
-      const audioArmed = recordingAudioArmed(deckWcId)
-      if (!live && !offerRunSave && !audioArmed) return
-      event.preventDefault()
-      cancelQuitAttempt()
-      sendRecordingCloseOffer(win, { live, offerRunSave, audioArmed })
-    })
-    win.on('closed', () => {
-      liveSessions?.detach(deckWcId)
-      presenterGuide.forget(deckWcId)
-      presentWindows.delete(deckWcId)
-      livePresenterContexts.delete(deckWcId)
-      updateChecker?.busyChanged()
-    })
-    // F5 in the presenter opens the audience view (its Audience button); ⇧F5 there, F5 / ⇧F5 in the
-    // other deck windows and ⌘R everywhere refresh the deck in place (deck-window-keys.ts).
-    // preventDefault here also keeps the menu's F5 "Present from the top" from firing.
-    win.webContents.on('before-input-event', (event, input) => {
-      const action = deckWindowKeyAction(deckWindowMode(mode), input)
-      if (!action) return
-      event.preventDefault()
-      // These keys never reach the page, so main reports them to the Guide itself (ticket 10).
-      if (action === 'open-audience') {
-        openDeckAudience(win).catch((e) => console.warn('[present] F5 audience failed:', e))
-        guideLearn.commandRan('presenter.audience', { inExample: false })
-      } else {
-        void refreshDeckFromEditor(win)
-        guideLearn.commandRan('presenter.refresh', { inExample: false })
-      }
-    })
-    // F5 in the presenter opens the audience view via window.open(?audience=1). Send it FULL-SCREEN
-    // to a second display if one exists; otherwise leave it as a normal window on this screen.
-    // The board's own window is a blank page the presenter window draws into (feedback-boards ticket
-    // 05); under its name nothing else opens.
-    // Only the deck's own pages and the board open in-app; a web / mail link (target="_blank") goes
-    // to the browser, so a remote page never inherits this window's bridges (present-window-open.ts).
-    // The same handler goes on every window opened from here, at any depth (presentation → Presenter
-    // → Audience is a grandchild).
-    guardDeckWindowTree(win.webContents, deckWindowOpenOpts)
-    win.webContents.on('did-create-window', (child, details) => {
-      // The board's own window (feedback-boards ticket 05, D23): the presenter window draws it. It
-      // goes to another display when there is one (not full screen: it is managed there), and it
-      // closes with the presenter window it belongs to.
-      if (details?.frameName === 'tw-board-window') {
-        // Only the blank page this presenter window opened for its board; anything else is closed.
-        if (details.url !== 'about:blank' || mode !== 'presenter' || !livePresenterContexts.has(deckWcId)) { if (!child.isDestroyed()) child.destroy(); return }
-        child.setMinimumSize(900, 560)
-        try {
-          const here = screen.getDisplayNearestPoint({ x: win.getBounds().x, y: win.getBounds().y })
-          const external = screen.getAllDisplays().find((d) => d.id !== here.id)
-          if (external) {
-            const { x, y, width, height } = external.workArea
-            child.setBounds({ x: x + Math.max(0, Math.round((width - 1440) / 2)), y: y + Math.max(0, Math.round((height - 900) / 2)), width: Math.min(1440, width), height: Math.min(900, height) })
-          }
-        } catch (e) { console.warn('[present] board window placement failed:', e) }
-        const closeChild = () => { if (!child.isDestroyed()) child.close() }
-        win.once('closed', closeChild)
-        child.once('closed', () => { if (!win.isDestroyed()) win.removeListener('closed', closeChild) })
-        return
-      }
-      // A web page on a slide: the audience side's copy follows the presenter pane's scrolling
-      // (remote-page-follow.ts). The presenter's Audience window, or the Presenter window opened from
-      // a presentation window (then the presentation window is the audience side).
-      const followPair = mode === 'presenter' && details?.url?.includes('audience=1') ? [win.webContents, child.webContents]
-        : mode !== 'presenter' && details?.url?.includes('presenter=1') ? [child.webContents, win.webContents] : null
-      if (followPair) {
-        const stopFollowing = followRemotePages(followPair[0], followPair[1])
-        child.once('closed', stopFollowing)
-        win.once('closed', stopFollowing)
-        // The same pair for a live web page: the child deck window gets its own host (it loads the
-        // opener's deck address, livepage=1 included), and the presenter's host leads.
-        if (details?.url?.includes('livepage=1')) {
-          const childHost = attachLivePageHost(child, mode === 'presenter' ? 'audience' : 'presenter', outlinePath)
-          const ownHost = livePageHosts.get(deckWcId) ?? null
-          const unpair = mode === 'presenter' ? pairLivePageHosts(ownHost, childHost) : pairLivePageHosts(childHost, ownHost)
-          child.once('closed', unpair)
-          win.once('closed', unpair)
-        }
-      }
-      if (!details?.url || !details.url.includes('audience=1')) return
-      // A freshly loaded presenter has a new session. Replace the audience from its old session.
-      if (mode === 'presenter') {
-        const previous = presenterAudienceWindows.get(win)
-        presenterAudienceWindows.set(win, child)
-        child.once('closed', () => {
-          if (presenterAudienceWindows.get(win) === child) presenterAudienceWindows.delete(win)
-        })
-        if (previous && !previous.isDestroyed()) previous.close()
-      }
-      // The presenter-spawned audience window gets its own role title too.
-      child.on('page-title-updated', (e) => e.preventDefault())
-      child.setTitle(`TalkWeaver Audience — ${title}`)
-      try {
-        const here = screen.getDisplayNearestPoint({ x: win.getBounds().x, y: win.getBounds().y })
-        const external = screen.getAllDisplays().find((d) => d.id !== here.id)
-        if (external) {
-          child.setBounds(external.bounds)
-          if (!E2E) setTimeout(() => { try { child.setFullScreen(true) } catch { /* ignore */ } }, 120)
-        }
-      } catch (e) { console.warn('[present] audience display placement failed:', e) }
-    })
-    await win.loadFile(presentPath, loadOpts)
-    if (openAudience && !win.isDestroyed()) {
-      await openDeckAudience(win)
-      if (!E2E && !win.isDestroyed()) win.focus()
-    }
-    void ledgerSeal(outlinePath, content, 'present')
-    return { success: true }
-  } catch (e) {
-    console.error('[present]', e)
-    return { success: false, error: String(e) }
-  }
-})
 
 // The presenter's More → Refresh with latest edits (presenter redesign ticket 05): the same
 // refresh-in-place ⌘R runs, for the deck window that asked.
@@ -6362,38 +5553,6 @@ ipcMain.handle('window:claim-talk', (event, outlinePath:string|null) => {
   const result = claimTalkForWindow(event.sender.id,outlinePath)
   if (result.ok) { movedEditorReceipts.delete(event.sender.id); galleryReservations.delete(event.sender.id); galleryClaimEpochs.delete(event.sender.id); establishedGalleryClaims.delete(event.sender.id) }
   return result
-})
-ipcMain.handle('vault:gallery-settle', (event, commit:boolean) => {
-  if (!event.senderFrame || event.senderFrame !== event.sender.mainFrame || typeof commit !== 'boolean') throw new Error('Main frame and settlement required')
-  const id = event.sender.id
-  const previous = galleryReservations.get(id)
-  const valid = galleryClaimEpochs.get(id) === galleryEpoch
-  const rollback = () => {
-    if (previous !== undefined) {
-      const result = claimTalkForWindow(id, previous)
-      if (!result.ok) throw new Error('Reserved outgoing claim could not be restored')
-    }
-    galleryReservations.delete(id); galleryClaimEpochs.delete(id)
-  }
-  if (!commit || !valid) {
-    rollback()
-    return {ok: !commit}
-  }
-  const entry = editorWindows.get(id)
-  const owned = entry?.outlinePath && vaultRegistry.resolve(entry.outlinePath)
-  if (!entry || !owned || !owned.vault.open || vaultAvailability.isUnavailable(owned.vault.id)) {
-    rollback()
-    return {ok:false}
-  }
-  try {
-    const root = statSync(owned.vault.root)
-    establishedGalleryClaims.set(id,{vaultId:owned.vault.id,root:owned.vault.root,path:entry.outlinePath!,dev:root.dev,ino:root.ino,revoked:false})
-  } catch {
-    rollback()
-    return {ok:false}
-  }
-  galleryReservations.delete(id)
-  return {ok:true}
 })
 
 // Refresh-in-place (⌘R): the editor hands back the talk's current content; recompile it and reload
@@ -6791,107 +5950,7 @@ talkTextIpcController = registerTalkTextIpc({
 
 // ── Build ──────────────────────────────────────────────────────────────────
 
-ipcMain.handle('talk:build', async (_event, outlinePath: string, content: string) => {
-  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
-  if (refusal) return { success: false, error: refusal }
-  const blocked = unresolvedOutboundFailure(content)
-  if (blocked) return blocked
-  if (!getCompilerPath()) return { success: false, error: 'Compiler not found' }
-  try {
-    const prepared = await prepareTalk(outlinePath, content, timerSettings(), {
-      pictureText: pictureTextForCompile(outlinePath, content)
-    }, 'variant')
-    if (!prepared) return { success: false, error: 'Compiler not found' }
-    const { slug, model } = prepared
-    const html = model.fullHtml as string
-    const talkDir = dirname(outlinePath)
-    const distDir = join(talkDir, 'dist')
-    if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
-    const outPath = join(distDir, slug + '.html')
-    await writeGeneratedFile(outPath, html)
-    return { success: true, outPath }
-  } catch (e) {
-    console.error('[build]', e)
-    return { success: false, error: String(e) }
-  }
-})
 
-// ── Build variants (ADR-0012): full + share-notes + share-no-notes + projections JSONL ──
-ipcMain.handle('talk:build-variants', async (_event, outlinePath: string, content: string) => {
-  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
-  if (refusal) return { success: false, error: refusal }
-  const blocked = unresolvedOutboundFailure(content)
-  if (blocked) return blocked
-  const compilerDir = getCompilerPath()
-  if (!compilerDir) return { success: false, error: 'Compiler not found' }
-  try {
-    const prepared = await prepareTalk(outlinePath, content, timerSettings(), undefined, 'variant')
-    if (!prepared) return { success: false, error: 'Compiler not found' }
-    const { slug, model, rows } = prepared
-    const talkDir = dirname(outlinePath)
-
-    const distDir = join(talkDir, 'dist')
-    if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
-
-    const title = (model.title as string) ?? slug
-    const fullHtml = model.fullHtml as string
-    const outPaths: string[] = []
-
-    const fullPath = join(distDir, slug + '-full.html')
-    await writeGeneratedFile(fullPath, fullHtml)
-    outPaths.push(fullPath)
-
-    // Prefer the real lib builders so share variants match the CLI exactly.
-    try {
-      const { extractStyles, extractSlides } = await import(
-        pathToFileURL(join(compilerDir, 'lib/04-html-extraction.mjs')).href
-      )
-      const { buildShareHtml } = await import(
-        pathToFileURL(join(compilerDir, 'lib/09-output-builders.mjs')).href
-      )
-      const styles = extractStyles(fullHtml)
-      // The share variants are handouts: a {prework} section's slides are never in them.
-      const slides = withoutPreworkSlides(extractSlides(fullHtml) as Array<{ id: string; html: string; notes: string }>, model.prework as CompiledPrework | undefined)
-      const license = (model as { license?: unknown }).license
-      const shareNotes = buildShareHtml({ title, slides, styles, includeNotes: true, slug, license })
-      const shareNoNotes = buildShareHtml({ title, slides, styles, includeNotes: false, slug, license })
-      const notesPath = join(distDir, slug + '-share-notes.html')
-      const noNotesPath = join(distDir, slug + '-share-no-notes.html')
-      await writeGeneratedFile(notesPath, shareNotes)
-      await writeGeneratedFile(noNotesPath, shareNoNotes)
-      outPaths.push(notesPath, noNotesPath)
-    } catch (builderErr) {
-      // Fallback: full as both, notes crudely stripped. Logged loudly per spec.
-      console.warn('[build-variants] real share builders unavailable, using FALLBACK:', builderErr)
-      const stripped = fullHtml.replace(
-        /<aside\b[^>]*class=["'][^"']*\bnotes\b[^"']*["'][^>]*>[\s\S]*?<\/aside>/gi,
-        ''
-      )
-      const notesPath = join(distDir, slug + '-share-notes.html')
-      const noNotesPath = join(distDir, slug + '-share-no-notes.html')
-      await writeGeneratedFile(notesPath, fullHtml)
-      await writeGeneratedFile(noNotesPath, stripped)
-      outPaths.push(notesPath, noNotesPath)
-    }
-
-    // Per-slide projections JSONL alongside the variants.
-    try {
-      if (rows && rows.length) {
-        const jsonl = rows.map((r: unknown) => JSON.stringify(r)).join('\n') + '\n'
-        const jsonlPath = join(distDir, slug + '-projections.jsonl')
-        await writeGeneratedFile(jsonlPath, jsonl)
-        outPaths.push(jsonlPath)
-      }
-    } catch (projErr) {
-      console.warn('[build-variants] projections not written:', projErr)
-    }
-
-    return { success: true, outPaths }
-  } catch (e) {
-    console.error('[build-variants]', e)
-    return { success: false, error: String(e) }
-  }
-})
 
 type RunHandoutArtifact = {
   path: string
@@ -6955,51 +6014,6 @@ async function buildRunHandoutArtifact(
     venueSource: { slides, styles, license: null, liveTalkSlug: talk.slug } }
 }
 
-// ── Export handout (Phase 1) — the audience-facing reading HTML (ADR-0012 share-no-notes). One
-// focused artefact written to dist/{slug}-handout.html, NOT the whole variant set. Matches the CLI
-// exactly via the real buildShareHtml(includeNotes:false) — the same content the compiler's launcher
-// treats as the handout. Phase 2 (Cloudflare Pages publish) builds on this.
-ipcMain.handle('talk:export-handout', async (_event, outlinePath: string, content: string) => {
-  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
-  if (refusal) return { success: false, error: refusal }
-  const blocked = unresolvedOutboundFailure(content)
-  if (blocked) return blocked
-  const compilerDir = getCompilerPath()
-  if (!compilerDir) return { success: false, error: 'Compiler not found' }
-  try {
-    const prepared = await prepareTalk(outlinePath, content, undefined, {
-      pictureText: pictureTextForCompile(outlinePath, content)
-    }, 'variant', undefined, { preview: false })
-    if (!prepared) return { success: false, error: 'Compiler not found' }
-    const { slug, model } = prepared
-    const talkDir = dirname(outlinePath)
-    const title = (model.title as string) ?? slug
-    const fullHtml = model.fullHtml as string
-
-    const { extractStyles, extractSlides } = await import(
-      pathToFileURL(join(compilerDir, 'lib/04-html-extraction.mjs')).href
-    )
-    const { buildShareHtml } = await import(pathToFileURL(join(compilerDir, 'lib/09-output-builders.mjs')).href)
-    const styles = extractStyles(fullHtml)
-    // Ticket 09: pre-work steps are never slides of a handout (the evergreen one included).
-    const slides = withoutPreworkSlides(extractSlides(fullHtml) as Array<{ id: string; html: string; notes: string }>, model.prework as CompiledPrework | undefined)
-    const license = (model as { license?: unknown }).license
-    const handoutHtml = buildShareHtml({
-      title, slides, styles, includeNotes: false, slug, license,
-      workerBaseUrl: localHandoutWorkerBaseUrl(), liveTalkSlug: slug,
-    })
-
-    const distDir = join(talkDir, 'dist')
-    if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
-    const handoutPath = join(distDir, slug + '-handout.html')
-    await writeGeneratedFile(handoutPath, handoutHtml)
-    void ledgerSeal(outlinePath, content, 'export')
-    return { success: true, path: handoutPath }
-  } catch (e) {
-    console.error('[export-handout]', e)
-    return { success: false, error: String(e) }
-  }
-})
 
 // ── Publish handout — in-app, config-driven Cloudflare Pages publishing (no external repo) ──────
 // Build the share-no-notes handout in-process (same path as talk:export-handout) into the site as the
@@ -7198,141 +6212,6 @@ function publishRehearsal(): { project: string } | null {
   return { project: getConfig('cfPagesProject', undefined) ?? 'talkweaver-test' }
 }
 
-ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, content: string, mediaChoice?: MediaPublishChoice) => {
-  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
-  if (refusal) return { success: false, error: refusal }
-  // `content` is the renderer's copy of the buffer, which can trail the last keystrokes: it gates the
-  // request early, but the handout, the ledger seal and the stamp use the flushed text below.
-  const blocked = unresolvedOutboundFailure(content)
-  if (blocked) return blocked
-
-  const compilerDir = getCompilerPath()
-  if (!compilerDir) return { success: false, error: 'Compiler not found' }
-
-  try {
-    // What is published is the editor's buffer as it stands when Publish was pressed: flush it to disk
-    // first (a forced save of the open editor's buffer through the one writer, talk-writer.ts; a
-    // closed talk's file is read as it is) and build from the text the flush returns — never from
-    // `content`, and never by writing the file here.
-    const flushed = await flushTalkForPublish(outlinePath)
-    if (!flushed.ok) return { success: false, error: flushed.error }
-    const published = flushed.text
-    const blockedNow = unresolvedOutboundFailure(published)
-    if (blockedNow) return blockedNow
-    const mediaNotices: string[] = []
-    const presenterTicket = presenterPublications.ticket()
-
-    // The sequence (leave to publish, the live service or its absence, the one upload, what a
-    // superseded publish does) is handout-publishing.ts. This supplies the talk's pages: `live` is
-    // the only live address they may carry, and it is '' when the live service is not ready.
-    const outcome = await handoutPublishing().publish({
-      entry: 'talk',
-      begin: async (report) => {
-        if (hasGitConflictMarkers(published)) return { fail: { error: 'The talk has unresolved Git conflict markers. Resolve them before publishing.', reply: { success: false, error: 'The talk has competing edits from syncing', notReady: { kind: 'not-ready', title: 'The talk has competing edits from syncing', detail: 'Keep both versions and resolve the Git conflict before publishing.', fix: { action: 'show-source', label: 'Reveal talk source' } } } } }
-        if (mediaChoice === 'with-placeholders') return null
-        const fileCheck = await buildHandoutPagesOffThread({ kind: 'preflight', compilerDir, outlinePath, text: resolvePooledRefs(published, outlinePath), assetRoots: assetRootsFor(outlinePath) })
-          .catch(() => ({ warnings: ['The media check could not finish.'], publicationFiles: undefined }))
-        if (fileCheck.publicationFiles) {
-          const { checked, findings } = fileCheck.publicationFiles
-          report?.({ checked, missing: new Set(findings.map(finding => finding.file)).size })
-        }
-        const media = publicationMediaReview(fileCheck.publicationFiles, fileCheck.warnings, mediaChoice)
-        if (media.prompt) return { fail: { error: media.prompt.title, reply: { success: false, notReady: media.prompt } } }
-        if (media.notices) mediaNotices.push(...media.notices)
-        return null
-      },
-      // The flushed string below is the compiler's selected input; no mutable-source recheck is claimed.
-      prepare: async ({ dir: siteDir, project, live, link, redirects, makeFolder, writeSiteFile, claimFile }) => {
-        const baseUrl = getConfig('publishBaseUrl', undefined)
-        const useShortIds = getConfig('publishUseShortIds', false) ?? false
-        // ENTRY FIRST: the address every link of this handout starts with is checked before anything is
-        // built or written (handout-publishing.ts). An address on this computer stops the publish here.
-        const base = link(resolveBase({ baseUrl: baseUrl as string | undefined, project }))
-        const slug = basename(outlinePath).replace('-outline.md', '')
-        // The talk's folder in the site: by the one function that makes a name a folder there
-        // (publishing-logic.ts siteFolder, and never through a link). A name that would not stay inside the site folder is refused here.
-        const talkOutDir = writableSiteFolder(siteDir, slug)
-        if (!talkOutDir) return { ok: false, error: SITE_FOLDER_REFUSED }
-        const resolved = resolvePooledRefs(published, outlinePath)
-
-        // Publish output: each handout
-        // folder gets the slimmed handout as <slug>.html PLUS a viewer/landing index.html (Open +
-        // Download + QR + short link). Only this folder is sent: every other talk keeps its live hash (per-talk publishing).
-        // ENTRY FIRST, the rest of it, all in memory before the first file is written: the stable short
-        // id (so the viewer page and the redirects carry the final link), the handout's own link (it
-        // goes into its pages: the QR code, the venue screen), and the WHOLE redirect file as it will be.
-        let id: string | undefined
-        let redirectsText: string | null = null
-        let registryToKeep: Record<string, string> | null = null
-        if (useShortIds) {
-          const registry = readHandoutRegistry()
-          const recoveredId = recoverIdFromUrl(readHandoutUrl(published), base)
-          const gen = (): string => generateShortId((n) => Uint8Array.from(randomBytes(n)))
-          const picked = pickShortId({ registry, slug, recoveredId, gen })
-          id = picked.id
-          registryToKeep = picked.registry
-          redirectsText = redirects(buildRedirects(picked.registry, [...new Set([...publishedFolders(siteDir), slug])]))
-        }
-        const url = link(publishUrl({ base, slug, id, useShortIds }))
-        // Checked: from here on things are written.
-        if (registryToKeep) writeHandoutRegistry(registryToKeep)
-        // Built privately and moved into the site only when the upload launches (handout-publishing.ts), or written in place when already there.
-        const outDir = makeFolder(talkOutDir)
-        claimFile(join(siteDir, '404.html')) // the page builder writes the site's 404 page: owned by this publish when it is new
-
-        const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
-        const qr = (makeQrSvg(url) as string) || ''
-        // The compile, the pages (Download, lazy <slug>.html, the home page, the venue screen) and their
-        // slimming and writing run OFF this thread (handout-pages.ts): a heavy handout held it for
-        // seconds, and the app showed the beachball. Everything it is handed has been checked above.
-        const pagesWritten = await buildHandoutPagesOffThread({
-          kind: 'talk', compilerDir, talkOutDir: outDir, siteDir, slug, live, url, qr,
-          downloadFile: `${slug}-download.html`, handoutFile: `${slug}.html`,
-          outlinePath, text: resolved, outline: published, assetRoots: assetRootsFor(outlinePath),
-          homeDetails: handoutHomeDetails({ outline: published }),
-        })
-
-
-        // The redirect file, as it was checked before the build began.
-        if (redirectsText !== null) writeSiteFile(join(siteDir, '_redirects'), redirectsText)
-        return { ok: true, built: { url, warnings: [...mediaNotices, ...publicationBuildWarnings(pagesWritten.warnings)] } }
-      },
-    })
-    // A publish that did not go up, or that the connection changed under, records nothing below.
-    if (!outcome.ok && outcome.reply) return outcome.reply as { success: false; error: string }
-    if (!outcome.ok) {
-      return {
-        success: false, error: outcome.error.startsWith('PUBLISH_') ? ((outcome.details?.includes('cannot be compared safely') || outcome.details?.startsWith('Publishing stopped because the local file ')) ? outcome.details : preservationMessage(outcome.error as PreservationReason)) : outcome.error,
-        ...(outcome.details ? { details: outcome.details } : {}), ...(outcome.notReady ? { notReady: outcome.notReady } : {}),
-      }
-    }
-    const { url, warnings } = outcome.built
-
-    // Best-effort: stamp handout_url into the outline frontmatter (so the short id is recoverable
-    // later). No frontmatter → left unchanged. Stamped onto the talk's CURRENT text through the one
-    // writer (the deploy can take minutes; the open editor's buffer may have moved on). `updatedOutline`
-    // reports the text the writer applied; the renderer does not adopt it — it stamps its own buffer
-    // as it stands (WorkspaceLayout.handlePublishHandout), a no-op when this stamp landed.
-    let updatedOutline = stampHandoutUrl(published, url)
-    if (updatedOutline !== published) {
-      const stamped = await writeTalkOutline(outlinePath, (current) => stampHandoutUrl(current, url), 'publish-handout')
-      if (stamped.ok) updatedOutline = stamped.text
-    }
-    presenterPublications.published(presenterTicket, { kind: 'talk', outlinePath, url,
-      retainUrl: !readHandoutUrl(updatedOutline) && stampHandoutUrl(updatedOutline, url) === updatedOutline })
-    void ledgerSeal(outlinePath, published, 'publish')
-    return {
-      success: true, url, display: url, updatedOutline, ...(warnings.length ? { warning: warnings.join(' ') } : {}),
-      // Published without live features (spec D7): the sentence, and what lies behind it for "Details".
-      ...(outcome.notice ? { liveNotice: outcome.notice, ...(outcome.noticeDetails ? { liveDetails: outcome.noticeDetails } : {}) } : {}),
-      // Handouts an earlier version left with a dead live address: how many, and their names for "Details".
-      ...(outcome.earlierNotice ? { earlierNotice: outcome.earlierNotice, ...(outcome.earlierDetails ? { earlierDetails: outcome.earlierDetails } : {}) } : {}),
-    }
-  } catch (e) {
-    console.error('[publish-handout]', e)
-    return { success: false, error: String(e) }
-  }
-})
 
 let localLiveWorker: { process: ChildProcessByStdio<null, Readable, Readable>; baseUrl: string; adminSecret: string } | null = null
 
@@ -8453,172 +7332,7 @@ ipcMain.handle('published:unpublish-talk', async (_event, payload: { vaultId: st
   }
 })
 
-// ── Thumbnails (rendered per-slide PNG previews) ─────────────────────────────
-// Optimize a talk's IMAGES to WebP: imported (Obsidian-era) talks carry large relative-path PNG/JPG
-// images in their own assets/ folder — big files that make previews slow to render (and handouts
-// fat). This converts each to WebP (q82, downscaled to a generous 2560px long side), rewrites the
-// outline refs, and moves the originals to the OS Trash (recoverable). Vault-pool images
-// (`img-XXXXXXX`, already WebP from paste), http/data URLs, and non-image refs are left alone.
-// Returns the rewritten outline so the renderer can adopt it in place (avoiding an autosave clobber).
-ipcMain.handle('talk:optimize-images', async (_event, outlinePath: string, content: string) => {
-  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
-  if (refusal) return { success: false, error: refusal }
-  try {
-    const sharp = require('sharp')
-    const talkDir = dirname(outlinePath)
-    // What may be touched is decided by optimise-images.ts (ADR-0036): a plain picture really inside
-    // the talk's allowed folders AND in this talk's own folder, whose .webp does not exist yet. Every
-    // reference is decided before anything is converted; a picture named several ways is converted
-    // once. A reference that is left alone has NOTHING read, written or trashed for it.
-    const compilerDir = getCompilerPath()
-    if (!compilerDir) return { success: false, error: 'Compiler not found' }
-    const { createAssetContainment } = await import(pathToFileURL(join(compilerDir, 'lib/asset-containment.mjs')).href)
-    const containment = createAssetContainment(assetRootsFor(outlinePath)) as AssetContainment
-    const plan = await planOptimisation(convertibleImageRefs(content), talkDir, containment)
-    const converted = new Map<string, string>()
-    let pictures = 0
-    let savedBytes = 0
-    const failed: string[] = []
-    for (const skip of plan.skipped) {
-      if (skip.reason !== 'missing') console.warn('[optimize-images] left alone (' + skip.reason + '):', skip.ref)
-      if (skip.reason !== 'elsewhere' && skip.reason !== 'clash') failed.push(skip.ref)
-    }
-    for (const conversion of plan.conversions) {
-      try {
-        const before = statSync(conversion.source).size
-        const webp: Buffer = await sharp(conversion.source)
-          .resize({ width: 2560, height: 2560, fit: 'inside', withoutEnlargement: true })
-          .webp({ quality: 82 })
-          .toBuffer()
-        // A new file only, never onto one that is there; the original goes to the Trash after it exists.
-        await writeNewFile(conversion.output, webp)
-        for (const [ref, webpRef] of conversion.refs) converted.set(ref, webpRef)
-        pictures += 1
-        savedBytes += Math.max(0, before - webp.length)
-        try { await shell.trashItem(conversion.source) } catch { /* leave the original if trashing fails */ }
-      } catch (convErr) {
-        console.warn('[optimize-images] failed for', conversion.refs[0]?.[0], convErr)
-        for (const [ref] of conversion.refs) failed.push(ref)
-      }
-    }
-    // Pictures left alone on purpose, by reason (new fields beside `failed`): another talk's or the
-    // shared pool's, and ones whose .webp name is taken.
-    const leftAlone = plan.skipped.filter((skip) => skip.reason === 'elsewhere').length
-    const clashes = plan.skipped.filter((skip) => skip.reason === 'clash').length
-    let newContent = content
-    if (converted.size > 0) {
-      // The same ref rewrites, applied to the talk's CURRENT text — the open editor's buffer when a
-      // window has it (talk-writer.ts), so edits made during the conversion survive. Only an image
-      // link whose whole target was converted is rewritten.
-      const written = await writeTalkOutline(outlinePath, (current) => rewriteConvertedRefs(current, converted), 'optimize-images')
-      if (!written.ok) throw new Error(written.error)
-      newContent = written.text
-      invalidateVaultCaches(outlinePath)
-    }
-    return { success: true, converted: pictures, savedBytes, failed: failed.length, leftAlone, clashes, newContent }
-  } catch (e) {
-    console.error('[optimize-images]', e)
-    return { success: false, error: String(e) }
-  }
-})
 
-// Cross-talk reuse (ADR-0003/0020): when a slide is inserted from ANOTHER talk, its relative-path
-// images and videos (`assets/foo.png`, relative to the SOURCE talk) would break in the destination talk (no
-// such file beside it → grey placeholder). Materialize each into the VAULT POOL — content-addressed
-// `_assets/<img-or-vid>-<hash>.<ext>`, which resolves from ANY talk. Images may be WebP-normalised;
-// videos retain their bytes. Rewrite refs to the pool id; leave pool / http / data refs alone. Returns the
-// rewritten markdown (the renderer inserts THAT). `sourceOutlinePath` locates the source assets.
-ipcMain.handle('talk:materialize-slide-assets', async (_event, sourceOutlinePath: string, markdown: string) => {
-  const refusal = outlineRefused(sourceOutlinePath) // writes beside the outline: refuse one outside the vault
-  if (refusal) return { success: false, error: refusal, markdown }
-  const vaultRoot = writableRootFor(sourceOutlinePath)
-  if (!vaultRoot) return { success: false, error: 'No vault root', markdown }
-  try {
-    const srcDir = dirname(sourceOutlinePath)
-    const assetsDir = join(vaultRoot, '_assets')
-    mkdirInVault(vaultRoot, assetsDir)
-    const refs = new Set<string>()
-    const re = /!\[[^\]]*\]\(([^)]+)\)/g
-    let m: RegExpExecArray | null
-    while ((m = re.exec(markdown)) !== null) {
-      const raw = m[1].trim().replace(/\s+"[^"]*"$/, '')
-      if (/^(https?:|data:|img-|vid-)/.test(raw)) continue
-      if (!/\.(png|jpe?g|gif|webp|mp4|mov|m4v|webm)$/i.test(raw)) continue
-      refs.add(raw)
-    }
-    let out = markdown
-    let materialized = 0
-    let skipped = 0
-    for (const ref of refs) {
-      let rel = ref
-      try { rel = decodeURIComponent(ref) } catch { rel = ref }
-      if (rel.toLowerCase().startsWith('file:')) { // a file URL points anywhere on the Mac: never followed
-        skipped += 1
-        console.warn('[materialize-slide-assets] skipped a file URL reference:', ref)
-        continue
-      }
-      const requested = rel.startsWith('/') ? rel : join(srcDir, rel)
-      // Reuse is vault-internal: a source outside the vault (absolute, `..`, or a symlink out) is
-      // never copied into _assets, where it would reach slides and published handouts.
-      const abs = pathStaysInside(vaultRoot, requested)
-      if (!abs) {
-        skipped += 1
-        console.warn('[materialize-slide-assets] skipped a reference outside the vault:', ref)
-        continue
-      }
-      if (!existsSync(abs)) continue
-      try {
-        const origBuf = readFileSync(abs)
-        const originalFormat = extname(abs).slice(1).toLowerCase() || 'png'
-        const isVideo = /^(mp4|mov|m4v|webm)$/.test(originalFormat)
-        let storeBuf: Buffer = origBuf
-        let storeExt = originalFormat
-        if (!isVideo) try {
-          const webp = await normaliseToWebp(origBuf)
-          if (webp.length > 0 && webp.length <= origBuf.length) { storeBuf = webp; storeExt = 'webp' }
-        } catch { /* keep original format */ }
-        const hash = createHash('sha256').update(storeBuf).digest('hex').slice(0, 7)
-        const id = (isVideo ? 'vid-' : 'img-') + hash
-        const assetPath = join(assetsDir, id + '.' + storeExt)
-        if (!existsSync(assetPath)) {
-          writeFileSync(assetPath, storeBuf)
-          const sidecarPath = join(assetsDir, id + '.yml')
-          if (!existsSync(sidecarPath)) {
-            writeFileSync(sidecarPath, [
-              'id: ' + id,
-              'created: ' + new Date().toISOString().slice(0, 10),
-              'original_format: ' + originalFormat,
-              'note: "materialized from cross-talk reuse"',
-              'alt: ""', 'caption: ""', 'source: ""', 'tags: []'
-            ].join('\n') + '\n', 'utf8')
-          }
-        }
-        // Posters belong to the source clip, never a same-named file elsewhere in the vault.
-        if (isVideo) {
-          const stem = requested.slice(0, -extname(requested).length)
-          for (const extension of ['png', 'jpg', 'jpeg', 'webp']) {
-            const candidate = `${stem}.${extension}`
-            if (!existsSync(candidate)) continue
-            const poster = pathStaysInside(vaultRoot, candidate)
-            if (!poster) {
-              console.warn('[materialize-slide-assets] skipped a poster outside the vault for:', ref)
-              break
-            }
-            const destination = join(assetsDir, `${id}.${extension}`)
-            if (!existsSync(destination)) writeFileSync(destination, readFileSync(poster))
-            break
-          }
-        }
-        out = out.split(ref).join(id) // ![alt](assets/foo.png) → ![alt](img-hash)
-        materialized += 1
-      } catch (e) { console.warn('[materialize-slide-assets] failed for', ref, e) }
-    }
-    return { success: true, markdown: out, materialized, skipped }
-  } catch (e) {
-    console.error('[materialize-slide-assets]', e)
-    return { success: false, error: String(e), markdown }
-  }
-})
 
 // Slides across vaults (ticket 06): a slide picked from ANOTHER open vault is copied into the open
 // talk's vault — its media read from the source vault and written into the target's pool, a colliding
@@ -8649,54 +7363,6 @@ function vaultNameOf(id: string): string {
   return (cached?.state === 'ok' ? fileText(cached.file, 'name') : '') || vaultAvailability.lastGood(id)?.name || basename(vault.root)
 }
 
-ipcMain.handle('talk:insert-from-vault', async (_event, sourceOutlinePath: unknown, targetOutlinePath: unknown, markdown: unknown, liveIds?: unknown) => {
-  if (typeof sourceOutlinePath !== 'string' || typeof targetOutlinePath !== 'string' || typeof markdown !== 'string') {
-    return { ok: false as const, error: 'Nothing to insert.' }
-  }
-  const from = vaultRegistry.resolve(resolvePath(sourceOutlinePath))
-  const to = vaultRegistry.resolve(resolvePath(targetOutlinePath))
-  if (!from || !to || !from.vault.open || !to.vault.open) return { ok: false as const, error: 'The slide’s vault or this talk’s vault is not open.' }
-  if (from.vault.id === to.vault.id) return { ok: true as const, crossVault: false as const }
-  // Ticket 07: an unavailable vault is neither read nor written (its folder is never re-created).
-  if (!vaultAvailable(from.vault) || !writableRoot(to.vault.root, rootFs) || !rootFs.isDirectory(from.vault.root)) {
-    return { ok: false as const, error: 'The slide’s vault or this talk’s vault is not available on this Mac.' }
-  }
-  const refusal = outlineRefused(targetOutlinePath) // the target talk must be an outline inside its vault
-  if (refusal) return { ok: false as const, error: refusal }
-  try {
-    const sourceTalk = findTalks(from.vault.root).find((t) => resolvePath(t.outlinePath) === resolvePath(sourceOutlinePath))
-    const pending = pendingOrigins.get(to.vault.root)
-    const extraTaken = [
-      ...(Array.isArray(liveIds) ? liveIds.filter((id): id is string => typeof id === 'string') : []),
-      ...(pending ? pending.keys() : [])
-    ]
-    const result = await prepareCrossVaultInsert({
-      source: { id: from.vault.id, name: vaultNameOf(from.vault.id), root: from.vault.root },
-      target: { id: to.vault.id, name: vaultNameOf(to.vault.id), root: to.vault.root },
-      sourceOutlinePath,
-      sourceTalkTitle: sourceTalk?.title || basename(sourceOutlinePath).replace(/-outline\.md$/, ''),
-      markdown,
-      extraTaken,
-      // Who inserts it: their "Just for me" author for the target vault, else the Settings author.
-      insertedBy: vaultRegistry.personal(to.vault.id).author?.trim() || String(metadataDefaults().author ?? '').trim()
-    }, await crossVaultTools(), { toWebp: normaliseToWebp })
-    if (!result.ok) return result
-    const hints = pendingOrigins.get(to.vault.root) ?? new Map<string, SlideOrigin>()
-    for (const slide of result.slides) {
-      hints.set(slide.id, slide.origin)
-      try { provenanceStore().record(to.vault.id, slide.id, slide.privateRecord) } catch (e) { console.warn('[insert-from-vault] private provenance not saved', e) }
-    }
-    pendingOrigins.set(to.vault.root, hints)
-    return {
-      ok: true as const, crossVault: true as const, markdown: result.markdown,
-      slides: result.slides.map((s) => ({ id: s.id, restamped: s.restamped })),
-      materialized: result.materialized, skipped: result.skipped
-    }
-  } catch (e) {
-    console.error('[insert-from-vault]', e)
-    return { ok: false as const, error: String(e) }
-  }
-})
 
 // Where a slide in this talk came from, when it came from another vault (Inspector, ticket 06). The
 // owner's Mac has the private record (source talk title); anyone else sees the vault name and who
@@ -8748,142 +7414,10 @@ function buildVaultAssetIndex(vaultRoot: string): Map<string, string> {
   return idx
 }
 
-// Cross-talk reuse via TEXT PASTE: the picker materialises a slide's relative images using its
-// source path, but pasted markdown has none. Resolve each relative `assets/<name>` ref by FILENAME
-// across the vault, copy it into the content-addressed pool (img-<hash>, WebP-normalised), and
-// rewrite the ref — so a pasted sequence's images resolve from any talk. Pool/http/data refs and
-// names not found anywhere are left untouched. Returns the rewritten markdown.
-ipcMain.handle('talk:materialize-pasted-assets', async (_event, markdown: string) => {
-  const vaultRoot = writableVaultRoot()
-  if (!vaultRoot) return { success: false, error: 'No vault root', markdown }
-  try {
-    const assetsDir = join(vaultRoot, '_assets')
-    mkdirInVault(vaultRoot, assetsDir)
-    const refs = new Set<string>()
-    const re = /!\[[^\]]*\]\(([^)]+)\)/g
-    let m: RegExpExecArray | null
-    while ((m = re.exec(markdown)) !== null) {
-      const raw = m[1].trim().replace(/\s+"[^"]*"$/, '')
-      if (/^(https?:|data:|img-|vid-)/.test(raw)) continue
-      if (!/\.(png|jpe?g|gif|webp|mp4|mov|m4v|webm)$/i.test(raw)) continue // images AND videos (2026-07-20: videos were silently dropped)
-      refs.add(raw)
-    }
-    if (refs.size === 0) return { success: true, markdown, materialized: 0, skipped: 0 }
-    if (!vaultAssetIndex) vaultAssetIndex = buildVaultAssetIndex(vaultRoot)
-    let out = markdown
-    let materialized = 0
-    let skipped = 0
-    for (const ref of refs) {
-      let rel = ref
-      try { rel = decodeURIComponent(ref) } catch { rel = ref }
-      if (rel.toLowerCase().startsWith('file:')) { // a file URL points anywhere on the Mac: never followed
-        skipped += 1
-        console.warn('[materialize-pasted-assets] skipped a file URL reference:', ref)
-        continue
-      }
-      const base = rel.split('/').pop() || rel
-      let found = vaultAssetIndex.get(base)
-      if (!found || !existsSync(found)) {
-        // Rebuild once in case the asset was added since the index was cached.
-        vaultAssetIndex = buildVaultAssetIndex(vaultRoot)
-        found = vaultAssetIndex.get(base)
-      }
-      if (!found || !existsSync(found)) continue
-      // The index lists linked files too: one that resolves outside the vault is never copied into
-      // _assets, where it would reach slides and published handouts.
-      const abs = pathStaysInside(vaultRoot, found)
-      if (!abs) {
-        skipped += 1
-        console.warn('[materialize-pasted-assets] skipped a reference outside the vault:', ref)
-        continue
-      }
-      try {
-        const origBuf = readFileSync(abs)
-        const originalFormat = extname(abs).slice(1).toLowerCase() || 'png'
-        const isVideo = /^(mp4|mov|m4v|webm)$/.test(originalFormat)
-        let storeBuf: Buffer = origBuf
-        let storeExt = originalFormat
-        // Images are WebP-normalised to shrink the pool; videos keep their exact bytes (webp is a
-        // still-image codec — never re-encode a clip here).
-        if (!isVideo) {
-          try {
-            const webp = await normaliseToWebp(origBuf)
-            if (webp.length > 0 && webp.length <= origBuf.length) { storeBuf = webp; storeExt = 'webp' }
-          } catch { /* keep original format */ }
-        }
-        const hash = createHash('sha256').update(storeBuf).digest('hex').slice(0, 7)
-        const id = (isVideo ? 'vid-' : 'img-') + hash // vid- so the resolver emits <video> + finds the poster
-        const assetPath = join(assetsDir, id + '.' + storeExt)
-        if (!existsSync(assetPath)) {
-          writeFileSync(assetPath, storeBuf)
-          const sidecarPath = join(assetsDir, id + '.yml')
-          if (!existsSync(sidecarPath)) {
-            writeFileSync(sidecarPath, [
-              'id: ' + id, 'created: ' + new Date().toISOString().slice(0, 10),
-              'original_format: ' + originalFormat, 'note: "materialized from pasted cross-talk slide"',
-              'alt: ""', 'caption: ""', 'source: ""', 'tags: []'
-            ].join('\n') + '\n', 'utf8')
-          }
-        }
-        // A clip's poster is a sibling image with the same stem next to the source video; copy it into
-        // the pool as vid-<hash>.<ext> so the compiler paints a first frame before playback.
-        if (isVideo) {
-          const stem = base.replace(/\.[^.]+$/, '')
-          for (const pext of ['png', 'jpg', 'jpeg', 'webp']) {
-            const posterFound = vaultAssetIndex.get(stem + '.' + pext)
-            if (posterFound && existsSync(posterFound)) {
-              const posterSrc = pathStaysInside(vaultRoot, posterFound)
-              if (!posterSrc) {
-                console.warn('[materialize-pasted-assets] skipped a poster outside the vault for:', ref)
-                break
-              }
-              const posterDst = join(assetsDir, id + '.' + pext)
-              if (!existsSync(posterDst)) writeFileSync(posterDst, readFileSync(posterSrc))
-              break
-            }
-          }
-        }
-        out = out.split(ref).join(id)
-        materialized += 1
-      } catch (e) { console.warn('[materialize-pasted-assets] failed for', ref, e) }
-    }
-    return { success: true, markdown: out, materialized, skipped }
-  } catch (e) {
-    console.error('[materialize-pasted-assets]', e)
-    return { success: false, error: String(e), markdown }
-  }
-})
 
 // App version, so any screen can show which build is running (dev-confusion guard).
 ipcMain.handle('app:version', () => process.env.npm_package_version ?? app.getVersion())
 
-// Manual rebuild escape hatch: wipe a talk's thumbnail cache so the next thumbnails() call
-// re-renders every slide from scratch. The renderer follows this with a fresh compile + thumbnails.
-// The renderer names the talk by slug only, so every vault's folder for that slug goes (a cache:
-// the other vault's talk re-renders on its next open).
-ipcMain.handle('talk:clear-thumb-cache', (_event, slug: string, outlinePath?: string) => {
-  try {
-    // Never a path, the vaults folder or an app-level cache (`__ledger__`, `__layout-preview__-…`).
-    if (typeof slug !== 'string' || !isPlainSegment(slug) || slug === VAULTS_DIR || slug.startsWith('__')) return false
-    // The slug comes from the renderer: only a talk's own folders inside the thumbnail cache.
-    const namespaceDir = thumbNamespaceDir()
-    const target = thumbCacheDir(namespaceDir, slug)
-    if (!target.ok) { console.error('[clear-thumb-cache] refused', target.error); return false }
-    // With the talk's path only its own vault's folder goes; without one (or for a path in no vault)
-    // every vault's folder for the slug does.
-    const ownerId = typeof outlinePath === 'string' && outlinePath ? vaultIdOf(outlinePath) : null
-    const ids = ownerId ? [ownerId] : vaultRegistry.list().map((v) => v.id)
-    const dirs = ownerId ? [talkThumbDir(namespaceDir, ownerId, slug)] : thumbLookupDirs(namespaceDir, { slug, key: '', vaultId: null }, ids)
-    for (const dir of dirs) {
-      if (!pathStaysInside(namespaceDir, dir)) { console.error('[clear-thumb-cache] refused', 'outside-vault'); continue }
-      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
-    }
-    return true
-  } catch (e) {
-    console.error('[clear-thumb-cache]', e)
-    return false
-  }
-})
 
 interface ThumbnailRequest {
   outlinePath: string
@@ -8968,91 +7502,7 @@ function cancelEditorThumbnails(windowId: string): void {
   clearThumbnailFocus(`editor:${windowId}@`)
 }
 
-// Which slides the strip shows (the active slide first, then the visible range): the render for that
-// talk captures them before the rest. Sent by the renderer when they change, throttled there.
-// Only the editor strip reports (no lane), only for a talk inside an open vault, and a window keeps at
-// most one focus entry: reporting a talk replaces whatever that window reported before, so the
-// registry is bounded by the number of windows and a window can only reorder its own editor render.
-ipcMain.on('talk:thumbnail-focus', (event, outlinePath: unknown, indices: unknown) => {
-  if (typeof outlinePath !== 'string' || !outlinePath || outlinePath.length > 4096) return
-  if (outlineRefused(outlinePath)) return
-  clearThumbnailFocus(`editor:${event.sender.id}@`)
-  setThumbnailFocus(`editor:${thumbnailTalkOwner(event.sender.id, '', outlinePath)}`, indices)
-})
 
-// Latest-wins is scoped per OWNER = window + lane (+ talk). One window hosts two independent requesters —
-// the editor strip (re-requests on every compile, 900ms after any content change) and the Slide
-// Browser's background per-talk render. With a window-wide owner the strip's re-request ABORTED
-// the browser's render mid-talk: a partial cache, `{}` back, and the browser marked the talk done —
-// half its cards blank for the rest of the session (2026-09-15).
-ipcMain.handle('talk:thumbnails', async (_event, outlinePath: string, content: string, opts?: { lane?: string; requestId?: string }) => {
-  const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
-  if (refusal) return null
-  const editorAtRequest = editorWindows.get(_event.sender.id)
-  try {
-    const lane = typeof opts?.lane === 'string' && /^[a-z-]{1,32}$/.test(opts.lane) ? opts.lane : ''
-    const owner = thumbnailTalkOwner(_event.sender.id, lane, outlinePath)
-    // Supersede, not cancel: the slide being captured for the older request finishes and is cached
-    // (it is content-keyed, so this request finds it on disk), and the rest of that run is dropped.
-    supersedeThumbnailRender(`editor:${owner}`)
-    latestThumbnailRequest.cancel(owner)
-    // Defence in depth. The browser lane walks the whole vault unattended; if the heap is already
-    // halfway to the measured 4096MB ceiling, one more full-deck inline is what tips it over.
-    //
-    // It DEFERS rather than giving up. The first version of this guard returned an empty map
-    // immediately, and the Browser counted that as one of a talk's two attempts — so while the
-    // editor lane held the heaviest deck inlined (a 3.2GB spike), a whole vault's worth of talks
-    // burned both attempts in seconds and every card stayed schematic until relaunch, with the
-    // PNGs already on disk. The heap comes down on its own; the sweep can wait for it.
-    if (lane === BROWSER_THUMBNAIL_LANE) {
-      const slug = basename(outlinePath).replace('-outline.md', '')
-      const first = heapGuardDecision(process.memoryUsage().heapUsed)
-      if (first.skip) {
-        logThumbnails(`heap at ${first.heapMb} MB — deferring ${slug} until it drops`)
-        // Outside the single-flight gate on purpose: holding it for up to three minutes would
-        // stall the editor lane, which is both the thing using the heap and the thing the user
-        // is watching. The wait takes its turn in the gate only when it is ready to prepare.
-        const waited = await waitForHeap(() => process.memoryUsage().heapUsed)
-        const seconds = Math.round(waited.waitedMs / 1000)
-        if (!waited.proceeded) {
-          logThumbnails(
-            `heap at ${waited.heapMb} MB after ${seconds}s of a ${Math.round(THUMBNAIL_HEAP_WAIT_MAX_MS / 1000)}s wait ` +
-            `(${waited.reads} reads) — skipping ${slug} this pass; the Browser will offer it again`
-          )
-          return {}
-        }
-        logThumbnails(`heap at ${waited.heapMb} MB after ${seconds}s — resuming ${slug}`)
-      }
-    }
-    const mediaOptions = thumbnailMediaOptions(lane, await browserThumbnailMediaOptions())
-    if (lane === BROWSER_THUMBNAIL_LANE && !mediaOptions) {
-      // Never fall back to the standing defaults here: inlining every video of every talk in the
-      // vault is precisely the crash. A missing thumbnail is the safe answer.
-      logThumbnails('the video-free media contract is unavailable — skipping the background pass')
-      return {}
-    }
-    const requestId = typeof opts?.requestId === 'string' && /^[a-zA-Z0-9-]{1,80}$/.test(opts.requestId) ? opts.requestId : null
-    const progress = requestId ? (thumbnails: Record<string, string>): void => {
-      if (!_event.sender.isDestroyed()) _event.sender.send('talk:thumbnail-progress', { outlinePath, requestId, thumbnails })
-    } : undefined
-    if (editorWindows.get(_event.sender.id) !== editorAtRequest) return {}
-    const result = await latestThumbnailRequest(owner, { outlinePath, content, lane, mediaOptions, progress })
-    // Backstop for the path the render callback never reaches: a superseded request still
-    // PREPARED its deck, and that model would otherwise sit retained with no follow-up to use it.
-    if (lane === BROWSER_THUMBNAIL_LANE) {
-      preparedTalkCache.evict(preparedTalkGroup(outlinePath, undefined, mediaOptions))
-    }
-    if (result && Object.keys(result).length === 0 && content.trim()) {
-      const message = `request for ${basename(outlinePath)} (owner ${owner}) was superseded or aborted before it finished`
-      if (lane === BROWSER_THUMBNAIL_LANE) logThumbnails(message)
-      else console.warn(`[thumbnails] ${message}`)
-    }
-    return result
-  } catch (e) {
-    console.error('[thumbnails]', e)
-    return null
-  }
-})
 
 // ── Asset sidecar metadata (ADR-0020) ────────────────────────────────────────
 // Flat `key: value` YAML, tags as `[a, b]` or a block list. Hand-parsed, no yaml dep.
@@ -9480,18 +7930,18 @@ ipcMain.handle('asset:paste-talk-pictures', async (_event, outlinePath: string, 
 // then saved through the editor's normal save path), so an unsaved edit is never overwritten and
 // the next autosave cannot undo the slide. Otherwise the file is re-read, checked unchanged and
 // written atomically. Either way the operation itself is addRunInstantSlide (instant-slide-insert.ts).
-const editorDocumentReplies = new Map<string, (value: EditorDocumentReply | null) => void>()
-ipcMain.handle('outline:editor-reply', (_event, requestId: unknown, value: unknown) => {
-  const resolve = typeof requestId === 'string' ? editorDocumentReplies.get(requestId) : undefined
-  if (!resolve) return
+const editorDocumentReplies = new Map<string, { senderId: number; resolve(value: EditorDocumentReply | null): void }>()
+ipcMain.handle('outline:editor-reply', (event, requestId: unknown, value: unknown) => {
+  const reply = typeof requestId === 'string' ? editorDocumentReplies.get(requestId) : undefined
+  if (!reply || reply.senderId !== event.sender.id) return
   editorDocumentReplies.delete(requestId as string)
-  resolve(value && typeof value === 'object' ? value as EditorDocumentReply : null)
+  reply.resolve(value && typeof value === 'object' ? value as EditorDocumentReply : null)
 })
 function requestEditorDocument(win: BrowserWindow, request: EditorDocumentRequestBody): Promise<EditorDocumentReply | null> {
   return new Promise((resolve) => {
     const requestId = randomBytes(12).toString('hex')
     const timer = setTimeout(() => { editorDocumentReplies.delete(requestId); resolve(null) }, 10_000)
-    editorDocumentReplies.set(requestId, (value) => { clearTimeout(timer); resolve(value) })
+    editorDocumentReplies.set(requestId, { senderId: win.webContents.id, resolve(value) { clearTimeout(timer); resolve(value) } })
     try { win.webContents.send('outline:editor-request', { ...request, requestId }) } catch { clearTimeout(timer); editorDocumentReplies.delete(requestId); resolve(null) }
   })
 }
@@ -9603,6 +8053,30 @@ const outlineDiskGuard = createOutlineDiskGuard({
     if (win && !win.isDestroyed()) win.webContents.send('outline:changed-on-disk', { outlinePath, change })
   },
 })
+const outlineSlideMerge = createOutlineSlideMerge({
+  guard: outlineDiskGuard,
+  recovery: outlineRecovery,
+  vaultFor(owner, path) {
+    const editor = editorWindows.get(Number(owner))
+    if (!editor || !liveWindow(editor.win) || editor.outlinePath !== path) return null
+    const root = vaultRootFor(path)
+    return outlineSaveRefusal(root, path) ? null : root ?? null
+  },
+  async readWindow(owner, path) {
+    const editor = editorWindows.get(Number(owner))
+    if (!editor) throw new Error('The editor is no longer open.')
+    return editorOutlineDocument(editor.win, path).read()
+  },
+  async reservedIds(root) {
+    const ledger = await ledgerLib()
+    if (!ledger) throw new Error('The vault’s slide ledger is unavailable.')
+    return ledger.idsInVault(root)
+  },
+  stageInWindow(owner, request) {
+    const editor = editorWindows.get(Number(owner))
+    return editor ? requestEditorDocument(editor.win, request) : Promise.resolve(null)
+  },
+})
 quitSequence.add({ name: 'Stop directory watch process', stage: 'will-quit', timeoutMs: 0, run: directoryWatchService.stop })
 quitSequence.add({ name: 'Release scratchpad subscriptions', stage: 'will-quit', timeoutMs: 0, run: scratchpadIpc.closeAll })
 quitSequence.add({ name: 'Dispose outline disk guard', stage: 'will-quit', timeoutMs: 0, run: () => outlineDiskGuard.dispose() })
@@ -9618,10 +8092,6 @@ configureTalkWriter({
     console.log(`[talk-writer] ${origin} ${outlinePath}: ${result.ok ? `${result.changed ? 'written' : 'unchanged'} via ${result.via}` : `refused: ${result.error}`}`)
   },
 })
-// The renderer keys its per-file save queue by the identity key (lib/saveQueue.ts), resolved on every
-// write, so every alias of one outline shares one queue and a retargeted link moves to its new file.
-ipcMain.handle('talk:outline-identity', (_event, outlinePath: unknown) =>
-  typeof outlinePath === 'string' && outlinePath ? outlineIdentity(outlinePath) : null)
 ipcMain.handle('outline:canonical-path', (_event, outlinePath: unknown) =>
   typeof outlinePath === 'string' && outlinePath ? outlineIdentity(outlinePath).realPath : null)
 let instantOutlineTools: Promise<OutlineTools> | null = null
@@ -9821,55 +8291,6 @@ ipcMain.handle('asset:add-video', async (_event, input: { path?: string; bytes?:
   }
 })
 
-// ── Create talk ────────────────────────────────────────────────────────────
-
-ipcMain.handle('vault:create-talk', async (event, opts: { title: string; slug: string; topicFolder?: string; vaultId?: string; startWithSketch?: boolean }) => {
-  // An unavailable vault (or one whose folder has just gone) gets no new talk: its folder is never
-  // re-created (ticket 07).
-  const vaultRoot = writableRootOfVault(opts?.vaultId)
-  if (!vaultRoot) return null
-  try {
-    const { title, slug, topicFolder } = opts
-    if (typeof title !== 'string' || !title.trim() || /[\r\n]/.test(title)) return null
-    // slug / topicFolder come from the renderer: the new talk folder must land inside the vault.
-    const target = newTalkFolder(vaultRoot, slug, topicFolder)
-    if (!target.ok) { console.error('[vault:create-talk] refused', target.error); return null }
-    const talkDir = target.path
-    const releaseMutation = reserveManagementMutation(event.sender.id, [talkDir])
-    if (!releaseMutation) return null
-    try {
-    const outlinePath = join(talkDir, slug + '-outline.md')
-    if (existsSync(talkDir) || !pathStaysInside(vaultRoot, talkDir)) return null
-    mkdirInVault(vaultRoot, dirname(talkDir))
-    mkdirSync(talkDir)
-    {
-      const initialContent = newTalkSource(title, opts.startWithSketch === true ? null : randomBytes(5).toString('hex'))
-      // Pre-fill the presenter's identity and house style: the vault file's affiliation, style and
-      // logo, then this person's author for the vault, then Settings → Presenter identity and deck
-      // defaults (several-vaults ticket 04). fill-missing only: nothing already in the template is
-      // touched, and a blank default writes nothing at all.
-      const vault = vaultOfRoot(vaultRoot)
-      const vaultFile = vault ? vaultRegistry.readFile(vault.id) : null
-      const { defaults } = resolveNewTalkDefaults({
-        vaultFile: vaultFile?.state === 'ok' ? vaultFile.file : null,
-        personal: vault ? vaultRegistry.personal(vault.id) : null,
-        app: metadataDefaults(),
-        talkFolderRel: talkFolderRelOf(vaultRoot, talkDir)
-      })
-      const { edits } = applyMetadataDefaults(parseFrontmatterPairs(initialContent), normaliseMetadataDefaults(METADATA_REGISTRY, defaults), { mode: 'fill-missing' })
-      const seeded = edits.length > 0 ? editFrontmatterText(initialContent, edits) : initialContent
-      const created = await writeTalkOutline(outlinePath, seeded, 'create-talk')
-      if (!created.ok) throw new Error(created.error)
-    }
-    invalidateTalkCache(vaultRoot)
-    return { name: slug, path: talkDir, outlinePath, title, slug } satisfies TalkInfo
-    } finally { releaseMutation() }
-  } catch (e) {
-    console.error('[vault:create-talk]', e)
-    return null
-  }
-})
-
 // ── Clone + folder management (ported from the Raycast extension's rename.ts) ────────────────
 // slugify must match the compiler's slugify so a cloned talk's files line up with its outline.
 function slugifyTalk(value: string): string {
@@ -9935,178 +8356,7 @@ function talkInfoFor(talkDir: string): TalkInfo | null {
   return { name: slug, path: talkDir, outlinePath, title, slug }
 }
 
-// Clone a talk: copy its whole folder (skip bundle/ + logs), rename slug files, retitle, strip the
-// published handout_url. Lands as a sibling (same parent folder), exactly like Raycast's Duplicate.
-ipcMain.handle('vault:clone-talk', async (event, outlinePath: string, newTitle: string) => {
-  if (galleryReservations.has(event.sender.id) || (movedEditorReceipts.has(event.sender.id) && !movedEditorReceipts.get(event.sender.id)!.settled)) return null
-  if (mutationBlocks(outlinePath)) return null
-  if (otherEditorHolding(outlinePath, editorWindows.get(event.sender.id)?.win)) return null
-  // outlinePath comes from the renderer: clone only a talk folder inside the vault, to a sibling
-  // folder that is still inside it.
-  const vaultRoot = writableRootFor(outlinePath)
-  if (!vaultRoot) return null // the talk's vault is unavailable: nothing is copied into it
-  const src = talkFolderOfOutline(vaultRoot, outlinePath)
-  if (!src.ok) { console.error('[vault:clone-talk] refused', src.error); return null }
-  try {
-    const srcDir = src.path
-    const oldSlug = basename(outlinePath).replace('-outline.md', '')
-    const siblingFor = (slug: string): string => {
-      const sibling = siblingTalkFolder(vaultRoot, srcDir, slug)
-      if (!sibling.ok) throw new Error(sibling.error)
-      return sibling.path
-    }
-    const titleSlug = folderSlugFor(slugifyTalk(newTitle))
-    let newSlug = titleSlug || `${oldSlug}-copy`
-    let target = siblingFor(newSlug)
-    // Never clobber: suffix -2, -3, … until the folder name is free.
-    let n = 2
-    while (existsSync(target)) { newSlug = `${titleSlug || oldSlug}-${n}`; target = siblingFor(newSlug); n += 1 }
-    if (otherEditorUnder(target, editorWindows.get(event.sender.id)?.win)) return null
-    const releaseMutation = reserveManagementMutation(event.sender.id, [srcDir, target])
-    if (!releaseMutation) return null
-    try {
-    const place = talkPlace(srcDir)
-    // Hidden, operation-owned preparation. No catalogue can discover a partially sanitised talk.
-    const stage = mkdtempSync(join(vaultRoot, '.tw-clone-'))
-    const stageIdentity = lstatSync(stage)
-    const prepared = join(stage, newSlug)
-    try {
-      const skip = new Set(['bundle', 'dist', '.deck-server.log', '_PRESENTATIONS'])
-      cpSync(srcDir, prepared, {
-        recursive: true,
-        filter: (source) => !source.slice(srcDir.length + 1).split(pathSep).some(part => skip.has(part))
-      })
-      renameSlugFiles(prepared, oldSlug, newSlug)
-      const newOutline = findOutlineIn(prepared)
-      if (!newOutline || !lstatSync(newOutline).isFile() || lstatSync(newOutline).isSymbolicLink()) throw new Error('Duplicate outline must be a regular copied file')
-      // The writer checks this after its awaits, where the bytes would go in: a link in the stage would take them out of it.
-      const made = [stage, prepared, newOutline].map((path) => ({ path, was: lstatSync(path) }))
-      const stillStage = () => {
-        for (const { path, was } of made) {
-          const now = lstatSync(path)
-          if (now.dev !== was.dev || now.ino !== was.ino || now.isSymbolicLink()) throw new Error('Duplicate stage changed')
-        }
-      }
-      await retitleOutline(newOutline, newTitle, stillStage)
-      await stripPublishedFields(newOutline, stillStage)
-      // The writer yielded and another process may have acted: the copy already read stands, the place it lands is judged again.
-      stillStage()
-      const stillSource = talkFolderOfOutline(vaultRoot, outlinePath)
-      const stillTarget = siblingTalkFolder(vaultRoot, srcDir, newSlug)
-      if (!stillSource.ok || stillSource.path !== srcDir || !stillTarget.ok || stillTarget.path !== target || talkPlace(srcDir) !== place) throw new Error('Talk folder changed during duplicate')
-      // mkdir is the exclusive destination claim: rename alone would replace an empty racer.
-      mkdirSync(target)
-      const targetIdentity = lstatSync(target)
-      try {
-        const sameTarget = () => {
-          const current = lstatSync(target)
-          if (current.dev !== targetIdentity.dev || current.ino !== targetIdentity.ino || current.isSymbolicLink()) throw new Error('Duplicate destination replaced')
-        }
-        // Publish the fully prepared outline last. Never overwrite a concurrent entry.
-        const outlineName = basename(newOutline)
-        for (const name of readdirSync(prepared).filter(name => name !== outlineName)) {
-          sameTarget()
-          cpSync(join(prepared, name), join(target, name), {recursive:true, errorOnExist:true, force:false})
-        }
-        sameTarget()
-        linkSync(newOutline, join(target, outlineName))
-      } catch (error) {
-        // Preserve partial output for recovery; never recursively delete a publicly reachable name.
-        console.error('[vault:clone-talk] unpublished preparation retained', target)
-        throw error
-      }
-    } finally {
-      const current = lstatSync(stage)
-      if (current.dev === stageIdentity.dev && current.ino === stageIdentity.ino && !current.isSymbolicLink()) rmSync(stage, {recursive:true})
-    }
-    invalidateVaultCaches(outlinePath)
-    return talkInfoFor(target)
-    } finally { releaseMutation() }
-  } catch (e) {
-    console.error('[vault:clone-talk]', e)
-    return null
-  }
-})
 
-// Rename a talk IN PLACE: retitle the frontmatter and, when the new title yields a new slug,
-// rename the talk folder + every slug-prefixed file in it (same mechanics as clone). The
-// published handout_url is kept — renaming a talk does not unpublish it. Refuses (returns
-// null) if the target folder name is already taken, rather than guessing a suffix: unlike a
-// clone, a rename must land exactly where the author pointed it.
-ipcMain.handle('vault:rename-talk', async (event, outlinePath: string, newTitle: string) => {
-  if (galleryReservations.has(event.sender.id) || (movedEditorReceipts.has(event.sender.id) && !movedEditorReceipts.get(event.sender.id)!.settled)) return null
-  if (mutationBlocks(outlinePath)) return null
-  let movedIdentity: {path:string;dev:number;ino:number} | null = null
-  try {
-    const title = String(newTitle || '').trim()
-    if (!title) return null
-    // Refuse while ANOTHER window holds this talk open: its autosave would recreate the old
-    // path after the move and the two files would drift apart (same hazard class as the
-    // 2026-07-05 empty-write incident). The requesting window is expected to flush + re-select.
-    if (otherEditorHolding(outlinePath, editorWindows.get(event.sender.id)?.win)) return { error: 'open-elsewhere' }
-    // outlinePath comes from the renderer: rename only a talk folder inside the vault, to a sibling
-    // folder that is still inside it.
-    const vaultRoot = vaultRootFor(outlinePath)
-    const src = talkFolderOfOutline(vaultRoot, outlinePath)
-    if (!src.ok) { console.error('[vault:rename-talk] refused', src.error); return null }
-    const srcDir = src.path
-    const place = talkPlace(srcDir)
-    // The writer checks this after its awaits, where the bytes would go in: the same talk, standing where it was judged.
-    const stillThisTalk = () => {
-      const now = talkFolderOfOutline(vaultRoot, outlinePath)
-      if (!now.ok || now.path !== srcDir || talkPlace(srcDir) !== place) throw new Error('Talk folder changed during rename')
-    }
-    const oldSlug = basename(outlinePath).replace('-outline.md', '')
-    const titleSlug = slugifyTalk(title) || oldSlug
-    const newSlug = titleSlug === oldSlug ? oldSlug : folderSlugFor(titleSlug)
-    let dir = srcDir
-    let releaseMutation: (() => void) | null = null
-    try {
-    if (newSlug !== oldSlug) {
-      const sibling = siblingTalkFolder(vaultRoot, srcDir, newSlug)
-      if (!sibling.ok) { console.error('[vault:rename-talk] refused', sibling.error); return null }
-      const target = sibling.path
-      if (otherEditorUnder(target, editorWindows.get(event.sender.id)?.win)) return {error:"open-elsewhere"}
-      if (existsSync(target)) return { error: 'target-exists' }
-      releaseMutation = reserveManagementMutation(event.sender.id, [srcDir, target])
-      if (!releaseMutation) return null
-      await retitleOutline(outlinePath, title, stillThisTalk)
-      // The writer yielded and another process may have acted: nothing moves until the folder and its destination are judged again.
-      const stillSource = talkFolderOfOutline(vaultRoot, outlinePath)
-      const stillTarget = siblingTalkFolder(vaultRoot, srcDir, newSlug)
-      if (!stillSource.ok || stillSource.path !== srcDir || !stillTarget.ok || stillTarget.path !== target || existsSync(target) || talkPlace(srcDir) !== place) throw new Error('Talk folder changed during rename')
-      const oldReal = canonicalOutlinePath(outlinePath)
-      outlineDiskGuard.forget(srcDir) // the app's own move or delete: never reported as a removal on disk
-      const sourceIdentity = lstatSync(srcDir)
-      renameSync(srcDir, target)
-      movedIdentity = {path:target,dev:sourceIdentity.dev,ino:sourceIdentity.ino}
-      renameSlugFiles(target, oldSlug, newSlug)
-      dir = target
-      const movedOutline = findOutlineIn(target)
-      if (!movedOutline) throw new Error("Moved outline missing")
-      transferMovedEditor(event.sender.id, outlinePath, movedOutline)
-      // The talk's recovery copy (if any) moves with it, so its next open still offers it.
-      const moved = findOutlineIn(target)
-      if (moved) await outlineRecovery.rekey(oldReal, canonicalOutlinePath(moved)).catch((e) => console.error('[outline-recovery] rekey', e))
-    }
-    if (!releaseMutation) { releaseMutation = reserveManagementMutation(event.sender.id, [dir]); if (!releaseMutation) return null }
-    const newOutline = findOutlineIn(dir)
-    if (newOutline && newSlug === oldSlug) { await retitleOutline(newOutline, title, stillThisTalk); transferMovedEditor(event.sender.id, outlinePath, newOutline) }
-    invalidateVaultCaches(outlinePath)
-    return talkInfoFor(dir)
-    } finally { releaseMutation?.() }
-  } catch (e) {
-    console.error('[vault:rename-talk]', e)
-    if (movedIdentity) {
-      const current = lstatSync(movedIdentity.path)
-      if (current.dev === movedIdentity.dev && current.ino === movedIdentity.ino && !current.isSymbolicLink()) {
-        const actual = talkInfoFor(movedIdentity.path)
-        if (actual) { transferMovedEditor(event.sender.id, outlinePath, actual.outlinePath); return actual }
-      }
-    }
-    return null
-  }
-})
 
 function transferMovedEditor(senderId: number, source: string, destination: string): void {
   const entry = editorWindows.get(senderId)
@@ -10134,177 +8384,11 @@ function vaultRel(abs: string, vaults: Vault[] = vaultRegistry.list()): string {
   return rel.replace(/^[/\\]+/, '').split(pathSep).join('/')
 }
 
-// Create a folder under the vault (optionally nested under parentRel). Returns its vault-rel path.
-ipcMain.handle('vault:create-folder', (event, name: string, parentRel?: string, vaultId?: string) => {
-  const vaultRoot = writableRootOfVault(vaultId)
-  if (!vaultRoot) return null
-  try {
-    // name / parentRel come from the renderer: the new folder must land inside the vault.
-    const target = createFolderTarget(vaultRoot, name, parentRel)
-    if (!target.ok) { console.error('[vault:create-folder] refused', target.error); return null }
-    const dir = target.path
-    const releaseMutation = reserveManagementMutation(event.sender.id, [dir])
-    if (!releaseMutation) return null
-    try {
-    if (existsSync(dir)) return vaultRel(dir) // already there — idempotent
-    mkdirInVault(vaultRoot, dir)
-    invalidateTalkCache(vaultRoot)
-    return vaultRel(dir)
-    } finally { releaseMutation() }
-  } catch (e) {
-    console.error('[vault:create-folder]', e)
-    return null
-  }
-})
 
-// Rename a folder (by its vault-rel path). Returns the new vault-rel path.
-ipcMain.handle('vault:rename-folder', async (event, folderRel: string, newName: string, vaultId?: string) => {
-  if (galleryReservations.has(event.sender.id) || (movedEditorReceipts.has(event.sender.id) && !movedEditorReceipts.get(event.sender.id)!.settled)) return null
-  const vaultRoot = writableRootOfVault(vaultId)
-  if (!vaultRoot || !folderRel) return null
-  try {
-    // folderRel / newName come from the renderer: a folder inside the vault (never the vault root)
-    // renamed to a sibling that is still inside the vault.
-    const target = renameFolderTargets(vaultRoot, folderRel, newName)
-    if (!target.ok) { console.error('[vault:rename-folder] refused', target.error); return null }
-    const { src, dest } = target
-    if (otherEditorUnder(src, editorWindows.get(event.sender.id)?.win)) return null
-    if (otherEditorUnder(dest, editorWindows.get(event.sender.id)?.win)) return null
-    if (!existsSync(src) || existsSync(dest)) return null
-    const releaseMutation = reserveManagementMutation(event.sender.id, [src, dest])
-    if (!releaseMutation) return null
-    try {
-    const oldReal = canonicalOutlinePath(src)
-    outlineDiskGuard.forget(src) // the app's own move or delete: never reported as a removal on disk
-    renameSync(src, dest)
-    transferMovedEditor(event.sender.id, src, dest)
-    try { await outlineRecovery.rekey(oldReal, canonicalOutlinePath(dest), { under: true }).catch((e) => console.error('[outline-recovery] rekey', e)) } catch (error) { console.error('[move recovery refresh]',error) }
-    try { invalidateVaultCaches(vaultRoot) } catch (error) { console.error('[move refresh]', error) }
-    return vaultRel(dest)
-    } finally { releaseMutation() }
-  } catch (e) {
-    console.error('[vault:rename-folder]', e)
-    return null
-  }
-})
 
-// Move a talk's whole folder into destFolderRel ('' = vault root). Returns the moved TalkInfo.
-ipcMain.handle('vault:move-talk', async (event, outlinePath: string, destFolderRel: string) => {
-  if (galleryReservations.has(event.sender.id) || (movedEditorReceipts.has(event.sender.id) && !movedEditorReceipts.get(event.sender.id)!.settled)) return null
-  if (mutationBlocks(outlinePath)) return null
-  if (otherEditorHolding(outlinePath, editorWindows.get(event.sender.id)?.win)) return null
-  const vaultRoot = writableRootFor(outlinePath)
-  if (!vaultRoot) return null
-  try {
-    // outlinePath / destFolderRel come from the renderer: move a talk folder inside the vault to a
-    // folder inside the vault ('' = the vault root).
-    const target = moveTalkTargets(vaultRoot, outlinePath, destFolderRel)
-    if (!target.ok) { console.error('[vault:move-talk] refused', target.error); return null }
-    const { srcDir, destParent, dest } = target
-    if (resolvePath(dest) === resolvePath(srcDir)) return talkInfoFor(srcDir) // no-op (same folder)
-    if (otherEditorUnder(dest, editorWindows.get(event.sender.id)?.win)) return null
-    if (existsSync(dest)) return null // a talk of that name already lives there
-    const releaseMutation = reserveManagementMutation(event.sender.id, [srcDir, dest])
-    if (!releaseMutation) return null
-    try {
-    mkdirInVault(vaultRoot, destParent)
-    const oldReal = canonicalOutlinePath(srcDir)
-    outlineDiskGuard.forget(srcDir) // the app's own move or delete: never reported as a removal on disk
-    renameSync(srcDir, dest)
-    transferMovedEditor(event.sender.id, srcDir, dest)
-    try { await outlineRecovery.rekey(oldReal, canonicalOutlinePath(dest), { under: true }).catch((e) => console.error('[outline-recovery] rekey', e)) } catch (error) { console.error('[move recovery refresh]',error) }
-    try { invalidateVaultCaches(vaultRoot) } catch (error) { console.error('[move refresh]', error) }
-    return talkInfoFor(dest)
-    } finally { releaseMutation() }
-  } catch (e) {
-    console.error('[vault:move-talk]', e)
-    return null
-  }
-})
 
-// List CATEGORY folders under the vault (vault-rel paths), INCLUDING empty ones — so a folder you
-// just created is visible in the sidebar even before any talk lives in it. A "category folder" is a
-// directory that is NOT itself a talk folder (a talk folder directly contains a *-outline.md).
-ipcMain.handle('vault:list-folders', async (_event, vaultId?: string) => {
-  const vaultRoot = rootOfVault(vaultId)
-  if (!vaultRoot) return []
-  const isTalkDir = async (dir: string): Promise<boolean> => {
-    try { return (await readdirAsync(dir)).some((f) => f.endsWith('-outline.md')) } catch { return false }
-  }
-  const out: string[] = []
-  const vaults = vaultRegistry.list() // one config read for every folder's relative path
-  const scan = async (dir: string, depth: number): Promise<void> => {
-    if (depth > 3) return
-    let entries
-    try { entries = await readdirAsync(dir, { withFileTypes: true }) } catch { return }
-    for (const entry of entries) {
-      const name = entry.name
-      // Assets, research and system folders are never categories. The browser's disk listing still shows them, inspect-only.
-      if (inspectOnlyFolderName(name)) continue
-      if (!entry.isDirectory()) continue
-      const full = join(dir, name)
-      if (await isTalkDir(full)) continue // a talk, not a category folder
-      out.push(vaultRel(full, vaults))
-      await scan(full, depth + 1)
-    }
-  }
-  await scan(vaultRoot, 0)
-  return out
-})
 
-// Delete a talk — moved to the OS Trash (recoverable), not hard-deleted, so an accidental
-// create/clone can be undone from Finder.
-ipcMain.handle('vault:delete-talk', async (event, outlinePath: string) => {
-  if (galleryReservations.has(event.sender.id) || (movedEditorReceipts.has(event.sender.id) && !movedEditorReceipts.get(event.sender.id)!.settled)) return false
-  if (mutationBlocks(outlinePath)) return false
-  if (otherEditorHolding(outlinePath, editorWindows.get(event.sender.id)?.win)) return false
-  // outlinePath comes from the renderer: trash only a talk folder inside the vault, never the vault
-  // root or anything outside it.
-  const target = talkFolderOfOutline(vaultRootFor(outlinePath), outlinePath)
-  if (!target.ok) { console.error('[vault:delete-talk] refused', target.error); return false }
-  const releaseMutation = reserveManagementMutation(event.sender.id, [target.path])
-  if (!releaseMutation) return false
-  let tracked: string[] = []
-  try {
-    tracked = outlineDiskGuard.openUnder(target.path)
-    await shell.trashItem(target.path)
-    for (const path of tracked) await outlineDiskGuard.check(path).catch(e => console.error('[vault:delete-talk] check',e))
-    invalidateVaultCaches(outlinePath)
-    return true
-  } catch (e) {
-    console.error('[vault:delete-talk]', e)
-    for (const path of tracked) await outlineDiskGuard.check(path).catch(error => console.error('[vault:delete-talk] recovery check', error))
-    return false
-  } finally { releaseMutation() }
-})
 
-// Delete a category folder (and anything inside it) — also to the OS Trash (recoverable).
-ipcMain.handle('vault:delete-folder', async (event, folderRel: string, vaultId?: string) => {
-  if (galleryReservations.has(event.sender.id) || (movedEditorReceipts.has(event.sender.id) && !movedEditorReceipts.get(event.sender.id)!.settled)) return false
-  const vaultRoot = writableRootOfVault(vaultId)
-  if (!vaultRoot || !folderRel) return false
-  // folderRel comes from the renderer: a folder inside the vault, never the vault root.
-  const target = deleteFolderTarget(vaultRoot, folderRel)
-  if (!target.ok) { console.error('[vault:delete-folder] refused', target.error); return false }
-  if (otherEditorUnder(target.path, editorWindows.get(event.sender.id)?.win)) return false
-  const releaseMutation = reserveManagementMutation(event.sender.id, [target.path])
-  if (!releaseMutation) return false
-  let tracked: string[] = []
-  try {
-    tracked = outlineDiskGuard.openUnder(target.path)
-    // A talk open in a window inside the folder is NOT forgotten: once the folder is in the Bin its
-    // window shows the removed-file bar (shared-talk ticket 08), its saves are refused (a recovery copy
-    // keeps the typing) and nothing is recreated unless the person chooses Save it again.
-    await shell.trashItem(target.path)
-    for (const realPath of tracked) await outlineDiskGuard.check(realPath).catch((e) => console.error('[vault:delete-folder] check', e))
-    invalidateVaultCaches(vaultRoot)
-    return true
-  } catch (e) {
-    console.error('[vault:delete-folder]', e)
-    for (const path of tracked) await outlineDiskGuard.check(path).catch(error => console.error('[vault:delete-folder] recovery check', error))
-    return false
-  } finally { releaseMutation() }
-})
 
 // Open a built artifact (file or folder) in the OS file manager / browser.
 // The path comes from the renderer: only a folder or a document inside an open vault, never an app,
@@ -10830,6 +8914,62 @@ ipcMain.handle('agent-skill:answer-offer', (_e, answer: unknown) => {
 ipcMain.handle('agent-skill:offer-shown', (_e, ids: unknown) => agentSkills().offerShown(agentIdsArg(ids)))
 handleFromSettingsWindow('agent-skill:remove', () => null, (_e, ids: unknown) => agentSkills().remove(agentIdsArg(ids)))
 handleFromSettingsWindow('agent-skill:replace', () => null, (_e, ids: unknown) => agentSkills().install(agentIdsArg(ids), { replace: true }))
+
+function vaultIpcHost() {
+  return {
+    ipcMain, BrowserWindow, E2E, afterExampleVaultChange, app, availableVaults, checkVaultAvailability,
+    claimGalleryTalk, claimTalkForWindow, currentVaultRoot, dialog, editorWindows,
+    establishedGalleryClaims, exampleVault, findOutlineIn, galleryAdmission, galleryCatalogue,
+    galleryClaimEpochs, galleryFacts, galleryHandoutSites, galleryReservations, invalidateTalkCache,
+    invalidateVaultCaches, metadataDefaults, mkdirInVault, movedEditorReceipts, mutationBlocks,
+    otherEditorHolding, otherEditorUnder, outlineDiskGuard, outlineRecovery, primaryVault,
+    publishSiteDir, readHandoutRegistry, renameSlugFiles, reserveManagementMutation, resolveGalleryTalk,
+    retitleOutline, revokeGalleryReads, rootFs, rootOfVault, scheduleVaultWarm, searchCache, shell,
+    slugifyTalk, stripPublishedFields, surfacedWarningCount, talkCache, talkInfoFor, transferMovedEditor,
+    vaultAvailability, vaultIndex, vaultOfRoot, vaultRegistry, vaultRel, vaultRootFor, vaultViews,
+    watchGallerySender, writableRootFor, writableRootOfVault, writableVaultRoot,
+    get galleryEpoch() { return galleryEpoch },
+  }
+}
+export type VaultIpcHost = ReturnType<typeof vaultIpcHost>
+export type { ProjectionRowMain, TalkInfo }
+
+registerVaultIpc(vaultIpcHost())
+
+function talkIpcHost() {
+  return {
+    ipcMain, BrowserWindow, E2E, TAKES_ENABLED, app, assetRootsFor, attachLivePageHost, attachLiveWindow,
+    browserThumbnailMediaOptions, buildHandoutPagesOffThread, buildTalkPresentFile, buildVaultAssetIndex,
+    cancelQuitAttempt, checkEmbedUrl, crossVaultTools, currentVaultRoot, deckWindowOpenOpts,
+    editorRevisions, editorWindows, extractDeckEmbeds, findTalks, getCompilerPath, getConfig, guideLearn,
+    handoutPublishing, htmlPageRunImport, invalidateVaultCaches, lastSaveFailed, lastUnsavedText,
+    latestThumbnailRequest, ledgerSeal, livePageAllowance, livePageHosts, livePresenterContexts,
+    localHandoutWorkerBaseUrl, logThumbnails, maybeOfferOutlineMigration, metadataDefaults, mkdirInVault,
+    normaliseToWebp, ocrCandidates, ocrIndex, openDeckAudience, outlineDiskGuard, outlineRecovery, outlineSlideMerge,
+    outlineRefused, outlineUrlOnDisk, pendingOrigins, pictureTextForCompile, plannedRunOf, prepareTalk,
+    preparedTalkCache, presentWindows, presentedVaultDeps, presenterAudienceWindows, presenterGuide,
+    presenterPublications, provenanceStore, readHandoutRegistry, refreshDeckFromEditor, resolveOcrBin,
+    resolvePooledRefs, rootFs, screen, shell, talkActivity, talkThumbCacheDir, thumbNamespaceDir,
+    thumbnailDocumentId, thumbnailTalkOwner, timerSettings, vaultAvailable, vaultIdOf, vaultNameOf,
+    vaultRegistry, vaultRootFor, verifiedRunSource, writableRootFor, writableTalkRoot, writableVaultRoot,
+    writeHandoutRegistry, writeOutlineFromEditor,
+    captureOfflinePage, clearThumbnailFocus, guardDeckWindowTree, offlineSource, parseRetake,
+    recordingAudioArmed, registerRecordingContext, renderThumbnails, sendRecordingCloseOffer,
+    setThumbnailFocus, setupRecordingPermissions, shouldOfferRunSave, supersedeThumbnailRender,
+    unregisterRecordingContext, updateTestSaveDelay, verifyRetake,
+    get liveSessions() { return liveSessions },
+    get presentReloadNonce() { return presentReloadNonce },
+    set presentReloadNonce(value: typeof presentReloadNonce) { presentReloadNonce = value },
+    get toolsWindow() { return toolsWindow },
+    get updateChecker() { return updateChecker },
+    get vaultAssetIndex() { return vaultAssetIndex },
+    set vaultAssetIndex(value: typeof vaultAssetIndex) { vaultAssetIndex = value },
+  }
+}
+export type TalkIpcHost = ReturnType<typeof talkIpcHost>
+export type { EmbedStatus }
+
+registerTalkIpc(talkIpcHost())
 
 // Keep app.name unchanged: userData and the Keychain entry depend on it.
 app.setAboutPanelOptions({ applicationName: PRODUCT_NAME })

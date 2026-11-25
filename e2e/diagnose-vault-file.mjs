@@ -19,13 +19,11 @@
 //
 // Screenshots go to ignored artefacts. --record-evidence restores the design evidence destination.
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && TW_E2E=1 node e2e/diagnose-vault-file.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -42,7 +40,8 @@ function record(name, pass, detail) {
 const outline = (title, slide) => ['---', `title: ${title}`, 'outline_version: 2', '---', '', '## Section', '',
   `### ${slide} {id=${slide.toLowerCase().replace(/\W+/g, '')}}`, '', 'Body one.', ''].join('\n')
 
-const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), 'tw-e2e-vault-file-')))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const personal = join(tempRoot, 'Personal')
 const workshops = join(tempRoot, 'Workshops')
 const shared = join(tempRoot, 'AI and assessment workshop')
@@ -73,10 +72,8 @@ const snap = (root) => existsSync(vaultJson(root)) ? { bytes: readFileSync(vault
 const strings = (v) => typeof v === 'string' ? [v] : v && typeof v === 'object' ? Object.values(v).flatMap(strings) : []
 const looksAbsolute = (s) => /^([/~\\]|[a-zA-Z]:[\\/]|file:)/.test(s.trim())
 
-await ensureFreshBuild(REPO)
 async function launch() {
-  const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
-  const page = await app.firstWindow()
+  const { app, page } = await launchApp({ scratch: appScratch, userData: userDataDir })
   await page.waitForLoadState('domcontentloaded')
   await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
   await page.waitForTimeout(1200)
@@ -276,7 +273,7 @@ try {
   await page.waitForTimeout(400)
   await page.evaluate((id) => window.tw.vault.setOpen(id, true), wsId)
   await page.waitForTimeout(800)
-  await app.close()
+  await appScratch.closeApp(app)
   ;({ app, page } = await launch())
   await page.waitForTimeout(1500)
   await page.evaluate(() => window.tw.vault.list())
@@ -290,6 +287,6 @@ try {
 } finally {
   const failed = results.filter((r) => !r.pass)
   console.log(`\n=== VAULT-FILE SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
-  await app.close().catch(() => {})
-  process.exit(failed.length ? 1 : 0)
+  await appScratch.closeApp(app).catch(() => {})
+  process.exitCode = failed.length ? 1 : 0
 }

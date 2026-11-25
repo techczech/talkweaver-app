@@ -17,15 +17,14 @@
 //      pressed, and the grid follows.
 // Fixture vault and a throwaway --user-data-dir; set TW_SHOTS=<dir> to save screenshots.
 import assert from 'node:assert/strict'
-import { _electron as electron } from 'playwright'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync, realpathSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { tmpdir } from 'node:os'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { pickerTalkRow } from './lib/picker-tree.mjs'
 
-const root = mkdtempSync(join(realpathSync(tmpdir()), 'tw-select-section-'))
+await using appScratch = createAppScratch()
+const root = appScratch.root
 const userData = join(root, 'userData'), vault = join(root, 'vault')
 mkdirSync(userData, { recursive: true })
 let edited = 0
@@ -62,12 +61,11 @@ writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, 
 
 const shots = process.env.TW_SHOTS
 if (shots) mkdirSync(shots, { recursive: true })
-await ensureFreshBuild(resolve('.'))
-const app = await electron.launch({
-  args: ['.', `--user-data-dir=${userData}`],
-  cwd: resolve('.'), env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
+const { app, page } = await launchApp({
+  scratch: appScratch,
+  userData,
+  env: { ...process.env, TW_REC_TEST: '1' },
 })
-const page = await app.firstWindow()
 page.setDefaultTimeout(10000)
 const errors = []
 page.on('pageerror', (error) => errors.push(error.message))
@@ -261,6 +259,5 @@ try {
   assert.deepEqual(errors, [], 'no renderer errors')
   console.log('PASS select section e2e')
 } finally {
-  await app.close().catch(() => {})
-  rmSync(root, { recursive: true, force: true })
+  await appScratch.closeApp(app).catch(() => {})
 }

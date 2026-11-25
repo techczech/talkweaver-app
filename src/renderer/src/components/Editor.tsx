@@ -50,6 +50,8 @@ import {
   runLineCommand,
   setOpenObjectBlock,
   sourceObjectPreviews,
+  videoSourceDuration,
+  type VideoSourceDuration,
   type ConsumeInsertFence
 } from '../extensions/objectBlocks/field'
 import { Decoration, EditorView, type DecorationSet, keymap, highlightActiveLine, showPanel, showTooltip } from '@codemirror/view'
@@ -77,6 +79,9 @@ import { notify } from '../lib/notify'
 import { queueOutlineWrite } from '../lib/saveQueue'
 import { lookForRecovery, noteOutlineSaveReply, outlineDiskChanges } from '../lib/outlineDiskChange'
 import { replaceDocTransaction } from '../lib/replaceDocTransaction'
+import { slideMergeHistory, slideMergeTransaction } from '../lib/slideMergeTransaction'
+import type { EditorDocumentReply, EditorDocumentRequestBody } from '../../../shared/editor-document'
+
 import { clipboardHasText, htmlClipboardText } from '../lib/clipboardText'
 import { adoptSavedText, isSaveStep, redoWithSave, savedTextAdopted, savedTextAdoption, undoWithSave } from '../extensions/savedTextAdoption'
 import { editorRevision } from '../lib/editorRevision'
@@ -210,6 +215,7 @@ interface Props {
   textFitNotes?: readonly TextFitNote[]
   /** Heading line of each compiled slide (strip order): the gutter numbers those lines, nothing else. */
   markdownHeadings?: ReadonlyMap<number, MarkdownHeadingKind>
+  markerSourceDuration?: VideoSourceDuration
   pictureProgress?: PictureProgress
   pictureDropLines?: { pointer: number; heading: number | null } | null
   /** Plain view's margin: what each heading line is called (Talk, Section, Slide n) and its layout name. */
@@ -274,6 +280,7 @@ interface Props {
     settleSave: (signal?: AbortSignal) => Promise<void>
     /** Write the current text even when it looks saved (a close's 'resave', ADR-0044 §6); false when not written. */
     forceSave: (signal?: AbortSignal) => Promise<boolean>
+    commitSlideMerge: CommitSlideMerge
     // Scroll the editor to reveal the current cursor (selection head) WITHOUT changing the selection,
     // and focus it. Used when a view switch re-shows the editor so it lands on the slide you're on
     // (the cursor is wherever strip/grid/outline navigation last put it) instead of snapping to the top.
@@ -380,6 +387,8 @@ export type ReplaceEditorDoc = (text: string, opts?: {
   diskHash?: string
 }) => string | null
 
+export type CommitSlideMerge = (request: Extract<EditorDocumentRequestBody, { kind: 'slide-merge' }>) => Promise<EditorDocumentReply>
+
 export type ReadEditorDoc = (options?: { discardProvisionalTrigger?: boolean; authoredOnly?: boolean; saveText?: string }) => {
   path: string
   text: string
@@ -415,6 +424,7 @@ function outlinerKeymapExtension() {
 const viewCompartment = new Compartment()
 // The Plain tab's font and text size. Empty in Markdown mode, so that tab stays exactly as it was.
 const plainTypeCompartment = new Compartment()
+const videoSourceDurationCompartment = new Compartment()
 type PictureProgress = { message: string; pos?: number }
 const setPictureProgress = StateEffect.define<PictureProgress | undefined>()
 const pictureProgressField = StateField.define<PictureProgress | undefined>({
@@ -484,6 +494,7 @@ export default function Editor({
   showSourceObjectPreviews = true,
   textFitNotes,
   markdownHeadings,
+  markerSourceDuration,
   pictureProgress,
   pictureDropLines,
   marginLabels,
@@ -523,6 +534,7 @@ export default function Editor({
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const moveFrozenRef = useRef(false)
+  const mergeSavingRef = useRef(false)
   const loadFrozenRef = useRef(true)
   // Closing (ADR-0044 §6, rules B and D; lib/closeFreeze.ts): from the close request until the window closes, or the
   // close is called off, the person's edits are refused. Only Reload's text and the adoption of a save's ids pass.
@@ -804,6 +816,7 @@ export default function Editor({
         doc: '',
         extensions: [
           EditorState.transactionFilter.of(tr => (moveFrozenRef.current || loadFrozenRef.current || (closeFrozenRef.current && !tr.annotation(savedTextAdopted) && !tr.annotation(closeFreezeExempt))) && tr.docChanged ? [] : tr),
+          EditorState.transactionFilter.of(tr => mergeSavingRef.current && tr.docChanged ? [] : tr),
           closeFreezeCompartment.current.of([]),
           researchMarkerCompartment.current.of(showResearchInsertion ? researchInsertionMarker : []),
           scratchDropExtension((id, place) => scratchDropRef.current?.(id, place)),
@@ -1129,10 +1142,12 @@ export default function Editor({
           outlinerKeymapExtension(),
           goToSectionChild.of(line => onSectionChildRef.current?.(line)),
           viewCompartment.of([sourceObjectPreviews.of(showSourceObjectPreviews), startBodyWithBullet.of(startWithBullet), slideTextInput.of(slideTextPanel), viewModeExtension(viewModeRef.current, plainViewOptions(marginMenuHandlers))]),
+          videoSourceDurationCompartment.of([]),
           plainTypeCompartment.of(viewModeRef.current === 'plain' ? plainTypeExtension(plainLookRef.current) : []),
           EditorView.updateListener.of((update) => {
             let authoredEdit: string | undefined
             if (update.docChanged) {
+              if (mergeSavingRef.current) return
               // T29b engagement trigger 2: a document change made BY THE USER — typing into an
               // already-focused editor is a keydown that edits the doc, so a keyboard-only user
               // engages exactly like a pointer user. Programmatic dispatches (load, adoption,
@@ -1266,6 +1281,7 @@ export default function Editor({
           // Keeps a save's adopted text marked as the save's undo step, and sends the Edit menu's
           // Undo and Redo through the undo that takes that step with the change below it.
           savedTextAdoption(),
+          slideMergeHistory,
           saveTidyUp(),
           outlineSaveIdentity,
           imageWidgetExtension({
@@ -1361,6 +1377,12 @@ export default function Editor({
     // installs its own range next; reporting the old caret here can select a different slide.
     if (enteringOutline) view.dispatch({ selection: view.state.selection, userEvent: 'select' })
   }, [viewMode, startWithBullet, slideTextPanel, showSourceObjectPreviews])
+
+  useEffect(() => {
+    viewRef.current?.dispatch({
+      effects: videoSourceDurationCompartment.reconfigure(markerSourceDuration ? videoSourceDuration.of(markerSourceDuration) : [])
+    })
+  }, [markerSourceDuration, talk.outlinePath])
 
   // A change of font or size in Settings: only the type compartment is swapped; the caret stays.
   useEffect(() => {
@@ -1690,6 +1712,62 @@ export default function Editor({
         if (current.trim() === '') return false
         return await writeQueued(path, v.state, editorRevision.current(), true)
       },
+      commitSlideMerge: ({ outlinePath, base, next, generation }) => queueOutlineWrite(outlinePath, async () => {
+        const view = viewRef.current
+        const active = () => viewRef.current === view && loadedPathRef.current === outlinePath && currentTalkRef.current === outlinePath
+        const before = view?.state
+        if (!view || !before || !active() || moveFrozenRef.current || loadFrozenRef.current || closeFrozenRef.current ||
+            outlineDiskChanges.isDiscarded(outlinePath) || before.doc.toString() !== base) {
+          return { ok: false, moved: true, error: 'The editor changed during the review. Open a new review to merge its current text.' }
+        }
+        if (saveTimerRef.current) { clearTimeout(saveTimerRef.current); saveTimerRef.current = null }
+        seamSaveRef.current = null
+        closeCompletion(view)
+        const previous = cleanDocumentRef.current
+        const staged = { text: previous.text, diskHash: previous.diskHash, dirty: true }
+        cleanDocumentRef.current = staged // invalidate autosaves queued against the previous editor epoch
+        provisionalTriggerRef.current = null
+        const transaction = slideMergeTransaction(view.state, next)
+        mergeSavingRef.current = true
+        let refused = false
+        try {
+          view.dispatch(transaction)
+          const text = view.state.doc.toString()
+          const identity = captureOutlineIdentity(view.state, text, acknowledgedIds.current)
+          let reply: Awaited<ReturnType<typeof window.tw.talk.writeOutline>> | null = null
+          try {
+            reply = await window.tw.talk.writeOutline(outlinePath, text, {
+              revision: transaction.docChanged ? editorRevision.bump() : editorRevision.current(),
+              slideMergeGeneration: generation,
+            })
+          } catch {
+            // The file may already hold the merge. Keep the staged text dirty for the next guarded save.
+          }
+          if (reply === false || reply?.ok === false) {
+            refused = true
+            return { ok: false, error: 'The reviewed merge could not be saved.' }
+          }
+          const saved = reply?.ok === true
+          if (active() && cleanDocumentRef.current === staged) {
+            if (saved) {
+              identity.acknowledge(text)
+              cleanDocumentRef.current = { text, dirty: false }
+            }
+            onContentChange(text)
+            onDirtyRef.current?.(!saved)
+            if (saved) onSaved?.()
+          }
+          return saved ? { ok: true, text } : { ok: false, error: 'The merge save could not be confirmed.' }
+        } finally {
+          mergeSavingRef.current = false
+          if (refused && active() && cleanDocumentRef.current === staged) {
+            // Restore the prior document AND history. An undo here would leave the refused merge
+            // available as Redo, allowing its stale choices to be saved as an ordinary edit.
+            view.setState(before)
+            cleanDocumentRef.current = { text: previous.text, diskHash: previous.diskHash, dirty: previous.dirty }
+          }
+        }
+      }),
       scrollCursorIntoView: () => {
         const v = viewRef.current
         if (!v) return
@@ -1757,7 +1835,7 @@ export default function Editor({
       },
     }
     registerEditorCommands?.(cmds)
-  }, [registerEditorCommands, writeQueued])
+  }, [registerEditorCommands, writeQueued, onContentChange, onSaved])
 
   // Expose the caret's list-item context to the icon picker. Read from the LIVE view at call
   // time so it reflects wherever the caret is when the picker opens (not registration time).
@@ -1908,7 +1986,7 @@ export default function Editor({
     if (!registerReplaceDoc) return
     registerReplaceDoc((text, opts) => {
       const view = viewRef.current
-      if (!view) return null
+      if (!view || mergeSavingRef.current) return null
       const loaded = !!loadedPathRef.current && loadedPathRef.current === currentTalkRef.current
       // A save-bound change needs the talk's real text in the doc: before the load lands the doc is a
       // transient the load will replace, so the change (and its save) would be lost or wrong.

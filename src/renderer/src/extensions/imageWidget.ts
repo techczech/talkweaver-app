@@ -7,6 +7,7 @@ import {
   type ViewUpdate
 } from '@codemirror/view'
 import { inSlideTextPanel } from './focusScope.ts'
+import { outlineObjectsIn } from './objectBlocks/field.ts'
 import { type Extension, RangeSetBuilder, StateEffect, type Text } from '@codemirror/state'
 import { placementLabel, type ImagePlacement, type PlacementKind } from '../../../shared/image-placement.ts'
 import { openFullScreenPreview } from './imageFullScreenPreview.ts'
@@ -292,14 +293,20 @@ const atomicMark = Decoration.mark({})
 
 // Every image line the widget hides is atomic too (ADR-0042, one object one delete): Backspace or Delete
 // beside any picture card takes its whole line, never a hidden `)` or `}`. One Undo restores it.
+// Outline supplies its own card for a marked video; Markdown keeps its source.
+function markedVideoStarts(view: EditorView): Set<number> {
+  return new Set(outlineObjectsIn(view.state)?.blocks.filter(block => block.video?.markers.length).map(block => block.from))
+}
+
 function buildImageAtomicRanges(view: EditorView): DecorationSet {
   if (inSlideTextPanel(view.state)) return Decoration.none
   const builder = new RangeSetBuilder<Decoration>()
+  const markedVideos = markedVideoStarts(view)
   for (const { from, to } of view.visibleRanges) {
     let pos = from
     while (pos <= to) {
       const line = view.state.doc.lineAt(pos)
-      if (IMAGE_LINE_RE.test(line.text) && line.to > line.from) builder.add(line.from, line.to, atomicMark)
+      if (!markedVideos.has(line.from) && IMAGE_LINE_RE.test(line.text) && line.to > line.from) builder.add(line.from, line.to, atomicMark)
       pos = line.to + 1
     }
   }
@@ -323,13 +330,14 @@ function buildCaptureRanges(view: EditorView): DecorationSet {
 function buildDecorations(view: EditorView, opts: WidgetOpts): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>()
   if (inSlideTextPanel(view.state)) return Decoration.none
+  const markedVideos = markedVideoStarts(view)
   const talkDir = typeof opts.talkDir === 'function' ? opts.talkDir() : opts.talkDir
   for (const { from, to } of view.visibleRanges) {
     let pos = from
     while (pos <= to) {
       const line = view.state.doc.lineAt(pos)
       const match = IMAGE_LINE_RE.exec(line.text)
-      if (match) {
+      if (match && !markedVideos.has(line.from)) {
         const caption = match[1]
         const { url, vaultId, isVideo } = resolveSrc(match[2], opts.vaultRoot, talkDir)
         const widget = new ImageWidget(url, caption, vaultId, opts.onClick, isVideo, opts.placementForLine?.(line.number, view.state.doc) ?? null)

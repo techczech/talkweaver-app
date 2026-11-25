@@ -1,16 +1,15 @@
 // Built Electron, hidden, with a private copy of the shipped example vault. Exercises the ordinary
 // BrowserWindow.close/app.quit routes; never the installed app, a real vault, or Playwright teardown as the verdict.
 import assert from 'node:assert/strict'
-import { _electron as electron } from 'playwright'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { resolveSlideId } from '../compiler/scripts/lib/slide-id.mjs'
 
 const repo = resolve('.')
-const scratch = mkdtempSync(join(tmpdir(), 'tw-close-after-move-'))
+await using appScratch = createAppScratch()
+const scratch = appScratch.root
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 delete env.ELECTRON_RUN_AS_NODE
@@ -25,7 +24,7 @@ async function cleanup() {
   // Playwright can dispose the application handle as soon as the child quits.
   if (!proc || proc.exitCode !== null || proc.signalCode !== null) return
   let timer
-  try { await Promise.race([closing.close().catch(() => {}), new Promise(r => { timer = setTimeout(r, 2000) })]) }
+  try { await Promise.race([appScratch.closeApp(closing).catch(() => {}), new Promise(r => { timer = setTimeout(r, 2000) })]) }
   finally {
     clearTimeout(timer)
     if (proc.exitCode === null && proc.signalCode === null) {
@@ -41,7 +40,6 @@ async function waitFor(fn, label, ms = 8000) {
   throw new Error(label)
 }
 try {
-  await ensureFreshBuild(repo)
   const undoCases = [{ move: 'command', quit: true, undo: true }, { move: 'drag', quit: false, undo: true }]
   const stallCase = { move: 'command', quit: false, stall: true }
   const cases = process.env.TW_CLOSE_CASE === 'undo' ? undoCases
@@ -56,8 +54,12 @@ try {
     const original = readFileSync(outline, 'utf8')
     writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'outline' }))
     const delay = join(root, 'save-delay')
-    app = await electron.launch({ args: ['.', `--user-data-dir=${ud}`, '--use-mock-keychain'], cwd: repo,
-      env: { ...env, TW_UPDATE_TEST_SAVE_DELAY_FILE: delay } })
+    app = (await launchApp({
+      scratch: appScratch,
+      userData: ud,
+      env: { ...env, TW_UPDATE_TEST_SAVE_DELAY_FILE: delay },
+      args: ['.', '--use-mock-keychain'],
+    })).app
     const proc = ownedProcess = app.process()
     assert.ok(proc, 'the test owns the Electron child')
     const exited = new Promise(r => proc.once('exit', (code, signal) => r({ code, signal })))
@@ -183,7 +185,7 @@ try {
   }
 } finally {
   try { await cleanup() }
-  finally { rmSync(scratch, { recursive: true, force: true }) }
+  finally { await appScratch.close() }
 }
 // Both the owned app and its private vault are gone. A Playwright connection can
 // still hold the test's Node process open after Electron's debugger teardown.

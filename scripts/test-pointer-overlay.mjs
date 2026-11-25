@@ -63,7 +63,12 @@ for (const chord of ['Space', 'Tab', 'Enter', 'Escape', '⌘A', '⌘C', '⌘W', 
 for (const chord of ['⇧ArrowRight', '⇧ArrowLeft', '⇧Space', '⇧PageDown', '⇧PageUp', '⇧Enter', '⇧Tab', '⇧Home', '⇧End', 'Delete', '⇧Backspace', 'Home', 'PageDown']) {
     assert.ok(shortcuts.taken(chord, 'presenter.pointer'), `${chord} must be refused (navigation or editing key, shifted or not)`);
 }
-for (const chord of ['⇧H', '⇧I', 'F9', '.', ',']) {
+for (const [chord, id] of [[',', 'presenter.video-back'], ['.', 'presenter.video-forward']]) {
+    const command = commands.find(entry => entry.id === id);
+    assert.ok(command, id);
+    assert.equal(shortcuts.taken(chord, 'presenter.pointer'), command.label, `${chord} belongs to ${id}`);
+}
+for (const chord of ['⇧H', '⇧I', 'F9', '⇧,', '⇧.']) {
     assert.equal(shortcuts.taken(chord, 'presenter.pointer'), null, `${chord} stays allowed`);
 }
 for (const key of ['Space', 'Tab', 'Enter', 'Escape', 'ArrowRight', 'ArrowLeft', 'ArrowUp', 'ArrowDown', 'F1', 'F12', ',', '.', '/', '[', ']', '-', '=']) {

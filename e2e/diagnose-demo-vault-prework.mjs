@@ -5,18 +5,16 @@
 //       offers "Move to a work file"; choosing it writes Work files/<name>.md, names it in the talk's `prework:`,
 //       removes the section, keeps every step id and {right}, and the Doctor's note is gone.
 // Run: cd talk-weaver && node e2e/diagnose-demo-vault-prework.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
+import { cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 
 let failures = 0
 const rec = (name, ok, detail) => { if (!ok) failures += 1; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`) }
-await ensureFreshBuild(process.cwd())
 
-const root = mkdtempSync(join(tmpdir(), 'tw-demo-prework-e2e-'))
+await using appScratch = createAppScratch()
+const root = appScratch.root
 const vault = join(root, 'vault'); const ud = join(root, 'userData')
 mkdirSync(ud, { recursive: true })
 cpSync(join(process.cwd(), 'demo-vault'), vault, { recursive: true })
@@ -26,12 +24,13 @@ const LEGACY = ['---', 'title: Legacy Section', '---', '# Legacy', '', '## Befor
 mkdirSync(join(vault, 'legacy-section'))
 const legacyPath = join(vault, 'legacy-section', 'legacy-section-outline.md')
 writeFileSync(legacyPath, LEGACY)
-writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'markdown' }, null, 2))
+// This fixture exercises work-file migration. Keep the demo images out of background Vision indexing.
+writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, openInView: 'markdown', ocrEnabled: false }, null, 2))
 
 const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
 let app
 for (let attempt = 1; attempt <= 3 && !app; attempt += 1) {
-  try { app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: process.cwd(), env, timeout: 60_000 }) }
+  try { app = (await launchApp({ scratch: appScratch, userData: ud, env, timeout: 60_000 })).app }
   catch (error) { if (attempt === 3) throw error; await new Promise((r) => setTimeout(r, 15_000)) }
 }
 const page = await app.firstWindow()
@@ -84,7 +83,7 @@ try {
   await page.waitForSelector('[role="dialog"][aria-label^="Layout Doctor"]', { timeout: 10_000 })
   await page.waitForTimeout(1500)
   rec('the Doctor warning is gone after the move', await page.locator('[data-doctor-prework-retired]').count() === 0)
-} finally { await app.close().catch(() => {}) }
+} finally { await appScratch.closeApp(app).catch(() => {}) }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
-process.exit(failures ? 1 : 0)
+process.exitCode = failures ? 1 : 0

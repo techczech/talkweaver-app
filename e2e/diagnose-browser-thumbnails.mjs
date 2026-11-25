@@ -6,21 +6,20 @@
 // profile exactly as an upgraded one looks (correct mtime, no compilerTag, render_hash values
 // from "another compiler"), opens the Browser on a six-slide talk and demands a real, distinct
 // picture on every card within a bounded time; a second opening must be served from the cache.
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { thumbAddressParts } from '../src/shared/thumb-url.ts'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { dirname, join } from 'path'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url)); const REPO = join(__dirname, '..')
 const results = []
 const record = (n, p, d) => { results.push({ n, p }); console.log(`${p ? 'PASS' : 'FAIL'}  ${n}${d ? '  — ' + d : ''}`) }
 const SHOTS = process.env.TW_SHOT_DIR || ''
 
-const root = mkdtempSync(join(tmpdir(), 'tw-e2e-browser-thumbs-')); const vault = join(root, 'v'); const ud = join(root, 'ud')
+await using appScratch = createAppScratch()
+const root = appScratch.root; const vault = join(root, 'v'); const ud = join(root, 'ud')
 const scratch = join(vault, 'misc', 'scratch-talk'); const six = join(vault, 'topic', 'six-talk')
 mkdirSync(scratch, { recursive: true }); mkdirSync(six, { recursive: true }); mkdirSync(ud, { recursive: true })
 // The talk being edited is never on the Browser's table, so a second talk is opened in the editor.
@@ -53,8 +52,7 @@ writeFileSync(join(ud, 'search-index.json'), JSON.stringify({
 const expected = freshRows.length
 console.log(`[fixture] six-talk compiles to ${expected} slides; index seeded with ${staleRows.length} stale rows`)
 
-await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
+const app = (await launchApp({ scratch: appScratch, userData: ud })).app
 if (process.env.TW_E2E_LOG) {
   app.process().stdout.on('data', (d) => process.stdout.write('[main] ' + d))
   app.process().stderr.on('data', (d) => process.stdout.write('[main:err] ' + d))
@@ -150,8 +148,8 @@ try {
 } catch (e) {
   record('harness completed without an exception', false, e?.stack || String(e))
 } finally {
-  await app.close().catch(() => {})
+  await appScratch.closeApp(app).catch(() => {})
 }
 const failed = results.filter((r) => !r.p)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)
-process.exit(failed.length ? 1 : 0)
+process.exitCode = failed.length ? 1 : 0

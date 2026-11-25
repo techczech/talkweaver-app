@@ -1,3 +1,4 @@
+import { readIpcRegistration } from '../../lib/read-ipc-registration.mjs'
 import { readMainSource } from '../../lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
@@ -17,7 +18,7 @@ try{
  const transferStart=source.indexOf("function transferMovedEditor(");vm.runInContext(transformSync(source.slice(transferStart,source.indexOf("// Vault-relative path",transferStart)),{loader:"ts"}).code,context);context.establishedGalleryClaims=new Map();context.galleryClaimEpochs=new Map();
  const retitleStart=source.indexOf('async function retitleOutline(');vm.runInContext(transformSync(source.slice(retitleStart,source.indexOf('// A clone is NOT published',retitleStart)),{loader:'ts'}).code,context);
  const strip=source.slice(source.indexOf('async function stripPublishedFields('),source.indexOf('\nfunction findOutlineIn('));vm.runInContext(transformSync(strip,{loader:'ts'}).code,context)
- for(const name of ['clone-talk','rename-talk','move-talk','delete-talk','rename-folder','delete-folder']){const start=source.indexOf("ipcMain.handle('vault:"+name+"'");const end=source.indexOf('\n})',start)+3;vm.runInContext(transformSync(source.slice(start,end),{loader:'ts'}).code,context)}
+ for(const name of ['clone-talk','rename-talk','move-talk','delete-talk','rename-folder','delete-folder']) vm.runInContext(transformSync(readIpcRegistration('vault:'+name),{loader:'ts'}).code,context)
  context.writableRootOfVault=()=>root;context.vaultRel=p=>path.relative(root,p);context.renameFolderTargets=(_,rel,name)=>({ok:true,src:path.join(root,rel),dest:path.join(root,name)});context.deleteFolderTarget=(_,rel)=>({ok:true,path:path.join(root,rel)});
  const adoptStart=source.indexOf("ipcMain.handle('window:adopt-moved-talk'");vm.runInContext(transformSync(source.slice(adoptStart,source.indexOf("\n})",adoptStart)+3),{loader:'ts'}).code,context);
  const event={sender:{id:1}};context.editorWindows.set(1,{win:{},outlinePath:null});context.editorWindows.set(2,{win:{},outlinePath:null});duringTrash=async p=>assert.equal(context.claimTalkForWindow(2,path.join(p,"old-outline.md")).ok,false,'claim must refuse during awaited Bin');

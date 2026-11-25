@@ -11,15 +11,13 @@
 //   (h) an attachment marked zone-mismatch shows the mark and is not planned over.
 //   (i) ticket 26: New pathway… creates a named pathway with selected slides inline; the sheet keeps its draft;
 //       the Run page's "Plan the next Run like this" opens a sheet with the Run's plan, no date, and saves a new planned Run.
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 
 const repo = process.cwd()
-const tempRoot = mkdtempSync(join(tmpdir(), 'talkweaver-plan-run-'))
-process.on('exit', () => rmSync(tempRoot, { recursive: true, force: true }))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const shots = join(tempRoot, 'screenshots')
 mkdirSync(shots, { recursive: true })
 const vault = join(tempRoot, 'vault')
@@ -51,11 +49,16 @@ const runsOf = (slug) => readdirSync(join(vault, '_PRESENTATIONS', slug)).filter
   .map((n) => JSON.parse(readFileSync(join(vault, '_PRESENTATIONS', slug, n), 'utf8')))
 const plusDays = (n) => { const t = new Date(); const d = new Date(t.getFullYear(), t.getMonth(), t.getDate() + n); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
 
-await ensureFreshBuild(repo)
 let app
 for (let attempt = 1; attempt <= 3 && !app; attempt += 1) {
   try {
-    app = await electron.launch({ args: ['.', `--user-data-dir=${userData}`, '--use-mock-keychain'], cwd: repo, env: Object.fromEntries(Object.entries({ ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }).filter(([key]) => key !== 'ELECTRON_RUN_AS_NODE')), timeout: 60000 })
+    app = (await launchApp({
+      scratch: appScratch,
+      userData,
+      env: Object.fromEntries(Object.entries({ ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }).filter(([key]) => key !== 'ELECTRON_RUN_AS_NODE')),
+      timeout: 60000,
+      args: ['.', '--use-mock-keychain'],
+    })).app
   } catch (error) {
     if (attempt === 3) throw error
     console.log(`launch attempt ${attempt} failed (${error.message}); retrying`)
@@ -287,7 +290,7 @@ try {
   record('saving leaves the marked attachment as it was found', after.expectedPeople === 31 && after.work.pre.timeZone === marked.work.pre.timeZone && after.work.pre.fileId === 'intake', JSON.stringify(after.work?.pre))
   await history3.close().catch(() => {})
 } finally {
-  await app.close().catch(() => {})
+  await appScratch.closeApp(app).catch(() => {})
 }
 console.log(failures ? `plan-run e2e: ${failures} FAILED` : 'plan-run e2e: all passed')
-process.exit(failures ? 1 : 0)
+process.exitCode = failures ? 1 : 0

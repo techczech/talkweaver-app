@@ -10,16 +10,13 @@
 // mark, Skip this version hides it for good → Settings shows "You skipped the newer version" and Stop skipping brings
 // the mark back → the stand-in goes away: "Could not reach talkweaver.app" → a Store copy: no mark, no
 // New versions card, and the command answers "Updates come from the Microsoft Store" with no request.
-import { _electron as electron } from 'playwright'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { createServer } from 'node:http'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openSettingsWindow, closeSettingsWindow } from './lib/settings-window.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
-import { testProfileEnv } from './lib/test-profile.mjs'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 const CURRENT_VERSION = JSON.parse(readFileSync(join(REPO, 'package.json'), 'utf8')).version
@@ -56,7 +53,8 @@ const server = createServer((req, res) => {
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
 const feedUrl = `http://127.0.0.1:${server.address().port}/updates.json`
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-updates-'))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const vault = join(tempRoot, 'vault')
 const td = join(vault, 'update-fixture')
 mkdirSync(td, { recursive: true })
@@ -65,7 +63,7 @@ writeFileSync(join(td, 'update-fixture-outline.md'), ['---', 'title: Update Fixt
 async function launch(source, state) {
   const ud = mkdtempSync(join(tempRoot, 'ud-'))
   writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault, ...(state ? { updateNotices: state } : {}) }, null, 2))
-  const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1', ...testProfileEnv(ud), TW_E2E_UPDATES_SOURCE: source, TW_E2E_UPDATES_FEED: feedUrl } })
+  const app = (await launchApp({ scratch: appScratch, userData: ud, env: { ...process.env, TW_E2E_UPDATES_SOURCE: source, TW_E2E_UPDATES_FEED: feedUrl } })).app
   const out = []
   app.process().stdout?.on('data', (chunk) => out.push(String(chunk)))
   const page = await app.firstWindow()
@@ -87,7 +85,6 @@ async function checkFromPalette(page) {
 }
 
 try {
-  await ensureFreshBuild(REPO)
   // ── A website copy that has just been updated from 0.40.0 ─────────────────────────────────────
   let { app, page, out } = await launch('website', { lastVersionRun: '0.40.0' })
   record('nothing opened by itself: no What\'s new tab, no note, no popover', (await page.locator('[data-whats-new-pane], [data-update-note], [data-update-popover]').count()) === 0)
@@ -167,7 +164,7 @@ try {
   const back = await settings.waitForFunction((version) => (document.querySelector('[data-updates-card]')?.innerText ?? '').includes(`${version} is available`), NEXT_VERSION, { timeout: 8000 }).then(() => true, () => false)
   record('Try again reads the feed and the card says "a newer TalkWeaver version is available." with Download…', back)
   record('Settings keeps a Check for updates button after an answer', (await settings.locator('[data-updates-card] [data-update-check]').count()) === 1)
-  await app.close()
+  await appScratch.closeApp(app)
 
   // ── A Microsoft Store copy ─────────────────────────────────────────────────────────────────────
   serving = true
@@ -191,13 +188,12 @@ try {
   await page.waitForTimeout(800)
   record('a Store copy asked to update in place anyway does nothing (refused in the main process)', storeUpdate.refusal === 'store' && storeUpdate.install.phase === 'idle' && !requests.slice(before).some((r) => r.url.startsWith('/releases/')), `refusal=${storeUpdate.refusal}; phase=${storeUpdate.install.phase}`)
   record('a Store copy made no request to the feed', requests.length === before, `requests=${requests.length - before}`)
-  await app.close()
+  await appScratch.closeApp(app)
 } catch (e) {
   record('update notices harness completed without throwing', false, String(e && e.stack ? e.stack : e))
 } finally {
   const failed = results.filter((r) => !r.pass)
   console.log(`\n=== UPDATE NOTICES SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
   server.close()
-  rmSync(tempRoot, { recursive: true, force: true })
-  process.exit(failed.length === 0 ? 0 : 1)
+  process.exitCode = failed.length === 0 ? 0 : 1
 }

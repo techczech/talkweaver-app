@@ -5,18 +5,17 @@
 //   (c) a file with findings says so on its row and lists them when open;
 //   (d) Open run switches to Sessions on that Run;
 //   (e) an empty vault shows the drawn empty state.
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 import { createPlannedRun } from '../src/main/runs.ts'
+
+await using appScratch = createAppScratch()
 
 const shotsDir = process.env.TW_SHOTS_DIR || ''
 if (shotsDir) mkdirSync(shotsDir, { recursive: true })
 let failures = 0
 const rec = (name, ok, detail) => { if (!ok) failures += 1; console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`) }
-await ensureFreshBuild(process.cwd())
 
 const head = (id, title) => ['---', `id: ${id}`, `title: ${title}`, 'revision: 1', '---', ''].join('\n')
 const RTI = head('research-teams-intake', 'Research teams intake') + ['Short steps.', '', '### Watch', '{id=watch}{video}', '![](https://youtu.be/dQw4w9WgXcQ)', '### Quick check', '{id=check}{check}{poll=single}', '- One {right}', '- Two', '### Try a prompt', '{id=try}{task}', '1. Pick', '2. Try', '### Want', '{id=want}{poll=open}', ''].join('\n')
@@ -24,7 +23,7 @@ const SFB = head('session-feedback', 'Session feedback') + ['### Useful?', '{id=
 const BROKEN = ['---', 'title: Broken one', '---', '', '### Table {id=tab}', '| a | b |', '|--|--|', '| 1 | 2 |', ''].join('\n')
 
 function makeVault(withFiles) {
-  const root = mkdtempSync(join(tmpdir(), 'tw-work-files-e2e-'))
+  const root = mkdtempSync(join(appScratch.root, 'case-'))
   const vault = join(root, 'vault'); const ud = join(root, 'userData')
   mkdirSync(vault, { recursive: true }); mkdirSync(ud, { recursive: true })
   writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
@@ -44,7 +43,7 @@ function makeVault(withFiles) {
 async function launch(ud) {
   const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try { return await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: process.cwd(), env, timeout: 60_000 }) }
+    try { return (await launchApp({ scratch: appScratch, userData: ud, env, timeout: 60_000 })).app }
     catch (error) { if (attempt === 3) throw error; await new Promise((r) => setTimeout(r, 15_000)) }
   }
 }
@@ -99,7 +98,7 @@ async function openWorkFiles(app) {
     await tools.locator('[data-wf-run="ai-for-research-teams/med"] button').click()
     await tools.waitForSelector('[data-tools-view="runs"][data-run="ai-for-research-teams/med"]', { timeout: 5000 }).catch(() => {})
     rec('Open run opens Sessions on that Run', await tools.locator('[data-tools-view="runs"][data-run="ai-for-research-teams/med"]').count() === 1)
-  } finally { await app.close().catch(() => {}) }
+  } finally { await appScratch.closeApp(app).catch(() => {}) }
 }
 
 {
@@ -111,8 +110,8 @@ async function openWorkFiles(app) {
     const body = (await tools.locator('[data-tools-view="workfiles"]').textContent()) ?? ''
     if (shotsDir) await tools.screenshot({ path: join(shotsDir, 'wf-empty.png') }).catch(() => {})
     rec('an empty vault shows the drawn empty state', ['No work files', 'A work file holds the steps of a pre-work or a post-work.', 'No work file selected'].every((t) => body.includes(t)), body.trim().slice(0, 120))
-  } finally { await app.close().catch(() => {}) }
+  } finally { await appScratch.closeApp(app).catch(() => {}) }
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
-process.exit(failures ? 1 : 0)
+process.exitCode = failures ? 1 : 0

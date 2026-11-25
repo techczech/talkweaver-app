@@ -21,6 +21,7 @@ import { captureMarkupLine, embedLinePageUrl } from '../../../../../compiler/scr
 import { notify } from '../../lib/notify.ts'
 import type { ObjectBlock } from './detect.ts'
 import { objectStatusField } from './status.ts'
+import { deleteObjectBlock } from './remove.ts'
 import { exactTextWrite } from './effects.ts'
 
 export type CardActionHost = {
@@ -148,6 +149,10 @@ export async function runCardAction(view: EditorView, block: ObjectBlock, action
     return
   }
   if (action === 'remove') {
+    if (block.video?.markers.length) {
+      deleteObjectBlock(view, block)
+      return
+    }
     const plan = planCardRemoval(view.state.doc.toString(), cardRef(block))
     if (!plan.ok) { notify(plan.reason, 'warning', 'card-remove'); return }
     write(view, plan.change, 'delete.object')

@@ -5,13 +5,12 @@
 // the no-results suggestions (L8).
 // Fixture vault and a throwaway --user-data-dir; set TW_SHOTS=<dir> to save screenshots.
 import assert from 'node:assert/strict'
-import { _electron as electron } from 'playwright'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync, realpathSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { tmpdir } from 'node:os'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
-const root = mkdtempSync(join(realpathSync(tmpdir()), 'tw-talk-search-'))
+await using appScratch = createAppScratch()
+const root = appScratch.root
 const userData = join(root, 'userData'), vault = join(root, 'vault')
 mkdirSync(userData, { recursive: true })
 function talk(rel, slug, fm, body = '### Opening\n\nWelcome\n') {
@@ -55,12 +54,12 @@ const shots = process.env.TW_SHOTS
 let app
 try {
   const executablePath = process.env.TW_TEST_APP_EXECUTABLE
-  if (!executablePath) await ensureFreshBuild(resolve('.'))
-  app = await electron.launch({
-    ...(executablePath ? { executablePath } : {}),
-    args: [...(executablePath ? [] : ['.']), `--user-data-dir=${userData}`],
-    cwd: resolve('.'), env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
-  })
+  app = (await launchApp({
+    scratch: appScratch,
+    userData,
+    executablePath,
+    env: { ...process.env, TW_REC_TEST: '1' },
+  })).app
   const page = await app.firstWindow()
   page.setDefaultTimeout(10000)
   const errors = []
@@ -253,6 +252,5 @@ try {
   }
   throw error
 } finally {
-  if (app) await app.close().catch(() => {})
-  rmSync(root, { recursive: true, force: true })
+  if (app) await appScratch.closeApp(app).catch(() => {})
 }

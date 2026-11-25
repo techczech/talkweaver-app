@@ -11,13 +11,11 @@
 //       saved" notice appears, and nothing is written anywhere (both vaults listed before/after).
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-vault-switch-save.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join, relative } from 'path'
-import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -32,7 +30,8 @@ const TITLE = 'Switch Talk'
 const OUTLINE = ['---', `title: ${TITLE}`, 'outline_version: 2', '---', '', '## Section', '',
   '### First slide {id=sw1}', '', 'Body one.', '', '### Second slide {id=sw2}', '', 'Body two.', ''].join('\n')
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-vault-switch-'))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const vaultA = join(tempRoot, 'vault-a')
 const vaultB = join(tempRoot, 'vault-b')
 const outside = join(tempRoot, 'outside')
@@ -63,9 +62,7 @@ function snapshot() {
   return out.join('\n')
 }
 
-await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userDataDir], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
-const page = await app.firstWindow()
+const { app, page } = await launchApp({ scratch: appScratch, userData: userDataDir })
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
 
@@ -117,6 +114,6 @@ try {
 } finally {
   const failed = results.filter((r) => !r.pass)
   console.log(`\n=== VAULT-SWITCH-SAVE SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
-  await app.close()
-  process.exit(failed.length === 0 ? 0 : 1)
+  await appScratch.closeApp(app)
+  process.exitCode = failed.length === 0 ? 0 : 1
 }

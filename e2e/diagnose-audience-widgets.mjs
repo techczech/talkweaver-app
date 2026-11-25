@@ -13,20 +13,18 @@
 //
 // Run: npm run test:audience-widgets:e2e   (SCEN=first-visit,fullscreen,... picks scenarios; TW_REPO=<other checkout with a build> to run that
 // build; SHOTS=<dir> keeps the audience captures; scratch user data and vault under the OS temp dir)
-import { _electron as electron } from 'playwright'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import sharp from 'sharp'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join, resolve } from 'node:path'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = process.env.TW_REPO ? resolve(process.env.TW_REPO) : join(__dirname, '..')
 const SHOTS = process.env.SHOTS ? resolve(process.env.SHOTS) : null
 if (SHOTS) mkdirSync(SHOTS, { recursive: true })
 const HARD_LIMIT_MS = Number(process.env.TW_LIMIT_MS || 800000)
-const killer = setTimeout(() => { console.error(`[audience-widgets] hard limit ${HARD_LIMIT_MS} ms reached`); process.exit(2) }, HARD_LIMIT_MS)
+const killer = setTimeout(async () => { console.error(`[audience-widgets] hard limit ${HARD_LIMIT_MS} ms reached`); try { await appScratch.close() } finally { process.exit(2) } }, HARD_LIMIT_MS)
 const log = (...a) => console.log('[audience-widgets]', ...a)
 
 // ── The neutral talk ────────────────────────────────────────────────────────────────────────────
@@ -153,7 +151,8 @@ auto_thanks_slide: false
 const ORDER = ['open', 'w-static', 'w-anim', 'w-click', 'w-slow', 'w-adj-a', 'w-adj-b', 'w-reveal', 'w-carousel', 'w-from', 'w-big', 'w-canvas-once', 'w-canvas-resize', 'w-observer', 'w-visible-only', 'w-raf-start', 'w-focus-self', 'w-onload-measure', 'end']
 const WIDGET_SLIDES = ORDER.filter((id) => id.startsWith('w-'))
 
-const root = mkdtempSync(join(tmpdir(), 'tw-e2e-audience-widgets-'))
+await using appScratch = createAppScratch()
+const root = appScratch.root
 const vault = join(root, 'vault')
 const userData = join(root, 'userData')
 const talkDir = join(vault, 'widget-check')
@@ -167,9 +166,8 @@ writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault }
 const results = []
 const record = (scenario, slide, ok, detail) => { results.push({ scenario, slide, ok, detail }); log(`${ok ? 'PASS' : 'FAIL'} ${scenario} ${slide}: ${detail}`) }
 
-if (!process.env.TW_REPO) await ensureFreshBuild(REPO)
 log('repo', REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userData], cwd: REPO, env: { ...process.env, TW_E2E: '1' }, timeout: 60000 })
+const app = (await launchApp({ scratch: appScratch, userData, args: [REPO], timeout: 60000 })).app
 const errors = []
 let exitCode = 1
 try {
@@ -387,9 +385,8 @@ try {
   console.error(error)
 } finally {
   // Bounded: closing the app with a presentation open can hang; then its process is ended.
-  const closed = await Promise.race([app.close().then(() => true, () => true), new Promise((r) => setTimeout(() => r(false), 15000))])
+  const closed = await Promise.race([appScratch.closeApp(app).then(() => true, () => true), new Promise((r) => setTimeout(() => r(false), 15000))])
   if (!closed) { log('app did not close in 15 s; ending its process'); try { app.process().kill('SIGKILL') } catch { /* gone */ } }
-  rmSync(root, { recursive: true, force: true })
   clearTimeout(killer)
 }
-process.exit(exitCode)
+process.exitCode = exitCode

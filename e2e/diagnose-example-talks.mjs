@@ -72,7 +72,7 @@ try {
   await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
 
   // ── (A) opening changes no byte ──
-  await page.getByRole('button', { name: 'Example talks', exact: true }).click()
+  await page.getByRole('button', { name: 'Open the example talks', exact: true }).click()
   await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
   await page.waitForFunction(() => document.title.includes('The Saturday market'), null, { timeout: 15000 }).catch(() => {})
   await page.waitForSelector('.cm-content', { timeout: 8000 })

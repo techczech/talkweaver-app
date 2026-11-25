@@ -1,22 +1,20 @@
 // Hidden Electron, isolated copy of a checked-in synthetic talk; real disk + renderer history + IPC stores.
 import assert from 'node:assert/strict'
-import { _electron as electron } from 'playwright'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { cutBlocks } from '../src/shared/slide-handling/blocks.ts'
 import { insertSlideAt } from '../src/shared/scratchpad-insert.ts'
-const repo=resolve('.'), temp=realpathSync(mkdtempSync(join(tmpdir(),'tw-aside-e2e-')))
+await using appScratch = createAppScratch()
+const repo=resolve('.'), temp=appScratch.root
 const vault=join(temp,'vault'), userData=join(temp,'userData'), talkDir=join(vault,'target'), outline=join(talkDir,'target-outline.md')
 let app, checks=0
 const pass=message=>{checks++;console.log('PASS '+message)}
 try {
  mkdirSync(userData,{recursive:true});cpSync(join(repo,'e2e/fixtures/slide-set-aside'),talkDir,{recursive:true})
  writeFileSync(join(userData,'config.json'),JSON.stringify({vaultRoot:vault,openInView:'markdown'}))
- await ensureFreshBuild(repo)
  const env={...process.env,TW_E2E:'1',TW_REC_TEST:'1'};delete env.ELECTRON_RUN_AS_NODE
- app=await electron.launch({args:['.',`--user-data-dir=${userData}`,'--use-mock-keychain'],cwd:repo,env})
+ app=(await launchApp({ scratch: appScratch, userData, env, args: ['.', '--use-mock-keychain'] })).app
  assert(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().every(w=>!w.isVisible())));pass('all Electron windows hidden')
  const page=await app.firstWindow();page.setDefaultTimeout(20000)
  const errors=[];page.on('pageerror',e=>errors.push(e.message))
@@ -61,4 +59,4 @@ try {
  await waitSaved(expected.text);assert.equal(saved(),original);pass('drop lands exactly at the marker with ids retained')
  await page.locator('.grid-view').focus();await page.keyboard.press('Meta+z');await waitSaved(cut.text);pass('one Undo removes only the dropped snapshot')
  assert.deepEqual(errors,[]);console.log(`${checks} set-aside Electron checks passed`)
-}finally{await app?.close();rmSync(temp,{recursive:true,force:true})}
+}finally{await appScratch.closeApp(app)}

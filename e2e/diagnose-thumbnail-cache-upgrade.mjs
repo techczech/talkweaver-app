@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict'
-import { _electron as electron } from 'playwright'
-import { mkdtempSync, mkdirSync, writeFileSync, readdirSync, existsSync, rmSync, statSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { mkdirSync, writeFileSync, readdirSync, existsSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 
 // Upgrade profiles may contain hundreds of thousands of old thumbnail revisions.
 // Opening one deck must not enumerate or copy unrelated decks into the new cache.
-const root = mkdtempSync(join(tmpdir(), 'tw-cache-upgrade-'))
+await using appScratch = createAppScratch()
+const root = appScratch.root
 const ud = join(root, 'userData'), vault = join(root, 'vault'), deck = join(vault, 'selected')
 const prior = join(ud, 'thumb-cache-v8-prior', 'unrelated-deck')
 mkdirSync(prior, { recursive: true }); mkdirSync(deck, { recursive: true })
@@ -29,11 +29,12 @@ const outlinePath = join(deck, 'selected-outline.md')
 writeFileSync(outlinePath, source)
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }))
 const executablePath = process.env.TW_TEST_APP_EXECUTABLE
-const app = await electron.launch({
-  ...(executablePath ? { executablePath } : {}),
-  args: [...(executablePath ? [] : ['.']), '--user-data-dir=' + ud],
-  cwd: resolve('.'), env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
-})
+const app = (await launchApp({
+  scratch: appScratch,
+  userData: ud,
+  executablePath,
+  env: { ...process.env, TW_REC_TEST: '1' },
+})).app
 try {
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
@@ -61,6 +62,5 @@ try {
   assert.ok(windows.every(w => !w.visible && w.alive))
   console.log('PASS cache upgrade: no unrelated migration, current thumbnails reused, old cache preserved', { count, elapsedMs:first.elapsedMs })
 } finally {
-  await app.close()
-  rmSync(root, { recursive: true, force: true })
+  await appScratch.closeApp(app)
 }

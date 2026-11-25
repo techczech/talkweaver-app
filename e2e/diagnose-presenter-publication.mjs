@@ -10,13 +10,11 @@
 //   - a Run's presenter takes its own Run's publish and not another Run's; a reloaded page and a
 //     re-present of the same Run keep that link; presented as the other Run, the window is that Run's.
 // Run: cd talk-weaver && node e2e/diagnose-presenter-publication.mjs
-import { _electron as electron } from 'playwright'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { createServer } from 'node:http'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { liveWorkerBuild } from '../scripts/lib/local-live-stub.mjs'
 
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
@@ -47,7 +45,8 @@ async function startRecording(page) {
   return until(() => page.evaluate(() => document.getElementById('twrec-module')?.dataset.rec ?? ''), (rec) => rec === 'recording', 10_000)
 }
 
-const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), 'tw-e2e-presenter-publication-')))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const userData = join(tempRoot, 'userData')
 const vault = join(tempRoot, 'Personal')
 mkdirSync(userData, { recursive: true })
@@ -99,15 +98,16 @@ writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, 
 
 let app
 let exitCode = 1
-const clean = { PATH: process.env.PATH, HOME: join(tempRoot, 'home'), TMPDIR: process.env.TMPDIR, LANG: process.env.LANG }
-mkdirSync(clean.HOME, { recursive: true })
+const clean = { PATH: process.env.PATH, LANG: process.env.LANG }
 try {
-  await ensureFreshBuild(REPO)
-  app = await electron.launch({
+  app = (await launchApp({
     // Fake camera and microphone (as diagnose-presenter-layers.mjs): a presenter recording checks its devices first.
-    args: ['.', `--user-data-dir=${userData}`, '--use-fake-device-for-media-stream'], cwd: REPO, timeout: 60_000,
-    env: { ...clean, TW_E2E: '1', TW_REC_TEST: '1', TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: 'stand-in-admin-secret' },
-  })
+    scratch: appScratch,
+    userData,
+    timeout: 60_000,
+    env: { ...clean, TW_REC_TEST: '1', TW_LIVE_LOCAL: '1', TALKWEAVER_LIVE_ADMIN_SECRET: 'stand-in-admin-secret' },
+    args: ['.', '--use-fake-device-for-media-stream'],
+  })).app
   await app.evaluate(({ shell, BrowserWindow, app: electronApp }) => {
     shell.openExternal = async () => {}
     const hide = (win) => { win.setPosition(-20000, -20000); win.hide() }
@@ -385,6 +385,5 @@ try {
   // A running session holds its window open (the close offer): the process goes, not the windows.
   app?.process().kill('SIGKILL')
   await new Promise((resolve) => server.close(resolve))
-  rmSync(tempRoot, { recursive: true, force: true })
 }
-process.exit(exitCode)
+process.exitCode = exitCode

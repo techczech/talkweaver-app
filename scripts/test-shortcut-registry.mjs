@@ -96,6 +96,7 @@ const contextPairs = [
   ['ArrowRight', 'presenter.next', 'presenter.instant-return'], // Return first while on an instant slide.
   ['Enter', 'presenter.next', 'presenter.save-run'], // The run-save offer takes Enter while visible.
   ['Mod-z', 'presenter.ink-undo', 'presenter.board-undo'], // Pen and board each have their own undo.
+  ['digit1-digit9', 'presenter.grid-child', 'presenter.video-marker'], // Grid beats keep the digits.
   ['z', 'presenter.gallery', 'presenter.embed-fullscreen'] // The slide's picture takes precedence over its embed.
 ]
 

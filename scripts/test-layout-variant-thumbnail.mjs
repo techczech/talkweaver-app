@@ -308,8 +308,9 @@ console.log('ok: variants render, differ by layout and option, cache, and say wh
   let prepares = 0
   const variantRenderer = createVariantThumbnailRenderer({
     prepareTalk: async (path, content) => { prepares += 1; return realPrepare(path, content) },
-    render: async ({ fullHtml, slides, cacheDir: dir }) => {
+    render: async ({ fullHtml, slides, cacheDir: dir, inspect }) => {
       received.push({ html: documentId(fullHtml), slide: fullHtml.match(new RegExp(`data-id="vi9k8"[^>]*`))?.[0] ?? '' })
+      if (inspect && !inspect.accepts({ words: ['Five', 'Catalogue', 'Catalogue'], overflows: false, matches: true })) return {}
       mkdirSync(dir, { recursive: true })
       return Object.fromEntries(slides.map((s) => { const png = join(dir, `h-${s.cacheKey}.png`); writeFileSync(png, fullHtml.slice(0, 64)); return [s.key, png] }))
     },
@@ -344,6 +345,13 @@ console.log('ok: variants render, differ by layout and option, cache, and say wh
   assert.equal((await handler(event, outlinePath, outline, 'vi9k8', 'cards', 'not-a-list')).status, 'invalid')
   assert.equal((await handler(event, outlinePath, outline, 'vi9k8', 'grid-zoom')).status, 'cannot-take')
   assert.equal(prepares, 3, 'nothing refused reached the compiler')
+  const checked = words => handler(event, outlinePath, outline, 'vi9k8', 'cards', undefined, 'panel:check:0',
+    undefined, { layout: 'cards', words })
+  assert.equal((await checked(['Five', 'Catalogue'])).cached, false, 'an unchecked picture cannot bypass inspection')
+  assert.equal((await checked(['Five', 'Catalogue'])).cached, true)
+  const lostWord = await checked(['Five', 'Catalogue', 'Catalogue', 'Catalogue'])
+  assert.equal(lostWord.status, 'cannot-take')
+  assert.match(lostWord.reason, /leave out/)
   console.log('ok: the IPC handler gates, varies by layout and caches')
 }
 

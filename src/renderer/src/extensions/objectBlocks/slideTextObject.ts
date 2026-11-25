@@ -1,3 +1,4 @@
+import { markerCountLabel, videoFileName } from '../../../../shared/video-marker-edits.ts'
 import { isolateHistory } from '@codemirror/commands'
 import type { Text } from '@codemirror/state'
 import { EditorView, WidgetType } from '@codemirror/view'
@@ -7,6 +8,7 @@ import { TRIGGER_LINE_RE } from '../../../../shared/trigger-line.ts'
 import { notify } from '../../lib/notify.ts'
 import { currentFocusRange, type FocusRange } from '../focusScope.ts'
 import { detectObjectBlocks, type ObjectBlock } from './detect.ts'
+import { deleteObjectBlock } from './remove.ts'
 import { exactTextWrite, setOpenObjectBlock } from './effects.ts'
 
 type Direction = -1 | 1
@@ -82,6 +84,9 @@ function moveObject(view: EditorView, block: ObjectBlock, blocks: readonly Objec
 }
 
 function describe(block: ObjectBlock): { label: string; detail: string } {
+  if (block.video?.markers.length) {
+    return { label: 'Video', detail: `${videoFileName(block.video.ref)} · ${markerCountLabel(block.video.markers.length)}` }
+  }
   if (block.media) {
     const label = block.media.kind === 'video' ? 'Video' : block.media.kind === 'audio' ? 'Audio' : 'Picture'
     return { label, detail: block.media.alt || block.media.src.split('/').at(-1) || block.media.src }
@@ -143,6 +148,19 @@ export class SlideTextObjectWidget extends WidgetType {
       control.addEventListener('click', event => { event.stopPropagation(); run() })
       actions.append(control)
       return control
+    }
+    if (this.block.video?.markers.length) {
+      card.classList.add('tw-video-marker-chip')
+      name.className = 'tw-video-marker-chip-icon'
+      name.textContent = '▶'
+      name.setAttribute('aria-hidden', 'true')
+      button('Remove video and its markers', '×', () => {
+        const { from, to, source } = this.block
+        if (view.state.doc.sliceString(from, to) === source) deleteObjectBlock(view, this.block)
+      })
+      head.append(actions)
+      card.append(head)
+      return card
     }
     for (const direction of [-1, 1] as const) {
       const control = button(direction < 0 ? 'Move up' : 'Move down', direction < 0 ? '↑' : '↓',

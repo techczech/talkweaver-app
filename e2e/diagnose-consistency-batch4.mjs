@@ -284,28 +284,35 @@ for (const title of [...new Set([showcase, ...talkTitles.slice(0, 6)])]) {
 await openShowcase()
 
 // ---- R16 ----------------------------------------------------------------------------------------------------------
-const editorUp = () => page.locator('.cm-content').first().isVisible().catch(() => false)
+const talkMenu = page.getByTitle('Talk menu', { exact: true })
+const authoringView = page.locator('.workspace-centre > :is([data-view], .pane--grid, .pane--strip):visible').first()
+const visibleView = () => authoringView.evaluate(element => element.dataset.view ??
+  (element.classList.contains('pane--grid') ? 'grid' : 'strip'))
 const modes = [
   { name: 'Vault Gallery', open: () => command('vault-gallery'), root: '.vault-gallery' },
   { name: 'Slide focus', open: async () => { await world.sideTab(/^Slides$/).click()
     await page.getByRole('button', { name: 'Show slides as an outline', exact: true }).click(); await page.locator('button.so-slide').nth(3).click(); await sleep(1000); await command('focus-slide'); await sleep(800); if (!(await page.locator('.lt-focus').count())) { await page.locator('button.so-slide').nth(4).click(); await sleep(800); await command('focus-slide') } }, root: '.lt-focus' },
-  { name: 'Pathways', open: () => command('pathways'), root: '[data-pathway-dock]' },
+  { name: 'Pathways', open: () => command('pathways'), root: '[data-pathway-dock]', returnView: 'slide' },
   { name: 'Slide Browser', open: () => command('search'), root: '.lt-browser-root' }
 ]
 for (const mode of modes) {
   for (const how of ['back control', 'Esc']) {
     await check(`${mode.name}: one "Back to <talk>" control, and the ${how} returns to the talk`, async () => {
       await world.sideTab(/^Talks$/).click().catch(() => {}); await sleep(300)
-      await mode.open(); await sleep(1500)
+      const talk = await talkMenu.innerText()
+      const view = await visibleView()
+      await mode.open()
       const root = page.locator(mode.root).first()
-      assert.ok(await root.isVisible(), `${mode.name} did not open`)
+      await root.waitFor()
       const back = page.locator('[data-mode-back]:visible')
       assert.equal(await back.count(), 1, 'not exactly one back control')
       assert.match((await back.first().innerText()).trim(), /^Back to .+/)
       if (how === 'Esc') await page.keyboard.press('Escape'); else await back.first().click()
-      await sleep(900)
+      await root.waitFor({ state: 'hidden' })
+      await talkMenu.waitFor()
+      assert.equal(await talkMenu.innerText(), talk, 'the same talk is showing')
+      assert.equal(await visibleView(), mode.returnView ?? view, 'the expected authoring view is showing')
       assert.equal(await page.locator(mode.root).filter({ visible: true }).count(), 0, `${mode.name} stayed open`)
-      assert.ok(await editorUp() || await page.locator('.pane--grid, .tw-slide-card').first().isVisible().catch(() => false), 'the talk is not showing')
       assert.equal(await page.locator('[data-mode-back]:visible').count(), 0)
     })
   }

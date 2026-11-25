@@ -199,6 +199,12 @@ async function pair(deck) {
   await projector.goto(`${origin}${deck}?audience=1&session=${session}`, { waitUntil: 'load' })
   await presenter.goto(`${origin}${deck}?presenter=1&session=${session}`, { waitUntil: 'load' })
   await presenter.waitForSelector('#presenterRoot, .presenter-root')
+  // The presenter starts with sound and mutes its videos once the paired projector takes over.
+  // Wait for that handoff on the opening slide before stepping the two windows.
+  await presenter.waitForFunction(() => {
+    const video = document.querySelector('.slide[data-id="video"] video')
+    return video?.muted && video.volume === 0
+  })
   let presses = 0
   /**
    * Press a key in the presenter; wait until the projector has applied that state and its files
@@ -348,14 +354,20 @@ try {
     })
 
     // ── a projector window opened mid-step ──────────────────────────────────────────────────
-    await check('a projector window opened while the file plays starts it', async () => {
+    await check('a second projector opened mid-step plays the file and leaves sound with the first', async () => {
       const late = await context.newPage()
       late.on('pageerror', (error) => { failures += 1; console.error(`FAIL page error: ${error.message}`) })
       await late.goto(`${origin}/on.html?audience=1&session=${session}`, { waitUntil: 'load' })
       await late.waitForFunction(() => document.querySelector('.slide.active')?.dataset.id === 'video', null, { timeout: 8000 })
       await late.waitForFunction(settled, null, { timeout: 8000, polling: 50 })
+      await late.waitForFunction(() => {
+        const video = document.querySelector('.slide.active video')
+        return video?.muted && video.volume === 0
+      })
       const shown = await late.evaluate(readSlide, false)
-      assert.deepEqual([steps(shown), playing(shown), shown.files[0].muted], [['playing'], [true], false], 'it joins at the playing step, with sound')
+      assert.deepEqual([steps(shown), playing(shown), shown.files[0].muted], [['playing'], [true], true], 'it joins at the playing step, silently')
+      const first = await projector.evaluate(readSlide, false)
+      assert.deepEqual([steps(first), playing(first), first.files[0].muted], [['playing'], [true], false], 'the first projector still plays with sound')
       await late.close()
     })
 

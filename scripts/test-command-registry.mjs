@@ -67,6 +67,7 @@ for (const shortcut of SHORTCUT_REGISTRY) {
 }
 
 const expectedPaletteIds = [
+  'video-marker-add',
   'research-panel', 'research-find', 'research-rename', 'research-change-kind', 'research-delete', 'research-move', 'research-copy', 'research-insert-here', 'research-insert', 'research-make-slide', 'research-open', 'research-previous', 'research-next', 'research-scope', 'research-close', 'research-copy-reference', 'research-reveal', 'research-source', 'research-used-in', 'research-scope-talk', 'research-scope-research', 'research-scope-everything', 'research-retry',
   'refresh', 'optimize-images', 'ocr-index', 'check-embeds', 'layout-doctor', 'research-capture', 'research-reveal-folder', 'new-sketch', 'scratchpad-panel', 'scratchpad-dock', 'scratchpad-float', 'scratchpad-collapse', 'scratchpad-add-slides', 'scratchpad-keep', 'scratchpad-reject', 'scratchpad-move-back', 'scratchpad-move-to-group', 'scratchpad-new-group', 'scratchpad-remove-missing', 'scratchpad-insert-slide', 'scratchpad-insert-visual', 'scratchpad-compare', 'scratchpad-change-place', 'scratchpad-move-up', 'scratchpad-move-down', 'where-used', 'focus-slide',
   'toggle-inspector', 'studio', 'runs', 'history', 'importer', 'attach-prework', 'attach-postwork', 'pathways', 'add-to-pathway', 'present-pathway', 'new-window', 'open-in-new-window', 'new-talk', 'new-folder',
@@ -230,7 +231,7 @@ assert.deepEqual(
     ['Help', 'check-for-updates'], ['Help', 'whats-new'], ['Help', 'help'], ['Insert', 'edit-image'], ['Insert', 'new-sketch'],
     ['Present', 'present-from-here'], ['Present', 'present-presenter'], ['Present', 'present-slide-window'],
     ['Present', 'present-window'], ['Present', 'plan-run'], ['Present', 'present-audience'],
-    ['Slides', 'set-aside-slides'], ['Talk', 'toggle-inspector'], ['Talk', 'pathways'],
+    ['Slides', 'set-aside-slides'], ['Talk', 'toggle-inspector'], ['Talk', 'pathways'], ['Talk', 'video-marker-add'],
     ['Talk', 'new-section'], ['Talk', 'new-subsection'], ['Talk', 'make-section'], ['Talk', 'select-several-slides'],
     ['Tools', 'tools-animated-video'], ['View', 'vault-gallery'],
     ['View', 'view-panel-previews'], ['View', 'view-panel-outline'], ['View', 'view-slide-tab-pages'], ['View', 'view-slide-tab-list'], ['View', 'edit-speaker-notes'], ['View', 'view-slide-panel'],

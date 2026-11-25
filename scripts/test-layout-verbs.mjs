@@ -500,3 +500,36 @@ assert.match(unstampedChat, /```chat\nuser:/, 'the example also inserts before t
   assert.match(shown.triggerLine, /\{id=fixed\}/)
   for (const code of ['title=show', 'titletop', 'titlelook=label']) assert(shown.triggerLine.includes('{' + code + '}'))
 }
+
+{
+  // Generate distinct and repeated words, links and inline marks, both line endings, plus neighbours.
+  const { previewListLayout, setListLayout } = await import('../src/shared/layout-verbs.ts')
+  const words = text => (text.match(/[\p{L}\p{N}]+/gu) ?? []).sort()
+  for (let seed = 0; seed < 64; seed++) {
+    const eol = seed % 2 ? '\r\n' : '\n'
+    const side = (n) => ['**Repeated**', 'Žluťoučký', '[word](https://example.test)', 'code `a_b`'][n % 4] + ' ' + String.fromCharCode(97 + n % 26)
+    const body = Array.from({ length: 2 + seed % 7 }, (_, n) => '- ' + side(n + seed))
+    const nested = [0, 1].flatMap(n => ['- ' + side(n), ...body.map(point => '  ' + point)])
+    for (const [structure, layout, lines] of [
+      ['groups-to-headings', 'compare', nested], ['nested-to-table', 'table', nested],
+      ['split-into-groups', 'compare', body], ['add-note-lines', 'list', body]
+    ]) {
+      const source = ['## Section', '### Exact title', '{id=example}{font-title=s}', '', ...lines,
+        '', '### Neighbour', '{id=next}', '- leave this alone'].join(eol)
+      const edit = { layout, structure }
+      const written = setListLayout(source, 'example', edit).outline
+      assert.equal(previewListLayout(source, 'example', edit), written)
+      assert.deepEqual(words(written.replace(/^\{.*\}\r?$/gm, '')), words(source.replace(/^\{.*\}\r?$/gm, '')), structure)
+      assert.equal(written.slice(written.indexOf('### Neighbour')), source.slice(source.indexOf('### Neighbour')))
+      if (eol === '\r\n') assert.doesNotMatch(written, /(?<!\r)\n/)
+      assert.equal(readOutlineSlides(written).slides.find(slide => slide.id === 'example').line, 2)
+    }
+  }
+  const unsafe = '### Title\n{id=example}\n\n- Group | pipe\n  - cell\n- Second\n  - cell\n'
+  assert.throws(() => setListLayout(unsafe, 'example', { layout: 'table', structure: 'nested-to-table' }), /Needs/)
+  const numbered = '### Title\n{id=example}\n\n- First\n  7. One\n  8. Two\n- Second\n  11) Three\n  12) Four\n'
+  const groups = setListLayout(numbered, 'example', { layout: 'compare', structure: 'groups-to-headings' }).outline
+  assert.match(groups, /^#### First\n\n7\. One\n8\. Two$/m)
+  assert.match(groups, /^#### Second\n\n11\) Three\n12\) Four$/m)
+  assert.throws(() => setListLayout(numbered, 'example', { layout: 'table', structure: 'nested-to-table' }), /without numbering/)
+}

@@ -81,6 +81,7 @@ export function isMarkdownFenceClosingLine(line, opening) {
 // The lexer's image-syntax line, and the one rule for whether it is an IMAGE (a video file in
 // image syntax is a video block). Shared with image-placement.mjs so the editor counts exactly
 // the image lines the lexer turns into image blocks.
+export const VIDEO_DIRECTIVE_RE = /^\[Video:\s*(.+?)\]\s*(\{\s*play-on-next\s*\})?$/i;
 export const IMAGE_SYNTAX_RE = /^!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)\s*((?:\{[^}]*\}\s*)*)$/;
 const VIDEO_FILE_RE = /\.(mp4|webm|mov|m4v)$/i;
 export function imageSyntaxIsVideo(src) {

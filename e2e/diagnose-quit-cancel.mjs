@@ -2,8 +2,8 @@
 // exposes the updater's existing ports at its adapter boundary; no test hook ships in the app.
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { _electron as electron } from 'playwright'
-import { cpSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { cpSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
@@ -12,7 +12,8 @@ import { buildNativeQuitMenu } from './lib/native-quit-menu.mjs'
 
 const repo = resolve(import.meta.dirname, '..'), evidence = join(repo, 'artefacts/quit-helpers')
 mkdirSync(evidence, { recursive: true })
-const root = mkdtempSync(join(evidence, 'cancel-')), copy = join(root, 'app')
+await using appScratch = createAppScratch()
+const root = appScratch.root, copy = join(root, 'app')
 const results = [], sockets = new Set()
 let app, buildSha256
 const pause = ms => new Promise(r => setTimeout(r, ms))
@@ -48,7 +49,7 @@ try {
     let proc
     try {
       const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }; delete env.ELECTRON_RUN_AS_NODE
-      app = await electron.launch({ args: [copy, '--user-data-dir=' + userData, '--use-mock-keychain', '--use-fake-device-for-media-stream'], cwd: repo, env })
+      app = (await launchApp({ scratch: appScratch, userData, env, args: [copy, '--use-mock-keychain', '--use-fake-device-for-media-stream'] })).app
       proc = app.process()
       proc.stdout?.on('data', bytes => { record.stdout = ((record.stdout ?? '') + bytes).slice(-16000) })
       proc.stderr?.on('data', bytes => { record.stderr = ((record.stderr ?? '') + bytes).slice(-16000) })
@@ -192,15 +193,15 @@ try {
       if (app) {
         // Own test process only; bypass the test's intentionally retained conflict/recording sheet.
         await app.evaluate(({ app }) => app.exit(0)).catch(() => {})
-        await Promise.race([app.close().catch(() => {}), pause(3000)])
+        await Promise.race([appScratch.closeApp(app).catch(() => {}), pause(3000)])
         if (proc.exitCode === null && proc.signalCode === null) proc.kill('SIGKILL')
         app = null
       }
     }
   }
 } finally {
-  if (app) await app.close().catch(() => {})
-  rmSync(root, { recursive: true, force: true })
+  if (app) await appScratch.closeApp(app).catch(() => {})
+  await appScratch.close()
   for (const socket of sockets) if (/\/scoped_dir[^/]+$/.test(socket)) rmSync(socket, { recursive: true, force: true })
   writeFileSync(join(evidence, 'cancel' + (process.env.TW_CANCEL_LABEL ?? '') + '.json'), JSON.stringify({ buildSha256, baseline: process.env.TW_CANCEL_BUILD ?? null, results, scratchRemoved: true }, null, 2))
 }

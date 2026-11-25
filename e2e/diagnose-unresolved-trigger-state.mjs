@@ -4,15 +4,13 @@
 // This parcel deliberately does not execute the harness. The node-level regression suites cover
 // the join and every main handler; this file exercises the rendered strip, Grid, Inspector and
 // block modal when the driver next runs Electron.
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
-import { testScratchDir } from '../scripts/lib/test-scratch.mjs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
 
 const repo = process.cwd()
-const root = testScratchDir(join(tmpdir(), 'talkweaver-unresolved-trigger-'))
+await using appScratch = createAppScratch()
+const root = appScratch.root
 const vault = join(root, 'vault')
 const userData = join(root, 'userData')
 const talkDir = join(vault, 'unresolved-probe')
@@ -49,12 +47,11 @@ function record(label, pass, detail = '') {
   if (!pass) failures += 1
 }
 
-await ensureFreshBuild(repo)
-const app = await electron.launch({
-  args: ['.', `--user-data-dir=${userData}`],
-  cwd: repo,
-  env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
-})
+const app = (await launchApp({
+  scratch: appScratch,
+  userData,
+  env: { ...process.env, TW_REC_TEST: '1' },
+})).app
 
 try {
   const page = await app.firstWindow()
@@ -104,7 +101,7 @@ try {
   await page.getByRole('button', { name: 'Open Layout Doctor' }).click()
   record('block modal opens the Layout Doctor fix path', await page.getByRole('dialog', { name: 'Layout Doctor — Unresolved probe' }).count() === 1)
 } finally {
-  await app.close()
+  await appScratch.closeApp(app)
 }
 
 if (failures) {

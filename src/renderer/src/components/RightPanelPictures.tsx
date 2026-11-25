@@ -7,7 +7,7 @@ import { panelEdit, type Design } from './rightPanelDesigns'
 
 export interface PanelTry { text: string; label: string }
 
-export default function RightPanelPictures({ path, text, slide, layout, group, choices, columns = 3, onTry, onKeep, previewChoice, pendingPicture, currentLabel = 'Current' }: {
+export default function RightPanelPictures({ path, text, slide, layout, group, choices, columns = 3, onTry, onKeep, previewChoice, pendingPicture, checkedPictures, currentLabel = 'Current' }: {
   path: string
   text: string
   slide: SlideRef
@@ -19,6 +19,7 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
   onKeep: (design: Design) => void
   previewChoice?: (design: Design) => string
   pendingPicture?: (design: Design) => ReactNode
+  checkedPictures?: VariantPictureMarks
   currentLabel?: string
 }) {
   const root = useRef<HTMLDivElement>(null)
@@ -57,7 +58,7 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
     )
     setMarks({})
     queue.reset(slideKey + text, candidates, slideKey)
-    queue.want(candidates.flatMap((candidate, index) => candidate.outline === null ? [] : [String(index)]))
+    queue.want(candidates.flatMap((candidate, index) => candidate.outline === null || choices[index].check ? [] : [String(index)]))
     // Release the old batch when candidates or the slide change, as well as when the panel closes.
     return () => {
       queue.dispose()
@@ -74,7 +75,7 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
   return <div ref={root} className="tw-right-pictures" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
     {choices.map((design, index) => {
       const { outline: candidate, reason } = candidates[index]
-      const mark = marks[String(index)]
+      const mark = design.check ? checkedPictures?.[design.label] : marks[String(index)]
       const url = pictureMarkUrl(mark)
       const reveal = isRevealPicture(mark) ? mark : undefined
       const tryIt = (): void => {

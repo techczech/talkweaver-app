@@ -1,3 +1,4 @@
+import { AUTHORING_MARKER_BRIDGE } from './authoring-video-markers-runtime.ts'
 import { installAuthoringRevealRuntime } from './authoring-reveal-runtime.ts'
 
 const PREVIEW_STYLE = `<style data-tw-preview-style>
@@ -189,7 +190,7 @@ export function markSlidePreviewHtml(rawHtml: string, options: { localPages?: bo
   if (withStyle.includes('data-tw-step-bridge')) return withStyle
   const authoring = options.authoring !== false
   const document = authoring ? installAuthoringRevealRuntime(withStyle) : withStyle
-  const bridge = authoring ? AUTHORING_STEP_BRIDGE : STEP_BRIDGE
+  const bridge = authoring ? AUTHORING_STEP_BRIDGE + AUTHORING_MARKER_BRIDGE : STEP_BRIDGE
   const at = document.lastIndexOf('</body>')
   return at < 0
     ? document + bridge

@@ -159,6 +159,12 @@ export const PRESENTER_PALETTE: Group[] = [
     { id: 'font-larger', name: 'Slide text larger', icon: 'a-arrow-up', shortcut: 'presenter.font-larger', controls: ['#fontUp', '#viewFontUp'] },
     { id: 'media', name: 'Play or pause media', icon: 'play', shortcut: 'presenter.media', controls: ['#presenterMediaPlay', '#presenterMediaPause'] },
     { id: 'video-fullscreen', name: 'Video full screen', icon: 'fullscreen', shortcut: 'presenter.video-fullscreen', controls: ['#presenterVideoFullscreen'] },
+    { id: 'video-restart', name: 'Back to start of video', icon: 'skip-back', shortcut: 'presenter.video-restart' },
+    { id: 'video-back', name: 'Skip video back 5 seconds', icon: 'rewind', shortcut: 'presenter.video-back' },
+    { id: 'video-forward', name: 'Skip video forward 5 seconds', icon: 'fast-forward', shortcut: 'presenter.video-forward' },
+    { id: 'video-marker', name: 'Video: Jump to marker', icon: 'play', shortcut: 'presenter.video-marker' },
+    { id: 'video-marker-next', name: 'Video: Next marker', icon: 'fast-forward', shortcut: 'presenter.video-marker-next' },
+    { id: 'video-marker-previous', name: 'Video: Previous marker', icon: 'rewind', shortcut: 'presenter.video-marker-previous' },
     { id: 'embed-fullscreen', name: 'Embedded page: full screen', icon: 'maximize-2', shortcut: 'presenter.embed-fullscreen', controls: ['#presenterEmbedFullscreen'] },
     { id: 'gallery', name: 'Image gallery', icon: 'images', shortcut: 'presenter.gallery', controls: ['#presenterGalleryBtn'] }
   ]],

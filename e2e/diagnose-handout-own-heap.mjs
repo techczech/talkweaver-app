@@ -12,11 +12,12 @@
 // Needs the build (npm run build): it runs out/main/handout-pages-worker.js, the file the app ships.
 // Peak memory is about 2 GB in the main process plus up to 4 GB in the build's child, briefly.
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { once } from 'node:events'
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
-import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createAppScratch } from './lib/launch-app.mjs'
 
 const repo = dirname(dirname(fileURLToPath(import.meta.url)))
 const electron = createRequire(import.meta.url)('electron') // the path of the pinned Electron binary
@@ -27,7 +28,8 @@ if (!existsSync(child)) {
   process.exit(1)
 }
 
-const scratch = mkdtempSync(join(tmpdir(), 'tw-handout-heap-'))
+await using appScratch = createAppScratch()
+const scratch = appScratch.root
 const userData = join(scratch, 'userData')
 const lib = join(scratch, 'compiler', 'lib')
 mkdirSync(userData, { recursive: true })
@@ -71,8 +73,7 @@ export async function publishLazyHandoutPagesAsync(dir, pages) {
 }
 `)
 
-const env = { ...process.env, ELECTRON_ENABLE_LOGGING: '0', TW_HANDOUT_HEAP_REPO: repo, TW_HANDOUT_HEAP_SCRATCH: scratch, TW_HANDOUT_HEAP_CHILD: child }
-delete env.ELECTRON_RUN_AS_NODE
+const env = appScratch.env(userData, { ...process.env, ELECTRON_ENABLE_LOGGING: '0', TW_HANDOUT_HEAP_REPO: repo, TW_HANDOUT_HEAP_SCRATCH: scratch, TW_HANDOUT_HEAP_CHILD: child })
 const started = Date.now()
 const host = spawn(electron, [join(repo, 'e2e', 'handout-heap-host'), `--user-data-dir=${userData}`, '--use-mock-keychain'], { cwd: repo, env, stdio: ['ignore', 'pipe', 'pipe'] })
 let out = ''
@@ -80,9 +81,10 @@ let err = ''
 host.stdout.on('data', (chunk) => { out += chunk })
 host.stderr.on('data', (chunk) => { err += chunk })
 const timer = setTimeout(() => { try { process.kill(host.pid) } catch { /* already gone */ } }, 300_000)
-const code = await new Promise((done) => host.on('exit', (status, signal) => done(signal ? `signal ${signal}` : status)))
-clearTimeout(timer)
-rmSync(scratch, { recursive: true, force: true })
+let status, signal
+try { [status, signal] = await once(host, 'exit') }
+finally { clearTimeout(timer) }
+const code = signal ? `signal ${signal}` : status
 
 const lines = out.split(/\r?\n/).filter((line) => /^(PASS|FAILED|HANDOUT-HEAP)/.test(line))
 for (const line of lines) console.log(line)
@@ -94,4 +96,4 @@ if (!ok) {
   if (err.trim()) console.log(`host stderr (last lines):\n${tail(err)}`)
 }
 console.log(`\n=== HANDOUT OWN HEAP (Electron utility process) SUMMARY: ${passed}/${EXPECTED} passed in ${((Date.now() - started) / 1000).toFixed(1)}s ===`)
-process.exit(ok ? 0 : 1)
+process.exitCode = ok ? 0 : 1

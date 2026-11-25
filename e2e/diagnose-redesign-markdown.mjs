@@ -190,8 +190,14 @@ try {
           await picker.getByRole('textbox', { name: 'Search icons' }).fill('star')
           await picker.locator('[data-icon-key="lucide:star"]').first().click()
         }
-        await until(() => disk() !== source, name + ': ' + command + ' did not write bytes')
-        let bytes = disk()
+        let bytes
+        await until(async () => {
+          const changed = await live()
+          // The outline writer preserves the inode, so a read can see its truncate before the write.
+          if (changed === source || disk() !== changed) return false
+          bytes = changed
+          return true
+        }, name + ': ' + command + ' did not save the editor bytes')
         if (command === 'duplicate-slide') {
           // Duplicate mints inside the queued write, after the click's synchronous UUID stub.
           const newIds = readSlides(bytes).slides.filter(slide => !authoredIds.has(slide.id)).map(slide => slide.id)
@@ -299,9 +305,12 @@ try {
     // Place the caret on the existing blank line above the heading.
     await page.keyboard.press('ArrowUp')
     await page.keyboard.type(prefix)
-    await page.getByRole('option', { name: 'New ' + kind }).waitFor()
+    const suggestion = page.getByRole('option', { name: 'New ' + kind, exact: true })
+    await suggestion.waitFor()
     // CodeMirror ignores acceptance during the first 75 ms of a new completion list.
     await page.waitForTimeout(100)
+    if (kind === 'subsection') await page.keyboard.press('ArrowDown')
+    assert.equal(await suggestion.getAttribute('aria-selected'), 'true', 'the requested heading action is selected')
     const typed = await live()
     await page.keyboard.press('Enter')
     await until(() => readSlides(disk()).slides.length === readSlides(source).slides.length + 1,
@@ -313,14 +322,19 @@ try {
     await undo('typed heading prefix')
   }
   for (const [heading, id] of [['## Season', 'season'], ['### Repair', 'repair'], ['#### Seeds', 'seeds']]) {
+    const trigger = '{id=' + id + '}\n'
+    const bodyStart = source.indexOf(trigger + '\n') + trigger.length
     await caretAt(heading, true)
     await page.keyboard.press('Enter')
-    assert.equal(await caretLine(), '', heading + ' opens a blank body line at the caret')
-    const token = '{id=' + id + '}'
-    const expected = source.replace(token, token + '\n')
-    assert.equal(await live(), expected, heading + ' keeps the heading, metadata and following source intact')
-    await until(() => disk() === expected, heading + ' saves the new line')
-    await undo(heading + ' Enter')
+    const caret = await editor.evaluate(el => el.cmTile.root.view.state.selection.main.head)
+    assert.equal(caret, bodyStart, heading + ' lands on the existing body line after its ID')
+    assert.equal(await live(), source, heading + ' and its following source stay intact')
+    assert.equal(disk(), source, heading + ' Enter leaves the saved bytes intact')
+    const body = 'Body entered from the heading'
+    await page.keyboard.type(body)
+    const expected = source.slice(0, bodyStart) + body + source.slice(bodyStart)
+    await until(() => disk() === expected, heading + ' saves text at the body line')
+    await undo(heading + ' body text')
   }
   console.log('PASS list continuation, nesting, stable-ID heading suggestions, and Enter after all three heading levels')
 

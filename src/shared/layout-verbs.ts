@@ -26,6 +26,7 @@
 // over the slide's content shape; the thresholds live in the constants below so they can be tuned
 // without reopening ADR-0032.
 // =============================================================================
+import { LIST_LAYOUT_STRUCTURES, planListStructure, type ListLayoutStructure } from './list-layout-structure.ts'
 import { LAYOUTS } from './layout-registry/entries.ts'
 import type { LayoutDef, OptionGroup } from './layout-registry/entries.ts'
 import { optionGroupsForSlide, registryOptionGroups } from './layout-registry/options.ts'
@@ -396,6 +397,15 @@ function speakerLines(lines: string[]): boolean {
   return new Set(labels).size < labels.length || labels.filter((label) => KNOWN_SPEAKERS.has(label)).length >= 2
 }
 
+export function listPointKinds(points: readonly string[]) {
+  return {
+    dates: allStartWithDates(points),
+    times: points.length > 0 && points.every(text => TIME_RE.test(text)),
+    stats: points.length > 0 && points.every(isNumberLabel),
+    values: points.length > 0 && points.every(text => labelNumber(text) !== null)
+  }
+}
+
 const CHART_LAYOUTS = new Set(['chart', 'barchart', 'piechart', 'linechart', 'bar', 'pie', 'line'])
 const DIAGRAM_LAYOUTS = new Set([
   'columns', 'pyramid', 'orgchart', 'mindmap', 'conceptmap', 'process', 'steps', 'iconrow', 'cycle', 'equation',
@@ -630,6 +640,49 @@ export function setLayout(
     }
   }
   return { outline: text, triggerLine: newLine, warnings: at.warnings }
+}
+
+export type ListLayoutEdit = { layout: string; options?: readonly LayoutOptionChoice[]; structure?: ListLayoutStructure }
+
+export function listStructurePlan(outline: string, slide: SlideRef, structure: ListLayoutStructure) {
+  const at = locate(outline, slide)
+  return planListStructure(at.read, at.slide, Math.max(at.blockEnd, at.slide.start + 1), structure)
+}
+
+/** The same planned text feeds pictures, hover and the editor's single undoable transaction. */
+export function setListLayout(outline: string, slide: SlideRef, edit: ListLayoutEdit): TriggerWrite {
+  if (!edit.structure) {
+    if (!['2col', '3col', 'annotated'].includes(edit.layout)) return setLayout(outline, slide, edit.layout, edit.options)
+    // These registry entries are modifiers. Start with List so they don't modify the layout
+    // the author is trying to leave (e.g. an annotated Contrast slide).
+    const at = locate(outline, slide)
+    const first = setLayout(outline, slide, 'list')
+    const second = setLayout(first.outline, { headingLine: at.slide.line }, edit.layout, edit.options)
+    return { ...second, warnings: [...first.warnings, ...second.warnings] }
+  }
+  const at = locate(outline, slide)
+  const plan = planListStructure(at.read, at.slide, Math.max(at.blockEnd, at.slide.start + 1), edit.structure)
+  if ('reason' in plan) throw new LayoutVerbError('cannot-take', plan.reason, plan.reason)
+  if (LIST_LAYOUT_STRUCTURES[edit.structure] !== edit.layout) {
+    throw new LayoutVerbError('cannot-take', 'This structure change needs its matching layout')
+  }
+  const options = [...(edit.options ?? [])]
+  if (edit.structure === 'add-note-lines') options.push({ group: 'list-style', token: 'annotated' })
+  if (edit.layout === 'compare') options.push(
+    { group: 'title-display', token: '' }, { group: 'title-placement', token: 'notitle' }
+  )
+  const ref = { headingLine: at.slide.line }
+  const written = setLayout(plan.outline, ref, edit.layout, options)
+  const facts = compilerFactsOf(written.outline).slideLayouts.get(at.slide.start)
+  if (!facts || !isDrawnAs(facts, entryNamed(edit.layout))) {
+    const reason = 'This content would render in a different design'
+    throw new LayoutVerbError('cannot-take', reason, reason)
+  }
+  return written
+}
+
+export function previewListLayout(outline: string, slide: SlideRef, edit: ListLayoutEdit): string {
+  return setListLayout(outline, slide, edit).outline
 }
 
 // ── The margin menu's two verbs: choose one layout, back to Auto ─────────────────────────────

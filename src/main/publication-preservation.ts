@@ -155,9 +155,11 @@ async function askProcessStart(pid: number): Promise<string | null | undefined> 
   try { process.kill(pid, 0) } catch (error) { return (error as NodeJS.ErrnoException).code === 'ESRCH' ? null : undefined }
   // The start time is the process's identity (a reused pid has another one). macOS: /bin/ps; Windows has no ps, so
   // ask PowerShell by absolute path (never through PATH) for the same fact.
+  // A cold PowerShell can take over 15 seconds. Give our first lookup more time, then use the cached identity.
+  const windowsLimit = pid === process.pid ? 45_000 : 15_000
   const [command, args, limit] = process.platform === 'win32'
     ? [join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe'),
-      ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${Math.trunc(pid)} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`], 15000]
+      ['-NoProfile', '-NonInteractive', '-Command', `(Get-Process -Id ${Math.trunc(pid)} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`], windowsLimit]
     : ['/bin/ps', ['-p', String(pid), '-o', 'lstart='], 2000]
   return new Promise(resolve => execFile(command as string, args as string[], { timeout: limit as number, windowsHide: true }, (error, stdout) => {
     if (!error && stdout.trim()) resolve(stdout.trim())

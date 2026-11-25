@@ -1,4 +1,4 @@
-import { readMainSource } from './lib/read-source.mjs'
+import { functionBody, readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -100,7 +100,7 @@ assert(walked.includes(yorkDeep), 'a talk four folder levels deep is walked')
 assert.equal(walked.length, 10, 'system, hidden and beyond-backstop folders hold no talks')
 assert.equal(TALK_SCAN_MAX_DEPTH, 8)
 const indexSource = readMainSource()
-const scanTalksBody = indexSource.slice(indexSource.indexOf('function scanTalks('), indexSource.indexOf("ipcMain.handle('vault:list-talks'"))
+const scanTalksBody = functionBody(indexSource, 'scanTalks')
 assert(scanTalksBody.includes('scanTalkFoldersSync(root)') && !/depth\s*>\s*\d/.test(scanTalksBody),
   'scanTalks (the slide-text warm pass list) walks with the shared scanner, no depth limit of its own')
 console.log('PASS scanner parity: vault index and slide-text walk list the same 10 talks, York day-2 included')

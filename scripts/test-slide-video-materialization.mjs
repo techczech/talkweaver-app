@@ -1,4 +1,5 @@
-import { readMainSource } from './lib/read-source.mjs'
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
+import { functionBody, readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
@@ -17,14 +18,13 @@ const writable = (r) => (r && rootFs.isDirectory(r) ? r : undefined)
 
 // Exercise the registered IPC handler with real files, without launching Electron.
 const source = readMainSource()
-const start = source.indexOf("ipcMain.handle('talk:materialize-slide-assets'")
-const end = source.indexOf('\n})', start) + 3
+const registration = readIpcRegistration('talk:materialize-slide-assets')
 let handler
 const root = fs.mkdtempSync(path.join(tmpdir(), 'tw-slide-media-'))
 let vaultRoot = root
 let normalizations = 0
 const warnings = []
-vm.runInNewContext(ts.transpileModule(source.slice(start, end), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, {
+vm.runInNewContext(ts.transpileModule(registration, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, {
   ...fs, ...path, createHash, Buffer, pathStaysInside,
   console: { ...console, warn: (...args) => warnings.push(args.join(' ')) },
   vaultRootFor: () => vaultRoot, // talk-scoped: the vault holding the source outline (registry)
@@ -35,10 +35,17 @@ vm.runInNewContext(ts.transpileModule(source.slice(start, end), { compilerOption
   normaliseToWebp: async (bytes) => { normalizations++; return bytes }
 })
 // The pasted-slide handler and the vault-wide filename index it resolves through.
-const pastedStart = source.indexOf('let vaultAssetIndex')
-const pastedEnd = source.indexOf('\n})', source.indexOf("ipcMain.handle('talk:materialize-pasted-assets'")) + 3
+const pastedRegistration = `
+  let vaultAssetIndex: Map<string, string> | null = null
+  const host = {
+    get vaultAssetIndex() { return vaultAssetIndex },
+    set vaultAssetIndex(value) { vaultAssetIndex = value },
+  }
+  ${functionBody(source, 'buildVaultAssetIndex')}
+  ${readIpcRegistration('talk:materialize-pasted-assets')}
+`
 let pastedHandler
-vm.runInNewContext(ts.transpileModule(source.slice(pastedStart, pastedEnd), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, {
+vm.runInNewContext(ts.transpileModule(pastedRegistration, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, {
   ...fs, ...path, createHash, Buffer, pathStaysInside,
   console: { ...console, warn: (...args) => warnings.push(args.join(' ')) },
   currentVaultRoot: () => vaultRoot, // vault-wide paste: the current vault (registry)

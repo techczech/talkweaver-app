@@ -1,3 +1,4 @@
+import { VIDEO_MARKER_RE } from "./video-markers.mjs";
 import { OPEN_PATTERN_TOKENS, VALUE_TRIGGER_DICTIONARY, resolveTrigger, resolveDynamicTrigger } from "../triggers.mjs";
 import { renderInline } from "./00-inline-render.mjs";
 import { parseVideoEmbed, isVideoEmbedUrl } from "./image-line-rules.mjs";
@@ -824,7 +825,7 @@ export function autoTimelineMode(groups) {
 
 // The line starts that end a paragraph in the lexer. The outline reader in quote-forms.mjs uses the
 // same pattern to find the paragraph that quoteFromQuotedParagraph promotes.
-export const PARAGRAPH_STOP_RE = /^([>|!#]|[-*]\s|\d+[.)]\s|\[(Embed|Simulation|Video):|\*\*Timeline)/i;
+export const PARAGRAPH_STOP_RE = new RegExp(/^([>|!#]|[-*]\s|\d+[.)]\s|\[(Embed|Simulation|Video):|\*\*Timeline)/i.source + "|" + VIDEO_MARKER_RE.source, "i");
 
 // G1 — straight-/curly-quote promotion. Dominik styles quotes with `>`, but sometimes a
 // quotation is written as a plain paragraph that simply BEGINS with a double quote. Such a

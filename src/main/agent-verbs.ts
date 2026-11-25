@@ -1,3 +1,4 @@
+import { editVideoMarker, scanOutlineVideos, type VideoMarkerEdit, type VideoMarkerEditResult } from '../shared/video-marker-edits.ts'
 import { saveOfflinePage } from './offline-page.ts'
 import type { OfflinePageInput, OfflinePageSaveResult } from '../shared/offline-page.ts'
 import { writeResearch, type ResearchWriteDeps } from './research-writer.ts'
@@ -107,7 +108,34 @@ export const OFFLINE_PAGE_VERB: AgentVerb<OfflinePageInput, OfflinePageSaveResul
   run: (input, deps) => deps.offlinePage ? saveOfflinePage(input, deps.offlinePage) : Promise.resolve({ ok: false, message: 'Offline page saving is not available in this host.' })
 }
 
-export const AGENT_VERBS = [OFFLINE_PAGE_VERB, RESEARCH_CAPTURE_VERB, RESEARCH_LIST_VERB, RESEARCH_WHERE_USED_VERB, RESEARCH_SEARCH_VERB, RESEARCH_INSERT_VERB, RESEARCH_MAKE_SLIDE_VERB, ...RESEARCH_WRITE_VERBS] as const
+// The agent supplies freshly read outline text and applies the returned source edit through its
+// normal outline workflow. A verb never opens a file or overwrites an agent's stale snapshot.
+const VIDEO_MARKER_VERBS: AgentVerb<unknown, VideoMarkerEditResult>[] = (['add', 'change', 'remove'] as const).map(action => ({
+  id: `videoMarker.${action}`,
+  tier: 'content',
+  posture: 'direct',
+  inputs: {
+    text: 'current outline text',
+    videoLine: 'zero-based video source line',
+    ...(action !== 'add' ? { line: 'zero-based marker source line' } : {}),
+    ...(action !== 'remove' ? { t: 'whole seconds', name: 'marker name; empty for unnamed' } : {})
+  },
+  async run(input) {
+    if (!input || typeof input !== 'object') return { error: 'Provide the current outline and video line.' }
+    const { text, videoLine, line, t, name } = input as Record<string, unknown>
+    if (typeof text !== 'string' || !Number.isSafeInteger(videoLine)) return { error: 'Provide the current outline and video line.' }
+    const video = scanOutlineVideos(text).videos.find(candidate => candidate.line === videoLine)
+    if (!video) return { error: 'No video on that line.' }
+    let edit: VideoMarkerEdit
+    if (action === 'add' && typeof t === 'number' && (name === undefined || typeof name === 'string')) edit = { action, t, name }
+    else if (action === 'change' && typeof line === 'number' && typeof t === 'number' && typeof name === 'string') edit = { action, line, t, name }
+    else if (action === 'remove' && typeof line === 'number') edit = { action, line }
+    else return { error: 'Provide the marker line, time and name for this action.' }
+    return editVideoMarker(text, video, edit)
+  }
+}))
+
+export const AGENT_VERBS = [OFFLINE_PAGE_VERB, RESEARCH_CAPTURE_VERB, RESEARCH_LIST_VERB, RESEARCH_WHERE_USED_VERB, RESEARCH_SEARCH_VERB, RESEARCH_INSERT_VERB, RESEARCH_MAKE_SLIDE_VERB, ...RESEARCH_WRITE_VERBS, ...VIDEO_MARKER_VERBS] as const
 
 /** IPC and agents call the very same registered implementation, with only open vault roots. */
 export function researchReadHandler(
@@ -123,6 +151,7 @@ export function researchReadHandler(
 
 /** Content commands of the command registry (by command id) and the verb each one calls. */
 export const COMMAND_VERBS: Readonly<Record<string, string>> = {
+  'video-marker-add': 'videoMarker.add',
   'save-offline-page': 'webPage.saveOffline',
   'research-insert': 'research.insert',
   'research-make-slide': 'research.makeSlide',

@@ -11,6 +11,7 @@ import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildPerSlideProjections } from '../compiler/scripts/lib/10-projections.mjs'
 import { createOutlineDiskGuard } from '../src/main/outline-disk-guard.ts'
 import { createOutlineRecovery } from '../src/main/outline-recovery.ts'
+import { createOutlineSlideMerge } from '../src/main/outline-slide-merge.ts'
 import { canonicalOutlinePath } from '../src/main/outline-identity.ts'
 import { configureTalkWriter, withTalkFileLock, writeTalkOutline } from '../src/main/talk-writer.ts'
 const scratch = mkdtempSync(join(tmpdir(), 'tw-merge-dom-'))
@@ -27,6 +28,13 @@ const guard = createOutlineDiskGuard({
   notify: (_owner, outlinePath, change) => { void page?.evaluate(({outlinePath,change}) => window.diskEvent?.({outlinePath,change}), {outlinePath,change}).catch(() => {}) },
 })
 configureTalkWriter({ editorBufferFor: () => null, diskGuard: guard })
+const slideMerge = createOutlineSlideMerge({
+  guard, recovery: createOutlineRecovery(join(scratch, 'slide-merge-recovery')), vaultFor: () => scratch,
+  readWindow: async () => page.evaluate(() => window.read().text),
+  reservedIds: async () => [],
+  stageInWindow: (_owner, request) => page.evaluate(request => window.commands.current.commitSlideMerge(request), request),
+})
+let writeDuringSlideMerge, loseMergeWriteReply = false
 try {
   await build({ stdin: { contents: `
 import React,{useEffect,useRef,useState} from 'react'
@@ -53,7 +61,7 @@ function Fixture(){
    return ()=>{current=false}
  },[content,showPicture])
  const row=compiled?.rows[compiled.index]
- window.compiledPicture=compiled
+ window.compiledPicture=compiled;window.outlineContent=content
  const guard=useOutlineDiskChange({activeOutlinePath:window.outlinePath,readDoc:()=>read.current?.({authoredOnly:true})??null,replaceDoc:(t,o)=>replace.current?.(t,o)??null,saveBuffer:()=>cmd.current.forceSave(),flush:()=>cmd.current.flushSave(),settle:s=>cmd.current.settleSave(s),forceSave:s=>cmd.current.forceSave(s),onDiscardTalk:()=>{}})
  const preview=guard.mergeReview && singleSlideDiskReview(guard.mergeReview)
  window.guard=guard;window.replace=(t,o)=>replace.current?.(t,o);window.read=()=>read.current?.();window.commands=cmd;window.openPicture=()=>setShowPicture(true)
@@ -86,12 +94,29 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   await page.exposeFunction('ipcRecovery', p => recovery.read(p))
   await page.exposeFunction('ipcClear', async p => { await recovery.clear(p); return true })
   await page.exposeFunction('ipcCompilePicture', async text => {
-    const model=await prepareSource(path,text,'Picture fixture',statSync(path))
+    // The Inspector fixture consumes slide projections and picture placement, without rendering a deck.
+    const model=await prepareSource(path,text,'Picture fixture',statSync(path),undefined,{projectionsOnly:true})
     const rows=buildPerSlideProjections(model,'picture-fixture')
     const index=rows.findIndex(row=>row.slide_id==='photo')
     return {rows,index,side:model.slides.find(slide=>slide.id==='photo').frame.image}
   })
   await page.exposeFunction('ipcWrite', async (p,text,opts) => {
+    if (opts?.slideMergeGeneration) {
+      const merge = slideMerge.takeWrite('window', p, opts.slideMergeGeneration, text)
+      if (!merge) return false
+      const result = await writeTalkOutline(p, merge.text, 'editor', {
+        observedDisk: merge.disk,
+        authorize: () => {
+          merge.authorize()
+          if (writeDuringSlideMerge) writeDuringSlideMerge()
+        },
+      })
+      merge.finish(result)
+      if (!result.ok) return false
+      writes++
+      if (loseMergeWriteReply) throw new Error('Merge landed, but its IPC reply was lost.')
+      return { ok: true, collisions: [] }
+    }
     const result = await writeTalkOutline(p,text,'editor',{expectedDiskHash:opts?.expectedDiskHash,authorize:()=>{assert.equal(guard.owns('window',p),true)}})
     if (!result.ok && result.changedOnDisk) { await recovery.save(p,text); return {ok:false,refused:'changed-on-disk',change:result.changedOnDisk} }
     if (!result.ok) return false
@@ -121,6 +146,64 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
     await page.evaluate(({path,base})=>{window.outlinePath=path;window.source=base;window.mount()}, {path,base})
     await page.waitForFunction(()=>window.read()?.base?.includes('alpha'))
   }
+  // Drive the future review's command through the real editor, with no existing sheet involved.
+  for (const lateChange of [true, false]) {
+    await fresh()
+    const windowText=base.replace('- alpha', '- local slide edit')
+    await page.evaluate(text=>window.replace(text,{ownUndoStep:true}),windowText)
+    const diskText=base.replace('- beta','- outside slide edit')
+    writeFileSync(path,diskText)
+    const review=await slideMerge.plan('window',path)
+    assert.equal(review.ok,true,JSON.stringify(review))
+    const beforeWrites=writes
+    const later=base.replace('- beta','- later outside edit')
+    writeDuringSlideMerge=lateChange ? ()=>writeFileSync(path,later) : undefined
+    const result=await slideMerge.apply('window',path,review.generation,{'id:b':'disk'})
+    writeDuringSlideMerge=undefined
+    if (lateChange) {
+      assert.equal(result.reason,'stale-disk')
+      assert.equal(writes,beforeWrites)
+      assert.equal(readFileSync(path,'utf8'),later)
+      assert.equal(await page.evaluate(()=>window.read().text),windowText)
+      await page.evaluate(()=>window.commands.current.undo())
+      assert.equal(await page.evaluate(()=>window.read().text),base)
+    } else {
+      assert.equal(result.ok,true,JSON.stringify(result))
+      assert.equal(writes,beforeWrites+1)
+      const merged=windowText.replace('- beta','- outside slide edit')
+      assert.equal(readFileSync(path,'utf8'),merged)
+      assert.equal(await page.evaluate(()=>window.read().text),merged)
+      await page.evaluate(()=>window.commands.current.undo())
+      assert.equal(await page.evaluate(()=>window.read().text),windowText)
+    }
+  }
+  // The file can land before invoke rejects. Keep the staged text dirty so the next save
+  // goes through the guard with the merge, rather than silently putting the old window back.
+  await fresh()
+  const windowText = base.replace('- alpha', '- local edit with lost reply')
+  await page.evaluate(text => window.replace(text, { ownUndoStep: true }), windowText)
+  writeFileSync(path, base.replace('- beta', '- disk edit with lost reply'))
+  const review = await slideMerge.plan('window', path)
+  assert.equal(review.ok, true, JSON.stringify(review))
+  const beforeLostReply = writes
+  loseMergeWriteReply = true
+  try {
+    await slideMerge.apply('window', path, review.generation, { 'id:b': 'disk' })
+  } finally {
+    loseMergeWriteReply = false
+  }
+  const landed = windowText.replace('- beta', '- disk edit with lost reply')
+  assert.equal(writes, beforeLostReply + 1)
+  assert.equal(readFileSync(path, 'utf8'), landed)
+  const editor = await page.evaluate(() => ({ text: window.read().text, base: window.read().base, dirty: window.read().dirty }))
+  assert.deepEqual(editor, { text: landed, base, dirty: true }, 'a lost write reply keeps the merge and the last acknowledged baseline')
+  await page.waitForFunction(text => window.outlineContent === text, landed)
+  assert.equal(await page.evaluate(() => window.commands.current.forceSave()), true)
+  assert.equal(readFileSync(path, 'utf8'), landed, 'the next guarded save must still hold the merged text')
+  assert.equal(await page.evaluate(() => window.read().dirty), false)
+  assert.deepEqual(errors,[])
+  console.log('slide merge DOM: real editor saves once, Undo is exact, a late generation mismatch restores history, and a lost reply keeps the merge dirty')
+  await fresh()
   // G1: a provisional picker must never restore a document from before disk adoption.
   for (const action of ['letter','click']) {
     await page.evaluate(()=>{const v=window.view();v.dispatch({selection:{anchor:v.state.doc.toString().indexOf('\n\n- alpha')+1}});v.focus()})

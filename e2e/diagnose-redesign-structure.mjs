@@ -131,12 +131,18 @@ try {
   const read = () => readFileSync(outline)
   await row('Watering').waitFor()
   assert.deepEqual(read(), start, 'seeing the talk leaves its file byte for byte')
+  // Outline supplies a pinned preview when the right panel is closed. Slide view has its own.
+  const rightPanel = page.locator('[data-right-column]')
+  const sidebarToggle = page.getByTestId('sidebar-toggle')
+  const rightWasOpen = await rightPanel.isVisible()
+  await page.getByTestId('outline-toggle').click()
+  if (rightWasOpen) await sidebarToggle.click()
   await panel.getByLabel('Current slide preview').waitFor()
-  if (shots) {
-    await panel.locator('.tw-structure-pinned img').waitFor()
-    await page.locator('[data-option-pictures="container-mode"] .opt-pic img').first().waitFor()
-  }
+  if (shots) await panel.locator('.tw-structure-pinned img').waitFor()
   await capture(page, 'LO1-outline')
+  await page.getByTestId('slides-toggle').click()
+  if (rightWasOpen) await sidebarToggle.click()
+  if (shots) await page.locator('[data-option-pictures="container-mode"] .opt-pic img').first().waitFor()
   await capture(page, 'ST2-section-slide')
   if (shots) {
     const inspector = page.locator('.tw-structure-inspector')

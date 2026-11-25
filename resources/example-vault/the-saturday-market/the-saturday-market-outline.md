@@ -149,6 +149,8 @@ Saturdays, eight until one.
 
 > **Try it.** All commands (<kbd>⌘⇧P</kbd>) also offers **Insert speaker notes**. On a slide with a web page, **Capture embed…** opens the page so you can save a view.
 
+> **Try it.** On a slide with a video file, open All commands (<kbd>⌘⇧P</kbd>) and choose **Video: Add marker at current time**.
+
 ## 04 See the talk
 {id=04-see-the-talk}
 

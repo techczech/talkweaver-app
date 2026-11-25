@@ -152,3 +152,24 @@ tiles, `{grid-linear}` to step through the tiles in order, or `{carousel}` when 
 have pictures. For One after another, remove the container-mode code. Removing the colour
 override restores rotation. Other colours include `{section-colour=blue}`,
 `{section-colour=deep-blue}`, `{section-colour=light}` and `{section-colour=light-amber}`.
+
+### Video markers
+
+Write one `[Marker: 1:23 The demo]` line per marker under a video file line,
+whether `![alt](media/demo.mp4)` or `[Video: media/demo.mp4]`. Marker
+spelling is case-insensitive. Blanks, standalone HTML comments and other
+marker lines may sit between the video and its markers. Use whole seconds as `m:ss` or
+`h:mm:ss`, with two-digit seconds and a maximum of 24 hours. The name is
+plain text and may be omitted. An unnamed marker displays its time.
+
+When adding a line, insert it in time order without reordering other lines.
+Equal times retain their source order. Keep markers with their video when
+moving or copying a slide. Keep markers beyond the duration, and keep orphan
+and YouTube or Vimeo markers as authored. They do not control playback.
+Marker lines do not appear as slide text, in handouts or on shared pages.
+
+The in-process source edits are `videoMarker.add`, `videoMarker.change`
+and `videoMarker.remove`. They take the current outline and zero-based
+source line numbers, and return an outline edit. Apply it only against
+that same outline. In the app, use the Video page on the Slide tab or
+**Video: Add marker at current time**.

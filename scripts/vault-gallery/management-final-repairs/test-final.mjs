@@ -1,3 +1,4 @@
+import { readIpcRegistration } from '../../lib/read-ipc-registration.mjs'
 import { readMainSource } from '../../lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import * as fs from 'node:fs'
@@ -21,7 +22,7 @@ try{
  const transferStart=source.indexOf("function transferMovedEditor(");vm.runInContext(transformSync(source.slice(transferStart,source.indexOf("// Vault-relative path",transferStart)),{loader:"ts"}).code,context);context.establishedGalleryClaims=new Map();context.galleryClaimEpochs=new Map();
  const retitleStart=source.indexOf('async function retitleOutline(');vm.runInContext(transformSync(source.slice(retitleStart,source.indexOf('// A clone is NOT published',retitleStart)),{loader:'ts'}).code,context);
  const strip=source.slice(source.indexOf('async function stripPublishedFields('),source.indexOf('\nfunction findOutlineIn('));vm.runInContext(transformSync(strip,{loader:'ts'}).code,context)
- for(const name of ['clone-talk','rename-talk','move-talk','delete-talk','rename-folder','delete-folder']){const start=source.indexOf("ipcMain.handle('vault:"+name+"'");const end=source.indexOf('\n})',start)+3;vm.runInContext(transformSync(source.slice(start,end),{loader:'ts'}).code,context)}
+ for(const name of ['clone-talk','rename-talk','move-talk','delete-talk','rename-folder','delete-folder']) vm.runInContext(transformSync(readIpcRegistration('vault:'+name),{loader:'ts'}).code,context)
  context.writableRootOfVault=()=>root;context.vaultRel=p=>path.relative(root,p);context.renameFolderTargets=(_,rel,name)=>({ok:true,src:path.join(root,rel),dest:path.join(root,name)});context.deleteFolderTarget=(_,rel)=>({ok:true,path:path.join(root,rel)});
  const recoverStart=source.indexOf("ipcMain.handle('window:recover-moved-talk'");vm.runInContext(transformSync(source.slice(recoverStart,source.indexOf('\n})',recoverStart)+3),{loader:'ts'}).code,context);
  const adoptStart=source.indexOf("ipcMain.handle('window:adopt-moved-talk'");vm.runInContext(transformSync(source.slice(adoptStart,source.indexOf("\n})",adoptStart)+3),{loader:'ts'}).code,context);
@@ -63,7 +64,7 @@ try{
  context.resolveNewTalkDefaults=()=>({defaults:{}});context.applyMetadataDefaults=()=>({edits:[]});context.parseFrontmatterPairs=()=>[];context.normaliseMetadataDefaults=()=>({});context.METADATA_REGISTRY={};context.invalidateTalkCache=()=>{};
  context.newTalkFolder=(_,slug,rel)=>({ok:true,path:path.join(root,rel||'',slug)});
  context.createFolderTarget=(_,name,parent)=>({ok:true,path:path.join(root,parent||'',name)});
- for(const name of ['create-talk','create-folder']){const start=source.indexOf("ipcMain.handle('vault:"+name+"'");vm.runInContext(transformSync(source.slice(start,source.indexOf('\n})',start)+3),{loader:'ts'}).code,context)}
+ for(const name of ['create-talk','create-folder']) vm.runInContext(transformSync(readIpcRegistration('vault:'+name),{loader:'ts'}).code,context)
  let releaseWriter, writerStarted;const startedWriter=new Promise(r=>writerStarted=r),pendingWriter=new Promise(r=>releaseWriter=r);
  context.writeTalkOutline=async(p,text)=>{writerStarted();await pendingWriter;fs.writeFileSync(p,text);return {ok:true}};
  const creating=handlers.get('vault:create-talk')(event,{title:'Fresh',slug:'fresh',topicFolder:'creating'});await startedWriter;

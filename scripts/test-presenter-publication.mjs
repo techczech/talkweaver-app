@@ -1,3 +1,4 @@
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
 // A publication reaches a presenter window that is already open (src/main/presenter-publication.ts,
 // src/preload/present-live-state.ts): only a successful, current publication of the same Talk or Run,
 // only the windows that are still open, and only the window's link: never its slide, timer, recording
@@ -306,14 +307,14 @@ await test('an old asynchronous QR result cannot reach a replaced context, even 
 
 await test('the wiring: results reach the service only after success, once, and Go live is not started from them', () => {
   const index = readMainSource()
-  const talk = index.slice(index.indexOf("ipcMain.handle('talk:publish-handout'"), index.indexOf('let localLiveWorker:'))
+  const talk = readIpcRegistration('talk:publish-handout')
   assert.ok(talk.indexOf('presenterPublications.ticket()') < talk.indexOf('handoutPublishing().publish('), 'the ticket is taken when the publish is asked for')
   assert.ok(talk.indexOf('if (!outcome.ok)') < talk.indexOf('presenterPublications.published('), 'a failed or superseded publish returns before the service is told')
   assert.equal(talk.split('presenterPublications.published(').length, 2)
   const run = index.slice(index.indexOf("ipcMain.handle('run:publish-handout'"), index.indexOf("ipcMain.handle('run:unpublish-handout'"))
   assert.ok(run.lastIndexOf('if (!outcome.ok)') < run.indexOf('presenterPublications.published('))
   assert.equal(run.split('presenterPublications.published(').length, 2)
-  const present = index.slice(index.indexOf("ipcMain.handle('talk:present'"), index.indexOf('// Recording lives in the presenter view only'))
+  const present = readIpcRegistration('talk:present')
   const accepted = present.indexOf('existing.loadFile(presentPath, reuseOpts)')
   assert.ok(present.indexOf('if (recordingArmed) {') < present.indexOf('livePresenterContexts.set(wcId, presenterContext())') && present.indexOf('presentWindows.set(wcId,') < accepted, 'a window is given another Run only when its page is really replaced')
   assert.ok(present.indexOf('outlineUrl: outlineUrlOnDisk(outlinePath),') > 0, 'publication identity uses the canonical reader that restricts no-frontmatter retention')

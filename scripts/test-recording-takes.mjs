@@ -1,3 +1,4 @@
+import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
 // Release 0.44.5, Record one slide again (the record-and-edit-video design of 10 Nov 2026, contract
 // "retake"): the video clock, the chosen take in the edits file, the resolved plan and a real export.
 // Plain Node; ffmpeg-static stands in for the app's bundled ffmpeg.
@@ -141,7 +142,7 @@ try {
     assert.match(panel, /takesInUse\(takesOn, savedChoices\)/)
     const main = readMainSource()
     assert.match(main, /const TAKES_ENABLED = takesEnabled\(\{ packaged: app\.isPackaged, flag: process\.env\[RECORD_AGAIN_ENV\] \}\)/)
-    const present = main.slice(main.indexOf("ipcMain.handle('talk:present'"))
+    const present = readIpcRegistration('talk:present')
     assert.ok(present.indexOf('if (asked && !TAKES_ENABLED) return { success: false, error: TAKES_OFF_ERROR }') > 0 && present.indexOf('if (asked && !TAKES_ENABLED)') < present.indexOf('verifyRetake('), 'talk:present refuses a retake first')
     assert.ok((main.match(/takesEnabled: \(\) => TAKES_ENABLED/g) ?? []).length === 2, 'both recording IPCs are told')
     pass('Record one slide again ships on; development without the flag shows no control, uses no choice and refuses a retake')
@@ -234,10 +235,9 @@ try {
     ]) assert.equal(verifyRetake(req, p, slug).ok, false, why)
     // In main: only the Tools window may ask, the request is checked before any context is registered,
     // and the context registered is the checked one.
-    const main = readMainSource()
-    const start = main.indexOf("ipcMain.handle('talk:present'"), body = main.slice(start, main.indexOf('\nipcMain.handle(', start + 10))
+    const body = readIpcRegistration('talk:present')
     const at = (needle) => { const i = body.indexOf(needle); assert.ok(i > 0, `talk:present has ${needle}`); return i }
-    assert.ok(at('isToolsWindowSender(event.sender, toolsWindow)') < at('verifyRetake(') && at('verifyRetake(') < at('registerRecordingContext('), 'sender, then truth, then the context')
+    assert.ok(at('isToolsWindowSender(event.sender, host.toolsWindow)') < at('verifyRetake(') && at('verifyRetake(') < at('registerRecordingContext('), 'sender, then truth, then the context')
     assert.match(body, /plannedRunId\) \|\| pathwayId\)\) return \{ success: false, error: 'Invalid retake' \}/, 'a retake with a planned Run or a pathway is refused')
     assert.match(body, /retake = verified\.retake/)
     assert.match(body, /verifyRetake\(requested, runAtHome\(root, /, 'the Run is read at exactly the home the take is saved in')

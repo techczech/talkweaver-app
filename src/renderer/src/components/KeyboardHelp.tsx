@@ -24,6 +24,7 @@ interface Props {
   placeRow?: PlaceRow
   /** The slide at the caret is a quote slide: Here then lists the Quote form rows, like Actions here. */
   quoteSlide?: boolean
+  fileVideo?: boolean
   vault?: VaultState
   /** Run a row from the sheet (the shared route); the sheet closes first. */
   onRun?: (row: SheetRow) => void
@@ -80,7 +81,7 @@ function ViewRowView({ label, keys }: { label: string; keys: string }) {
   )
 }
 
-export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow = null, quoteSlide = false, vault, onRun, canRunCarried, view }: Props) {
+export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow = null, quoteSlide = false, fileVideo = false, vault, onRun, canRunCarried, view }: Props) {
   const [revision, setRevision] = useState(0)
   useEffect(() => onKeymapChanged(() => setRevision((value) => value + 1)), [])
   const [query, setQuery] = useState('')
@@ -90,7 +91,7 @@ export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow =
   const data = useMemo(
     () => keyboardSheet({
       place,
-      context: { row: placeRow, vault, quoteSlide },
+      context: { row: placeRow, vault, quoteSlide, fileVideo },
       chordOf: liveShortcutLabel,
       defaultChordOf,
       canRun: (id) => runnable.has(id),
@@ -98,7 +99,7 @@ export default function KeyboardHelp({ isOpen, onClose, place = null, placeRow =
     }),
     // revision: a rebound chord redraws the sheet.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [place, placeRow, quoteSlide, vault, revision, runnable, canRunCarried]
+    [place, placeRow, quoteSlide, fileVideo, vault, revision, runnable, canRunCarried]
   )
 
   // The keys of each whole view, from the shortcut registry's scopes (shared/view-keys.ts); a rebound chord shows live.

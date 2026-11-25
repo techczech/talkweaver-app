@@ -93,3 +93,12 @@
 #presenterBottomBar.n3 .tw-nav-tool { width: 32px; padding: 0; }
 #presenterBottomBar.n2 .tw-nav-mode > .tw-btn-label,
 #presenterBottomBar.n3 .tw-nav-tool > .tw-btn-label { display: none; }
+
+/* A narrow video slide keeps fullscreen and the media actions in the row with navigation. */
+#presenterBottomBar.n3:has(#presenterVideoFullscreen:not([hidden])) :is(.presenter-media, .presenter-gallery) > button {
+  width: 32px;
+  padding: 0;
+}
+#presenterBottomBar.n3:has(#presenterVideoFullscreen:not([hidden])) :is(.presenter-media-label, .presenter-media .tw-btn-label, .presenter-gallery .tw-btn-label) {
+  display: none;
+}

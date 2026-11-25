@@ -86,6 +86,8 @@ export const COMMAND_PLACES: Readonly<Record<string, PlaceDeclaration>> = {
   'outline-collapse-all': NOT_BY_PLACE,
   'outline-expand-all': NOT_BY_PLACE,
   // Not rows of the drawn place table (state 12): Actions here adds them on a slide itself (actions-here.ts MOVE_TO_PLACES).
+  // The Video page's command is added to Actions here only when the selected slide has a file video.
+  'video-marker-add': NOT_BY_PLACE,
   'move-slide-to': NOT_BY_PLACE,
   'move-section-to': NOT_BY_PLACE,
   'select-section': NOT_BY_PLACE,

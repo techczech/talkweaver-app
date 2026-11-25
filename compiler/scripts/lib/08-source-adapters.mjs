@@ -1,3 +1,4 @@
+import { readVideoMarker } from "./video-markers.mjs";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
@@ -2806,7 +2807,8 @@ async function prepareSourceModel(sourcePath, sourceText, explicitTitle, sourceS
     // trigger grammar as a regex here: the old `[a-z]+=[^}]*` discriminator selected the legacy
     // adapter when a value token was followed by another brace group (or used a hyphenated/camel
     // case key). The legacy adapter then discarded section slides and bookends without warnings.
-    const hasV2TriggerSyntax = sourceText.split(/\r?\n/).some((line) => {
+    const lines = sourceText.split(/\r?\n/);
+    const hasV2TriggerSyntax = lines.some((line) => {
       const heading = line.match(/^#{1,6}\s+(.+)$/);
       if (heading) return parseHeadingAttrs(heading[1]).title !== heading[1].trim();
       return parseTriggerLine(line) !== null;
@@ -2814,6 +2816,7 @@ async function prepareSourceModel(sourcePath, sourceText, explicitTitle, sourceS
     const isV2 = /^---\r?\n[\s\S]*?\r?\n---/.test(sourceText)
       || /^####\s/m.test(sourceText)
       || hasV2TriggerSyntax
+      || lines.some(readVideoMarker)
       || /^\[(Embed|Simulation|Video):/mi.test(sourceText)
       || pollDirectivesFor(sourceText.split(/\r?\n/)).directives.length > 0;
     const model = isV2 ? adaptMarkdownOutlineV2(sourceText, fallbackTitle, defaults, run) : adaptMarkdownOutline(sourceText, fallbackTitle);
@@ -2917,6 +2920,7 @@ export function collectDeckLinks(slides) {
     // parser). Heading lines are kept: a link in a slide title is on the slide.
     const lines = audienceSourceLines(source, { headings: true });
     for (const line of lines) {
+      if (readVideoMarker(line)) continue;
       let m;
       RE.lastIndex = 0;
       while ((m = RE.exec(line)) !== null) {

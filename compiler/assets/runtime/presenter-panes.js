@@ -304,6 +304,7 @@ export function createPresenterPanes(deck) {
     // is taken out of the clone.
     if (modeState && (modeState.kind || flatStepSlide(slide))) linkPreviewClone(slide, clone);
     clone.querySelectorAll(".lightbox-video-placeholder").forEach(p => { if (deck.lightboxVideo?.el) p.replaceWith(deck.lightboxVideo.el.cloneNode(true)); });
+    clone.querySelectorAll(".tw-video-seek").forEach(bar => bar.remove());
     clone.querySelectorAll("video").forEach(v => {
       delete v.dataset.twPlaybackWatched;
       v.removeAttribute("autoplay"); v.setAttribute("muted", ""); v.muted = true; v.defaultMuted = true; v.tabIndex = -1;

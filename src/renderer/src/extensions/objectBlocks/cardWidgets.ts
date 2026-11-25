@@ -1,3 +1,4 @@
+import { markerCountLabel, videoFileName } from '../../../../shared/video-marker-edits.ts'
 // Compact object cards (ADR-0042, Shape A): every fence that is not a drawable object, speaker notes and
 // standalone HTML comments. A card is one line of what the object is; ⌄ expands a bounded, read-only
 // preview (session chrome, never written); `</>` shows the exact source. Every piece of author text is
@@ -54,6 +55,9 @@ export function cardSummary(block: ObjectBlock): { title: string; detail: string
       chips: ['Presenter only'],
       first: nonBlankLines(body)[0]
     }
+  }
+  if (block.video?.markers.length) {
+    return { title: 'Video', detail: `${videoFileName(block.video.ref)} · ${markerCountLabel(block.video.markers.length)}`, chips: [] }
   }
   if (block.kind === 'embed' && block.embed) {
     const facts = block.embed
@@ -263,6 +267,15 @@ export class CardWidget extends ObjectWidget {
       shell.append(el('div', `tw-obj-card-first${summary.mono ? ' is-mono' : ''}`, summary.first))
     } else if (!objectBlockEditableSource(this.block).trim()) {
       shell.append(el('div', 'tw-obj-card-first', cardKind(this.block.kind)?.emptyPrompt ?? ''))
+    }
+    if (!this.raw && this.block.video?.markers.length) {
+      const list = el('div', 'tw-video-card-markers')
+      for (const marker of [...this.block.video.markers].sort((a, b) => a.t - b.t)) {
+        const line = el('div', 'tw-video-card-marker')
+        line.append(el('span', '', marker.time), el('span', '', marker.name || marker.time))
+        list.append(line)
+      }
+      shell.append(list)
     }
     shell.append(el('span', 'tw-obj-hint', '↵ edit · ⌫ delete'))
     return shell

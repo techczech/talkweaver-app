@@ -10,12 +10,11 @@
 //   (e) Mark as delivered writes the Run (delivered on disk), the page and the list follow;
 //   (f) pre-work closed, post-work open and unpublished: the checklist matches the drawn state.
 // TW_SHOTS_DIR saves one screenshot per drawn state.
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { testScratchDir } from '../scripts/lib/test-scratch.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { tmpdir } from 'node:os'
+
+await using appScratch = createAppScratch()
 
 const shotsDir = process.env.TW_SHOTS_DIR || ''
 if (shotsDir) mkdirSync(shotsDir, { recursive: true })
@@ -24,7 +23,6 @@ const rec = (name, ok, detail) => {
   if (!ok) failures += 1
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? ' — ' + detail : ''}`)
 }
-await ensureFreshBuild(process.cwd())
 
 const ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone
 const pad = (n) => String(n).padStart(2, '0')
@@ -41,7 +39,7 @@ const T2 = 'Generative AI in teaching'
 const WORK_FILE = ['---', 'id: research-teams-intake', 'title: Research teams intake', 'revision: 1', '---', '', '### Watch', '{id=watch}{video}', '', '### Try', '{id=try}{task}', ''].join('\n')
 
 function seed(runs) {
-  const root = testScratchDir(join(tmpdir(), 'tw-run-page-e2e-'))
+  const root = mkdtempSync(join(appScratch.root, 'case-'))
   const vault = join(root, 'vault'); const ud = join(root, 'userData')
   mkdirSync(ud, { recursive: true })
   for (const [slug, title] of [['ai-research', T1], ['ai-teaching', T2]]) {
@@ -62,7 +60,7 @@ async function launch(runs) {
   const { ud, vault } = seed(runs)
   const env = { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    try { return { app: await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: process.cwd(), env, timeout: 60_000 }), vault } }
+    try { return { app: (await launchApp({ scratch: appScratch, userData: ud, env, timeout: 60_000 })).app, vault } }
     catch (error) { if (attempt === 3) throw error; await new Promise((r) => setTimeout(r, 15_000)) }
   }
 }
@@ -186,7 +184,7 @@ const FOUR = [
     rec('the page follows: Delivered, no Mark as delivered, results open', (await tools.locator('[data-run-pill]').innerText()) === 'Delivered' && (await actionsOf(tools, 'delivered')) === '' && (await actionsOf(tools, 'results')) === 'open-results', await actionsOf(tools, 'delivered'))
     rec('the list follows: Medical Sciences moved under Past', await tools.evaluate(() => { const g = [...document.querySelectorAll('[data-sessions-group]')].find((el) => el.getAttribute('data-sessions-group') === 'past'); return !!g && g.parentElement.textContent.includes('Medical Sciences') }))
     await main.close().catch(() => {})
-  } finally { await app.close().catch(() => {}) }
+  } finally { await appScratch.closeApp(app).catch(() => {}) }
 }
 
 // ---- (f) pre-work closed, post-work open, unpublished
@@ -222,7 +220,7 @@ const FOUR = [
     rec('unpublished: warn step, Publish again', (await steps(tools)).includes('published:warn') && (await actionsOf(tools, 'published')) === 'publish-again preview-page', await actionsOf(tools, 'published'))
     rec('unpublished pill is amber', (await tools.locator('[data-run-pill]').innerText()) === 'Unpublished')
     await shot(tools, '3-unpublished')
-  } finally { await app.close().catch(() => {}) }
+  } finally { await appScratch.closeApp(app).catch(() => {}) }
 }
 
 // Browse every populated task category; collect the same command inventory the flat palette exposed.
@@ -250,7 +248,7 @@ async function browsePaletteCommands(tools) {
     const offered = (await browsePaletteCommands(tools)).filter(row => row.disabled).map(row => row.id).sort().join(' ')
     rec('with no Run selected the Run commands are disabled (and so are Open run and New work file)', offered === 'tools-animated-video tools-copy-invitation tools-copy-link tools-edit-plan tools-go-live tools-open-run tools-plan-like-this tools-publish tools-unpublish tools-new-work-file'.split(' ').sort().join(' '), offered)
     await tools.keyboard.press('Escape')
-  } finally { await app.close().catch(() => {}) }
+  } finally { await appScratch.closeApp(app).catch(() => {}) }
 }
 
 // ---- (g) work-files ticket 30: the Tools window's keys and its palette (⌘⇧P), on the same handlers as the buttons
@@ -311,8 +309,8 @@ async function browsePaletteCommands(tools) {
     await tools.keyboard.press('Enter')
     await tools.waitForTimeout(300)
     rec('Unpublish from the palette asks first (the button\'s confirmation)', await tools.locator('[data-unpublish-confirm]').count() === 1 && await tools.locator('[data-command-menu]').count() === 0)
-  } finally { await app.close().catch(() => {}) }
+  } finally { await appScratch.closeApp(app).catch(() => {}) }
 }
 
 console.log(failures ? `\n${failures} FAILED` : '\nALL PASSED')
-process.exit(failures ? 1 : 0)
+process.exitCode = failures ? 1 : 0

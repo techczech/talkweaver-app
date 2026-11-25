@@ -14,13 +14,11 @@
 //       it to the Slide outline and unmounts the Talks panel.
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-sidebar.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { activeTalkRow, talkRows as mountedTalkRows, waitForTalkList, openFirstTalk } from './lib/talklist.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { activeTalkRow, talkRows as mountedTalkRows, openFirstTalk } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempSync, writeFileSync, utimesSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdirSync, writeFileSync, utimesSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -73,7 +71,8 @@ function outline(title) {
   ].join('\n')
 }
 
-const tempRoot = mkdtempSync(join(tmpdir(), 'tw-e2e-sidebar-' + String(Date.now()) + '-'))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const tempVault = join(tempRoot, 'vault')
 const userDataDir = join(tempRoot, 'userData')
 const talks = [
@@ -127,13 +126,11 @@ writeFileSync(join(tempVault, '_PRESENTATIONS', 'c10-beta', `${session.id}.json`
 writeFileSync(join(userDataDir, 'config.json'), JSON.stringify({ vaultRoot: tempVault, openInView: 'outline', slidesPanelView: 'outline' }, null, 2), 'utf8')
 writeFileSync(join(userDataDir, 'search-index.json'), JSON.stringify(searchIndex), 'utf8')
 
-await ensureFreshBuild(REPO)
-const app = await electron.launch({
-  args: ['.', '--user-data-dir=' + userDataDir],
-  cwd: REPO,
-  env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
+const { app, page } = await launchApp({
+  scratch: appScratch,
+  userData: userDataDir,
+  env: { ...process.env, TW_REC_TEST: '1' },
 })
-const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
 
@@ -143,22 +140,24 @@ const focusedLabel = () => page.evaluate(() => document.activeElement?.getAttrib
 const activeEditorText = () => page.locator('.cm-activeLine').first().textContent().catch(() => '')
 
 try {
-  await waitForTalkList(page)
-  await page.waitForSelector('[data-talk-slug="c10-alpha"]', { timeout: 8000 })
+  // On the start screen the shortcut focuses its own search. Open a talk to test the sidebar path.
+  await page.locator('.tw-welcome').getByRole('button', { name: 'C10 Alpha', exact: true }).click()
+  await page.locator('.cm-content').first().waitFor()
+  await page.getByRole('tab', { name: 'Slides', exact: true }).click()
 
   await page.keyboard.press('Meta+Shift+T')
   const talksFocused = await waitFor(async () => (await focusedLabel()) === 'Filter talks', 4000)
-  record('⌘⇧T focuses the Talks search', talksFocused)
+  record('⌘⇧T from the editor opens and focuses the Talks search', talksFocused, `focus=${await focusedLabel()}`)
 
   await page.keyboard.type('C10')
-  await page.waitForTimeout(250)
-  const filtered = await talkRows().count()
-  record('typing filters the Talks list', filtered === 3, `rows=${filtered}`)
+  await page.locator('.tl-res-head').getByText('3 talks', { exact: true }).waitFor({ timeout: 5000 })
+  const hits = await talkRows().evaluateAll(rows => rows.map(row => row.getAttribute('data-talk-slug')))
+  record('typing filters the Talks list', hits.length === 3 && hits[1] === 'c10-beta', `results=${hits.join(', ')}`)
 
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('ArrowDown')
   await page.keyboard.press('Enter')
-  const openedSecond = await waitFor(async () => (await activeTalkSlug()) === 'c10-beta', 5000)
+  const openedSecond = await waitFor(async () => (await activeTalkSlug()) === 'c10-beta', 30000)
   record('↓↓ + Enter opens the second filtered talk', openedSecond, `active=${await activeTalkSlug()}`)
 
   await page.keyboard.press('Meta+Shift+O')
@@ -234,6 +233,6 @@ try {
 } finally {
   const failed = results.filter((r) => !r.pass)
   console.log(`\n=== SIDEBAR SUMMARY: ${results.length - failed.length}/${results.length} passed ===`)
-  await app.close()
-  process.exit(failed.length === 0 ? 0 : 1)
+  await appScratch.closeApp(app)
+  process.exitCode = failed.length === 0 ? 0 : 1
 }

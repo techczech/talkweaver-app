@@ -1,3 +1,4 @@
+import { readVideoMarker } from "./video-markers.mjs";
 // The quote grammar: what is a quotation in a slide's outline lines, and what is its attribution.
 //
 // ONE definition. The markdown lexer (03-markdown-lexer.mjs) calls takeQuoteBlock, takeParagraph and
@@ -76,8 +77,12 @@ export function takeQuoteBlock(lines, start) {
 export function takeParagraph(lines, start) {
   const parts = []
   let i = start
-  while (i < lines.length && lines[i].trim() && !PARAGRAPH_STOP_RE.test(lines[i].trim())) {
-    parts.push(lines[i].trim())
+  while (i < lines.length) {
+    const line = lines[i].trim()
+    const stop = PARAGRAPH_STOP_RE.exec(line)
+    // A syntactically shaped marker outside the supported time range stays prose.
+    if (!line || (stop && (stop[1] || readVideoMarker(line)))) break
+    parts.push(line)
     i += 1
   }
   return { parts, end: i }

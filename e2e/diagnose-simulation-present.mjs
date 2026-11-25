@@ -14,13 +14,11 @@
 //     content, not decoration, and ignores prefers-reduced-motion (spec decision 10).
 //
 // Run: node e2e/diagnose-simulation-present.mjs   (scratch user data and vault under the OS temp dir)
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -48,7 +46,8 @@ const CHECKS = [
 const ledger = createCheckLedger(CHECKS)
 const record = (name, pass, detail) => ledger.record(name, Boolean(pass), detail)
 
-const root = mkdtempSync(join(tmpdir(), 'tw-e2e-sim-'))
+await using appScratch = createAppScratch()
+const root = appScratch.root
 const vault = join(root, 'vault')
 const userData = join(root, 'userData')
 const talkDir = join(vault, 'ai-chat-and-terminal-slides')
@@ -59,8 +58,7 @@ const content = readFileSync(DEMO, 'utf8')
 writeFileSync(outlinePath, content, 'utf8')
 writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2), 'utf8')
 
-await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userData], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
+const app = (await launchApp({ scratch: appScratch, userData })).app
 const errors = []
 let exitCode = 1
 try {
@@ -229,7 +227,6 @@ try {
   console.error(error)
   ledger.summary('SIMULATION PRESENT E2E')
 } finally {
-  await app.close().catch(() => {})
-  rmSync(root, { recursive: true, force: true })
+  await appScratch.closeApp(app).catch(() => {})
 }
-process.exit(exitCode)
+process.exitCode = exitCode

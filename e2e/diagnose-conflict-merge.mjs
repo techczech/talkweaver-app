@@ -14,13 +14,11 @@
 //                     written; Start again reloads both versions at step 1.
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && TW_E2E=1 node e2e/diagnose-conflict-merge.mjs
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join, relative } from 'path'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -71,7 +69,8 @@ function airText(title) {
     .replace('## Redesign, not detection', '## Redesign the task, not the detector')
 }
 
-const tempRoot = realpathSync(mkdtempSync(join(tmpdir(), 'tw-e2e-conflict-merge-')))
+await using appScratch = createAppScratch()
+const tempRoot = appScratch.root
 const vault = join(tempRoot, 'Workshop')
 const trash = join(tempRoot, 'Trash')
 const userData = join(tempRoot, 'userData')
@@ -99,9 +98,7 @@ writeFileSync(join(userData, 'config.json'), JSON.stringify({
   vaults: [{ id: 'vault-workshop', root: vault, open: true, order: 0 }]
 }, null, 2))
 
-await ensureFreshBuild(REPO)
-const app = await electron.launch({ args: ['.', '--user-data-dir=' + userData], cwd: REPO, env: { ...process.env, TW_E2E: '1', TW_E2E_TRASH_DIR: trash } })
-const page = await app.firstWindow()
+const { app, page } = await launchApp({ scratch: appScratch, userData, env: { ...process.env, TW_E2E_TRASH_DIR: trash } })
 await page.waitForLoadState('domcontentloaded')
 await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
 await page.waitForTimeout(1200)
@@ -262,9 +259,9 @@ try {
 } catch (error) {
   record('harness ran to the end', false, error?.stack ?? String(error))
 } finally {
-  await app.close().catch(() => {})
+  await appScratch.closeApp(app).catch(() => {})
 }
 
 const failed = results.filter((r) => !r.pass)
 console.log(`\n${results.length - failed.length}/${results.length} passed`)
-process.exit(failed.length ? 1 : 0)
+process.exitCode = failed.length ? 1 : 0

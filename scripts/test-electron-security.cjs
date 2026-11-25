@@ -79,8 +79,9 @@ for (const [name, [mode, expected]] of Object.entries(deckModes)) {
   assert.deepEqual(presentWindowPreferences(mode, preloads), expected, `${name} deck window: preload and sandbox`)
 }
 // The presenter is the recorder: recording is attached only there, so it is the one unsandboxed deck window.
-assert.match(mainSource, /const recording = mode === 'presenter'\s*\n\s*const deckPrefs = presentWindowPreferences\(mode, join\(__dirname, '\.\.\/preload'\)\)/, 'the deck window factory takes its preload and sandbox from presentWindowPreferences')
-const deckWindow = mainSource.slice(mainSource.indexOf('const deckPrefs = presentWindowPreferences'), mainSource.indexOf("registerWindowKind(win, 'deck')"))
+const talkIpc = readFileSync(join(__dirname, '../src/main/talk-ipc.ts'), 'utf8')
+assert.match(talkIpc, /const recording = mode === 'presenter'\s*\n\s*const deckPrefs = presentWindowPreferences\(mode, join\(__dirname, '\.\.\/preload'\)\)/, 'the deck window factory takes its preload and sandbox from presentWindowPreferences')
+const deckWindow = talkIpc.slice(talkIpc.indexOf('const deckPrefs = presentWindowPreferences'), talkIpc.indexOf("registerWindowKind(win, 'deck')"))
 assert.match(deckWindow, /\.\.\.deckPrefs\s*\n\s*\}/, 'deckPrefs is the last word on the deck window preferences')
 assert.doesNotMatch(deckWindow, /sandbox:|preload:/, 'the deck window sets no sandbox or preload of its own')
 const { readdirSync } = require('node:fs')

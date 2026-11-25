@@ -1,3 +1,4 @@
+import { readVideoMarker } from '../../../../../compiler/scripts/lib/video-markers.mjs'
 import {
   logicalTriggerBlockAfterHeading,
   TRIGGER_LINE_RE
@@ -29,7 +30,8 @@ import {
   parseMarkdownFenceOpeningLine
 } from '../../../../../compiler/scripts/lib/03-object-token.mjs'
 
-import { IMAGE_SYNTAX_RE, imageSyntaxIsAudio, imageSyntaxIsVideo } from '../../../../../compiler/scripts/lib/image-line-rules.mjs'
+import { scanOutlineVideos, type AuthoredVideo } from '../../../../shared/video-marker-edits.ts'
+import { IMAGE_SYNTAX_RE, VIDEO_DIRECTIVE_RE, imageSyntaxIsAudio, imageSyntaxIsVideo } from '../../../../../compiler/scripts/lib/image-line-rules.mjs'
 
 export type ObjectBlockKind =
   | 'gfm-table'
@@ -86,6 +88,7 @@ export type ObjectBlock = {
   /** An embed card: what its first line names, and the saved views grouped under a web page. */
   embed?: EmbedFacts
   /** A media reference written with image syntax. */
+  video?: AuthoredVideo
   media?: { kind: 'picture' | 'video' | 'audio'; alt: string; src: string }
 }
 
@@ -112,7 +115,7 @@ export type InlineComment = {
 
 /** A construct left as text with a warning (unclosed notes, an unclosed comment). */
 export type RegionWarning = {
-  kind: 'unclosed-notes' | 'unclosed-comment'
+  kind: 'unclosed-notes' | 'unclosed-comment' | 'orphan-video-marker'
   /** The opener's line start and end. */
   from: number
   to: number
@@ -421,27 +424,40 @@ export function detectOutlineObjects(doc: string, includePictures = false): Outl
 
   resolveSimulationSessions(doc, blocks, lines, ownerByLine)
   const notesBlocks = notesObjects(doc, lines, regions, ownerByLine)
-  const embedBlocks = embedObjects(doc, rawLines, lines, fenced, [...blocks, ...notesBlocks])
-  const { commentBlocks, inline } = commentObjects(doc, rawLines, lines, regions, [...blocks, ...notesBlocks, ...embedBlocks])
-  const all = [...blocks, ...notesBlocks, ...embedBlocks, ...commentBlocks].sort((a, b) => a.from - b.from)
-  if (includePictures) {
+  const videoScan = scanOutlineVideos(doc, regions)
+  const videos = new Map(videoScan.videos.map(video => [video.line, video]))
+  const embedBlocks = embedObjects(doc, rawLines, lines, fenced, [...blocks, ...notesBlocks], videos)
+  const all = [...blocks, ...notesBlocks, ...embedBlocks].sort((a, b) => a.from - b.from)
+  if (includePictures || videos.size) {
     let occupied = 0
     const pictures: ObjectBlock[] = []
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index]
       if (fenced[index]) continue
+      const video = videos.get(index)
+      if (!includePictures && !video?.markers.length) continue
       const match = IMAGE_SYNTAX_RE.exec(line.text.trim())
       if (!match) continue
       while (occupied < all.length && all[occupied].to <= line.from) occupied += 1
       if (occupied < all.length && all[occupied].from < line.to) continue
       const [, alt, src] = match
       const kind = imageSyntaxIsAudio(src) ? 'audio' : imageSyntaxIsVideo(src) || /^vid-[a-f0-9]{7}$/.test(src) ? 'video' : 'picture'
-      pictures.push({ kind: 'picture', from: line.from, to: line.to, source: doc.slice(line.from, line.to), media: { kind, alt, src } })
+      const to = lines[video?.markers.at(-1)?.line ?? index].to
+      pictures.push({ kind: 'picture', from: line.from, to, source: doc.slice(line.from, to), media: { kind, alt, src }, video })
     }
     all.push(...pictures)
-    all.sort((a, b) => a.from - b.from)
   }
-  return { blocks: all, inline, warnings: regionWarnings(doc, lines, regions) }
+  // A marked video card spans any intervening comments. Drawing a second card inside
+  // that range would overlap the video replacement in CodeMirror.
+  const { commentBlocks, inline } = commentObjects(doc, rawLines, lines, regions, all)
+  all.push(...commentBlocks)
+  all.sort((a, b) => a.from - b.from)
+  const warnings = regionWarnings(doc, lines, regions)
+  for (const index of videoScan.orphans) {
+    const line = lines[index]
+    warnings.push({ kind: 'orphan-video-marker', from: line.from, to: line.from + line.text.replace(/\r$/, '').length })
+  }
+  return { blocks: all, inline, warnings }
 }
 
 function lineIndexAt(lines: SourceLine[], pos: number): number {
@@ -510,7 +526,6 @@ function resolveSimulationSessions(
 }
 
 const EMBED_RE = /^\[(Embed|Simulation):\s*(.+?)\]$/i
-const VIDEO_RE = /^\[Video:\s*(.+?)\]\s*(\{\s*play-on-next\s*\})?$/i
 
 function nameOf(src: string): string {
   if (/^https?:/i.test(src)) {
@@ -537,7 +552,8 @@ function embedObjects(
   rawLines: string[],
   lines: SourceLine[],
   fenced: boolean[],
-  others: ObjectBlock[]
+  others: ObjectBlock[],
+  videos: ReadonlyMap<number, AuthoredVideo>
 ): ObjectBlock[] {
   const out: ObjectBlock[] = []
   const occupied = (from: number, to: number): boolean => others.some((block) => from < block.to && to > block.from)
@@ -551,7 +567,7 @@ function embedObjects(
       const src = m[2].trim()
       const web = /^https?:/i.test(src)
       facts = { variant: web ? 'web' : m[1].toLowerCase() === 'simulation' ? 'simulation' : 'local', src, name: nameOf(src), marker: false, captures: [] }
-    } else if ((m = text.match(VIDEO_RE))) {
+    } else if ((m = text.match(VIDEO_DIRECTIVE_RE))) {
       const src = m[1].trim()
       facts = { variant: /^https?:/i.test(src) ? 'video-web' : 'video', src, name: nameOf(src), marker: false, captures: [], playOnNext: Boolean(m[2]) }
     } else if (
@@ -562,7 +578,8 @@ function embedObjects(
       facts = { variant: 'bare', src: text, name: nameOf(text), marker: false, captures: [] }
     }
     if (!facts) continue
-    let last = index
+    const video = videos.get(index)
+    let last = video?.markers.at(-1)?.line ?? index
     if (embedLinePageUrl(text)) {
       for (let next = index + 1; next < lines.length; next += 1) {
         const line = rawLines[next].replace(/\r$/, '')
@@ -583,7 +600,7 @@ function embedObjects(
     const from = lines[index].from
     const to = lines[last].to
     if (occupied(from, to)) continue
-    out.push({ kind: 'embed', from, to, source: doc.slice(from, to), embed: facts })
+    out.push({ kind: 'embed', from, to, source: doc.slice(from, to), embed: facts, video })
     index = last
   }
   return out
@@ -671,7 +688,7 @@ function commentObjects(
     }
     if (extent.startLine !== extent.endLine) continue
     // A heading line's text and tail are Plain view's; a comment on it stays text.
-    if (/^#{1,6}\s/.test(rawLines[extent.startLine])) continue
+    if (/^#{1,6}\s/.test(rawLines[extent.startLine]) || readVideoMarker(rawLines[extent.startLine])) continue
     if (insideOther(extent.from, extent.to)) continue
     inline.push({ from: extent.from, to: extent.to, source: text, comment: describeHtmlComment(text) })
   }

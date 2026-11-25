@@ -1,0 +1,79 @@
+/* @order 2200 */
+#presenterFollowing[data-markers] {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-self: start;
+  container-type: inline-size;
+}
+#presenterFollowing > [hidden],
+#presenterFollowing .presenter-marker-hint[hidden] { display: none; }
+#presenterFollowing[data-markers] #markerHeading:not([hidden]) {
+  display: grid;
+  justify-self: stretch;
+  width: 100%;
+  max-width: none;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+}
+.presenter-marker-hint { color: #a5b5c4; text-transform: none; letter-spacing: 0; font-weight: 500; white-space: nowrap; }
+.presenter-marker-hint span + span { display: none; }
+@media (max-width: 1100px) {
+  .presenter-marker-hint span:first-child { display: none; }
+  .presenter-marker-hint span + span { display: inline; }
+}
+.presenter-marker-list {
+  position: relative;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  min-height: 0;
+  max-height: min(40dvh, 360px);
+  scrollbar-width: thin;
+}
+.presenter-marker-list li { margin: 0; }
+.presenter-marker-list button {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 1.25rem minmax(2.5rem, max-content) minmax(0, 1fr);
+  align-items: center;
+  gap: 6px;
+  min-height: 27px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  color: #edf3f8;
+  background: transparent;
+  font: 500 12px/1.25 system-ui, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+.presenter-marker-list button:hover:not(:disabled) { background: #ffffff16; }
+.presenter-marker-list button[data-current] {
+  background: #20364a;
+  box-shadow: inset 2px 0 #ffb541;
+  font-weight: 700;
+}
+.presenter-marker-list button:disabled { cursor: default; opacity: .55; }
+.presenter-marker-list kbd,
+.presenter-marker-list time { font: 600 11px/1.25 ui-monospace, monospace; }
+.presenter-marker-list kbd:not(:empty) {
+  width: fit-content;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #253747;
+  color: #d7e5f1;
+}
+.presenter-marker-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.presenter-panel:has(> #presenterFollowing[data-markers]) {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+.presenter-panel > #presenterFollowing[data-markers] { padding: 8px 0 0; }
+.presenter-root[data-notes-placement="bottom"] > .presenter-side > #presenterFollowing[data-markers] {
+  max-height: 100%;
+}
+@media (max-width: 1100px), (max-height: 700px) {
+  .presenter-marker-list { max-height: min(26dvh, 162px); }
+}

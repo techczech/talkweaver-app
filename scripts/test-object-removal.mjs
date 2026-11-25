@@ -29,6 +29,12 @@ const cases = [
   ['speaker notes, last on the slide', '## One\n\nIntro\n\n▶:::notes\nSay hello.\n:::\n\n## Two\n', '## One\n\nIntro\n\n## Two\n'],
   ['comment, middle', '## One\n\nIntro\n\n▶<!-- a private remark -->\n\nMore\n', '## One\n\nIntro\n\nMore\n'],
   ['web page, last in the talk', '## One\n\nIntro\n\n▶[Embed: https://example.com]\n', '## One\n\nIntro\n'],
+  ['marked image video, comment and blank lines between the markers',
+    '## One\n\n▶![Demo](clip.webm)\n[Marker: 0:00 Intro]\n \n  <!-- keep this -->  \n\n[Marker: 0:07 Demo]\n\nMore\n',
+    '## One\n\n  <!-- keep this -->  \n\nMore\n'],
+  ['marked video directive, multiline comment with a blank line, CRLF and marker at EOF',
+    '## One\r\n\r\n▶[Video: clip.webm]\r\n\r\n<!-- Keep this\r\n\r\n[Marker: 0:09 hidden]\r\n-->\r\n[Marker: 0:07 Demo]',
+    '## One\r\n\r\n<!-- Keep this\r\n\r\n[Marker: 0:09 hidden]\r\n-->\r\n'],
   ['mermaid diagram, middle', '## One\n\nIntro\n\n▶```mermaid\ngraph LR\n  A --> B\n```\n\nMore\n', '## One\n\nIntro\n\nMore\n'],
 
   // Trigger lists: the token goes too.

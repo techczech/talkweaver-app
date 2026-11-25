@@ -248,8 +248,8 @@ function changedPaths(before, after) {
   return [...paths].filter((path) => JSON.stringify(before.get(path)) !== JSON.stringify(after.get(path))).sort()
 }
 
-function tempEntries() {
-  return readdirSync(tmpdir()).filter((name) => /^(?:\.?tw-|talkweaver-|talk-weaver-)/.test(name)).sort()
+function tempEntries(path = tmpdir()) {
+  return readdirSync(path).filter((name) => /^(?:\.?tw-|talkweaver-|talk-weaver-)/.test(name)).sort()
 }
 
 const opts = parseArgs(process.argv.slice(2))
@@ -285,6 +285,7 @@ console.log(`run-tests: ${names.length} script(s) from ${label}, ${opts.jobs} at
 const beforeTree = opts.allowDirtyTree ? null : worktreeSnapshot()
 const scratch = makeRunTemp()
 const beforeTemp = new Set(tempEntries())
+const releaseRun = opts.tier === 'e2e-release'
 if (process.platform === 'darwin' &&
     tiers.requiresNativeGallery?.some(name => names.includes(name)) &&
     !existsSync(join(root, 'native/vault-gallery'))) {
@@ -323,12 +324,18 @@ const notRun = results.filter((result) => result.notRun !== null)
 console.log(`\n${results.length - failed.length - notRun.length} passed, ${failed.length} failed, ${notRun.length} not run, ${wall}s wall clock`)
 for (const result of notRun) console.log(`not run: ${result.name}: ${result.notRun}`)
 if (failed.length) console.log(`failed: ${failed.map((result) => result.name).join(' ')}`)
-for (const entry of tempEntries()) {
-  if (!beforeTemp.has(entry)) console.log(`run-tests: new temporary entry ${JSON.stringify(entry)}`)
+const newTemp = tempEntries().filter(entry => !beforeTemp.has(entry))
+if (releaseRun) {
+  for (const [index, name] of names.entries()) {
+    const scriptTemp = join(scratch, index.toString(36))
+    if (existsSync(scriptTemp)) newTemp.push(...tempEntries(scriptTemp).map(entry => `${name}/${entry}`))
+  }
 }
+for (const entry of newTemp) console.log(`run-tests: new temporary entry ${JSON.stringify(entry)}`)
+if (releaseRun) console.log(`run-tests: temporary-folder check: ${newTemp.length} new matching entries`)
 const changes = beforeTree === null ? [] : changedPaths(beforeTree, worktreeSnapshot())
 if (changes.length) {
   console.error('run-tests: tests changed the repository:')
   for (const path of changes) console.error(`  - ${JSON.stringify(path)}`)
 }
-process.exit(failed.length || changes.length ? 1 : 0)
+process.exit(failed.length || changes.length || (releaseRun && newTemp.length) ? 1 : 0)

@@ -4,12 +4,10 @@
 // render_hash (layout + block model). This verifies render_hash changes on a trigger change while
 // content_hash stays stable, AND that the live thumbnail map re-keys.
 // Run after `npm run build`.
-import { _electron as electron } from 'playwright'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { mkdirSync, mkdtempDisposableSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
+import { mkdirSync, writeFileSync } from 'fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const REPO = join(__dirname, '..')
@@ -20,8 +18,8 @@ function record(name, pass, detail) {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}${detail ? '  — ' + detail : ''}`)
 }
 
-using fixture = mkdtempDisposableSync(join(tmpdir(), 'tw-e2e-thr-'))
-const tempRoot = fixture.path
+await using fixture = createAppScratch()
+const tempRoot = fixture.root
 const vault = join(tempRoot, 'vault')
 const ud = join(tempRoot, 'userData')
 const td = join(vault, 'thr')
@@ -30,9 +28,7 @@ const outlinePath = join(td, 'thr-outline.md')
 writeFileSync(outlinePath, '---\ntitle: T\n---\n\n## S\n\n### Why maps?\n{list}\n\n- car\n- horse\n- boat\n')
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
 
-await ensureFreshBuild(REPO)
-await using app = await electron.launch({ args: ['.', '--use-mock-keychain', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
-const page = await app.firstWindow()
+const { app, page } = await launchApp({ scratch: fixture, userData: ud, args: ['.', '--use-mock-keychain'] })
 await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1200)
 

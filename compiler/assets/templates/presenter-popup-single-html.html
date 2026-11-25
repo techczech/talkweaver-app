@@ -441,8 +441,12 @@
       <div class="preview" id="nextPreview"></div>
     </div>
     <div class="presenter-panel presenter-following" id="presenterFollowing">
-      <h2>Then</h2>
+      <h2 id="followingHeading">Then</h2>
       <div class="preview" id="followingPreview"></div>
+      <h2 id="markerHeading" hidden><span>Markers</span><span class="presenter-marker-hint" id="markerHint">
+        <span>Keys 1–9 jump</span><span>1–9</span>
+      </span></h2>
+      <ol class="presenter-marker-list" id="presenterMarkerList" aria-label="Markers" hidden></ol>
     </div>
     <div class="presenter-panel presenter-notes" id="presenterNotes">
       <h2>Notes<span class="presenter-notes-auto" id="presenterNotesAuto"></span></h2>
@@ -479,12 +483,12 @@
       <div class="presenter-media" id="presenterMedia" hidden>
         <span class="presenter-media-label" id="presenterMediaLabel"></span>
         <select class="presenter-media-select" id="presenterMediaSelect" aria-label="Choose media to control" hidden></select>
-        <button type="button" class="btn" id="presenterMediaPlay">Play</button>
-        <button type="button" class="btn" id="presenterMediaPause">Pause</button>
-        <button type="button" class="btn" id="presenterVideoFullscreen" hidden>Video full screen</button>
+        <button type="button" class="btn" id="presenterMediaPlay" aria-label="Play media">Play</button>
+        <button type="button" class="btn" id="presenterMediaPause" aria-label="Pause media">Pause</button>
+        <button type="button" class="btn" id="presenterVideoFullscreen" aria-label="Video full screen" hidden>Video full screen</button>
       </div>
       <div class="presenter-gallery" id="presenterGallery" hidden>
-        <button type="button" class="btn" id="presenterGalleryBtn">Gallery</button>
+        <button type="button" class="btn" id="presenterGalleryBtn" aria-label="Gallery">Gallery</button>
       </div>
     </div>
     <div class="tw-nav-right">
@@ -842,6 +846,7 @@
   const isRetake = isPresenter && params.get("retake") === "1";
   const isAudience = params.get("audience") === "1";
   const isReplay = params.get("replay") === "1";
+  const isEditorPreview = document.body.hasAttribute("data-tw-preview");
   // A live web page (?livepage=1: only decks TalkWeaver itself opens from a file): the slide's one
   // remote page is shown by main as a separate top-level view over an empty slot, so sites that
   // refuse framing show too (src/main/live-page-host.ts). Without the flag (exports, share pages,
@@ -1307,9 +1312,8 @@
   });
   // "Play as a step" (ticket 05): a {play-on-next} file starts when the step reaches it and stops
   // when the step moves on (runtime/media-steps.js; applyModeDimming hands it each file's state).
-  // The presenter owns muted video playback; the audience alone runs audible audio chips. A video
+  // The presenter owns local video playback; the audience alone runs audio chips. A video
   // enlarged in the lightbox has left its figure, so it is resolved through its placeholder.
-  if (isPresenter) slides.forEach(slide => slide.querySelectorAll("video").forEach(v => { v.defaultMuted = true; v.muted = true; v.tabIndex = -1; }));
   let lastPresenterVideoAt = Date.now();
   function audienceFollowsVideo() { return isAudience && isPaired && Date.now() - lastPresenterVideoAt < 3000; }
   const mediaSteps = createMediaStepController({
@@ -1344,6 +1348,7 @@
     moveNode(video, els.lightboxImg.parentNode, els.lightboxImg);
     video.classList.add("lightbox-video");
     video.setAttribute("controls", "");
+    if (!isPresenter && !isReplay) videoSeekControls.place(video);
   }
   function unmountLightboxVideo() {
     if (!lightboxVideo) return;
@@ -1352,6 +1357,7 @@
     el.classList.remove("lightbox-video");
     if (!hadControls) el.removeAttribute("controls");
     if (placeholder.parentNode) moveNode(el, placeholder.parentNode, placeholder);
+    if (!isPresenter && !isReplay) videoSeekControls.place(el);
     placeholder.remove();
   }
   function slideVideos(slide = currentSlide()) {
@@ -1362,7 +1368,7 @@
   // size, which on a full-screen audience window is the whole display.
   function requestVideoFullscreen(video) {
     if (!video) return false;
-    if (document.fullscreenElement === video) { document.exitFullscreen?.(); return true; }
+    if (video.ownerDocument.fullscreenElement === video) { video.ownerDocument.exitFullscreen?.(); return true; }
     const result = video.requestFullscreen?.();
     if (result && typeof result.catch === "function") result.catch(() => {});
     return true;
@@ -2992,6 +2998,7 @@
       if (active) audioChips.enter(slide, !isPresenter && !isReplay && !document.body.hasAttribute("data-tw-preview"));
       else audioChips.leave(slide);
       slide.querySelectorAll("video").forEach((v) => {
+        if (active && !isPresenter && !isReplay && !isEditorPreview && v.closest("figure.slide-video")) videoSeekControls.place(v);
         if (active && (isPresenter || !isPaired || (isAudience && !audienceFollowsVideo())) && v.autoplay && (!isPresenter || videoEntering)) {
           const p = v.play();
           if (p && typeof p.catch === "function") p.catch(() => {});
@@ -3017,6 +3024,7 @@
     syncCountdown();
     syncSectionTimer();
     const slide = currentSlide();
+    if (editorVideoEnabled) paintEditorVideoControls(slide);
     viewed.add(state.index);
     // The counter is the slide's number out of the talk's slides, the number the editor, strip, grid and outline give it
     // (house rule R7). It used to count BEATS (F3), and beats outnumber slides wherever a grid returns to its grid or a
@@ -3076,6 +3084,7 @@
       // in the middle of the letterbox.
       frame.style.left = `${(box.width - PREVIEW_DECK_W * scale) / 2}px`;
       frame.style.top = "0px";
+      if (frame.dataset.videoPlayback) setVideoPreviewScale(frame.contentDocument, scale);
     }
     fitPaneEmbed(target);
   }
@@ -5065,6 +5074,12 @@
     // Freeze and mark: the live page again in every window (no default key; rebindable).
     "return-live": { run: livePageReturnLive, enabled: () => livePageFreezePhase() !== "off" },
     "embed-fullscreen": { run: toggleEmbedFullScreen, enabled: () => Boolean(panePageSource()) },
+    "video-restart": { run: () => seekPresenterVideo(), enabled: canSeekPresenterVideo },
+    "video-back": { run: () => seekPresenterVideo(-5), enabled: canSeekPresenterVideo },
+    "video-forward": { run: () => seekPresenterVideo(5), enabled: canSeekPresenterVideo },
+    "video-marker": { run: focusPresenterMarkers, enabled: () => presenterMarkerRows().some(marker => !marker.past) },
+    "video-marker-next": { run: () => stepPresenterMarker(1), enabled: () => Boolean(presenterAdjacentMarker(1)) },
+    "video-marker-previous": { run: () => stepPresenterMarker(-1), enabled: () => Boolean(presenterAdjacentMarker(-1)) },
     "previews-larger": { run: () => cyclePreviewSize(-1) },
     "previews-smaller": { run: () => cyclePreviewSize(1) },
     "notes-forward": { run: () => notesScroller?.step(1) },
@@ -5887,7 +5902,8 @@
     els.presenterNotesBody.dataset.nextTitle = nextSlideEl ? navTitleForSlideId(nextSlideEl.dataset.id) : "end of the talk";
     // The notes placement decides whether Then shows beside the notes (bottom, off) or gives way
     // to them (sidebar, the former side-column behaviour).
-    if (notesPlacementPanels(notesPlacement, hasNotes).then) {
+    renderPresenterMedia();
+    if (!renderPresenterMarkers() && notesPlacementPanels(notesPlacement, hasNotes).then) {
       // "Then" pane: beats[i+2], fully revealed — same structural rule as the Next pane.
       const thenBeat = beats[clampBeat(state.beat) + 2] || null;
       const thenTarget = thenBeat ? previewTargetForBeat(thenBeat, 999) : null;
@@ -5898,7 +5914,6 @@
     // so the .current marker tracks the live slide (parity with the standalone refresh in
     // renderAudience).
     if (overview.isOpen()) overview.render();
-    renderPresenterMedia();
     renderPresenterPoll();
   }
 
@@ -6093,15 +6108,128 @@
   // stored state) can never auto-play from a stale command. Each command carries a nonce so a
   // window that receives it on more than one path (BroadcastChannel AND postMessage) runs it
   // once. The presenter reads the live slide's media; the target is its DOM index.
+  function selectedMedia() {
+    const media = slideMedia(currentSlide());
+    return media[Number(els.presenterMediaSelect.value)] || media[0];
+  }
+  function selectedPresenterVideo() {
+    const selected = selectedMedia();
+    return selected?.isVideo ? selected.el : slideVideos()[0]?.el;
+  }
+  function canSeekPresenterVideo() {
+    const duration = selectedPresenterVideo()?.duration;
+    return Number.isFinite(duration) && duration > 0;
+  }
+  function seekPresenterVideo(offset) {
+    const video = selectedPresenterVideo();
+    if (!video || !Number.isFinite(video.duration) || video.duration <= 0) return false;
+    return seekVideoAt(video, offset === undefined ? 0 : Math.max(0, video.currentTime + offset));
+  }
+  function seekVideoAt(video, value) {
+    if (!videoPlayback.command(video, { action: "seek", value, nonce: createSessionId() })) return false;
+    publishVideos(undefined, video);
+    return true;
+  }
+
+  function onGridBeat() {
+    const kind = beats[clampBeat(state.beat)]?.kind;
+    return kind === "grid" || kind === "grid-return";
+  }
+  function selectedMarkerVideo() {
+    const selected = selectedMedia();
+    return selected?.isVideo ? selected.el : null;
+  }
+  function presenterMarkerRows() {
+    return videoMarkerRows(selectedMarkerVideo(), !onGridBeat());
+  }
+  function presenterAdjacentMarker(direction) {
+    const video = selectedMarkerVideo();
+    return video ? adjacentVideoMarker(presenterMarkerRows(), video.currentTime, direction) : undefined;
+  }
+  function stepPresenterMarker(direction) {
+    const marker = presenterAdjacentMarker(direction);
+    if (marker) jumpToPresenterMarker(marker.t);
+  }
+  function jumpToPresenterMarker(time) {
+    if (!presenterMarkerRows().some(marker => marker.t === time && !marker.past)) return false;
+    return seekVideoAt(selectedMarkerVideo(), time);
+  }
+  function focusPresenterMarkers() {
+    (markerList.querySelector("button[data-current]") ?? markerList.querySelector("button:not(:disabled)"))?.focus();
+  }
+
+  const followingHeading = document.getElementById("followingHeading");
+  const markerHeading = document.getElementById("markerHeading");
+  const markerHint = document.getElementById("markerHint");
+  const markerList = document.getElementById("presenterMarkerList");
+  let paintedMarkerRows = "";
+  let paintedMarkerIndex = -1;
+  function renderPresenterMarkers() {
+    if (!isPresenter) return false;
+    const rows = presenterMarkerRows();
+    const showing = rows.some(marker => !marker.past);
+    const following = els.presenterFollowing;
+    const hasNotes = els.presenterSide.classList.contains("has-notes");
+    const host = showing && !notesPlacementPanels(notesPlacement, hasNotes).then
+      ? els.nextPreview.parentElement : els.presenterSide;
+    if (following.parentElement !== host) {
+      if (host === els.presenterSide) host.insertBefore(following, els.presenterNotes);
+      else host.append(following);
+    }
+    following.toggleAttribute("data-markers", showing);
+    followingHeading.hidden = els.followingPreview.hidden = showing;
+    markerHeading.hidden = markerList.hidden = !showing;
+    markerHint.hidden = !rows.some(marker => marker.key);
+    const signature = showing ? JSON.stringify(rows) : "";
+    if (signature !== paintedMarkerRows) {
+      paintedMarkerRows = signature;
+      paintedMarkerIndex = -1;
+      markerList.replaceChildren(...(showing ? rows : []).map(marker => {
+        const item = document.createElement("li");
+        const button = document.createElement("button");
+        button.type = "button";
+        button.disabled = marker.past;
+        const number = document.createElement("kbd");
+        number.textContent = marker.key || "";
+        const time = document.createElement("time");
+        time.textContent = markerClock(marker.t);
+        const name = document.createElement("span");
+        name.className = "presenter-marker-name";
+        name.textContent = marker.name + (marker.past ? " · past the end" : "");
+        name.title = name.textContent;
+        button.append(number, time, name);
+        button.addEventListener("click", () => jumpToPresenterMarker(marker.t));
+        item.append(button);
+        return item;
+      }));
+      markerList.scrollTop = 0;
+    }
+    const active = showing ? activeVideoMarker(rows, selectedMarkerVideo().currentTime) : -1;
+    if (active !== paintedMarkerIndex) {
+      markerList.children[paintedMarkerIndex]?.firstElementChild.removeAttribute("data-current");
+      paintedMarkerIndex = active;
+      const row = markerList.children[active]?.firstElementChild;
+      if (row) {
+        row.setAttribute("data-current", "");
+        const top = row.parentElement.offsetTop;
+        const bottom = top + row.parentElement.offsetHeight;
+        if (top < markerList.scrollTop) markerList.scrollTop = top;
+        else if (bottom > markerList.scrollTop + markerList.clientHeight) markerList.scrollTop = bottom - markerList.clientHeight;
+      }
+    }
+    return showing;
+  }
+
   function sendMediaCommand(action) {
     if (!isPresenter) return;
     const media = slideMedia(currentSlide());
-    if (media.length === 0) return;
-    let target = Number(els.presenterMediaSelect.value);
-    if (!Number.isInteger(target) || target < 0 || target >= media.length) target = 0;
+    const requested = Number(els.presenterMediaSelect.value);
+    const target = media[requested] ? requested : 0;
+    const item = media[target];
+    if (!item) return;
     const nonce = createSessionId();
-    if (media[target].isVideo) {
-      videoPlayback.command(media[target].el, { action: action === "toggle" ? (media[target].el.paused ? "play" : "pause") : action, nonce });
+    if (item.isVideo) {
+      videoPlayback.command(item.el, { action: action === "toggle" ? (item.el.paused ? "play" : "pause") : action, nonce });
       publishVideos();
     } else sendMediaCommandToPeer({ action: action === "toggle" ? "play" : action, target, nonce });
     // Audio and provider embeds retain their audience command path.
@@ -6118,6 +6246,50 @@
   }
 
   // Local videos have one owner. Every other surface submits controls as intents and follows snapshots.
+  const videoSeekControls = createVideoSeekControls({
+    icon: twIconEl,
+    hideControls: video => isAudience && videoMarkerRows(video).some(marker => !marker.past),
+    shortcut(id, presenter) {
+      const entry = PRESENTER_COMMAND_KEYS.find(command => command.id === id);
+      const defaults = entry?.keys || "";
+      return { key: entry?.codes[0], label: presenter ? presenterShortcuts?.key(id, defaults) || defaults : defaults };
+    },
+    markersFor(video, isCurrent) {
+      if (isCurrent) {
+        const selected = selectedMarkerVideo();
+        if (!selected || selected.dataset.twVideoIndex !== video.dataset.twVideoIndex) return null;
+        return { rows: presenterMarkerRows(), jump: jumpToPresenterMarker };
+      }
+      if (isEditorPreview) return { rows: videoMarkerRows(video), jump: time => { video.currentTime = time; } };
+      return null;
+    },
+    fullscreen(video) {
+      if (!isEditorPreview && video !== lightboxVideo?.el) {
+        const index = slideImages().findIndex(entry => entry.kind === "video" && entry.el === video);
+        if (index >= 0) openLightbox(index);
+      }
+      requestVideoFullscreen(video);
+    }
+  });
+  let editorVideoEnabled = false;
+  function setVideoPreviewScale(doc, scale) {
+    if (Number.isFinite(scale) && scale > 0) doc?.documentElement.style.setProperty("--tw-video-preview-scale", Math.max(0.1, scale));
+  }
+  function paintEditorVideoControls(slide) {
+    slide.querySelectorAll("figure.slide-video video").forEach(video => videoSeekControls.place(video));
+    window.parent.postMessage({ type: "tw-preview-video", url: location.href, slideId: slide.dataset.id,
+      playable: Boolean(slide.querySelector("video, iframe[data-embed-video]")) }, "*");
+  }
+  if (isEditorPreview && window.parent !== window) {
+    window.addEventListener("message", event => {
+      if (event.source !== window.parent || event.data?.type !== "tw-enable-preview-video") return;
+      setVideoPreviewScale(document, event.data.scale);
+      if (!editorVideoEnabled) {
+        editorVideoEnabled = true;
+        paintEditorVideoControls(currentSlide());
+      }
+    });
+  }
   const retainedVideos = new Map();
   const movingVideos = new WeakSet();
   // Chromium resets a media element moved to another document: it loads again from the start and
@@ -6213,17 +6385,90 @@
     if (videoPlayback.apply(s, player, false) && wasPaused && !player.paused) clipStartsFollowingPresenter.add(player);
     audienceVideoPausedSeen.set(player, player.paused);
   }
+  // Audience takes over only after its copy of each playing video can play. The presenter
+  // silences its owner first, then grants sound to the ready audience over the video channel.
+  // On exit the audience silences itself before releasing the grant.
+  const pairedAudience = isAudience && params.has("session");
+  const audienceAudioId = pairedAudience ? createSessionId() : "";
+  const routedMute = new WeakMap();
+  const AUDIENCE_AUDIO_LEASE_MS = 3000;
+  let audioAudience = null;
+  let audioGranted = false;
+  let audienceLeaving = false;
+  function forceVideoSilence(v, force) {
+    const previous = routedMute.get(v);
+    if (force) {
+      if (!previous) routedMute.set(v, { muted: v.muted || v.defaultMuted, volume: v.volume });
+      if (v.muted !== true) v.muted = true;
+      if (v.volume !== 0) v.volume = 0;
+    } else if (previous) {
+      routedMute.delete(v);
+      v.volume = previous.volume;
+      v.muted = previous.muted;
+    }
+  }
+  function routedVideoSilence() {
+    if (isReplay) return true;
+    if (isPresenter) return audioAudience !== null;
+    return pairedAudience && (audienceLeaving || (audienceFollowsVideo() && !audioGranted));
+  }
+  function syncRoutedVideoSound() {
+    const force = routedVideoSilence();
+    for (const slide of slides) slide.querySelectorAll("video").forEach(v => forceVideoSilence(v, force));
+    if (lightboxVideo) forceVideoSilence(lightboxVideo.el, force);
+  }
+  function announceAudienceAudio() {
+    if (!pairedAudience || audienceLeaving || !audienceFollowsVideo()) return;
+    const videos = slideMedia(currentSlide()).filter(item => item.isVideo);
+    const ready = videos.every(({ el }) => {
+      const snapshot = audienceVideoStates.get(videoKey(videoIdentity(el)));
+      return snapshot && (snapshot.paused || snapshot.ended || (!el.paused && el.readyState >= 3 && !el.seeking));
+    });
+    if (audioGranted || ready) sendToPeer({ type: commandType, command: "video-playback", audioReady: audienceAudioId });
+  }
+  function releaseAudienceAudio() {
+    if (!pairedAudience || audienceLeaving) return;
+    audienceLeaving = true;
+    audioGranted = false;
+    syncRoutedVideoSound();
+    sendToPeer({ type: commandType, command: "video-playback", audioLeft: audienceAudioId });
+  }
   function publishVideoHeartbeat() {
-    if (isPresenter) sendToPeer({ type: commandType, command: "video-playback", heartbeat: { presenterId: videoPlayback.presenterId, at: Date.now() } });
+    if (isPresenter) sendToPeer({ type: commandType, command: "video-playback",
+      heartbeat: { presenterId: videoPlayback.presenterId, at: Date.now(), audioTo: audioAudience?.id || "" } });
   }
   function receiveVideoPlayback(message) {
     if (isPresenter && message.ready === true) { publishVideoHeartbeat(); publishVideos(); return; }
-    if (isAudience && message.heartbeat && videoPlayback.observeOwner(message.heartbeat)) noteVideoPresenter(message.heartbeat);
+    if (isPresenter && typeof message.audioReady === "string" && message.audioReady.length > 0 && message.audioReady.length <= 100) {
+      if (audioAudience && audioAudience.id !== message.audioReady) return;
+      const newlyGranted = !audioAudience;
+      audioAudience = { id: message.audioReady, at: Date.now(), peer: peerWindow };
+      if (newlyGranted) { syncRoutedVideoSound(); publishVideoHeartbeat(); }
+      return;
+    }
+    if (isPresenter && audioAudience && message.audioLeft === audioAudience.id) {
+      audioAudience = null;
+      syncRoutedVideoSound();
+      publishVideoHeartbeat();
+      return;
+    }
+    if (isAudience && message.heartbeat && videoPlayback.observeOwner(message.heartbeat)) {
+      const wasSilent = routedVideoSilence();
+      const oldPresenter = audiencePresenterId;
+      noteVideoPresenter(message.heartbeat);
+      audioGranted = !audienceLeaving && Boolean(audienceAudioId) && audienceAudioId === message.heartbeat.audioTo;
+      if (wasSilent !== routedVideoSilence()) syncRoutedVideoSound();
+      if (oldPresenter !== audiencePresenterId) announceAudienceAudio();
+    }
     if (isAudience && videoPlayback.accept(message.snapshot)) {
       const s = message.snapshot;
+      const wasSilent = routedVideoSilence();
+      if (s.presenterId !== audiencePresenterId) audioGranted = false;
       noteVideoPresenter(s);
+      if (wasSilent !== routedVideoSilence()) syncRoutedVideoSound();
       audienceVideoStates.set(videoKey(s), s);
       followVideoSnapshot(s, liveSlideVideo(s.slide, s.video), message.answers);
+      announceAudienceAudio();
     } else if (isPresenter && message.intent) {
       const i = message.intent;
       if (!videoPlayback.valid(i.identity) || i.identity.presenterId !== videoPlayback.presenterId || i.identity.navSeq !== (Number(state.seq) || 0)) return;
@@ -6235,25 +6480,30 @@
       publishVideos(i.nonce, i.action === "seek" ? owner : null);
     }
   }
+  function forwardCurrentVideoKey(event) {
+    event.preventDefault();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: event.key, code: event.code,
+      metaKey: event.metaKey, ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey,
+      repeat: event.repeat, location: event.location, bubbles: true, cancelable: true }));
+  }
   function watchVideo(v, identity, current) {
     if (v.dataset.twPlaybackWatched) return;
     v.dataset.twPlaybackWatched = "1";
-    if (current || isPresenter) {
-      v.defaultMuted = true; v.muted = true; v.volume = 0; v.tabIndex = -1;
-      v.addEventListener("volumechange", () => { if (!v.muted) v.muted = true; if (v.volume !== 0) v.volume = 0; });
+    if (current || isPresenter) v.tabIndex = -1;
+    if (isPresenter || pairedAudience || isReplay || current) {
+      forceVideoSilence(v, current || routedVideoSilence());
+      v.addEventListener("volumechange", () => {
+        if (current || routedVideoSilence()) forceVideoSilence(v, true);
+      });
     }
+    if (pairedAudience) v.addEventListener("playing", announceAudienceAudio);
     if (current) {
       let pointerDown = false;
       const returnFocus = () => { v.blur(); v.ownerDocument.defaultView?.frameElement?.blur(); window.focus(); document.body.tabIndex = -1; document.body.focus({ preventScroll: true }); };
       v.addEventListener("pointerdown", () => { pointerDown = true; });
       v.addEventListener("pointerup", () => { pointerDown = false; returnFocus(); });
       v.addEventListener("seeked", () => { if (!pointerDown && v.ownerDocument.activeElement === v) returnFocus(); });
-      v.addEventListener("keydown", event => {
-        event.preventDefault();
-        document.dispatchEvent(new KeyboardEvent("keydown", { key: event.key, code: event.code,
-          metaKey: event.metaKey, ctrlKey: event.ctrlKey, altKey: event.altKey, shiftKey: event.shiftKey,
-          repeat: event.repeat, location: event.location, bubbles: true }));
-      });
+      v.addEventListener("keydown", forwardCurrentVideoKey);
     }
     if (isAudience) audienceVideoPausedSeen.set(v, v.paused);
     for (const [event, action] of [["play", "play"], ["pause", "pause"], ["seeking", "seek"], ["ratechange", "rate"]]) v.addEventListener(event, () => {
@@ -6272,7 +6522,17 @@
         requestVideoChange(videoKey(identity), action, action === "seek" ? v.currentTime : v.playbackRate);
       } else if (isPresenter) publishVideos(undefined, action === "seek" ? v : null);
     });
-    if (isPresenter && !current) v.addEventListener("ended", publishVideos);
+    if (isPresenter && !current) {
+      v.addEventListener("ended", publishVideos);
+      for (const event of ["loadedmetadata", "durationchange", "timeupdate", "seeking"]) {
+        v.addEventListener(event, () => {
+          if (identity.slide !== state.index || v !== selectedMarkerVideo()) return;
+          const hadMarkers = els.presenterFollowing.hasAttribute("data-markers");
+          if (!renderPresenterMarkers() && hadMarkers) renderPresenter();
+          videoSeekControls.refresh(previewVideo(identity.video));
+        });
+      }
+    }
     v.addEventListener("loadedmetadata", () => {
       if (identity.slide !== state.index) { v.pause(); return; }
       if (isPresenter) publishVideos();
@@ -6297,18 +6557,43 @@
   }
   function connectCurrentVideos(iframe, slide) {
     if (slide !== currentSlide()) return;
-    iframe.contentDocument?.querySelectorAll("video").forEach(v => {
+    const doc = iframe.contentDocument;
+    if (doc?.querySelector("figure.slide-video video")) {
+      iframe.dataset.videoPlayback = "1";
+      setVideoPreviewScale(doc, iframe.getBoundingClientRect().width / PREVIEW_DECK_W);
+      iframe.removeAttribute("aria-hidden");
+      iframe.removeAttribute("tabindex");
+    }
+    doc?.querySelectorAll("video").forEach(v => {
       const held = retainedVideos.get(v.dataset.twVideoIndex);
       if (held) { v.replaceWith(held); retainedVideos.delete(v.dataset.twVideoIndex); v = held; resumeMovedVideo(held); }
       watchVideo(v, { slide: slides.indexOf(slide), video: Number(v.dataset.twVideoIndex) }, true);
+      if (v.closest("figure.slide-video")) videoSeekControls.place(v, forwardCurrentVideoKey);
     });
     publishVideos();
+    renderPresenterMarkers();
   }
+  els.presenterMediaSelect?.addEventListener("change", () => {
+    renderPresenter();
+    els.currentPreview?.querySelector("iframe:not(.live-sim-frame)")?.contentDocument?.querySelectorAll("video")
+      .forEach(videoSeekControls.refresh);
+  });
   slides.forEach((slide, index) => slide.querySelectorAll("video").forEach(v => watchVideo(v, { slide: index, video: Number(v.dataset.twVideoIndex) }, false)));
   let wasFollowingVideo = audienceFollowsVideo();
+  if (pairedAudience) {
+    window.addEventListener("pagehide", releaseAudienceAudio);
+    window.addEventListener("pageshow", () => { audienceLeaving = false; syncRoutedVideoSound(); announceAudienceAudio(); });
+  }
   setInterval(() => {
+    if (audioAudience && (audioAudience.peer?.closed || Date.now() - audioAudience.at >= AUDIENCE_AUDIO_LEASE_MS)) {
+      audioAudience = null;
+      syncRoutedVideoSound();
+      publishVideoHeartbeat();
+    }
     const following = audienceFollowsVideo();
     if (wasFollowingVideo && !following) {
+      audioGranted = false;
+      syncRoutedVideoSound();
       currentSlide()?.querySelectorAll("[data-play-on-next]").forEach(file => { if (file.querySelector("video")) delete file.dataset.mediaStepStarted; });
       videoArrivalSlide = null;
       renderAudience();
@@ -6317,6 +6602,7 @@
   }, 200);
   // Changes publish immediately; the heartbeat also repairs drift and supplies late joiners.
   setInterval(() => { publishVideoHeartbeat(); publishVideos(); }, 1000);
+  if (pairedAudience) setInterval(announceAudienceAudio, 500);
 
   // Presenter side of the audio chip: the projector reports each chip's state and whole-second
   // time; the presenter keeps the latest per slide and chip, paints it into the current-slide
@@ -6486,7 +6772,9 @@
       const images = slideImages();
       els.presenterGallery.hidden = images.length === 0;
       if (els.presenterGalleryBtn) {
-        twSetLabel(els.presenterGalleryBtn, state.lightbox?.open ? "Close gallery" : "Gallery");
+        const label = state.lightbox?.open ? "Close gallery" : "Gallery";
+        twSetLabel(els.presenterGalleryBtn, label);
+        els.presenterGalleryBtn.setAttribute("aria-label", label);
         els.presenterGalleryBtn.dataset.tip = state.lightbox?.open ? "Close image gallery" : "Image gallery";
       }
     }
@@ -7387,7 +7675,7 @@
   // past its last card. More's "Card on a grid slide" item goes to card 1 through the same lookup.
   function gridCardTarget(n) {
     const gb = beats[clampBeat(state.beat)];
-    if (!gb || (gb.kind !== "grid" && gb.kind !== "grid-return")) return null;
+    if (!onGridBeat()) return null;
     const target = childIdsForSection("grid", gb.slideId)[n - 1];
     return target && slideIndexById.has(target) ? target : null;
   }
@@ -7436,6 +7724,10 @@
     // because it was clicked is not one (keyboardFocusedControl), so after a click on a bar button
     // the same keys (a clicker sends them) do what they did before.
     if (isActivationOfKeyboardFocusedControl(event)) return;
+    if (isPresenter && !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey) {
+      const offset = event.key === "," ? -5 : event.key === "." ? 5 : undefined;
+      if ((event.key === "0" || offset !== undefined) && seekPresenterVideo(offset)) { event.preventDefault(); return; }
+    }
     if (isPresenter && event.key === "F5") { event.preventDefault(); openAudienceChromeless(); return; }
     if (isPresenter && event.key === "?") { event.preventDefault(); toggleShortcuts(); return; }
     if (isPresenter && event.key === "Escape" && els.twShortcuts && !els.twShortcuts.hidden) { event.preventDefault(); toggleShortcuts(false); return; }
@@ -7538,6 +7830,10 @@
     if (/^[1-9]$/.test(key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
       const target = gridCardTarget(Number(key));
       if (target) { event.preventDefault(); goToContainerChild(target); return; }
+      if (isPresenter && !onGridBeat() && !event.shiftKey) {
+        const marker = presenterMarkerRows().find(marker => marker.key === Number(key));
+        if (marker && jumpToPresenterMarker(marker.t)) { event.preventDefault(); return; }
+      }
     }
     // AUDIENCE mirrors modes via shared state — f stays FULLSCREEN here and there are no mode
     // toggles (the presenter/standalone owns R/F). But when a mode IS on, the audience's arrows
@@ -7892,8 +8188,9 @@
   // A key the presenter acted on (handleKey prevented its default) is reported to the Guide (ticket 10).
   window.addEventListener("keydown", (event) => {
     const acted = event.defaultPrevented;
+    const gridBeat = isPresenter && onGridBeat();
     handleKey(event);
-    if (isPresenter && !acted && event.defaultPrevented && !shortcutForwarded.has(event)) reportGuideCommand(guideKeyCommand(event));
+    if (isPresenter && !acted && event.defaultPrevented && !shortcutForwarded.has(event)) reportGuideCommand(guideKeyCommand(event, gridBeat));
   });
   // ADR-0005 chrome policy: the control bar auto-hides after ~2s of mouse stillness and reappears
   // on any mouse movement. C pins it visible (handled in handleKey). Presenter mode hides the deck
@@ -8226,8 +8523,10 @@
   let guideChords = null;
   // The command a default key ran, read after handleKey acted on it (it prevented the default).
   // Keys that mean two commands are told apart by the state handleKey read.
-  function guideKeyCommand(event) {
-    if (/^[1-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) return "presenter.grid-child";
+  function guideKeyCommand(event, gridBeat) {
+    if (/^[1-9]$/.test(event.key) && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      return gridBeat ? "presenter.grid-child" : "presenter.video-marker";
+    }
     const chord = presenterChord(event);
     if (!chord) return null;
     if (!guideChords) {

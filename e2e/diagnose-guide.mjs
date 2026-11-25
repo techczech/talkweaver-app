@@ -123,7 +123,7 @@ try {
       const p2 = await second.firstWindow()
       await p2.waitForLoadState('domcontentloaded')
       await second.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
-      await p2.getByRole('button', { name: 'Example talks', exact: true }).click()
+      await p2.getByRole('button', { name: 'Open the example talks', exact: true }).click()
       await p2.getByRole('button', { name: 'The Saturday market', exact: true }).and(p2.getByTitle('Talk menu', { exact: true })).waitFor({ timeout: 15000 })
       if (buttonOn) {
         await p2.waitForSelector('[data-guide]', { timeout: 8000 })

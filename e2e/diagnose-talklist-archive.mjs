@@ -6,13 +6,12 @@
 // outside the list (focus not in the talk editor or a field) puts the caret in the search box.
 // Fixture vault and a throwaway --user-data-dir; set TW_SHOTS=<dir> to save screenshots.
 import assert from 'node:assert/strict'
-import { _electron as electron } from 'playwright'
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync, realpathSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { tmpdir } from 'node:os'
-import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
-const root = mkdtempSync(join(realpathSync(tmpdir()), 'tw-talklist-archive-'))
+await using appScratch = createAppScratch()
+const root = appScratch.root
 const userData = join(root, 'userData'), vault = join(root, 'vault')
 mkdirSync(userData, { recursive: true })
 function talk(rel, slug, fm) {
@@ -41,14 +40,13 @@ const given = new Date().getFullYear() === 2026 ? 'given 10 Jul' : 'given 10 Jul
 
 const shots = process.env.TW_SHOTS
 const executablePath = process.env.TW_TEST_APP_EXECUTABLE
-if (!executablePath) await ensureFreshBuild(resolve('.'))
 async function launch() {
-  const app = await electron.launch({
-    ...(executablePath ? { executablePath } : {}),
-    args: [...(executablePath ? [] : ['.']), `--user-data-dir=${userData}`],
-    cwd: resolve('.'), env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' }
+  const { app, page } = await launchApp({
+    scratch: appScratch,
+    userData,
+    executablePath,
+    env: { ...process.env, TW_REC_TEST: '1' },
   })
-  const page = await app.firstWindow()
   page.setDefaultTimeout(10000)
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
@@ -191,7 +189,7 @@ try {
   await header(page, 'agents-2026').click()
   await header(page, 'zebra').click()
   await waitStored((s) => s[ARCHIVE] === true && s['agents-2026'] === false && s.zebra === true, 'archive + zebra open, agents-2026 closed')
-  await run.app.close()
+  await appScratch.closeApp(run.app)
   run = null
   run = await launch()
   page = run.page
@@ -207,7 +205,7 @@ try {
   // Collapsing likewise: close the Archive, relaunch, still closed.
   await header(page, ARCHIVE).click()
   await waitStored((s) => s[ARCHIVE] === false, 'archive closed')
-  await run.app.close()
+  await appScratch.closeApp(run.app)
   run = null
   run = await launch()
   page = run.page
@@ -237,6 +235,5 @@ try {
   }
   throw error
 } finally {
-  if (run) await run.app.close().catch(() => {})
-  rmSync(root, { recursive: true, force: true })
+  if (run) await appScratch.closeApp(run.app).catch(() => {})
 }

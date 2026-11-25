@@ -2,6 +2,8 @@ name: PR DOM
 on:
   pull_request:
     paths:
+      - '.github/workflows/pr-dom.yml'
+      - 'scripts/test-tiers.json'
       - 'src/renderer/**'
       - 'src/shared/**'
       - 'scripts/**/*dom*'
@@ -50,6 +52,13 @@ jobs:
           JS
       - name: Install Chromium headless shell
         run: npx playwright install --with-deps --only-shell chromium
+      - name: Install reference fonts for selected layout coverage
+        if: steps.select.outputs.core_fonts == 'true'
+        run: |
+          # The deck fixtures use Trebuchet MS. Without it, Chromium lays them out in DejaVu Sans.
+          printf '%s\n' 'ttf-mscorefonts-installer msttcorefonts/accepted-mscorefonts-eula boolean true' | sudo debconf-set-selections
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ttf-mscorefonts-installer
+          test "$(fc-match -f '%{family}' 'Trebuchet MS')" = "Trebuchet MS"
       - name: Install Poppler for selected PDF coverage
         if: steps.select.outputs.poppler == 'true'
         run: |

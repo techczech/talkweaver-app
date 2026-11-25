@@ -1,14 +1,17 @@
-import { useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Bookmark, Check, ChevronDown, ChevronLeft, ChevronRight, ClipboardPaste, Plus, StickyNote, Undo2 } from 'lucide-react'
 import type { ProjectionRow } from '../../../preload/index'
 import type { NotesEntry } from '../../../shared/objects/object-verbs'
 import FixedDeckPreview from './FixedDeckPreview'
 import { useLiveSlidePreview } from './useLiveSlidePreview'
+import { withoutAuthoringVideoMarkers } from '../../../shared/video-marker-edits'
+import { markerPreviewUrl, useMarkerPreviewRead, type useMarkerPreview } from './useMarkerPreview'
 import type { PanelTry } from './RightPanelPictures'
 
 interface Props {
   path: string
   outline: string
+  markerPreview?: Pick<ReturnType<typeof useMarkerPreview>, 'frame' | 'available'>
   trying?: PanelTry | null
   applied?: string | null
   onUndoDesign?: () => void
@@ -38,10 +41,14 @@ interface Props {
 
 // WN1 / NT1 use Slide Focus's stage and the same scoped editor, with the editor under the stage.
 export default function WorkspaceSlideView({
-  path, outline, trying, applied, onUndoDesign, onOpenReveal, row, index, count, pathwayNavigation, navigationShortcuts, place, notes, notesKey, notesOpen, onToggleNotes, onNotesChange, onNotesEngaged,
+  path, outline, markerPreview, trying, applied, onUndoDesign, onOpenReveal, row, index, count, pathwayNavigation, navigationShortcuts, place, notes, notesKey, notesOpen, onToggleNotes, onNotesChange, onNotesEngaged,
   attachEditor, onTalkDetails, editable, emptySlide, sourceRecovery, section, subslides, addSubslide, subslide
 }: Props) {
-  const { previewUrl, previewErr, compiling } = useLiveSlidePreview(path, trying?.text ?? outline, row?.slide_id ?? '', 'workspace')
+  const previewText = useMemo(() => withoutAuthoringVideoMarkers(trying?.text ?? outline), [trying?.text, outline])
+  const { previewUrl, previewErr, compiling } = useLiveSlidePreview(path, previewText, row?.slide_id ?? '', 'workspace')
+  const frame = useRef<HTMLIFrameElement>(null)
+  const previewFrame = markerPreview?.frame ?? frame
+  const readPlayback = useMarkerPreviewRead(previewFrame)
   const open = notesOpen
   const showEmptySlide = editable && emptySlide
   const slideView = useRef<HTMLDivElement>(null)
@@ -63,7 +70,9 @@ export default function WorkspaceSlideView({
         <div className="workspace-slide-stage" tabIndex={-1} aria-busy={compiling} data-empty-slide={showEmptySlide || undefined} data-panel-trying={!!trying || undefined}>
           {sourceRecovery ? <div className="workspace-slide-message">This slide couldn’t be previewed.</div>
             : subslide?.thumb ? <img className="tw-subslide-stage-image" src={subslide.thumb} alt="" />
-              : previewUrl ? <FixedDeckPreview title="Slide preview" src={previewUrl} onOpenReveal={onOpenReveal} readOnly />
+              : previewUrl ? <FixedDeckPreview title="Slide preview" src={markerPreview ? markerPreviewUrl(previewUrl) : previewUrl}
+                  iframeRef={previewFrame} onFrameLoad={markerPreview ? readPlayback : undefined}
+                  onOpenReveal={onOpenReveal} readOnly={!markerPreview?.available} />
             : previewErr && <div className="workspace-slide-message">This slide couldn’t be previewed.</div>}
           {showEmptySlide && (
             <div className="workspace-empty-preview" aria-hidden="true">

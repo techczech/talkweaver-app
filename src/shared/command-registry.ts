@@ -252,6 +252,7 @@ const QUOTE_FORM_COMMANDS = QUOTE_FORM_COMMAND_IDS.map((id) => command({
 // Application commands are declared once here. The palette and native custom menus retain their
 // existing order, but now render this data instead of maintaining parallel title/shortcut lists.
 const PALETTE_COMMANDS = [
+  command({ id: 'video-marker-add', label: 'Video: Add marker at current time', scope: 'app', shortcutId: 'app.video-marker-add', menu: { path: ['Talk'], order: 120 }, palette: { visible: true, keywords: ['video', 'marker', 'chapter', 'time'] }, handlerId: 'video-marker-add' }),
   // Research repeat actions are palette-only: their keys belong to the picker, never native menus.
   command({ id: 'research-panel', label: 'Research', scope: 'app', shortcutId: 'app.research-panel', menu: { path: ['View'], order: 180 }, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-panel' }),
   command({ id: 'research-find', label: 'Find in research…', scope: 'app', shortcutId: 'app.research-find', menu: { path: ['View'], order: 181 }, palette: { visible: true, keywords: ['research', 'scout'] }, handlerId: 'research-find' }),

@@ -3,12 +3,10 @@
 // launch per colour; the recording that follows the countdown is never stopped or saved, the app is
 // closed instead. Hard limit: 120 seconds overall, every wait has its own timeout.
 // Usage: npm run build, then node e2e/diagnose-recording-countdown.mjs (SHOTS=<dir> for the pictures).
-import { _electron as electron } from 'playwright'
+import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import assert from 'node:assert/strict'
 import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
-import { once } from 'node:events'
-import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 const repo = resolve(import.meta.dirname, '..')
@@ -16,25 +14,18 @@ const shots = process.env.SHOTS ? resolve(process.env.SHOTS) : null
 if (shots) mkdirSync(shots, { recursive: true })
 const WAIT = { timeout: 15000 }
 const log = (line) => console.log(`[countdown ${new Date().toISOString().slice(11, 19)}] ${line}`)
+await using appScratch = createAppScratch()
 let app = null
 let root = null
 const cleanup = async () => {
   const closing = app; app = null
-  if (closing) {
-    const proc = closing.process()
-    await Promise.race([closing.close().catch(() => {}), new Promise((r) => setTimeout(r, 5000))])
-    if (proc && proc.exitCode === null && proc.signalCode === null) {
-      const exited = once(proc, 'exit')
-      proc.kill('SIGKILL')
-      await exited
-    }
-  }
+  await appScratch.closeApp(closing)
   if (root) { await rm(root, { recursive: true, force: true, maxRetries: 3 }); root = null }
 }
-const hardStop = setTimeout(async () => { log('FAIL: 120-second limit reached'); await cleanup(); process.exit(2) }, 120000)
+const hardStop = setTimeout(async () => { log('FAIL: 120-second limit reached'); try { await cleanup() } finally { await appScratch.close(); process.exit(2) } }, 120000)
 
 async function one(name, colour) {
-  root = mkdtempSync(join(tmpdir(), 'tw-countdown-e2e-'))
+  root = mkdtempSync(join(appScratch.root, 'case-'))
   const vault = join(root, 'vault'), talk = join(vault, 'fixture'), userData = join(root, 'userData')
   mkdirSync(talk, { recursive: true }); mkdirSync(userData, { recursive: true })
   const outline = join(talk, 'fixture-outline.md')
@@ -42,7 +33,14 @@ async function one(name, colour) {
   writeFileSync(outline, content)
   writeFileSync(join(userData, 'config.json'), JSON.stringify({ vaultRoot: vault, recordingDiscardMs: 800 }))
   log(`${name}: launching`)
-  app = await electron.launch({ cwd: repo, timeout: 30000, args: ['.', '--user-data-dir=' + userData, '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'], env: { ...process.env, TW_E2E: '1', TW_REC_TEST: '1' } })
+  app = (await launchApp({
+    scratch: appScratch,
+    userData,
+    timeout: 30000,
+    env: { ...process.env, TW_REC_TEST: '1' },
+    args: ['.', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'],
+    firstWindowOptions: WAIT,
+  })).app
   const main = await app.firstWindow(WAIT)
   await main.waitForLoadState('domcontentloaded', WAIT)
   log(`${name}: opening the presenter`)
@@ -106,4 +104,4 @@ try {
   await cleanup()
   clearTimeout(hardStop)
 }
-process.exit(code)
+process.exitCode = code
