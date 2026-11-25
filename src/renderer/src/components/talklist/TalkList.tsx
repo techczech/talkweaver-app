@@ -468,11 +468,22 @@ export default function TalkList({
     if (scrollRafRef.current != null) cancelAnimationFrame(scrollRafRef.current)
   }, [])
 
-  // Focus the search input when the tw-search-talks command fires (command palette / ⌘⇧T).
+  // Focus the search input when the tw-focus-talks-panel-search command fires (command palette / ⌘⇧T).
   useEffect(() => {
     const focus = (): void => { requestAnimationFrame(() => { searchRef.current?.focus(); searchRef.current?.select() }) }
-    window.addEventListener('tw-search-talks', focus)
-    return () => window.removeEventListener('tw-search-talks', focus)
+    window.addEventListener('tw-focus-talks-panel-search', focus)
+    return () => window.removeEventListener('tw-focus-talks-panel-search', focus)
+  }, [])
+
+  useEffect(() => {
+    const showAll = (): void => {
+      setQuery('')
+      setShow(null)
+      setFocusKey(null)
+      panelRef.current?.focus()
+    }
+    window.addEventListener('tw-show-all-talks', showAll)
+    return () => window.removeEventListener('tw-show-all-talks', showAll)
   }, [])
 
   // / from outside the panel (browser.filter): while the file list is open, / pressed anywhere but the

@@ -1,0 +1,187 @@
+.tw-welcome-mini { position: relative; display: block; aspect-ratio: 16 / 9; container-type: inline-size; overflow: auto; overflow: hidden; border: 1px solid #c8cfd8; border-radius: 4px; background: #f5f7fc; color: #273648; }
+.tw-welcome-mini > b { display: table; padding: 1px 7%; border-radius: 0 0 4px 0; background: #1175bd; color: white; font: 700 4.2cqw var(--font-ui); }
+.tw-welcome-mini--empty > b { margin: 4%; padding: 0 4px; border-left: 1px solid #1175bd; border-radius: 0; background: none; color: #69778a; }
+.tw-welcome-mini-points { position: absolute; top: 37%; left: 6%; font: 500 4cqw/1.7 var(--font-ui); }
+.tw-welcome-mini--empty .tw-welcome-mini-points { top: 55%; color: #69778a; }
+.tw-welcome-slide-columns { position: absolute; inset: 16% 5% 7%; display: grid; grid-template-columns: 1.25fr 1fr; gap: 4%; }
+.tw-welcome-slide-columns > span { display: grid; gap: 5%; min-width: 0; overflow: hidden; }
+.tw-welcome-slide-columns i { display: flex; align-items: center; padding: 0 5%; border-radius: 3px; font: 650 3.2cqw var(--font-ui); white-space: nowrap; background: #1378be; color: white; }
+.tw-welcome-slide-columns i:nth-child(2) { background: #09558c; }
+.tw-welcome-slide-columns i:last-child { background: #dbe9fa; color: #23384e; }
+.tw-welcome-slide-columns img { width: 100%; height: 100%; min-height: 0; object-fit: cover; border-radius: 3px; }
+.tw-welcome-mini-table { position: absolute; inset: 22% 6% 8%; border-top: 4px solid #1175bd; background: repeating-linear-gradient(to bottom, transparent 0 17%, #c3cfdf 17% 22%); }
+.tw-welcome-outline-art { display: flex; flex-direction: column; color: var(--ink); font-size: 10px; line-height: 1.45; }
+.tw-welcome-deck-art { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; }
+
+.tw-welcome-window { display: flex; flex-direction: column; height: 100%; background: var(--panel); }
+.tw-welcome-titlebar { height: var(--tw-native-block, 0px); flex: none; background: var(--panel); }
+.tw-welcome {
+  flex: 1; min-height: 0; min-width: 0; display: grid;
+  background: var(--panel); color: var(--ink); font: 0.8125rem/1.35 var(--font-ui);
+  container-type: inline-size; overflow: auto;
+}
+.tw-welcome--split { grid-template-columns: minmax(0, 1fr) 340px; }
+.tw-welcome h2 { margin: 0; color: var(--ink); font: 700 0.9375rem/1.2 var(--font-ui); }
+.tw-welcome-open, .tw-welcome-new { min-width: 0; min-height: 0; padding: 18px 20px 14px; }
+.tw-welcome-open { display: flex; }
+.tw-welcome-open-inner {
+  width: 100%; max-width: 760px; min-width: 0; margin-left: auto;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.tw-welcome--split .tw-welcome-new { overflow: auto; background: var(--paper); border-left: 1px solid var(--line-strong); }
+.tw-welcome-new form { display: flex; flex-direction: column; gap: 12px; }
+.tw-welcome label { font-weight: 600; display: block; margin-bottom: 5px; }
+
+.tw-welcome-button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 32px; min-width: 0; padding: 4px 12px; border: 1px solid var(--line-strong);
+  border-radius: var(--radius); background: var(--panel); color: var(--ink);
+  font: 500 0.8125rem/1.2 var(--font-ui); cursor: pointer;
+}
+.tw-welcome-button--small { min-height: 28px; padding-inline: 10px; }
+.tw-welcome-button:hover:not(:disabled), .tw-welcome-starts > button:hover:not(:disabled) {
+  border-color: var(--accent); background: var(--hover);
+}
+.tw-welcome-button:disabled, .tw-welcome-starts > button:disabled { cursor: default; opacity: 0.6; }
+.tw-welcome svg { flex-shrink: 0; }
+.tw-welcome :is(button, input):focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+.tw-welcome-search, .tw-welcome input#tw-welcome-title {
+  width: 100%; min-width: 0; border: 1px solid var(--line-strong); border-radius: var(--radius);
+  background: var(--panel); color: var(--ink);
+}
+.tw-welcome-search {
+  flex: none; display: flex; align-items: center; gap: 8px; height: 36px;
+  padding: 0 8px 0 10px; color: var(--muted);
+}
+.tw-welcome-search input {
+  flex: 1; min-width: 0; align-self: stretch; padding: 0;
+  border: 0; outline: none; background: transparent; color: var(--ink);
+  font: 0.84375rem var(--font-ui);
+}
+.tw-welcome-search input:focus-visible { outline: none; }
+.tw-welcome input::placeholder { color: var(--muted); opacity: 1; }
+.tw-welcome-search:focus-within, .tw-welcome input#tw-welcome-title:focus {
+  border-color: var(--focus);
+  outline: none;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 35%, transparent);
+}
+.tw-welcome input#tw-welcome-title { height: 34px; padding: 0 10px; font: 0.84375rem var(--font-ui); }
+.tw-welcome-search .icon-btn { width: 24px; height: 24px; }
+.tw-welcome kbd {
+  flex: none; padding: 0 5px; border: 1px solid var(--line-strong); border-radius: var(--radius-sm);
+  background: var(--surface-2); color: var(--muted); font: 500 0.6875rem/1.35 var(--font-ui); white-space: nowrap;
+}
+.tw-welcome-list { min-height: 0; overflow: auto; margin-top: 2px; }
+.tw-welcome-list table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; }
+.tw-welcome-slide-count { width: 55px; }
+.tw-welcome-edited { width: 122px; }
+.tw-welcome-list th {
+  position: sticky; top: 0; z-index: 1; padding: 0 0 0 10px; height: 27px;
+  border-block: 1px solid var(--line); background: var(--surface-2); color: var(--muted);
+  text-align: left; font: 600 0.71875rem var(--font-ui);
+}
+.tw-welcome-list th:first-child > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-welcome-list th button {
+  display: inline-flex; align-items: center; gap: 3px; height: 25px; padding: 0;
+  border: none; background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.tw-welcome-list th button:hover { color: var(--ink); }
+.tw-welcome-list th:nth-child(2), .tw-welcome-list td:nth-child(2) { text-align: right; font-variant-numeric: tabular-nums; padding-left: 0; }
+.tw-welcome-list td { height: 32px; padding: 0 0 0 10px; border-bottom: 1px solid var(--line); }
+.tw-welcome-list td:first-child { padding-right: 10px; }
+.tw-welcome-list td:last-child, .tw-welcome-list td:nth-child(2) { color: var(--muted); font-size: 0.78125rem; white-space: nowrap; }
+.tw-welcome-list tbody tr { cursor: pointer; }
+.tw-welcome-list tbody tr:hover { background: var(--hover); }
+.tw-welcome-list tr[aria-selected="true"] { background: var(--accent-soft); }
+.tw-welcome-list tr[aria-selected="true"] td:first-child { box-shadow: inset 2px 0 var(--accent); }
+.tw-welcome-row-name { display: flex; align-items: baseline; min-width: 0; gap: 8px; }
+.tw-welcome-row-name button, .tw-welcome-row-folder {
+  min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tw-welcome-row-name button {
+  flex: 0 1 auto; padding: 2px 0; border: 0; background: transparent; color: var(--ink);
+  font: 550 0.8125rem var(--font-ui); cursor: inherit; text-align: left;
+}
+.tw-welcome-row-name button:focus-visible { outline-offset: -2px; }
+.tw-welcome-row-name mark { background: var(--selection); color: inherit; border-radius: 2px; }
+.tw-welcome-row-folder { color: var(--faint); font-size: 0.71875rem; }
+.tw-welcome-row-name kbd { margin-left: auto; align-self: center; }
+.tw-welcome-list-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: -3px; }
+.tw-welcome-no-match { padding: 20px 10px; overflow: auto; overflow-wrap: anywhere; }
+.tw-welcome-no-match strong { display: block; font-size: 0.875rem; }
+.tw-welcome-no-match p { margin: 3px 0 12px; color: var(--muted); }
+.tw-welcome-no-match > div { display: flex; flex-wrap: wrap; gap: 8px; }
+.tw-welcome-reading { color: var(--muted); font-size: 0.75rem; }
+
+.tw-welcome-starts, .tw-welcome-start-actions { display: grid; gap: 8px; }
+.tw-welcome-starts > button {
+  display: grid; grid-template-columns: 92px minmax(0, 1fr); align-items: center; gap: 12px;
+  border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink);
+  padding: 10px; cursor: pointer; border-radius: 10px; text-align: left; font: inherit; min-width: 0;
+}
+.tw-welcome-starts strong { display: flex; align-items: center; gap: 7px; font-size: 0.84375rem; }
+.tw-welcome-starts strong + span { display: block; margin-top: 3px; color: var(--muted); font-size: 0.75rem; }
+.tw-welcome-art > :is(.tw-welcome-before, svg) { display: none; }
+.tw-welcome-location { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--muted); font-size: 0.78125rem; }
+.tw-welcome-location > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tw-welcome-location button { flex: none; }
+.tw-welcome--split .tw-welcome-location button { margin-left: auto; }
+.tw-welcome-error { color: var(--crimson); margin-top: 5px; }
+
+.tw-welcome--first .tw-welcome-new { overflow: auto; padding: 22px 28px; }
+.tw-welcome--first form { max-width: 860px; margin-inline: auto; }
+.tw-welcome--first h2 { font-size: 1.1875rem; }
+.tw-welcome--first .tw-welcome-starts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.tw-welcome--first .tw-welcome-start-actions { display: flex; flex-wrap: wrap; }
+.tw-welcome-no-talks {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+  margin-top: 6px; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted);
+}
+.tw-welcome-no-talks strong { display: block; color: var(--ink); font-size: 0.875rem; }
+.tw-welcome--first .tw-welcome-starts > button {
+  display: flex; flex-direction: column; align-items: stretch; gap: 9px;
+  padding: 12px; border-radius: var(--radius-lg);
+}
+.tw-welcome--first .tw-welcome-art { display: grid; }
+.tw-welcome--first .tw-welcome-art > :is(.tw-welcome-before, svg) { display: block; }
+.tw-welcome--first .tw-welcome-art .tw-welcome-outline-art { display: flex; }
+
+.tw-welcome--first .tw-welcome-art {
+  height: 118px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper);
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 9px;
+}
+
+@media (min-width: 1360px) {
+  .tw-welcome--split { grid-template-columns: minmax(0, 1fr) 450px; }
+  .tw-welcome--split h2 { font-size: 1.0625rem; }
+  .tw-welcome-list td { height: 38px; }
+  .tw-welcome--split .tw-welcome-start-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .tw-welcome--split .tw-welcome-starts > button {
+    display: flex; flex-direction: column; align-items: stretch; gap: 9px; padding: 12px; border-radius: var(--radius-lg);
+  }
+  .tw-welcome--split .tw-welcome-art {
+    display: grid; height: 118px; padding: 8px; border: 1px solid var(--line); border-radius: 8px;
+    background: var(--paper); grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 9px;
+  }
+  .tw-welcome--split .tw-welcome-art > :is(.tw-welcome-before, svg) { display: block; }
+  .tw-welcome--split .tw-welcome-art .tw-welcome-outline-art { display: flex; }
+  .tw-welcome--first .tw-welcome-new { padding-top: 60px; }
+}
+
+/* A docked Guide can narrow the workspace even in a wide window. */
+@container (max-width: 580px) {
+  .tw-welcome-open, .tw-welcome--split .tw-welcome-new { padding-inline: 12px; }
+  .tw-welcome-edited { width: 94px; }
+  .tw-welcome-row-name kbd { display: none; }
+}
+@container (max-width: 500px) {
+  .tw-welcome--split > :is(.tw-welcome-open, .tw-welcome-new) { grid-column: 1 / -1; overflow: visible; }
+  .tw-welcome--split .tw-welcome-new { border-left: 0; border-top: 1px solid var(--line-strong); }
+  .tw-welcome--split .tw-welcome-list { max-height: 300px; }
+}
+
+@media (forced-colors: active) {
+  .tw-welcome-search:focus-within, .tw-welcome input#tw-welcome-title:focus { outline: 2px solid Highlight; }
+  .tw-welcome-list tr[aria-selected="true"] td:first-child { border-left: 2px solid Highlight; }
+}

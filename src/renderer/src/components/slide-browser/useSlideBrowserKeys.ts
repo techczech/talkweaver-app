@@ -1,5 +1,5 @@
 // The Slide Browser's keyboard (capture; ⌘S + ? are handled by the workspace's global handler).
-// The scripts/test-shortcut-registry.mjs "key truth" check reads this file's handleKey region:
+// The scripts/test-presenter-key-truth.mjs "key truth" check reads this file's handleKey region:
 // every key comparison in it is claimed there by a registry id, and every key the registry lists
 // for the slide picker is bound here.
 import { type Dispatch, type RefObject, type SetStateAction, useEffect } from 'react'

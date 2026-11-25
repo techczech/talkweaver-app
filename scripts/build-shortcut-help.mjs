@@ -1,9 +1,8 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const templatePath = join(root, 'compiler/assets/templates/presenter-popup-single-html.html')
 export const iconsModulePath = join(root, 'src/shared/presenter-icons.generated.ts')
 const lucidePath = join(root, 'compiler/assets/icons/lucide.json')
 const startMarker = '/*SHORTCUT_HELP*/'
@@ -73,7 +72,7 @@ export async function buildShortcutHelp() {
   ].join('\n  ')
 }
 
-export async function renderTemplateWithShortcutHelp(template = readFileSync(templatePath, 'utf8')) {
+export async function renderTemplateWithShortcutHelp(template) {
   const start = template.indexOf(startMarker)
   const end = template.indexOf(endMarker)
   if (start < 0 || end < start) throw new Error(`Template must contain ${startMarker} and ${endMarker}`)
@@ -82,12 +81,17 @@ export async function renderTemplateWithShortcutHelp(template = readFileSync(tem
 }
 
 export async function writeShortcutHelp() {
-  // Icons first: the template block is built from the same bodies.
-  writeFileSync(iconsModulePath, await renderIconsModule(), 'utf8')
-  writeFileSync(templatePath, await renderTemplateWithShortcutHelp(), 'utf8')
-  return templatePath
+  const { writeDeckStyles } = await import('./build-deck-styles.mjs')
+  const icons = await renderIconsModule()
+  if (!existsSync(iconsModulePath) || readFileSync(iconsModulePath, 'utf8').replaceAll('\r\n', '\n') !== icons) {
+    writeFileSync(iconsModulePath, icons, 'utf8')
+  }
+  return writeDeckStyles()
 }
 
-if (import.meta.url === new URL(process.argv[1], 'file:').href) {
-  console.log(`shortcut help → ${await writeShortcutHelp()}`)
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  writeShortcutHelp().then((path) => console.log(`shortcut help → ${path}`)).catch((error) => {
+    console.error(error)
+    process.exitCode = 1
+  })
 }

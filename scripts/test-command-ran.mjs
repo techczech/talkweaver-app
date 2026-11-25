@@ -10,6 +10,7 @@
 //     per session (except commands that delete, which ask every time), passes the talk's path, never throws,
 //     and announces a first tick to listeners;
 //   - the handler wrapper: every handler reports its own id after it ran; one that throws is not a run.
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs'
@@ -53,7 +54,7 @@ const accepted = (id) => ACCEPTED[id] ?? null
 // key-less palette entry's control). Keys bound outside the template report for themselves: the preloads'
 // keys with a literal reportGuideCommand('<id>'), and F5 / ⌘R, which main intercepts, with a literal
 // guideLearn.commandRan('<id>'). The bridge preload forwards the page's event to main (guide:command-ran).
-const TEMPLATE = read('compiler/assets/templates/presenter-popup-single-html.html')
+const TEMPLATE = readPresenterTemplate()
 const generated = (name) => { const m = TEMPLATE.match(new RegExp(`const ${name} = (.*);\n`)); return m ? JSON.parse(m[1]) : null }
 const PRESENTER_COMMAND_KEYS = generated('PRESENTER_COMMAND_KEYS')
 const PRESENTER_CONTROL_COMMANDS = generated('PRESENTER_CONTROL_COMMANDS')

@@ -11,13 +11,12 @@
 //   • containerRenderPlan: for a grid beat → {done[],next,items[{done,next}]}; for a contents
 //     beat → {items[{done,current}], currentIndex, variant}. Pure function of (beat, beats,
 //     beatIndex, childIds).
-import { readFileSync } from 'node:fs'
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const templatePath = join(here, '..', 'compiler', 'assets', 'templates', 'presenter-popup-single-html.html')
-const templateHtml = readFileSync(templatePath, 'utf8')
+const templateHtml = readPresenterTemplate()
 
 const START = '// === CONTAINER_HELPERS_START'
 const END = '// === CONTAINER_HELPERS_END'

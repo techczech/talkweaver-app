@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { presenterTemplateSource } from '../compiler/scripts/lib/presenter-template.mjs'
 
 const repo = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const scratch = mkdtempSync(join(tmpdir(), '.tw-packaged-layout-'))
@@ -25,7 +26,10 @@ function filesBelow(root) {
 }
 
 try {
-  cpSync(join(repo, 'compiler'), compiler, { recursive: true })
+  cpSync(join(repo, 'compiler'), compiler, {
+    recursive: true,
+    filter: (source) => source !== join(repo, 'compiler', presenterTemplateSource)
+  })
 
   // Packaged compiler modules may use relative files and Node built-ins only. This static half of
   // the gate prevents an in-repo node_modules directory from masking a bare dependency during CI.

@@ -4,9 +4,9 @@
 // 2026-07-08 (28ed6ca) the deck window's before-input-event refreshed on F5 in every deck window,
 // so the presenter page's F5 (presenter.audience) never ran.
 // Usage: node scripts/test-deck-window-keys.mjs
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import { functionBody, readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
-import { readFileSync } from 'node:fs'
 
 const { deckWindowKeyAction, deckWindowMode, OPEN_AUDIENCE_SCRIPT } = await import(
   new URL('../src/main/deck-window-keys.ts', import.meta.url)
@@ -40,7 +40,7 @@ assert.equal(deckWindowMode(undefined), 'window')
 
 // The action is the presenter's Audience button, so F5 and the button cannot drift apart.
 assert.match(OPEN_AUDIENCE_SCRIPT, /getElementById\("presenterAudienceApp"\)\?\.click\(\)/, 'F5 clicks the presenter Audience button')
-const template = readFileSync(new URL('../compiler/assets/templates/presenter-popup-single-html.html', import.meta.url), 'utf8')
+const template = readPresenterTemplate()
 assert.match(template, /id="presenterAudienceApp"/, 'the presenter template has the Audience button')
 assert.match(template, /els\.presenterAudienceApp\.addEventListener\("click", openAudienceChromeless\)/, 'the Audience button opens the audience view')
 

@@ -1,1038 +1,328 @@
-import { strict as assert } from 'node:assert'
-import { readFileSync, readdirSync } from 'node:fs'
-import { dirname, join, relative, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { installTestDom, TestKeyboardEvent } from './test-dom.mjs'
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
+import assert from 'node:assert/strict'
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { test } from 'node:test'
+import { build } from 'esbuild'
+import { JSDOM } from 'jsdom'
+import { toAccelerator } from '@app-patterns/commands'
+import { SHORTCUT_REGISTRY, SHORTCUT_SCOPES, shortcutEventMatches } from '../src/shared/shortcut-registry.ts'
+import { COMMAND_REGISTRY, listedPaletteCommands, paletteExclusion, toolsWindowCommands } from '../src/shared/command-registry.ts'
+import { EVERYWHERE, NOT_BY_PLACE, PLACES, offeredAt } from '../src/shared/command-places.ts'
+import { appCommandIdOf, bridleIdOf, bridleIdOfKeymapId, keymapIdOf, registry } from '../src/shared/bridle-commands.ts'
+import { overridesFromStore, storeWritesFor } from '../src/shared/keymap-overrides.ts'
+import { keyboardSheet } from '../src/shared/keyboard-sheet.ts'
+import { viewKeySections } from '../src/shared/view-keys.ts'
+import { PRESENTER_KEY_NEEDS } from '../src/shared/presenter-palette.ts'
+import { updateCheckMenuTemplate } from '../src/main/settings-update-menu.ts'
+import { renderTemplateWithShortcutHelp, renderIconsModule, iconsModulePath } from './build-shortcut-help.mjs'
 
-const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const { SHORTCUT_REGISTRY, SHORTCUT_SCOPES, shortcutEventMatches } = await import(
-  new URL('../src/shared/shortcut-registry.ts', import.meta.url)
-)
-const dom = installTestDom()
-try {
-  assert.equal(
-    typeof shortcutEventMatches,
-    'function',
-    'the shortcut registry exposes platform-aware event matching for DOM-owned editors'
-  )
-  assert.equal(
-    shortcutEventMatches(
-      new TestKeyboardEvent('keydown', { key: 'Enter', metaKey: true }),
-      'editor.object-finish'
-    ),
-    true,
-    'Mod-Enter matches Command on macOS'
-  )
-  assert.equal(
-    shortcutEventMatches(
-      new TestKeyboardEvent('keydown', { key: 'Enter', ctrlKey: true }),
-      'editor.object-finish'
-    ),
-    true,
-    'Mod-Enter matches Control on Windows and Linux'
-  )
-  assert.equal(
-    shortcutEventMatches(
-      new TestKeyboardEvent('keydown', { key: 'F8' }),
-      'editor.object-finish',
-      'F8'
-    ),
-    true,
-    'an object-finish rebind takes effect in the DOM-owned shell'
-  )
-  assert.equal(
-    shortcutEventMatches(
-      new TestKeyboardEvent('keydown', { key: 'Enter', metaKey: true }),
-      'editor.object-finish',
-      'F8'
-    ),
-    false,
-    'the replaced default no longer finishes after a rebind'
-  )
-  for (const modifier of ['metaKey', 'ctrlKey']) {
-    assert.equal(
-      shortcutEventMatches(
-        new TestKeyboardEvent('keydown', { key: '/', [modifier]: true }),
-        'app.help'
-      ),
-      true,
-      `keyboard help accepts ${modifier === 'metaKey' ? 'Command' : 'Control'} + /`
-    )
-  }
-  for (const [id, shiftKey] of [['editor.new-section', false], ['editor.new-subsection', true]]) {
-    const chord = (metaKey, ctrlKey) => new TestKeyboardEvent('keydown', { key: 's', metaKey, ctrlKey, shiftKey })
-    assert.equal(shortcutEventMatches(chord(true, true), id), true, id)
-    assert.equal(shortcutEventMatches(chord(true, false), id), false, `${id} leaves the Command binding alone`)
-    assert.equal(shortcutEventMatches(chord(false, true), id), false, `${id} leaves the Control binding alone`)
-  }
-} finally {
-  dom.restore()
+const shortcuts = new Map(SHORTCUT_REGISTRY.map(entry => [entry.id, entry]))
+const commands = new Map(COMMAND_REGISTRY.map(command => [command.id, command]))
+const palette = new Map(listedPaletteCommands().map(command => [command.id, command]))
+const defaultLabel = id => shortcuts.get(id).unbound ? 'no default' : shortcuts.get(id).keys
+
+function nativeMenu(keys = {}, editorKeys) {
+  const flatten = items => items.flatMap(item => [item, ...flatten(item.submenu ?? [])])
+  return flatten(updateCheckMenuTemplate({ platform: 'darwin', keys, editorKeys, run() {}, log() {} }))
 }
-const rendererRegistry = readFileSync(join(root, 'src/renderer/src/keymap/registry.ts'), 'utf8')
-const objectBlockField = readFileSync(
-  join(root, 'src/renderer/src/extensions/objectBlocks/field.ts'),
-  'utf8'
-)
 
-function declaredEditorCommands(source) {
-  const block = source.match(/export const EDITOR_COMMANDS: EditorCommand\[\] = \[([\s\S]*?)\n\]/)?.[1] ?? ''
-  return block.split('\n').flatMap((line) => {
-    const commandId = line.match(/^\s*command\('([^']+)'/)?.[1]
-    if (!commandId) return []
-    const explicitRegistryId = line.match(/,\s*'([^']+)'\),?\s*$/)?.[1]
-    return [{ id: commandId, registryId: explicitRegistryId ?? `editor.${commandId}` }]
+function sheetRows(chordOf = defaultLabel) {
+  const sheet = keyboardSheet({ place: null, chordOf, defaultChordOf: defaultLabel, canRun: id => palette.has(id) })
+  return [...sheet.groups, ...sheet.surfaces].flatMap(section => section.rows)
+}
+
+const template = readPresenterTemplate()
+
+function generatedPresenterData(name) {
+  // The generator serialises these values as one JSON declaration per line.
+  const prefix = `  const ${name} = `
+  const declaration = template.split('\n').find(line => line.startsWith(prefix))
+  assert.ok(declaration?.endsWith(';'), `missing generated presenter data: ${name}`)
+  return JSON.parse(declaration.slice(prefix.length, -1))
+}
+
+const root = fileURLToPath(new URL('../', import.meta.url))
+const renderer = async () => {
+  // The renderer resolves extensionless imports through its bundler. Keep CodeMirror instances shared.
+  const { outputFiles } = await build({
+    stdin: {
+      contents: `
+        export { EDITOR_COMMANDS, NON_CONSUMING } from './src/renderer/src/keymap/registry'
+        export * from './src/renderer/src/keymap/store'
+        export { resolveActionBarItems } from './src/renderer/src/components/actionBar/model'
+        export { EditorView, keymap } from '@codemirror/view'
+        export { EditorState } from '@codemirror/state'
+      `,
+      resolveDir: root
+    },
+    bundle: true, write: false, format: 'esm', platform: 'node', jsx: 'automatic',
+    external: ['@codemirror/*', 'react', 'react/*']
   })
-}
-
-function declaredNonConsuming(source) {
-  const body = source.match(/export const NON_CONSUMING = new Set\(\[([^\]]*)\]\)/)?.[1] ?? ''
-  return new Set([...body.matchAll(/'([^']+)'/g)].map((match) => match[1]))
-}
-
-const editorCommands = declaredEditorCommands(rendererRegistry)
-const nonConsumingCommands = declaredNonConsuming(rendererRegistry)
-assert.deepEqual(
-  editorCommands
-    .filter((command) => (
-      command.registryId === 'editor.object-edit'
-      || command.registryId === 'editor.title-continue'
-      || command.registryId === 'editor.protected-line-continue'
-      || command.registryId === 'editor.list-continue'
-    ))
-    .map((command) => command.id),
-  ['object-edit', 'title-continue', 'protected-line-continue', 'list-continue'],
-  'Enter fall-through chain follows EDITOR_COMMANDS declaration order: object before title before protected line before list'
-)
-assert.deepEqual(
-  SHORTCUT_REGISTRY
-    .filter((entry) => entry.id === 'editor.object-finish' || entry.id === 'editor.object-leave')
-    .map((entry) => [entry.id, entry.codes]),
-  [
-    ['editor.object-finish', ['Mod-Enter']],
-    ['editor.object-leave', ['Escape']]
-  ],
-  'object finish and commit-and-leave have editor-scope shortcut declarations'
-)
-assert.deepEqual(
-  editorCommands
-    .filter((command) => (
-      command.registryId === 'editor.object-finish'
-      || command.registryId === 'editor.object-leave'
-    ))
-    .map((command) => command.id),
-  ['object-finish', 'object-leave'],
-  'object finish and commit-and-leave route through EDITOR_COMMANDS for rebinding and discovery'
-)
-assert.equal(
-  /key:\s*['"](?:Mod-Enter|Escape)['"]/.test(objectBlockField),
-  false,
-  'object finish and commit-and-leave are not hard-coded in the object-block extension'
-)
-assert.equal(
-  objectBlockField.includes('// shortcut-id: browser.move editor.protect-heading-delete'),
-  true,
-  'the object-block binding comment names only the local arrow and deletion guards'
-)
-assert.equal(
-  SHORTCUT_REGISTRY.some((entry) => entry.id === 'app.toggle-inspector' && entry.keys === '⌘P'),
-  true,
-  'app shortcut registry declares Toggle Inspector on ⌘P'
-)
-assert.equal(
-  SHORTCUT_REGISTRY.some((entry) => entry.id === 'app.pathways' && entry.keys === '⌘⌥P' && entry.codes.includes('Mod-Alt-p')),
-  true,
-  'app shortcut registry declares Pathway view on the free mnemonic ⌘⌥P chord'
-)
-assert.deepEqual(
-  SHORTCUT_REGISTRY.filter((entry) => entry.id.startsWith('presenter.poll-')).map((entry) => [entry.id, entry.keys]),
-  [['presenter.poll-primary', 'Q'], ['presenter.poll-reveal', '⇧ Q'], ['presenter.poll-compose', 'K']],
-  'Presenter poll click targets have registered and discoverable keyboard paths'
-)
-assert.deepEqual(
-  SHORTCUT_REGISTRY.filter((entry) => entry.scope === 'pathway').map((entry) => entry.id),
-  ['pathway.move-item'],
-  'Pathway window keyboard parity is fully registered'
-)
-assert.deepEqual(
-  SHORTCUT_REGISTRY.filter((entry) => entry.unbound).map((entry) => entry.id),
-  ['research.copy-reference', 'research.reveal', 'research.source', 'research.used-in', 'research.scope-talk', 'research.scope-research', 'research.scope-everything', 'research.rename', 'research.change-kind', 'research.delete', 'research.move', 'research.copy', 'research.insert-here', 'research.retry', 'app.edit-image', 'app.check-for-updates', 'app.whats-new', 'editor.bulleted-list', 'editor.numbered-list', 'editor.italic', 'editor.inline-code', 'editor.highlight', 'editor.strikethrough', 'editor.underline', 'editor.object-expand', 'editor.object-discard', 'editor.delete-comment', 'editor.insert-notes'],
-  'unbound commands include the list actions alongside the existing text-formatting residents'
-)
-assert.equal(SHORTCUT_REGISTRY.some(entry => entry.id === 'pathway.reorder'), false, 'the deleted window Reorder mode has no binding')
-
-let failures = 0
-const fail = (message) => { failures += 1; console.error(`  ✗ ${message}`) }
-const ok = (message) => console.log(`  ✓ ${message}`)
-
-function sharedBindingConflicts(entries, commands, nonConsuming, directNonConsuming = new Set()) {
-  const groups = new Map()
-  for (const entry of entries) {
-    if (entry.unbound) continue
-    const pair = `${entry.scope}\0${entry.codes.join('|')}`
-    const sharers = groups.get(pair) ?? []
-    sharers.push(entry)
-    groups.set(pair, sharers)
+  const dir = mkdtempSync(join(tmpdir(), 'tw-test-shortcuts-'))
+  try {
+    // Resolve the external renderer packages from the checkout when importing the scratch bundle.
+    symlinkSync(join(root, 'node_modules'), join(dir, 'node_modules'), 'junction')
+    const bundle = join(dir, 'renderer.mjs')
+    writeFileSync(bundle, outputFiles[0].contents)
+    return await import(pathToFileURL(bundle).href)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
   }
+}
 
+test('registry entries have unique ids, valid scopes and display metadata', () => {
+  assert.equal(shortcuts.size, SHORTCUT_REGISTRY.length, 'duplicate shortcut id')
+  assert.equal(commands.size, COMMAND_REGISTRY.length, 'duplicate command id')
+  for (const entry of SHORTCUT_REGISTRY) {
+    assert.ok(SHORTCUT_SCOPES.includes(entry.scope), `${entry.id}: unknown scope ${entry.scope}`)
+    for (const field of ['id', 'label', 'group', 'explanation', 'keys']) {
+      assert.ok(entry[field]?.trim(), `${entry.id}: missing ${field}`)
+    }
+    assert.equal(entry.codes.length === 0, Boolean(entry.unbound), `${entry.id}: bound state disagrees with codes`)
+    assert.ok(entry.codes.every(code => code.trim()), `${entry.id}: blank code`)
+  }
+})
+
+// Each allowance names a pair and its one shared chord, so a third owner still causes a failure.
+const contextPairs = [
+  ['Escape', 'editor.rollback-trigger', 'editor.object-leave'], // Trigger rollback gets first refusal.
+  ['Backspace', 'editor.protect-heading-delete', 'editor.object-delete'], // Heading guard vs selected object.
+  ['Escape', 'slide-picker.close', 'slide-picker.close-beside'], // Close the talk beside first.
+  ['Backspace', 'slide-picker.clear-scope', 'slide-picker.remove-chip'], // Empty Find a talk box owns its chips.
+  ['Mod-Enter', 'slide-picker.insert', 'slide-picker.add-beside'], // Find a talk results vs selected slides.
+  ['ArrowRight', 'presenter.next', 'presenter.instant-return'], // Return first while on an instant slide.
+  ['Enter', 'presenter.next', 'presenter.save-run'], // The run-save offer takes Enter while visible.
+  ['Mod-z', 'presenter.ink-undo', 'presenter.board-undo'], // Pen and board each have their own undo.
+  ['z', 'presenter.gallery', 'presenter.embed-fullscreen'] // The slide's picture takes precedence over its embed.
+]
+
+function bindingKey(code, primary) {
+  const base = code.replace(/^(?:(?:Mod|Ctrl|Alt|Shift)-)*/, '')
+  const mods = new Set(code.slice(0, code.length - base.length).split('-').filter(Boolean))
+  if (mods.delete('Mod')) mods.add(mods.has('Ctrl') ? 'Meta' : primary)
+  return [...mods].sort().concat(base.toLowerCase()).join('+')
+}
+
+test('each chord has one owner per scope and platform, except documented context overlaps', async () => {
+  const { EDITOR_COMMANDS, NON_CONSUMING } = await renderer()
+  const editorOrder = new Map(EDITOR_COMMANDS.filter(command => !command.surface)
+    .map((command, index) => [command.shortcutId, { index, fallsThrough: NON_CONSUMING.has(command.id) }]))
   const conflicts = []
-  for (const group of groups.values()) {
-    // A direct fall-through acts only in its own narrow state and otherwise leaves the key to the
-    // rest of the group (its surface's handler checks it first), so it claims nothing from them.
-    // (Talk search 08: a DOM surface's fall-through — the picker's add-beside, close-beside,
-    // remove-chip — may share its key with a consuming DOM command, not only with an editor one.)
-    const sharers = group.filter((entry) => !directNonConsuming.has(entry.id))
-    if (sharers.length < 2) continue
-    const idsInGroup = new Set(sharers.map((entry) => entry.id))
-    const declarationChain = commands.filter((command) => idsInGroup.has(command.registryId))
-    const isDeterministicFallThrough =
-      declarationChain.length === sharers.length
-      && declarationChain.slice(0, -1).every((command) => nonConsuming.has(command.id))
-    if (isDeterministicFallThrough) continue
-    for (const current of sharers.slice(1)) {
-      conflicts.push(
-        `conflict: ${sharers[0].id} and ${current.id} share (${current.scope}, ${current.codes.join(' / ')})`
-      )
-    }
-  }
-  return conflicts
-}
-
-assert.deepEqual(
-  sharedBindingConflicts(
-    [
-      { id: 'editor.object-edit', scope: 'editor', codes: ['Enter'] },
-      { id: 'editor.title-continue', scope: 'editor', codes: ['Enter'] },
-      { id: 'editor.protected-line-continue', scope: 'editor', codes: ['Enter'] },
-      { id: 'editor.list-continue', scope: 'editor', codes: ['Enter'] }
-    ],
-    [
-      { id: 'object-edit', registryId: 'editor.object-edit' },
-      { id: 'title-continue', registryId: 'editor.title-continue' },
-      { id: 'protected-line-continue', registryId: 'editor.protected-line-continue' },
-      { id: 'list-continue', registryId: 'editor.list-continue' }
-    ],
-    new Set(['object-edit', 'title-continue', 'protected-line-continue'])
-  ),
-  [],
-  'a four-command chain is legal when every sharer except the last falls through'
-)
-
-assert.deepEqual(
-  sharedBindingConflicts(
-    [
-      { id: 'editor.first-consuming', scope: 'editor', codes: ['Enter'] },
-      { id: 'editor.second-consuming', scope: 'editor', codes: ['Enter'] }
-    ],
-    [
-      { id: 'first-consuming', registryId: 'editor.first-consuming' },
-      { id: 'second-consuming', registryId: 'editor.second-consuming' }
-    ],
-    new Set()
-  ),
-  ['conflict: editor.first-consuming and editor.second-consuming share (editor, Enter)'],
-  'two consuming commands sharing a binding remain an illegal duplicate'
-)
-
-assert.deepEqual(
-  sharedBindingConflicts(
-    [
-      { id: 'editor.rollback-trigger', scope: 'editor', codes: ['Escape'] },
-      { id: 'editor.object-leave', scope: 'editor', codes: ['Escape'] }
-    ],
-    [{ id: 'object-leave', registryId: 'editor.object-leave' }],
-    new Set(['object-leave']),
-    new Set(['editor.rollback-trigger'])
-  ),
-  [],
-  'the rollback trigger falls through first, then object leave handles Escape'
-)
-
-// Talk search 08: a DOM fall-through beside a consuming DOM command is legal; two consuming DOM
-// commands on one key in one scope are still a conflict.
-assert.deepEqual(
-  sharedBindingConflicts(
-    [
-      { id: 'slide-picker.insert', scope: 'slide-picker', codes: ['Mod-Enter'] },
-      { id: 'slide-picker.add-beside', scope: 'slide-picker', codes: ['Mod-Enter'] }
-    ],
-    [],
-    new Set(),
-    new Set(['slide-picker.add-beside'])
-  ),
-  [],
-  'add beside falls through to insert outside the Find a talk box'
-)
-assert.deepEqual(
-  sharedBindingConflicts(
-    [
-      { id: 'slide-picker.select-section', scope: 'slide-picker', codes: ['s'] },
-      { id: 'slide-picker.sort', scope: 'slide-picker', codes: ['s'] }
-    ],
-    [],
-    new Set()
-  ),
-  ['conflict: slide-picker.select-section and slide-picker.sort share (slide-picker, s)'],
-  'two consuming DOM commands on one key in one scope remain an illegal duplicate (the S conflict, had both stayed in one scope)'
-)
-
-console.log('Registry hygiene:')
-const legalScopes = new Set(SHORTCUT_SCOPES)
-const ids = new Set()
-for (const entry of SHORTCUT_REGISTRY) {
-  if (!entry.id?.trim()) fail('entry missing id')
-  else if (ids.has(entry.id)) fail(`duplicate id "${entry.id}"`)
-  else ids.add(entry.id)
-  if (!entry.keys?.trim()) fail(`${entry.id}: missing display keys`)
-  if (!entry.unbound && (!Array.isArray(entry.codes) || entry.codes.length === 0 || entry.codes.some((code) => !code.trim()))) {
-    fail(`${entry.id}: codes must be a non-empty string array`)
-  }
-  if (!legalScopes.has(entry.scope)) fail(`${entry.id}: illegal scope "${entry.scope}"`)
-  if (!entry.label?.trim()) fail(`${entry.id}: missing label`)
-  if (!entry.explanation?.trim()) fail(`${entry.id}: missing explanation`)
-  if (!entry.group?.trim()) fail(`${entry.id}: missing group`)
-}
-// A command in this set acts only in its own narrow state and otherwise leaves its key to the other
-// commands sharing it (its handler checks it first and falls through).
-const directEditorFallthrough = new Set([
-  'editor.rollback-trigger',
-  // Talk search 08, the slide picker. Add beside acts only in Find a talk while it lists talks;
-  // elsewhere ⌘↵ inserts the selected slides.
-  'slide-picker.add-beside',
-  // Esc closes the talk beside as one step of the picker's close ladder (slide-picker.close).
-  'slide-picker.close-beside',
-  // ⌫ removes a talk chip only in an empty Find a talk box; elsewhere it clears the rail's scope.
-  'slide-picker.remove-chip',
-  // 0.38 ticket 13: Z is the slide's zoom. The presenter's handler gives it to the picture where
-  // the slide has one (presenter.gallery); the embedded page takes it only on a slide with a page
-  // and no picture.
-  'presenter.embed-fullscreen',
-  // 0.38 ticket 08: ⌘Z undoes the Pen's last stroke only while the pen is on; the board panel,
-  // while it shows, takes ⌘Z first (presenter.board-undo).
-  'presenter.ink-undo'
-])
-for (const conflict of sharedBindingConflicts(
-  SHORTCUT_REGISTRY,
-  editorCommands,
-  nonConsumingCommands,
-  directEditorFallthrough
-)) fail(conflict)
-if (failures === 0) ok(`${SHORTCUT_REGISTRY.length} entries are well-formed with no illegal binding conflicts`)
-
-function walk(dir) {
-  const files = []
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name)
-    if (entry.isDirectory()) files.push(...walk(path))
-    else if (/\.(?:ts|tsx)$/.test(entry.name)) files.push(path)
-  }
-  return files
-}
-
-// Files with real commands map to one or more declared ids. Context-local arrow/Enter/Escape
-// handling shares the generic browser/picker declarations instead of inventing duplicate commands.
-const BINDING_MAP = new Map([
-  // This inventory maps the physical file that owns each binding; the scanner already walks src/.
-  ['src/main/index.ts', ['app.toggle-inspector', 'presenter.refresh', 'presenter.audience']],
-  ['src/preload/present-edit-bridge.ts', ['presenter.edit']],
-  ['src/preload/present-guide.ts', ['presenter.guide']],
-  ['src/preload/present-live-bridge.ts', ['presenter.live', 'presenter.close']],
-  ['src/preload/present-rec-ui.ts', ['presenter.record', 'presenter.record-flag', 'presenter.record-pause', 'presenter.save-run-as', 'presenter.save-run', 'presenter.close', 'presenter.next', 'presenter.previous']],
-  ['src/renderer/src/App.tsx', ['app.sidebar-talks', 'app.sidebar-outline', 'app.sidebar-toggle', 'app.settings']],
-  // The image drawer (ticket 11): docked beside the editor; keys act only while focus is inside it.
-  ['src/renderer/src/components/ResearchPanel.tsx', ['research.previous', 'research.next', 'research.insert', 'research.make-slide', 'research.open', 'research.scope', 'research.close']],
-  ['src/renderer/src/components/ImageDrawer.tsx', ['image-drawer.move', 'image-drawer.insert', 'image-drawer.close', 'image-drawer.choose-editable', 'image-drawer.choose-picture']],
-  ['src/renderer/src/components/CommandMenu.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
-  // The option controls the Inspector draws (the file no longer holds the ⌘L palette): ← → Space Enter within a group.
-  ['src/renderer/src/components/CommandPalette.tsx', ['picker.navigate', 'picker.choose', 'picker.close', 'picker.toggle']],
-  ['src/renderer/src/components/Editor.tsx', ['app.help', 'editor.rollback-trigger', 'editor.list-continue']],
-  ['src/renderer/src/components/GridView.tsx', ['browser.move', 'browser.open']],
-  // The docked layout picker (ADR-0032): its own scope, the keyboard map of the locked mockup.
-  ['src/renderer/src/components/LayoutPickerColumn.tsx', ['layout-picker.try', 'layout-picker.along', 'layout-picker.next-group', 'layout-picker.keep', 'layout-picker.keep-starter', 'layout-picker.put-back']],
-  ['src/renderer/src/components/RunsView.tsx', ['browser.move', 'browser.open', 'browser.close']],
-  ['src/renderer/src/components/Importer.tsx', ['importer.move', 'importer.flagged', 'importer.search', 'importer.apply', 'importer.reset', 'importer.views', 'importer.help', 'importer.close']],
-  ['src/renderer/src/components/IconPicker.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
-  ['src/renderer/src/components/Inspector.tsx', ['app.inspector-slides', 'app.inspector-steps']],
-  // The Inspector's option pictures (ADR-0032 §7): ← → within a group, ↵/Space choose — the same keys as its other option controls.
-  ['src/renderer/src/components/InspectorOptionPictures.tsx', ['picker.navigate', 'picker.choose', 'picker.toggle']],
-  ['src/renderer/src/components/InsertViewer.tsx', ['browser.move', 'browser.open', 'browser.close', 'browser.insert', 'browser.toggle-selection']],
-  ['src/renderer/src/components/MergeConfirm.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
-  ['src/renderer/src/components/MetadataPanel.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
-  ['src/renderer/src/components/PathwaysView.tsx', ['pathway.move-item']],
-  // The Plain view's Command-I icon picker (ticket 13): ←↑↓→ move, ↵ inserts, esc closes; Tab is held in the field (no move out).
-  ['src/renderer/src/components/PlainIconPicker.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
-  ['src/renderer/src/components/PropagationChecklist.tsx',['picker.navigate', 'picker.choose', 'picker.close', 'picker.toggle']],
-  ['src/renderer/src/components/SearchPalette.tsx', ['browser.move', 'browser.insert', 'browser.preview', 'browser.toggle-selection', 'browser.close']],
-  // The ⌘S slide picker: its own scope; the key-truth check below holds it to exactly these keys.
-  ['src/renderer/src/components/slide-browser/useSlideBrowserKeys.ts', ['slide-picker.move', 'slide-picker.extend', 'slide-picker.view', 'slide-picker.tab', 'slide-picker.close', 'slide-picker.clear-scope', 'slide-picker.toggle-selection', 'slide-picker.select-section', 'slide-picker.insert', 'slide-picker.select-whole-section', 'slide-picker.tags', 'slide-picker.preview', 'slide-picker.versions', 'slide-picker.near', 'slide-picker.density', 'slide-picker.rail', 'slide-picker.talk-beside', 'slide-picker.close-beside']],
-  ['src/renderer/src/components/SlideFocus.tsx', ['browser.move', 'browser.open', 'browser.close']],
-  ['src/renderer/src/components/SlidesOrganizer.tsx', ['browser.move', 'browser.open', 'browser.close']],
-  ['src/renderer/src/components/Studio.tsx', ['app.help', 'browser.move', 'browser.open', 'browser.close']],
-  // The recording editor matches its keys with shortcutEventMatches over KEYS (registry ids); Escape closes the most local thing.
-  ['src/renderer/src/components/recording/RecordingEditor.tsx', ['studio.editor-play', 'studio.editor-cut', 'studio.editor-previous-word', 'studio.editor-next-word', 'studio.editor-extend-previous', 'studio.editor-extend-next', 'studio.trim-undo', 'studio.trim-redo', 'studio.trim-start', 'studio.trim-end']],
-  // The Tools window's keys (work-files ticket 30): one handler runs every `tools.*` chord, and ⌘⇧P opens that window's palette.
-  ['src/renderer/src/components/ToolsPalette.tsx', ['app.command-palette', 'tools.view-sessions', 'tools.view-published', 'tools.view-workfiles', 'tools.plan-run', 'tools.edit-plan', 'tools.plan-like-this', 'tools.publish', 'tools.go-live', 'tools.open-run', 'tools.copy-link', 'tools.copy-invitation', 'tools.new-work-file']],
-  ['src/renderer/src/components/TalkText.tsx', ['talktext.notes', 'talktext.script', 'talktext.rewrite', 'talktext.show-slide', 'talktext.previous-slide', 'talktext.next-slide', 'talktext.copy', 'talktext.help', 'talktext.close']],
-  ['src/renderer/src/components/TagPicker.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
-  ['src/renderer/src/components/WorkspaceLayout.tsx', ['app.research-panel', 'app.research-find', 'app.slide-search', 'app.find-talk', 'app.context-menu', 'app.layout-picker', 'app.icon-picker', 'app.image-search', 'app.where-used', 'app.slide-focus', 'app.command-palette', 'app.new-window', 'app.help', 'app.toggle-inspector', 'app.view-slides', 'app.view-plain', 'app.view-markdown', 'app.view-grid', 'app.present', 'app.present-current']],
-  ['src/renderer/src/components/talklist/TalkList.tsx', ['browser.open']],
-  // Talk search completion (ADR-0029 §2): ↑↓ move, ↵/Tab complete, Esc dismisses — a picker.
-  ['src/renderer/src/components/talklist/SearchAssist.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
-  // Find a talk (talk search 05): ↑↓ move its results, ↵ shows a talk, Esc clears; ⌘↵ adds beside
-  // and ⌫ in the empty box removes the last chip (talk search 08).
-  ['src/renderer/src/components/browser-rail/FindTalk.tsx', ['picker.navigate', 'picker.choose', 'picker.close', 'slide-picker.add-beside', 'slide-picker.remove-chip']],
-  ['src/renderer/src/components/talklist/menus.tsx', ['picker.navigate', 'picker.choose', 'picker.close']],
-  // Plain margin menus (plain view ticket 04): Esc closes the menu and puts the caret back on the heading.
-  ['src/renderer/src/components/MarginMenu.tsx', ['picker.close']],
-  ['src/renderer/src/components/cards.tsx', ['picker.choose', 'picker.close']],
-  ['src/renderer/src/components/talklist/useKeyboard.ts', ['browser.move', 'browser.open', 'browser.close', 'browser.talk-view', 'browser.talk-names', 'browser.filter', 'browser.sort', 'browser.open-talk', 'browser.up-level', 'browser.fold-all', 'browser.rename', 'browser.duplicate', 'browser.move-talk', 'browser.delete-talk']],
-  ['src/renderer/src/extensions/triggerComplete.ts', ['picker.navigate', 'picker.choose', 'picker.close', 'picker.back', 'picker.digit']],
-  ['src/renderer/src/extensions/idProtect.ts', ['editor.protect-heading-delete']],
-  ['src/renderer/src/extensions/objectBlocks/field.ts', ['browser.move', 'editor.protect-heading-delete']],
-  ['src/renderer/src/objects/shell.ts', ['app.help', 'editor.object-finish', 'editor.object-leave', 'editor.object-discard']],
-  ['src/renderer/src/objects/card-editors.ts', ['editor.object-row-up', 'editor.object-row-down']],
-  ['src/renderer/src/objects/table-editor.ts', ['picker.navigate', 'picker.close']]
-])
-
-// Generic handlers are deliberately not shortcut commands. Each ignored file must still produce a
-// scan hit, so deleting the handler makes this list fail as stale.
-const SCAN_IGNORE = new Map([
-  ['src/renderer/src/components/SketchView.tsx', 'Escape is the Sketch view’s local Back action. It binds no application shortcut.'],
-  ['src/renderer/src/components/AnimatedVideoSheet.tsx', 'Dialog-local Escape dismissal and Tab focus containment; no app command or shortcut.'],
-  ['src/renderer/src/components/AgentSkillOffer.tsx', 'Escape-only dismissal of the agent-skill onboarding dialog (Not now); local modal behaviour, no shortcut is bound'],
-  ['src/renderer/src/components/vault-gallery/GalleryHandoutSheet.tsx', 'Local handout dialog Tab wrap and Escape dismissal.'],
-  ['src/renderer/src/components/vault-gallery/GalleryManagement.tsx', 'Local move dialog Escape dismissal.'],
-  ['src/renderer/src/components/vault-gallery/GalleryList.tsx', 'Arrow, Home, End, Enter and Space move, open and preview within the focused file list of the open gallery; local grid behaviour, no shortcut is bound'],
-  ['src/renderer/src/components/vault-gallery/GalleryTiles.tsx', 'Arrow, Enter and Space move, open and preview within the focused tile grid of the open gallery; local listbox behaviour, no shortcut is bound'],
-  ['src/renderer/src/components/vault-gallery/GalleryOverview.tsx', 'Arrow and Enter move and open within the focused vault list of the open gallery; local grid behaviour, no shortcut is bound'],
-  ['src/renderer/src/components/vault-gallery/GalleryTree.tsx', 'Arrow keys move and expand within the focused folder tree of the open gallery; local tree behaviour, no shortcut is bound'],
-  ['src/renderer/src/components/vault-gallery/ManagementLayer.tsx', 'Local management dialog Tab wrap and Escape dismissal.'],
-  ['src/renderer/src/components/vault-gallery/VaultGallery.tsx', 'Escape dismisses the gallery and Tab contains focus; local modal behaviour, no shortcut is bound'],
-  ['src/renderer/src/components/scratchpad/ScratchpadInsert.tsx', 'Escape dismisses the open insertion menu and Enter chooses the first filtered destination; local menu behaviour, no shortcut is bound'],
-  ['src/renderer/src/components/StructureControls.tsx', 'Enter and Space use native button activation in the focused insert controls. Escape closes the choices and restores focus to Insert here. Arrow keys, Home and End are kept from the surrounding list’s key handler. No application shortcut is bound.'],
-  ['src/main/settings-update-menu.ts', 'Uses the effective shared binding for app.check-for-updates while building the app-menu template; declares no shortcut.'],
-  ['src/renderer/src/components/scratchpad/ScratchpadCard.tsx', 'Enter opens the big preview and Space selects while a Slide Scratchpad card has focus (native button-like card behaviour); no shortcut is bound'],
-  ['src/renderer/src/components/scratchpad/ScratchpadPanel.tsx', 'Escape dismisses only the open docked options menu. It binds no application shortcut.'],
-  ['src/renderer/src/components/slide-handling/BatchBar.tsx', '↑ ↓ and Enter move through the destinations of the open Move to… list and Escape closes it (the same local list behaviour as the Move slide to… panel); no shortcut is bound'],
-  ['src/renderer/src/components/scratchpad/ScratchpadGroupMenu.tsx', 'Escape-only dismissal of the open group menu; no shortcut is bound'],
-  ['src/renderer/src/components/EditorTabs.tsx', 'Arrow keys, Home and End move focus in the view switch; the selected view is dispatched via the registry'],
-  ['src/renderer/src/components/actionBar/ActionBar.tsx', 'Escape only dismisses the visible tooltip or overflow menu; no shortcut is bound'],
-  ['src/renderer/src/components/AbstractPanel.tsx', 'Escape-only modal dismissal and Enter on a native form control'],
-  ['src/renderer/src/components/RemoveExampleConfirm.tsx', 'Escape-only dismissal of the Remove the example vault? confirmation (onboarding ticket 12, modal, local); no shortcut is bound'],
-  ['src/renderer/src/components/InspectorBoard.tsx', 'The Board section’s fields keep their own typing (Enter stays in the one-line instructions; ↑ ↓ on a column’s handle moves that column, ADR-0032 round-3 A2); ⌥↑/⌥↓ still reach the Inspector’s slide navigation; no shortcut is bound'],
-  ['src/renderer/src/extensions/objectBlocks/notesDrag.ts', 'Up and Down move the current block only while its speaker-notes drag handle has focus, as with the Board column handle. No application shortcut is bound.'],
-  ['src/renderer/src/components/ReactionsControl.tsx', 'Enter on the native custom-labels field commits it (ticket 04); no shortcut is bound'],
-  ['src/renderer/src/components/RunAnswers.tsx', 'Escape-only dismissal of the open Copy and Export menu on a Run’s answers; no shortcut is bound'],
-  ['src/renderer/src/components/EmbedCheckPanel.tsx', 'Escape-only panel dismissal'],
-  ['src/renderer/src/components/ExplainPanel.tsx', 'Escape-only panel dismissal'],
-  ['src/renderer/src/extensions/plainView/hiddenLines.ts', 'In the Plain view ArrowRight and Shift-ArrowRight at the end of a heading step over its hidden tokens and layout lines instead of stopping inside them; plain caret movement, not a command, no shortcut is bound'],
-  ['src/renderer/src/extensions/plainView/iconPictures.ts', 'In the Plain view End (and its macOS forms) on a paragraph or list item that ends in an icon token goes to the end of the visible text, before the token, as it does on a title; plain caret movement, not a command, no shortcut is bound'],
-  ['src/renderer/src/extensions/plainView/guardKeys.ts', 'In the Plain view Backspace and Delete (also with Alt, and Mod-Delete) do nothing when the one character they would delete lies in text the view hides (a heading\'s tokens, a layout line, the front matter); elsewhere they are the ordinary keys; no shortcut is bound'],
-  ['src/renderer/src/extensions/plainView/talkDetails.ts', 'Escape inside the Talk details panel returns focus to the editor; Enter and Space on its buttons are the native button behaviour; no shortcut is bound'],
-  ['src/renderer/src/extensions/workStrips.ts', 'Escape-only dismissal of the open Attach / Open run list under the Metadata table (ticket 08, local menu); no shortcut is bound'],
-  ['src/renderer/src/extensions/imageFullScreenPreview.ts', 'Escape-only dismissal of the full-screen image view; no shortcut is bound'],
-  ['src/renderer/src/components/ImageMetaPanel.tsx', 'Escape-only panel dismissal'],
-  ['src/renderer/src/components/UpdateNotices.tsx', 'Escape-only dismissal of the open update popover (update notices, ADR-0041); the commands are check-for-updates and whats-new, which have no default key'],
-  ['src/renderer/src/components/KeyboardHelp.tsx', 'Escape only closes the shortcut dialog; the opening command is app.help'],
-  ['src/renderer/src/components/SlideRowMenus.tsx', '↑ ↓ Enter inside the open Move slide to… / Move section to… destination list (modal, local list keys, as Actions here); the opening commands are move-slide-to and move-section-to, which have no shortcut'],
-  ['src/renderer/src/components/ActionsHerePanel.tsx', '↑ ↓ Enter and Escape inside the open Actions here panel (modal, local menu keys, as the row menus); the opening command is app.context-menu'],
-  ['src/renderer/src/components/LayoutDoctorPanel.tsx', 'Escape-only panel dismissal and a Tab focus trap inside the open panel (modal, local); no shortcut is bound'],
-  ['src/renderer/src/components/OutlineDiskChangeBar.tsx', 'Escape-only dismissal of the changed-on-disk sheet (answers Stay here); no shortcut is bound'],
-  ['src/renderer/src/components/OutlineMergeSheet.tsx', 'Escape answers Stay here and Tab contains focus inside the disk-merge modal; local modal controls, no app shortcut is bound'],
-  ['src/preload/present-close-flow.ts', 'Escape-only dismissal and a Tab focus trap inside the close-presentation dialog; no app shortcut is bound'],
-  ['src/renderer/src/components/ToolbarMenu.tsx', 'Escape-only generic toolbar-menu dismissal'],
-  ['src/renderer/src/components/talklist/VaultSheet.tsx', 'Escape dismissal and Cmd+Enter to submit the Add vault / Edit this vault sheet (several-vaults ticket 04, modal, local); no shortcut is bound'],
-  ['src/renderer/src/components/ConflictCompare.tsx', 'Escape-only dismissal of the conflict compare screen (several-vaults ticket 10; same as Cancel, writes nothing); no shortcut is bound'],
-  ['src/renderer/src/components/talklist/ShowFilter.tsx', 'Escape-only dismissal of the Show menu popover (several-vaults ticket 07); no shortcut is bound'],
-  ['src/renderer/src/components/PlanRunSheet.tsx', 'Escape dismissal, Enter in the event field and Cmd+Enter to save in the plan sheet (modal, local)'],
-  ['src/renderer/src/components/RunExtras.tsx', 'Escape cancels and Cmd+Enter keeps the inline edit box of Extras for this run on the Run page (work-files ticket 24, the drawn Esc and ⌘↩ on its Cancel and Done, local to the box)'],
-  ['src/renderer/src/components/UnpublishRunConfirm.tsx', 'Escape cancels, Return confirms only on the focused Unpublish button, and Tab stays inside the Unpublish confirmation of the Run page (work-files ticket 17, modal, local, the drawn Esc and ↩ on its two buttons); no shortcut is bound'],
-  ['src/renderer/src/components/RunLedger.tsx', 'Enter commits and Escape cancels the context field of a Run\'s ledger (local to the field, as the History row\'s was); no shortcut is bound'],
-  ['src/renderer/src/components/RunLedgerBoard.tsx', 'Escape-only dismissal of the Copy as Markdown popover and the share-link dialog (feedback-boards ticket 06); no shortcut is bound'],
-  ['src/preload/present-live-setup.ts', 'A key on the Going live prompt\'s button only blurs the button, so Space and Enter go on to the slides (ticket 05); no shortcut is bound'],
-  ['src/preload/present-end-live-boards.ts', 'Escape cancels and Enter confirms the End live board question (D20, modal, local); no app shortcut is bound'],
-  ['src/renderer/src/components/ShareSheet.tsx', 'Escape-only share-sheet dismissal (share for comments)'],
-  ['src/renderer/src/components/CaptureResearchSheet.tsx', 'Escape dismissal, Enter in the title field and Cmd+Enter to file in the Capture to research sheet (modal, local)'],
-  ['src/renderer/src/components/PublishNotReadySheet.tsx', 'Escape-only dismissal of the publish "not ready" sheet'],
-  ['src/renderer/src/components/PublishWorkNoticeSheet.tsx', 'Escape-only dismissal of the publish dialog that says work files go out with a Run'],
-  ['src/renderer/src/extensions/frontmatterTable.ts', 'Escape-only dismissal of the metadata row\'s "?" help block (T27); no shortcut is bound'],
-  ['src/renderer/src/components/WhereUsedPanel.tsx', 'Escape-only panel dismissal'],
-  ['src/renderer/src/keymap/store.ts', 'keymap.of appears only in an explanatory comment; bindings are created from EDITOR_COMMANDS'],
-  ['src/renderer/src/objects/chart-editor.ts', 'Outline-node Enter, Tab, arrow and Alt-arrow handling is local text-field editing semantics, not an app command'],
-  ['src/renderer/src/objects/markmap-editor.ts', 'Outline-node Enter, Tab, arrow and Alt-arrow handling is local text-field editing semantics, not an app command'],
-  ['src/shared/metadata-registry.ts', 'e.key is a metadata entry comparison, not a KeyboardEvent']
-])
-
-assert.deepEqual(
-  BINDING_MAP.get('src/renderer/src/objects/table-editor.ts'),
-  ['picker.navigate', 'picker.close'],
-  'the column menu maps its arrow and Escape handling to the shared picker commands'
-)
-assert.equal(
-  SCAN_IGNORE.has('src/renderer/src/objects/table-editor.ts'),
-  false,
-  'the table editor no longer hides all keyboard handling behind a blanket scan ignore'
-)
-assert.equal(
-  SCAN_IGNORE.has('src/renderer/src/objects/markmap-editor.ts'),
-  true,
-  'the markmap text-field transformations keep their narrow local-semantics justification'
-)
-assert.equal(
-  BINDING_MAP.get('src/renderer/src/components/Editor.tsx')?.includes('app.help'),
-  true,
-  'the object-editor help hook is declared in the Editor binding map'
-)
-
-const patterns = [
-  ['keymap.of', /keymap\.of\s*\(/g],
-  ['accelerator', /accelerator\s*:/g],
-  ['addEventListener:keydown', /addEventListener\s*\(\s*['"]keydown['"]/g],
-  ['e.key', /\b(?:e|event)\.key\s*===/g]
-]
-const hits = []
-for (const file of walk(join(root, 'src'))) {
-  const source = readFileSync(file, 'utf8')
-  const rel = relative(root, file)
-  const lines = source.split('\n')
-  for (const [kind, pattern] of patterns) {
-    pattern.lastIndex = 0
-    let match
-    while ((match = pattern.exec(source))) {
-      const line = source.slice(0, match.index).split('\n').length
-      hits.push({ rel, line, kind })
-    }
-  }
-}
-
-console.log('Static scan (src keyboard binding sites):')
-let covered = 0
-let declaredCount = 0
-let ignoredCount = 0
-for (const hit of hits) {
-  const declared = BINDING_MAP.get(hit.rel)
-  if (declared) {
-    covered += 1
-    declaredCount += 1
-    for (const id of declared) if (!ids.has(id)) fail(`${hit.rel}:${hit.line}: mapped shortcut id "${id}" is not declared`)
-    continue
-  }
-  if (SCAN_IGNORE.has(hit.rel)) {
-    covered += 1
-    ignoredCount += 1
-    continue
-  }
-  fail(`${hit.rel}:${hit.line}: ${hit.kind} binding site has no nearby shortcut-id declaration or SCAN_IGNORE justification`)
-}
-for (const [file] of [...BINDING_MAP, ...SCAN_IGNORE]) {
-  if (!hits.some((hit) => hit.rel === file)) fail(`stale binding map or SCAN_IGNORE entry "${file}"`)
-}
-if (covered === hits.length) ok(`${hits.length} binding sites found; ${declaredCount} declared, ${ignoredCount} explicitly ignored`)
-
-assert(!rendererRegistry.includes('APP_SHORTCUTS'), 'APP_SHORTCUTS hand-maintained list must be removed')
-
-// T27: ⌘⇧P is owned by an explicit, palette-hidden, toolbar-placed command — never the generic
-// shortcut-only fallthrough — so the Tools menu and the capture-phase key share one handler.
-const { COMMAND_REGISTRY: commandRegistry } = await import(new URL('../src/shared/command-registry.ts', import.meta.url))
-const paletteShortcutCommands = commandRegistry.filter((entry) => entry.shortcutId === 'app.command-palette')
-assert.equal(paletteShortcutCommands.length, 1, 'app.command-palette is registered exactly once (no fallthrough duplicate)')
-assert.equal(paletteShortcutCommands[0].handlerId, 'app.command-palette', 'the ⌘⇧P command dispatches through its own handler id')
-assert.equal(paletteShortcutCommands[0].palette.visible, false, 'the palette does not list itself')
-assert.equal(paletteShortcutCommands[0].toolbar?.menu, 'tools', '⌘⇧P lives in the Tools menu as All commands…')
-
-// ── Presenter key truth (presenter redesign ticket 07) ──────────────────────────────────────────
-// The presenter's ? sheet and command palette list the registry's presenter scope, so that scope
-// must be exactly the keys the presenter binds. Every key comparison in the presenter's key
-// handlers (the template's handleKey as it runs in the presenter, the palette's own keys, and the
-// preloads' handlers) must be claimed below by a registry id, or marked as not reaching the
-// presenter (`!isPresenter`); every presenter-scope entry must be claimed by a binding that
-// exists. A listed key with no binding fails ("listed but not bound"); a binding with no listed
-// key fails ("bound but not listed").
-console.log('Presenter key truth:')
-const { deckWindowKeyAction } = await import(new URL('../src/main/deck-window-keys.ts', import.meta.url))
-const { PRESENTER_KEY_NEEDS } = await import(new URL('../src/shared/presenter-palette.ts', import.meta.url))
-const presenterTemplate = readFileSync(join(root, 'compiler/assets/templates/presenter-popup-single-html.html'), 'utf8')
-function sourceRegion(source, from, to, { skipBlocks = [] } = {}) {
-  const start = source.indexOf(from)
-  if (start < 0) return null
-  const end = source.indexOf(to, start + from.length)
-  if (end < 0) return null
-  let text = source.slice(start, end + to.length)
-  // Blocks that never run in the presenter (the audience branch): cut from their opening brace
-  // to the matching closing one.
-  for (const opener of skipBlocks) {
-    const at = text.indexOf(opener)
-    if (at < 0) return null
-    let depth = 0
-    let i = at + opener.length - 1
-    for (; i < text.length; i += 1) {
-      if (text[i] === '{') depth += 1
-      else if (text[i] === '}') { depth -= 1; if (depth === 0) break }
-    }
-    text = text.slice(0, at) + text.slice(i + 1)
-  }
-  return text
-}
-const PRESENTER_KEY_REGIONS = [
-  ['template handleKey', presenterTemplate, 'function handleKey(event) {', 'else if (isPresenter) return;', { skipBlocks: ['if (isAudience) {'] }],
-  ['template isTalkQrKey', presenterTemplate, 'function isTalkQrKey(event) {', '\n  }'],
-  ['template paletteKey', presenterTemplate, 'function paletteKey(event) {', '\n  }'],
-  // ⌘V is the system paste: the presenter binds the paste event, not a key.
-  ['template paste', presenterTemplate, "window.addEventListener('paste', (event) => {", '\n  });'],
-  ['present-rec-ui', readFileSync(join(root, 'src/preload/present-rec-ui.ts'), 'utf8'), "window.addEventListener('keydown', (e: KeyboardEvent) => {", '}, true)'],
-  ['present-live-bridge', readFileSync(join(root, 'src/preload/present-live-bridge.ts'), 'utf8'), "window.addEventListener('keydown', (event) => {", '}, true)'],
-  ['present-edit-bridge', readFileSync(join(root, 'src/preload/present-edit-bridge.ts'), 'utf8'), "'keydown',", 'true\n  )'],
-  ['present-guide', readFileSync(join(root, 'src/preload/present-guide.ts'), 'utf8'), "window.addEventListener('keydown', (event: KeyboardEvent) => {", '}, true)'],
-  ['deck-window-keys', readFileSync(join(root, 'src/main/deck-window-keys.ts'), 'utf8'), 'export function', '\n}'],
-  // The board panel (feedback-boards ticket 05): inlined into the presenter template, so its keys are
-  // the template's own (no preload needed).
-  ['template board panel', readFileSync(join(root, 'compiler/assets/runtime/board-panel.js'), 'utf8'), 'function boardUndoKey(event) {', '\n  return {']
-]
-const KEY_COMPARISON = /event\.key\.toLowerCase\(\) === 'i'|\b(?:key|code|e\.key|event\.key|event\.code|input\.key)(?:\.toLowerCase\(\))?\s*[!=]==\s*['"]|\.test\((?:key|e\.key|event\.key)\)|new Set\(\[\s*["']|(?<!function )isTalkQrKey\(event\)|addEventListener\('paste'/
-// [region, line pattern, registry ids]. An empty id list needs `!isPresenter` in the line.
-const PRESENTER_KEY_CLAIMS = [
-  ['template handleKey', /event\.metaKey && event\.shiftKey && !event\.altKey && event\.key\.toLowerCase\(\) === 'p'/, ['presenter.command-palette']],
-  ['template handleKey', /event\.metaKey && event\.altKey && !event\.shiftKey && event\.key\.toLowerCase\(\) === 'i'/, ['presenter.instant-compose']],
-  ['template handleKey', /event\.key === ["']Escape["']/, ['presenter.close']],
-  // ↵ in the instant and Quick-poll composers acts as their Show / Open poll button: composer-local.
-  ['template handleKey', /event\.key === ["']Enter["'] && !event\.shiftKey/, ['picker.choose']],
-  ['template handleKey', /instantActive && !lightboxActiveHere\(\) && event\.key === 'ArrowRight'/, ['presenter.instant-return']],
-  ['template handleKey', /event\.key === "F5"/, ['presenter.audience']],
-  ['template handleKey', /event\.key === "\?"/, ['presenter.help']],
-  ['template handleKey', /key === "k" \|\| key === "K"/, ['presenter.poll-compose']],
-  ['template handleKey', /key === "a" \|\| key === "A"/, ['presenter.questions']],
-  ['template handleKey', /key === "q" \|\| key === "Q"/, ['presenter.poll-primary', 'presenter.poll-reveal']],
-  ['template handleKey', /const nextKeys = |const nextCodes = /, ['presenter.next']],
-  ['template handleKey', /const previousKeys = |const previousCodes = /, ['presenter.previous']],
-  // While the talk QR is up: Esc or U return; navigation is swallowed there.
-  ['template handleKey', /key === "Escape" \|\| \(isPresenter && isTalkQrKey\(event\)\)/, ['presenter.close', 'presenter.talk-qr']],
-  ['template handleKey', /if \(isNextKey \|\| isPreviousKey \|\| key === "Home" \|\| key === "End"\)/, ['presenter.talk-qr']],
-  ['template handleKey', /if \(isPresenter && isTalkQrKey\(event\)\)/, ['presenter.talk-qr']],
-  ['template handleKey', /key === "Escape" \|\| key === "Enter" \|\| key === " " \|\| code === "Space"\) \{ event\.preventDefault\(\); closeQrFullscreen/, ['presenter.close']],
-  // The open gallery: Esc / Z close, V full screen, Home / End first and last image.
-  ['template handleKey', /key === "Escape" \|\| key === "z" \|\| key === "Z"/, ['presenter.gallery', 'presenter.close']],
-  ['template handleKey', /\(key === "v" \|\| key === "V"\) && slideVideos\(\)\.length > 0\) \{ event\.preventDefault\(\); videoFullscreenCommand\(\); return; \}/, ['presenter.video-fullscreen']],
-  ['template handleKey', /if \(key === "(?:Home|End)"\) \{ event\.preventDefault\(\); publish\(\{ lightbox/, ['presenter.gallery']],
-  ['template handleKey', /key === "Escape" && livePage\.interact/, ['presenter.close']],
-  ['template handleKey', /key === "Escape" && interactingFrame/, ['presenter.close']],
-  ['template handleKey', /key === "Escape" && livePage\.interact/, ['presenter.close']],
-  // Esc puts the slide back when its embedded page is full screen and not in use (ticket 13).
-  ['template handleKey', /key === "Escape" && embedFullScreenOn\(\)/, ['presenter.close']],
-  ['template handleKey', /key === "e" \|\| key === "E"/, ['presenter.embed']],
-  ['template handleKey', /\/\^\[1-9\]\$\/\.test\(key\)/, ['presenter.grid-child']],
-  ['template handleKey', /isPresenter && key === "Escape"/, ['presenter.close']],
-  ['template handleKey', /key === "j" \|\| key === "J"/, ['presenter.notes-scroll']],
-  ['template handleKey', /\.presenter-notes-more/, ['presenter.notes-scroll']],
-  ['template handleKey', /key === "r" \|\| key === "R"/, ['presenter.reveal']],
-  ['template handleKey', /key === "f" \|\| key === "F"/, ['presenter.focus']],
-  ['template handleKey', /if \(key === "Escape"\) \{ event\.preventDefault\(\); exitMode/, ['presenter.close']],
-  ['template handleKey', /if \(key === "Home"\) \{ event\.preventDefault\(\); goTo\(0, 0\)|else if \(key === "Home"\)/, ['presenter.first']],
-  ['template handleKey', /if \(key === "End"\) \{ event\.preventDefault\(\); goTo\(total - 1, 0\)|else if \(key === "End"\)/, ['presenter.last']],
-  ['template handleKey', /isPresenter && key === "\+"/, ['presenter.font-larger']],
-  ['template handleKey', /isPresenter && key === "-"/, ['presenter.font-smaller']],
-  ['template handleKey', /key === "o" \|\| key === "O"/, ['presenter.overview']],
-  ['template handleKey', /isPresenter && key === "[[\]]"/, ['presenter.preview-size']],
-  ['template handleKey', /key === "t" \|\| key === "T"/, ['presenter.duration']],
-  ['template handleKey', /key === "p" \|\| key === "P"/, ['presenter.timer']],
-  ['template handleKey', /event\.key\.toLowerCase\(\) === 'i'/, ['presenter.pointer']],
-  ['template handleKey', /event\.key === 'Escape' && pointerArmed/, ['presenter.close']],
-  // The Pen (0.38 ticket 08): Esc abandons a drag or turns it off; D, W / ⇧W, X / ⇧X, ⌘Z while on.
-  ['template handleKey', /event\.key === 'Escape' && penArmed/, ['presenter.close']],
-  ['template handleKey', /event\.key\.toLowerCase\(\) === 'd'/, ['presenter.pen']],
-  ['template handleKey', /event\.key\.toLowerCase\(\) === 'w'/, ['presenter.pen-tool']],
-  ['template handleKey', /event\.key\.toLowerCase\(\) === 'x'/, ['presenter.ink-clear', 'presenter.ink-clear-all']],
-  ['template handleKey', /penArmed && \(event\.metaKey \|\| event\.ctrlKey\).*event\.key\.toLowerCase\(\) === 'z'/, ['presenter.ink-undo']],
-  ['template handleKey', /key === "h" \|\| key === "H"/, ['presenter.highlight']],
-  ['template handleKey', /key === "m" \|\| key === "M"/, ['presenter.media']],
-  ['template handleKey', /isPresenter && \(key === "z" \|\| key === "Z"\)/, ['presenter.gallery', 'presenter.embed-fullscreen']],
-  ['template handleKey', /isPresenter && \(key === "v" \|\| key === "V"\)/, ['presenter.video-fullscreen']],
-  ['template handleKey', /key === "s" \|\| key === "S"/, ['presenter.skip']],
-  ['template handleKey', /key === "b" \|\| key === "B"/, ['presenter.return']],
-  // Keys that are not the presenter's: C pins the deck's control bar, N steps a mode, Enter / Space
-  // open a slide's QR code, all in the audience and plain deck windows only.
-  ['template handleKey', /!isPresenter && /, []],
-  ['template isTalkQrKey', /event\.key === "u" \|\| event\.key === "U"/, ['presenter.talk-qr']],
-  ['template paste', /addEventListener\('paste'/, ['presenter.instant-paste']],
-  ['template paletteKey', /key === ',' && paletteHighlight/, ['presenter.rebind']],
-  ['template paletteKey', /key === 'Escape'/, ['picker.close']],
-  ['template paletteKey', /key === 'ArrowDown' \|\| key === 'ArrowUp'/, ['picker.navigate']],
-  ['template paletteKey', /key === 'Enter'/, ['picker.choose']],
-  // Tab is held in the search field (no focus walk out of the open palette).
-  ['template paletteKey', /key === 'Tab'/, ['picker.close']],
-  // The short-recording question on the cluster: ↵ keeps, Esc discards.
-  ['present-rec-ui', /e\.key === 'Enter'\) \{ e\.preventDefault\(\); e\.stopImmediatePropagation\(\); void controller\.confirmSave\(true\)/, ['picker.choose']],
-  ['present-rec-ui', /e\.key === 'Escape'\) \{ e\.preventDefault\(\); e\.stopImmediatePropagation\(\); void controller\.confirmSave\(false\)/, ['picker.close']],
-  ['present-rec-ui', /e\.key === 'L' \|\| e\.key === 'l'/, ['presenter.save-run-as']],
-  ['present-rec-ui', /saveToast\.classList\.contains\('show'\) && e\.key === 'Enter'/, ['presenter.save-run']],
-  ['present-rec-ui', /e\.key === 'R' \|\| e\.key === 'r'/, ['presenter.record']],
-  ['present-rec-ui', /e\.key === 'M' \|\| e\.key === 'm'/, ['presenter.record-flag']],
-  ['present-rec-ui', /e\.key === 'P' \|\| e\.key === 'p'/, ['presenter.record-pause']],
-  ['present-live-bridge', /event\.key === 'Escape' && !panel\.hidden/, ['presenter.close']],
-  ['present-live-bridge', /event\.key === 'g' \|\| event\.key === 'G'/, ['presenter.live']],
-  ['present-edit-bridge', /e\.key !== 'e' && e\.key !== 'E'/, ['presenter.edit']],
-  ['present-guide', /event\.key !== 'c' && event\.key !== 'C'/, ['presenter.guide']],
-  // F5 opens the audience view; ⇧F5 refreshes (the routes themselves: deckWindowKeyTruth below).
-  // The board panel: ⌘Z undoes the last board change while it shows; ⌥↵ picks up and drops; Esc
-  // closes its menu, puts a held card down or leaves full screen; ↵ / Space on a card open its menu
-  // (on a button they press it); in the board's own window Q opens or closes the board, as beside the slide.
-  ['template board panel', /event\.key\.toLowerCase\(\) === 'z'/, ['presenter.board-undo']],
-  ['template board panel', /event\.key === 'Enter'\) \{/, ['presenter.board-pick']],
-  ['template board panel', /event\.key === 'Enter' \|\| event\.key === ' '/, ['picker.choose']],
-  ['template board panel', /event\.key === 'q' \|\| event\.key === 'Q'/, ['presenter.poll-primary']],
-  ['template board panel', /event\.key === 'Escape'/, ['presenter.close']],
-  ['deck-window-keys', /input\.key === 'F5'/, ['presenter.audience', 'presenter.refresh']],
-  ['deck-window-keys', /input\.key\.toLowerCase\(\) === 'r'/, ['presenter.refresh']]
-]
-const PRESENTER_ALLOWED_CLAIM_SCOPES = new Set(['presenter', 'picker'])
-// A key set literal (the template's nextKeys / nextCodes …) names DOM key values and codes; the
-// registry names codes. Space has three spellings, and the keypad's Enter is Enter.
-const SET_KEY_SPELLING = { ' ': 'Space', Spacebar: 'Space', NumpadEnter: 'Enter' }
-// Ticket 08: a presenter key set (nextKeys …) must list only keys its claimed entries list (Return
-// advanced the slide unlisted), and a key bound only by a preload or the main process must name
-// that preload in PRESENTER_KEY_NEEDS, so the ? sheet hides it where the preload is absent (G was
-// listed in a presenter window opened without the live preload). `needs` turns the second check on.
-function presenterKeyTruth(registry, regions, claims, { needs } = {}) {
-  const problems = []
-  const lines = []
-  const boundIn = new Map()
-  for (const [name, source, from, to, options] of regions) {
-    const text = sourceRegion(source, from, to, options)
-    if (text == null) { problems.push(`presenter key region "${name}" not found`); continue }
-    text.split('\n').forEach((line, index) => { if (KEY_COMPARISON.test(line)) lines.push({ name, index, line: line.trim() }) })
-  }
-  const used = new Set()
-  const bound = new Set()
-  for (const hit of lines) {
-    const matched = claims.filter(([region, pattern]) => region === hit.name && pattern.test(hit.line))
-    if (!matched.length) { problems.push(`bound but not listed: ${hit.name}: ${hit.line.slice(0, 140)}`); continue }
-    for (const claim of matched) {
-      used.add(claim)
-      if (claim[2].length === 0 && !/!isPresenter/.test(hit.line)) problems.push(`${hit.name}: a claim with no key must be guarded by !isPresenter: ${hit.line.slice(0, 140)}`)
-      for (const id of claim[2]) {
-        bound.add(id)
-        if (!boundIn.has(id)) boundIn.set(id, new Set())
-        boundIn.get(id).add(hit.name)
-      }
-    }
-    const set = /new Set\(\[([^\]]*)\]\)/.exec(hit.line)
-    if (set) {
-      const ids = matched.flatMap((claim) => claim[2])
-      const codes = new Set(ids.flatMap((id) => registry.find((item) => item.id === id)?.codes ?? []))
-      for (const [, literal] of set[1].matchAll(/["']([^"']*)["']/g)) {
-        const code = SET_KEY_SPELLING[literal] ?? literal
-        if (!codes.has(code)) problems.push(`bound but not listed: ${hit.name}: key "${literal}" in ${hit.line.slice(0, 60)}… is not a key of ${ids.join(', ')}`)
+  for (const primary of ['Meta', 'Ctrl']) {
+    const overlaps = new Map()
+    const pairKey = (code, a, b) => JSON.stringify([bindingKey(code, primary), ...[a, b].sort()])
+    const allowed = new Set(contextPairs.map(([code, a, b]) => pairKey(code, a, b)))
+    for (const entry of SHORTCUT_REGISTRY) {
+      for (const code of entry.codes) {
+        const binding = bindingKey(code, primary)
+        const key = `${entry.scope}: ${binding}`
+        const sharers = overlaps.get(key) ?? new Set()
+        for (const other of sharers) {
+          if (other === entry.id || allowed.has(pairKey(code, other, entry.id))) continue
+          const previous = editorOrder.get(other)
+          const current = editorOrder.get(entry.id)
+          if (entry.scope === 'editor' && previous && current &&
+            (previous.index < current.index ? previous : current).fallsThrough) continue
+          conflicts.push(`${primary} ${key}: ${other} and ${entry.id} both claim ${code}`)
+        }
+        sharers.add(entry.id)
+        overlaps.set(key, sharers)
       }
     }
   }
-  for (const claim of claims) {
-    if (!used.has(claim)) problems.push(`stale presenter key claim ${claim[0]} ${claim[1]} (no such binding)`)
-    for (const id of claim[2]) {
-      const entry = registry.find((item) => item.id === id)
-      if (!entry) problems.push(`bound but not listed: ${claim[0]} ${claim[1]} → "${id}" is not in the registry`)
-      else if (!PRESENTER_ALLOWED_CLAIM_SCOPES.has(entry.scope)) problems.push(`${claim[0]} ${claim[1]} → "${id}" is a ${entry.scope} key, not the presenter's`)
-    }
-  }
-  for (const entry of registry.filter((item) => item.scope === 'presenter' && !item.unbound)) {
-    if (!bound.has(entry.id)) problems.push(`listed but not bound: presenter key ${entry.keys} (${entry.id}, "${entry.label}") has no binding in the presenter`)
-    const where = [...(boundIn.get(entry.id) ?? [])]
-    if (needs && where.length && where.every((name) => !name.startsWith('template')) && !needs[entry.id]) {
-      problems.push(`listed without its preload: presenter key ${entry.keys} (${entry.id}) is bound only in ${where.join(', ')}; name that preload in PRESENTER_KEY_NEEDS`)
-    }
-  }
-  return { problems, lines }
-}
-// The main process's deck-window keys (src/main/deck-window-keys.ts), by what the module does
-// rather than how it reads: every key it routes in a presenter window must be a key of the
-// registry entry for that action (⇧F5 refreshed a presenter window unlisted until ticket 08).
-const DECK_ACTION_IDS = { 'open-audience': 'presenter.audience', refresh: 'presenter.refresh' }
-const DECK_PROBE_KEYS = [...Array.from({ length: 12 }, (_, i) => `F${i + 1}`), ...'abcdefghijklmnopqrstuvwxyz0123456789'.split(''),
-  'Enter', 'Escape', 'Tab', 'Backspace', ' ', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageUp', 'PageDown']
-function deckWindowKeyTruth(registry, action) {
-  const problems = []
-  let routed = 0
-  for (const key of DECK_PROBE_KEYS) {
-    for (let mods = 0; mods < 16; mods += 1) {
-      const input = { type: 'keyDown', key, shift: Boolean(mods & 1), meta: Boolean(mods & 2), control: Boolean(mods & 4), alt: Boolean(mods & 8) }
-      const result = action('presenter', input)
-      if (!result) continue
-      routed += 1
-      const named = `${input.control ? '⌃' : ''}${input.alt ? '⌥' : ''}${input.shift ? '⇧' : ''}${input.meta ? '⌘' : ''}${key.length === 1 ? key.toUpperCase() : key}`
-      const id = DECK_ACTION_IDS[result]
-      const entry = id ? registry.find((item) => item.id === id) : null
-      const event = { key: input.shift && key.length === 1 ? key.toUpperCase() : key, shiftKey: input.shift, metaKey: input.meta, ctrlKey: input.control, altKey: input.alt }
-      if (!entry) problems.push(`bound but not listed: deck-window-keys routes ${named} in a presenter window to "${result}", which is no presenter key`)
-      else if (!entry.codes.some((code) => shortcutEventMatches(event, id, code))) problems.push(`bound but not listed: deck-window-keys routes ${named} in a presenter window to "${result}", but ${id} lists only ${entry.keys}`)
-    }
-  }
-  return { problems, routed }
-}
-// The checker itself: a listed key with no binding and a binding with no listed key both fail.
-{
-  const fakeRegistry = [
-    { id: 'presenter.a', scope: 'presenter', keys: 'A', label: 'A' },
-    { id: 'presenter.orphan', scope: 'presenter', keys: 'X', label: 'Listed, unbound' }
-  ]
-  const fakeSource = 'function handleKey(event) {\n  if (key === "a") a();\n  if (key === "z") z();\n  else if (isPresenter) return;'
-  const { problems } = presenterKeyTruth(fakeRegistry, [['fake', fakeSource, 'function handleKey(event) {', 'else if (isPresenter) return;']], [['fake', /key === "a"/, ['presenter.a']]])
-  assert(problems.some((p) => p.startsWith('listed but not bound: presenter key X')), 'the key-truth check fails on a listed key with no binding')
-  assert(problems.some((p) => p.startsWith('bound but not listed: fake: if (key === "z")')), 'the key-truth check fails on a binding with no listed key')
-  // A key set with a key its entry does not list (Return in nextKeys before ticket 08).
-  const setSource = 'function handleKey(event) {\n  const nextKeys = new Set(["ArrowRight", " ", "Enter"]);\n  else if (isPresenter) return;'
-  const setTruth = presenterKeyTruth([{ id: 'presenter.a', scope: 'presenter', keys: '→ Space', label: 'A', codes: ['ArrowRight', 'Space'] }], [['fake', setSource, 'function handleKey(event) {', 'else if (isPresenter) return;']], [['fake', /const nextKeys = /, ['presenter.a']]])
-  assert.deepEqual(setTruth.problems.map((p) => p.replace(/ in .*? is/, ' is')), ['bound but not listed: fake: key "Enter" is not a key of presenter.a'], 'the key-truth check fails on a key in a key set that its entry does not list')
-  // A key bound only by a preload, listed with no PRESENTER_KEY_NEEDS entry (G before ticket 08).
-  const preloadSource = "window.addEventListener('keydown', (event) => {\n  if (event.key === 'g' || event.key === 'G') live()\n}, true)"
-  const preloadRegion = ['preload', preloadSource, "window.addEventListener('keydown', (event) => {", '}, true)']
-  const preloadRegistry = [{ id: 'presenter.live', scope: 'presenter', keys: 'G', label: 'Live', codes: ['g'] }]
-  const preloadClaims = [['preload', /event\.key === 'g'/, ['presenter.live']]]
-  assert(presenterKeyTruth(preloadRegistry, [preloadRegion], preloadClaims, { needs: {} }).problems.some((p) => p.startsWith('listed without its preload: presenter key G')), 'the key-truth check fails on a preload-only key the sheet would list without its preload')
-  assert.deepEqual(presenterKeyTruth(preloadRegistry, [preloadRegion], preloadClaims, { needs: { 'presenter.live': '[data-live]' } }).problems, [], 'a preload-only key named in PRESENTER_KEY_NEEDS passes')
-  // The deck-window module's ⇧F5 route, against a registry whose refresh lists only ⌘R.
-  const staleRegistry = [
-    { id: 'presenter.audience', scope: 'presenter', keys: 'F5', codes: ['F5'] },
-    { id: 'presenter.refresh', scope: 'presenter', keys: '⌘R', codes: ['Mod-r'] }
-  ]
-  const stale = deckWindowKeyTruth(staleRegistry, deckWindowKeyAction)
-  assert.deepEqual(stale.problems, ['bound but not listed: deck-window-keys routes ⇧F5 in a presenter window to "refresh", but presenter.refresh lists only ⌘R'], 'the key-truth check fails on the deck-window module\'s unlisted ⇧F5 route')
-}
-const truth = presenterKeyTruth(SHORTCUT_REGISTRY, PRESENTER_KEY_REGIONS, PRESENTER_KEY_CLAIMS, { needs: PRESENTER_KEY_NEEDS })
-for (const problem of truth.problems) fail(problem)
-if (truth.problems.length === 0) ok(`${truth.lines.length} presenter key bindings claimed; every presenter key in the registry is bound; preload-only keys name their preload`)
-const deckTruth = deckWindowKeyTruth(SHORTCUT_REGISTRY, deckWindowKeyAction)
-for (const problem of deckTruth.problems) fail(problem)
-if (deckTruth.problems.length === 0) ok(`${deckTruth.routed} presenter-window key routes in the main process are all listed`)
-// ── Slide picker and file list key truth (talk search 08) ────────────────────────────────────
-// The ⌘S slide picker (its capture handler and the Find a talk box) and the file list (the Talks
-// panel's key handler) bind exactly the keys the registry lists for them: every key comparison in
-// those handlers is claimed by a registry id (or, with no id, carries the reason it binds nothing),
-// every claim still matches a line, and every key the registry lists for the surface is claimed.
-// A rebindable key is compared through surfaceKey(event, '<local id>'); its claim must name the
-// registry id that local id stands for (src/renderer/src/keymap/surfaceKeys.ts).
-console.log('Slide picker and file list key truth:')
-const slideBrowserSource = readFileSync(join(root, 'src/renderer/src/components/slide-browser/useSlideBrowserKeys.ts'), 'utf8')
-const findTalkSource = readFileSync(join(root, 'src/renderer/src/components/browser-rail/FindTalk.tsx'), 'utf8')
-const talkPanelSource = readFileSync(join(root, 'src/renderer/src/components/talklist/useKeyboard.ts'), 'utf8')
-const surfaceKeysSource = readFileSync(join(root, 'src/renderer/src/keymap/surfaceKeys.ts'), 'utf8')
-const SURFACE_KEY_IDS = Object.fromEntries(
-  [...(surfaceKeysSource.match(/export const SURFACE_KEYS = \{([\s\S]*?)\}/)?.[1] ?? '').matchAll(/'([^']+)':\s*'([^']+)'/g)]
-    .map((match) => [match[1], match[2]])
-)
-assert.equal(Object.keys(SURFACE_KEY_IDS).length, 47, 'the rebindable structure, view, Slide navigation, presentation, talk-search and research keys are read from surfaceKeys.ts')
-assert.equal(SURFACE_KEY_IDS['previous-slide'], 'app.previous-slide')
-assert.equal(SURFACE_KEY_IDS['next-slide'], 'app.next-slide')
-const SURFACE_KEY_COMPARISON = /\be\.key\s*[!=]==|\.includes\(e\.key\)|\.test\(e\.key\)|surfaceKey\(|findBoxOwnsKey\(e\.key/
-const PICKER_REGIONS = [
-  ['picker', slideBrowserSource, 'function handleKey(e: KeyboardEvent): void {', "window.addEventListener('keydown', handleKey, { capture: true })"],
-  ['find box', findTalkSource, 'function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>): void {', "if (e.key === 'Enter') choose(activeRow(), false)"]
-]
-const FILE_LIST_REGIONS = [
-  ['file list', talkPanelSource, 'return function handlePanelKey(e: ReactKeyboardEvent<HTMLElement>): void {', '\n  }\n}']
-]
-// [region, line pattern, registry ids, reason when the ids are empty]
-const PICKER_CLAIMS = [
-  ['picker', /findBoxOwnsKey\(e\.key/, [], 'hands ↑↓ ↵ Esc to Find a talk while it lists talks (the find-box claims below)'],
-  ['picker', /e\.key === 'Tab' && rootRef\.current/, ['slide-picker.tab']],
-  ['picker', /e\.key === 'Escape' && el instanceof HTMLInputElement && el\.dataset\.railEsc === '1'/, [], 'hands Esc to a rail vocabulary input, which clears its own words first'],
-  ['picker', /e\.key !== 'Escape' && besideOn && keyFree && surfaceKey\(e, 'close-beside'\)/, ['slide-picker.close-beside']],
-  ['picker', /^if \(e\.key === 'Escape'\) \{$/, ['slide-picker.close', 'slide-picker.close-beside']],
-  ['picker', /surfaceKey\(e, 'select-whole-section'\)/, ['slide-picker.select-whole-section']],
-  ['picker', /surfaceKey\(e, 'talk-beside'\)/, ['slide-picker.talk-beside']],
-  ['picker', /mod && !e\.shiftKey && e\.key === 'Enter'/, ['slide-picker.insert']],
-  ['picker', /^if \(e\.key === 'ArrowDown' \|\| e\.key === 'ArrowUp' \|\| e\.key === 'ArrowLeft' \|\| e\.key === 'ArrowRight'\) \{$/, ['slide-picker.move', 'slide-picker.extend']],
-  ['picker', /inField && \(e\.key === 'ArrowLeft' \|\| e\.key === 'ArrowRight'\)\) return/, [], '← → move the caret while typing'],
-  ['picker', /e\.key === 'Backspace' && !mod && !e\.altKey/, ['slide-picker.clear-scope']],
-  ['picker', /\['2', '3', '4', '5', '6'\]\.includes\(e\.key\)/, ['slide-picker.density']],
-  ['picker', /e\.key === 'x' \|\| e\.key === 'X'/, ['slide-picker.toggle-selection']],
-  ['picker', /e\.key === 's' \|\| e\.key === 'S'/, ['slide-picker.select-section']],
-  ['picker', /e\.key === 't' \|\| e\.key === 'T'/, ['slide-picker.tags']],
-  ['picker', /plain && e\.key === ' ' && onButton\) return/, [], 'Space on a focused button is that button’s click'],
-  ['picker', /e\.key === ' ' \|\| e\.key === 'p' \|\| e\.key === 'P'/, ['slide-picker.preview']],
-  ['picker', /e\.key === 'i' \|\| e\.key === 'I'/, ['slide-picker.rail']],
-  ['picker', /e\.key === 'e' \|\| e\.key === 'E'/, ['slide-picker.versions']],
-  ['picker', /e\.key === 'u' \|\| e\.key === 'U'/, ['slide-picker.near']],
-  ['picker', /plain && e\.key === 'Enter'/, ['slide-picker.view']],
-  ['find box', /e\.key === 'Backspace' && query === '' && props\.chips\.length > 0/, ['slide-picker.remove-chip']],
-  ['find box', /surfaceKey\(e\.nativeEvent, 'add-beside'\)/, ['slide-picker.add-beside']],
-  ['find box', /findBoxOwnsKey\(e\.key/, [], 'the keys below are the box’s only while it lists talks, completes or holds words'],
-  ['find box', /e\.key === 'Escape'\) \{ onQueryChange\(''\)/, ['picker.close']],
-  ['find box', /e\.key === 'Arrow(?:Down|Up)'\) \{ setActive/, ['picker.navigate']],
-  ['find box', /e\.key === 'Enter'\) choose\(activeRow\(\), false\)/, ['picker.choose']]
-]
-const FILE_LIST_CLAIMS = [
-  ['file list', /t\.tagName === 'BUTTON' && \(e\.key === 'Enter' \|\| e\.key === ' '\)\) return/, [], 'a focused toolbar button keeps its own ↵ and Space'],
-  ['file list', /e\.key === 'v' \|\| e\.key === 'V'/, ['browser.talk-view']],
-  ['file list', /e\.key === 'n' \|\| e\.key === 'N'/, ['browser.talk-names']],
-  ['file list', /e\.key === 's' \|\| e\.key === 'S'/, ['browser.sort']],
-  ['file list', /d\.sortPopOpen && \/\^\[1-5\]\$\/\.test\(e\.key\)/, ['browser.sort']],
-  ['file list', /e\.key === 'm' \|\| e\.key === 'M'/, ['browser.move-talk']],
-  ['file list', /e\.key === '\/'/, ['browser.filter']],
-  ['file list', /^if \(e\.key === 'Escape'\) \{$/, ['browser.close']],
-  ['file list', /^if \(e\.key === 'ArrowDown' \|\| e\.key === 'ArrowUp'\) \{$/, ['browser.move']],
-  ['file list', /^const dir = e\.key === 'ArrowDown'/, ['browser.move']],
-  ['file list', /^if \(e\.key === 'Arrow(?:Right|Left)'\) \{$/, ['browser.move']],
-  ['file list', /^if \(e\.key === 'Enter'\) \{$/, ['browser.open']],
-  ['file list', /e\.key === 'F2'/, ['browser.rename']],
-  ['file list', /e\.key === 'o' \|\| e\.key === 'O'/, ['browser.open-talk']],
-  ['file list', /e\.key === 'ArrowUp'\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); d\.upOneLevel/, ['browser.up-level']],
-  ['file list', /e\.key === 'Arrow(?:Left|Right)'\) \{ e\.preventDefault\(\); e\.stopPropagation\(\); d\.(?:collapse|expand)AllInView/, ['browser.fold-all']],
-  ['file list', /e\.key === 'd' \|\| e\.key === 'D'/, ['browser.duplicate']],
-  ['file list', /e\.key === 'Backspace'\) \{ e\.preventDefault\(\); d\.startDelete/, ['browser.delete-talk']]
-]
-function surfaceKeyTruth(registry, regions, claims, { owns, scopes }) {
-  const problems = []
-  const lines = []
-  for (const [name, source, from, to] of regions) {
-    const text = sourceRegion(source, from, to)
-    if (text == null) { problems.push(`key region "${name}" not found`); continue }
-    text.split('\n').forEach((line) => { if (SURFACE_KEY_COMPARISON.test(line)) lines.push({ name, line: line.trim() }) })
-  }
-  const used = new Set()
-  const bound = new Set()
-  for (const hit of lines) {
-    const matched = claims.filter(([region, pattern]) => region === hit.name && pattern.test(hit.line))
-    if (!matched.length) { problems.push(`bound but not listed: ${hit.name}: ${hit.line.slice(0, 140)}`); continue }
-    const local = /surfaceKey\([^,]+,\s*'([^']+)'\)/.exec(hit.line)?.[1]
-    for (const claim of matched) {
-      used.add(claim)
-      if (claim[2].length === 0 && !claim[3]) problems.push(`${hit.name}: a claim with no key must say why: ${hit.line.slice(0, 140)}`)
-      if (local && !claim[2].includes(SURFACE_KEY_IDS[local])) problems.push(`${hit.name}: surfaceKey '${local}' is ${SURFACE_KEY_IDS[local] ?? 'no surface key'}, but the line is claimed for ${claim[2].join(', ')}`)
-      for (const id of claim[2]) bound.add(id)
-    }
-  }
-  for (const claim of claims) {
-    if (!used.has(claim)) problems.push(`stale key claim ${claim[0]} ${claim[1]} (no such binding)`)
-    for (const id of claim[2]) {
-      const entry = registry.find((item) => item.id === id)
-      if (!entry) problems.push(`bound but not listed: ${claim[0]} ${claim[1]} → "${id}" is not in the registry`)
-      else if (!scopes.has(entry.scope)) problems.push(`${claim[0]} ${claim[1]} → "${id}" is a ${entry.scope} key, not this surface's`)
-    }
-  }
-  for (const entry of registry.filter((item) => owns(item) && !item.unbound)) {
-    if (!bound.has(entry.id)) problems.push(`listed but not bound: ${entry.keys} (${entry.id}, "${entry.label}") has no binding`)
-  }
-  return { problems, lines }
-}
-// The checker itself fails on a listed key with no binding, a binding with no listed key, and a
-// rebindable key claimed for the wrong command.
-{
-  const fakeRegistry = [
-    { id: 'slide-picker.a', scope: 'slide-picker', keys: 'A', label: 'A' },
-    { id: 'slide-picker.orphan', scope: 'slide-picker', keys: 'W', label: 'Listed, unbound' },
-    { id: 'slide-picker.talk-beside', scope: 'slide-picker', keys: 'O', label: 'Beside' }
-  ]
-  const fakeSource = "function handleKey(e: KeyboardEvent): void {\n  if (e.key === 'a') a()\n  if (e.key === 'z') z()\n  if (surfaceKey(e, 'talk-beside')) beside()\n  window.addEventListener('keydown', handleKey, { capture: true })"
-  const fakeRegion = [['picker', fakeSource, 'function handleKey(e: KeyboardEvent): void {', "window.addEventListener('keydown', handleKey, { capture: true })"]]
-  const owns = (entry) => entry.scope === 'slide-picker'
-  const scopes = new Set(['slide-picker'])
-  const { problems } = surfaceKeyTruth(fakeRegistry, fakeRegion, [['picker', /e\.key === 'a'/, ['slide-picker.a']], ['picker', /surfaceKey\(e, 'talk-beside'\)/, ['slide-picker.a']]], { owns, scopes })
-  assert(problems.some((p) => p.startsWith('listed but not bound: W (slide-picker.orphan')), 'the picker key-truth check fails on a listed key with no binding')
-  assert(problems.some((p) => p.startsWith("bound but not listed: picker: if (e.key === 'z')")), 'the picker key-truth check fails on a binding with no listed key')
-  assert(problems.some((p) => p.startsWith("picker: surfaceKey 'talk-beside' is slide-picker.talk-beside, but the line is claimed for slide-picker.a")), 'the picker key-truth check fails on a rebindable key claimed for the wrong command')
-}
-const pickerTruth = surfaceKeyTruth(SHORTCUT_REGISTRY, PICKER_REGIONS, PICKER_CLAIMS, {
-  owns: (entry) => entry.scope === 'slide-picker',
-  scopes: new Set(['slide-picker', 'picker'])
+  assert.deepEqual(conflicts, [], 'duplicate shortcut bindings')
 })
-for (const problem of pickerTruth.problems) fail(problem)
-if (pickerTruth.problems.length === 0) ok(`${pickerTruth.lines.length} slide picker key bindings claimed; every slide picker key in the registry is bound`)
-const fileListTruth = surfaceKeyTruth(SHORTCUT_REGISTRY, FILE_LIST_REGIONS, FILE_LIST_CLAIMS, {
-  owns: (entry) => entry.scope === 'browser' && entry.group === 'Talks panel',
-  scopes: new Set(['browser'])
-})
-for (const problem of fileListTruth.problems) fail(problem)
-if (fileListTruth.problems.length === 0) ok(`${fileListTruth.lines.length} file list key bindings claimed; every Talks panel key in the registry is bound`)
 
-// Talk search 08's keys. The S conflict: the picker's select section and the file list's sort are
-// two surfaces' keys, each listed in its own scope — never one scope's key claimed twice.
-const talkSearchKeys = [
-  ['app.find-talk', 'app', '⇧⌘S', ['Mod-Shift-s']],
-  ['slide-picker.add-beside', 'slide-picker', '⌘↵', ['Mod-Enter']],
-  ['slide-picker.talk-beside', 'slide-picker', 'O', ['o']],
-  ['slide-picker.close-beside', 'slide-picker', 'Esc', ['Escape']],
-  ['slide-picker.select-whole-section', 'slide-picker', '⇧⌘↵', ['Mod-Shift-Enter']],
-  ['app.sidebar-talks', 'app', '⌘⇧T', ['Mod-Shift-t']],
-  ['browser.filter', 'browser', '/', ['/']]
-]
-for (const [id, scope, keys, codes] of talkSearchKeys) {
-  const entry = SHORTCUT_REGISTRY.find((candidate) => candidate.id === id)
-  assert.deepEqual([entry?.scope, entry?.keys, entry?.codes], [scope, keys, codes], `${id} is registered in ${scope} as ${keys}`)
-}
-assert.deepEqual(
-  SHORTCUT_REGISTRY.filter((entry) => entry.codes.includes('s') && !entry.unbound).map((entry) => [entry.scope, entry.id]),
-  [['browser', 'browser.sort'], ['slide-picker', 'slide-picker.select-section'], ['presenter', 'presenter.skip'], ['talktext', 'talktext.script']],
-  'S is the file list’s sort and the slide picker’s select section, in their own scopes'
-)
-// Work files ticket 30: the Tools window's keys. Each is in the Tools scope, each has its reason in its
-// explanation, none repeats a chord of the Tools scope, and the unpublish and attach commands have no key.
-{
-  const tools = SHORTCUT_REGISTRY.filter((entry) => entry.scope === 'tools')
-  assert.deepEqual(
-    tools.map((entry) => [entry.id, entry.keys]),
-    [['tools.view-sessions', '⌘4'], ['tools.view-published', '⌘5'], ['tools.view-workfiles', '⌘6'], ['tools.plan-run', '⌘⌥N'], ['tools.edit-plan', '⌘⌥E'],
-      ['tools.plan-like-this', '⌘⇧D'], ['tools.publish', '⌘⌥U'], ['tools.go-live', '⌘⌥L'], ['tools.open-run', '⌘⌥O'], ['tools.copy-link', '⌘⇧C'],
-      ['tools.copy-invitation', '⌘⌥C'], ['tools.new-work-file', '⌘⇧N']],
-    'the Tools scope holds exactly the keys this sweep chose'
-  )
-  assert.equal(tools.every((entry) => entry.explanation.length > 40), true, 'every Tools key states its reason in its explanation')
-  assert.equal(new Set(tools.flatMap((entry) => entry.codes)).size, tools.flatMap((entry) => entry.codes).length, 'no chord is shared inside the Tools scope')
-  // The collisions the ticket names: none of these chords is a Tools key.
-  const taken = ['Mod-Shift-p', 'Mod-Shift-l', 'Mod-1', 'Mod-2', 'Mod-3', 'Mod-n', 'Mod-d', 'Mod-e', 'Mod-r']
-  assert.deepEqual(tools.flatMap((entry) => entry.codes).filter((code) => taken.includes(code)), [], 'no Tools key repeats ⌘⇧P, ⌘⇧L, ⌘1 to ⌘3, ⌘N, ⌘D, ⌘E or ⌘R')
-}
-// ADR-0011: the universal keymap's reserved chords. Only their reserved surface may hold them (a
-// reserved chord with no surface stays unbound); each holder below is that surface.
-const RESERVED_CHORDS = new Map([
-  ['Mod-Shift-p', ['app.command-palette', 'presenter.command-palette']],
-  ['Mod-Shift-k', []],
-  ['Mod-k', ['app.context-menu']],
-  ['Mod-p', ['app.toggle-inspector']],
-  ['Mod-f', ['app.find', 'importer.search']],
-  // ⌘⇧F is "search everything": Focus current slide moved to ⌘⌥⇧F (shared settings, 0.40), so it is unbound.
-  ['Mod-Shift-f', []],
-  ['Mod-,', ['app.settings']],
-  ['Mod-/', ['app.help']],
-  ['Mod-Shift-,', ['presenter.rebind']]
-])
-const reservedHolders = SHORTCUT_REGISTRY.flatMap((entry) => entry.codes
-  .filter((code) => RESERVED_CHORDS.has(code) && !RESERVED_CHORDS.get(code).includes(entry.id))
-  .map((code) => `${entry.id} holds ${code}`))
-assert.deepEqual(reservedHolders, [], 'no command takes an ADR-0011 reserved chord from its surface')
-{
-  const probe = [{ id: 'slide-picker.find-talk', codes: ['Mod-Shift-k'] }]
-  const hits = probe.flatMap((entry) => entry.codes.filter((code) => RESERVED_CHORDS.has(code) && !RESERVED_CHORDS.get(code).includes(entry.id)))
-  assert.deepEqual(hits, ['Mod-Shift-k'], 'the reserved-chord check fails on a command given ⌘⇧K')
-}
-
-// Ticket 07's keys: ⇧R, ⇧P, L, ⌘E, ⌘R registered for the presenter; N and C no longer listed.
-// Ticket 08's: ⇧F5 (refresh) and ↵ (next).
-const presenterScope = SHORTCUT_REGISTRY.filter((entry) => entry.scope === 'presenter')
-for (const [id, keys] of [['presenter.record', '⇧R'], ['presenter.record-pause', '⇧P'], ['presenter.save-run-as', 'L'], ['presenter.save-run', '↵'], ['presenter.edit', '⌘E'], ['presenter.refresh', '⌘R / ⇧F5'], ['presenter.next', '→ Space ↓ PgDn ↵']]) {
-  assert.equal(presenterScope.find((entry) => entry.id === id)?.keys, keys, `${id} is registered in the presenter scope as ${keys}`)
-}
-assert.equal(presenterScope.some((entry) => entry.keys === 'N'), false, 'the presenter scope does not list N (it does nothing in the presenter)')
-assert.deepEqual(presenterScope.filter((entry) => entry.keys === 'C').map((entry) => entry.id), ['presenter.guide'], 'C is bound to one thing in the presenter: the Guide column (0.38.2 release notes)')
-assert.equal(readFileSync(new URL('../src/preload/present-guide.ts', import.meta.url), 'utf8').includes("addEventListener('keydown'"), true, 'the Guide preload binds C')
-const { PRESENTER_CONTROLS: presenterControls } = await import(new URL('../src/shared/presenter-controls.ts', import.meta.url))
-assert.equal(presenterControls.some((control) => 'unregisteredKeys' in control), false, 'every presenter control takes its keys from the registry (no unregisteredKeys)')
-
-// Fix round 4: the Inspector's option pictures declare their own shortcut ids, not the pickers'.
-{
-  const pictures = readFileSync(join(root, 'src/renderer/src/components/InspectorOptionPictures.tsx'), 'utf8')
-  const declared = [...pictures.matchAll(/shortcut-id:\s*([^\n—]+)/g)].flatMap((match) => match[1].trim().split(/\s+/))
-  assert.deepEqual(declared.sort(), ['inspector.option-pictures-choose', 'inspector.option-pictures-move'], 'option pictures declare only their own ids')
-  for (const id of declared) {
-    const entry = SHORTCUT_REGISTRY.find((candidate) => candidate.id === id)
-    assert.equal(entry?.scope, 'inspector', `${id} is registered in the inspector scope`)
+test('every command has a menu, palette or documented place to use it', () => {
+  const menu = nativeMenu()
+  const inMenu = new Set(menu.filter(item => item.id).map(item => appCommandIdOf(item.id)))
+  const toolPalette = new Set(toolsWindowCommands().map(command => command.id))
+  const presenterPalette = new Set(generatedPresenterData('PRESENTER_PALETTE')
+    .flatMap(([, entries]) => entries.map(entry => entry.shortcut)))
+  const missing = COMMAND_REGISTRY.filter(command => {
+    if (inMenu.has(command.id) || palette.has(command.id) || toolPalette.has(command.id) ||
+      presenterPalette.has(command.shortcutId)) return false
+    if (command.places === EVERYWHERE || PLACES.some(place => offeredAt(command.places, place))) return false
+    // NOT_BY_PLACE is a declaration of scope, not a route on its own.
+    return !(command.places === NOT_BY_PLACE && paletteExclusion(command)?.trim())
+  })
+  assert.deepEqual(missing.map(command => command.id), [], 'commands with no menu, palette or documented place')
+  for (const def of registry.defs) {
+    if (def.noMenu) {
+      assert.ok(def.noMenuReason?.trim(), `${def.id}: missing menu exclusion reason`)
+      continue
+    }
+    // App Patterns' native frame uses roles and label-only Settings/Help items.
+    assert.ok(menu.some(item => item.id === def.id || item.role === def.id ||
+      (!item.id && !item.role && item.label === def.label)), `${def.id}: missing native menu item`)
   }
+})
+
+test('every bound shortcut has its registry label in the keyboard sheet or presenter help', () => {
+  const byShortcut = new Map()
+  for (const row of sheetRows()) {
+    const id = commands.get(row.commandId)?.shortcutId
+    if (!id) continue
+    assert.equal(row.chord, shortcuts.get(id).unbound ? 'no key' : defaultLabel(id), `${id}: sheet chord`)
+    byShortcut.set(id, row.chord)
+  }
+  for (const section of viewKeySections()) {
+    for (const row of section.rows) {
+      if (!row.shortcutId) continue // Literal gesture help.
+      assert.equal(row.keys, defaultLabel(row.shortcutId), `${row.shortcutId}: view help chord`)
+      byShortcut.set(row.shortcutId, row.keys)
+    }
+  }
+  const presenter = new Map(generatedPresenterData('SHORTCUTS_LIST').flatMap(([, rows]) =>
+    rows.map(([keys, , needs, id]) => [id, { keys, needs }])))
+  for (const entry of SHORTCUT_REGISTRY) {
+    if (entry.unbound) continue
+    const chord = entry.scope === 'presenter' ? presenter.get(entry.id)?.keys : byShortcut.get(entry.id)
+    assert.equal(chord, entry.keys, `${entry.id}: missing or wrong chord in keyboard sheet/help`)
+    if (entry.scope === 'presenter') {
+      assert.equal(presenter.get(entry.id).needs, PRESENTER_KEY_NEEDS[entry.id] ?? null, `${entry.id}: help preload gate`)
+    }
+  }
+})
+
+test('a persisted rebind updates menu, palette, keyboard sheet, tooltip and the focused editor', async () => {
+  const dom = new JSDOM('<!doctype html>', { url: 'https://talkweaver.test/', pretendToBeVisual: true })
+  const globals = ['window', 'document', 'navigator', 'MutationObserver', 'HTMLElement', 'Element', 'Node', 'Event']
+  const previous = globals.map(name => [name, Object.getOwnPropertyDescriptor(globalThis, name)])
+  for (const name of globals) {
+    Object.defineProperty(globalThis, name, { configurable: true, value: name === 'window' ? dom.window : dom.window[name] })
+  }
+  let view
+  try {
+    const ui = await renderer()
+    const command = palette.get('format-bold')
+    const menuId = bridleIdOf(command.id)
+    const ids = { bridleIdOfKeymapId, keymapIdOf }
+    const current = nativeMenu().find(item => item.id === menuId)
+    const override = 'Mod-Alt-b'
+    let keys = {}, appKeys = ''
+    dom.window.tw = { keymap: {
+      get: async () => ({}),
+      onChanged: () => () => {},
+      set: async overrides => {
+        const writes = storeWritesFor(overrides, keys, ids)
+        keys = Object.fromEntries(writes.rebind.map(({ commandId, chord }) => [commandId, chord]))
+        appKeys = writes.appKeys
+        return { ok: true, overrides: overridesFromStore(keys, appKeys, ids) }
+      }
+    } }
+    const unsubscribe = ui.startKeymapSync()
+    // Let the get() response and its store adoption settle before rebinding.
+    await Promise.resolve()
+    await Promise.resolve()
+    let changed = 0
+    const stopWatching = ui.onKeymapChanged(() => { changed += 1 })
+    ui.setOverride('bold', override)
+    await Promise.resolve()
+    stopWatching()
+    unsubscribe()
+    assert.ok(changed, 'live surfaces receive the keymap change')
+    assert.equal(ui.effectiveKeys(command.shortcutId), override, 'renderer reads stored rebind')
+    const menu = nativeMenu(keys, appKeys).find(item => item.id === menuId)
+    assert.notEqual(menu.accelerator, current.accelerator)
+    assert.equal(menu.accelerator, toAccelerator('⌘⌥B'), 'native menu accelerator')
+    assert.equal(menu.registerAccelerator, false, 'the menu displays the chord without stealing dispatch')
+    const hint = ui.liveCommandShortcutLabel(command)
+    assert.equal(hint, '⌘⌥B', 'palette hint')
+    const row = sheetRows(ui.liveShortcutLabel).find(row => row.commandId === command.id)
+    assert.deepEqual([row.chord, row.was], [hint, defaultLabel(command.shortcutId)], 'keyboard sheet chord and previous default')
+    const buttons = resolveButtons(ui, command, hint)
+    assert.equal(buttons[0].tooltip, `${command.label} (⌘⌥B)`, 'action bar tooltip')
+
+    view = new ui.EditorView({
+      parent: document.body,
+      state: ui.EditorState.create({ doc: 'word', selection: { anchor: 0, head: 4 },
+        extensions: [ui.keymap.of(ui.buildEditorKeyBindings())] })
+    })
+    view.focus()
+    assert.equal(document.activeElement, view.contentDOM)
+    const press = altKey => view.contentDOM.dispatchEvent(new dom.window.KeyboardEvent('keydown', {
+      key: 'b', code: 'KeyB', bubbles: true, cancelable: true, altKey,
+      metaKey: process.platform === 'darwin', ctrlKey: process.platform !== 'darwin'
+    }))
+    press(false)
+    assert.equal(view.state.doc.toString(), 'word', 'the old chord leaves the document alone')
+    press(true)
+    assert.equal(view.state.doc.toString(), '**word**', 'the rebound chord actually bolds the selection')
+  } finally {
+    view?.destroy()
+    dom.window.close()
+    for (const [name, descriptor] of previous) {
+      if (descriptor) Object.defineProperty(globalThis, name, descriptor)
+      else delete globalThis[name]
+    }
+  }
+})
+
+function resolveButtons(ui, command, keys) {
+  const runnable = new Map([[command.id, { label: command.label, keys, run() {} }]])
+  return ui.resolveActionBarItems([command.id], runnable).flatMap(section => section.items)
 }
 
-const { renderTemplateWithShortcutHelp, renderIconsModule, iconsModulePath } = await import('./build-shortcut-help.mjs')
-const templatePath = join(root, 'compiler/assets/templates/presenter-popup-single-html.html')
-const template = readFileSync(templatePath, 'utf8')
-assert.equal(template, await renderTemplateWithShortcutHelp(template), 'Generated presenter shortcut help is stale')
-assert.equal(readFileSync(iconsModulePath, 'utf8'), await renderIconsModule(), 'Generated presenter icons are stale')
+test('ControlOrMeta selects the platform primary modifier and a combined chord requires both', () => {
+  const event = (key, modifiers) => ({ key, metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, ...modifiers })
+  for (const primary of ['metaKey', 'ctrlKey']) {
+    assert.ok(shortcutEventMatches(event('/', { [primary]: true }), 'app.help'), `${primary} + / opens help`)
+    assert.ok(shortcutEventMatches(event('Enter', { [primary]: true }), 'editor.object-finish'), `${primary} + Enter finishes an object`)
+    assert.equal(shortcutEventMatches(event('s', { [primary]: true }), 'editor.new-section'), false, `${primary} alone leaves the other S chord alone`)
+  }
+  assert.equal(shortcutEventMatches(event('Enter'), 'editor.object-finish'), false)
+  assert.ok(shortcutEventMatches(event('s', { metaKey: true, ctrlKey: true }), 'editor.new-section'))
+  assert.ok(shortcutEventMatches(event('F8'), 'editor.object-finish', 'F8'), 'F8 finishes an object after rebinding')
+  assert.equal(shortcutEventMatches(event('Enter', { metaKey: true }), 'editor.object-finish', 'F8'), false,
+    'the old Command+Enter no longer finishes an object after rebinding')
+})
 
-if (failures > 0) {
-  console.error(`\ntest-shortcut-registry: ${failures} failure(s).`)
-  process.exit(1)
-}
-console.log('\ntest-shortcut-registry: all checks passed.')
+test('Tools shortcuts leave the app and system chords free across scopes', () => {
+  const protectedKeys = ['n', 'd', 'e', 'r', '1', '2', '3']
+  const tools = SHORTCUT_REGISTRY.filter(entry => entry.scope === 'tools')
+  for (const primary of ['Meta', 'Ctrl']) {
+    const protectedChords = new Set(protectedKeys.map(key => bindingKey(`Mod-${key}`, primary)))
+    const conflicts = tools.flatMap(entry => entry.codes
+      .filter(code => protectedChords.has(bindingKey(code, primary)))
+      .map(code => `${entry.id} claims ${code}`))
+    assert.deepEqual(conflicts, [], `Tools cannot take protected chords on ${primary}`)
+  }
+})
+
+test('ADR-0011 reserved chords keep their designated actions', () => {
+  const reserved = new Map([
+    ['Mod-Shift-p', ['app.command-palette', 'presenter.command-palette']],
+    ['Mod-Shift-k', []], ['Mod-k', ['app.context-menu']], ['Mod-p', ['app.toggle-inspector']],
+    ['Mod-f', ['app.find', 'importer.search']], ['Mod-Shift-f', []],
+    ['Mod-,', ['app.settings']], ['Mod-/', ['app.help']], ['Mod-Shift-,', ['presenter.rebind']]
+  ])
+  for (const [chord, ids] of reserved) {
+    const holders = SHORTCUT_REGISTRY.filter(entry => entry.codes.some(code =>
+      bindingKey(code, 'Meta') === bindingKey(chord, 'Meta'))).map(entry => entry.id)
+    assert.deepEqual(holders.sort(), [...ids].sort(), chord)
+  }
+})
+
+test('Enter falls through an object, title and protected line before continuing a list', async () => {
+  const { EDITOR_COMMANDS } = await renderer()
+  const chain = ['object-edit', 'title-continue', 'protected-line-continue', 'list-continue']
+  assert.deepEqual(EDITOR_COMMANDS.filter(command => chain.includes(command.id)).map(command => command.id), chain)
+})
+
+test('the command palette opens from Tools without listing itself', () => {
+  const definitions = COMMAND_REGISTRY.filter(command => command.shortcutId === 'app.command-palette')
+  assert.equal(definitions.length, 1)
+  const [command] = definitions
+  assert.equal(command.handlerId, 'app.command-palette')
+  assert.equal(command.toolbar?.menu, 'tools')
+  assert.equal(palette.has(command.id), false)
+})
+
+test('generated presenter help and icons are current', async () => {
+  assert.equal(template, await renderTemplateWithShortcutHelp(template), 'Generated presenter shortcut help is stale')
+  assert.equal(readFileSync(iconsModulePath, 'utf8'), await renderIconsModule(), 'Generated presenter icons are stale')
+})

@@ -5,7 +5,7 @@ import { readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync, statSync }
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { chromium } from 'playwright'
-import { writeDeckStyles } from './build-deck-styles.mjs'
+import { ensurePresenterTemplate } from './build-deck-styles.mjs'
 import { readabilityProbe } from './lib/slide-readability.mjs'
 import { extractSlides, extractStyles } from '../compiler/scripts/lib/04-html-extraction.mjs'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
@@ -15,7 +15,7 @@ const option = name => process.argv.find(a => a.startsWith(`--${name}=`))?.split
 const baseline = option('compiler')
 const captureOnly = baseline && !process.argv.includes('--verify-baseline')
 const evidence = option('evidence')
-if (!baseline) writeDeckStyles()
+if (!baseline) await ensurePresenterTemplate()
 const { prepareSource } = await import(pathToFileURL(join(baseline || repo, 'compiler/scripts/lib/08-source-adapters.mjs')))
 const fixture = join(repo, 'scripts/fixtures/ocean-look/reading-weight-outline.md')
 const source = readFileSync(fixture, 'utf8')

@@ -19,7 +19,7 @@ import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { extractStyles, extractSlides } from '../compiler/scripts/lib/04-html-extraction.mjs'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
-import { writeDeckStyles } from './build-deck-styles.mjs'
+import { ensurePresenterTemplate } from './build-deck-styles.mjs'
 
 const CHAT = `user: What changed in our refund policy last month?
 model-reasoning (4s): They want last month’s changes.
@@ -131,7 +131,7 @@ ${CHAT}
 Plain slide.
 `
 
-writeDeckStyles()
+await ensurePresenterTemplate()
 const dir = await mkdtemp(join(tmpdir(), 'tw-sim-dom-'))
 const outline = join(dir, 'sim-outline.md')
 await writeFile(outline, md)

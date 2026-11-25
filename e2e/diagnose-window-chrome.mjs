@@ -192,7 +192,7 @@ try {
     await closeApp()
   }
   const editor = await launch('editor', true)
-  await editor.locator('.tw-welcome-card').waitFor()
+  await editor.locator('.tw-welcome-new').waitFor()
   if (!baseline) {
     await inspect(editor, 'editor-welcome', { titles: '.workspace-title' })
     // Crossing the narrow breakpoint collapses the Talks sidebar until the user reopens it.

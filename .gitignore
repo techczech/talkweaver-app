@@ -48,3 +48,4 @@ agent-skill-dist/
 
 # Private library audit decks, screenshots and measurement records.
 /.audit-local/
+/compiler/assets/templates/presenter-popup-single-html.generated.html.*.tmp

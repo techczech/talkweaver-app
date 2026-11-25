@@ -3,7 +3,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
-import { writeDeckStyles } from './build-deck-styles.mjs'
+import { ensurePresenterTemplate } from './build-deck-styles.mjs'
 import { inClassicLook } from './lib/slide-markup-identity.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -13,7 +13,7 @@ export const samplerArtefactsDir = join(repo, 'artefacts/layout-sampler')
 
 // `classic: true` compiles the sampler in the pre-0.44 look (checks that hold the classic designs).
 export async function buildLayoutSampler(outputDir = samplerArtefactsDir, { classic = false } = {}) {
-  writeDeckStyles()
+  await ensurePresenterTemplate()
   const written = readFileSync(samplerOutlinePath, 'utf8')
   const source = classic ? inClassicLook(written) : written
   // The sampler's two videos are test fixtures in e2e/fixtures, outside docs/: name that folder as an

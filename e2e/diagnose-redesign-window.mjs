@@ -54,9 +54,9 @@ try {
   await welcome.waitFor()
   await page.waitForFunction(() => document.activeElement?.id === 'tw-welcome-title')
   await page.waitForFunction(() => {
-    const footer = document.querySelector('.tw-welcome-foot')
-    const buttons = [...footer.querySelectorAll('button')].map(button => button.getBoundingClientRect())
-    return buttons.every(rect => Math.abs(rect.y - buttons[0].y) < 2 && rect.right <= footer.getBoundingClientRect().right)
+    const actions = document.querySelector('.tw-welcome-start-actions')
+    const buttons = [...actions.querySelectorAll('button')].map(button => button.getBoundingClientRect())
+    return buttons.every(rect => Math.abs(rect.y - buttons[0].y) < 2 && rect.right <= actions.getBoundingClientRect().right)
   })
   await page.screenshot({ path: join(output, 'FR1-welcome.png') })
   await page.getByLabel('Name of the talk').fill('Garden Rota')

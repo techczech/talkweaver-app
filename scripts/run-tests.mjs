@@ -298,6 +298,11 @@ if (process.platform === 'darwin' &&
     process.exit(1)
   }
 }
+if (pkg.scripts['generate:deck-styles']) {
+  execFileSync(process.execPath, [
+    '--disable-warning=MODULE_TYPELESS_PACKAGE_JSON', 'scripts/build-deck-styles.mjs',
+  ], { cwd: root, stdio: 'inherit' })
+}
 const started = Date.now()
 const results = await runAll(names, opts.jobs, opts.timeout, new Set(tiers.serial ?? []), scratch)
 const failed = results.filter((result) => !result.ok)

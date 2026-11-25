@@ -5,6 +5,7 @@
 //   - the presenter's counters are slide numbers out of the slides, not beat positions (the 43-vs-45 defect);
 //   - Recent starts collapsed; every workspace mode draws the one shared back control and none keeps its old route.
 // The real app is checked by e2e/diagnose-consistency-batch4.mjs.
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { rightColumnTabs } from '../src/shared/guide.ts'
@@ -48,7 +49,7 @@ assert.equal(titleHeadingLine(docOf('# T\n\n## S\n')), 1)
 assert.equal(titleHeadingLine(docOf('---\ntitle: T\n# comment in the front matter\n---\n## S\n')), null, 'a heading that is not the title is not the title')
 
 // The presenter: the counters are slide numbers.
-const presenter = read('compiler/assets/templates/presenter-popup-single-html.html')
+const presenter = readPresenterTemplate()
 assert.ok(!/presenterCount\.textContent = `[^`]*beats\.length/.test(presenter), 'the presenter counter does not count beats')
 assert.ok(!/slideCount\.textContent = `[^`]*beats\.length/.test(presenter), 'the audience counter does not count beats')
 assert.match(presenter, /presenterCount\.textContent = `\$\{slideNumberOfBeat\(state\.beat\)\} \/ \$\{slides\.length\}`/)

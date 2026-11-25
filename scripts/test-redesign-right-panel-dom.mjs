@@ -17,6 +17,7 @@ const slideText = process.argv.includes('--slide-text')
 const notes = process.argv.includes('--notes')
 const outlinePreview = process.argv.includes('--outline-preview')
 const sidebarFollow = process.argv.includes('--sidebar-follow')
+const checkResearch = !polish && !slideText && !notes && !outlinePreview && !sidebarFollow
 const scratch = mkdtempSync(join(tmpdir(), 'tw-right-panel-dom-'))
 const outline = join(scratch, 'garden-outline.md')
 const followTitle = number => ({
@@ -97,12 +98,13 @@ ${publish}`) }
     }}],
     stdin: {
       contents: `
-import React, { useState } from 'react'
+import React, { useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { EditorView } from '@codemirror/view'
 import { GalleryThumbnails, Library, ListTree } from 'lucide-react'
 import { installMock } from './src/renderer/src/tw-mock.ts'
 import WorkspaceLayout from './src/renderer/src/components/WorkspaceLayout.tsx'
+import WelcomeTalk from './src/renderer/src/components/WelcomeTalk.tsx'
 import Toasts from './src/renderer/src/components/Toasts.tsx'
 import { notify } from './src/renderer/src/lib/notify.ts'
 import './src/renderer/src/styles.css'
@@ -146,6 +148,10 @@ window.tw.asset.pasteTalkPictures = async () => window.acceptPicturePaste ? ['be
 window.tw.workFiles = { list: async () => null }
 window.tw.pathways = { read: async () => ({ slides: [], pathways: [] }), onChanged: empty }
 window.tw.icons = { names: async () => [], svg: async () => null, search: async () => [] }
+window.tw.research = {
+  list: async () => ({ ok: true, items: [], skipped: 0, limited: false }),
+  cancelUsage: () => {},
+}
 let attachedView = null
 window.editorView = () => {
   const dom = document.querySelector('.cm-editor')
@@ -157,10 +163,13 @@ window.centerFixtureCaret = () => {
   const view = window.editorView()
   view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head, { y: 'center' }) })
 }
-function Fixture({ path, outlinePath, polish, slideText, outlinePreview }) {
+function Fixture({ path, outlinePath, polish, slideText, outlinePreview, checkResearch }) {
+  const [hasTalk, setHasTalk] = useState(!checkResearch)
   const [outlineHost, setOutlineHost] = useState(null)
   const [slidesPanelView, setSlidesPanelView] = useState(outlinePreview ? 'previews' : 'outline')
   const [slideTabView, setSlideTabView] = useState('pages')
+  const welcomeSearchRef = useRef(null)
+  const talk = { name: 'Garden', path, outlinePath, slug: 'garden', title: 'Garden meeting', vaultId: 'fixture' }
   return <div className="app-shell">
     {(polish || slideText) && <div ref={setOutlineHost} style={{ flex: "0 0 190px", minWidth: 0 }} />}
     {outlinePreview && <aside className="sidebar-wrap" data-slides-mode={slidesPanelView} style={{ width: 262, '--sidebar-width': '262px' }}>
@@ -176,7 +185,11 @@ function Fixture({ path, outlinePath, polish, slideText, outlinePreview }) {
       </div>
       <div className="sidebar-nav-body" ref={setOutlineHost} />
     </aside>}
-    <WorkspaceLayout activeTalk={{ name: 'Garden', path, outlinePath, slug: 'garden', title: 'Garden meeting' }}
+    <WorkspaceLayout activeTalk={hasTalk ? talk : null}
+      welcome={<WelcomeTalk folder={path} talks={[talk]} vaults={[{ id: 'fixture', root: path, open: true }]}
+        searchRef={welcomeSearchRef} onOpen={async () => { setHasTalk(true); return true }}
+        onStart={async () => { setHasTalk(true); return null }}
+        onChangeFolder={() => {}} onExamples={async () => null} onOpenTalks={() => {}} onImport={() => {}} />}
       vaultRoot={path} startView={polish || outlinePreview ? 'markdown' : undefined} leftPreviewsHost={outlineHost}
       leftSidebarShown={outlinePreview} slidesPanelView={slidesPanelView}
       slideTabView={slideTabView} onChooseSlideTabView={setSlideTabView} /><Toasts /></div>
@@ -186,7 +199,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
 `,
       sourcefile: 'right-panel-fixture.tsx', loader: 'tsx', resolveDir: root
     },
-    bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic',
+    bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.svg': 'dataurl' },
     define: { __TW_SECURITY_TEST__: 'false', 'import.meta.env.DEV': 'false' },
     outfile: join(scratch, 'fixture.js'), logLevel: 'warning'
   })
@@ -217,8 +230,40 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     return pathToFileURL(file).href
   })
   await page.goto(pathToFileURL(html).href)
-  const props = { path: scratch, outlinePath: outline, polish, slideText, outlinePreview: outlinePreview || sidebarFollow }
+  const props = { path: scratch, outlinePath: outline, polish, slideText, outlinePreview: outlinePreview || sidebarFollow, checkResearch }
   await page.evaluate(props => window.mountFixture(props), props)
+
+  if (checkResearch) {
+    await page.getByRole('heading', { name: 'Open a talk', exact: true }).waitFor()
+    assert.equal(await page.getByRole('button', { name: /^Research\b/ }).count(), 0, 'Research requires an open talk')
+    const titleField = page.getByRole('textbox', { name: 'Name of the talk' })
+    await titleField.evaluate(input => input.addEventListener('keydown', event => {
+      if (event.code === 'KeyR') input.dataset.researchChord = String(event.defaultPrevented)
+    }))
+    await titleField.press('ControlOrMeta+Shift+R')
+    assert.equal(await titleField.getAttribute('data-research-chord'), 'false', 'the welcome screen leaves the chord alone')
+
+    await titleField.fill('Garden meeting')
+    await page.getByRole('button', { name: /Start with a slide/ }).click()
+    const editor = page.locator('.workspace-slide-input .cm-content')
+    const panel = page.getByRole('complementary', { name: 'Research', exact: true })
+    const shortcut = 'ControlOrMeta+Shift+R'
+    await editor.press(shortcut)
+    await panel.getByText('Nothing collected for this talk yet').waitFor()
+    await page.keyboard.press(shortcut)
+    await panel.waitFor({ state: 'detached' })
+    await page.getByRole('tablist', { name: 'Sidebar' }).getByRole('button', { name: 'Research', exact: true }).click()
+    await panel.waitFor()
+    await page.keyboard.press(shortcut)
+    await panel.waitFor({ state: 'detached' })
+    await editor.press('ControlOrMeta+Shift+P')
+    await page.getByRole('combobox', { name: 'Command query' }).fill('Research')
+    await page.locator('[data-command="research-panel"]').click()
+    await panel.waitFor()
+    await page.keyboard.press(shortcut)
+    await panel.waitFor({ state: 'detached' })
+    console.log('Research is absent on the welcome screen and opens with a talk via the shortcut, sidebar and palette.')
+  }
 
   if (slideText) {
     const panel = page.locator('.workspace-slide-text')

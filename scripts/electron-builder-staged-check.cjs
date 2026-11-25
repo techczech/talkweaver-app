@@ -18,7 +18,7 @@
 // attestation that does not match the committed pin, a broken signature, and a binary that is not the
 // pinned program. That verifier is the release gate (docs/RELEASING.md), not this hook.
 'use strict'
-const { lstatSync, readFileSync, writeFileSync } = require('node:fs')
+const { existsSync, lstatSync, readFileSync, writeFileSync } = require('node:fs')
 const { join } = require('node:path')
 const { MAC_FFMPEG_ATTESTATION, macFfmpegAttestation, macFfmpegPinProblem, stagedMacFfmpegProblem } = require('./lib/ffmpeg-ship-check.cjs')
 
@@ -57,8 +57,18 @@ function createStagedCheck(deps = {}) {
 }
 
 async function afterPack(context) {
+  const mac = ['darwin', 'mas'].includes(context.electronPlatformName)
+  const resources = mac
+    ? join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
+    : join(context.appOutDir, 'resources')
+  const { presenterTemplateSource, readPresenterTemplate } = await import('../compiler/scripts/lib/presenter-template.mjs')
+  const compiler = join(resources, 'compiler')
+  if (existsSync(join(compiler, presenterTemplateSource)) || readPresenterTemplate(compiler) !== readPresenterTemplate()) {
+    throw new Error('Packaged compiler must contain the generated presenter template with the built bytes.')
+  }
+  console.log('  • staged presenter template matches the generated build input')
   await createStagedCheck()(context)
-  if (!['darwin', 'mas'].includes(context.electronPlatformName)) return
+  if (!mac) return
   const plist = require('plist')
   const infoPath = join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Info.plist')
   const info = plist.parse(readFileSync(infoPath, 'utf8'))

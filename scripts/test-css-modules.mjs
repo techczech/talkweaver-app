@@ -1,9 +1,10 @@
 import { strict as assert } from 'node:assert'
-import { spawnSync } from 'node:child_process'
+import { presenterTemplateOutput, presenterTemplateSource, readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import { fileURLToPath } from 'node:url'
-import { readFileSync, readdirSync } from 'node:fs'
-import { join, resolve } from 'node:path'
-import { buildDeckStyles, layoutModulesInRegistryOrder, renderTemplateWithDeckStyles } from './build-deck-styles.mjs'
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { buildDeckStyles, layoutModulesInRegistryOrder, renderTemplateWithDeckStyles, writeDeckStyles } from './build-deck-styles.mjs'
 
 const repo = resolve(fileURLToPath(new URL('..', import.meta.url)))
 const styles = join(repo, 'compiler/assets/styles')
@@ -88,7 +89,7 @@ assert.notEqual(markOrder, paragraphOrder, 'ink-marker owns a genuinely free ord
 assert(overrides.split('\n').length <= 200, 'overrides.css must not exceed 200 lines')
 assert(!buildDeckStyles().includes('@layer '), 'assembled deck stylesheet must not use cascade layers')
 
-const template = readFileSync(join(repo, 'compiler/assets/templates/presenter-popup-single-html.html'), 'utf8')
+const template = readPresenterTemplate()
 assert.equal(template, renderTemplateWithDeckStyles(template), 'Generated inline deck stylesheet is stale')
 const preOeParagraphRule = '.slide-content > p:not(.lead):not(.kicker) { max-width: 60ch; }'
 assert.equal(
@@ -100,18 +101,36 @@ console.log(`css modules: ${modules.length} layout modules; overrides ${override
 
 // A sampler build may overlap a compiler read in the parallel unit tier. An already-current
 // template must never be opened for writing, which would briefly truncate the shared source.
-const unchangedWriter = spawnSync(process.execPath, ['--input-type=module', '-e', `
-  import fs from 'node:fs';
-  import { syncBuiltinESMExports } from 'node:module';
-  const target = ${JSON.stringify(join(repo, 'compiler/assets/templates/presenter-popup-single-html.html'))};
-  const write = fs.writeFileSync;
-  fs.writeFileSync = function(path, ...args) {
-    if (path === target) throw new Error('An unchanged template was opened for writing');
-    return write.call(this, path, ...args);
-  };
-  syncBuiltinESMExports();
-  const { writeDeckStyles } = await import('./scripts/build-deck-styles.mjs');
-  if (writeDeckStyles() !== target) throw new Error('The build must still return its template path');
-`], { cwd: repo, encoding: 'utf8' })
-assert.equal(unchangedWriter.status, 0, unchangedWriter.stderr || unchangedWriter.error?.message)
-console.log('css modules: a current shared template is never truncated by an overlapping sampler build')
+const templatePath = await writeDeckStyles()
+const before = statSync(templatePath)
+await writeDeckStyles()
+const after = statSync(templatePath)
+assert.equal(after.mtimeMs, before.mtimeMs, 'the generator does not rewrite unchanged output')
+assert.equal(after.ino, before.ino, 'the generator does not replace unchanged output')
+console.log('css modules: a current shared template is never rewritten by an overlapping sampler build')
+
+const scratch = mkdtempSync(join(tmpdir(), 'tw-presenter-freshness-'))
+try {
+  const compiler = join(scratch, 'compiler')
+  const older = new Date(1000)
+  const built = new Date(2000)
+  const newer = new Date(3000)
+  const inputs = [presenterTemplateSource, 'assets/styles/base.css', '../src/shared/shortcut-registry.ts']
+  for (const file of [...inputs, presenterTemplateOutput]) {
+    const path = join(compiler, file)
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, 'fixture')
+    const mtime = file === presenterTemplateOutput ? built : older
+    utimesSync(path, mtime, mtime)
+  }
+  assert.equal(readPresenterTemplate(compiler), 'fixture')
+  for (const file of inputs) {
+    const path = join(compiler, file)
+    utimesSync(path, newer, newer)
+    assert.throws(() => readPresenterTemplate(compiler), /is stale: .*Run npm run generate:deck-styles/, file)
+    utimesSync(path, older, older)
+  }
+  console.log('css modules: the source template, styles and shortcut help can each make the output stale')
+} finally {
+  rmSync(scratch, { recursive: true, force: true })
+}

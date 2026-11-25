@@ -7,9 +7,10 @@
 // Ticket 07 (teleprompter placements, the all-talks setting, J, automatic scroll, bottom notes
 // during a poll) is covered by test-presenter-teleprompter.mjs.
 // Usage: node scripts/test-presenter-notes-placement.mjs   (REPORT=1 prints the measured table)
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { readFileSync, statSync } from 'node:fs'
+import { statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -17,7 +18,7 @@ import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 
 // ── 1. The pure block ────────────────────────────────────────────────────────────────────────
-const template = readFileSync(new URL('../compiler/assets/templates/presenter-popup-single-html.html', import.meta.url), 'utf8')
+const template = readPresenterTemplate()
 const START = '// === NOTES_PLACEMENT_START'
 const END = '// === NOTES_PLACEMENT_END'
 assert(template.includes(START) && template.includes(END), 'the template carries the NOTES_PLACEMENT block')

@@ -41,7 +41,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import sharp from 'sharp'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
-import { writeDeckStyles } from './build-deck-styles.mjs'
+import { ensurePresenterTemplate } from './build-deck-styles.mjs'
 import { walkSlides } from './lib/slide-readability.mjs'
 
 const hardStop = setTimeout(() => { console.error('test-section-colours-overlays-dom: hard timeout'); process.exit(124) }, 25 * 60 * 1000)
@@ -51,7 +51,7 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 mkdirSync(join(repo, '.audit-local'), { recursive: true })
 const work = mkdtempSync(join(repo, '.audit-local/section-colours-overlays-'))
 process.on('exit', () => rmSync(work, { recursive: true, force: true }))
-writeDeckStyles()
+await ensurePresenterTemplate()
 const FIXTURE = join(repo, 'scripts/fixtures/ocean-look/section-colours-overlays-outline.md')
 const LEADS = ['blue', 'amber', 'light', 'deep-blue', 'light-amber']
 const PERCENTILE = 0.1

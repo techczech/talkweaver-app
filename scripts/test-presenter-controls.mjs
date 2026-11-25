@@ -8,6 +8,7 @@
 //     registry's key; icons are lucide SVGs of one stroke width and one size; no emoji or
 //     Unicode-symbol icon is left in the chrome.
 // Usage: node scripts/test-presenter-controls.mjs   SHOTS=<dir> also saves the 1440x900 build shots.
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
 import { readFileSync, statSync } from 'node:fs'
@@ -45,8 +46,7 @@ const moved = SHORTCUT_REGISTRY.map((e) => (e.id === 'presenter.skip' ? { ...e, 
 assert.equal(presenterControlTips(moved).skipNextBtn[1], 'X', 'the skip tooltip reads the registry, not a copy')
 assert.throws(() => presenterControlKeys({ id: 'x', name: 'X', shortcut: 'presenter.nope' }, SHORTCUT_REGISTRY), /no shortcut/)
 // The generated artefacts are current.
-const templatePath = join(repo, 'compiler/assets/templates/presenter-popup-single-html.html')
-const template = readFileSync(templatePath, 'utf8')
+const template = readPresenterTemplate()
 assert.equal(template, await renderTemplateWithShortcutHelp(template), 'template block is stale: npm run generate:shortcut-help')
 assert.equal(readFileSync(iconsModulePath, 'utf8'), await renderIconsModule(), 'presenter-icons.generated.ts is stale: npm run generate:shortcut-help')
 

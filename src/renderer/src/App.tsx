@@ -310,7 +310,9 @@ function MainApp() {
   const [newTalkStartView, setNewTalkStartView] = useState<StartingView | null>(null)
   const [newFolderOpen, setNewFolderOpen] = useState(false)
   // Add vault / Edit this vault / join / refusal sheet (several-vaults ticket 04).
-  const [vaultSheet, setVaultSheet] = useState<VaultSheetState | null>(null)
+  const [vaultSheet, setVaultSheet] = useState<(VaultSheetState & { forWelcome?: boolean }) | null>(null)
+  const [welcomeVaultId, setWelcomeVaultId] = useState<string | null>(null)
+  const welcomeSearchRef = useRef<HTMLInputElement>(null)
   // Whether the example vault is in the list (onboarding ticket 06): read by Add vault…, which is
   // also reached from listeners set up once.
   const exampleListedRef = useRef(false)
@@ -640,15 +642,27 @@ function MainApp() {
     setSidebarMode(mode)
     setSidebarCollapsed(false)
     requestAnimationFrame(() => {
-      window.dispatchEvent(new Event(mode === 'talks' ? 'tw-search-talks' : 'tw-search-slides'))
+      window.dispatchEvent(new Event(mode === 'talks' ? 'tw-focus-talks-panel-search' : 'tw-search-slides'))
     })
+  }, [])
+
+  const focusTalkSearch = useCallback((): void => {
+    const field = welcomeSearchRef.current
+    if (field) { field.focus(); field.select() }
+    else focusSidebarSearch('talks')
+  }, [focusSidebarSearch])
+
+  const showAllTalks = useCallback((): void => {
+    setSidebarMode('talks')
+    setSidebarCollapsed(false)
+    requestAnimationFrame(() => window.dispatchEvent(new Event('tw-show-all-talks')))
   }, [])
 
   const toggleSidebar = useCallback((focusMode: SidebarMode): void => {
     setSidebarCollapsed((collapsed) => {
       if (collapsed && focusMode !== 'pathways') {
         requestAnimationFrame(() => {
-          window.dispatchEvent(new Event(focusMode === 'talks' ? 'tw-search-talks' : 'tw-search-slides'))
+          window.dispatchEvent(new Event(focusMode === 'talks' ? 'tw-focus-talks-panel-search' : 'tw-search-slides'))
         })
       }
       return !collapsed
@@ -670,10 +684,14 @@ function MainApp() {
     function onKey(e: KeyboardEvent): void {
       if (isWorkspaceCovered()) return
       const cmKey = eventToCMKey(e)
+      // CodeMirror's Mod is Control on Windows and Linux. Keep the app-owned Talks search
+      // consistent with that binding while preserving the explicit Control match.
       const matched = SIDEBAR_COMMAND_IDS.find((id) => sidebarKeysRef.current[id] === cmKey)
+        ?? (e.ctrlKey && !e.metaKey && !/Mac|iPhone|iPad|iPod/.test(navigator.platform) &&
+          cmKey?.replace(/^Ctrl-/, 'Mod-') === sidebarKeysRef.current['sidebar.talks'] ? 'sidebar.talks' : undefined)
       if (matched === 'sidebar.talks') {
         e.preventDefault()
-        focusSidebarSearch('talks')
+        focusTalkSearch()
         commandRan('app.sidebar-talks')
         return
       }
@@ -703,7 +721,7 @@ function MainApp() {
       window.removeEventListener('keydown', onKey, { capture: true })
       window.removeEventListener(KEYMAP_CHANGED_EVENT, readSidebarKeys)
     }
-  }, [focusSidebarSearch, sidebarMode, toggleSidebar])
+  }, [focusSidebarSearch, focusTalkSearch, sidebarMode, toggleSidebar])
 
   // Commands that live deeper in the tree (command palette / toolbar) reach App via window events,
   // so every clickable action also has a keyboard-reachable command. Settings / New talk / New folder.
@@ -729,7 +747,6 @@ function MainApp() {
     // "Add vault…" (palette command id change-vault): the Add vault flow, never a replacement of the
     // first vault (ticket 07). First-run setup still chooses a root through VaultSetup.
     const changeVaultEv = (): void => { void addVault() }
-    const searchTalks = (): void => { setSidebarMode('talks'); setSidebarCollapsed(false) }
     // Palette command open-in-new-window: show the file list first (it is unmounted when the sidebar is
     // collapsed or on Slide outline), then let it act on its focused row.
     const openInNewWindow = (): void => {
@@ -752,7 +769,7 @@ function MainApp() {
     window.addEventListener('tw-new-folder', newFolder)
     window.addEventListener('tw-refresh-talks', refresh)
     window.addEventListener('tw-change-vault', changeVaultEv)
-    window.addEventListener('tw-search-talks', searchTalks)
+    window.addEventListener('tw-search-talks', focusTalkSearch)
     window.addEventListener('tw-open-in-new-window', openInNewWindow)
     window.addEventListener('tw-search-slides', searchSlides)
     return () => {
@@ -767,11 +784,11 @@ function MainApp() {
       window.removeEventListener('tw-new-folder', newFolder)
       window.removeEventListener('tw-refresh-talks', refresh)
       window.removeEventListener('tw-change-vault', changeVaultEv)
-      window.removeEventListener('tw-search-talks', searchTalks)
+      window.removeEventListener('tw-search-talks', focusTalkSearch)
       window.removeEventListener('tw-open-in-new-window', openInNewWindow)
       window.removeEventListener('tw-search-slides', searchSlides)
     }
-  }, [])
+  }, [focusTalkSearch])
 
   useEffect(() => {
     try {
@@ -929,13 +946,22 @@ function MainApp() {
   // Pick a folder (ticket 04). A folder with no vault file opens the New vault sheet, one with a
   // vault file the join sheet; a folder already open as a vault, or inside one, is refused in a small
   // sheet that names that vault.
-  async function pickVaultFolder(): Promise<void> {
+  async function pickVaultFolder(forWelcome = false): Promise<void> {
     const chosen = await window.tw.vault.chooseFolder()
     if (!chosen) return
-    if (!chosen.ok) { setVaultSheet({ mode: 'refused', reason: chosen.reason, message: chosen.message, other: chosen.other }); return }
-    setVaultSheet({ mode: chosen.kind, chosen })
+    if (!chosen.ok) {
+      if (forWelcome && chosen.other && state.phase === 'ready' &&
+        state.vaults.some(v => v.id === chosen.other?.id && v.open && !v.unavailable) && chosen.reason === 'duplicate') {
+        setWelcomeVaultId(chosen.other.id)
+        return
+      }
+      setVaultSheet({ mode: 'refused', reason: chosen.reason, message: chosen.message, other: chosen.other, forWelcome })
+      return
+    }
+    setVaultSheet({ mode: chosen.kind, chosen, forWelcome })
   }
-  async function vaultSheetDone(): Promise<void> {
+  async function vaultSheetDone(vault: VaultView): Promise<void> {
+    if (vaultSheet?.forWelcome) setWelcomeVaultId(vault.id)
     setVaultSheet(null)
     await loadVaults({ force: false })
   }
@@ -1019,22 +1045,22 @@ function MainApp() {
   function welcomeContent(vault?: VaultView) {
     const choose = () => {
       if (state.phase === 'setup') void window.tw.vault.chooseRoot().then(root => { if (root) void loadVaults({ force: true }) })
-      else void addVault()
+      else void pickVaultFolder(true)
     }
     const folder = vault?.root
     const savedIn = !folder || /(?:^|[/\\])Documents[/\\]TalkWeaver[/\\]?$/.test(folder) ? 'Documents/TalkWeaver' : folder
-    return <WelcomeTalk folder={savedIn}
+    return <WelcomeTalk folder={savedIn} folderPath={folder}
+      talks={state.phase === 'ready' ? state.talks : undefined}
+      vaults={state.phase === 'ready' ? state.vaults : undefined}
+      searchRef={welcomeSearchRef}
+      onOpen={selectTalkFromPanel}
       onStart={(title, view) => startFromWelcome(title, view, vault)}
       onChangeFolder={() => { commandRan('change-vault'); choose() }}
       onExamples={() => {
         commandRan('get-started-show-example')
         return openExampleVault()
       }}
-      onOpenTalks={() => {
-        commandRan('search-talks')
-        if (state.phase === 'setup') choose()
-        else window.dispatchEvent(new Event('tw-search-talks'))
-      }}
+      onOpenTalks={showAllTalks}
       onImport={() => { commandRan('importer'); window.dispatchEvent(new Event('tw-open-importer')) }} />
   }
 
@@ -1250,8 +1276,8 @@ function MainApp() {
         <VaultSheet
           state={vaultSheet}
           onClose={() => setVaultSheet(null)}
-          onDone={() => { void vaultSheetDone() }}
-          onChooseAnother={() => { setVaultSheet(null); void pickVaultFolder() }}
+          onDone={vault => { void vaultSheetDone(vault) }}
+          onChooseAnother={() => { setVaultSheet(null); void pickVaultFolder(vaultSheet.forWelcome) }}
           onShowVault={showVault}
           onOpenExample={async () => {
             const message = await openExampleVault()
@@ -1287,7 +1313,7 @@ function MainApp() {
         startView={welcomeStart?.path === activeTalk?.outlinePath ? welcomeStart?.view : undefined}
         onSketchStarted={() => setWelcomeStart(null)}
         defaultView={openInView}
-        welcome={welcomeContent(firstUsableVault ?? undefined)}
+        welcome={welcomeContent(state.vaults.find(v => v.id === welcomeVaultId && usableVault(v)) ?? firstUsableVault ?? undefined)}
         leftPreviewsHost={sidebarMode === 'slides' && !sidebarCollapsed ? previewsHost : null}
         leftPathwaysHost={visibleSidebarMode === 'pathways' && !sidebarCollapsed ? pathwaysHost : null}
         onOpenPathways={openPathwaysTab}

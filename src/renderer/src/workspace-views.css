@@ -149,52 +149,8 @@
 }
 .workspace-slide-notes textarea + textarea { margin-top: 6px; }
 
-.tw-welcome-window { display: flex; flex-direction: column; height: 100%; background: var(--paper); }
-.tw-welcome-titlebar { height: var(--tw-native-block, 0px); flex: none; background: var(--panel); }
-.tw-welcome { flex: 1; min-height: 0; overflow: auto; padding: 22px; display: flex; background: var(--paper); }
-.tw-welcome-card {
-  box-shadow: var(--popover-shadow);
-  width: min(824px, 100%); margin: auto; background: var(--panel); border: 1px solid var(--line);
-  border-radius: var(--radius-lg); padding: clamp(18px, 3vw, 34px); color: var(--ink); font: 13.5px/1.35 var(--font-ui);
-}
-.tw-welcome-brand { display: flex; align-items: center; gap: 8px; font-weight: 700; color: var(--oxford); }
-.tw-welcome h1 { font-size: 25px; margin-top: 13px; }
-.tw-welcome p { color: var(--muted); margin: 5px 0 18px; }
-.tw-welcome label { font-weight: 600; display: block; margin-bottom: 5px; }
-.tw-welcome input { width: 100%; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius); font: inherit; background: var(--panel); color: var(--ink); }
-.tw-welcome-starts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
-.tw-welcome-starts > button {
-  border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 12px; cursor: pointer;
-  border-radius: var(--radius-lg); text-align: left; font: inherit;
-}
-.tw-welcome-starts > button:hover { border-color: var(--accent); background: var(--hover); }
-.tw-welcome-starts strong { display: flex; align-items: center; gap: 7px; margin: 9px 0 3px; }
-.tw-welcome-starts strong + span { color: var(--muted); font-size: 12px; }
-.tw-welcome-art { display: grid; height: 118px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 9px; color: var(--ink); }
-.tw-welcome-mini { position: relative; display: block; aspect-ratio: 16 / 9; container-type: inline-size; overflow: hidden; border: 1px solid #c8cfd8; border-radius: 4px; background: #f5f7fc; color: #273648; }
-.tw-welcome-mini > b { display: table; padding: 1px 7%; border-radius: 0 0 4px 0; background: #1175bd; color: white; font: 700 4.2cqw var(--font-ui); }
-.tw-welcome-mini--empty > b { margin: 4%; padding: 0 4px; border-left: 1px solid #1175bd; border-radius: 0; background: none; color: #69778a; }
-.tw-welcome-mini-points { position: absolute; top: 37%; left: 6%; font: 500 4cqw/1.7 var(--font-ui); }
-.tw-welcome-mini--empty .tw-welcome-mini-points { top: 55%; color: #69778a; }
-.tw-welcome-slide-columns { position: absolute; inset: 16% 5% 7%; display: grid; grid-template-columns: 1.25fr 1fr; gap: 4%; }
-.tw-welcome-slide-columns > span { display: grid; gap: 5%; min-width: 0; overflow: hidden; }
-.tw-welcome-slide-columns i { display: flex; align-items: center; padding: 0 5%; border-radius: 3px; font: 650 3.2cqw var(--font-ui); white-space: nowrap; background: #1378be; color: white; }
-.tw-welcome-slide-columns i:nth-child(2) { background: #09558c; }
-.tw-welcome-slide-columns i:last-child { background: #dbe9fa; color: #23384e; }
-.tw-welcome-slide-columns img { width: 100%; height: 100%; min-height: 0; object-fit: cover; border-radius: 3px; }
-.tw-welcome-mini-table { position: absolute; inset: 22% 6% 8%; border-top: 4px solid #1175bd; background: repeating-linear-gradient(to bottom, transparent 0 17%, #c3cfdf 17% 22%); }
-.tw-welcome-outline-art { display: flex; flex-direction: column; color: var(--ink); font-size: 10px; line-height: 1.45; }
-.tw-welcome-deck-art { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; }
-.tw-welcome-foot { display: flex; align-items: center; gap: 3px; margin-top: 16px; border-top: 1px solid var(--line); padding-top: 10px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
-.tw-welcome-foot :is(button, span) { display: inline-flex; align-items: center; gap: 4px; }
-.tw-welcome-foot .tw-welcome-location { min-width: 0; }
-.tw-welcome-location > span { display: block !important; overflow: hidden; text-overflow: ellipsis; }
-.tw-welcome-foot button { flex-shrink: 0; border: 0; border-radius: 6px; color: var(--oxford); background: transparent; padding: 4px 5px; font: inherit; cursor: pointer; }
-.tw-welcome-foot button:hover { background: var(--hover); }
-.tw-welcome-foot .tw-welcome-foot-spacer { flex: 1; }
 .tw-slides-footer { padding: 6px 8px; border-top: 1px solid var(--line); }
 .tw-slides-footer button { display: flex; align-items: center; gap: 5px; margin: auto; padding-inline: 8px; }
-.tw-welcome-error { color: var(--crimson); margin-top: 8px; }
 
 @media (max-width: 1199px) {
   .app-shell:has(.workspace-view-titlebar) .sidebar-wrap[data-slides-mode="previews"] { width: 86px !important; }

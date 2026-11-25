@@ -9,6 +9,7 @@
 //     lone second column.
 // Usage: node scripts/test-presenter-teleprompter.mjs
 //   REPORT=1 prints the measured table; SHOTS=<dir> also saves the 1440x900 screenshots for review.
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import assert from 'node:assert/strict'
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises'
 import { readFileSync, statSync } from 'node:fs'
@@ -19,7 +20,7 @@ import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 
 // ── 1. The pure block ────────────────────────────────────────────────────────────────────────
-const template = readFileSync(new URL('../compiler/assets/templates/presenter-popup-single-html.html', import.meta.url), 'utf8')
+const template = readPresenterTemplate()
 const START = '// === NOTES_PLACEMENT_START'
 const END = '// === NOTES_PLACEMENT_END'
 const block = template.slice(template.indexOf(START), template.indexOf(END))

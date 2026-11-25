@@ -89,12 +89,12 @@ try {
   let { app, page } = await launch(a)
   try {
     const welcome = page.locator('.tw-welcome-window')
-    const examples = welcome.getByRole('button', { name: 'Example talks', exact: true })
+    const examples = welcome.getByRole('button', { name: 'Open the example talks', exact: true })
     await examples.waitFor({ state: 'visible', timeout: 10000 })
     record('first launch offers the example talks from the welcome screen',
-      await welcome.getByRole('button', { name: 'Open my talks', exact: true }).isVisible() && await examples.isVisible())
+      await welcome.getByText('No talks yet', { exact: true }).isVisible() && await examples.isVisible())
     await shot(page, '06-first-launch.png')
-    await page.getByRole('button', { name: 'Example talks', exact: true }).click()
+    await examples.click()
     await page.getByTitle('Talk menu', { exact: true }).filter({ hasText: 'The Saturday market' }).waitFor({ timeout: 15000 })
     await ensureTalksMode(page)
     await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
@@ -172,7 +172,7 @@ try {
   ;({ app, page } = await launch(d))
   try {
     await page.locator('.tw-welcome-window').waitFor({ state: 'visible', timeout: 10000 })
-    await page.getByRole('button', { name: 'Example talks', exact: true }).click()
+    await page.getByRole('button', { name: 'Open the example talks', exact: true }).click()
     const msg = page.locator('.tw-welcome-window').getByRole('alert')
     const warningShown = await msg.waitFor({ state: 'visible', timeout: 8000 }).then(() => true, () => false)
     record('a folder in the way: one sentence, still on the setup screen',

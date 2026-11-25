@@ -1,6 +1,5 @@
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import { expect, test } from 'bun:test'
-import { readFileSync } from 'node:fs'
-import { resolve } from 'node:path'
 import {
   AUDIENCE_FEEDBACK_START,
   audienceCountsView,
@@ -82,7 +81,7 @@ test('preload publishes the talk QR overlay only while it is up', () => {
 })
 
 test('generated presenter uses one green-or-reconnecting live control', () => {
-  const template = readFileSync(resolve(import.meta.dir, '../compiler/assets/templates/presenter-popup-single-html.html'), 'utf8')
+  const template = readPresenterTemplate()
   expect(template).not.toContain('id="liveChip"')
   expect(template).not.toContain('id="liveReconnectChip"')
   expect(template.match(/id="liveGoButton"/g)).toHaveLength(1)

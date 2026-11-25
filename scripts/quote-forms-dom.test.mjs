@@ -10,10 +10,10 @@ import { pathToFileURL } from 'node:url'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
-import { writeDeckStyles } from './build-deck-styles.mjs'
+import { ensurePresenterTemplate } from './build-deck-styles.mjs'
 import { markSlidePreviewHtml } from '../src/shared/slide-preview.ts'
 
-writeDeckStyles()
+await ensurePresenterTemplate()
 const X = 'https://x.com/techczech/status/1234567890123456789'
 const filler = (n) => {
   const base = 'alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu'.split(' ')

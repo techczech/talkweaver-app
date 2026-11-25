@@ -1,3 +1,4 @@
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync, existsSync } from 'node:fs'
 import { test } from 'node:test'
@@ -89,7 +90,7 @@ test('joining URLs are allowlisted and QR markup cannot carry script or handlers
 })
 
 test('the presenter can reveal held results after stopping responses', () => {
-  const template = readFileSync(new URL('../compiler/assets/templates/presenter-popup-single-html.html', import.meta.url), 'utf8')
+  const template = readPresenterTemplate()
   const source = template.split('// PRESENTER_POLL_VIEW_MODEL_START')[1].split('// PRESENTER_POLL_VIEW_MODEL_END')[0]
   const viewModel = new Function(`${source}; return presenterPollViewModel`)()
   assert.equal(viewModel({ ...held, open: false }).showReveal, true)

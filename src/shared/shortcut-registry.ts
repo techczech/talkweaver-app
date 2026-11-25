@@ -168,8 +168,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['browser.move-talk', 'M', ['m'], 'Move talk', 'Moves the focused talk into a folder.', 'Talks panel'],
     ['browser.delete-talk', '⌘⌫', ['Mod-Backspace'], 'Move talk to Bin', 'Moves the focused talk to the Bin after confirmation.', 'Talks panel']
   ]),
-  // The ⌘S slide picker (SlideBrowser.tsx, browser-rail/FindTalk.tsx). The key-truth check in
-  // scripts/test-shortcut-registry.mjs holds this list to exactly the keys those handlers bind.
+  // The ⌘S slide picker (SlideBrowser.tsx, browser-rail/FindTalk.tsx).
   ...entries('slide-picker', [
     ['slide-picker.move', '↑ ↓ ← →', ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'], 'Move through slides', 'Moves the focused card; with a talk beside the results, ← and → cross between the two sides.', 'Navigate'],
     ['slide-picker.extend', '⇧↑ ⇧↓ ⇧← ⇧→', ['Shift-ArrowUp', 'Shift-ArrowDown', 'Shift-ArrowLeft', 'Shift-ArrowRight'], 'Extend the selection', 'Moves the focused card and selects every card from the anchor to it.', 'Navigate'],

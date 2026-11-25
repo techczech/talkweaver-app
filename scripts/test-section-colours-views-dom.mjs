@@ -27,7 +27,7 @@ import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
 import { extractSlides, extractStyles } from '../compiler/scripts/lib/04-html-extraction.mjs'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
 import { injectPathwayRuntime } from '../src/main/pathways.ts'
-import { writeDeckStyles } from './build-deck-styles.mjs'
+import { ensurePresenterTemplate } from './build-deck-styles.mjs'
 import { walkSlides } from './lib/slide-readability.mjs'
 
 const hardStop = setTimeout(() => { console.error('test-section-colours-views-dom: hard timeout'); process.exit(124) }, 12 * 60 * 1000)
@@ -37,7 +37,7 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), '..')
 mkdirSync(join(repo, '.audit-local'), { recursive: true })
 const work = mkdtempSync(join(repo, '.audit-local/section-colours-views-'))
 process.on('exit', () => rmSync(work, { recursive: true, force: true }))
-writeDeckStyles()
+await ensurePresenterTemplate()
 const FIXTURE = join(repo, 'scripts/fixtures/ocean-look/section-colours-outline.md')
 
 const rgb = (hex) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`

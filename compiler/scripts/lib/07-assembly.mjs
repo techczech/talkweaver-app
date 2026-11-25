@@ -1,3 +1,4 @@
+import { readPresenterTemplate } from './presenter-template.mjs';
 import { selectBundledTypefaces } from "./deck-typefaces.mjs";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -913,7 +914,7 @@ export function renderSlideSections(model) {
 }
 
 export async function buildDeckHtmlFromModel(model) {
-  const template = await readFile(resolve(scriptDir, "..", "assets/templates/presenter-popup-single-html.html"), "utf8");
+  const template = readPresenterTemplate();
   const face = model.deckFont || "";
   if (modelHasCodeBlock(model.slides, "svg")) await loadCompilerSvgSanitiser();
   const slideMarkup = renderSlideSections(model);

@@ -10,7 +10,7 @@ import { ROWS } from './fixtures/chat-sim-rows/scenario.mjs'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { extractStyles, extractSlides } from '../compiler/scripts/lib/04-html-extraction.mjs'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
-import { writeDeckStyles } from './build-deck-styles.mjs'
+import { ensurePresenterTemplate } from './build-deck-styles.mjs'
 import { missingPopplerTools, reportMissingPoppler } from './lib/test-poppler.mjs'
 const shots = process.argv.includes('--shots')
 const out = resolve('docs/design/2026-11-17-chat-simulations/build-shots')
@@ -23,7 +23,7 @@ const md = '# Synthetic row verification\n\n## Examples\n\n' + fence('rows', ROW
 await test('compiled native row runtime and exports', async (t) => {
 let browser
 try {
-  writeDeckStyles()
+  await ensurePresenterTemplate()
   const outline = join(dir, 'outline.md')
   await writeFile(outline, md)
   const model = await prepareSource(outline, md, 'rows-test', { mtimeMs: 0, size: md.length, isDirectory: () => false })

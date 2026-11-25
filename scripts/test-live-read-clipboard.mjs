@@ -1,6 +1,7 @@
 // The presenter's clipboard read, in main (src/main/live-read-clipboard.ts, src/main/recent-press.ts;
 // embed-sandbox design 4.3, matrix row 18): only a focused presenter window that had a real key or
 // mouse press in the last five seconds; text capped; one image.
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import { readMainSource } from './lib/read-source.mjs'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -169,7 +170,7 @@ await test('wiring: main owns the read; the preload asks only with a user activa
   const fn = preload.slice(preload.indexOf('readClipboard: async'), preload.indexOf('action: (message'))
   assert.ok(fn.indexOf('navigator.userActivation?.isActive !== true') > 0 && fn.indexOf('navigator.userActivation?.isActive !== true') < fn.indexOf("ipcRenderer.invoke('live:read-clipboard')"), 'the activation check comes before the call')
   // The one caller in the deck awaits the bridge (it was synchronous before).
-  const template = readFileSync(new URL('../compiler/assets/templates/presenter-popup-single-html.html', import.meta.url), 'utf8')
+  const template = readPresenterTemplate()
   assert.match(template, /clip = await window\.twLivePollBridge\?\.readClipboard\?\.\(\)/)
 })
 

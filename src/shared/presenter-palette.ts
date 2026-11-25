@@ -177,7 +177,7 @@ export const PRESENTER_PALETTE_ICONS = ['search'] as const
  * Presenter keys that only work when a preload has mounted (the presenter window TalkWeaver opens
  * has them; a deck opened on its own does not): the ? sheet shows such a row only when its
  * selector matches. The palette dims the matching entries by their own `needs`.
- * scripts/test-shortcut-registry.mjs fails a key bound only by a preload or the main process that
+ * scripts/test-presenter-key-truth.mjs fails a key bound only by a preload or the main process that
  * is missing here.
  */
 export const PRESENTER_KEY_NEEDS: Record<string, string> = {

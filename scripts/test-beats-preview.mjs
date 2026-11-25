@@ -12,13 +12,12 @@
 //   • beatLabel: 'card 2/3 — <section title>' for carousel-context beats, 'back to grid —
 //     <section title>' for grid-return (section id IS beat.slideId), 'next slide' otherwise,
 //     'end of talk' past the last beat.
-import { readFileSync } from 'node:fs'
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const templatePath = join(here, '..', 'compiler', 'assets', 'templates', 'presenter-popup-single-html.html')
-const templateHtml = readFileSync(templatePath, 'utf8')
+const templateHtml = readPresenterTemplate()
 
 const START = '// === BEAT_HELPERS_START'
 const END = '// === BEAT_HELPERS_END'

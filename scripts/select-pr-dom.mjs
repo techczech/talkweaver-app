@@ -34,7 +34,15 @@ for (const [name, parts] of Object.entries(shards)) {
   }
 }
 
-const affected = dom.filter(name => selected.has(name))
+const ubuntuExclusions = new Map(Object.entries(prDom.ubuntuExclusions ?? {}))
+for (const [name, reason] of ubuntuExclusions) {
+  if (!dom.includes(name) || typeof reason !== 'string' || !reason.trim() || /[\r\n]/.test(reason)) {
+    throw new Error(`Invalid hosted Ubuntu DOM exclusion for ${name}`)
+  }
+  if (selected.has(name)) console.log(`Excluded from Ubuntu PR DOM: ${name}. ${reason}`)
+}
+
+const affected = dom.filter(name => selected.has(name) && !ubuntuExclusions.has(name))
 const ordered = affected.flatMap(name => shards[name] ?? [name])
 const needsPoppler = affected.some(name => prDom.poppler.includes(name))
 console.log(`Selected ${affected.length} of ${dom.length} DOM scripts (${ordered.length} runs): ${ordered.join(' ')}`)

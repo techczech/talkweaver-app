@@ -24,7 +24,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { chromium } from 'playwright'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
-import { writeDeckStyles } from './build-deck-styles.mjs'
+import { ensurePresenterTemplate } from './build-deck-styles.mjs'
 import { doctorDeck } from './layout-doctor-render.mjs'
 import { inClassicLook } from './lib/slide-markup-identity.mjs'
 import { createHash } from 'node:crypto'
@@ -83,7 +83,7 @@ if (recordMain) {
   console.log(`recorded origin/main clips for ${WALKED.length} outlines to ${MAIN_CLIPS}`)
   process.exit(0)
 }
-writeDeckStyles()
+await ensurePresenterTemplate()
 
 async function compileTo(name, sourcePath, text, extraRoots = []) {
   const model = await prepareSource(sourcePath, text, name, statSync(sourcePath), undefined, { allowedAssetRoots: [dirname(sourcePath), ...extraRoots] })

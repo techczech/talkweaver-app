@@ -67,6 +67,7 @@
     "test:going-live-row",
     "test:live-service-keys",
     "test:live-ipc",
+    "test:preferences-ipc",
     "test:worker-dist",
     "test:secrets-store",
     "test:atomic-file",
@@ -175,6 +176,7 @@
     "test:slide-browser-vaults",
     "test:css-modules",
     "test:shortcuts",
+    "test:presenter-key-truth",
     "test:deck-window-keys",
     "test:commands",
     "test:task-groups",
@@ -639,6 +641,7 @@
     "test:cards:dom",
     "test:pathways-docked-dom",
     "test:workspace-pathways-dom",
+    "test:start-screen:dom",
     "test:image-edit:dom",
     "test:local-page-preview:dom",
     "test:capture-network:dom",
@@ -655,6 +658,12 @@
     "test:typeface-widths"
   ],
   "prDom": {
+    "ubuntuExclusions": {
+      "test:presenter-teleprompter": "Linux font metrics differ. Covered by the nightly Studio DOM tier.",
+      "test:ocean-look-dom": "Linux font metrics differ. Covered by the nightly Studio DOM tier.",
+      "test:section-colours-views-dom": "Linux font metrics differ. Covered by the nightly Studio DOM tier.",
+      "test:ocean-loop-and-many-items": "Linux font metrics differ. Covered by the nightly Studio DOM tier."
+    },
     "shards": {
       "test:object-gap-entry-points:dom": [
         "test:object-gap-entry-points:dom:shard-1",

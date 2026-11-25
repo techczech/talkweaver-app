@@ -1,3 +1,4 @@
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
@@ -45,7 +46,7 @@ function extractMermaidConfig(source, label) {
 }
 
 const presenterConfig = extractMermaidConfig(
-  readFileSync(new URL('../compiler/assets/templates/presenter-popup-single-html.html', import.meta.url), 'utf8'),
+  readPresenterTemplate(),
   'presenter runtime'
 )
 const outputBuilderConfig = extractMermaidConfig(

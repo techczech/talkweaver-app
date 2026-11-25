@@ -2238,12 +2238,12 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
           }
         }
       }
-      for (const id of ['new-section', 'new-subsection', 'present-from-here', 'present-presenter'] as const) {
+      for (const id of ['new-section', 'new-subsection', 'present-from-here', 'present-presenter', 'research-panel'] as const) {
         if (surfaceKey(e, id) && activeTalkRef.current && !(isTypingTarget(e.target) && isTypingKey(e))) {
           e.preventDefault(); e.stopPropagation(); runRegisteredCommand(id); return
         }
       }
-      for (const id of [...Object.values(VIEW_COMMANDS), 'check-for-updates', 'whats-new', 'research-panel', 'research-find', 'set-aside-slides', 'search-slides-grid', 'search-next', 'search-previous', 'pathways', 'add-to-pathway', 'present-pathway'] as const) {
+      for (const id of [...Object.values(VIEW_COMMANDS), 'check-for-updates', 'whats-new', 'research-find', 'set-aside-slides', 'search-slides-grid', 'search-next', 'search-previous', 'pathways', 'add-to-pathway', 'present-pathway'] as const) {
         if (surfaceKey(e, id)) { e.preventDefault(); e.stopPropagation(); runRegisteredCommand(id); return }
       }
       // ⇧⌘S (app.find-talk, rebindable): the same picker, with the cursor in Find a talk.
@@ -4765,7 +4765,6 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         <div className="workspace-toolbar">
           <span className="workspace-title" style={{ color: 'var(--text-2)', fontWeight: 500 }}>TalkWeaver</span>
           <div className="toolbar-actions">
-          <button type="button" className="toolbar-btn" title={`Research (${liveShortcutLabel('app.research-panel')})`} onClick={() => runRegisteredCommand('research-panel')}>Research <kbd>{liveShortcutLabel('app.research-panel')}</kbd></button>
             <ToolbarMenu
               icon="tools"
               label="Tools"

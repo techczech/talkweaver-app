@@ -17,6 +17,7 @@
  * Companion: `test:reveal-cross-runtime` proves the two live DOMs agree. This one proves the
  * selector SOURCES agree, and fails with a far clearer message when they do not.
  */
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import {
   presenterSelectors,
   audienceSelectors,
@@ -60,7 +61,7 @@ for (const name of ['MODE_SELECTOR', 'CARD_UNIT_SELECTOR']) {
   const moduleSrc = readFileSync(new URL('../compiler/assets/runtime/emphasis-steps.js', import.meta.url), 'utf8')
   const EMPH_STEP_SELECTOR = moduleSrc.match(/export const EMPH_STEP_SELECTOR = '([^']+)'/)?.[1]
   if (!EMPH_STEP_SELECTOR) { failed = true; console.error('FAIL emphasis steps: runtime/emphasis-steps.js no longer exports EMPH_STEP_SELECTOR') }
-  const presenterSrc = readFileSync(PRESENTER_PATH, 'utf8')
+  const presenterSrc = readPresenterTemplate()
   const audienceSrc = readFileSync(AUDIENCE_PATH, 'utf8')
   // Each runtime lists a slide's units with the one ownership rule first (runtime/step-ownership.js, inlined with the
   // emphasis steps): a miniature of another slide in a contents strip is never this slide's unit or its carousel.
@@ -92,7 +93,7 @@ for (const name of ['MODE_SELECTOR', 'CARD_UNIT_SELECTOR']) {
   const MEDIA_STEP_SELECTOR = moduleSrc.match(/export const MEDIA_STEP_SELECTOR = '([^']+)'/)?.[1]
   if (!MEDIA_STEP_SELECTOR) { failed = true; console.error('FAIL media steps: runtime/emphasis-steps.js no longer exports MEDIA_STEP_SELECTOR') }
   if (!/EMPH_STEP_SELECTOR \+ ',' \+ MEDIA_STEP_SELECTOR/.test(moduleSrc)) { failed = true; console.error('FAIL media steps: emphasisStepElements no longer lists the files with the blocks and the emphasis spans') }
-  const presenterSrc = readFileSync(PRESENTER_PATH, 'utf8')
+  const presenterSrc = readPresenterTemplate()
   const audienceSrc = readFileSync(AUDIENCE_PATH, 'utf8')
   const wired = {
     presenter: presenterSrc.includes('<!--MEDIA_STEPS_RUNTIME-->') && /mediaSteps\.apply\(slide, (plan|playbackPlan)\.files, \1\.media\(/.test(presenterSrc) && /mediaStepStates\(units, kind, step, movedOn\)/.test(presenterSrc),

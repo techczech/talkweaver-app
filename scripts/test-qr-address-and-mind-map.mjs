@@ -17,7 +17,7 @@ import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildDeckHtmlFromModel } from '../compiler/scripts/lib/07-assembly.mjs'
 import { extractSlides, extractStyles } from '../compiler/scripts/lib/04-html-extraction.mjs'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
-import { writeDeckStyles } from './build-deck-styles.mjs'
+import { ensurePresenterTemplate } from './build-deck-styles.mjs'
 
 const work = mkdtempSync(join(tmpdir(), 'tw-qr-mindmap-'))
 const HARD_LIMIT_MS = 600_000
@@ -185,7 +185,7 @@ function mapProblems(where, id, m) {
 const timer = setTimeout(() => { console.error(`test:qr-address-and-mind-map: over ${HARD_LIMIT_MS / 1000}s, stopped`); process.exit(2) }, HARD_LIMIT_MS)
 const browser = await chromium.launch({ headless: true })
 try {
-  writeDeckStyles()
+  await ensurePresenterTemplate()
   // 1. QR addresses
   for (const [kind, url] of ONLY === 'maps' ? [] : Object.entries(ADDRESSES)) {
     for (const palette of ['', 'bold']) {

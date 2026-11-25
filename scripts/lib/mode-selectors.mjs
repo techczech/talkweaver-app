@@ -7,13 +7,14 @@
  * applies it to both runtimes proves nothing — it would agree with itself even while the shipped
  * outputs disagree. Always drive each runtime with its OWN selector.
  */
+import { readPresenterTemplate, presenterTemplateOutput } from '../../compiler/scripts/lib/presenter-template.mjs'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
-export const PRESENTER_PATH = join(root, 'compiler/assets/templates/presenter-popup-single-html.html')
+export const PRESENTER_PATH = join(root, 'compiler', presenterTemplateOutput)
 export const AUDIENCE_PATH = join(root, 'compiler/scripts/lib/09-output-builders.mjs')
 
 /** Split a selector list on top-level commas (commas inside (...) belong to :not()/:is()). */
@@ -51,7 +52,7 @@ export function fromStringLiteral(src, name) {
 }
 
 export function presenterSelectors(name = 'MODE_SELECTOR') {
-  return fromArrayLiteral(readFileSync(PRESENTER_PATH, 'utf8'), name)
+  return fromArrayLiteral(readPresenterTemplate(), name)
 }
 
 export function audienceSelectors(name = 'MODE_SELECTOR') {

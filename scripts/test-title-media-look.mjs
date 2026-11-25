@@ -1,3 +1,4 @@
+import { readPresenterTemplate } from '../compiler/scripts/lib/presenter-template.mjs'
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import ffmpeg from 'ffmpeg-static'
@@ -5,7 +6,7 @@ import { readFileSync, writeFileSync, statSync, mkdirSync, mkdtempSync, rmSync }
 import { resolve, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { chromium } from 'playwright'
-import { writeDeckStyles } from './build-deck-styles.mjs'
+import { ensurePresenterTemplate } from './build-deck-styles.mjs'
 import { extractSlides, extractStyles } from '../compiler/scripts/lib/04-html-extraction.mjs'
 import { buildShareHtml } from '../compiler/scripts/lib/09-output-builders.mjs'
 import { readabilityProbe } from './lib/slide-readability.mjs'
@@ -16,7 +17,7 @@ const repo = resolve(import.meta.dirname, '..')
 const option = name => process.argv.find(a => a.startsWith(`--${name}=`))?.slice(name.length + 3)
 const baseline = option('compiler'), evidence = option('evidence')
 const captureOnly = baseline && !process.argv.includes('--verify-baseline')
-if (!baseline) writeDeckStyles()
+if (!baseline) await ensurePresenterTemplate()
 const { prepareSource, adaptMarkdownOutlineV2 } = await import(pathToFileURL(join(baseline || repo, 'compiler/scripts/lib/08-source-adapters.mjs')))
 const fixture = join(repo, 'scripts/fixtures/ocean-look/title-clear/outline.md')
 let source = readFileSync(fixture, 'utf8')
@@ -181,7 +182,7 @@ try {
   const { makeQrSvg } = await import('../compiler/scripts/lib/01-cli-utils.mjs')
   const quick = await browser.newPage({ viewport: { width: 1920, height: 1080 } })
   await quick.setContent('<!doctype html><html><head></head><body></body></html>')
-  await quick.addStyleTag({ content: extractStyles(readFileSync(join(repo, 'compiler/assets/templates/presenter-popup-single-html.html'), 'utf8')) + instant.instantSlideStyles })
+  await quick.addStyleTag({ content: extractStyles(readPresenterTemplate()) + instant.instantSlideStyles })
   await quick.addScriptTag({ content: instant.instantSlideRuntimeSource() })
   await quick.evaluate(({ url, svg }) => {
     window.quickProof = createInstantSlideSurface(document.body, { showQr: true, clickable: false, qr: () => ({ url, svg, link: true }) })

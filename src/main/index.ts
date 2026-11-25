@@ -43,6 +43,7 @@ import { revealResearchSource } from './research-reader'
 import { createLatestThumbnailRequestHandler } from './thumbnail-queue'
 import { app, BrowserWindow, clipboard, ipcMain, dialog, Menu, net, protocol, shell, session, screen, powerMonitor, nativeTheme, WebContentsView, type IpcMainInvokeEvent, type MenuItemConstructorOptions } from 'electron'
 import { join, basename, dirname, extname } from 'path'
+import { readPresenterTemplate } from '../../compiler/scripts/lib/presenter-template.mjs'
 
 // EPIPE guard: when the packaged binary is launched with stdout/stderr piped and the pipe
 // dies, any console.log (prerenderAllThumbnails logs a lot) would otherwise throw an
@@ -393,9 +394,10 @@ import { newTalkSource } from '../shared/redesign-window-source'
 import { editFrontmatterText, parseFrontmatterPairs } from '../shared/frontmatter-editor'
 import { extractSection, type SectionLocation } from '../shared/insert-section'
 import { commandElectronAccelerator, menuCommands } from '../shared/command-registry'
+import { registerPreferencesIpc } from './preferences-ipc'
+import type { EditorViewMode } from '../shared/editor-view-mode'
 import { actionBarVisibleFrom } from '../shared/action-bar-settings'
-import { EDITOR_VIEW_MODE_KEY, editorViewModeFrom, type EditorViewMode } from '../shared/editor-view-mode'
-import { PLAIN_FONT_KEY, PLAIN_TEXT_SIZE_KEY, plainFontFrom, plainTextSizeFrom, plainLookFrom, type PlainLook } from '../shared/plain-view-look'
+import { plainLookFrom, type PlainLook } from '../shared/plain-view-look'
 import { placeChipVisibleFrom } from '../shared/place-chip-settings'
 import { guideButtonVisibleFrom, guideProgressFrom } from '../shared/guide'
 import { GuideLearnStore } from './guide-learn-store'
@@ -680,6 +682,8 @@ type Config = {
   // path → open. Only the user's choices; read tolerantly (src/main/talk-folder-state.ts).
   talkListFolders?: StoredFolderStates
 }
+export type { Config }
+
 function configPath() {
   return join(app.getPath('userData'), 'config.json')
 }
@@ -1306,20 +1310,6 @@ function transcriptionSetup(): TranscriptionSetup {
   })
   return transcriptionSetupInstance
 }
-
-ipcMain.handle('preferences:get-transcription', () => transcriptionSettings())
-
-// These paths name programs main runs (Python, the script, ffmpeg): only the Settings window may
-// change them; any other sender gets the paths as they are, unchanged.
-handleFromSettingsWindow('preferences:set-transcription', () => transcriptionSettings(), async (_event, cfg: { python?: string; script?: string; ffmpeg?: string }) => {
-  // Settings sends all three; an empty field clears its setting. Stored as typed (`~` kept).
-  writeConfig({
-    transcriptionPython: (cfg.python || '').trim() || undefined,
-    transcriptionScript: (cfg.script || '').trim() || undefined,
-    transcriptionFfmpeg: (cfg.ffmpeg || '').trim() || undefined
-  })
-  return transcriptionSettings()
-})
 
 // The Transcription row (spec D16), the agent prompt it copies, and the set-up folder it opens.
 ipcMain.handle('transcription:native-inventory', async () => {
@@ -2215,42 +2205,6 @@ vaultRegistry.onChange(() => {
   }
 })
 
-// ── Settings IPC (folders the app reads from) ────────────────────────────────
-// The Settings panel reads these to show the configured folders and let the user change them.
-// archiveDefault is always null — the archive is config-only (no hardcoded fallback).
-// detectArchiveRoot is declared lower in this file; these handlers run lazily (at call time,
-// after the module is fully initialised) so the forward reference is safe.
-ipcMain.handle('preferences:get-paths', () => {
-  const c = readConfig()
-  return {
-    vaultRoot: currentVaultRoot() ?? null,
-    archiveRoot: c.archiveRoot ?? null,
-    archiveDefault: null,
-    archiveAvailable: detectArchiveRoot() != null
-  }
-})
-
-handleFromSettingsWindow('preferences:choose-archive', () => null, async () => {
-  const result = await dialog.showOpenDialog({
-    title: 'Choose Image Archive Root',
-    message: 'Select the folder containing the old-PowerPoint image archive (registry/media.db)',
-    properties: ['openDirectory']
-  })
-  if (result.canceled || !result.filePaths.length) return null
-  const chosen = result.filePaths[0]
-  writeConfig({ archiveRoot: chosen })
-  searchCache.clear()
-  invalidateTalkCache()
-  return chosen
-})
-
-handleFromSettingsWindow('preferences:clear-archive', () => detectArchiveRoot(), () => {
-  writeConfig({ archiveRoot: undefined }) // a preference: back to its default through the store
-  searchCache.clear()
-  invalidateTalkCache()
-  return null
-})
-
 // ── Presentation backup ──────────────────────────────────────────────────────
 // Write every Talk's full self-contained presenter HTML (presenter view + speaker notes — the same
 // artifact `Present` uses, NOT the presenter-stripped share export) to a user-chosen folder on a
@@ -2460,12 +2414,6 @@ function broadcastActionBar(): void {
     try { if (!win.isDestroyed()) win.webContents.send('action-bar:changed', state) } catch { /* window closing */ }
   }
 }
-ipcMain.handle('preferences:get-action-bar', () => actionBarState())
-ipcMain.handle('preferences:set-action-bar-visible', (_event, visible: boolean) => {
-  writeConfig({ actionBarVisible: visible === true })
-  broadcastActionBar()
-  return actionBarState().visible
-})
 
 // ── Editor view (plain editing view): Plain or Markdown, one app-wide setting, broadcast to every window ──
 function workspaceViewPreferences(): { openIn: WorkspaceView; slidesPanel: SlidesPanelView; slideTab: SlideTabView } {
@@ -2476,61 +2424,16 @@ function workspaceViewPreferences(): { openIn: WorkspaceView; slidesPanel: Slide
     slidesPanel: getConfig('slidesPanelView', 'previews') === 'outline' ? 'outline' : 'previews'
   }
 }
-ipcMain.handle('preferences:get-workspace-views', workspaceViewPreferences)
-ipcMain.handle('preferences:set-slide-tab', async (_event, view: unknown) => {
-  if (view === 'pages' || view === 'list') await sharedSettings?.store.set('writing.slideTabView', view)
-})
-ipcMain.handle('preferences:set-slides-panel', (_event, view: unknown) => {
-  if (view !== 'previews' && view !== 'outline') return
-  writeConfig({ slidesPanelView: view })
-  broadcastToWindows('workspace-views:changed', workspaceViewPreferences())
-})
-
-function editorViewMode(): EditorViewMode {
-  return editorViewModeFrom(readConfig()[EDITOR_VIEW_MODE_KEY])
-}
-ipcMain.handle('preferences:get-editor-view-mode', () => editorViewMode())
-ipcMain.handle('preferences:set-editor-view-mode', (_event, mode: unknown) => {
-  writeConfig({ [EDITOR_VIEW_MODE_KEY]: editorViewModeFrom(mode) })
-  const next = editorViewMode()
-  for (const win of BrowserWindow.getAllWindows()) {
-    try { if (!win.isDestroyed()) win.webContents.send('editor-view-mode:changed', next) } catch { /* window closing */ }
-  }
-  return next
-})
 
 // ── Plain view look (plain editing view, spec T13): font and text size, app-wide, broadcast to every window ──
 function plainLook(): PlainLook {
   return plainLookFrom(readConfig() as Record<string, unknown>)
 }
-ipcMain.handle('preferences:get-plain-look', () => plainLook())
-ipcMain.handle('preferences:set-plain-look', (_event, change: unknown) => {
-  const c = (change && typeof change === 'object' ? change : {}) as { font?: unknown; size?: unknown }
-  const current = plainLook()
-  writeConfig({
-    [PLAIN_FONT_KEY]: c.font === undefined ? current.font : plainFontFrom(c.font),
-    [PLAIN_TEXT_SIZE_KEY]: c.size === undefined ? current.size : plainTextSizeFrom(c.size)
-  })
-  const next = plainLook()
-  for (const win of BrowserWindow.getAllWindows()) {
-    try { if (!win.isDestroyed()) win.webContents.send('plain-look:changed', next) } catch { /* window closing */ }
-  }
-  return next
-})
 
 // ── Place chip (onboarding ticket 02): one app-wide visibility setting, broadcast like the bar ──
 function placeChipVisible(): boolean {
   return placeChipVisibleFrom(readConfig().placeChipVisible)
 }
-ipcMain.handle('preferences:get-place-chip', () => ({ visible: placeChipVisible() }))
-ipcMain.handle('preferences:set-place-chip-visible', (_event, visible: boolean) => {
-  writeConfig({ placeChipVisible: visible === true })
-  const state = { visible: placeChipVisible() }
-  for (const win of BrowserWindow.getAllWindows()) {
-    try { if (!win.isDestroyed()) win.webContents.send('place-chip:changed', state) } catch { /* window closing */ }
-  }
-  return state.visible
-})
 
 // ── The Guide (onboarding ticket 07): the sidebar button's switch and the Guide's progress ──
 function broadcastToWindows(channel: string, state: unknown): void {
@@ -2541,7 +2444,6 @@ function broadcastToWindows(channel: string, state: unknown): void {
 function guideButtonVisible(): boolean {
   return guideButtonVisibleFrom(readConfig().guideButtonVisible)
 }
-ipcMain.handle('preferences:get-guide-button', () => ({ visible: guideButtonVisible() }))
 function setGuideButtonVisible(visible: boolean): boolean {
   writeConfig({ guideButtonVisible: visible === true })
   const state = { visible: guideButtonVisible() }
@@ -2550,7 +2452,6 @@ function setGuideButtonVisible(visible: boolean): boolean {
   pushPresentChapter()
   return state.visible
 }
-ipcMain.handle('preferences:set-guide-button-visible', (_event, visible: boolean) => setGuideButtonVisible(visible === true))
 ipcMain.handle('guide:get-progress', () => guideProgressFrom(readConfig().guideProgress))
 // A talk of the example vault was opened in some window: kept once, told to every window.
 ipcMain.handle('guide:note-example-talk-opened', () => {
@@ -2682,37 +2583,6 @@ ipcMain.handle('guide:open-link', async (event, id: unknown): Promise<boolean> =
   try { await shell.openExternal(link.href); return true } catch { return false }
 })
 
-ipcMain.handle('preferences:get-backup', () => backupSettings())
-
-ipcMain.handle('preferences:set-backup', (_event, patch: { enabled?: boolean; intervalMin?: number }) => {
-  const next: Partial<Config> = {}
-  if (typeof patch.enabled === 'boolean') next.backupEnabled = patch.enabled
-  if (Number.isFinite(patch.intervalMin)) next.backupIntervalMin = Math.max(5, Math.round(patch.intervalMin as number))
-  writeConfig(next)
-  // Turning it on backs up whatever is already enrolled and stale — it never scans the vault.
-  if (getConfig('backupEnabled', false) && getConfig('backupFolder', undefined)) {
-    setTimeout(() => { runLaunchBackup().catch(() => {}) }, 400)
-  }
-  return backupSettings()
-})
-
-handleFromSettingsWindow('preferences:choose-backup-folder', () => backupSettings(), async () => {
-  const result = await dialog.showOpenDialog({
-    title: 'Choose Backup Folder',
-    message: 'Pick a folder inside your OneDrive/Dropbox — TalkWeaver saves presentable HTML backups there',
-    properties: ['openDirectory', 'createDirectory']
-  })
-  if (result.canceled || !result.filePaths.length) return backupSettings()
-  writeConfig({ backupFolder: result.filePaths[0] })
-  if (getConfig('backupEnabled', false)) setTimeout(() => { runLaunchBackup().catch(() => {}) }, 400)
-  return backupSettings()
-})
-
-handleFromSettingsWindow('preferences:clear-backup-folder', () => backupSettings(), () => {
-  writeConfig({ backupFolder: undefined }) // a preference: back to its default through the store
-  return backupSettings()
-})
-
 // Presenter clock amber/dark-amber thresholds (Task 3): the Settings → Timer global default. A
 // deck's frontmatter `warn-at:`/`urgent-at:` overrides this per-talk (resolved in the compiler).
 function timerSettings(): { warnAtMinutes: number; urgentAtMinutes: number } {
@@ -2722,54 +2592,12 @@ function timerSettings(): { warnAtMinutes: number; urgentAtMinutes: number } {
   }
 }
 
-ipcMain.handle('preferences:get-timer', () => timerSettings())
-
-ipcMain.handle('preferences:set-timer', (_event, patch: { warnAtMinutes?: number; urgentAtMinutes?: number }) => {
-  const next: Partial<Config> = {}
-  if (Number.isFinite(patch.warnAtMinutes)) next.timerWarnAtMinutes = Math.max(1, Math.round(patch.warnAtMinutes as number))
-  if (Number.isFinite(patch.urgentAtMinutes)) next.timerUrgentAtMinutes = Math.max(1, Math.round(patch.urgentAtMinutes as number))
-  writeConfig(next)
-  return timerSettings()
-})
-
 // ── Presenter identity and deck defaults (Ticket 9b) ─────────────────────────
 // The SAME config.json the rest of Settings uses. The renderer renders the section from the
 // metadata registry; this end only stores and sanitises.
 function metadataDefaults(): MetadataDefaults {
   return normaliseMetadataDefaults(METADATA_REGISTRY, getConfig('metadataDefaults', {}) ?? {})
 }
-
-ipcMain.handle('preferences:get-metadata-defaults', () => metadataDefaults())
-
-ipcMain.handle('preferences:set-metadata-defaults', (_event, patch: MetadataDefaults) => {
-  writeConfig({ metadataDefaults: normaliseMetadataDefaults(METADATA_REGISTRY, { ...metadataDefaults(), ...(patch ?? {}) }) })
-  return metadataDefaults()
-})
-
-// ── Settings changelog (Gate-5) ──────────────────────────────────────────────
-// Every settings change is recorded (old → new, when) in a per-machine userData JSON log, so
-// a tweak the user forgot making is one click to find — and to undo via the per-entry Reset
-// in Settings → Changes. Values only, never secrets (the renderer logs those as presence).
-type SettingsChangeEntry = { at: number; key: string; label: string; from: string; to: string }
-function settingsChangelogFile(): string { return join(app.getPath('userData'), 'settings-changelog.json') }
-function readSettingsChangelog(): SettingsChangeEntry[] {
-  try {
-    const raw = JSON.parse(readFileSync(settingsChangelogFile(), 'utf8'))
-    return Array.isArray(raw) ? (raw as SettingsChangeEntry[]) : []
-  } catch { return [] }
-}
-ipcMain.handle('preferences:changelog-get', () => readSettingsChangelog())
-ipcMain.handle('preferences:changelog-log', (_event, entry: { key: string; label: string; from: string; to: string }) => {
-  if (
-    typeof entry?.key !== 'string' || typeof entry?.label !== 'string' ||
-    typeof entry?.from !== 'string' || typeof entry?.to !== 'string'
-  ) return readSettingsChangelog()
-  const list = readSettingsChangelog()
-  list.unshift({ at: Date.now(), key: entry.key, label: entry.label, from: entry.from, to: entry.to })
-  const trimmed = list.slice(0, 200) // a per-machine audit trail, not an archive
-  try { writeFileSync(settingsChangelogFile(), JSON.stringify(trimmed, null, 2), 'utf8') } catch { /* log-only */ }
-  return trimmed
-})
 
 // Manual "Back up now" — force-exports every Talk regardless of change signature.
 handleFromSettingsWindow('backup:run-now', () => null, async () => {
@@ -3326,8 +3154,8 @@ function surfacedWarningCount(rows: ProjectionRowMain[]): number {
   return n
 }
 
-// Facts about every talk of every open vault, keyed by slug (the first open vault wins a slug that
-// two vaults share; a per-vault key is a later ticket).
+// Outline paths distinguish talks with the same slug in different vaults. Existing slug readers
+// retain the first-open-vault entry.
 ipcMain.handle('vault:talk-meta', async () => {
   try {
     type Meta = {
@@ -3344,17 +3172,16 @@ ipcMain.handle('vault:talk-meta', async () => {
       pathwayCount: number
       pathwayNames: string[]
     }
-    const out: Record<string, Meta> = {}
+    const out: Record<string, Meta> = Object.create(null)
     for (const vault of availableVaults()) {
       const root = vault.root
       const persisted = await vaultIndex.metadata(vault)
       for (const talk of await vaultIndex.cached(vault)) {
-        if (out[talk.slug]) continue
         const cached = searchCache.get(talk.outlinePath)
         const first = cached?.rows?.[0] as (ProjectionRowMain & { render_hash?: string }) | undefined
         const meta = persisted[talk.slug]
         const pathwaySummary = readPathwaySummary(root, talk.slug)
-        out[talk.slug] = {
+        const facts: Meta = {
           slideCount: cached ? cached.rows.length : null,
           createdMs: meta?.createdMs ?? 0,
           editedMs: meta?.editedMs ?? 0,
@@ -3365,6 +3192,8 @@ ipcMain.handle('vault:talk-meta', async () => {
           pathwayCount: pathwaySummary.count,
           pathwayNames: pathwaySummary.names
         }
+        out[talk.outlinePath] = facts
+        out[talk.slug] ??= facts
       }
     }
     return out
@@ -3457,9 +3286,9 @@ function thumbCacheRoot(): string {
         .filter((f) => f.endsWith('.mjs'))
         .sort()
         .map((f) => join(libDir, f))
-      files.push(join(dir, '..', 'assets', 'templates', 'presenter-popup-single-html.html'))
       const h = createHash('sha256')
       for (const f of files) if (existsSync(f)) h.update(readFileSync(f))
+      h.update(readPresenterTemplate(join(dir, '..')))
       tag = h.digest('hex').slice(0, 8)
     } catch {
       tag = 'base'
@@ -10711,6 +10540,21 @@ async function runSetupCommand(args: string[]): Promise<void> {
 // ── Shared settings (0.42): the store, the Settings window, the menu bar (settings-host.ts) ──────────
 // Started first thing at launch (app.whenReady below), before anything reads a preference.
 let sharedSettings: TalkWeaverSettings | null = null
+
+registerPreferencesIpc({
+  ipcMain, handleFromSettingsWindow, dialog, readConfig, writeConfig, getConfig,
+  broadcastToWindows, currentVaultRoot, detectArchiveRoot,
+  userDataPath: () => app.getPath('userData'),
+  get settingsStore() { return sharedSettings?.store },
+  invalidateArchiveCaches: () => {
+    searchCache.clear()
+    invalidateTalkCache()
+  },
+  transcriptionSettings, backupSettings, runLaunchBackup, timerSettings, metadataDefaults,
+  actionBarState, broadcastActionBar, workspaceViewPreferences, plainLook, placeChipVisible,
+  guideButtonVisible, setGuideButtonVisible
+})
+
 // The settings store's own writes (the Settings window's, an import's) are waited for before an update's native call
 // (write-queues.ts 'settings-store'); preference writes main makes are the overlay's ('settings-overlay').
 registerDrainHook('settings-store', {

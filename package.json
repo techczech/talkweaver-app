@@ -1,6 +1,6 @@
 {
   "name": "talk-weaver",
-  "version": "0.45.3-alpha.5",
+  "version": "0.45.3-alpha.6",
   "description": "Desktop authoring app for the presentation ecosystem",
   "main": "./out/main/index.js",
   "engines": {
@@ -24,8 +24,9 @@
     "test:redesign-window:e2e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/diagnose-redesign-window.mjs",
     "diagnose:surface-tour": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/diagnose-surface-tour.mjs",
     "postinstall": "node node_modules/electron/install.js",
-    "dev": "npm run build:worker-dist && npm run build:gallery-native:host && npm run build:transcription:host && electron-vite dev",
+    "dev": "npm run build:worker-dist && npm run build:gallery-native:host && npm run build:transcription:host && npm run generate:deck-styles && electron-vite dev",
     "typecheck": "npm run typecheck:app && npm run typecheck:live-follow-protocol",
+    "prepreview:handout": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-deck-styles.mjs --ensure",
     "preview:handout": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --disable-warning=ExperimentalWarning scripts/local-handout-preview.mjs",
     "test:internal-integration": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-internal-integration.mjs",
     "test:publication-preservation": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-publication-preservation.mjs",
@@ -53,6 +54,7 @@
     "test:going-live-row": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-going-live-row.mjs",
     "test:live-service-keys": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-live-service-keys.mjs",
     "test:live-ipc": "bun scripts/test-live-ipc.mjs",
+    "test:preferences-ipc": "bun scripts/test-preferences-ipc.mjs",
     "test:secrets-store": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-secrets-store.mjs",
     "test:atomic-file": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-atomic-file.mjs",
     "test:owner-tokens": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-owner-tokens.mjs",
@@ -83,6 +85,7 @@
     "test:pages-upload-transport": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-pages-upload-transport.mjs",
     "test:presenter-publication": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-presenter-publication.mjs",
     "test:presenter-publication:e2e": "node e2e/diagnose-presenter-publication.mjs",
+    "pretest:handout-publishing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-deck-styles.mjs --ensure",
     "test:handout-publishing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-handout-publishing.mjs",
     "test:publish-history:dom": "node scripts/test-publish-history-dom.mjs",
     "test:per-talk-publishing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-per-talk-publishing.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-deployed-site-recovery.mjs",
@@ -100,6 +103,7 @@
     "test:present-window-sandbox:e2e": "node e2e/diagnose-present-window-sandbox.mjs",
     "test:compiler-svg-parity": "node scripts/test-compiler-svg-sanitiser-parity.mjs",
     "test:packaged-files": "node scripts/test-packaged-files.cjs",
+    "pretest:packaged-compiler": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-deck-styles.mjs --ensure",
     "test:packaged-compiler": "node scripts/test-packaged-compiler-layout.mjs",
     "test:mermaid-vendor-security": "node scripts/test-mermaid-vendor-behaviour.mjs",
     "test:mermaid-vendor-embedding": "node scripts/test-mermaid-vendor-embedding.mjs",
@@ -199,6 +203,7 @@
     "generate:slide-search-runtime": "node scripts/build-slide-search-runtime.mjs",
     "test:css-modules": "node scripts/test-css-modules.mjs",
     "test:shortcuts": "node scripts/test-shortcut-registry.mjs",
+    "test:presenter-key-truth": "node scripts/test-presenter-key-truth.mjs",
     "test:deck-window-keys": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-deck-window-keys.mjs",
     "test:commands": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-command-registry.mjs",
     "test:task-groups": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-task-groups.mjs",
@@ -589,6 +594,7 @@
     "test:deck-boots": "node scripts/test-deck-boots.mjs",
     "test:thumb-key": "node scripts/test-thumb-key-resolution.mjs",
     "test:slide-browser-picture-key": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-slide-browser-picture-key.mjs",
+    "pretest:thumbnail-incremental": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-deck-styles.mjs --ensure",
     "test:thumbnail-incremental": "node scripts/test-thumbnail-incremental.mjs",
     "test:thumbnail-queue": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-thumbnail-queue.mjs",
     "test:thumbnail-priority": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-thumbnail-priority.mjs",
@@ -855,6 +861,7 @@
     "test:slide-thumbnails": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-slide-thumbnails.mjs",
     "test:pathway-list": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-pathway-list.mjs",
     "test:workspace-pathways-dom": "node scripts/test-workspace-pathways-dom.mjs",
+    "test:start-screen:dom": "node scripts/test-start-screen-dom.mjs",
     "test:pathways-docked-dom": "node scripts/test-pathways-docked-dom.mjs",
     "test:pathways:e2e": "node e2e/diagnose-pathways.mjs",
     "test:image-edit": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-image-edit.mjs",
@@ -914,7 +921,9 @@
     "test:transcription-native": "node scripts/test-native-transcription.mjs",
     "build:transcription:host": "node -e \"if(process.platform==='darwin')require('node:child_process').execFileSync('npm',['run','build:transcription'],{stdio:'inherit'})\"",
     "verify:electron-security": "node scripts/verify-electron-security.cjs",
+    "prebuild:security-test": "npm run generate:deck-styles",
     "build:security-test": "node scripts/build-security-test.cjs",
+    "prebuild:update-test": "npm run generate:deck-styles",
     "build:update-test": "node scripts/build-update-test.cjs",
     "test:electron-security": "node scripts/test-electron-security.cjs && node scripts/test-security-startup.mjs",
     "test:test-network-guard": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-test-network-guard.mjs",
@@ -963,7 +972,12 @@
       },
       {
         "from": "compiler",
-        "to": "compiler"
+        "to": "compiler",
+        "filter": [
+          "**/*",
+          "!assets/templates/presenter-popup-single-html.html",
+          "!assets/templates/presenter-popup-single-html.generated.html.*.tmp"
+        ]
       },
       {
         "from": "resources/agent-rewrite",
