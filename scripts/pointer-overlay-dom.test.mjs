@@ -147,7 +147,7 @@ try {
             });
             assert.equal(hit, null, `${selector} is outside Pointer capture`);
         }
-        await presenter.keyboard.press('Meta+Shift+p');
+        await presenter.keyboard.press('ControlOrMeta+Shift+p');
         await gone();
         assert.equal(await presenter.locator('.tw-live-overlay').evaluate(el => getComputedStyle(el).pointerEvents), 'none');
         await presenter.locator('#presenterCommandSearch').fill('Next');
@@ -341,14 +341,14 @@ try {
         await presenter.click('#presenterMore');
         await presenter.click('#morePointer');
         assert.equal(await presenter.locator('#presenterPointer').getAttribute('aria-pressed'), 'false');
-        await presenter.keyboard.press('Meta+Shift+p');
+        await presenter.keyboard.press('ControlOrMeta+Shift+p');
         await presenter.locator('#presenterCommandSearch').fill('Pointer');
         await presenter.keyboard.press('Enter');
         assert.equal(await presenter.locator('#presenterPointer').getAttribute('aria-pressed'), 'true');
         await presenter.keyboard.press('Escape');
-        await presenter.keyboard.press('Meta+Shift+p');
+        await presenter.keyboard.press('ControlOrMeta+Shift+p');
         await presenter.locator('#presenterCommandSearch').fill('Pointer');
-        await presenter.keyboard.press('Meta+Shift+,');
+        await presenter.keyboard.press('ControlOrMeta+Shift+,');
         await presenter.waitForSelector('#presenterRebind');
         const previewHandle = await presenter.locator('#currentPreview iframe:not(.preview-incoming)').elementHandle();
         const previewFrame = await previewHandle.contentFrame();
@@ -361,7 +361,7 @@ try {
         assert.equal(await presenter.evaluate(() => document.activeElement.id), 'presenterRebind');
         await presenter.keyboard.press('Escape');
         await presenter.waitForSelector('#presenterRebind', { state: 'detached' });
-        await presenter.keyboard.press('Meta+Shift+,');
+        await presenter.keyboard.press('ControlOrMeta+Shift+,');
         await presenter.waitForSelector('#presenterRebind');
         for (const key of ['h', '1', '0', '-', '=', 'Shift+?', 'Meta+z', 'Space', 'Tab', 'Enter', 'Meta+a', 'Meta+c', 'Meta+w', 'Meta+q', 'Control+c', 'Alt+ArrowLeft',
             'Shift+ArrowRight', 'Shift+Space', 'Shift+PageDown', 'Shift+Enter', 'Delete', 'Shift+Tab']) {
@@ -371,7 +371,7 @@ try {
         await presenter.keyboard.press('n');
         await presenter.waitForSelector('#presenterRebind', { state: 'detached' });
         assert.equal(await presenter.locator('#palette-pointer').getAttribute('data-keys'), 'N / I');
-        await presenter.keyboard.press('Meta+Shift+,');
+        await presenter.keyboard.press('ControlOrMeta+Shift+,');
         await presenter.keyboard.press('y');
         await presenter.waitForSelector('#presenterRebind', { state: 'detached' });
         assert.equal(await presenter.locator('#palette-pointer').getAttribute('data-keys'), 'Y / I');
@@ -398,9 +398,9 @@ try {
         assert.match(await presenter.locator('.tw-tip').innerText(), /Pointer: show your mouse on every screen/);
         assert.match(await presenter.locator('.tw-tip').innerText(), /Y/);
         await presenter.keyboard.press('Escape');
-        await presenter.keyboard.press('Meta+Shift+p');
+        await presenter.keyboard.press('ControlOrMeta+Shift+p');
         await presenter.locator('#presenterCommandSearch').fill('Spotlight');
-        await presenter.keyboard.press('Meta+Shift+,');
+        await presenter.keyboard.press('ControlOrMeta+Shift+,');
         const rebindStatus = presenter.locator('#presenterRebind [role="status"]');
         for (const [key, owner] of [[',', 'Skip video back 5 seconds'], ['.', 'Skip video forward 5 seconds']]) {
             await presenter.keyboard.press(key);
@@ -428,9 +428,9 @@ try {
         assert.equal(await presenter.locator('#presenterPointer').getAttribute('aria-pressed'), 'false');
         await presenter.keyboard.press('Escape');
         await presenter.keyboard.press('Home');
-        await presenter.keyboard.press('Meta+Shift+p');
+        await presenter.keyboard.press('ControlOrMeta+Shift+p');
         await presenter.locator('#presenterCommandSearch').fill('Next');
-        await presenter.keyboard.press('Meta+Shift+,');
+        await presenter.keyboard.press('ControlOrMeta+Shift+,');
         await presenter.keyboard.press('n');
         assert.equal(await presenter.locator('#palette-next').getAttribute('data-keys'), 'N / → Space ↓ PgDn ↵');
         assert.equal(await presenter.locator('#presenterNext').getAttribute('data-key'), 'N / → Space ↓ PgDn ↵');
@@ -445,9 +445,9 @@ try {
         await presenter.keyboard.press('Home');
         await presenter.keyboard.press('Space');
         await audience.waitForSelector('.slide.active[data-id=image]');
-        await presenter.keyboard.press('Meta+Shift+p');
+        await presenter.keyboard.press('ControlOrMeta+Shift+p');
         await presenter.locator('#presenterCommandSearch').fill('Next');
-        await presenter.keyboard.press('Meta+Shift+,');
+        await presenter.keyboard.press('ControlOrMeta+Shift+,');
         await presenter.getByRole('button', { name: 'Reset to default', exact: true }).click();
         await presenter.keyboard.press('Escape');
         await presenter.keyboard.press('Home');

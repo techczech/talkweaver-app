@@ -1,6 +1,6 @@
 {
   "name": "talk-weaver",
-  "version": "0.45.3-alpha.7",
+  "version": "0.45.3-alpha.9",
   "description": "Desktop authoring app for the presentation ecosystem",
   "main": "./out/main/index.js",
   "engines": {
@@ -17,6 +17,7 @@
     "test:redesign-structure:e2e": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON e2e/diagnose-redesign-structure.mjs",
     "test:slide-text-panel:dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-redesign-right-panel-dom.mjs --slide-text",
     "test:redesign-right-panel-dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-redesign-right-panel-dom.mjs",
+    "test:design-switch-dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-redesign-right-panel-dom.mjs --design-switch",
     "test:list-layout-suggestions-dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-list-layout-suggestions-dom.mjs",
     "test:notes-in-place:dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-redesign-right-panel-dom.mjs --notes",
     "test:outline-preview-dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-redesign-right-panel-dom.mjs --outline-preview",
@@ -89,6 +90,8 @@
     "test:presenter-publication:e2e": "node e2e/diagnose-presenter-publication.mjs",
     "pretest:handout-publishing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-deck-styles.mjs --ensure",
     "test:handout-publishing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-handout-publishing.mjs",
+    "pretest:publish-cli": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-deck-styles.mjs --ensure",
+    "test:publish-cli": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-publish-cli.mjs",
     "test:publish-history:dom": "node scripts/test-publish-history-dom.mjs",
     "test:per-talk-publishing": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-per-talk-publishing.mjs && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-deployed-site-recovery.mjs",
     "test:handout-slimming": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-handout-slimming.mjs",
@@ -365,6 +368,7 @@
     "test:object-gap-entry-points:dom:shard-1": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-object-gap-entry-points-dom.mjs --shard=1/3",
     "test:object-gap-entry-points:dom:shard-2": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-object-gap-entry-points-dom.mjs --shard=2/3",
     "test:object-gap-entry-points:dom:shard-3": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-object-gap-entry-points-dom.mjs --shard=3/3",
+    "test:object-markdown-editing:dom": "node scripts/test-object-markdown-editing-dom.mjs",
     "test:object-previews:dom": "node scripts/test-object-previews-dom.mjs",
     "test:object-guard-ranges:dom": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-object-guard-ranges-dom.mjs",
     "test:object-removal": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-object-removal.mjs",
@@ -1211,6 +1215,7 @@
     "@app-patterns/updates-react": "file:./vendor/app-patterns/app-patterns-updates-react-0.4.1.tgz",
     "@xmldom/xmldom": "^0.8.15",
     "dompurify": "^3.4.17",
+    "js-yaml": "4.3.2",
     "markdown-it": "^14.3.3"
   },
   "patchedDependencies": {

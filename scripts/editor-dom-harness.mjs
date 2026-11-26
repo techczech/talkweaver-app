@@ -1,5 +1,5 @@
 // Shared harness for editor DOM tests: the real React Editor (both views) in Playwright's bundled
-// Chromium, with IPC replaced by an in-memory outline that records every write. `|` marks the caret.
+// Chromium, with IPC replaced by a fixture outline that records every write. `|` marks the caret.
 import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -9,7 +9,7 @@ import { chromium } from 'playwright'
 
 const root = resolve(import.meta.dirname, '..')
 
-export async function openEditorHarness({ appCsp = false } = {}) {
+export async function openEditorHarness({ appCsp = false, fileBacked = false } = {}) {
   const scratch = mkdtempSync(join(tmpdir(), 'tw-editor-dom-'))
   await build({
     stdin: {
@@ -31,7 +31,7 @@ const root=createRoot(document.getElementById('root'))
 window.writes=[]
 window.previewPages={}
 window.previewReads=[]
-window.tw={talk:{readOutline:()=>Promise.resolve(source),writeOutline:async(p,text)=>{window.writes.push(text);return {ok:true,content:text}},outlineDiskVersion:async()=>null,acceptOutlineDiskVersion:async()=>({ok:true}),discardOutlineRecovery:async()=>true,outlineRecovery:async()=>null},vault:{onTalkMetaUpdated:()=>()=>{}},workFiles:{list:async()=>null},icons:{svg:async()=>null},objects:{
+window.tw={talk:{readOutline:()=>Promise.resolve(source),writeOutline:async(p,text)=>{await window.writeFixtureOutline?.(text);window.writes.push(text);return {ok:true,content:text}},outlineDiskVersion:async()=>null,acceptOutlineDiskVersion:async()=>({ok:true}),discardOutlineRecovery:async()=>true,outlineRecovery:async()=>null},vault:{onTalkMetaUpdated:()=>()=>{}},workFiles:{list:async()=>null},icons:{svg:async()=>null},objects:{
  status:async()=>({ok:true,statuses:[]}),
  staticPreview:async (path,ref)=>{window.previewReads.push([path,ref]);return window.previewPages[ref]??null}
 }}
@@ -69,9 +69,11 @@ window.entry={
   const csp = appCsp ? readFileSync(join(root, 'src/renderer/index.html'), 'utf8')
     .match(/<meta\s+http-equiv="Content-Security-Policy"[^>]+>/)?.[0] : ''
   if (appCsp && !csp) throw new Error('Missing app CSP')
-  writeFileSync(join(scratch, 'fixture.html'), csp + '<meta charset="utf-8"><link rel="stylesheet" href="styles.css"><style>body{margin:0}.cm-editor{height:700px;width:1000px}</style><div id="root"></div><script src="harness.js"></script>')
+  writeFileSync(join(scratch, 'fixture.html'), csp + '<meta charset="utf-8"><link rel="stylesheet" href="styles.css"><style>body{margin:0}.editor-container > .cm-editor{height:700px;width:1000px}</style><div id="root"></div><script src="harness.js"></script>')
   const browser = await chromium.launch({ headless: true })
   const page = await browser.newPage({ viewport: { width: 1000, height: 760 } })
+  const outlinePath = join(scratch, 'fixture.md')
+  if (fileBacked) await page.exposeFunction('writeFixtureOutline', (text) => writeFileSync(outlinePath, text))
   const errors = []
   page.on('pageerror', (e) => errors.push(e.message))
   await page.goto(pathToFileURL(join(scratch, 'fixture.html')).href)
@@ -86,6 +88,7 @@ window.entry={
     } else {
       anchor = head = marked.indexOf('|'); text = marked.replace('|', '')
     }
+    if (fileBacked) writeFileSync(outlinePath, text)
     await page.evaluate(({ text, mode }) => window.mount(text, mode), { text, mode })
     await page.waitForFunction((t) => window.view()?.state.doc.toString() === t, text)
     await page.evaluate(({ anchor, head }) => window.setCaret(anchor, head), { anchor, head })
@@ -98,5 +101,5 @@ window.entry={
     await browser.close()
     rmSync(scratch, { recursive: true, force: true })
   }
-  return { page, mount, shown, press, errors, close }
+  return { page, mount, shown, press, errors, close, outlinePath }
 }

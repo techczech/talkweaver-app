@@ -34,6 +34,17 @@ assert.equal(found.flat, true); assert.deepEqual(found.folders.map(f => f.path),
 const nodes = treeNodes(talks, folders, new Set())
 assert.deepEqual(nodes.map(n => [n.name, n.count, n.hasChildren, n.expanded]), [['agents', 2, false, false], ['ext', 4, true, false], ['handout-data', 0, false, false]])
 assert.deepEqual(treeNodes(talks, folders, new Set(['ext'])).map(n => n.path), ['agents', 'ext', 'ext/Day 1', 'ext/Day 2', 'handout-data'])
+// A system subtree is hidden by default even if an older index contains talks in it.
+const mixed = [t('Projects/bundle/deck/deck-outline.md'), t('Projects/Workshop/live/live-outline.md')]
+const visible = folderPaths(mixed, ['Projects/Empty', 'Projects/Workshop/live']).filter(path => !inspectOnlyPath(path))
+assert.ok(!visible.includes('Projects/Workshop/live'), 'a stale category entry cannot duplicate a known talk directory')
+const project = treeNodes(mixed, visible, new Set()).find(n => n.path === 'Projects')
+const projectRows = browseRows(mixed, visible, { kind: 'folder', path: 'Projects' }, '')
+assert.equal(project.count, projectRows.talks.length + projectRows.folders.reduce((sum, folder) => sum + folder.count, 0))
+assert.equal(project.count, 1, 'hidden descendants do not contribute to the visible folder count')
+assert.equal(treeNodes(mixed, visible, new Set(['Projects'])).find(n => n.path === 'Projects/Empty').count, 0)
+assert.equal(treeNodes(mixed, folderPaths(mixed), new Set(), true).find(n => n.path === 'Projects').count, 2)
+assert.equal(browseRows(mixed, visible, { kind: 'all' }, '').talks.length, 2)
 // unknown sorts last in both directions
 const row = (name, size) => ({ name, location: '', facts: { slides: null, images: null, size, handouts: null, modified: null } })
 for (const dir of ['asc', 'desc']) assert.deepEqual([row('a', null), row('b', 5), row('c', 9)].sort((x, y) => compareBy('size', dir, x, y)).map(r => r.name).at(-1), 'a')

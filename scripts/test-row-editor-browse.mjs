@@ -116,7 +116,7 @@ await test('a chat the deck reads as different turns than rows would show opens 
   const api = { preflight: () => ({ ok: true }), commit: () => ({ ok: true }) }
   const open = (inner) => {
     const block = detectOutlineObjects(`# T\n\n## S\n\n\`\`\`chat\n${inner}\n\`\`\`\n`).blocks.find((b) => b.kind === 'chat')
-    return mountCardEditor(block, cardKind('chat'), inner, textareaEditor(inner), api, undefined, (x) => x)
+    return mountCardEditor(block, cardKind('chat'), inner, textareaEditor, api, undefined, (x) => x)
   }
   const classes = (node) => [node.className, ...(node.children ?? []).flatMap(classes)]
   assert.ok(classes(open('user: one\nbot: two')).some((c) => /\boe-rows\b/.test(c)), 'rows for an ordinary chat')

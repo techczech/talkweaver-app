@@ -12,6 +12,7 @@
 // No Electron import; erasable TypeScript only (a node script imports it as it is).
 import { AGENT_ROUTE_VERBS } from './agent-skill/cli.ts'
 import { AGENT_VERBS } from './agent-verbs.ts'
+import { PUBLISH_CLI_VERB } from './publish-cli.ts'
 
 export interface VerbEntry {
   /** `setup status`, `settings set`, `agent install` (command line) or `research.capture` (in-process). */
@@ -25,6 +26,7 @@ const setup = (verb: string, args: string, summary: string): VerbEntry => ({ ver
 const settings = (verb: string, args: string, summary: string): VerbEntry => ({ verb: `settings ${verb}`, args, summary, route: 'cli' })
 
 export const CLI_VERBS: readonly VerbEntry[] = [
+  { ...PUBLISH_CLI_VERB, route: 'cli' },
   setup('status', '[--json]', 'Reads every row of publishing, live service, recording storage, transcription and the Importer. Exit 0 when connected and Publishing and Going live are Ready.'),
   setup('cloudflare connect', '[--json]', 'Reads the Cloudflare token from standard input, saves it to the operating system\'s secure storage, checks it.'),
   setup('cloudflare account', '<id> [--json]', 'Chooses the account when the token sees several.'),
@@ -59,15 +61,16 @@ export const VERB_INVENTORY: readonly VerbEntry[] = [...CLI_VERBS, ...IN_PROCESS
 
 /** references/commands.md, generated from the inventory at build. */
 export function commandsReference(): string {
-  const rows = (family: string): string[] => CLI_VERBS.filter((v) => v.verb.startsWith(`${family} `)).map((v) => `| \`talkweaver ${v.verb}\` | ${v.args ? `\`${v.args}\`` : ''} | ${v.summary} |`)
+  const rows = (family: string): string[] => CLI_VERBS.filter((v) => v.verb === family || v.verb.startsWith(`${family} `)).map((v) => `| \`talkweaver ${v.verb}\` | ${v.args ? `\`${v.args.replaceAll('|', '\\|')}\`` : ''} | ${v.summary} |`)
   const table = (family: string): string[] => ['| Command | Arguments | What it does |', '|---|---|---|', ...rows(family), '']
   return [
     '# Commands (generated)',
     '',
     'Generated from the app\'s verb inventory at build. Do not edit. When to use each verb: [CLI](cli.md).',
     '',
-    'Exit codes: 0 done or ready, 1 not done or not ready, 2 usage error. `setup` refuses while the app is open.',
+    'For publish exit codes and progress, see [publish](cli.md#publish).',
     '',
+    '## publish', '', ...table('publish'),
     '## setup', '', ...table('setup'),
     '## settings', '', ...table('settings'),
     '## agent', '', ...table('agent'),

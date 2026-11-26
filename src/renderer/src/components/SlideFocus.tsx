@@ -140,7 +140,7 @@ export default function SlideFocus({
       return !!t.closest('.cm-editor')
     }
     function handle(e: KeyboardEvent): void {
-      if (suspendKeys || isWorkspaceCovered()) return
+      if (suspendKeys || isWorkspaceCovered() || (e.target instanceof HTMLElement && e.target.closest('.oe'))) return
       // The detach confirm owns Esc/Enter while it is up.
       if (confirmOpen) {
         if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); setConfirmOpen(false) }

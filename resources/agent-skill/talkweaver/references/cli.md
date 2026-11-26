@@ -1,10 +1,22 @@
 # TalkWeaver command line
 
-Run as `talkweaver <family> <verb>`; the fallback is the app binary with the same arguments. Every verb takes `--json`.
+Run `talkweaver <command>`. The fallback is the app binary with the same arguments. Every verb takes `--json`.
 
-Exit codes: 0 done, 1 not done or not ready (the state is printed), 2 usage error (nothing was done).
+For setup, settings and agent, exit 0 means done, 1 means the action stopped or the feature needs setup, and 2 means a usage error. Publish has its own result codes below.
 
 The complete verb list with arguments is generated: [commands](commands.md). This page says when to use each verb.
+
+## publish
+
+- Publish only when the owner asks. Use the requested Talk and check that its configured Pages site is the intended destination. The command uses TalkWeaver's stored credentials. It accepts a talk path or id and the documented switches.
+- `talkweaver publish <talk path or id> --dry-run` builds and checks against the configured site, reports staged files and bytes and surfaces any problems. It sends no upload or deployment and records no publish attempt. It uses the recorded live-service address without updating the service.
+- `talkweaver publish <talk path or id>` publishes the Talk handout through the same operation as the editor's Publish handout. Pass the outline path, a talk folder path or a unique talk id (the outline filename without `-outline.md`) in an open library. Use the full outline path when ids collide.
+- On Mac and Unix, publish and dry-run use the running app through a connection local to the OS user running TalkWeaver. They use the saved outline and warn if it differs from the open editor. Save any intended edits in TalkWeaver before publishing. Both commands run headlessly when the app is closed.
+- On Windows, publish and dry-run require TalkWeaver to be closed. With the app open, they exit `4` with the next step “Close TalkWeaver and retry.”
+- `talkweaver publish <talk path or id> --status` reads this computer's recent attempts for the talk, including the failure step, Cloudflare codes, timings and whether the outcome is known. It works while the app is open and makes no network request.
+- `--json` writes one JSON object per line to stdout. Every object has `format: "talkweaver-publish/1"` and `event: "progress"`, `"warning"` or `"result"`. Read the final result for `outcome`, the `url` of a published or unchanged handout, or `reason`, `liveSite`, `nextStep` and any `diagnostic` for a failure. Status returns `attempts`.
+- Exit codes: `0` published, unchanged, dry-run complete or status read. `1` failed with the live site untouched. `2` usage error, including an unknown or ambiguous talk id. The CLI lists matching outlines or up to ten suggestions in the terminal or in `candidates` with `--json`. `3` outcome unknown. `4` setup or a compatible running app required. `130` cancelled before deployment.
+- For exit `3`, check the intended live page and report the uncertainty. Read the history before another attempt. For setup or sign-in, use the returned next step in TalkWeaver. Ctrl+C cancels while cancellation is available. After the deployment request starts, wait for confirmation.
 
 ## setup
 

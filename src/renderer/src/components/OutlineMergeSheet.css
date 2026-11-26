@@ -1,10 +1,12 @@
-.outline-merge-root > .disk-change-sheet__scrim { z-index: 3000; }
+.outline-merge-sheet::backdrop { background: var(--veil); }
 .outline-merge-sheet {
   position: fixed; z-index: 3001; inset: 5vh max(1rem, calc((100vw - 68rem) / 2));
-  display: flex; flex-direction: column; gap: .65rem; padding: 1.2rem;
+  width: auto; height: auto; max-width: none; max-height: none; margin: 0;
+  flex-direction: column; gap: .65rem; padding: 1.2rem;
   background: var(--panel, Canvas); color: var(--ink, CanvasText); border: 1px solid var(--line, GrayText);
   border-radius: .5rem; box-shadow: 0 1rem 4rem #0004; font: .875rem var(--font-ui, system-ui, sans-serif);
 }
+.outline-merge-sheet[open] { display: flex; }
 .outline-merge-sheet h2, .outline-merge-sheet h3, .outline-merge-sheet p { margin: 0; }
 .outline-merge-sheet h2 { font-size: 1.2rem; }
 .outline-merge-sheet h3 { font-size: 1rem; margin-bottom: .5rem; }

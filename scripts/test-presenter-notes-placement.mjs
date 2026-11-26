@@ -278,7 +278,7 @@ try {
     assert.equal(reopened.scale, s.scale, `${W}x${H}: the reopened sidebar layout matches`)
 
     // The command palette offers the placements (no new chord).
-    await again.keyboard.press('Meta+Shift+P')
+    await again.keyboard.press('ControlOrMeta+Shift+P')
     await again.fill('#presenterCommandSearch', 'notes placement')
     const offered = await again.$$eval('#presenterCommandResults button', (bs) => bs.map((b) => b.querySelector('.tw-pal-name')?.textContent || b.textContent))
     assert.equal(offered.length, 5, `the palette lists five placements (${offered.join(' | ')})`)

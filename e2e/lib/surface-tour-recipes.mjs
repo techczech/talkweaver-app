@@ -468,7 +468,7 @@ R['presenter-questions'] = { run: async (t) => { await pres(t); t.missing('the Q
 R['presenter-more'] = { run: pbtn('More') }
 R['presenter-pen-pop'] = { run: async (t) => { const w = await pres(t); await t.click(w.locator('button', { hasText: 'Pen' }).first(), { page: w, button: 'right' }); await w.waitForTimeout(500) } }
 R['presenter-pen-strip'] = { run: pbtn('Pen') }
-R['presenter-palette'] = { run: async (t) => { const w = await pres(t); await w.keyboard.press('Meta+Shift+P'); await w.waitForTimeout(600) } }
+R['presenter-palette'] = { run: async (t) => { const w = await pres(t); await w.keyboard.press('ControlOrMeta+Shift+P'); await w.waitForTimeout(600) } }
 R['presenter-guide'] = { run: pbtn(/Guide/) }
 R['presenter-licence'] = { run: async (t) => { await t.command('present-window'); const w = await t.windowOf('present', 12000); t.shootPage = w; t.shootLabel = 'presentation'; await w.waitForTimeout(1500); const el = w.getByText(/licen[cs]e/i).first(); if (!(await el.count())) t.missing('the Presentation window of this talk shows no licence link (it appears for slides carrying licensed material)'); await t.click(el, { page: w }) } }
 R['presenter-status-presenterRecSlot'] = { observe: /Not recording/, run: async (t) => { await pres(t) } }

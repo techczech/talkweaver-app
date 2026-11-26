@@ -6,7 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { dismissToast, notify } from '../lib/notify'
 import { outlineWritesSettled, queueOutlineWrite } from '../lib/saveQueue'
 import {
-  guardLeave, outlineDiskChanges, resolveChoice, saveAfterDiskCleared, reloadFromDisk,
+  changedAtLabel, guardLeave, outlineDiskChanges, resolveChoice, saveAfterDiskCleared, reloadFromDisk,
   type OutlineDiskChange, type OutlineDiskChoice,
 } from '../lib/outlineDiskChange'
 import { closeFrozen } from '../lib/closeFreeze'
@@ -15,7 +15,9 @@ import { editorRevision } from '../lib/editorRevision'
 import { updateRestartDraft } from '../lib/talkDrafts'
 import { applyOutlineMerge, prepareOutlineMerge, type OutlineMergeReview, type OutlineReconcileDeps } from '../lib/outlineReconcile'
 import { singleSlideDiskReview } from '../lib/slideDiskReview'
-import { resolveOutlineMerge } from '../../../shared/outline-merge'
+import { normalizeOutlineMergeText, type SlideMergeChoices } from '../../../shared/outline-merge'
+import type { SlideMergeReview } from '../../../shared/outline-slide-merge'
+import { mergeResultText, revealMergeArchive } from './outlineMergeCopy'
 
 export interface OutlineDiskChangeWiring {
   /** The talk open in this workspace, or null. */
@@ -32,6 +34,7 @@ export interface OutlineDiskChangeWiring {
   settle(signal?: AbortSignal): Promise<void>
   /** Writes the editor's current text even when it looks saved (Editor forceSave). */
   forceSave(signal?: AbortSignal): Promise<boolean>
+  cancelDebouncedSave?(outlinePath: string): void
   hasPendingSketch?(): boolean
   saveSketch?(): Promise<boolean>
   /** The talk was discarded (removed on disk): let it go from this window. */
@@ -43,10 +46,15 @@ export interface OutlineDiskChangeState {
   change: OutlineDiskChange | null
   busy: boolean
   mergeReview: OutlineMergeReview | null
-  mergeChoices: Record<string, string>
+  slideReview: SlideMergeReview | null
+  slideReviewStale: 'disk' | 'review' | null
+  slideReviewError: string | null
+  slideReviewWholeTalk: boolean
+  savingMerge: boolean
+  refreshSlideReview(): void
+  applySlideReview(generation: string, choices: SlideMergeChoices): void
   applyMerge(generation: number, choices: Record<string, string>, decision?: 'merge' | 'put-back'): void
   dismissMerge(): void
-  keepMergeDraft(generation: number, choices: Record<string, string>): void
   /** A choice on the bar. */
   choose(choice: Exclude<OutlineDiskChoice, 'stay'>): void
   /** The open sheet (a switch or a close waiting for the person), or null. */
@@ -67,7 +75,20 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
   const busyRef = useRef(false)
   const [sheet, setSheet] = useState<OutlineDiskChange | null>(null)
   const [mergeReview, setMergeReview] = useState<OutlineMergeReview | null>(null)
-  const reviewRef = useRef<{ path: string; review: OutlineMergeReview; draft?: string; choices?: Record<string, string> } | null>(null)
+  const reviewRef = useRef<{ path: string; review: OutlineMergeReview } | null>(null)
+  const slideReviewRef = useRef<{ path: string; review: SlideMergeReview } | null>(null)
+  const [slideReview, setSlideReview] = useState<SlideMergeReview | null>(null)
+  const [slideReviewStale, setSlideReviewStale] = useState<OutlineDiskChangeState['slideReviewStale']>(null)
+  const [slideReviewError, setSlideReviewError] = useState<string | null>(null)
+  const [slideReviewWholeTalk, setSlideReviewWholeTalk] = useState(false)
+  const [savingMerge, setSavingMerge] = useState(false)
+  const closeSlideReview = useCallback(() => {
+    slideReviewRef.current = null
+    setSlideReview(null)
+    setSlideReviewStale(null)
+    setSlideReviewError(null)
+    setSlideReviewWholeTalk(false)
+  }, [])
   const recoveryFailedRef = useRef<string | null>(null)
   const autoVersionRef = useRef<string | null>(null)
   const reconciliationRef = useRef<Promise<void> | null>(null)
@@ -78,30 +99,39 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
   // clears on its own (the other side reverted the file) while no choice is under way leaves typing
   // made meanwhile unsaved: save the buffer so it lands.
   useEffect(() => window.tw.talk.onOutlineChangedOnDisk?.(({ outlinePath, change: next }) => {
-    if (next) { outlineDiskChanges.report(next); return }
+    if (next) {
+      outlineDiskChanges.report(next)
+      if (slideReviewRef.current?.path === outlinePath && next.hash !== slideReviewRef.current.review.diskHash) {
+        setSlideReviewStale('disk')
+      }
+      return
+    }
     const had = outlineDiskChanges.get(outlinePath)
     if (had?.kind === 'recovery') return
+    if (slideReviewRef.current?.path === outlinePath) {
+      // A revert while the cards are open is also a change. Leave the displayed snapshots
+      // and the buffer alone until an explicit refresh or dismissal. Apply clears its own report.
+      if (!applyingRef.current) {
+        wiringRef.current.cancelDebouncedSave?.(outlinePath)
+        outlineDiskChanges.clear(outlinePath)
+        setSlideReviewStale('disk')
+      }
+      return
+    }
     const review = reviewRef.current?.path === outlinePath ? reviewRef.current : null
-    // Apply/reconcile preserves this review and clears the report itself on success.
     if (review && busyRef.current) return
-    void (async () => {
-      if (review?.draft !== undefined) {
-        const draft = review.draft
-        const kept = await depsRef.current!.preserve(outlinePath, { ...review.review, draft }).catch(() => null)
-        // A result edited during preservation needs its own archive before it can close.
-        if (reviewRef.current !== review || review.draft !== draft || busyRef.current || outlineDiskChanges.get(outlinePath) !== had) return
-        if (!kept) { recoveryFailedRef.current = outlinePath; notify('Could not keep your merge draft. It is still open; retry before leaving.', 'warning', TOAST); return }
-      }
-      if (outlineDiskChanges.get(outlinePath) !== had) return // a newer event won
-      if (outlinePath === wiringRef.current.activeOutlinePath) {
-        autoVersionRef.current = null
-        if (reviewRef.current === review) { reviewRef.current = null; setMergeReview(null) }
-      }
-      outlineDiskChanges.clear(outlinePath)
-      if (had && outlinePath === wiringRef.current.activeOutlinePath) {
-        await saveAfterDiskCleared(outlinePath, { ...depsRef.current!, busy: busyRef.current })
-      }
-    })().catch(error => notify(error instanceof Error ? error.message : String(error), 'warning', TOAST))
+    if (outlinePath === wiringRef.current.activeOutlinePath) {
+      autoVersionRef.current = null
+      if (reviewRef.current === review) { reviewRef.current = null; setMergeReview(null) }
+    }
+    outlineDiskChanges.clear(outlinePath)
+    // A late acknowledgement after Reload or explicit discard must not save the
+    // newly adopted, clean buffer back over the disk bytes (for example CRLF).
+    const doc = wiringRef.current.readDoc()
+    if (had && outlinePath === wiringRef.current.activeOutlinePath && doc?.path === outlinePath && doc.dirty !== false) {
+      void saveAfterDiskCleared(outlinePath, { ...depsRef.current!, busy: busyRef.current })
+        .catch(error => notify(error instanceof Error ? error.message : String(error), 'warning', TOAST))
+    }
   }), [])
   useEffect(() => {
     const sync = (): void => setChange(activeOutlinePath ? outlineDiskChanges.get(activeOutlinePath) : null)
@@ -148,41 +178,89 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
     }
   }, [])
 
-  const reconcile = useCallback((): Promise<void> => {
+  const reconcile = useCallback((refresh = false): Promise<void> => {
     if (reconciliationRef.current) return reconciliationRef.current
     const path = wiringRef.current.activeOutlinePath
     if (!path || busyRef.current) return Promise.resolve()
     const run = (async (): Promise<void> => {
       busyRef.current = true; setBusy(true)
       try {
-        const previous = reviewRef.current
-        if (previous?.path === path && previous.draft !== undefined) {
-          if (!await depsRef.current!.preserve(path, { ...previous.review, draft: previous.draft }).catch(() => null)) { recoveryFailedRef.current = path; throw Error('Could not keep your merge draft. Retry, or leave using the disk version after discarding these edits.') }
-        }
-        // A review still current (same buffer, base and disk version) stays open as it is, with the
-        // person's choices and edited Result: a denied close or quit must not reset the merge.
-        if (previous?.path === path && reviewRef.current === previous) {
-          const doc = wiringRef.current.readDoc()
-          const pending = outlineDiskChanges.get(path)
-          if (doc?.path === path && doc.text === previous.review.mine && depsRef.current!.readBase(path) === previous.review.base &&
-            pending?.kind === 'changed' && pending.hash === previous.review.hash) {
-            // Keep the same guarantee a rebuild gives: a recovery copy exists before anyone may leave.
-            if (previous.draft === undefined && !await depsRef.current!.preserve(path, previous.review).catch(() => null)) {
-              recoveryFailedRef.current = path
-              throw Error('Could not keep your merge draft. Retry, or leave using the disk version after discarding these edits.')
-            }
-            recoveryFailedRef.current = null
-            setMergeReview(previous.review)
-            return
+        await outlineWritesSettled(path)
+        if (path !== wiringRef.current.activeOutlinePath) return
+        const old = slideReviewRef.current
+        const observed = outlineDiskChanges.get(path)
+        if (observed?.kind !== 'changed') {
+          if (old?.path === path && refresh) {
+            autoVersionRef.current = null
+            closeSlideReview()
           }
+          return
         }
+        const doc = wiringRef.current.readDoc()
+        if (doc?.path !== path || doc.base == null) return
+        const clean = doc.dirty === false || normalizeOutlineMergeText(doc.text) === normalizeOutlineMergeText(doc.base)
+        if (old?.path === path && !refresh) {
+          if (old.review.diskHash !== observed.hash) setSlideReviewStale('disk')
+          if (old.review.sources.mine !== doc.text) setSlideReviewStale(reason => reason ?? 'review')
+          setSlideReview(old.review)
+          return
+        }
+        if (!clean) {
+          reviewRef.current = null; setMergeReview(null)
+          setSlideReviewError(null)
+          const planned = await window.tw.talk.planSlideMerge(path)
+          if (wiringRef.current.activeOutlinePath !== path) return
+          if (planned.ok) {
+            const current = outlineDiskChanges.get(path)
+            // The stable plan can see newer bytes than the watcher. A notification that
+            // arrived during planning wins unless it names the snapshot we just received.
+            if (current === observed && current.hash !== planned.diskHash) {
+              outlineDiskChanges.report({ outlinePath: path, kind: 'changed', hash: planned.diskHash, changedAt: planned.diskChangedAt })
+            }
+            const newer = outlineDiskChanges.get(path)?.hash !== planned.diskHash
+            autoVersionRef.current = outlineDiskChanges.get(path)?.hash ?? null
+            recoveryFailedRef.current = null
+            slideReviewRef.current = { path, review: planned }
+            setSlideReviewWholeTalk(false)
+            setSlideReviewStale(newer ? 'disk' : null)
+            setSlideReview(planned)
+          } else if (planned.reason === 'no-conflict') {
+            const disk = await depsRef.current!.diskVersion(path)
+            if (wiringRef.current.activeOutlinePath !== path) return
+            if (disk && normalizeOutlineMergeText(disk.text) === normalizeOutlineMergeText(doc.base)) {
+              wiringRef.current.cancelDebouncedSave?.(path)
+              autoVersionRef.current = null
+              outlineDiskChanges.clear(path, observed.hash)
+              closeSlideReview()
+            } else {
+              setSlideReviewError(planned.error)
+              notify(planned.error, 'warning', TOAST)
+            }
+          } else {
+            if (planned.reason === 'recovery-failed') recoveryFailedRef.current = path
+            if (planned.reason === 'stale-disk' && !await depsRef.current!.diskVersion(path)) {
+              if (wiringRef.current.activeOutlinePath !== path) return
+              closeSlideReview(); markRemoved(path); return
+            }
+            const error = 'error' in planned ? planned.error : 'The talk could not be reviewed. Try again.'
+            setSlideReviewError(error)
+            notify(error, 'warning', TOAST)
+          }
+          return
+        }
+        if (old?.path === path) closeSlideReview()
         for (let attempt = 0; attempt < 3; attempt++) {
           const prepared = await prepareOutlineMerge(path, depsRef.current!)
           if (wiringRef.current.activeOutlinePath !== path) return
           if (prepared.kind === 'retry') continue
           if (prepared.kind === 'removed') { markRemoved(path); return }
-          if (prepared.kind === 'conflict' || prepared.kind === 'ready') {
-            recoveryFailedRef.current = null
+          if (prepared.kind === 'ready' || prepared.kind === 'conflict') {
+            if (prepared.review.mine !== prepared.review.base) {
+              // Typing began while the clean snapshot was being read. Use the slide plan
+              // on the next turn, before offering any write.
+              autoVersionRef.current = null
+              return
+            }
             reviewRef.current = { path, review: prepared.review }
             setMergeReview(prepared.review)
             autoVersionRef.current = prepared.review.hash
@@ -192,25 +270,72 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
           }
           return
         }
-        notify('The talk is still changing. Choose Review merge to try again; both versions are kept.', 'info', TOAST)
-      } catch (error) { notify(error instanceof Error ? error.message : String(error), 'warning', TOAST) }
-      finally { busyRef.current = false; setBusy(false) }
+        notify('The talk is still changing. Choose Review merge to try again.', 'info', TOAST)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        setSlideReviewError(message)
+        notify(message, 'warning', TOAST)
+      } finally { busyRef.current = false; setBusy(false) }
     })()
     reconciliationRef.current = run
     void run.then(() => { if (reconciliationRef.current === run) reconciliationRef.current = null })
     return run
-  }, [markRemoved])
+  }, [closeSlideReview, markRemoved])
 
   useEffect(() => {
-    if (!change || change.kind !== 'changed' || autoVersionRef.current === change.hash || busy) return
+    if (busy) return
+    const opening = slideReviewRef.current
+    if (opening && opening.path === activeOutlinePath) {
+      if (change?.hash !== opening.review.diskHash) setSlideReviewStale('disk')
+      return
+    }
+    if (!change || change.kind !== 'changed' || autoVersionRef.current === change.hash) return
     autoVersionRef.current = change.hash
     void reconcile()
-  }, [change, busy, reconcile])
+  }, [activeOutlinePath, change, busy, reconcile])
   useEffect(() => {
-    if (reviewRef.current?.path !== activeOutlinePath) { reviewRef.current = null; setMergeReview(null); autoVersionRef.current = null }
-    if (!change || change.kind !== 'changed') { setMergeReview(null); autoVersionRef.current = null }
-    if (recoveryFailedRef.current !== activeOutlinePath) recoveryFailedRef.current = null
-  }, [activeOutlinePath, change?.kind])
+    if (slideReviewRef.current?.path !== activeOutlinePath) closeSlideReview()
+    if (reviewRef.current?.path !== activeOutlinePath) { reviewRef.current = null; setMergeReview(null) }
+    autoVersionRef.current = null
+  }, [activeOutlinePath, closeSlideReview])
+  useEffect(() => {
+    if (change?.kind !== 'changed') setMergeReview(null)
+  }, [change?.kind])
+
+  const refreshSlideReview = useCallback(() => { void reconcile(true) }, [reconcile])
+
+  const applySlideReview = useCallback((generation: string, choices: SlideMergeChoices) => {
+    const current = slideReviewRef.current
+    if (!current || current.review.generation !== generation || current.path !== wiringRef.current.activeOutlinePath ||
+        busyRef.current || slideReviewStale) return
+    const observed = outlineDiskChanges.get(current.path)
+    if (observed?.hash !== current.review.diskHash) { setSlideReviewStale('disk'); return }
+    busyRef.current = true; setBusy(true); setSavingMerge(true); setSlideReviewError(null)
+    applyingRef.current = (async () => {
+      try {
+        const result = await window.tw.talk.applySlideMerge(current.path, generation, choices)
+        if (wiringRef.current.activeOutlinePath !== current.path || slideReviewRef.current !== current) return
+        if (result.ok) {
+          outlineDiskChanges.clear(current.path, current.review.diskHash)
+          autoVersionRef.current = null
+          closeSlideReview()
+          notify(`Applied and saved at ${changedAtLabel(result.savedAt)}. ${mergeResultText(result.summary)}`, 'success', TOAST,
+            { label: 'Show recovery copy', onAction: () => { void revealMergeArchive(current.review.recovery.path) } })
+        } else if (result.reason === 'unsafe-structure' || result.reason === 'duplicate-ids') {
+          setSlideReviewWholeTalk(true)
+        } else {
+          if (result.reason === 'stale-disk') setSlideReviewStale('disk')
+          else setSlideReviewStale(reason => reason ?? 'review')
+          setSlideReviewError('error' in result ? result.error : 'The merge choices could not be saved. Review the versions again.')
+        }
+      } catch (error) {
+        setSlideReviewStale(reason => reason ?? 'review')
+        setSlideReviewError(error instanceof Error ? error.message : String(error))
+      } finally {
+        applyingRef.current = null; busyRef.current = false; setBusy(false); setSavingMerge(false)
+      }
+    })()
+  }, [closeSlideReview, slideReviewStale])
 
   const applyMerge = useCallback((generation: number, choices: Record<string, string>, decision: 'merge' | 'put-back' = 'merge'): void => {
     const current = reviewRef.current
@@ -232,6 +357,8 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
         }
         if (result.kind === 'removed') { markRemoved(current.path); return }
         if (result.kind === 'saved' || result.kind === 'reloaded') {
+          // The same external bytes may arrive again after Put it back.
+          autoVersionRef.current = null
           recoveryFailedRef.current = null; reviewRef.current = null; setMergeReview(null)
           notify(decision === 'put-back' ? 'Put back the slide. The disk edit is in recovery.' : 'Kept the changes to the talk.', 'info', TOAST)
         } else if (result.kind === 'error') { if (result.recoveryFailed) recoveryFailedRef.current = current.path; notify(result.error, 'warning', TOAST) }
@@ -239,26 +366,15 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
       .finally(() => { applyingRef.current = null; busyRef.current = false; setBusy(false) })
     applyingRef.current = applying
   }, [reconcile, markRemoved])
-  const keepMergeDraft = useCallback((generation: number, choices: Record<string, string>): void => {
-    const current = reviewRef.current
-    if (!current || current.review.generation !== generation) return
-    const defaults = Object.fromEntries(current.review.merge.conflicts.map(item => [item.id, item.mine]))
-    current.choices = choices
-    current.draft = resolveOutlineMerge(current.review.merge, { ...defaults, ...choices }) ?? undefined
-  }, [])
   const dismissMerge = useCallback((): void => {
-    const current = reviewRef.current
-    if (!current || busyRef.current) return
-    void depsRef.current!.preserve(current.path, { ...current.review, draft: current.draft }).catch(() => null)
-      .then(kept => {
-        if (reviewRef.current !== current || busyRef.current) return
-        setMergeReview(null)
-        if (!kept) {
-          recoveryFailedRef.current = current.path
-          notify('The merge draft could not be kept. You can retry or explicitly discard your unsaved edits when leaving.', 'warning', TOAST)
-        }
-      })
-  }, [])
+    if (busyRef.current) return
+    const current = slideReviewRef.current
+    if (current) {
+      autoVersionRef.current = outlineDiskChanges.get(current.path)?.hash ?? null
+      closeSlideReview()
+    }
+    setMergeReview(null)
+  }, [closeSlideReview])
 
   const after = (current: OutlineDiskChange, choice: Exclude<OutlineDiskChoice, 'stay'>, result: Awaited<ReturnType<typeof resolveChoice>>): void => {
     if (!result.ok) { notify(result.error, 'warning', TOAST); return }
@@ -271,6 +387,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
     const current = outlinePath ? outlineDiskChanges.get(outlinePath) : null
     if (!outlinePath || !current || busyRef.current) return
     if (current.kind === 'changed') {
+      if (slideReviewRef.current?.path === outlinePath) { void reconcile(); return }
       const previous = reviewRef.current
       const doc = wiringRef.current.readDoc()
       if (previous?.path === outlinePath && previous.review.hash === current.hash && doc?.text === previous.review.mine && (doc.dirty === false ? doc.text : doc.base) === previous.review.base) setMergeReview(previous.review)
@@ -320,6 +437,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
       const pending = outlineDiskChanges.get(outlinePath)
       if (!allowed && pending?.kind === 'changed' && recoveryFailedRef.current === outlinePath) {
         setMergeReview(null)
+        closeSlideReview()
         void window.tw.talk.ackCloseRequest?.()
         const choice = await new Promise<OutlineDiskChoice>(resolve => {
           sheetAnswerRef.current = answer => { sheetAnswerRef.current = null; setSheet(null); resolve(answer) }
@@ -336,7 +454,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
     } finally {
       if (ownsBusy) busyRef.current = false
     }
-  }, [reconcile])
+  }, [reconcile, closeSlideReview])
 
   const answerSheet = useCallback((choice: OutlineDiskChoice): void => { sheetAnswerRef.current?.(choice) }, [])
 
@@ -407,6 +525,8 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
         // The ordinary close keeps its timing: main's five-second fallback covers the flush in the leave guard, then is
         // switched off, as before. An update's restart keeps the fallback on through the confirmation: a frozen editor
         // that does not confirm in time calls the restart off.
+        if (applyingRef.current && update !== true) await window.tw.talk.ackCloseRequest?.()
+        if (applyingRef.current) await applyingRef.current
         await closeFrozen({ ...editorDeps, leave: async () => {
           if (update !== true && wiringRef.current.hasPendingSketch?.()) await window.tw.talk.ackCloseRequest?.()
           const mayLeave = await leave()
@@ -419,5 +539,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
     })()
   }), [leave])
 
-  return { change, busy, choose, sheet, answerSheet, guardLeave: leave, mergeReview, mergeChoices: reviewRef.current?.choices ?? {}, applyMerge, dismissMerge, keepMergeDraft }
+  return { change, busy, choose, sheet, answerSheet, guardLeave: leave, mergeReview, applyMerge, dismissMerge,
+    slideReview: slideReviewRef.current?.path === activeOutlinePath ? slideReview : null, slideReviewStale, slideReviewError,
+    slideReviewWholeTalk, savingMerge, refreshSlideReview, applySlideReview }
 }

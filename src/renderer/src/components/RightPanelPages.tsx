@@ -136,12 +136,13 @@ function useCheckedDesignPictures(surface: PanelSurface, designs: Design[], auto
   }
 }
 
-export function DesignsBlock({ surface, designs, long, compact, section }: {
+export function DesignsBlock({ surface, designs, long, compact, section, hasSubslides }: {
   surface: PanelSurface
   designs: Design[]
   long: boolean
   compact: boolean
   section: boolean
+  hasSubslides: boolean
 }) {
   const [all, setAll] = useState(false)
   const count = compact ? 2 : 4
@@ -155,7 +156,9 @@ export function DesignsBlock({ surface, designs, long, compact, section }: {
     ? [current, ...fit.slice(0, count - 1)] : fit.slice(0, count)
   return <div className="tw-right-designs">
     <PageHead label={section ? 'Slides in this section' : fit.length ? 'Designs for this slide' : 'Designs'} aspect="design" onCopy={fit.length ? surface.onCopy : undefined} />
-    {!fit.length ? <p className="tw-right-origin">Designs appear here when the slide has a title and at least one point.</p> : <>
+    {!fit.length ? <p className="tw-right-origin">{hasSubslides
+      ? 'This slide has two sides. Select one in the sidebar to change it.'
+      : 'Designs appear here when the slide has a title and at least one point.'}</p> : <>
       <RightPanelPictures {...surface} group="design" choices={shown} columns={2}
         pendingPicture={section ? sectionModePicture : undefined} checkedPictures={checkedPictures} />
       {(all || long || fit.length <= count) && unavailable.length > 0 && <ul className="tw-right-no-fit">

@@ -106,13 +106,15 @@ try {
   await until(projected, 0)
 
   async function palette(command, target, viaShortcut = false) {
-    if (viaShortcut && process.platform === 'darwin') {
+    const search = presenter.locator('#presenterCommandSearch')
+    if (viaShortcut) {
+      await presenter.keyboard.press('Control+Meta+Shift+P')
+      assert.equal(await search.isVisible(), false, 'an extra modifier does not open the presenter palette')
       await presenter.keyboard.press('ControlOrMeta+Shift+P')
     } else {
       await presenter.locator('#presenterMenuView').click()
       await presenter.locator('#viewCommands').click()
     }
-    const search = presenter.locator('#presenterCommandSearch')
     await search.waitFor({ state: 'visible' })
     await search.fill(command)
     await presenter.locator(`[data-palette-id="${target}"]:not(:disabled)`).click()

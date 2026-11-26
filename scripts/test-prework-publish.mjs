@@ -1,7 +1,10 @@
+import { withTalkPublishOperation } from './lib/read-ipc-registration.mjs'
 import { readMainSource } from './lib/read-source.mjs'
 import { hasGitConflictMarkers } from '../src/main/conflict-copies.mjs'
 import { publicationMediaReview, publicationBuildWarnings } from '../src/shared/publication-files.ts'
 import { preservationMessage } from '../src/main/publication-preservation.ts'
+import { outlineIdentity } from '../src/main/outline-identity.ts'
+import { redactPublishException, redactPublishText } from '../src/shared/publish-diagnostic.ts'
 // Publishing a planned Run (feedback-boards ticket 09; work-files ticket 16 "Publish for this run"), and the
 // evergreen handout, through the REAL ipcMain handlers lifted out of src/main/index.ts with the
 // TypeScript compiler (as test-handout-from-buffer.mjs does), over a temp vault with the REAL Run
@@ -90,10 +93,13 @@ function loadHandler(channel, dependencies) {
   }
   visit(sourceFile)
   assert.ok(callback, `${channel}: handler is registered`)
-  const transpiled = ts.transpileModule(`const handler = ${callback.getText(sourceFile)}`, {
+  const transpiled = ts.transpileModule(withTalkPublishOperation(channel, `const handler = ${callback.getText(sourceFile)}`), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText
-  return Function(...Object.keys(dependencies), `${transpiled}\nreturn handler`)(...Object.values(dependencies))
+  const ports = channel === 'talk:publish-handout'
+    ? { ...dependencies, host: dependencies, activeHandoutPublishes: new Map(), outlineIdentity, redactPublishText, redactPublishException }
+    : dependencies
+  return Function(...Object.keys(ports), `${transpiled}\nreturn handler`)(...Object.values(ports))
 }
 
 configureTalkWriter({ editorBufferFor: () => null })

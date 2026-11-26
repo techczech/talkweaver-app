@@ -1,7 +1,7 @@
 import type { ProjectionRow } from '../../../preload'
 import { LAYOUTS } from '../../../shared/layout-registry/entries'
 import {
-  canTakeAllLayouts, clearPointRow, previewLayout, resetLayoutOptions, setLayout, setListLayout, setLayoutOptions, setQuoteForm, suggestLayouts,
+  canTakeAllLayouts, clearPointRow, previewLayout, reconcileSlideDesign, resetLayoutOptions, setLayout, setListLayout, setLayoutOptions, setQuoteForm, suggestLayouts,
   type LayoutOptionChoice, type QuoteFormChoice, type SlideRef
 } from '../../../shared/layout-verbs'
 import { listLayoutCandidates, type LayoutPreviewCheck } from '../../../shared/list-layout-suggestions'
@@ -27,12 +27,21 @@ export const TITLE_STYLES = [
 ] as const
 
 export function panelEdit(text: string, slide: SlideRef, edit: PanelEdit, layout: string, preview = false): string {
+  const entry = edit.layout && LAYOUTS.find(candidate => candidate.name === edit.layout)
+  if (entry && entry.resolvesTo?.key === 'liststyle') {
+    edit = { ...edit, layout: 'list', options: [option('list-style', entry.name), ...(edit.options ?? [])] }
+  }
+  if (edit.clearRow) {
+    text = clearPointRow(text, slide)
+    layout = 'list'
+    if (!edit.reset) edit = { ...edit, layout }
+  }
+  text = reconcileSlideDesign(text, slide, layout, edit.layout, edit.options)
   if (edit.layout && (edit.structure || ['2col', '3col', 'annotated'].includes(edit.layout))) {
     const written = setListLayout(text, slide, { layout: edit.layout, structure: edit.structure, options: edit.options })
     if (!preview) reportTriggerMergeWarnings(written.warnings)
     return written.outline
   }
-  if (edit.clearRow) text = clearPointRow(text, slide)
   if (edit.reset) {
     const result = resetLayoutOptions(text, slide, edit.reset).outline
     if (!edit.reset.includes('title-icon')) return result
@@ -49,7 +58,7 @@ export function panelEdit(text: string, slide: SlideRef, edit: PanelEdit, layout
   const form = edit.options?.length === 1 && edit.options[0].group === 'quote-form' ? edit.options[0] : null
   if (form) return setQuoteForm(text, slide, (form.token.replace(/^form=/, '') || 'auto') as QuoteFormChoice, layout).outline
   const edited = edit.layout ? setLayout(before, slide, edit.layout, edit.options)
-    : edit.options?.length ? setLayoutOptions(before, slide, edit.options, edit.clearRow ? 'list' : layout) : null
+    : edit.options?.length ? setLayoutOptions(before, slide, edit.options, layout) : null
   if (edited && !preview) reportTriggerMergeWarnings(edited.warnings)
   return edited?.outline ?? text
 }

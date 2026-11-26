@@ -137,7 +137,7 @@ key(presenter.window, 'u')
 relay()
 
 // Palette: the command is listed with its shortcut and runs.
-key(presenter.window, 'P', { metaKey: true, shiftKey: true })
+key(presenter.window, 'P', { ctrlKey: true, shiftKey: true })
 const palette = presenter.document.getElementById('presenterCommandPalette')
 assert.equal(palette.hidden, false)
 const entry = [...presenter.document.querySelectorAll('#presenterCommandResults button')].find((button) => button.querySelector('.tw-pal-name')?.textContent === 'Show talk QR code')

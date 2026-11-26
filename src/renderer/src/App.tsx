@@ -682,7 +682,7 @@ function MainApp() {
       }
     }
     function onKey(e: KeyboardEvent): void {
-      if (isWorkspaceCovered()) return
+      if (isWorkspaceCovered() || (e.target instanceof HTMLElement && e.target.closest('.oe'))) return
       const cmKey = eventToCMKey(e)
       // CodeMirror's Mod is Control on Windows and Linux. Keep the app-owned Talks search
       // consistent with that binding while preserving the explicit Control match.

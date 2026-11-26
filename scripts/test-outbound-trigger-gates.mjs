@@ -1,9 +1,12 @@
+import { withTalkPublishOperation } from './lib/read-ipc-registration.mjs'
 import { readMainSource } from './lib/read-source.mjs'
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import ts from 'typescript'
+import { outlineIdentity } from '../src/main/outline-identity.ts'
+import { redactPublishException, redactPublishText } from '../src/shared/publish-diagnostic.ts'
 import { grantedPublishing } from './lib/publishing-fakes.mjs'
 
 const sourceText = readMainSource()
@@ -38,14 +41,17 @@ function handlerSource(channel) {
 
 function loadHandler(channel, dependencies) {
   const callback = handlerSource(channel)
-  const transpiled = ts.transpileModule(`const handler = ${callback}`, {
+  const transpiled = ts.transpileModule(withTalkPublishOperation(channel, `const handler = ${callback}`), {
     compilerOptions: {
       target: ts.ScriptTarget.ES2022,
       module: ts.ModuleKind.ESNext
     }
   }).outputText
-  const names = Object.keys(dependencies)
-  const values = Object.values(dependencies)
+  const ports = channel === 'talk:publish-handout'
+    ? { ...dependencies, host: dependencies, activeHandoutPublishes: new Map(), outlineIdentity, redactPublishException, redactPublishText }
+    : dependencies
+  const names = Object.keys(ports)
+  const values = Object.values(ports)
   return Function(...names, `${transpiled}\nreturn handler`)(...values)
 }
 
@@ -80,12 +86,15 @@ const dependencies = {
   currentVaultRoot: () => '/vault',
   writableVaultRoot: () => '/vault', // writes resolve the vault only while its folder is there (vaults 07)
   vaultRootFor: () => '/vault',
-  readRun: () => ({ status: 'delivered' }),
+  readRunForTalk: () => ({ status: 'delivered' }),
+  requireRunForTalk: () => ({ status: 'delivered' }),
+  runPublicationAuthority: () => () => {},
   talkBySlug: () => ({ slug: 'talk', outlinePath: '/vault/talk-outline.md' }),
   readFileSync: () => brokenOutline,
   // The Run handlers build from the flushed text (talk-writer.ts flushTalkForPublish), not the file.
   flushTalkForPublish: async () => ({ ok: true, via: 'disk', changed: false, text: brokenOutline }),
   // The Run's publish takes its turn in the site's queue first (the real sequence; leave always given) and refuses at its first step.
+  presenterPublications: { ticket: () => 1 },
   handoutPublishing: () => grantedPublishing({ siteDir: join(tmpdir(), 'tw-outbound-gates-site-never-written') })
 }
 
@@ -96,7 +105,7 @@ const cases = [
   ['talk:build', [null, '/vault/talk-outline.md', brokenOutline], expected],
   ['talk:build-variants', [null, '/vault/talk-outline.md', brokenOutline], expected],
   ['talk:export-handout', [null, '/vault/talk-outline.md', brokenOutline], expected],
-  ['talk:publish-handout', [null, '/vault/talk-outline.md', brokenOutline], expected],
+  ['talk:publish-handout', [{ sender: { id: 1 } }, '/vault/talk-outline.md', brokenOutline], expected],
   ['run:build-handout', [null, { talkSlug: 'talk', runId: 'run-1' }], expected],
   ['run:publish-handout', [null, { talkSlug: 'talk', runId: 'run-1' }], expected]
 ]
@@ -108,6 +117,11 @@ for (const [channel, args, expectedResult] of cases) {
     result = await handler(...args)
   } catch (cause) {
     result = { threw: cause instanceof Error ? cause.message : String(cause) }
+  }
+  if (channel === 'talk:publish-handout') {
+    const { diagnostic, ...reply } = result
+    assert.equal(diagnostic?.untouched, true, 'the blocked handout sends no deployment')
+    result = reply
   }
   assert.deepEqual(result, expectedResult, `${channel}: refuses unresolved content with its real failure shape`)
 }

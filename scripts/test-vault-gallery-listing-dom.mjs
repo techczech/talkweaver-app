@@ -3,6 +3,19 @@ import assert from 'node:assert/strict'
 import { startHarness, DISK, emitProgress } from './lib/vault-gallery-repair-harness.mjs'
 const h = await startHarness()
 try {
+  // The cached zero starts a direct listing. The checking state lasts until it answers.
+  const e = await h.open(); await e.tree0(DISK); await e.enter()
+  await e.ctl("ctl.inv=r=>!r.recursive&&r.relativePath==='Empty'?{state:'running'}:{}")
+  await e.row('Empty').dblclick()
+  await e.g.getByRole('heading', { name: 'Checking folder…' }).waitFor()
+  assert.equal(await e.g.getByText('No talks or folders here', { exact: true }).count(), 0)
+  await e.ctl("ctl.inv=null")
+  await e.g.getByRole('button', { name: 'Refresh', exact: true }).click()
+  await e.g.getByRole('heading', { name: 'No talks or folders here' }).waitFor()
+  assert.equal((await e.lastInv()).recursive, false)
+  assert.equal((await e.lastInv()).relativePath, 'Empty')
+  await e.close()
+
   // Measuring a selected talk keeps the folder's disk-only and system rows; Stop keeps them.
   const s = await h.open(); await s.tree0(DISK); await s.enter(); await s.tree(/^Work \d/)
   await s.row('disk-only').waitFor()

@@ -34,18 +34,21 @@ export type ShellCheatSheet = {
   matches?(event: KeyboardEvent, shortcutId: string): boolean
 }
 
-export function textareaEditor(source: string, className = 'oe-markup'): MountedEditor {
+export type MountSourceEditor = (source: string, className?: string, label?: string) => MountedEditor
+
+export function textareaEditor(source: string, className = 'oe-markup', label?: string): MountedEditor {
   const area = document.createElement('textarea')
   area.className = className
   area.value = source
   area.spellcheck = false
+  if (label) area.setAttribute('aria-label', label)
   return { element: area, serialise: () => area.value, focus: () => area.focus() }
 }
 
 export function mountShell(options: {
   kind: string
   editor: MountedEditor
-  markup?: MountedEditor
+  markup?: MountSourceEditor
   editorLabel?: string
   editorDisabledTitle?: string
   parseEditor?(source: string): MountedEditor | null
@@ -78,8 +81,8 @@ export function mountShell(options: {
     mounted: MountedEditor,
     button: HTMLButtonElement
   ): void => {
-    active.destroy?.()
     active.element.replaceWith(mounted.element)
+    active.destroy?.()
     active = mounted
     note.hidden = true
     tabs.querySelectorAll('button').forEach((item) => item.classList.toggle('on', item === button))
@@ -109,9 +112,8 @@ export function mountShell(options: {
       setActive(parsed, editorTab)
     })
     markupTab.addEventListener('click', () => {
-      if (active !== options.editor) return
-      options.markup = textareaEditor(active.serialise())
-      setActive(options.markup, markupTab)
+      if (!options.markup || active !== options.editor) return
+      setActive(options.markup(active.serialise()), markupTab)
     })
     tabs.append(editorTab, markupTab)
   }
@@ -149,6 +151,10 @@ export function mountShell(options: {
   done.innerHTML = '✓ Done <kbd>⌘↵</kbd>'
   const controller = new AbortController()
   let finished = false
+  const dispose = (): void => {
+    controller.abort()
+    active.destroy?.()
+  }
   const showRefusal = (reason: string): void => {
     shell.classList.remove('oe-commit-refused')
     void shell.offsetWidth
@@ -180,8 +186,7 @@ export function mountShell(options: {
       showRefusal(result.reason)
       return result
     }
-    controller.abort()
-    active.destroy?.()
+    dispose()
     return result
   }
   const controlledShell = shell as HTMLElement & {
@@ -190,20 +195,21 @@ export function mountShell(options: {
     __twPreflightTeardown?: () => ObjectEditorCommitResult
     __twRetargetApi?: (next: ObjectEditorApi) => void
     __twDiscard?: () => void
+    __twDispose?: () => void
   }
   const hasDraft = () => !finished && (active.serialise() !== initialSource || JSON.stringify(commitOptions(active.serialise())) !== initialOptions)
   controlledShell.__twHasDraft = hasDraft
   controlledShell.__twCommit = (context = 'teardown') => commit(context)
   controlledShell.__twPreflightTeardown = preflightTeardown
   controlledShell.__twRetargetApi = (next) => { api = next }
+  controlledShell.__twDispose = dispose
   done.addEventListener('click', () => commit())
   foot.append(hint)
   // Discard (object cards, ADR-0042): restores nothing because nothing was written; closes the editor.
   const discard = (): void => {
     if (finished || !api.discard) return
     finished = true
-    controller.abort()
-    active.destroy?.()
+    dispose()
     api.discard()
   }
   if (api.discard) {
@@ -218,7 +224,7 @@ export function mountShell(options: {
   foot.append(done)
   controlledShell.__twDiscard = discard
   shell.append(head, surfaces, foot)
-  shell.addEventListener('keydown', (event) => {
+  const handleShortcut = (event: KeyboardEvent): void => {
     if (options.cheatSheet?.isShortcut(event)) {
       event.preventDefault()
       event.stopPropagation()
@@ -254,6 +260,13 @@ export function mountShell(options: {
       commit()
       return
     }
+  }
+  // Finish/leave take precedence over CodeMirror (which binds Mod-Enter to insert a blank line).
+  shell.addEventListener('keydown', (event) => {
+    if (active.element.classList.contains('oe-markdown')) handleShortcut(event)
+  }, { capture: true })
+  shell.addEventListener('keydown', (event) => {
+    handleShortcut(event)
     event.stopPropagation()
   })
   for (const type of ['keyup', 'keypress', 'beforeinput', 'input', 'mousedown', 'click', 'dblclick'] as const) {

@@ -207,7 +207,7 @@ await test('update restart: retained Details and design, Advanced and live objec
     const deps = { window: { tw }, document: root, updateRestartDraft: drafts.updateRestartDraft,
       notify: (message) => calls.push(message), editorRevision: { current: () => 1 },
       freezeFor: () => ({ freeze: () => { throw new Error('must not blur and commit a draft') }, unfreeze: () => {} }),
-      unfreezeAllRef: { current: new Set() }, wiringRef: { current: { activeOutlinePath: null } },
+      unfreezeAllRef: { current: new Set() }, applyingRef: { current: null }, wiringRef: { current: { activeOutlinePath: null } },
       closeFrozen: async () => { calls.push('ordinary close'); return 'closed' }, leave: async () => true }
     const run = new Function(...Object.keys(deps), `return (${stripTypeScriptTypes(callback)})`)(...Object.values(deps))
     run({ quit: false, update: true })

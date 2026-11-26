@@ -82,6 +82,7 @@
     "test:setup-cli",
     "test:ffmpeg-source-bundle",
     "test:handout-publishing",
+    "test:publish-cli",
     "test:per-talk-publishing",
     "test:handout-slimming",
     "test:sharp-image-paths",
@@ -460,6 +461,7 @@
     "test:object-gap-entry-points:dom",
     "test:icon-svg-raster:dom",
     "test:object-guard-ranges:dom",
+    "test:object-markdown-editing:dom",
     "test:object-previews:dom",
     "test:video-playback-dom",
     "test:audience-media:dom",
@@ -478,6 +480,7 @@
     "test:save-tidy-up-after-undo-dom",
     "test:slide-text-panel:dom",
     "test:redesign-right-panel-dom",
+    "test:design-switch-dom",
     "test:video-markers-dom",
     "test:video-markers-presenter-dom",
     "test:list-layout-suggestions-dom",
@@ -772,6 +775,7 @@
       {
         "paths": [
           "src/renderer/src/**/[Oo]utline*Merge*",
+          "src/renderer/src/components/SlideMergeCards*",
           "src/renderer/src/components/useOutlineDiskChange.ts",
           "src/renderer/src/lib/outlineMutation.ts",
           "src/renderer/src/lib/saveQueue.ts",

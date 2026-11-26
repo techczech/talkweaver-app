@@ -7,6 +7,8 @@ import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { chromium } from 'playwright'
 import { markSlidePreviewHtml } from '../src/shared/slide-preview.ts'
+import { authoredLayoutDecision } from '../compiler/scripts/lib/authored-layout.mjs'
+import { parseHeadingAttrs } from '../compiler/scripts/lib/02-triggers-layout.mjs'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildPerSlideProjections } from '../compiler/scripts/lib/10-projections.mjs'
 import { normalizePositions } from '../src/shared/outline-normalize.ts'
@@ -20,7 +22,8 @@ const slideText = process.argv.includes('--slide-text')
 const notes = process.argv.includes('--notes')
 const outlinePreview = process.argv.includes('--outline-preview')
 const sidebarFollow = process.argv.includes('--sidebar-follow')
-const checkResearch = !videoMarkers && !polish && !slideText && !notes && !outlinePreview && !sidebarFollow
+const designSwitch = process.argv.includes('--design-switch')
+const checkResearch = !designSwitch && !videoMarkers && !polish && !slideText && !notes && !outlinePreview && !sidebarFollow
 const scratch = mkdtempSync(join(tmpdir(), 'tw-right-panel-dom-'))
 const outline = join(scratch, 'garden-outline.md')
 const followTitle = number => ({
@@ -34,7 +37,13 @@ const followSlides = Array.from({ length: 50 }, (_, i) => {
   const heading = number === 43 ? '##' : '###'
   return `${heading} ${followTitle(number)} {id=s${number}}\n\n${number === 43 ? '' : `- Observation ${number}\n\n`}`
 })
-const source = sidebarFollow ? [
+const originalAttributes = '{id=design-switch}  {tags=workbench} {font-title=l} {table-bands=on}'
+const source = designSwitch ? [
+  '---', 'outline_version: 2', 'title: Layout history', 'auto_title_slide: false', 'auto_thanks_slide: false', '---',
+  '', '### Workshop supplies {mindmap}{from=sample#original}', originalAttributes, '',
+  '- Soil', '  - Carry bags', '  - Open bags',
+  '- Water', '  - Fill cans', '  - Wash cans', ''
+].join('\n') : sidebarFollow ? [
   '---\noutline_version: 2\ntitle: Garden meeting\nauto_title_slide: false\nauto_thanks_slide: false\n---\n\n',
   ...followSlides
 ].join('') : (videoMarkers ? [
@@ -234,10 +243,11 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     return { ok: true, content: stamped }
   })
   await page.exposeFunction('compileFixture', async text =>
-    buildPerSlideProjections(await prepareSource(outline, text, 'Garden meeting', statSync(outline)), 'garden'))
+    buildPerSlideProjections(await prepareSource(outline, text, 'Garden meeting', statSync(outline), undefined,
+      { projectionsOnly: designSwitch }), 'garden'))
   let renderSequence = 0
   await page.exposeFunction('renderFixture', async text => {
-    if (!videoMarkers && !slideText && !notes && !outlinePreview && !/image=above|table-bands=on|id=title-loop|\{[^}]*\bannotated\b/.test(text)) return 'about:blank'
+    if (designSwitch || !videoMarkers && !slideText && !notes && !outlinePreview && !/image=above|table-bands=on|id=title-loop|\{[^}]*\bannotated\b/.test(text)) return 'about:blank'
     const model = await prepareSource(outline, text, 'Garden meeting', statSync(outline))
     const file = join(scratch, `preview-${++renderSequence}.html`)
     writeFileSync(file, videoMarkers ? markSlidePreviewHtml(model.fullHtml) : model.fullHtml)
@@ -279,7 +289,65 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     console.log('Research is absent on the welcome screen and opens with a talk via the shortcut, sidebar and palette.')
   }
 
-  if (videoMarkers) {
+  if (designSwitch) {
+    const inspector = page.locator('.tw-inspector')
+    const designs = inspector.locator('[data-section="designs"]')
+    const adjust = inspector.locator('.tw-right-adjust')
+    const tile = (section, label) => section.getByRole('button').filter({ has: page.getByText(label, { exact: true }) })
+    const buffer = () => page.evaluate(() => window.editorView()?.state.doc.toString())
+    const attributes = text => text.split('\n').slice(7, 9).join('\n')
+    const history = [source]
+    const change = async (section, label, layout, expected = [], absent = []) => {
+      await tile(section, label).click()
+      await page.waitForFunction(before => {
+        const text = window.editorView()?.state.doc.toString()
+        return text !== before && text === window.compiledFixture && text === window.savedFixture
+      }, history.at(-1))
+      const text = await buffer()
+      assert.doesNotMatch(attributes(text), /Workshop supplies\{/, label + ' keeps heading attributes separated')
+      const tokens = [...attributes(text).matchAll(/\{([^}]*)\}/g)].map(match => match[1])
+      const layouts = tokens.flatMap(token => {
+        const { attrs } = parseHeadingAttrs(`{${token}}`)
+        const decision = authoredLayoutDecision(attrs, Object.keys(attrs))
+        return decision ? [decision.layout] : []
+      })
+      assert.deepEqual(layouts, [layout], label)
+      for (const token of ['id=design-switch', 'from=sample#original', 'tags=workbench', 'font-title=l', ...expected]) {
+        assert.equal(tokens.filter(candidate => candidate === token).length, 1, label + ' keeps ' + token)
+      }
+      for (const token of absent) assert(!tokens.includes(token), label + ' removes ' + token)
+      history.push(text)
+    }
+    await page.waitForFunction(() => window.compiledRows?.some(row => row.slide_id === 'design-switch'))
+    await inspector.locator('.tw-right-who strong').filter({ hasText: 'Workshop supplies' }).waitFor()
+    await change(designs, 'Title and points', 'list', [], ['table-bands=on'])
+    await designs.getByRole('button', { name: /^Show all(?: \d+)? designs$/ }).click()
+    await change(designs, 'Icon boxes', 'list', ['iconlist', 'iconlist=boxes'])
+    await adjust.getByRole('button', { name: /^Points\b/ }).click()
+    const points = inspector.locator('[data-section="points"]')
+    await change(points, 'Numbers', 'list', ['numbered'], ['iconlist', 'iconlist=boxes'])
+    await change(points, 'Large', 'list', ['numbered=styled'])
+    await inspector.getByRole('button', { name: 'Back', exact: true }).click()
+    if (await designs.getByRole('button', { name: /^Show all(?: \d+)? designs$/ }).isVisible()) {
+      await designs.getByRole('button', { name: /^Show all(?: \d+)? designs$/ }).click()
+    }
+    await change(designs, 'Table from outline', 'table', [], ['numbered', 'numbered=styled'])
+    await adjust.getByRole('button', { name: /^Table\b/ }).click()
+    await change(inspector.locator('[data-section="table"]'), 'Rows only', 'table', ['table-header=off', 'table-columns=off'])
+    await page.locator('.tw-right-bar').getByRole('button', { name: 'Undo', exact: true }).click()
+    await page.waitForFunction(text => window.savedFixture === text && window.compiledFixture === text, history.at(-2))
+    const replay = async (key, text) => {
+      await inspector.focus()
+      await page.keyboard.press(key)
+      await page.waitForFunction(expected => window.savedFixture === expected && window.compiledFixture === expected, text)
+      assert.equal(await buffer(), text)
+    }
+    await replay('ControlOrMeta+Shift+Z', history.at(-1))
+    for (const previous of history.slice(0, -1).reverse()) await replay('ControlOrMeta+z', previous)
+    assert.equal(attributes(await buffer()), attributes(source))
+    assert.equal(readFileSync(outline, 'utf8'), source)
+    console.log('PASS six right-panel changes keep one layout, drop orphan options and preserve source tags; Undo and Redo restore each saved outline byte for byte.')
+  } else if (videoMarkers) {
     const sourceLine = '![Watering rota demo](watering-rota-demo.webm)'
     const command = detail => page.evaluate(detail => window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail })), detail)
     const waitForText = text => page.waitForFunction(expected => window.editorView()?.state.doc.toString() === expected, text)
@@ -890,7 +958,9 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     await disclosure.press('Enter')
     const body = page.getByRole('textbox', { name: 'Speaker notes, presenter only' })
     await body.waitFor()
-    assert.equal(await body.inputValue(), 'First note with trailing spaces  \nPrivate second line')
+    assert.equal(await body.evaluate(node =>
+      Array.from(node.querySelectorAll('.cm-line'), line => line.textContent).join('\n')
+    ), 'First note with trailing spaces  \nPrivate second line')
     const collapse = page.getByRole('button', { name: 'Collapse speaker notes' })
     await collapse.click()
     await body.waitFor({ state: 'hidden' })
@@ -2086,7 +2156,28 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
           await tile.click()
           await page.waitForFunction(text => window.savedFixture === text && window.compiledFixture === text, variant)
           assert.equal(await appliedOutline(), variant, `${label}: thumbnail and apply share the outline`)
-          await active.locator(painted).waitFor({ state: 'attached' })
+          try {
+            // The editor can finish saving while the stage is still switching from Try to the committed preview.
+            await page.waitForFunction(text => {
+              const stage = document.querySelector('.tw-inspector-stage')
+              const url = stage?.querySelector('iframe')?.src.split('#')[0]
+              return !stage?.hasAttribute('data-panel-trying') && url && window.fixturePreviewText.get(url) === text
+            }, variant)
+            await active.locator(painted).waitFor({ state: 'attached' })
+          } catch (error) {
+            const stageState = await stage.evaluate((element, text) => {
+              const src = element.querySelector('iframe')?.src
+              return { src, trying: element.hasAttribute('data-panel-trying'),
+                committed: !!src && window.fixturePreviewText.get(src.split('#')[0]) === text }
+            }, variant)
+            const frameState = await preview.locator('html').evaluate((element, slideId) => {
+              const slide = element.querySelector(`section.slide[data-id="${slideId}"]`)
+              return { url: location.href, activeId: element.querySelector('section.slide.active')?.dataset.id,
+                hasSlide: !!slide, strip: slide?.querySelector('.title-strip')?.textContent }
+            }, id, { timeout: 1000 }).catch(() => null)
+            console.error('Applied title preview', { id, theme, label, stageState, frameState })
+            throw error
+          }
           assert.deepEqual(await readBody(), before, `${theme} ${id} ${label}: applied slide keeps the body design`)
           if (id === 'title-loop') await captureLook(`title-${token.replace('titlelook=', '')}`, theme, stage)
           if (id === 'title-statement') assert.match(variant, /\{statement-sidebar=off\}/)

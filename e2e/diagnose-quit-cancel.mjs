@@ -87,9 +87,15 @@ try {
       }
       if (scenario === 'restart') {
         stage('restart closes editors')
-        // The real updater adapter closes and saves all editors, as it must before native install.
-        assert.equal(await app.evaluate(() => globalThis.quitTestPorts.closeWindowsForRestart()), true)
-        assert.equal(page.isClosed(), true)
+        // Electron confirms the native window close independently of Playwright's page-close event.
+        await Promise.all([
+          page.waitForEvent('close'),
+          (async () => {
+            const closed = await app.evaluate(() => globalThis.quitTestPorts.closeWindowsForRestart())
+            assert.equal(closed, true, 'the updater adapter kept a window open before native install')
+            if (!page.isClosed()) console.log('Restart closed the native window before Playwright received page close.')
+          })(),
+        ])
         // Stand in for a native installer that enters before-quit but leaves the process alive.
         await app.evaluate(({ app }) => { app.once('before-quit', event => event.preventDefault()) })
         stage('native Quit after restart closed editors')
@@ -109,23 +115,33 @@ try {
         assert.match(outside, /DISK_CONFLICT/, 'the outside write must overlap the typed slide')
         writeFileSync(outline, outside)
         const review = page.getByTestId('outline-merge-sheet')
-        const stay = review.getByRole('button', { name: 'Stay here', exact: true })
-        await stay.click()
+        const decideLater = review.getByRole('button', { name: 'Decide later', exact: true })
+        const conflict = review.getByRole('article').filter({ has: page.getByRole('heading', { name: 'Where the plot is', exact: true }) })
+        const keepSlide = conflict.getByRole('button', { name: "Keep this window's version", exact: true })
+        const editorText = () => page.locator('.cm-content').evaluate(el => el.cmTile.root.view.state.doc.toString())
+        await decideLater.click()
         await review.waitFor({ state: 'hidden' })
         stage('native Quit reopens merge review')
         await quit()
-        await review.waitFor()
-        assert.match(await review.getByRole('textbox', { name: 'Mine 1', exact: true }).inputValue(), /STAY_TYPED/)
-        assert.match(await review.getByRole('textbox', { name: 'On disk 1', exact: true }).inputValue(), /DISK_CONFLICT/)
+        await keepSlide.waitFor()
+        const typedBeforeDismiss = await editorText()
+        assert.match(typedBeforeDismiss, /STAY_TYPED/)
+        assert.match((await conflict.locator('.merge-cards-diff pre del').allTextContents()).join(''), /STAY_TYPED/)
+        assert.match((await conflict.locator('.merge-cards-diff pre ins').allTextContents()).join(''), /DISK_CONFLICT/)
         assert.equal(readFileSync(outline, 'utf8'), outside, 'Quit must leave the disk version intact while the choice is pending')
-        await stay.click()
+        await decideLater.click()
         await review.waitFor({ state: 'hidden' })
         await until(async () => await page.locator('[data-close-freeze]').count() === 0, 'editor did not unfreeze')
+        assert.equal(await editorText(), typedBeforeDismiss, 'Decide later must keep the typed version in the editor')
+        assert.equal(readFileSync(outline, 'utf8'), outside, 'Decide later must keep the outside version on disk')
         await picture()
         stage('save the typed slide and independent outside edit')
         await page.getByRole('button', { name: 'Review merge', exact: true }).click()
-        await review.getByRole('button', { name: 'Use mine', exact: true }).click()
-        await review.getByRole('button', { name: 'Apply merge', exact: true }).click()
+        await keepSlide.click()
+        // The final disk slide needs confirmation because a write may have paused there.
+        await review.getByRole('group', { name: 'Version for Outside', exact: true })
+          .getByRole('button', { name: 'Take the new slide from disk', exact: true }).click()
+        await review.getByRole('button', { name: 'Apply to the file', exact: true }).click()
         await review.waitFor({ state: 'hidden' })
         const saved = readFileSync(outline, 'utf8')
         assert.match(saved, /STAY_TYPED/, 'the text entered before Quit must reach disk')
@@ -187,7 +203,7 @@ try {
     } catch (error) {
       record.error = error.stack
       if (app) record.state = await bounded(app.evaluate(({ BrowserWindow }) => ({ allowed: globalThis.quitTestAllowed(), foreground: globalThis.quitTestForeground(), windows: BrowserWindow.getAllWindows().map(w => ({ id: w.id, url: w.webContents.getURL(), loading: w.webContents.isLoadingMainFrame() })) })), 'diagnostics unavailable', 2000).catch(() => null)
-      console.error('FAIL cancelled Quit: ' + scenario + ': ' + error.message)
+      console.error('FAIL cancelled Quit: ' + scenario + ': ' + (error.stack ?? error.message))
     }
     finally {
       if (app) {

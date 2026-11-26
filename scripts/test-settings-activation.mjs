@@ -7,11 +7,12 @@ const main = readMainSource()
 const start = main.indexOf("app.on('activate', () => {")
 assert.ok(start >= 0)
 const handler = main.slice(start, main.indexOf('\n})', start) + 3)
-function activate({ editor = null, windows = [], setup = false, lock = true } = {}) {
+function activate({ editor = null, windows = [], setup = false, publish = false, lock = true } = {}) {
   let callback, created = 0
   runInNewContext(handler, {
     app: { on: (name, fn) => { assert.equal(name, 'activate'); callback = fn } },
     SETUP_ARGS: setup ? [] : null,
+    PUBLISH_ARGS: publish ? ['example'] : null,
     holdsInstanceLock: lock,
     BrowserWindow: { getAllWindows: () => windows },
     targetEditorFor: (path) => { assert.equal(path, null); return editor },
@@ -25,6 +26,7 @@ assert.equal(activate({ windows: [{ kind: 'thumbnail' }] }), 1, 'utility windows
 assert.equal(activate(), 1, 'no windows: create an editor')
 assert.equal(activate({ editor: {}, windows: [{}] }), 0, 'an existing live editor is reused')
 assert.equal(activate({ setup: true }), 0, 'setup must not open an editor')
+assert.equal(activate({ publish: true }), 0, 'a CLI publish holding the profile lock must not open an editor')
 assert.equal(activate({ lock: false }), 0, 'settings CLI and refused second instances must not open an editor')
 // Activation uses the same factory as startup; keep its hidden-mode guard intact.
 assert.match(main.slice(main.indexOf('function createWindow()'), main.indexOf('const editorWindows =')), /E2E \? \{ show: false \}/)

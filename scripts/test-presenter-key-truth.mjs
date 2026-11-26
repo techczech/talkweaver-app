@@ -61,11 +61,11 @@ const PRESENTER_KEY_REGIONS = [
   // the template's own (no preload needed).
   ['template board panel', readFileSync(join(root, 'compiler/assets/runtime/board-panel.js'), 'utf8'), 'function boardUndoKey(event) {', '\n  return {']
 ]
-const KEY_COMPARISON = /event\.key\.toLowerCase\(\) === 'i'|\b(?:key|code|e\.key|event\.key|event\.code|input\.key)(?:\.toLowerCase\(\))?\s*[!=]==\s*['"]|\.test\((?:key|e\.key|event\.key)\)|new Set\(\[\s*["']|(?<!function )isTalkQrKey\(event\)|addEventListener\('paste'/
+const KEY_COMPARISON = /event\.key\.toLowerCase\(\) === 'i'|\b(?:key|code|e\.key|event\.key|event\.code|input\.key)(?:\.toLowerCase\(\))?\s*[!=]==\s*['"]|\.test\((?:key|e\.key|event\.key)\)|new Set\(\[\s*["']|(?<!function )isTalkQrKey\(event\)|presenterShortcutMatches\(event,|addEventListener\('paste'/
 // [region, line pattern, registry ids]. An empty id list needs `!isPresenter` in the line.
 const PRESENTER_KEY_CLAIMS = [
-  ['template handleKey', /event\.metaKey && event\.shiftKey && !event\.altKey && event\.key\.toLowerCase\(\) === 'p'/, ['presenter.command-palette']],
-  ['template handleKey', /event\.metaKey && event\.altKey && !event\.shiftKey && event\.key\.toLowerCase\(\) === 'i'/, ['presenter.instant-compose']],
+  ['template handleKey', /presenterShortcutMatches\(event, 'presenter\.command-palette'\)/, ['presenter.command-palette']],
+  ['template handleKey', /presenterShortcutMatches\(event, 'presenter\.instant-compose'\)/, ['presenter.instant-compose']],
   ['template handleKey', /event\.key === ["']Escape["']/, ['presenter.close']],
   // ↵ in the instant and Quick-poll composers acts as their Show / Open poll button: composer-local.
   ['template handleKey', /event\.key === ["']Enter["'] && !event\.shiftKey/, ['picker.choose']],
@@ -128,7 +128,7 @@ const PRESENTER_KEY_CLAIMS = [
   ['template handleKey', /!isPresenter && /, []],
   ['template isTalkQrKey', /event\.key === "u" \|\| event\.key === "U"/, ['presenter.talk-qr']],
   ['template paste', /addEventListener\('paste'/, ['presenter.instant-paste']],
-  ['template paletteKey', /key === ',' && paletteHighlight/, ['presenter.rebind']],
+  ['template paletteKey', /presenterShortcutMatches\(event, 'presenter\.rebind'\) && paletteHighlight/, ['presenter.rebind']],
   ['template paletteKey', /key === 'Escape'/, ['picker.close']],
   ['template paletteKey', /key === 'ArrowDown' \|\| key === 'ArrowUp'/, ['picker.navigate']],
   ['template paletteKey', /key === 'Enter'/, ['picker.choose']],

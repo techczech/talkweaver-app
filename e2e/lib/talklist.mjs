@@ -183,7 +183,10 @@ export async function openTalkByTitle(
   await row.click({ noWaitAfter: true })
   await page.waitForFunction((key) => [...document.querySelectorAll('[data-row-key]')]
     .some((el) => el.getAttribute('data-row-key') === key && el.getAttribute('aria-selected') === 'true'), rowKey, { polling: 50, timeout: TALK_OPEN_TIMEOUT })
-  await talkSearchInput(page).fill('')
+  // Playwright clears text inputs by sending Delete. The opening talk can move
+  // focus into CodeMirror before that key arrives, so use the filter's button.
+  const clearFilter = page.locator(TALKS_PANEL).first().getByRole('button', { name: 'Clear filter', exact: true })
+  if (await clearFilter.isVisible()) await clearFilter.click({ noWaitAfter: true })
   await page.locator('.cm-content').first().waitFor({ state: 'visible', timeout })
   return true
 }

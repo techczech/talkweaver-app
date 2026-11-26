@@ -7,6 +7,7 @@
 // Run: cd talk-weaver && node e2e/diagnose-demo-vault-prework.mjs
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openTalkByTitle } from './lib/talklist.mjs'
+import assert from 'node:assert/strict'
 import { cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -18,7 +19,8 @@ const root = appScratch.root
 const vault = join(root, 'vault'); const ud = join(root, 'userData')
 mkdirSync(ud, { recursive: true })
 cpSync(join(process.cwd(), 'demo-vault'), vault, { recursive: true })
-const LEGACY = ['---', 'title: Legacy Section', '---', '# Legacy', '', '## Before the session', '{id=pwform}{prework}', '', 'Two quick steps.', '',
+const LEGACY_HEADER = '---\ntitle: Legacy Section\n---\n'
+const LEGACY = [LEGACY_HEADER + '# Legacy', '', '## Before the session', '{id=pwform}{prework}', '', 'Two quick steps.', '',
   '### Quick check', '{poll=single}{id=quiz}{check}', '', '- Wrong', '- Right one {right}', '', '### Hopes', '{poll=open}{id=hopes}', '',
   '## Opening', '{id=open}', '', '### What you knew', '{id=quizresults}{results=quiz}', ''].join('\n')
 mkdirSync(join(vault, 'legacy-section'))
@@ -65,6 +67,9 @@ try {
   await page.waitForSelector('[data-doctor-prework-retired]', { timeout: 10_000 })
   const note = ((await page.locator('[data-doctor-prework-retired]').innerText()) ?? '').replace(/\s+/g, ' ')
   rec('the Doctor notes the section and offers the move', note.includes('Pre-work now lives in a work file') && note.includes('Move to a work file'), note)
+  const liveHeader = await page.locator('.cm-content').first().evaluate((element, length) =>
+    element.cmTile.root.view.state.doc.sliceString(0, length), LEGACY_HEADER.length)
+  assert.equal(liveHeader, LEGACY_HEADER, 'the live outline still has its original frontmatter before migration')
   await page.locator('[data-doctor-move-prework]').click()
   await page.waitForFunction(() => document.querySelector('[data-doctor-prework-retired]')?.textContent?.includes('Moved to Work files/'), null, { timeout: 10_000 }).catch(() => {})
   rec('the Doctor says where it went', ((await page.locator('[data-doctor-prework-retired]').innerText()) ?? '').includes('Moved to Work files/legacy-section-pre-work.md'))

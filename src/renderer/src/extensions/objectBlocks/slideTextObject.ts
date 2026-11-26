@@ -84,7 +84,7 @@ function moveObject(view: EditorView, block: ObjectBlock, blocks: readonly Objec
 }
 
 function describe(block: ObjectBlock): { label: string; detail: string } {
-  if (block.video?.markers.length) {
+  if (block.video) {
     return { label: 'Video', detail: `${videoFileName(block.video.ref)} · ${markerCountLabel(block.video.markers.length)}` }
   }
   if (block.media) {
@@ -149,18 +149,20 @@ export class SlideTextObjectWidget extends WidgetType {
       actions.append(control)
       return control
     }
-    if (this.block.video?.markers.length) {
+    if (this.block.video) {
       card.classList.add('tw-video-marker-chip')
       name.className = 'tw-video-marker-chip-icon'
       name.textContent = '▶'
       name.setAttribute('aria-hidden', 'true')
-      button('Remove video and its markers', '×', () => {
+      button(this.block.video.markers.length ? 'Remove video and its markers' : 'Remove video', '×', () => {
         const { from, to, source } = this.block
         if (view.state.doc.sliceString(from, to) === source) deleteObjectBlock(view, this.block)
       })
-      head.append(actions)
-      card.append(head)
-      return card
+      if (this.block.video.markers.length) {
+        head.append(actions)
+        card.append(head)
+        return card
+      }
     }
     for (const direction of [-1, 1] as const) {
       const control = button(direction < 0 ? 'Move up' : 'Move down', direction < 0 ? '↑' : '↓',

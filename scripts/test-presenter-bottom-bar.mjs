@@ -244,7 +244,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
   await compare('Skip next slide', { button: 'skipNextBtn', key: 's', fields: ['slide', 'beat', 'counter'] })
   await compare('Return', { setup: jumpFar, button: 'returnBtn', key: 'b', fields: ['slide', 'beat', 'counter'] })
   await compare('Quick poll', { button: 'navQuickPoll', key: 'k', fields: ['quickCompose'] })
-  await compare('Instant slide', { button: 'navInstant', key: 'Meta+Alt+i', fields: ['instantCompose'] })
+  await compare('Instant slide', { button: 'navInstant', key: 'ControlOrMeta+Alt+i', fields: ['instantCompose'] })
   await compare('Focus', { button: 'presenterFocus', key: 'f', fields: ['mode'] })
   await compare('Highlight', { button: 'presenterHighlight', key: 'h', fields: ['highlightArmed'] })
   // More

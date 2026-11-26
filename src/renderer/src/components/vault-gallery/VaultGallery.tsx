@@ -3,7 +3,7 @@ import { ChevronRight, FolderOpen, LayoutGrid, List, PanelLeft, PanelRight, Refr
 import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { TalkInfo } from '../../../../preload'
 import { acceptsGalleryReply, galleryIdentity, type GalleryCatalogue, type GalleryTalk } from '../../../../shared/vault-gallery'
-import { ancestorsOf, compareBy, crumbParts, folderPaths, inspectOnlyPath, knownTalkCount, leafName, nextSort, parentOf, plural, readView, talkFolder, type BrowseScope, type BrowseView, type SortState } from '../../../../shared/vault-gallery-browse'
+import { ancestorsOf, compareBy, crumbParts, folderPaths, folderTalks, inspectOnlyPath, knownTalkCount, leafName, nextSort, parentOf, plural, readView, talkFolder, type BrowseScope, type BrowseView, type SortState } from '../../../../shared/vault-gallery-browse'
 import type { GalleryOpenGuard } from '../../lib/talkSelection'
 import { setWorkspaceCovered } from '../../lib/workspaceCover'
 import GalleryDetails, { type DetailsTarget } from './GalleryDetails'
@@ -133,17 +133,18 @@ export default function VaultGallery({ revision, onClose, onOpen, management, ta
   const state = catalogue && vault ? vaultState(catalogue, management?.vaults, vault.id) : 'open'
   const browsable = browsing && !!vault && state === 'open'
   const folder = scope.kind === 'folder' ? scope.path : ''
+  const includeSystem = showSystem || inspectOnlyPath(folder)
   const inventory = useGalleryInventory(browsable ? vault!.id : null, folder, `${catalogue?.rootGeneration}:${managementRevision}`, query)
   const folders = useMemo(() => vault ? folderPaths(vault.talks, management?.foldersByVault[vault.id] ?? []) : [], [vault, management?.foldersByVault])
   const built = useMemo(() => !vault || !browsable ? { items: [] as GalleryItem[], flat: false }
-    : buildItems({ talks: vault.talks, folders, scope, query, listing: inventory.listing, search: inventory.search, showSystem: showSystem || inspectOnlyPath(folder) }), [vault, browsable, folders, scope, query, inventory.listing, inventory.search, showSystem, folder])
+    : buildItems({ talks: vault.talks, folders, scope, query, listing: inventory.listing, search: inventory.search, showSystem: includeSystem }), [vault, browsable, folders, scope, query, inventory.listing, inventory.search, includeSystem])
   const items = built.items
   const flat = browsable && built.flat
   const mixed = flat && items.some(i => i.kind !== 'talk')
   const overviewTalks = useMemo(() => !browsing && vault && state === 'open' ? vault.talks.slice(0, 4) : [], [browsing, vault, state])
   const talksInView = useMemo(() => browsable ? items.filter((i): i is Extract<GalleryItem, { kind: 'talk' }> => i.kind === 'talk').map(i => i.talk) : overviewTalks, [browsable, items, overviewTalks])
   const covers = browsing ? view === 'Gallery' : true
-  const mosaicTalks = (path: string) => (vault?.talks ?? []).filter(t => talkFolder(t) === path || talkFolder(t).startsWith(path + '/')).sort((a, b) => a.title.localeCompare(b.title)).slice(0, 4)
+  const mosaicTalks = (path: string) => folderTalks(vault?.talks ?? [], path, includeSystem).sort((a, b) => a.title.localeCompare(b.title)).slice(0, 4)
   const mosaicKeys = browsable && view === 'Gallery' ? items.filter(i => i.kind === 'folder').flatMap(i => i.kind === 'folder' ? mosaicTalks(i.path).map(galleryIdentity) : []).join('|') : ''
   const known0 = useGalleryFacts(talksInView, `${catalogue?.rootGeneration}:${vaultId}:${folder}:${scope.kind}:${query}:${browsing}:${view}`, host, covers, mosaicKeys, reloads)
   const known: Known = { facts: known0.facts, handouts: known0.handouts, scans: [inventory.scan, inventory.search] }
@@ -161,7 +162,14 @@ export default function VaultGallery({ revision, onClose, onOpen, management, ta
   useEffect(() => { setCopied(false) }, [selected])
   // After Enter on a folder the new list's first row takes focus, so arrows and Escape keep working.
   // An empty folder has no row to take it: the panel itself does, so Escape and Tab still work.
-  const listed = inventory.listing?.relativePath === folder && inventory.listing.state !== 'running'
+  const listing = inventory.listing?.relativePath === folder ? inventory.listing : null
+  const listed = !!listing && listing.state !== 'running'
+  const hasUnindexedOutline = listing?.entries.some(e => e.kind === 'file' && parentOf(e.relativePath) === folder && e.relativePath.endsWith('-outline.md'))
+  const verifiedEmpty = scope.kind === 'folder' && listing?.state === 'complete' && !hasUnindexedOutline && !sorted.length && !query.trim()
+  const emptyHeading = scope.kind === 'all' ? 'No talks in this vault'
+    : !listed ? 'Checking folder…'
+      : hasUnindexedOutline ? 'Talk outline found'
+        : verifiedEmpty ? 'No talks or folders here' : 'Couldn’t check this folder'
   useEffect(() => {
     if (!focusFirst || !browsable) return
     // Someone who moved on while the rows were on their way (into the search box, to a button) keeps their place.
@@ -251,7 +259,7 @@ export default function VaultGallery({ revision, onClose, onOpen, management, ta
   const foldersInside = (path: string) => folders.filter(f => parentOf(f) === path && !inspectOnlyPath(f)).length
   const overviewCount = vault && state === 'open' && vault.status === 'stale' ? vault.talks.length : null
   const target: DetailsTarget = { overview: !browsable, foldersInside, item: browsable ? chosen : null, vaultName: vault?.name ?? '', root: vaultInfo?.root, status: state === 'open' ? 'Open' : state === 'closed' ? 'Closed' : 'Not connected',
-    context: browsable ? (scope.kind === 'all' ? { kind: 'all', path: '', count: vault!.talks.length, folders: 0 } : { kind: folder ? 'folder' : 'vault', path: folder, count: knownTalkCount(vault!.talks, folder), folders: foldersInside(folder) })
+    context: browsable ? (scope.kind === 'all' ? { kind: 'all', path: '', count: vault!.talks.length, folders: 0 } : { kind: folder ? 'folder' : 'vault', path: folder, count: knownTalkCount(vault!.talks, folder, includeSystem), folders: foldersInside(folder) })
       : { kind: 'vault', path: '', count: overviewCount, folders: vault && state === 'open' ? foldersInside('') : null } }
   const detailsShown = narrow ? drawer === 'details' : detailsOpen
   const toggleDetails = () => narrow ? setDrawer(d => d === 'details' ? null : 'details') : setDetails(!detailsOpen)
@@ -353,7 +361,7 @@ export default function VaultGallery({ revision, onClose, onOpen, management, ta
             </>
               : !vault ? null
                 : state !== 'open' ? <div className="vg-blank">{state === 'closed' ? <FolderClosed size={36} aria-hidden /> : <Unplug size={36} aria-hidden />}<h2>{vault.name} is {state === 'closed' ? 'closed' : 'not connected'}</h2><p>{state === 'closed' ? 'Its files stay where they are. Open the vault to browse it.' : `Last known location: ${vaultInfo?.root ?? 'unknown'}. Its files have not been read. Connect the drive and check again.`}</p></div>
-                  : !sorted.length ? <div className="vg-blank">{query.trim() ? searchRunning ? <div role="status"><Search size={36} aria-hidden /><h2>Searching…</h2><p>Looking through stored files in {scopeName}. Nothing found yet.</p></div> : searchIncomplete ? <div role="status"><Search size={36} aria-hidden /><h2>No results so far</h2><p>Nothing matches “{query}” in what was checked. Coverage is incomplete: {inventory.search?.reason ?? 'not every stored file was checked'}.</p></div> : <><Search size={36} aria-hidden /><h2>No results</h2><p>Nothing matches “{query}” in {scopeName}.</p></> : <><FolderOpen size={36} aria-hidden /><h2>No talks here yet</h2><p>This folder has no known talks or subfolders. The catalogue is cached, so this is not a verified empty folder.</p></>}</div>
+                  : !sorted.length ? <div className="vg-blank">{query.trim() ? searchRunning ? <div role="status"><Search size={36} aria-hidden /><h2>Searching…</h2><p>Looking through stored files in {scopeName}. Nothing found yet.</p></div> : searchIncomplete ? <div role="status"><Search size={36} aria-hidden /><h2>No results so far</h2><p>Nothing matches “{query}” in what was checked. Coverage is incomplete: {inventory.search?.reason ?? 'not every stored file was checked'}.</p></div> : <><Search size={36} aria-hidden /><h2>No results</h2><p>Nothing matches “{query}” in {scopeName}.</p></> : <div role="status"><FolderOpen size={36} aria-hidden /><h2>{emptyHeading}</h2>{scope.kind === 'folder' && hasUnindexedOutline && <p>Refresh the Talks sidebar to update the catalogue.</p>}</div>}</div>
                     : view === 'List' ? <GalleryList items={sorted} flat={flat} mixed={mixed} vaultName={vault.name} known={known} sort={sort} setSort={k => setSort(s => nextSort(s, k))} selected={selected} select={setSelected} activate={activate} preview={previewItem} focusKey={focusKey} contextMenu={contextMenu} />
                       : <GalleryTiles mosaicTalks={mosaicTalks} items={sorted} known={known} selected={selected} select={setSelected} activate={activate} preview={previewItem} dropCover={known0.dropCover} focusKey={focusKey} contextMenu={contextMenu} />}
       </div>
@@ -361,7 +369,7 @@ export default function VaultGallery({ revision, onClose, onOpen, management, ta
     </main>
     <footer className="vg-status">
       {browsable ? <>
-        <span className="vg-grow">{query.trim() ? `${plural(sorted.length, 'result')} in ${scopeName} and subfolders` : plural(sorted.length, 'item')} · Counts may be incomplete (cached catalogue)</span>
+        <span className="vg-grow">{query.trim() ? `${plural(sorted.length, 'result')} in ${scopeName} and subfolders` : plural(sorted.length, 'item')}{!verifiedEmpty && ' · Counts may be incomplete (cached catalogue)'}</span>
         {/* Refresh re-reads the cached catalogue and the directory listing only; it never lists talks on the host. */}
         <button className="vg-lnk" disabled={scanning || busy} onClick={() => setManagementRevision(n => n + 1)}><RefreshCw size={14} aria-hidden />{UI.refresh}</button>
         <span role="status" className="vg-sizestatus">{scanning ? `${searching && inventory.scan?.relativePath === folder ? 'Searching' : 'Measuring'} ${inventory.scan?.relativePath || vault!.name}… ${inventory.scan?.counted ?? 0} entries checked` : inventory.scan && ['cancelled', 'partial', 'refused', 'unavailable', 'stale'].includes(inventory.scan.state) ? `Size ${inventory.scan.state}: ${inventory.scan.reason ?? 'coverage incomplete'}` : `${sizesMeasured} of ${sorted.length} sizes measured`}</span>

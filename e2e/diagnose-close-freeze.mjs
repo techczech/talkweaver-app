@@ -4,7 +4,7 @@
 //   (T) the window's own close: FIRST_EDIT typed, then the close; while its save runs the editor says "Saving before
 //       closing…" and refuses SECOND_EDIT (typing, a paste, ⌘Z); the window closes with FIRST_EDIT on disk and the
 //       editor never held SECOND_EDIT. This is review round two's finding 1 (it lost SECOND_EDIT).
-//   (S) A conflicting close opens merge review. “Stay here” returns to the editor and a later merge saves both edits.
+//   (S) A conflicting close opens merge review. “Decide later” returns to the editor and a later merge saves both edits.
 //   (Q) a quit with typing waiting: the same freeze, and the text is on disk after the app has quit.
 // Editor assertions read CodeMirror's own document; file assertions read the real file.
 //
@@ -107,28 +107,33 @@ try {
   const outside = beforeStay.replace('First slide body text.', 'First slide body text. OUTSIDE_STAY')
   writeFileSync(OUTLINE_PATH, outside)
   const review = page.getByTestId('outline-merge-sheet')
-  await review.waitFor()
-  await review.getByRole('button', { name: 'Stay here', exact: true }).click()
+  const decideLater = review.getByRole('button', { name: 'Decide later', exact: true })
+  const keepSlide = review.getByRole('group', { name: 'Version for First slide', exact: true })
+    .getByRole('button', { name: "Keep this window's version", exact: true })
+  await decideLater.click()
   await review.waitFor({ state: 'hidden' })
   const win2 = await app.browserWindow(page)
   await win2.evaluate((w) => w.close())
-  await review.waitFor()
+  await keepSlide.waitFor()
+  const typedBeforeDismiss = await editorText()
   const openWithTyping = !page.isClosed() &&
-    (await review.getByRole('textbox', { name: 'Mine 1', exact: true }).inputValue()).includes('STAY_TYPED') &&
-    (await review.getByRole('textbox', { name: 'On disk 1', exact: true }).inputValue()).includes('OUTSIDE_STAY') &&
+    typedBeforeDismiss?.includes('STAY_TYPED') &&
+    (await review.locator('.merge-cards-diff pre del').allTextContents()).join('').includes('STAY_TYPED') &&
+    (await review.locator('.merge-cards-diff pre ins').allTextContents()).join('').includes('OUTSIDE_STAY') &&
     disk() === outside
-  await review.getByRole('button', { name: 'Stay here', exact: true }).click()
+  await decideLater.click()
   await review.waitFor({ state: 'hidden' })
   const thawed = await waitFor(async () => (await page.locator('[data-close-freeze]').count()) === 0, 3000)
+  const preserved = await editorText() === typedBeforeDismiss && disk() === outside
   await typeAtEndOfBody(' AFTER_STAY')
   const afterStay = await editorText()
   await page.getByTestId('outline-disk-change-bar').getByRole('button', { name: 'Review merge', exact: true }).click()
-  await review.getByRole('button', { name: 'Use mine', exact: true }).click()
-  await review.getByRole('button', { name: 'Apply merge', exact: true }).click()
+  await keepSlide.click()
+  await review.getByRole('button', { name: 'Apply to the file', exact: true }).click()
   const saved = await waitFor(async () => /STAY_TYPED/.test(disk()) && /AFTER_STAY/.test(disk()), 5000)
-  record('(S) close opens merge review, Stay here restores editing, and applying the merge saves both edits',
-    openWithTyping && thawed !== null && afterStay?.includes('STAY_TYPED') && afterStay?.includes('AFTER_STAY') && saved !== null,
-    `review kept both versions=${openWithTyping}, unfrozen=${thawed}ms, saved after merge=${saved !== null}`)
+  record('(S) close opens merge review, Decide later restores editing, and applying the merge saves both typed edits',
+    openWithTyping && thawed !== null && preserved && afterStay?.includes('STAY_TYPED') && afterStay?.includes('AFTER_STAY') && saved !== null,
+    `review showed both versions=${openWithTyping}, unfrozen=${thawed}ms, both versions preserved after dismissal=${preserved}, saved after merge=${saved !== null}`)
   await closeApp()
 
   // (Q) A quit with typing waiting for its autosave.

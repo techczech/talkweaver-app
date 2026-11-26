@@ -138,7 +138,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['editor.link', '⌥⌘K', ['Mod-Alt-k'], 'Insert link (clipboard-aware)', 'Wraps the selection as a Markdown link; a URL in the clipboard becomes the target. WriteFlex’s ⌘⇧K is not carried — the universal keymap reserves it.', 'Format'],
     ['editor.rollback-trigger', 'Esc', ['Escape'], 'Cancel trigger completion', 'Restores the exact text that preceded a provisional trigger completion.', 'Editing'],
     ['editor.protect-heading-delete', '⌘⌫ / ⌫', ['Mod-Backspace', 'Backspace'], 'Protect slide identity', 'Prevents partial deletion from corrupting a slide heading and trigger identity.', 'Editing'],
-    ['editor.object-edit', '↵', ['Enter'], 'Edit object at caret', 'Opens the selected object block for in-place editing; inside an open object, Enter is a plain newline.', 'Objects'],
+    ['editor.object-edit', '↵', ['Enter'], 'Edit object at caret', 'Opens the selected object block for in-place editing. In its Markdown editor, Enter continues lists.', 'Objects'],
     ['editor.object-delete', '⌫ / ⌦', ['Backspace', 'Delete'], 'Delete selected object', 'Deletes the selected object block whole (one Undo restores it). Next to an object, the first press selects it; a key never joins a line onto the object.', 'Objects'],
     ['editor.object-raw', '⇧⌘M', ['Shift-Mod-m'], 'Show markup on widget', 'Toggles the raw markup view on the object block at the caret.', 'Objects'],
     ['editor.object-finish', '⌘↵', ['Mod-Enter'], 'Finish object editing', 'Closes the open object source and returns to its rendered widget.', 'Objects'],

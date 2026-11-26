@@ -519,7 +519,18 @@ export function startCloudflareApiStub(options = {}) {
   const fake = createFakeCloudflare(options)
   const server = createServer((request, response) => {
     const chunks = []
-    request.on('data', (chunk) => chunks.push(chunk))
+    const isUpload = request.method === 'POST' && request.url === '/client/v4/pages/assets/upload'
+    const dropAt = isUpload ? options.dropUploadAtBytes?.(Number(request.headers['content-length'])) : undefined
+    let received = 0
+    request.on('data', chunk => {
+      received += chunk.length
+      if (dropAt !== undefined && received >= dropAt) {
+        request.socket.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    request.on('error', () => { /* the client or this fixture ended the connection */ })
     request.on('end', async () => {
       const url = new URL(request.url, 'http://stub')
       const path = url.pathname.replace(/^\/client\/v4/, '')

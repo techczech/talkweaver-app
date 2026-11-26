@@ -12,6 +12,19 @@ import type { TalkSearchField } from './talk-search.ts'
 
 export type TalkFieldPrefix = 'fo' | 'fi' | 'met' | 'co' | 'da'
 
+/** Fewest edits turning term into a substring of text. */
+export function substringDistance(term: string, text: string): number {
+  let prev = new Array(text.length + 1).fill(0)
+  for (let i = 1; i <= term.length; i += 1) {
+    const cur = [i]
+    for (let j = 1; j <= text.length; j += 1) {
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (term[i - 1] === text[j - 1] ? 0 : 1))
+    }
+    prev = cur
+  }
+  return Math.min(...prev)
+}
+
 export interface TalkPrefixDef {
   prefix: TalkFieldPrefix
   /** As typed: `fo:`. */

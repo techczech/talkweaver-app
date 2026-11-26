@@ -1,13 +1,18 @@
+import type { PublishDiagnostic } from './publish-diagnostic.ts'
+
 // Structured events only: no API bodies, source text, credentials or raw exception strings.
 export type PublishStage = 'started' | 'files' | 'authorised' | 'inventory' | 'record' | 'building' | 'built' | 'uploading' | 'uploaded' | 'confirmed' | 'local-record-failed' | 'finished'
 export type PublishHistoryEvent = {
   attemptId: string; at: string; computer: string; appVersion: string; entry: string; stage: PublishStage
   site?: string; revision?: string; files?: number; bytes?: number; removed?: number; missing?: number; folders?: string[]
-  recordPresent?: boolean; linksReconciled?: number; linkStyleChanged?: boolean; outcome?: 'published' | 'unchanged' | 'rehearsed' | 'stopped' | 'unknown' | 'unexpected-error'
+  recordPresent?: boolean; linksReconciled?: number; linkStyleChanged?: boolean
+  outcome?: 'published' | 'unchanged' | 'rehearsed' | 'stopped' | 'unknown' | 'unexpected-error' | 'failed' | 'cancelled'
+  diagnostic?: PublishDiagnostic
 }
 export type PublishHistoryAttempt = {
   id: string; startedAt: string; computer: string; appVersion: string; entry: string
   site?: string; outcome?: PublishHistoryEvent['outcome']; events: PublishHistoryEvent[]
+  canRetry?: boolean
 }
 export type PublishSiteCheck = { state: 'in-step' | 'changed' | 'unknown'; checkedAt: string; revision?: string; publishedBy?: string; publishedAt?: string; publisherVersion?: string }
 export const publishStageLabel: Record<PublishStage, string> = {

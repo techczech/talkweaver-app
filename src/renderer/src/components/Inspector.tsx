@@ -5,7 +5,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { AlertTriangle, Check, ChevronDown, ChevronUp, Undo2 } from 'lucide-react'
 import type { ProjectionRow, TalkInfo } from '../../../preload/index'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
-import type { LayoutDef, OptionGroup } from '../data/layouts'
+import type { OptionGroup } from '../data/layouts'
 import { LAYOUTS } from '../data/layouts'
 import { deckListStyleForSlide, deckStatementTokenForOutline, inheritedTitleLookForSlide, inheritedTitleToneForSlide, pictureSideForSlide } from '../../../shared/deck-frame'
 import { plainInlineText } from '../../../../compiler/scripts/lib/00-inline-render.mjs'
@@ -65,7 +65,7 @@ interface Props {
   onRemoveSavedView?: (pageUrl: string, image: string, embed: { index: number; of: number }) => void
   /** The layout section's "Change ⌘L": opens the layout picker (what ⌘L runs). */
   onOpenLayoutPicker?: () => void
-  onCommitOption: (entry: LayoutDef | undefined, group: OptionGroup, token: string) => string | null
+  onCommitOption: (group: OptionGroup, token: string) => string | null
   /** ADR-0032: writes a Board section edit into the inspected slide's text; false when refused. */
   onBoardEdit: (edit: BoardEdit) => boolean
   /** ADR-0032 §2: while set, the column under the pinned preview is the layout picker (`column`), and the
@@ -90,7 +90,7 @@ interface Props {
   onReplacePicture: (line: number) => void
   onRemovePicture: (line: number) => void
   onMarkdown: () => void
-  structure?: { section: boolean; childCount: number; carousel: boolean; panes?: { title: string; select: () => void }[]; addSubslide: () => void; inheritedColour?: { value: string; selectSection: () => void } }
+  structure?: { section: boolean; hasSubslides: boolean; childCount: number; carousel: boolean; panes?: { title: string; select: () => void }[]; addSubslide: () => void; inheritedColour?: { value: string; selectSection: () => void } }
 
 }
 
@@ -291,7 +291,7 @@ export default function Inspector({
             selectedToken={binding.selectedToken}
             commitToken={(value) => inspectorCommitToken(binding, value.token)}
             onSelect={(value) => {
-              onCommitOption(binding.source === 'entry' ? (binding.owner ?? entry) : undefined, binding.group, inspectorCommitToken(binding, value.token))
+              onCommitOption(binding.group, inspectorCommitToken(binding, value.token))
             }}
           />
           {binding.pictures.rest.length > 0 && (binding.selectedToken === 'sidebar' || binding.pictures.rest.some((value) => value.token === binding.selectedToken)) && (
@@ -301,7 +301,7 @@ export default function Inspector({
                 entry={undefined}
                 binding={{ group: binding.group, selectedToken: binding.selectedToken }}
                 values={[{ token: 'sidebar', label: 'Auto' }, ...binding.pictures.rest]}
-                onSelect={(group, token) => { onCommitOption(undefined, group, token) }}
+                onSelect={(group, token) => { onCommitOption(group, token) }}
               />
             </div>
           )}
@@ -313,7 +313,7 @@ export default function Inspector({
           values={binding.values}
           deckToken={binding.deckToken}
           onSelect={(group, token) => {
-            onCommitOption(binding.source === 'entry' ? (binding.owner ?? entry) : undefined, group, inspectorCommitToken(binding, token))
+            onCommitOption(group, inspectorCommitToken(binding, token))
           }}
         />
       )}
@@ -369,7 +369,7 @@ export default function Inspector({
         ? { ...value, altTokens: [...(value.altTokens ?? []), 'reveal=steps'] }
         : value)
     } : arrival.group
-    onCommitOption(undefined, group, inspectorCommitToken(arrival, revealSelected ? '' : 'reveal'))
+    onCommitOption(group, inspectorCommitToken(arrival, revealSelected ? '' : 'reveal'))
   }
   const revealAction = revealOn
     ? { label: 'Turn off', accessibleLabel: 'Turn reveal off' }
@@ -542,7 +542,7 @@ export default function Inspector({
         </> : surface && <>
           {(long || !pageInfo) && <section className="tw-inspector-section" data-section="designs"
             ref={element => { if (element) sectionRefs.current.set('designs', element); else sectionRefs.current.delete('designs') }}>
-            <DesignsBlock key={slideKey} surface={surface} designs={designs} long={long} compact={!centrePreview} section={section} />
+            <DesignsBlock key={slideKey} surface={surface} designs={designs} long={long} compact={!centrePreview} section={section} hasSubslides={!!structure?.hasSubslides} />
           </section>}
           {!long && !pageInfo && <AdjustRows pages={pages} choose={changePage} />}
           {pages.filter(item => showPage(item.id)).map(item => <section key={item.id} data-section={item.id}
@@ -595,7 +595,7 @@ export default function Inspector({
             </div>}
             {item.id === 'more' && <>
               {pageGroups('more')}
-              {model.prework && <InspectorPrework model={model.prework} onResults={token => { if (model.prework) onCommitOption(undefined, model.prework.results.group, token) }} />}
+              {model.prework && <InspectorPrework model={model.prework} onResults={token => { if (model.prework) onCommitOption(model.prework.results.group, token) }} />}
               <h4>About this slide</h4><button type="button" className="toolbar-btn" onClick={onExplain}>Explain how this slide was made</button>
               {warnings.length > 0 && <p>{warnings.map(warning => warning.text).join(' · ')}</p>}
               {activeIndex === 0 && <VaultOrigin outlinePath={talk.outlinePath} outlineContent={outlineContent} />}

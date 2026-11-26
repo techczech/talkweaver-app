@@ -4,7 +4,7 @@ import { basename } from 'node:path'
 import { ID_TOKEN_RE } from '../../compiler/scripts/lib/slide-id.mjs'
 import type { EditorDocumentReply, EditorDocumentRequestBody } from '../shared/editor-document.ts'
 import { applySlideMerge, normalizeOutlineMergeText, planSlideMerge, type SlideMergeChoices } from '../shared/outline-merge.ts'
-import { summarizeSlideMerge, type SlideMergeApplyReply, type SlideMergeFailure, type SlideMergeReviewReply } from '../shared/outline-slide-merge.ts'
+import { summarizeSlideMerge, WHOLE_TALK_MERGE_KEY, type SlideMergeApplyReply, type SlideMergeFailure, type SlideMergeReviewReply } from '../shared/outline-slide-merge.ts'
 import { structureOf } from '../shared/talk-structure.ts'
 import { hashOutlineText, type OutlineDiskGuard } from './outline-disk-guard.ts'
 import { outlineIdentity } from './outline-identity.ts'
@@ -38,6 +38,7 @@ interface Review {
   disk: ObservedOutlineDisk
   current(): boolean
   writing?: PendingWrite
+  unsafeStructure?: boolean
 }
 
 const sectionTitles = (source: string) => {
@@ -92,7 +93,8 @@ export function createOutlineSlideMerge(deps: SlideMergeDeps) {
         const sections = { base: sectionTitles(sources.base), mine: sectionTitles(mine), disk: sectionTitles(disk.text) }
         const view: Extract<SlideMergeReviewReply, { ok: true }> = {
           ok: true, generation, fileName: basename(path), lastSavedAt: base.savedAt, diskChangedAt: disk.mtime,
-          sources, details, order, orders, duplicateIds, recovery,
+          sources, details, order, orders, duplicateIds, recovery, diskHash: disk.hash,
+          slideCounts: { mine: versions.mine.slides.size, disk: versions.disk.slides.size },
           rows: rows.map(row => ({
             ...row, mineDiscardsDiskEdits: comparable(row.disk?.text) !== comparable(row.base?.text),
             sections: {
@@ -111,6 +113,13 @@ export function createOutlineSlideMerge(deps: SlideMergeDeps) {
       }
     },
 
+    pictureSource(owner: string, path: string, generation: string, side: 'mine' | 'disk') {
+      const session = deps.guard.session(owner, path)
+      const review = session && reviews.get(session)
+      if (!review || review.view.generation !== generation || !review.current()) return null
+      return { text: review.view.sources[side], lines: review.view.rows.flatMap(row => row[side] ? [row[side].line] : []) }
+    },
+
     async apply(owner: string, path: string, generation: string, choices: SlideMergeChoices): Promise<SlideMergeApplyReply> {
       const session = deps.guard.session(owner, path)
       const vault = deps.vaultFor(owner, path)
@@ -124,8 +133,16 @@ export function createOutlineSlideMerge(deps: SlideMergeDeps) {
       try {
         // Resolve invalid choices before invoking the editor or risking a write. The second pass
         // allocates copy IDs against the destination vault and merges already in flight.
-        let merged = applySlideMerge(review.plan, choices)
-        if (!merged.ok) return merged
+        const whole = Object.hasOwn(choices, WHOLE_TALK_MERGE_KEY) ? choices[WHOLE_TALK_MERGE_KEY] : undefined
+        if (whole !== undefined && (Object.keys(choices).length !== 1 || (whole !== 'mine' && whole !== 'disk') ||
+            (!review.view.duplicateIds.length && !review.unsafeStructure))) {
+          return { ok: false, reason: 'invalid-choice', keys: [WHOLE_TALK_MERGE_KEY] }
+        }
+        let merged = whole ? { ok: true as const, text: review.view.sources[whole] } : applySlideMerge(review.plan, choices)
+        if (!merged.ok) {
+          if (merged.reason === 'unsafe-structure') review.unsafeStructure = true
+          return merged
+        }
         if (Object.values(choices).includes('both')) {
           const taken = await deps.reservedIds(vault)
           if (!review.current()) return stalePlan()

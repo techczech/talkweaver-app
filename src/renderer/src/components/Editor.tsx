@@ -27,14 +27,12 @@ import {
   startBodyWithBullet,
   type CursorListItemContext
 } from '../extensions/outliner'
-import {
-  buildEditorKeyBindings,
-  eventMatchesEffectiveShortcut,
-  KEYMAP_CHANGED_EVENT
-} from '../keymap/store'
+import { eventMatchesEffectiveShortcut } from '../keymap/store'
+import { markdownEditingKeymap, markdownEditingLanguage } from '../extensions/markdownEditing'
+import { mountMarkdownSourceEditor } from '../objects/markdown-source-editor'
 import { EDITOR_COMMANDS } from '../keymap/registry'
 import { placeOfLine, type Place } from '../../../shared/place.ts'
-import { outlineParagraphFolds, outlineFolding, outlineFoldService, revealFoldedLine } from '../extensions/outlineFold'
+import { outlineFolding, outlineFoldService, revealFoldedLine } from '../extensions/outlineFold'
 import { frontmatterTableExtension } from '../extensions/frontmatterTable'
 import { setWorkStripsData, workStripHandlersFacet } from '../extensions/workStrips'
 import { loadWorkStripsData } from '../lib/workStripsData'
@@ -60,8 +58,6 @@ import { history, isolateHistory } from '@codemirror/commands'
 import { editorBaseKeymap } from '../extensions/editorBaseKeymap'
 import { search, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
 import { commandRan } from '../commands/command-ran'
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown'
-import { languages } from '@codemirror/language-data'
 import { viewModeExtension, type PlainViewOptions } from '../extensions/plainView'
 import { plainTypeExtension } from '../extensions/plainView/theme'
 import { plainIconTools, type PlainIconTools } from '../extensions/plainView/iconTools'
@@ -79,7 +75,7 @@ import { notify } from '../lib/notify'
 import { queueOutlineWrite } from '../lib/saveQueue'
 import { lookForRecovery, noteOutlineSaveReply, outlineDiskChanges } from '../lib/outlineDiskChange'
 import { replaceDocTransaction } from '../lib/replaceDocTransaction'
-import { slideMergeHistory, slideMergeTransaction } from '../lib/slideMergeTransaction'
+import { isSlideMergeReviewOpen, slideMergeHistory, slideMergeTransaction } from '../lib/slideMergeTransaction'
 import type { EditorDocumentReply, EditorDocumentRequestBody } from '../../../shared/editor-document'
 
 import { clipboardHasText, htmlClipboardText } from '../lib/clipboardText'
@@ -102,11 +98,10 @@ import { quoteLinkFormExtension } from '../extensions/quoteLinkForm'
 import { markdownHeadingStyles, setMarkdownHeadings, type MarkdownHeadingKind } from '../extensions/markdownHeadings'
 import { setTextFitNotes, textFitWarningExtension } from '../extensions/textFitWarning'
 import type { TextFitNote } from '../../../shared/text-fit-notes.ts'
-import type { QuoteFormChoice } from '../../../shared/layout-verbs'
+import { LayoutVerbError, reconcileSlideDesign, type QuoteFormChoice } from '../../../shared/layout-verbs'
 import { flashTriggerEchoAt, triggerEchoChange } from '../extensions/triggerEcho'
 import {
   commitLayoutSelection,
-  commitSlideOption,
   commitQuoteFormOption,
   provisionalTriggerAtCursor,
   selectionFromTriggerLine,
@@ -202,7 +197,7 @@ interface Props {
   vaultRoot?: string | null
   /** Jump target. takeFocus=true moves keyboard focus into the editor (sidebar/⌘E jumps);
    *  false only aims the viewport/caret (strip card clicks keep their own keyboard nav). */
-  focusLine?: { line: number; takeFocus: boolean; editTitle?: boolean } | null
+  focusLine?: { line: number; takeFocus: boolean; editTitle?: boolean; selectPlaceholder?: boolean } | null
   // Slide Focus (ADR-0032, Task 8): when set, the editor shows/edits ONLY this slide's line range
   // (absolute doc offsets [from, to)); every other line is hidden and edit-guarded — a scoped view
   // onto the SAME outline doc, never a copy. null / undefined = normal full-outline editing (today's
@@ -280,6 +275,7 @@ interface Props {
     settleSave: (signal?: AbortSignal) => Promise<void>
     /** Write the current text even when it looks saved (a close's 'resave', ADR-0044 §6); false when not written. */
     forceSave: (signal?: AbortSignal) => Promise<boolean>
+    cancelDebouncedSave: (outlinePath: string) => void
     commitSlideMerge: CommitSlideMerge
     // Scroll the editor to reveal the current cursor (selection head) WITHOUT changing the selection,
     // and focus it. Used when a view switch re-shows the editor so it lands on the slide you're on
@@ -330,7 +326,7 @@ interface Props {
   // clean up). The parent opens the picker and calls this with the chosen trigger.
   registerLayoutContext?: (fn: () => LayoutPickerContext | null) => void
   registerApplyLayout?: (fn: (initial: LayoutDef[], selected: LayoutDef[]) => void) => void
-  registerApplyOption?: (fn: (entry: LayoutDef | undefined, group: OptionGroup, token: string, headingLine?: number, slideId?: string | null, compiledLayout?: string) => string | null) => void
+  registerApplyOption?: (fn: (group: OptionGroup, token: string, headingLine?: number, slideId?: string | null, compiledLayout?: string) => string | null) => void
   // Protected-token click (2026-07-03): clicking a `{…}` chip reports the token instead of
   // placing a cursor inside it — the parent routes id → where-used panel, trigger → ⌘L picker.
   onProtectedTokenClick?: (token: string, kind: 'id' | 'trigger') => void
@@ -367,7 +363,6 @@ interface Props {
 // a Compartment so a Settings change re-binds live, without remounting the editor. Bound at highest
 // precedence so the chords override CodeMirror's default selection-extension bindings. The registry
 // documents WHY these chords were chosen (no Ctrl+Arrow — macOS reserves it for Mission Control).
-const keymapCompartment = new Compartment()
 
 // What the Plain view needs from the app: where icon pictures come from (the same bridge the icon picker uses).
 function plainViewOptions(menus: MarginMenuHandlers): PlainViewOptions {
@@ -415,10 +410,6 @@ export interface HeadingTools {
 // new talk's file (live finding 2026-07-11; same hazard class as the 2026-07-05 empty write —
 // and the cross-talk variant would sail past the empty-over-nonempty backstop).
 const historyCompartment = new Compartment()
-function outlinerKeymapExtension() {
-  return keymapCompartment.of(Prec.highest(keymap.of(buildEditorKeyBindings())))
-}
-
 // The view compartment holds what Plain replaces: the theme and the highlight (extensions/plainView).
 // Markdown mode puts today's warm-paper code-font theme and default highlight back, unchanged.
 const viewCompartment = new Compartment()
@@ -812,6 +803,13 @@ export default function Editor({
 
     const view = new EditorView({
       parent: containerRef.current,
+      dispatchTransactions: (transactions, editor) => {
+        // Native Edit → Undo can still reach CodeMirror behind a modal, and history
+        // transactions bypass transaction filters. Only Apply may change this review's input.
+        if (transactions.some(tr => tr.isUserEvent('undo') || tr.isUserEvent('redo')) &&
+            (mergeSavingRef.current || isSlideMergeReviewOpen())) return
+        editor.update(transactions)
+      },
       state: EditorState.create({
         doc: '',
         extensions: [
@@ -1005,7 +1003,7 @@ export default function Editor({
           // A web link pasted or typed into a quote slide's source line makes the slide a web page in the same undo step (spec 3.1).
           quoteLinkFormExtension(() => compiledLayoutAtRef.current),
           highlightActiveLine(),
-          markdown({ base: markdownLanguage, codeLanguages: languages, extensions: [outlineParagraphFolds] }),
+          markdownEditingLanguage,
           // Folding: collapse any heading section or list subtree (gutter arrows + Ctrl-Shift-[/]).
           outlineFolding,
           foldGutter(),
@@ -1064,6 +1062,7 @@ export default function Editor({
           keyCapExtension,
           // RIVER object blocks: slide-white rendered widgets in the warm-paper outline flow.
           objectBlocksExtension({
+            mountSource: mountMarkdownSourceEditor,
             onInsertMenu: (coords, consumeFence) => onInsertObjectMenuRef.current?.(coords, consumeFence),
             cheatSheet: {
               isShortcut: (event) => eventMatchesEffectiveShortcut(event, 'app.help'),
@@ -1139,7 +1138,7 @@ export default function Editor({
           keymap.of([{ key: 'Mod-f', run: (view) => { const opened = openSearchPanel(view); if (opened) commandRan('app.find'); return opened }, scope: 'editor search-panel' }]),
           // One list (extensions/editorBaseKeymap.ts): the Plain view's guard is built from the same one.
           keymap.of([...editorBaseKeymap]),
-          outlinerKeymapExtension(),
+          markdownEditingKeymap('outline'),
           goToSectionChild.of(line => onSectionChildRef.current?.(line)),
           viewCompartment.of([sourceObjectPreviews.of(showSourceObjectPreviews), startBodyWithBullet.of(startWithBullet), slideTextInput.of(slideTextPanel), viewModeExtension(viewModeRef.current, plainViewOptions(marginMenuHandlers))]),
           videoSourceDurationCompartment.of([]),
@@ -1345,19 +1344,6 @@ export default function Editor({
       window.clearInterval(timer)
     }
   }, [talk.slug, talk.vaultId])
-
-  // Re-bind the outliner keymap live when the user customises shortcuts in Settings.
-  useEffect(() => {
-    function reconfigure(): void {
-      const v = viewRef.current
-      if (!v) return
-      v.dispatch({
-        effects: keymapCompartment.reconfigure(Prec.highest(keymap.of(buildEditorKeyBindings())))
-      })
-    }
-    window.addEventListener(KEYMAP_CHANGED_EVENT, reconfigure)
-    return () => window.removeEventListener(KEYMAP_CHANGED_EVENT, reconfigure)
-  }, [])
 
   // Slide Focus (ADR-0032, Task 8): push the focusRange prop into the editor's focus-scope field via
   // an effect — no remount, no compartment churn. undefined/null exits focus (the extension is then
@@ -1712,6 +1698,11 @@ export default function Editor({
         if (current.trim() === '') return false
         return await writeQueued(path, v.state, editorRevision.current(), true)
       },
+      cancelDebouncedSave: outlinePath => {
+        if (loadedPathRef.current !== outlinePath || !saveTimerRef.current) return
+        clearTimeout(saveTimerRef.current)
+        saveTimerRef.current = null
+      },
       commitSlideMerge: ({ outlinePath, base, next, generation }) => queueOutlineWrite(outlinePath, async () => {
         const view = viewRef.current
         const active = () => viewRef.current === view && loadedPathRef.current === outlinePath && currentTalkRef.current === outlinePath
@@ -1917,7 +1908,7 @@ export default function Editor({
     }
     applyLayoutRef.current = applyLayout
     registerApplyLayout?.(applyLayout)
-    registerApplyOption?.((entry, group, token, headingLine, slideId, compiledLayout) => {
+    registerApplyOption?.((group, token, headingLine, slideId, compiledLayout) => {
       const v = viewRef.current
       if (!v) return null
       // Until this talk's text is loaded the doc is a transient the load will replace (and autosave
@@ -1934,21 +1925,33 @@ export default function Editor({
       if (slideId != null && ownHeadingLine == null) return null
       const current = target(ownHeadingLine ?? undefined)
       if (!current) return null
+      const doc = v.state.doc.toString()
+      const slide = { headingLine: current.headingLine }
+      const cleanDesign = (text: string): string | null => {
+        if (!/^#{2,6}\s/.test(v.state.doc.line(current.headingLine).text)) return text
+        try {
+          return reconcileSlideDesign(text, slide, compiledLayout, undefined, [{ group: group.key, token }])
+        } catch (error) {
+          notify(error instanceof LayoutVerbError ? error.detail : 'The change could not be applied to this slide.', 'warning')
+          return null
+        }
+      }
       const original = current.trigger?.text ?? ''
       // Quote form: the verb, so an inferred quote slide never gains a `{quote}` token (see commitQuoteFormOption).
       if (group.key === 'quote-form') {
-        const doc = v.state.doc.toString()
         const written = commitQuoteFormOption(doc, current.headingLine, token, compiledLayout)
         if (written) {
           if (written.outline !== doc) {
-            const spec = replaceDocTransaction(doc, written.outline, { ownUndoStep: true })
+            const reconciled = cleanDesign(written.outline)
+            if (reconciled == null) return null
+            const spec = replaceDocTransaction(doc, reconciled, { ownUndoStep: true })
             if (spec) v.dispatch(spec)
           }
           return written.triggerLine
         }
       }
-      // T32: the ⌘L picker and the Inspector (editor mounted) sweep against the deck's choice.
-      const next = commitSlideOption(v.state.doc.toString(), current.headingLine, original, entry, group, token)
+      // The Inspector edits the chosen option. Layout choices use their own transaction.
+      const next = commitOptionSelection(original, group, token, deckCommitContext(doc, current.headingLine))
       const heading = v.state.doc.line(current.headingLine)
       // Old outlines can still carry the arrival token in the heading's trailing groups.
       const headingText = group.key === 'arrival-mode' && token === ''
@@ -1957,9 +1960,18 @@ export default function Editor({
       const headingChange = headingText === heading.text ? [] : [{ from: heading.from, to: heading.to, insert: headingText }]
       const plan = next === original && !current.needsMerge
         ? { changes: [], warnings: [] }
-        : planEditorTriggerCommit(v.state.doc.toString(), current.headingLine, () => next)
+        : planEditorTriggerCommit(doc, current.headingLine, () => next)
       if (!headingChange.length && !plan.changes.length) return original
       reportTriggerMergeWarnings(plan.warnings)
+      const transaction = v.state.update({ changes: [...headingChange, ...plan.changes], annotations: isolateHistory.of('full') })
+      const writtenDoc = transaction.newDoc.toString()
+      const reconciled = cleanDesign(writtenDoc)
+      if (reconciled == null) return null
+      if (reconciled !== writtenDoc) {
+        const spec = replaceDocTransaction(doc, reconciled, { ownUndoStep: true })
+        if (spec) v.dispatch(spec)
+        return next
+      }
       const echo = triggerEchoChange(original, next)
       const written = echo
         ? plan.changes.find((change) => change.insert.includes(next))
@@ -1967,7 +1979,7 @@ export default function Editor({
       const echoPosition = echo && written
         ? written.from + echo.from + headingText.length - heading.text.length
         : null
-      v.dispatch({ changes: [...headingChange, ...plan.changes], annotations: isolateHistory.of('full') })
+      v.dispatch(transaction)
       if (echo && echoPosition != null) {
         flashTriggerEchoAt(v, echoPosition, echo.token)
       }
@@ -2089,9 +2101,11 @@ export default function Editor({
     const prefix = focusLine.editTitle ? line.text.match(/^#{1,6}[ 	]+/)?.[0].length ?? 0 : 0
     // An untitled divider reserves its second space to separate the name from its ID while typing.
     const reservedSpace = focusLine.editTitle && /^#{2,6} {2}\{id=[\w-]+\}$/.test(line.text) ? 1 : 0
+    const anchor = line.from + prefix - reservedSpace
+    const head = focusLine.selectPlaceholder && line.text[prefix] === '—' ? anchor + 1 : anchor
     const reveal = viewMode === 'markdown' ? revealFoldedLine(view.state, line.from) : []
     view.dispatch({
-      selection: { anchor: line.from + prefix - reservedSpace },
+      selection: { anchor, head },
       // 'start' parks the target line at the TOP of the editor viewport — matching the slide
       // strip/preview, which already scrolls the selected card to the top. 'center' left the
       // jumped-to slide mid-screen, which read as inconsistent with the previews.

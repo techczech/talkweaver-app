@@ -145,7 +145,7 @@ export function commitPickerOption(line: string, group: OptionGroup, token: stri
 }
 
 /**
- * One option choice from the ⌘L picker, the mounted-editor Inspector or the inline palette,
+ * One option choice from the ⌘L picker or the inline palette,
  * written to one slide's Trigger line. With an `entry`, the entry is selected first (the picker
  * chooses an entry's option as that entry). The sweep reads the deck's choice for this slide
  * (`deckCommitContext`), so no surface removes a token the deck keeps live on the compiled slide.

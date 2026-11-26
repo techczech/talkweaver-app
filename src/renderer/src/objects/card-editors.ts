@@ -24,7 +24,7 @@ import {
 import type { ObjectBlock } from '../extensions/objectBlocks/detect.ts'
 import {
   mountShell,
-  textareaEditor,
+  type MountSourceEditor,
   type MountedEditor,
   type ObjectEditorApi,
   type ShellCheatSheet
@@ -530,7 +530,7 @@ export function mountCardEditor(
   block: ObjectBlock,
   card: CardKindDeclaration,
   inner: string,
-  markup: MountedEditor,
+  markup: MountSourceEditor,
   api: ObjectEditorApi,
   cheatSheet: ShellCheatSheet | undefined,
   replacementFor: (inner: string) => string
@@ -559,7 +559,7 @@ export function mountCardEditor(
     if (!asRows(inner)) {
       return mountShell({
         kind: `${card.label}${design} · lines as written`,
-        editor: textareaEditor(inner),
+        editor: markup(inner),
         foot: `the slide reads these lines as different ${noun}s than rows would show · esc leave · ⌘↵ done`,
         api,
         cheatSheet
@@ -576,8 +576,7 @@ export function mountCardEditor(
     })
   }
   if (card.editor === 'notes') {
-    const editor = textareaEditor(inner, 'oe-markup oe-notes-body')
-    editor.element.setAttribute('aria-label', 'Speaker notes, presenter only')
+    const editor = markup(inner, 'oe-markup oe-notes-body', 'Speaker notes, presenter only')
     editor.element.title = NOTES_PRIVACY_TEXT
     return mountShell({
       kind: block.deckNotes ? `${card.label} · whole talk · Presenter only` : `${card.label} · Presenter only`,
@@ -598,7 +597,7 @@ export function mountCardEditor(
   if (card.editor === 'source') {
     return mountShell({
       kind: `${card.label} · source`,
-      editor: textareaEditor(inner, 'oe-markup oe-embed-source'),
+      editor: markup(inner, 'oe-markup oe-embed-source'),
       foot: 'the lines as written · esc leave · ⌘↵ done',
       api,
       cheatSheet
@@ -606,7 +605,7 @@ export function mountCardEditor(
   }
   return mountShell({
     kind: block.comment ? `${card.label} · ${block.comment.label.replace(/^Comment · /, '')}` : card.label,
-    editor: textareaEditor(inner, 'oe-markup oe-comment-source'),
+    editor: markup(inner, 'oe-markup oe-comment-source'),
     foot: 'the comment stays one block from <!-- to --> · esc leave · ⌘↵ done',
     api,
     cheatSheet

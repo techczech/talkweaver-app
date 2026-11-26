@@ -81,7 +81,7 @@ const CHECKS = [
   'the live service\'s set-up (Set up going live, in Settings) fails: the handout still publishes; the message is sorted and what the tool printed is only behind Details, without the token',
   'the live service ready (Try again, in Settings): the talk\'s and the Run\'s published pages carry its address, and there is no notice',
   'gate: after every publish, no file this app published holds an address on this computer in a position TalkWeaver writes',
-  'a token that can read the site but not publish: the publish fails with its sorted sentence, Details holds the raw text and no token',
+  'a token that can read the site but not publish: the publish fails with its sorted sentence and records the request and Cloudflare code',
   'the Publishing handouts row turns to "The token cannot publish pages" with the permission named, and "Check again" does not turn it back to Ready',
   'once a publish goes up the row is Ready again',
   'not connected again: Publish Run handout and Unpublish answer with what is missing, and the Run keeps its link',
@@ -343,25 +343,35 @@ try {
   const rowBefore = await rowText()
   await closeSettings()
   const refused = await publish()
+  const recorded = await page.evaluate(() => window.tw.publish.history())
+  const refusalRecord = recorded.ok ? recorded.attempts[0] : undefined
   record(9, refused?.success === false && refused.error === PUBLISH_REFUSED && refused.notReady === undefined && typeof refused.details === 'string'
-    && refused.details.includes('[code: 10000]') && !Object.values(TOKENS).some((token) => refused.details.includes(token)) && !refused.error.includes(REPLY_TEXT_MARK)
+    && refused.diagnostic?.status === 403 && refused.diagnostic?.cloudflareErrors?.some(error => error.code === 10000)
+    && refusalRecord?.outcome === 'failed' && refusalRecord.events.at(-1)?.diagnostic?.elapsedMs === refused.diagnostic?.elapsedMs
+    && refusalRecord.events.at(-1)?.diagnostic?.status === refused.diagnostic?.status
+    && !Object.values(TOKENS).some((token) => JSON.stringify(refusalRecord).includes(token)) && !refused.error.includes(REPLY_TEXT_MARK)
     && rowBefore.endsWith('Ready'), `${refused?.error} · Details: ${String(refused?.details).replace(/\s+/g, ' ').slice(0, 160)}`)
 
-  // The same refusal through the window: the failure's "Details" button, in the error tone.
+  // The same refusal through the window: both the notice and the persistent badge reach the sheet.
   await pressPublish()
   await page.waitForFunction(() => [...document.querySelectorAll('[role="status"]')].some((node) => node.textContent.includes('Publish failed')), null, { timeout: 240_000 })
   seenButtons.push(...await toastButtons(page))
   const failedToast = page.locator('[role="status"] > div', { hasText: 'Publish failed' })
   const failedText = (await failedToast.innerText()).replace(/\s+/g, ' ')
   await failedToast.getByRole('button', { name: 'Details' }).click()
-  await page.waitForTimeout(200)
-  const afterDetails = (await toasts.innerText()).replace(/\s+/g, ' ')
+  const failureSheet = page.getByRole('dialog', { name: 'Publish failed' })
+  await failureSheet.getByRole('button', { name: 'Close' }).click()
+  await page.getByRole('button', { name: 'Publish failed', exact: true }).click()
+  await failureSheet.getByText('Nothing on the live site changed.', { exact: false }).waitFor()
+  await failureSheet.getByText('Technical details', { exact: true }).click()
+  const afterDetails = await failureSheet.innerText()
+  await failureSheet.getByRole('button', { name: 'Close' }).click()
   // 16. Every action button seen: named, and readable against its fill and against its toast.
   const tones = [...new Set(seenButtons.map((button) => button.tone))].sort()
   const labels = [...new Set(seenButtons.map((button) => button.label))].sort()
   record(16, seenButtons.length >= 4 && seenButtons.every(readable) && JSON.stringify(tones) === JSON.stringify(['error', 'success', 'warning'])
-    && ['Copy link', 'Details', 'Open Settings'].every((label) => labels.includes(label)) && failedText.includes(PUBLISH_REFUSED) && !failedText.includes('[code:')
-    && afterDetails.length > failedText.length && !Object.values(TOKENS).some((token) => afterDetails.includes(token)),
+    && ['Copy link', 'Details', 'Open Settings'].every((label) => labels.includes(label)) && failedText.includes('Publish failed')
+    && afterDetails.includes('Cloudflare 10000') && afterDetails.includes('HTTP 403') && !Object.values(TOKENS).some((token) => afterDetails.includes(token)),
     seenButtons.map((button) => `${button.tone} "${button.label}" ${button.colour} on ${button.fill} (${button.onFill.toFixed(1)}:1; fill on toast ${button.onToast.toFixed(1)}:1)`).join(' · '))
 
   // 10. The row after the refusal, and after "Check again".

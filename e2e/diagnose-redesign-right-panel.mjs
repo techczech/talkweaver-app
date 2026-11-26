@@ -17,7 +17,8 @@ const source = [
   '---', 'outline_version: 2', 'title: Garden meeting', 'auto_title_slide: false', 'auto_thanks_slide: false',
   'defaults:', '  title: top', '---', '',
   '## In the garden {id=g1}', '', '### Three priorities {id=p1}', '{plainlist}',
-  '', '- Repair the beds', '- Share the tools', '- Welcome new growers', '',
+  // Icon list is only offered when at least one point resolves to an icon.
+  '', '- Repair the beds {icon=lucide:hammer}', '- Share the tools', '- Welcome new growers', '',
   ':::notes', '- PRIVATE: client fee is 40k', ':::', '',
   '### Volunteer shifts {id=p2}', '{table}', '', '| Day | Volunteers |', '| --- | --- |', '| Monday | 4 |', '',
   '### Garden photographs {id=p3}', '', '- The garden at the start of the year', '', '![The beds](beds.png)', ''
@@ -113,7 +114,20 @@ try {
   await inspector.locator('.tw-right-who').getByText('Three priorities', { exact: true }).waitFor()
   const designs = inspector.locator('[data-section="designs"]')
   const iconList = designs.getByRole('button', { name: /^Icon list\b/ })
-  await iconList.locator('img').waitFor()
+  await designs.waitFor()
+  // The compact Designs list checks only enough candidates to fill its visible slots.
+  const showAll = designs.getByRole('button', { name: /^Show all(?: \d+)? designs$/ })
+  if (await showAll.isVisible()) await showAll.click()
+  await iconList.waitFor().catch(async error => {
+    const visibleDesigns = await designs.locator('.tw-right-picture > strong').allTextContents()
+    throw new Error(`Icon list was not offered. Visible designs: ${visibleDesigns.join(', ')}`, { cause: error })
+  })
+  const image = iconList.locator('img')
+  await image.waitFor()
+  assert.ok(await image.evaluate(async img => {
+    await img.decode()
+    return img.naturalWidth > 0
+  }), 'the Icon list preview must decode')
   const stage = page.locator('.workspace-slide-stage iframe')
   await stage.waitFor()
   const beforeTry = await stage.getAttribute('src')
@@ -177,6 +191,7 @@ try {
   assert.equal(disk(), changed, 'reading and drawing the disk review makes no write')
   await review.getByRole('button', { name: 'Put it back', exact: true }).click()
   await until(() => disk() === saved, 'Put it back restores the reviewed slide’s prior bytes')
+  await page.locator('.tw-disk-chip-btn').waitFor({ state: 'hidden' })
   writeFileSync(outline, changed)
   await returnToTalk()
   await review.waitFor({ timeout: 60_000 })

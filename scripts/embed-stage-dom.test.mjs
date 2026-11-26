@@ -170,7 +170,7 @@ try {
   await placed('back on the slide')
   for (const p of [presenter, audience]) assert.equal(await p.evaluate(() => window.savedFrame === (document.querySelector('#currentPreview iframe.live-sim-frame') || document.querySelector('.slide.active figure.slide-embed iframe'))), true, 'same frame after the slide is put back')
   for (const p of [presenter, audience]) assert.equal(await p.evaluate(() => window.frameLoads), 0, 'the page frame was not reloaded on the way back')
-  await presenter.keyboard.press('Meta+Shift+p')
+  await presenter.keyboard.press('ControlOrMeta+Shift+p')
   await presenter.locator('#presenterCommandSearch').fill('Embedded page: full screen')
   await presenter.keyboard.press('Enter')
   await audience.waitForSelector('.embed-full-screen')

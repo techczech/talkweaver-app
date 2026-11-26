@@ -121,7 +121,7 @@
 }
 .tw-video-marker-row input:focus { outline: 1px solid var(--accent); }
 .tw-video-marker-message { color: var(--muted); margin: 6px 0; }
-.tw-video-marker-rows small { display: block; margin: 0 0 5px 24px; color: var(--crimson); }
+.tw-video-marker-rows li small { display: block; margin: 0 0 5px 24px; color: var(--crimson); font-size: 12px; }
 .tw-video-marker-rows [data-past-end] .tw-marker-key { color: var(--crimson); cursor: default; }
 
 .tw-video-marker-row kbd {

@@ -1,7 +1,7 @@
 import { galleryIdentity, type GalleryTalk } from '../../../../shared/vault-gallery'
 import { plainTalkTitle } from '../../../../shared/plain-title'
 import type { InventoryEntry, InventoryResult } from '../../../../shared/vault-gallery-storage'
-import { browseRows, folderRole, inspectOnlyPath, knownTalkCount, leafName, parentOf, type BrowseScope } from '../../../../shared/vault-gallery-browse'
+import { browseRows, folderRole, inspectOnlyPath, knownTalkCount, leafName, parentOf, talkDirectory, type BrowseScope } from '../../../../shared/vault-gallery-browse'
 
 /** One selectable thing in the file list: a known talk, a folder, or an inspect-only stored entry. */
 export type GalleryItem =
@@ -29,9 +29,9 @@ export const UI = {
 export function buildItems(i: { talks: GalleryTalk[]; folders: string[]; scope: BrowseScope; query: string; listing: InventoryResult | null; search: InventoryResult | null; showSystem: boolean }): { items: GalleryItem[]; flat: boolean } {
   const { talks, scope, query, listing, search, showSystem } = i
   const folder = scope.kind === 'folder' ? scope.path : ''
-  const base = browseRows(talks, i.folders.filter(f => !inspectOnlyPath(f)), scope, query)
+  const base = browseRows(talks, i.folders.filter(f => !inspectOnlyPath(f)), scope, query, showSystem)
   const needle = query.trim().toLocaleLowerCase()
-  const talkDirs = new Set(talks.map(t => t.relativeOutline.split('/').slice(0, -1).join('/'))), outlines = new Set(talks.map(t => t.relativeOutline))
+  const talkDirs = new Set(talks.map(talkDirectory)), outlines = new Set(talks.map(t => t.relativeOutline))
   const within = (path: string) => !folder || path === folder || path.startsWith(folder + '/')
   const direct = listing?.relativePath === folder ? listing.entries.filter(e => parentOf(e.relativePath) === folder) : []
   // Without a query, All talks lists talks only: the disk listing of the root is for the folder view.
@@ -44,7 +44,7 @@ export function buildItems(i: { talks: GalleryTalk[]; folders: string[]; scope: 
     const role = isDirectoryKind(e.kind) ? folderRole(e.relativePath) : 'ordinary'
     if (e.kind === 'folder' && role === 'ordinary') {
       seen.add(e.relativePath)
-      folderItems.push({ kind: 'folder', key: folderKey(e.relativePath), name: leafName(e.relativePath), path: e.relativePath, count: knownTalkCount(talks, e.relativePath) })
+      folderItems.push({ kind: 'folder', key: folderKey(e.relativePath), name: leafName(e.relativePath), path: e.relativePath, count: knownTalkCount(talks, e.relativePath, showSystem) })
     } else entries.set(e.relativePath, role === 'ordinary' ? e : { ...e, kind: role })
   }
   // A registry folder the listing has not delivered yet is still a system or assets folder, not an ordinary one.

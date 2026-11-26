@@ -28,7 +28,7 @@ installMock()
 window.twMacInset = true
 window.setSearchBinding = keys => setOverride('sidebar.talks', keys)
 const year = new Date().getFullYear()
-const root = '/Users/you/Documents/TalkWeaver'
+const root = '/fixture-home/example-user/Documents/TalkWeaver'
 const otherRoot = '/mock/other'
 const vaults = [root, otherRoot].map((root, order) => ({
   id: 'garden-' + order, root, order, open: true, name: order ? 'School talks' : 'Garden talks',
@@ -119,6 +119,12 @@ createRoot(document.getElementById('root')).render(<WindowChrome><App /></Window
   await page.goto(url)
   await open.getByText('Recent talks', { exact: true }).waitFor()
   await row('Community garden update').waitFor()
+  const title = page.locator('.workspace-toolbar .workspace-title')
+  const inset = await title.evaluate(el => ({
+    left: el.getBoundingClientRect().left,
+    reserved: Number.parseFloat(getComputedStyle(el).getPropertyValue('--tw-native-fallback-inline'))
+  }))
+  assert.ok(inset.left >= inset.reserved, 'the welcome title uses the editor’s horizontal window-controls inset')
   assert.equal(await open.locator('tbody tr').count(), 8)
   assert.equal(await focus(search), true)
   await page.evaluate(() => window.setSearchBinding('Mod-Shift-y'))

@@ -120,7 +120,7 @@ window.jumpEditor = excerpt => {
   await page.route(/^https?:/, route => route.abort())
   await page.goto(pathToFileURL(html).href)
   await page.evaluate(props => window.mountFixture(props), { path: dir, outlinePath, text: source, rows })
-  const outline = page.locator('[data-view="outline"] .cm-scroller')
+  const outline = page.locator('[data-view="outline"] .editor-container > .cm-editor > .cm-scroller')
   const slide = page.locator('.workspace-slide-view')
   const right = page.getByTestId('sidebar-toggle')
   const outlineRow = name => page.locator('[data-slides-organizer]').getByRole('button', { name })

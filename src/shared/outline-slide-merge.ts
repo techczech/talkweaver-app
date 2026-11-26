@@ -5,6 +5,8 @@ export interface SlideMergeReviewRow extends SlideMergeRow {
   sections: Record<'base' | 'mine' | 'disk', string | null>
 }
 
+export const WHOLE_TALK_MERGE_KEY = 'whole-talk'
+
 export interface SlideMergeReview extends Pick<SlideMergePlan, 'details' | 'order' | 'orders' | 'duplicateIds'> {
   rows: readonly SlideMergeReviewRow[]
   /** Opaque, window-bound. Only the most recent review for the current editor load can apply. */
@@ -12,6 +14,8 @@ export interface SlideMergeReview extends Pick<SlideMergePlan, 'details' | 'orde
   fileName: string
   lastSavedAt: number
   diskChangedAt: number
+  diskHash: string
+  slideCounts: { mine: number; disk: number }
   /** Exact UTF-8 outline text for the three source panes. */
   sources: { base: string; mine: string; disk: string }
   unchanged: number
@@ -42,6 +46,11 @@ export function summarizeSlideMerge(review: SlideMergeReview, choices: SlideMerg
   }
   const selected = (row: { key: string; defaultChoice?: 'mine' | 'disk' }) =>
     Object.hasOwn(choices, row.key) ? choices[row.key] : row.defaultChoice
+  const wholeTalk = Object.hasOwn(choices, WHOLE_TALK_MERGE_KEY) && choices[WHOLE_TALK_MERGE_KEY]
+  if (wholeTalk === 'mine' || wholeTalk === 'disk') {
+    const total = review.slideCounts[wholeTalk]
+    return { ...summary, unchanged: 0, [wholeTalk]: total, total }
+  }
   for (const row of review.rows) {
     const choice = selected(row)
     if (!choice || (choice === 'both' && (!row.mine || !row.disk))) {

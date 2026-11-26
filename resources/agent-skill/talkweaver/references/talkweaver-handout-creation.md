@@ -11,7 +11,7 @@
 
 ## Build locally
 
-Discover the installed app's export/build UI or connected tool. The app's export operations are not shell commands, and no command-line handout builder exists. Do not invent a bridge. A separately verified compiler CLI is usable only with its documented handout mode and compatible source format.
+Discover the installed app's export/build UI or connected tool for an exported file. Use the publish dry run to check a Talk's publishing build. A separately verified compiler CLI is usable only with its documented handout mode and compatible source format.
 
 Current Talk export writes `dist/<slug>-handout.html` beside the outline and returns its path. Run builds return the actual output path plus selected `slideIds` and `missing` references; use those results rather than guessing the filename. Check missing references and inspect the generated output before claiming the requested cut is complete. Do not hand-edit generated HTML.
 
@@ -21,6 +21,6 @@ Verify the file exists and opens, title/event/date match, selected slides and or
 
 ## Publish when authorised
 
-Publication is a separate operation. Use the configured existing Talk or Run publishing surface only for the authorised destination and content. Inspect the complete candidate before publishing. Do not add credentials, change hosting/routing, create a new deployment project, or publish to obtain a local preview.
+Publish only when the owner asks. For a Talk, use `talkweaver publish <talk path or id>` against its configured site, with `--dry-run` to check the build first and `--status` to inspect earlier attempts and diagnostics. For a Run, use the app's Run publishing surface. Inspect the intended candidate before publishing. Do not add credentials, change hosting or routing, create a new deployment project or publish to obtain a local preview.
 
 Let the app manage publication metadata and URLs. Read back the returned live page, download and relevant links before claiming delivery. A local file URL or local QR code is not a phone-accessible public URL. Distinguish built locally, visually checked, published and live-verified; do not infer one from another.

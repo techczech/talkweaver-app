@@ -3,6 +3,10 @@ import { StateEffect, type EditorState, type Transaction } from '@codemirror/sta
 import { normalizeOutlineMergeText } from '../../../shared/outline-merge.ts'
 import { replaceDocTransaction } from './replaceDocTransaction.ts'
 
+export function isSlideMergeReviewOpen(): boolean {
+  return typeof document !== 'undefined' && document.querySelector('dialog.merge-cards:modal') !== null
+}
+
 const unchangedMerge = StateEffect.define<null>()
 export const slideMergeHistory = invertedEffects.of(transaction =>
   transaction.effects.some(effect => effect.is(unchangedMerge)) ? [unchangedMerge.of(null)] : [])

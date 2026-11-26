@@ -83,6 +83,8 @@ export function createVideoSeekControls({ icon, shortcut, fullscreen, markersFor
       bar.style.width = video.offsetWidth + 'px';
       bar.style.borderBottomLeftRadius = style?.borderBottomLeftRadius || '';
       bar.style.borderBottomRightRadius = style?.borderBottomRightRadius || '';
+      const scale = Number(video.ownerDocument.documentElement.style.getPropertyValue('--tw-video-preview-scale')) || 1;
+      bar.toggleAttribute('data-compact', bar.clientWidth * scale < 420);
       ticks.fitLabels();
     }
     function syncFullscreen() {

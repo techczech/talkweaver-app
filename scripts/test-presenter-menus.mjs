@@ -394,7 +394,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
     menu: 'presenterMenuLive', item: 'liveCopyVenueLink', old: async (p) => { await p.evaluate(() => { document.getElementById('liveGoPanel').hidden = false }); await p.click('#liveVenueCopy') }, fields: ['clipboard']
   })
   await compare('Show talk QR code', { setup: (p) => goLive(p).then(() => p.keyboard.press('Escape')), menu: 'presenterMenuLive', item: 'liveTalkQr', old: (p) => p.keyboard.press('u'), fields: ['talkQr'] })
-  await compare('Compose instant slide', { menu: 'presenterMenuLive', item: 'presenterInstantButton', old: (p) => p.keyboard.press('Meta+Alt+KeyI'), fields: ['instantCompose'] })
+  await compare('Compose instant slide', { menu: 'presenterMenuLive', item: 'presenterInstantButton', old: (p) => p.keyboard.press('ControlOrMeta+Alt+KeyI'), fields: ['instantCompose'] })
   await compare('Instant slide from clipboard', {
     setup: (p) => p.evaluate(() => { window.__clipboardText = 'https://example.org/agents' }),
     menu: 'presenterMenuLive', item: 'liveInstantPaste',
@@ -463,7 +463,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
   }
   await compare('Clear highlights', { setup: highlightSomething, menu: 'presenterMenuView', item: 'viewHighlightClear', old: async (p) => { await p.click('#presenterMore'); await p.click('#presenterHighlightClear') }, fields: ['highlightClear'] })
   await compare('Keyboard shortcuts', { menu: 'presenterMenuView', item: 'viewShortcuts', old: (p) => p.keyboard.press('?'), fields: ['shortcuts'] })
-  await compare('All commands', { menu: 'presenterMenuView', item: 'viewCommands', old: (p) => p.keyboard.press('Meta+Shift+P'), fields: ['palette'] })
+  await compare('All commands', { menu: 'presenterMenuView', item: 'viewCommands', old: (p) => p.keyboard.press('ControlOrMeta+Shift+P'), fields: ['palette'] })
   await compare('Notes placement and scrolling', { menu: 'presenterMenuView', item: 'notesPlacementBtn', old: (p) => p.evaluate(() => document.getElementById('notesPlacementBtn').click()), fields: ['notesMenu'] })
 
   // ── 3. Fit at 1280x800 and 1440x900, and c8 ───────────────────────────────────────────────

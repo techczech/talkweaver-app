@@ -30,14 +30,15 @@ export function presenterChord(event) {
   return normalisePresenterChord((event.ctrlKey ? '⌃' : '') + (event.altKey ? '⌥' : '') + (event.metaKey ? '⌘' : '')
     + (event.shiftKey ? '⇧' : '') + (key === ' ' ? 'Space' : key || ''));
 }
-export function presenterCodeChord(code) {
+export function presenterCodeChord(code, modIsMeta = true) {
   if (code === '-') return '-';
   const parts = code.split('-');
   let key = parts.pop();
   if (key === 'BracketLeft') key = '[';
   if (key === 'BracketRight') key = ']';
-  return normalisePresenterChord((parts.includes('Ctrl') ? '⌃' : '') + (parts.includes('Alt') ? '⌥' : '')
-    + (parts.includes('Mod') || parts.includes('Meta') ? '⌘' : '')
+  const mod = parts.includes('Mod');
+  return normalisePresenterChord((parts.includes('Ctrl') || (mod && !modIsMeta) ? '⌃' : '')
+    + (parts.includes('Alt') ? '⌥' : '') + (parts.includes('Meta') || (mod && modIsMeta) ? '⌘' : '')
     + (parts.includes('Shift') ? '⇧' : '') + key);
 }
 export function createPresenterShortcuts({ document, storage, commands, onChange }) {

@@ -602,13 +602,13 @@ try {
     await clickMore(page, `${size} sidebar`, Math.min(pure.notesBandStep(b.body.clientHeight, b.lineHeight), b.body.scrollHeight - b.body.clientHeight))
 
     // ── The command palette: a placement each, faster and slower.
-    await page.keyboard.press('Meta+Shift+P')
+    await page.keyboard.press('ControlOrMeta+Shift+P')
     await page.fill('#presenterCommandSearch', 'notes placement')
     assert.equal((await page.$$('#presenterCommandResults button')).length, 5, 'the palette lists five placements')
     await page.click('#palette-notes-top-band')
     await settle(page, 250)
     assert.equal((await measure(page)).placement, 'top-band', 'the palette entry sets the placement')
-    await page.keyboard.press('Meta+Shift+P')
+    await page.keyboard.press('ControlOrMeta+Shift+P')
     await page.fill('#presenterCommandSearch', 'notes scroll')
     assert.equal((await page.$$('#presenterCommandResults button')).length, 4, 'the palette offers by hand, automatically, faster and slower')
     await page.click('#palette-notes-faster')

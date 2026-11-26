@@ -6,8 +6,9 @@ import { buildPerSlideProjections } from '../compiler/scripts/lib/10-projections
 // Layout content verbs (ADR-0032; ticket 02): pure functions over outline text.
 import { strict as assert } from 'node:assert'
 import {
-  canTakeLayout, clearPointRow, LayoutVerbError, previewLayout, resetLayoutOptions, setLayout, setLayoutOption, setLayoutOptions, suggestLayouts
+  canTakeLayout, clearPointRow, LayoutVerbError, previewLayout, reconcileSlideDesign, resetLayoutOptions, setLayout, setLayoutOption, setLayoutOptions, suggestLayouts
 } from '../src/shared/layout-verbs.ts'
+import { compilerFactsOf } from '../src/shared/plain-view-compiler-facts.ts'
 import { LAYOUTS } from '../src/shared/layout-registry/entries.ts'
 import { deckCommitContext, pictureSideForSlide } from '../src/shared/deck-frame.ts'
 import { logicalTriggerBlockAfterHeading } from '../src/shared/trigger-line.ts'
@@ -38,6 +39,29 @@ title: Intern to Toolmaker
 
 `
 const names = (list) => list.map((s) => s.layout)
+
+{
+  const cases = [
+    ['stepped Cards', 'carousel',
+      '### Cards\n{id=slide}{cards}{cards=stepped}{icons}\n\n- One\n- Two\n'],
+    ['Cards section with children', 'section-title',
+      '## Cards\n{id=slide}{cards}{icons}\n\n#### Child\n{id=child}\n\n- One\n'],
+    ['competing layout tags', 'cards',
+      '## Competing {statement}\n{id=slide}{cards}{contrast=tint}\n\n- One\n- Two\n'],
+  ]
+  const options = [{ group: 'font-title', token: 'font-title=l' }]
+  for (const [label, drawnLayout, doc] of cases) {
+    const facts = compilerFactsOf(doc).slideLayouts.get(0)
+    assert.equal(facts.decision.layout, 'cards', label + ' writes Cards')
+    assert.equal(facts.final.layout, drawnLayout, label + ' uses the expected compiled layout')
+    const before = reconcileSlideDesign(doc, 'slide', drawnLayout, undefined, options)
+    assert.equal(before, doc, label + ' keeps its authored attributes before an option write')
+    const after = setLayoutOptions(doc, 'slide', options, drawnLayout).outline
+    assert.match(after, /\{font-title=l\}/, label + ' writes the new title size')
+    assert.equal(reconcileSlideDesign(after, 'slide', drawnLayout, undefined, options), after,
+      label + ' keeps its authored attributes after an option write')
+  }
+}
 
 {
   const mixed = '### A picture and points\n{id=family}{list-visual}{font-title=l}\n\n- One\n- Two\n\n![Picture](sample.png)\n'

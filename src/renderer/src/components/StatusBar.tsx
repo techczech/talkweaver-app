@@ -2,6 +2,7 @@ import { AgentSkillMark } from './AgentSkillOffer'
 import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { MapPin } from 'lucide-react'
 import type { Place } from '../../../shared/place.ts'
+import { publishDiagnosticTitle, type PublishDiagnostic } from '../../../shared/publish-diagnostic'
 import { placeChipView } from './placeChipModel'
 import { APP_VERSION } from '../buildInfo'
 import { formatTalkDates, type TalkDates } from '../lib/talkFacts'
@@ -25,6 +26,9 @@ interface Props {
   compiling?: boolean
   buildStatus?: 'idle' | 'building' | 'done' | 'error'
   buildPath?: string | null
+  /** What the chip says when `buildStatus` is 'error' (a failed publish is not a failed build). */
+  buildErrorLabel?: string
+  publishIssue?: { diagnostic: PublishDiagnostic; onClick: () => void } | null
   /** Created/edited/delivered for the active talk (T29) — nothing renders until loaded. */
   dates?: TalkDates | null
   /** Version-only bar for the no-talk-open empty state. */
@@ -71,6 +75,8 @@ export default function StatusBar({
   compiling = false,
   buildStatus = 'idle',
   buildPath = null,
+  buildErrorLabel = 'Build failed',
+  publishIssue = null,
   dates = null,
   minimal = false,
   shared = null,
@@ -134,7 +140,7 @@ export default function StatusBar({
             : `Built ✓ ${basename(buildPath)}`
           : 'Built'
         : buildStatus === 'error'
-          ? 'Build failed'
+          ? buildErrorLabel
           : ''
 
   const buildIsClickable = buildStatus === 'done' && buildPath !== null
@@ -208,14 +214,14 @@ export default function StatusBar({
         )}
       </div>
 
-      {(showBuild || (!minimal && (shared || runChip))) && (
+      {(showBuild || publishIssue || (!minimal && (shared || runChip))) && (
         <div style={styles.right}>
-          {!minimal && runChip && <span style={{ marginRight: shared || showBuild ? '6px' : 0, display: 'inline-flex' }}>{runChip}</span>}
+          {!minimal && runChip && <span style={{ marginRight: shared || showBuild || publishIssue ? '6px' : 0, display: 'inline-flex' }}>{runChip}</span>}
           {shared && !minimal && (
             <button
               type="button"
               onClick={shared.onClick}
-              style={{ ...styles.chip, ...styles.chipBtn, ...(shared.ended ? styles.chipEnded : shared.paused ? styles.chipPaused : shared.error ? styles.chipError : styles.chipShared), marginRight: showBuild ? '6px' : 0 }}
+              style={{ ...styles.chip, ...styles.chipBtn, ...(shared.ended ? styles.chipEnded : shared.paused ? styles.chipPaused : shared.error ? styles.chipError : styles.chipShared), marginRight: showBuild || publishIssue ? '6px' : 0 }}
               title={shared.title}
               data-testid="status-shared"
               data-paused={shared.paused ? 'true' : undefined}
@@ -224,6 +230,11 @@ export default function StatusBar({
               {shared.label}
             </button>
           )}
+          {publishIssue && <button type="button" onClick={publishIssue.onClick} aria-haspopup="dialog"
+            style={{ ...styles.chip, ...styles.chipBtn, ...(publishIssue.diagnostic.kind === 'cancelled' ? styles.chipEnded : styles.chipError),
+              marginRight: showBuild ? '6px' : 0 }}>
+            {publishDiagnosticTitle(publishIssue.diagnostic)}
+          </button>}
           {!showBuild ? null : buildIsClickable ? (
             <button
               onClick={handleBuildClick}

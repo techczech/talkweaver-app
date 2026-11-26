@@ -43,7 +43,7 @@ export default function GalleryTree(p: Props) {
       {p.catalogue.vaults.map(v => {
         const state = stateOf(v.id), here = v.id === p.vaultId, open = here && p.expandedVaults.has(v.id) && state === 'open'
         const folders = here ? folderPaths(v.talks, p.foldersByVault[v.id] ?? []).filter(f => p.showSystem || !inspectOnlyPath(f)) : []
-        const nodes = open ? treeNodes(v.talks, folders, p.expandedFolders) : []
+        const nodes = open ? treeNodes(v.talks, folders, p.expandedFolders, p.showSystem) : []
         return <div key={v.id} role="group" aria-label={v.name}>
           <div className="vg-trrow">
             <button role="treeitem" aria-level={1} aria-expanded={state === 'open' ? open : undefined} aria-selected={here && p.browsing && p.scope.kind === 'folder' && p.scope.path === ''} className={`vg-tr ${here && p.browsing && p.scope.kind === 'folder' && !p.scope.path ? 'here' : ''} ${state !== 'open' ? 'dim' : ''}`} onClick={() => p.chooseVault(v.id)} onKeyDown={e => treeKey(e, state === 'open', open, () => p.toggleVault(v.id))}>

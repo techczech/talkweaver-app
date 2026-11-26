@@ -21,6 +21,7 @@ import { createCloudflareConnection } from '../src/main/cloudflare-connection.ts
 import { REGISTRY_ORIGIN_UNAVAILABLE, REGISTRY_ORIGIN_UNWRITABLE, SITE_BOOTSTRAP_CHANGED, SITE_BOOTSTRAP_REFUSED, createHandoutPublishing } from '../src/main/handout-publishing.ts'
 import { readRegistryStrict, registryOrigin, writeRegistry } from '../src/main/registry-origin.ts'
 import { createHash } from 'node:crypto'
+import { publishDiagnosticMessage, redactPublishText } from '../src/shared/publish-diagnostic.ts'
 import { publicationBinding } from '../src/main/publication-preservation.ts'
 import { RUN_FOLDER_UNPROVEN, legacyRunUnproven, runUnpublishJob } from '../src/main/run-unpublish.ts'
 import { normaliseRun } from '../src/main/runs.ts'
@@ -858,7 +859,270 @@ test('a real compiler preflight records the media review before any upload', asy
   assert.equal(w.deploymentsPosted().length,0)
   const events=history.list()[0].events
   assert.ok(events.some(event=>event.stage==='files'&&event.files===1&&event.missing===1))
-  assert.equal(history.list()[0].outcome,'stopped')
+  assert.equal(history.list()[0].outcome,'failed')
+})
+
+for (const scenario of [
+  { name: 'token failure', step: 'token', path: '/upload-token', status: 401, count: 1 },
+  { name: 'check-missing timeout', step: 'check-missing', path: '/pages/assets/check-missing', count: 5 },
+  { name: 'asset HTTP 400', step: 'upload', path: '/pages/assets/upload', status: 400 },
+  { name: 'HTTP 503 recovers', path: '/pages/assets/check-missing', status: 503, count: 2, delay: 1000 },
+  { name: '429 honours Retry-After', path: '/pages/assets/check-missing', status: 429, count: 2, delay: 8000 },
+  { name: 'deployment POST failure', step: 'deployment', path: '/deployments', status: 400, count: 1 },
+  { name: 'user cancel', step: 'check-missing', path: '/pages/assets/check-missing', count: 1, cancel: true },
+  { name: 'network intermediary 403', step: 'upload', path: '/pages/assets/upload', status: 403, html: true },
+]) {
+  test(`publish diagnostic: ${scenario.name}`, async t => {
+    const { createPublishHistory } = await import('../src/main/publish-history.ts')
+    const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+    const path = join(w.root, 'publishing-history.json')
+    const history = createPublishHistory(path)
+    w.ports.observe = history.record
+    const progress = []
+    const backoff = []
+    const transport = w.ports.pages()
+    w.ports.pages = () => ({ ...transport, testRequestMs: 150, sleep: async ms => backoff.push(ms) })
+    const controller = new AbortController()
+    const fixtureKey = ['fakeKey', '1234abcd'.repeat(4)].join('')
+    const fixtureJwt = ['eyJ0eXAiOiJKV1QifQ', 'bW9ja3BheWxvYWQ', 'bW9ja3NpZ25hdHVyZQ'].join('.')
+    let calls = 0
+    w.api.model.answer = request => {
+      if (!request.path.endsWith(scenario.path) || (scenario.step === 'deployment' && request.method !== 'POST')) return null
+      calls++
+      if (!scenario.status) {
+        if (scenario.cancel) controller.abort()
+        return { status: 200, wait: new Promise(() => {}), body: {} }
+      }
+      if (scenario.delay && calls > 1) return null
+      if (scenario.html) return { status: 403, contentType: 'text/html', body: '<html>Sign into the venue network</html>' }
+      return {
+        status: scenario.status,
+        ...(scenario.status === 429 ? { headers: { 'Retry-After': '8' } } : {}),
+        body: { success: false, result: null, errors: [{
+          code: 8000096,
+          message: `Fixture refused. Authorization: Bearer ${TOKEN}\nAPI key=${fixtureKey}; JWT ${fixtureJwt}`,
+        }] },
+      }
+    }
+    const result = await w.service.publish({
+      ...w.talkJob('talk-a', { 'index.html': 'A', 'two.html': 'B' }), signal: controller.signal,
+      onProgress: event => progress.push(event),
+      sourceOutline: { path: join(w.root, 'test-outline.md'), key: '1:2' },
+    })
+    const row = history.list()[0]
+    if (scenario.delay) {
+      assert.equal(result.ok, true)
+      assert.equal(row.outcome, 'published')
+      assert.equal(w.deploymentsPosted().length, 1)
+      assert.ok(backoff.includes(scenario.delay))
+      assert.ok(progress.some(event => event.retry?.delayMs === scenario.delay && event.retry.nextAttempt === 2))
+    } else {
+      assert.equal(result.ok, false)
+      assert.equal(row.outcome, scenario.cancel ? 'cancelled' : 'failed')
+      const diagnostic = row.events.at(-1).diagnostic
+      assert.deepEqual(result.diagnostic, diagnostic)
+      assert.equal(diagnostic.step, scenario.step)
+      assert.equal(diagnostic.attempt, scenario.count === 5 ? 5 : 1)
+      assert.equal(diagnostic.kind, scenario.cancel ? 'cancelled' : scenario.status ? 'http' : 'timeout')
+      assert.equal(diagnostic.status, scenario.status)
+      assert.ok(diagnostic.elapsedMs >= 0)
+      assert.equal(diagnostic.filesAcknowledged, scenario.step === 'deployment' ? diagnostic.filesTotal : 0)
+      if (scenario.status && !scenario.html) {
+        assert.equal(diagnostic.cloudflareErrors[0].code, 8000096)
+        assert.ok(diagnostic.cloudflareErrors[0].message.startsWith('Fixture refused.'))
+        assert.doesNotMatch(diagnostic.cloudflareErrors[0].message, /Authorization/i)
+      }
+      assert.equal(diagnostic.untouched, true)
+      assert.match(publishDiagnosticMessage(diagnostic), /Nothing on the live site changed\./)
+      if (scenario.html) {
+        assert.equal(diagnostic.signIn, undefined)
+        assert.equal(diagnostic.viaIntermediary, true)
+        assert.match(publishDiagnosticMessage(diagnostic), /A network in between refused the upload/)
+        assert.doesNotMatch(publishDiagnosticMessage(diagnostic), /credentials|token|<html>/)
+      }
+      assert.equal(w.deploymentsPosted().length, scenario.step === 'deployment' ? 1 : 0)
+      for (const fixture of [TOKEN, fixtureKey, fixtureJwt]) {
+        assert.equal(readFileSync(path, 'utf8').includes(fixture), false)
+        assert.equal(JSON.stringify(result).includes(fixture), false)
+      }
+    }
+    if (scenario.step === 'upload') {
+      assert.ok(row.events.at(-1).diagnostic.batch >= 1)
+      assert.ok(row.events.at(-1).diagnostic.batches > 1)
+      // Concurrent batches may already have reached the stub. Each can be sent only once.
+      const hashes = w.api.requests.filter(request => request.path === scenario.path).flatMap(request => JSON.parse(request.body).map(file => file.key))
+      assert.ok(hashes.length >= 1)
+      assert.equal(new Set(hashes).size, hashes.length)
+      assert.deepEqual(backoff, [])
+    } else assert.equal(calls, scenario.count)
+    if (process.env.TW_PUBLISH_DIAGNOSTIC_FIXTURES === '1') {
+      console.log('DIAGNOSTIC_FIXTURE ' + JSON.stringify({ name: scenario.name, row, retry: progress.find(event => event.retry) }))
+    }
+  })
+}
+
+test('a reset during a multi-file upload rechecks its hashes and only sends missing files individually', async t => {
+  let reset = false
+  let stub
+  let truncatedBytes
+  const largest = 'A'.repeat(300_000)
+  const held = hashOf(largest, '/talk-a/one.html')
+  const w = await world(t, {
+    record: { registry: {}, shortLinks: false, headers: '' },
+    stub: { dropUploadAtBytes: contentLength => {
+      if (!reset && contentLength > 400_000) {
+        reset = true
+        truncatedBytes = contentLength
+        // The provider may already have committed one hash even though the request's reply never arrived.
+        stub.model.assets.set(held, { bytes: Buffer.from(largest), contentType: 'text/html' })
+        return 65_536
+      }
+    } },
+  })
+  stub = w.api
+  const progress = []
+  const result = await w.service.publish({
+    ...w.talkJob('talk-a', { 'one.html': largest, 'two.html': 'B'.repeat(200_000), 'three.html': 'C'.repeat(100_000), 'index.html': 'D'.repeat(10_000) }),
+    onProgress: event => progress.push(event),
+  })
+  assert.equal(result.ok, true)
+  assert.ok(reset && truncatedBytes > 400_000)
+  const checkMissing = w.api.requests.filter(request => request.path === '/pages/assets/check-missing')
+  assert.equal(checkMissing.length, 2)
+  const rechecked = JSON.parse(checkMissing.at(-1).body).hashes
+  assert.ok(rechecked.length > 1 && rechecked.includes(held))
+  const uploaded = w.api.requests.filter(request => request.path === '/pages/assets/upload')
+    .map(request => JSON.parse(request.body))
+  assert.ok(uploaded.every(batch => !batch.some(file => file.key === held)))
+  for (const hash of rechecked.filter(hash => hash !== held)) {
+    assert.ok(uploaded.some(batch => batch.length === 1 && batch[0].key === hash))
+  }
+  const latest = progress.at(-1)
+  assert.equal(latest.filesAcknowledged, latest.filesTotal)
+  assert.ok(latest.filesSent < latest.filesAcknowledged)
+  assert.ok(latest.bytesSent > 300_000)
+  assert.equal(w.deploymentsPosted().length, 1)
+})
+
+// Based on test 6b in the original fix/publish-fable draft.
+test('a persistent bad gateway is recorded at the final attempt without one more backoff', async t => {
+  const { createPublishHistory } = await import('../src/main/publish-history.ts')
+  const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+  const history = createPublishHistory(join(w.root, 'publishing-history.json'))
+  w.ports.observe = history.record
+  const backoff = []
+  const transport = w.ports.pages()
+  w.ports.pages = () => ({ ...transport, sleep: async ms => backoff.push(ms) })
+  w.api.model.answer = request => request.path === '/pages/assets/upload' ? { status: 502, body: '<html>bad gateway</html>' } : null
+  const result = await w.service.publish(w.talkJob('talk-a', { 'index.html': 'A' }))
+  assert.equal(result.ok, false)
+  const [attempt] = history.list()
+  assert.equal(attempt.outcome, 'failed')
+  assert.equal(attempt.events.at(-1).diagnostic.step, 'upload')
+  assert.equal(attempt.events.at(-1).diagnostic.status, 502)
+  assert.equal(attempt.events.at(-1).diagnostic.attempt, 5)
+  assert.ok(!backoff.includes(16_000), 'no final backoff after attempt 5')
+  assert.ok(!attempt.events.some(event => event.stage === 'uploaded'))
+})
+
+test('cancellation is closed before the deployment request can be sent', async t => {
+  const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+  const controller = new AbortController()
+  const dispatch = []
+  const result = await w.service.publish({
+    ...w.talkJob('talk-a', { 'index.html': 'A' }), signal: controller.signal,
+    onProgress: event => {
+      if (event.step !== 'deployment') return
+      dispatch.push(event.canCancel)
+      controller.abort()
+    },
+  })
+  assert.deepEqual(dispatch, [false])
+  assert.equal(result.ok, true)
+  assert.equal(w.deploymentsPosted().length, 1)
+})
+
+test('retry refuses a changed publishing destination before any upload', async t => {
+  const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+  const result = await w.service.publish({
+    ...w.talkJob('talk-a', { 'index.html': 'A' }), expectedSite: `cf-pages:${ACCOUNT}:other-site`,
+  })
+  assert.equal(result.ok, false)
+  assert.match(result.diagnostic.cause, /publishing destination has changed/)
+  assert.equal(result.diagnostic.untouched, true)
+  assert.equal(w.api.requests.filter(request => request.path.endsWith('/upload-token')).length, 0)
+  assert.equal(w.deploymentsPosted().length, 0)
+})
+
+test('history still reads a stopped attempt saved by an older app', async t => {
+  const { createPublishHistory } = await import('../src/main/publish-history.ts')
+  const w = await world(t)
+  const path = join(w.root, 'publishing-history.json')
+  const at = '2026-11-26T13:22:00.000Z'
+  const row = {
+    id: 'older-attempt', startedAt: at, computer: 'Air', appVersion: '0.45.3-alpha.7', entry: 'talk', outcome: 'stopped',
+    events: [{ attemptId: 'older-attempt', at, computer: 'Air', appVersion: '0.45.3-alpha.7', entry: 'talk', stage: 'finished', outcome: 'stopped' }],
+  }
+  writeFileSync(path, JSON.stringify({ version: 1, attempts: [row] }))
+  assert.deepEqual(createPublishHistory(path).list(), [row])
+})
+
+test('diagnostic redaction retains recovery codes and masks standalone credential shapes', () => {
+  const fixtureValue = ['Mock', '4s1z'.repeat(8), 'Api1'].join('')
+  const twoPartJwt = [{ alg: 'HS256' }, { sub: 'test-only' }]
+    .map(part => Buffer.from(JSON.stringify(part)).toString('base64url')).join('.')
+  const reason = 'PUBLISH_CANDIDATE_CHANGED: A local file prevented publication.'
+  const result = redactPublishText(reason + ' ' + ACCOUNT + ' ' + fixtureValue + ' X-Auth-Key: fixture')
+  assert.equal(result, reason + ' [redacted] [redacted] [redacted]')
+  assert.equal(redactPublishText(reason + ' ' + twoPartJwt) === reason + ' [redacted]', true, 'masks a JWT with only a header and body')
+  assert.equal(redactPublishText('pneumonoultramicroscopicsilicovolcanoconiosis'), 'pneumonoultramicroscopicsilicovolcanoconiosis')
+})
+
+test('a confirmed deployment remains published when the local mirror cannot be written', async t => {
+  const { createPublishHistory } = await import('../src/main/publish-history.ts')
+  const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+  const history = createPublishHistory(join(w.root, 'publishing-history.json'))
+  w.ports.observe = history.record
+  writeFileSync(w.siteDir, 'existing local file')
+  const result = await w.service.publish(w.talkJob('talk-a', { 'index.html': 'A' }))
+  assert.equal(result.ok, true)
+  assert.equal(result.built.name, 'talk-a')
+  assert.match(result.localWarning, /this Mac.*copy/u)
+  assert.equal(w.deploymentsPosted().length, 1)
+  assert.ok(w.production().files['/talk-a/index.html'])
+  assert.equal(readFileSync(w.siteDir, 'utf8'), 'existing local file')
+  assert.deepEqual(history.list().map(row => row.outcome), ['published'])
+  assert.match(history.list()[0].events.at(-1).diagnostic.cause, /Error:.*EEXIST/u)
+})
+
+test('an unexpected error after dispatch keeps an unknown result and a redacted cause', async t => {
+  const { createPublishHistory } = await import('../src/main/publish-history.ts')
+  const w = await world(t, { record: { registry: {}, shortLinks: false, headers: '' } })
+  const history = createPublishHistory(join(w.root, 'publishing-history.json'))
+  w.ports.observe = history.record
+  const transport = w.ports.pages()
+  w.ports.pages = () => ({
+    ...transport,
+    fetch: async (address, init) => {
+      const response = await transport.fetch(address, init)
+      if (init?.method === 'GET' && /\/deployments\/[^/]+$/u.test(new URL(address).pathname)) {
+        return { get headers() { throw new TypeError('Could not read confirmation. Authorization: Bearer ' + TOKEN) } }
+      }
+      return response
+    },
+  })
+  const result = await w.service.publish(w.talkJob('talk-a', { 'index.html': 'A' }))
+  assert.equal(result.ok, false)
+  assert.equal(w.deploymentsPosted().length, 1)
+  assert.deepEqual(history.list().map(row => row.outcome), ['unknown'])
+  assert.equal(result.diagnostic.step, 'confirm')
+  assert.equal(result.diagnostic.untouched, undefined)
+  assert.equal(result.diagnostic.uncertain, true)
+  assert.match(result.diagnostic.cause, /TypeError: Could not read confirmation/u)
+  assert.match(publishDiagnosticMessage(result.diagnostic), /Check the site and try again later/u)
+  assert.doesNotMatch(publishDiagnosticMessage(result.diagnostic), /Nothing on the live site changed/u)
+  assert.ok(w.state.logs.some(line => line.includes('TypeError: Could not read confirmation')))
+  assert.equal(JSON.stringify([history.list(), result, w.state.logs]).includes(TOKEN), false)
 })
 
 test('a confirmed Run handout stays published when this Mac cannot save its link', async (t) => {

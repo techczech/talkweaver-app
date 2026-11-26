@@ -1,6 +1,6 @@
 /* ADR-0045: WN1, LO1, FR1–FR6. The view switch is shared; each column scrolls locally. */
-.app-shell:has(.workspace-view-titlebar) { position: relative; padding-top: var(--toolbar-height); }
-.app-shell .workspace-view-titlebar {
+.app-shell:has(:is(.workspace-view-titlebar, .workspace-welcome-titlebar)) { position: relative; padding-top: var(--toolbar-height); }
+.app-shell :is(.workspace-view-titlebar, .workspace-welcome-titlebar) {
   position: absolute; inset: 0 0 auto; z-index: 12;
   height: var(--toolbar-height); padding: 0 14px 0 max(10px, var(--tw-native-inline, 0px));
   justify-content: flex-start; gap: 8px;
@@ -13,7 +13,7 @@
 .workspace-view-titlebar > :first-child .toolbar-btn-content { min-width: 0; }
 .workspace-view-titlebar > :first-child .toolbar-btn-content > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .workspace-view-titlebar > :first-child .toolbar-menu { right: auto; left: 0; }
-.workspace-view-titlebar .toolbar-actions { margin-left: auto; }
+:is(.workspace-view-titlebar, .workspace-welcome-titlebar) .toolbar-actions { margin-left: auto; }
 .workspace-view-titlebar .pane-btn-label { display: inline; }
 .workspace-view-titlebar .pane-btn { gap: 5px; }
 .workspace-view-switch { flex: none; }
@@ -26,10 +26,10 @@
 .app-shell .workspace-toolbar.workspace-view-titlebar .toolbar-split button .toolbar-btn-content > svg { display: block; }
 .app-shell .workspace-toolbar.workspace-view-titlebar .toolbar-split button:first-child .toolbar-btn-content > span { display: inline; }
 
-.app-shell:has(.workspace-view-titlebar) :is(.sidebar-modebar, .rc-tabs) {
+.app-shell:has(:is(.workspace-view-titlebar, .workspace-welcome-titlebar)) :is(.sidebar-modebar, .rc-tabs) {
   min-height: var(--toolbar-height); height: var(--toolbar-height); padding-block: 0; align-items: center;
 }
-.app-shell:has(.workspace-view-titlebar) .sidebar-rail { padding-top: 8px; }
+.app-shell:has(:is(.workspace-view-titlebar, .workspace-welcome-titlebar)) .sidebar-rail { padding-top: 8px; }
 .app-shell:has(.workspace-view-titlebar) .status-bar { height: 28px; }
 .sidebar-mode-btn, .tw-slides-switch button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; }
 .tw-slides-switch { display: flex; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); }

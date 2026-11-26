@@ -1,5 +1,5 @@
 import {
-  TALK_FIELD_PREFIXES, folderFrom, foldText, formatPrefixed, replaceToken, tokenizeTalkQuery,
+  TALK_FIELD_PREFIXES, folderFrom, foldText, formatPrefixed, replaceToken, substringDistance, tokenizeTalkQuery,
   type QueryToken
 } from '../../../../shared/talk-query.ts'
 import type { TalkFolderCount } from '../../../../shared/talk-search.ts'
@@ -108,19 +108,6 @@ export type Suggestion =
   | { kind: 'folder'; key: string; name: string; count: number; query: string }
   | { kind: 'drop'; key: string; label: string; query: string }
   | { kind: 'slides'; key: string; label: string; query: string }
-
-/** Fewest edits turning `term` into some stretch of `text` (Sellers' approximate substring). */
-function substringDistance(term: string, text: string): number {
-  let prev = new Array(text.length + 1).fill(0)
-  for (let i = 1; i <= term.length; i += 1) {
-    const cur = [i]
-    for (let j = 1; j <= text.length; j += 1) {
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (term[i - 1] === text[j - 1] ? 0 : 1))
-    }
-    prev = cur
-  }
-  return Math.min(...prev)
-}
 
 /** The folder name nearest a mistyped fo: value (`jersy` → jersey-2026), with the talks it would
  *  find; null when the value already finds a folder or nothing is close. */

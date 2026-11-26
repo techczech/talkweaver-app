@@ -23,6 +23,7 @@ import {
   mountShell,
   textareaEditor,
   type MountedEditor,
+  type MountSourceEditor,
   type ObjectEditorApi,
   type ShellCheatSheet,
 } from './shell.ts'
@@ -284,7 +285,7 @@ type ObjectEditorMount = (
   block: ObjectBlock,
   declaration: ObjectDeclaration,
   inner: string,
-  markup: MountedEditor,
+  markup: MountSourceEditor,
   api: ObjectEditorApi,
   cheatSheet?: ShellCheatSheet
 ) => HTMLElement | null
@@ -314,7 +315,7 @@ const OBJECT_EDITORS: Record<ObjectDeclaration['editor'], ObjectEditorMount> = {
     if (!grid) {
       return mountShell({
         kind: 'Table',
-        editor: markup,
+        editor: markup(inner),
         foot: isTriggerTable
           ? 'nested-list form · ⌘↵ done'
           : 'pipe-table markup · ⌘↵ done',
@@ -340,7 +341,7 @@ const OBJECT_EDITORS: Record<ObjectDeclaration['editor'], ObjectEditorMount> = {
       if (!shape) {
         return mountShell({
           kind: 'Chart',
-          editor: markup,
+          editor: markup(inner),
           foot: 'markup only — resolve the chart trigger before using the visual editor · ⌘↵ done',
           api,
           cheatSheet,
@@ -352,7 +353,7 @@ const OBJECT_EDITORS: Record<ObjectDeclaration['editor'], ObjectEditorMount> = {
       if (!editor) {
         return mountShell({
           kind: 'Chart',
-          editor: markup,
+          editor: markup(inner),
           foot: 'markup only — add a numeric value to each list item · ⌘↵ done',
           api,
           cheatSheet,
@@ -413,17 +414,17 @@ function mountMarkupFallback(
 export function mountObjectEditor(
   block: ObjectBlock,
   api: ObjectEditorApi,
-  cheatSheet?: ShellCheatSheet
+  cheatSheet?: ShellCheatSheet,
+  markup: MountSourceEditor = textareaEditor
 ): HTMLElement {
   const inner = innerSource(block)
-  const markup = textareaEditor(inner)
   const card = cardKind(block.kind)
   if (card) return mountCardEditor(block, card, inner, markup, api, cheatSheet, (next) => objectEditorReplacement(block, next))
   const declaration = objectLayoutEntryForBlockKind(block.kind)?.object
   if (!declaration) {
     return mountMarkupFallback(
       block,
-      markup,
+      markup(inner),
       api,
       cheatSheet,
       `No registry-declared editor for object block ${block.kind}.`
@@ -433,7 +434,7 @@ export function mountObjectEditor(
   if (!mount) {
     return mountMarkupFallback(
       block,
-      markup,
+      markup(inner),
       api,
       cheatSheet,
       `No object editor implementation for registry editor ${declaration.editor} on ${block.kind}.`
@@ -442,7 +443,7 @@ export function mountObjectEditor(
   return mount(block, declaration, inner, markup, api, cheatSheet)
     ?? mountMarkupFallback(
       block,
-      markup,
+      markup(inner),
       api,
       cheatSheet,
       `No object editor implementation for registry widget ${declaration.widget} on ${block.kind}.`

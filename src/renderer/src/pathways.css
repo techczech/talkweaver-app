@@ -21,15 +21,11 @@
 .pathway-slide-nav button:disabled { opacity: .45; cursor: default; }
 
 @container (max-width: 300px) {
-  [data-slides-mode="outline"] .sidebar-mode-btn svg { display: none; }
+  .sidebar-mode-btn span { display: none; }
+  .sidebar-mode-btn svg { display: block; }
 }
 @container (max-width: 220px) {
-  [data-sidebar]:not([data-slides-mode="previews"]) .sidebar-mode-btn svg { display: none; }
   [data-sidebar]:not([data-slides-mode="previews"]) .sidebar-mode-btn { padding-inline: 3px; }
-}
-@container (max-width: 185px) {
-  [data-slides-mode="outline"] .sidebar-mode-btn svg { display: block; }
-  [data-slides-mode="outline"] .sidebar-mode-btn span { display: none; }
 }
 .pathway-dock header { padding:16px; border-bottom:1px solid var(--line); }
 .pathway-dock select { width:100%; padding:8px; border:1px solid var(--line); border-radius:6px; background:var(--panel); color:var(--ink); font:inherit; }

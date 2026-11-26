@@ -1,4 +1,6 @@
-import { readIpcRegistration } from './lib/read-ipc-registration.mjs'
+import { readIpcRegistration, readTalkPublishOperation } from './lib/read-ipc-registration.mjs'
+import ts from 'typescript'
+import { redactPublishException, redactPublishText } from '../src/shared/publish-diagnostic.ts'
 // Publishing handouts (src/main/handout-publishing.ts, src/shared/publish-status.ts and the publish
 // side of src/main/cloudflare-connection.ts; spec "Cloudflare set-up in the app", D7, D8, D12 and
 // the "not ready" table). No network: the REAL connection and the REAL publishing sequence, the
@@ -302,7 +304,7 @@ async function connected(overrides = {}, token = TOKEN) {
   const main = readMainSource()
   const between = (from, to) => { const start = main.indexOf(from); assert.ok(start >= 0, `${from} is in the main process`); return main.slice(start, main.indexOf(to, start + from.length)) }
   const BODIES = {
-    talk: readIpcRegistration('talk:publish-handout'),
+    talk: readTalkPublishOperation(),
     run: between("ipcMain.handle('run:publish-handout'", '\n})\n'),
     'run-unpublish': between("ipcMain.handle('run:unpublish-handout'", '\n})\n'),
     'talk-unpublish': between("ipcMain.handle('published:unpublish-talk'", '\n})\n'),
@@ -311,9 +313,28 @@ async function connected(overrides = {}, token = TOKEN) {
   }
   for (const entry of ENTRIES) {
     const body = BODIES[entry]
-    assert.ok(new RegExp(`handoutPublishing\\(\\)\\.publish\\(\\{\\s*entry: '${entry}'`).test(body), `${entry}: goes through the one publishing sequence, as entry '${entry}'`)
+    if (entry !== 'talk') assert.ok(new RegExp(`handoutPublishing\\(\\)\\.publish\\(\\{\\s*entry: '${entry}'`).test(body), `${entry}: goes through the one publishing sequence, as entry '${entry}'`)
     assert.ok(!/readToken\(|runBundledWrangler\(|ensureLiveWorker\(|CLOUDFLARE_API_TOKEN|tokenExists\(/.test(body), `${entry}: its handler reads no token, starts no tool and asks the live service nothing itself`)
   }
+  // Run the registered talk handler through the publisher so changes to the job's syntax cannot break this gate.
+  let talkHandler
+  const observed = []
+  const ports = {
+    ipcMain: { handle: (_channel, handler) => { talkHandler = handler } },
+    outlineRefused: () => 'The outline is outside the vault.',
+    presenterPublications: { ticket: () => 1 },
+    handoutPublishing: () => createHandoutPublishing({
+      siteDir: () => 'fixture-untouched', observe: event => observed.push(event),
+      authorise: () => assert.fail('a refused source must never be authorised or sent'),
+    }),
+    activeHandoutPublishes: new Map(), redactPublishText, redactPublishException,
+  }
+  const talkCode = ts.transpileModule(BODIES.talk + '\n' + readIpcRegistration('talk:publish-handout'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText
+  Function('host', ...Object.keys(ports), talkCode)(ports, ...Object.values(ports))
+  const talkRefusal = await talkHandler(null, '/outside-vault.md', '')
+  assert.deepEqual([talkRefusal.success, talkRefusal.error], [false, 'The outline is outside the vault.'])
+  assert.deepEqual(observed.map(event => [event.entry, event.stage]), [['talk', 'started'], ['talk', 'finished']])
+  assert.equal(observed.at(-1).diagnostic.untouched, true)
   assert.ok(between("ipcMain.handle('live:go'", '\n  })\n').includes('host.ensureLiveJoinUrl(context)'), 'Go live reaches the short-link upload')
   assert.equal(main.split('handoutPublishing().publish(').length - 1, ENTRIES.length, 'there are exactly as many uploads of the site as rows in the table')
   assert.ok(!main.includes("'pages', 'deploy'") && !/deployPublishedSite/.test(main), 'the main process has no upload of its own left')
@@ -324,7 +345,11 @@ async function connected(overrides = {}, token = TOKEN) {
     : code)
   assert.ok(!main.includes('runBundledWrangler') && !/\brunWrangler\(/.test(calls), 'the main process runs no wrangler command to publish')
   assert.ok(main.includes('blake3: () => (wranglerBlake3 ??= loadWranglerBlake3(app.getAppPath()))'), "the Pages hash is wrangler's own blake3, from the app's own node_modules")
-  // Nothing publishes by itself: no command line, no timer, no save hook reaches the sequence.
+  assert.match(readIpcRegistration('talk:publish-handout'), /publishTalkHandout\(host,/, 'the editor calls the same operation')
+  assert.match(functionBody(main, 'runLocalPublish'), /publishTalkHandout\(/, 'the CLI calls the same operation')
+  assert.match(functionBody(main, 'runPublishCommand'), /publishNeedsLock && !holdsInstanceLock\s*\? await forwardPublish/, 'the second instance forwards to the primary')
+  assert.match(main, /listenForPublish\(app.getPath\('userData'\), receive\)/, 'the primary listens for publishes on its own profile')
+  // Nothing publishes by itself: no setup command, timer or save hook reaches the sequence.
   for (const file of ['src/main/setup-cli.ts', 'src/main/talk-writer.ts']) {
     if (existsSync(join(repo, file))) assert.ok(!readSource(join(repo, file)).includes('handoutPublishing'), `${file} does not publish`)
   }
@@ -521,7 +546,8 @@ const NOT_AN_ADDRESS = ['', '   ', 'localhost', 'localhost:3000/x', '127.0.0.1:8
       assert.equal((await w.publish('talk')).ok && (await w.publish('run')).ok, true)
       const before = tree(w.dir)
       const result = await w.publish(entry, { link })
-      assert.deepEqual(result, { ok: false, error: PUBLISH_LINK_REFUSED }, `${entry}: the site's own link ${JSON.stringify(link)} stops the publish`)
+      assert.deepEqual([result.ok, result.error], [false, PUBLISH_LINK_REFUSED], `${entry}: the site's own link ${JSON.stringify(link)} stops the publish`)
+      assert.equal(result.diagnostic.untouched, true)
       assert.deepEqual(tree(w.dir), before, `${entry}: the site folder is byte for byte as it was: nothing was built`)
       assert.deepEqual([w.uploads.length, w.recorded.length, w.built.length], [2, 2, 2], `${entry}: nothing uploaded, nothing recorded`)
     }
@@ -905,7 +931,9 @@ for (const entry of ENTRIES) {
 {
   // The publish's own failures pass through as they are; a site that would run code is a fixed sentence.
   const w = await connected()
-  assert.deepEqual(await w.publish('run', { failBuild: 'Compiler not found' }), { ok: false, error: 'Compiler not found' })
+  const failedBuild = await w.publish('run', { failBuild: 'Compiler not found' })
+  assert.deepEqual([failedBuild.ok, failedBuild.error], [false, 'Compiler not found'])
+  assert.equal(failedBuild.diagnostic.step, 'building')
   w.hooks.hazard = 'Publishing stopped: /site/_worker.js would make the site run code, which TalkWeaver handouts never do. Remove it and publish again.'
   assert.equal((await w.publish('talk')).error, w.hooks.hazard)
   assert.deepEqual([w.uploads.length, w.recorded.length], [0, 0])

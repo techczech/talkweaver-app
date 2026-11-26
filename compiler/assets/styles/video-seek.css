@@ -22,6 +22,9 @@ figure.slide-video:has(> .tw-video-seek) > .video-enlarge { display: none; }
   text-align: left;
 }
 .tw-video-seek[hidden] { display: none; }
+.tw-video-seek[data-compact] { flex-wrap: wrap; row-gap: calc(14 * var(--tw-video-unit)); }
+.tw-video-seek[data-compact] .tw-video-seek-track { order: 1; flex: 1 0 100%; }
+.tw-video-seek[data-compact] > button:last-of-type { margin-left: auto; }
 .tw-video-seek button {
   display: grid;
   place-items: center;

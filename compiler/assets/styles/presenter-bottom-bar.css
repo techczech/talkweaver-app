@@ -79,7 +79,7 @@
 
 /* The More menu opens upward, right-aligned on "…". */
 #presenterBottomBar .tw-menu-anchor { position: relative; display: inline-flex; flex: none; }
-#presenterBottomBar .tw-menu.tw-menu-up { top: auto; bottom: calc(100% + 8px); right: 0; width: 330px; box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5); }
+#presenterBottomBar .tw-menu.tw-menu-up { top: auto; bottom: calc(100% + 8px); right: 0; min-width: 330px; box-shadow: 0 -12px 40px rgba(0, 0, 0, 0.5); }
 #presenterBottomBar .tw-menu[hidden] { display: none !important; }
 #presenterBottomBar .tw-menu .tw-mi { height: auto; min-height: 34px; padding: 0 10px; border: 0; border-radius: 6px; background: none; justify-content: normal; }
 #presenterBottomBar .tw-menu .tw-mi:has(.tw-mi-sub) { padding-top: 7px; padding-bottom: 7px; }

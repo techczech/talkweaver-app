@@ -188,8 +188,7 @@ html, body, #root {
   font-size: 11px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase;
   color: var(--accent-text); padding: 0 6px 0 4px; margin-right: auto;
   display: flex; align-items: center; gap: 6px;
-  /* The label gives way first, so the eighth button (Add vault) is never clipped at narrow sidebar widths. */
-  min-width: 0; overflow: hidden; white-space: nowrap; flex: 0 1 auto;
+  white-space: nowrap; flex: none;
 }
 .tl-tbtn {
   appearance: none; border: 1px solid transparent; background: transparent;
@@ -1968,9 +1967,15 @@ button.tw-reveal-badge:focus-visible { outline: 2px solid var(--focus); outline-
   border-radius: 5px; outline: none; background: var(--paper); color: var(--ink);
   padding: 9px 11px; font: 11.5px/1.6 var(--font-mono);
 }
-.oe-markup:focus, .oe-mermaid textarea:focus, .oe-svg textarea:focus {
+.oe-markup:focus, .oe-markup:focus-within, .oe-mermaid textarea:focus, .oe-svg textarea:focus {
   border-color: var(--oxford); box-shadow: 0 0 0 1px var(--oxford);
 }
+.oe-surface > .oe-markdown.cm-editor {
+  height: auto; min-width: 0; min-height: 0; padding: 0; resize: none; background: var(--paper);
+}
+.oe-markdown > .cm-scroller { min-height: 170px; max-height: 20rem; }
+.oe-markdown > .cm-scroller > .cm-content { padding: 9px 11px; }
+.oe-notes-body.oe-markdown > .cm-scroller { min-height: 100px; }
 .oe-parse-note {
   margin-top: 8px; border-left: 2px solid var(--crimson); padding: 6px 9px;
   background: color-mix(in srgb, var(--crimson) 7%, var(--hover)); color: var(--crimson);
@@ -2507,7 +2512,20 @@ button.tw-reveal-badge:focus-visible { outline: 2px solid var(--focus); outline-
 .tw-video-card-marker { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 8px; font: 12px/1.45 var(--font-ui); }
 .tw-video-card-marker span:first-child { color: var(--muted); font-variant-numeric: tabular-nums; }
 .tw-video-card-marker span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tw-video-source-note { color: var(--muted); padding: 2px 0 4px 24px; font: 12px/1.4 var(--font-ui); }
+.tw-video-marker-source span { text-decoration: none; }
+.tw-video-marker-source .tw-video-marker-source-token,
+.tw-video-marker-source .tw-video-marker-source-token span { color: var(--amber); }
+.tw-video-source-note { color: var(--muted); padding: 2px 0 4px; font: 12px/1.4 var(--font-ui); }
+.tw-video-source-note::before {
+  content: '';
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  margin-inline-end: 8px;
+  vertical-align: -2px;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'%3E%3Crect x='3' y='3' width='18' height='18' rx='2'/%3E%3Cpath d='M7 3v18M17 3v18M3 8h4m-4 4h18M3 16h4m10-8h4m-4 8h4'/%3E%3C/svg%3E") center / contain no-repeat;
+}
 .tw-video-source-warning {
   color: var(--ink);
   background: color-mix(in srgb, #d59139 23%, var(--panel));

@@ -176,6 +176,8 @@ const meta = readSkillMetadata(skillMd)
 assert.equal(meta.app, 'talkweaver'); assert.equal(meta.version, pkg.version, 'metadata.app-version equals the app version')
 // Scout is an optional external tool in the reconciled skill, not a private store.
 assert.match(skillMd, /scout search --hybrid/); assert.match(skillMd, /scout capture --project/);
+const publishPermission = '- Publish only when the owner asks.'
+assert.equal(skillMd.split('\n').filter(line => line === publishPermission).length, 1)
 const FORBIDDEN = [/\/Users\//, /\/home\/[a-z]/i, /[A-Z]:\\Users/, /dominik/i, /gitrepos/i, /_SKILLS/, /nexus/i, /onedrive/i, /learninglog/i, /slide-versions/i, /abstracts-archive/, /instruction-only/i, /installs no app/i, /\bIPC\b/, /talk:export-handout|run:build-handout|transcript:run|talk:write-outline/]
 for (const f of files(built)) {
   const t = readFileSync(f, 'utf8')

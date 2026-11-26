@@ -178,7 +178,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
   }
   const settle = (page, ms = 200) => page.waitForTimeout(ms)
   const guard = async (name, fn) => { try { await fn() } catch (error) { failures.push(`${name}: stopped: ${String(error.message).split('\n')[0]}`) } }
-  const openPalette = async (page) => { await page.keyboard.press('Meta+Shift+P'); await settle(page, 120) }
+  const openPalette = async (page) => { await page.keyboard.press('ControlOrMeta+Shift+P'); await settle(page, 120) }
   const rows = (page) => page.evaluate(() => [...document.querySelectorAll('#presenterCommandResults .tw-pal-row')].map((row) => ({
     id: row.dataset.paletteId, name: row.querySelector('.tw-pal-name')?.textContent || '',
     icon: [...(row.querySelector(':scope > svg')?.classList || [])].find((c) => c.startsWith('lucide-')) || null,
@@ -335,7 +335,7 @@ export const clipboard = { writeText() {}, readText() { return '' }, readImage()
     ['duration', { key: 't', fields: ['duration'] }],
     ['record-start', { key: 'Shift+R', fields: ['rec'] }],
     ['quick-poll', { key: 'k', fields: ['quickCompose'] }],
-    ['instant-compose', { key: 'Meta+Alt+i', fields: ['instantCompose'] }],
+    ['instant-compose', { key: 'ControlOrMeta+Alt+i', fields: ['instantCompose'] }],
     ['reveal', { key: 'r', fields: ['mode'] }],
     ['focus', { key: 'f', fields: ['mode'] }],
     ['highlight', { key: 'h', fields: ['highlight'] }],

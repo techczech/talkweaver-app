@@ -392,8 +392,8 @@ try {
   const markupTab = shell.locator('.oe-tabs button', { hasText: 'Markup' })
   await requirePainted(markupTab, 'pipe-table Markup tab')
   await markupTab.click()
-  const markup = shell.locator('.oe-markup')
-  await requirePainted(markup, 'pipe-table markup textarea')
+  const markup = shell.locator('.oe-markup .cm-content')
+  await requirePainted(markup, 'pipe-table markup editor')
   await markup.fill('')
   // The preceding write crossed the app's own saved/dirty boundary before this editor opened, so
   // the fixture file is now a deterministic no-write witness for the deliberate refusal.
@@ -472,7 +472,7 @@ try {
   }
   shell = await openObjectEditor('Legal short-separator table', '.tge')
   await shell.locator('.oe-tabs button', { hasText: 'Markup' }).click()
-  await shell.locator('.oe-markup').press('Escape')
+  await shell.locator('.oe-markup .cm-content').press('Escape')
   await shell.waitFor({ state: 'detached' })
   record(
     'Escape commits and leaves from table, mindmap, Mermaid, SVG, and markup panes',
@@ -484,7 +484,7 @@ try {
     ['Marker mindmap', '.oe-outline', '.oe-node input[data-node="0"]', false],
     ['Valid Mermaid labels', '.oe-mermaid', '.oe-mermaid textarea', false],
     ['Valid SVG', '.oe-svg', '.oe-svg textarea', false],
-    ['Legal short-separator table', '.tge', '.oe-markup', true]
+    ['Legal short-separator table', '.tge', '.oe-markup .cm-content', true]
   ]) {
     shell = await openObjectEditor(title, surface)
     if (openMarkup) {
@@ -537,7 +537,7 @@ try {
   shell = await openObjectEditor('Valid Mermaid labels', '.oe-mermaid')
   const mermaidMarkupTab = shell.locator('.oe-tabs button', { hasText: 'Markup' })
   await mermaidMarkupTab.click()
-  const mermaidMarkup = shell.locator('.oe-markup')
+  const mermaidMarkup = shell.locator('.oe-markup .cm-content')
   await mermaidMarkup.fill('')
   await mermaidMarkup.press('Meta+Enter')
   const mermaidRefusal = shell.locator('.oe-parse-note')
@@ -554,7 +554,7 @@ try {
   shell = await openObjectEditor('Valid SVG', '.oe-svg')
   const svgMarkupTab = shell.locator('.oe-tabs button', { hasText: 'Markup' })
   await svgMarkupTab.click()
-  const svgMarkup = shell.locator('.oe-markup')
+  const svgMarkup = shell.locator('.oe-markup .cm-content')
   await svgMarkup.fill(
     '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><rect x="2" y="2" width="16" height="16"/></svg>'
   )

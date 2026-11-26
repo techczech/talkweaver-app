@@ -1,17 +1,15 @@
 import { TAKES_OFF_ERROR } from '../shared/recording-takes'
 import { saveOfflinePage } from './offline-page'
-import { preservationMessage, type PreservationReason } from './publication-preservation'
 import type { MediaPublishChoice } from '../shared/publish-status'
-import { publicationMediaReview, publicationBuildWarnings } from '../shared/publication-files'
 import { parseOutlineSaveIdentity } from '../shared/outline-save-identity'
 import type { SlideMergeChoices } from '../shared/outline-merge'
 import { join, basename, dirname, extname } from 'path'
 import { pathToFileURL } from 'url'
 import { registerWindowKind } from './window-kinds'
 import { canonicalOutlinePath, outlineIdentity } from './outline-identity'
-import { flushTalkForPublish, readTalkOutline, writeTalkOutline } from './talk-writer'
+import { readTalkOutline, writeTalkOutline } from './talk-writer'
 import { existsSync, statSync, readFileSync, writeFileSync, mkdirSync, rmSync } from 'fs'
-import { createHash, randomBytes, randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { resolve as resolvePath } from 'path'
 import { thumbCacheDir } from './vault-paths'
 import { pathStaysInside } from './path-containment'
@@ -20,21 +18,18 @@ import { convertibleImageRefs, planOptimisation, rewriteConvertedRefs, writeNewF
 import { preparedTalkGroup } from './prepared-talk-cache'
 import { isSuperseded } from './single-flight'
 import { BROWSER_THUMBNAIL_LANE, THUMBNAIL_HEAP_WAIT_MAX_MS, heapGuardDecision, thumbnailMediaOptions, waitForHeap } from './thumbnail-media-policy'
-import { hasGitConflictMarkers } from './conflict-copies.mjs'
 import { writableRoot } from './vault-availability'
 import { VAULTS_DIR, isPlainSegment, talkThumbDir, thumbLookupDirs, thumbUrl } from './thumb-cache-dirs'
-import { selectedThumbnailSlide } from '../shared/slide-preview'
+import { selectedThumbnailSlide, thumbnailSlides } from '../shared/slide-preview'
 import { readFile as readFileAsync } from 'fs/promises'
 import { type RetakeContext } from './recording'
 import { runAtHome } from './recording-paths'
 import { extractSection, type SectionLocation } from '../shared/insert-section'
 import { unresolvedOutboundFailure } from '../shared/layout-doctor'
-import { SITE_FOLDER_REFUSED, resolveBase, publishUrl, readHandoutUrl, recoverIdFromUrl, generateShortId, pickShortId, buildRedirects, stampHandoutUrl } from './publishing-logic'
 import { livePresenterContext, type LivePresenterContext } from './live-session-manager'
 import { presenterLink } from './presenter-publication'
 import { presentedTalkVault } from './presented-vault'
 import { isToolsWindowSender } from './talkTextSender'
-import { publishedFolders, writableSiteFolder } from './handout-publishing'
 import { writeGeneratedFile } from './generated-file-write'
 import { withoutPreworkSlides, type CompiledPrework } from '../shared/run-prework'
 import { prepareCrossVaultInsert, type SlideOrigin } from './cross-vault-insert'
@@ -42,27 +37,27 @@ import { deckWindowKeyAction, deckWindowMode } from './deck-window-keys'
 import { presentWindowPreferences } from './present-window-prefs'
 import { followRemotePages } from './remote-page-follow'
 import { pairLivePageHosts } from './live-page-host'
-import { handoutHomeDetails } from '../shared/handout-home'
+import { publishTalkHandout } from './talk-handout-publish'
 import type { TalkIpcHost, EmbedStatus, ProjectionRowMain } from './index'
 
 /** Registers talk channels on the app's already guarded IPC object. */
 export function registerTalkIpc(host: TalkIpcHost): void {
   const {
     ipcMain, BrowserWindow, E2E, TAKES_ENABLED, app, assetRootsFor, attachLivePageHost, attachLiveWindow,
-    browserThumbnailMediaOptions, buildHandoutPagesOffThread, buildTalkPresentFile, buildVaultAssetIndex,
+    browserThumbnailMediaOptions, buildTalkPresentFile, buildVaultAssetIndex,
     cancelQuitAttempt, checkEmbedUrl, crossVaultTools, currentVaultRoot, deckWindowOpenOpts,
     editorRevisions, editorWindows, extractDeckEmbeds, findTalks, getCompilerPath, getConfig, guideLearn,
-    handoutPublishing, htmlPageRunImport, invalidateVaultCaches, lastSaveFailed, lastUnsavedText,
+    htmlPageRunImport, invalidateVaultCaches, lastSaveFailed, lastUnsavedText,
     latestThumbnailRequest, ledgerSeal, livePageAllowance, livePageHosts, livePresenterContexts,
     localHandoutWorkerBaseUrl, logThumbnails, maybeOfferOutlineMigration, metadataDefaults, mkdirInVault,
     normaliseToWebp, ocrCandidates, ocrIndex, openDeckAudience, outlineDiskGuard, outlineRecovery, outlineSlideMerge,
     outlineRefused, outlineUrlOnDisk, pendingOrigins, pictureTextForCompile, plannedRunOf, prepareTalk,
     preparedTalkCache, presentWindows, presentedVaultDeps, presenterAudienceWindows, presenterGuide,
-    presenterPublications, provenanceStore, readHandoutRegistry, refreshDeckFromEditor, resolveOcrBin,
+    provenanceStore, refreshDeckFromEditor, resolveOcrBin,
     resolvePooledRefs, rootFs, screen, shell, talkActivity, talkThumbCacheDir, thumbNamespaceDir,
     thumbnailDocumentId, thumbnailTalkOwner, timerSettings, vaultAvailable, vaultIdOf, vaultNameOf,
-    vaultRegistry, vaultRootFor, verifiedRunSource, writableRootFor, writableTalkRoot, writableVaultRoot,
-    writeHandoutRegistry, writeOutlineFromEditor,
+    variantMedia, vaultRegistry, vaultRootFor, verifiedRunSource, writableRootFor, writableTalkRoot, writableVaultRoot,
+    writeOutlineFromEditor,
     captureOfflinePage, clearThumbnailFocus, guardDeckWindowTree, offlineSource, parseRetake,
     recordingAudioArmed, registerRecordingContext, renderThumbnails, sendRecordingCloseOffer,
     setThumbnailFocus, setupRecordingPermissions, shouldOfferRunSave, supersedeThumbnailRender,
@@ -273,6 +268,37 @@ export function registerTalkIpc(host: TalkIpcHost): void {
       return { ok: false, reason: 'invalid-choice', keys: [] }
     }
     return outlineSlideMerge.apply(String(event.sender.id), path, generation, choices as SlideMergeChoices)
+  })
+
+  // Review pictures are compiled from the trusted snapshots and keyed by source line, including
+  // slides that have yet to receive an ID. Render only the rows that the review actually shows.
+  ipcMain.handle('talk:slide-merge-pictures', async (event, path: unknown, generation: unknown, side: unknown) => {
+    if (typeof path !== 'string' || typeof generation !== 'string' || (side !== 'mine' && side !== 'disk')) return {}
+    const source = outlineSlideMerge.pictureSource(String(event.sender.id), path, generation, side)
+    if (!source?.lines.length || outlineRefused(path)) return {}
+    try {
+      const prepared = await prepareTalk(path, source.text, undefined, await variantMedia(), 'variant')
+      if (!prepared?.rows || typeof prepared.model.fullHtml !== 'string') return {}
+      const { rows } = prepared
+      const fullHtml = prepared.model.fullHtml
+      const wanted = new Set(source.lines)
+      const slides = thumbnailSlides(rows, thumbnailDocumentId(fullHtml, prepared.previewKey)).flatMap(slide => {
+        const line = rows[slide.index]?.source_line
+        return typeof line === 'number' && wanted.has(line) ? [{ ...slide, line }] : []
+      })
+      const rendered = await renderThumbnails({
+        fullHtml, deckKey: prepared.previewKey, preview: prepared.preview, slides,
+        cacheDir: talkThumbCacheDir(path, prepared.slug), requestKey: `merge:${event.sender.id}:${side}`,
+      })
+      return Object.fromEntries(slides.flatMap(slide => {
+        const file = rendered[slide.key]
+        if (!file) return []
+        return [[slide.line, thumbUrl(prepared.slug, basename(file, '.png'), vaultIdOf(path))]]
+      }))
+    } catch (error) {
+      console.error('[slide-merge-pictures]', error)
+      return {}
+    }
   })
 
   ipcMain.handle('talk:outline-accept-disk', async (event, outlinePath: unknown, hash: unknown, opts?: { keepPending?: boolean; revision?: unknown }) => {
@@ -813,139 +839,34 @@ export function registerTalkIpc(host: TalkIpcHost): void {
     }
   })
 
-  ipcMain.handle('talk:publish-handout', async (_event, outlinePath: string, content: string, mediaChoice?: MediaPublishChoice) => {
-    const refusal = outlineRefused(outlinePath) // writes beside the outline: refuse one outside the vault
-    if (refusal) return { success: false, error: refusal }
-    // `content` is the renderer's copy of the buffer, which can trail the last keystrokes: it gates the
-    // request early, but the handout, the ledger seal and the stamp use the flushed text below.
-    const blocked = unresolvedOutboundFailure(content)
-    if (blocked) return blocked
-
-    const compilerDir = getCompilerPath()
-    if (!compilerDir) return { success: false, error: 'Compiler not found' }
-
+  const activeHandoutPublishes = new Map<number, { requestId?: string; controller: AbortController; canCancel: boolean }>()
+  ipcMain.handle('talk:cancel-publish-handout', (event, requestId: unknown) => {
+    const active = event?.sender && activeHandoutPublishes.get(event.sender.id)
+    if (typeof requestId !== 'string' || active?.requestId !== requestId || !active.canCancel) return false
+    active.controller.abort()
+    return true
+  })
+  ipcMain.handle('talk:publish-handout', async (event, outlinePath: string, content: string, mediaChoice?: MediaPublishChoice,
+    options?: { requestId?: string; retryAttemptId?: string }) => {
+    const sender = event?.sender
+    if (sender && activeHandoutPublishes.has(sender.id)) return { success: false, error: 'A handout publish is already running in this window.' }
+    const requestId = options?.requestId
+    if (requestId !== undefined && (typeof requestId !== 'string' || !/^[0-9a-f-]{36}$/u.test(requestId))) {
+      return { success: false, error: 'The publish request could not be read.' }
+    }
+    const active = { requestId, controller: new AbortController(), canCancel: true }
+    if (sender) activeHandoutPublishes.set(sender.id, active)
     try {
-      // What is published is the editor's buffer as it stands when Publish was pressed: flush it to disk
-      // first (a forced save of the open editor's buffer through the one writer, talk-writer.ts; a
-      // closed talk's file is read as it is) and build from the text the flush returns — never from
-      // `content`, and never by writing the file here.
-      const flushed = await flushTalkForPublish(outlinePath)
-      if (!flushed.ok) return { success: false, error: flushed.error }
-      const published = flushed.text
-      const blockedNow = unresolvedOutboundFailure(published)
-      if (blockedNow) return blockedNow
-      const mediaNotices: string[] = []
-      const presenterTicket = presenterPublications.ticket()
-
-      // The sequence (leave to publish, the live service or its absence, the one upload, what a
-      // superseded publish does) is handout-publishing.ts. This supplies the talk's pages: `live` is
-      // the only live address they may carry, and it is '' when the live service is not ready.
-      const outcome = await handoutPublishing().publish({
-        entry: 'talk',
-        begin: async (report) => {
-          if (hasGitConflictMarkers(published)) return { fail: { error: 'The talk has unresolved Git conflict markers. Resolve them before publishing.', reply: { success: false, error: 'The talk has competing edits from syncing', notReady: { kind: 'not-ready', title: 'The talk has competing edits from syncing', detail: 'Keep both versions and resolve the Git conflict before publishing.', fix: { action: 'show-source', label: 'Reveal talk source' } } } } }
-          if (mediaChoice === 'with-placeholders') return null
-          const fileCheck = await buildHandoutPagesOffThread({ kind: 'preflight', compilerDir, outlinePath, text: resolvePooledRefs(published, outlinePath), assetRoots: assetRootsFor(outlinePath) })
-            .catch(() => ({ warnings: ['The media check could not finish.'], publicationFiles: undefined }))
-          if (fileCheck.publicationFiles) {
-            const { checked, findings } = fileCheck.publicationFiles
-            report?.({ checked, missing: new Set(findings.map(finding => finding.file)).size })
-          }
-          const media = publicationMediaReview(fileCheck.publicationFiles, fileCheck.warnings, mediaChoice)
-          if (media.prompt) return { fail: { error: media.prompt.title, reply: { success: false, notReady: media.prompt } } }
-          if (media.notices) mediaNotices.push(...media.notices)
-          return null
-        },
-        // The flushed string below is the compiler's selected input; no mutable-source recheck is claimed.
-        prepare: async ({ dir: siteDir, project, live, link, redirects, makeFolder, writeSiteFile, claimFile }) => {
-          const baseUrl = getConfig('publishBaseUrl', undefined)
-          const useShortIds = getConfig('publishUseShortIds', false) ?? false
-          // ENTRY FIRST: the address every link of this handout starts with is checked before anything is
-          // built or written (handout-publishing.ts). An address on this computer stops the publish here.
-          const base = link(resolveBase({ baseUrl: baseUrl as string | undefined, project }))
-          const slug = basename(outlinePath).replace('-outline.md', '')
-          // The talk's folder in the site: by the one function that makes a name a folder there
-          // (publishing-logic.ts siteFolder, and never through a link). A name that would not stay inside the site folder is refused here.
-          const talkOutDir = writableSiteFolder(siteDir, slug)
-          if (!talkOutDir) return { ok: false, error: SITE_FOLDER_REFUSED }
-          const resolved = resolvePooledRefs(published, outlinePath)
-
-          // Publish output: each handout
-          // folder gets the slimmed handout as <slug>.html PLUS a viewer/landing index.html (Open +
-          // Download + QR + short link). Only this folder is sent: every other talk keeps its live hash (per-talk publishing).
-          // ENTRY FIRST, the rest of it, all in memory before the first file is written: the stable short
-          // id (so the viewer page and the redirects carry the final link), the handout's own link (it
-          // goes into its pages: the QR code, the venue screen), and the WHOLE redirect file as it will be.
-          let id: string | undefined
-          let redirectsText: string | null = null
-          let registryToKeep: Record<string, string> | null = null
-          if (useShortIds) {
-            const registry = readHandoutRegistry()
-            const recoveredId = recoverIdFromUrl(readHandoutUrl(published), base)
-            const gen = (): string => generateShortId((n) => Uint8Array.from(randomBytes(n)))
-            const picked = pickShortId({ registry, slug, recoveredId, gen })
-            id = picked.id
-            registryToKeep = picked.registry
-            redirectsText = redirects(buildRedirects(picked.registry, [...new Set([...publishedFolders(siteDir), slug])]))
-          }
-          const url = link(publishUrl({ base, slug, id, useShortIds }))
-          // Checked: from here on things are written.
-          if (registryToKeep) writeHandoutRegistry(registryToKeep)
-          // Built privately and moved into the site only when the upload launches (handout-publishing.ts), or written in place when already there.
-          const outDir = makeFolder(talkOutDir)
-          claimFile(join(siteDir, '404.html')) // the page builder writes the site's 404 page: owned by this publish when it is new
-
-          const { makeQrSvg } = await import(pathToFileURL(join(compilerDir, 'lib/01-cli-utils.mjs')).href)
-          const qr = (makeQrSvg(url) as string) || ''
-          // The compile, the pages (Download, lazy <slug>.html, the home page, the venue screen) and their
-          // slimming and writing run OFF this thread (handout-pages.ts): a heavy handout held it for
-          // seconds, and the app showed the beachball. Everything it is handed has been checked above.
-          const pagesWritten = await buildHandoutPagesOffThread({
-            kind: 'talk', compilerDir, talkOutDir: outDir, siteDir, slug, live, url, qr,
-            downloadFile: `${slug}-download.html`, handoutFile: `${slug}.html`,
-            outlinePath, text: resolved, outline: published, assetRoots: assetRootsFor(outlinePath),
-            homeDetails: handoutHomeDetails({ outline: published }),
-          })
-
-
-          // The redirect file, as it was checked before the build began.
-          if (redirectsText !== null) writeSiteFile(join(siteDir, '_redirects'), redirectsText)
-          return { ok: true, built: { url, warnings: [...mediaNotices, ...publicationBuildWarnings(pagesWritten.warnings)] } }
+      return await publishTalkHandout(host, outlinePath, content, mediaChoice, {
+        retryAttemptId: options?.retryAttemptId,
+        signal: active.controller.signal,
+        onProgress: progress => {
+          active.canCancel = progress.canCancel
+          if (requestId && sender && !sender.isDestroyed()) sender.send('talk:publish-progress', requestId, progress)
         },
       })
-      // A publish that did not go up, or that the connection changed under, records nothing below.
-      if (!outcome.ok && outcome.reply) return outcome.reply as { success: false; error: string }
-      if (!outcome.ok) {
-        return {
-          success: false, error: outcome.error.startsWith('PUBLISH_') ? ((outcome.details?.includes('cannot be compared safely') || outcome.details?.startsWith('Publishing stopped because the local file ')) ? outcome.details : preservationMessage(outcome.error as PreservationReason)) : outcome.error,
-          ...(outcome.details ? { details: outcome.details } : {}), ...(outcome.notReady ? { notReady: outcome.notReady } : {}),
-        }
-      }
-      const { url, warnings } = outcome.built
-
-      // Best-effort: stamp handout_url into the outline frontmatter (so the short id is recoverable
-      // later). No frontmatter → left unchanged. Stamped onto the talk's CURRENT text through the one
-      // writer (the deploy can take minutes; the open editor's buffer may have moved on). `updatedOutline`
-      // reports the text the writer applied; the renderer does not adopt it — it stamps its own buffer
-      // as it stands (WorkspaceLayout.handlePublishHandout), a no-op when this stamp landed.
-      let updatedOutline = stampHandoutUrl(published, url)
-      if (updatedOutline !== published) {
-        const stamped = await writeTalkOutline(outlinePath, (current) => stampHandoutUrl(current, url), 'publish-handout')
-        if (stamped.ok) updatedOutline = stamped.text
-      }
-      presenterPublications.published(presenterTicket, { kind: 'talk', outlinePath, url,
-        retainUrl: !readHandoutUrl(updatedOutline) && stampHandoutUrl(updatedOutline, url) === updatedOutline })
-      void ledgerSeal(outlinePath, published, 'publish')
-      return {
-        success: true, url, display: url, updatedOutline, ...(warnings.length ? { warning: warnings.join(' ') } : {}),
-        // Published without live features (spec D7): the sentence, and what lies behind it for "Details".
-        ...(outcome.notice ? { liveNotice: outcome.notice, ...(outcome.noticeDetails ? { liveDetails: outcome.noticeDetails } : {}) } : {}),
-        // Handouts an earlier version left with a dead live address: how many, and their names for "Details".
-        ...(outcome.earlierNotice ? { earlierNotice: outcome.earlierNotice, ...(outcome.earlierDetails ? { earlierDetails: outcome.earlierDetails } : {}) } : {}),
-      }
-    } catch (e) {
-      console.error('[publish-handout]', e)
-      return { success: false, error: String(e) }
+    } finally {
+      if (sender) activeHandoutPublishes.delete(sender.id)
     }
   })
 

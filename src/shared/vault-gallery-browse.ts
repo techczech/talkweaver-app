@@ -20,23 +20,32 @@ const within = (path: string, folder: string): boolean => !folder || path === fo
 /** Every folder that exists in the catalogue or the registry, with its ancestors. */
 export function folderPaths(talks: GalleryTalk[], known: string[] = []): string[] {
   const all = new Set<string>()
+  const talkDirs = new Set(talks.map(talkDirectory))
   const add = (path: string) => { const parts = path.split('/').filter(Boolean); for (let i = 1; i <= parts.length; i++) all.add(parts.slice(0, i).join('/')) }
   for (const talk of talks) add(talkFolder(talk))
-  for (const path of known) add(path)
+  for (const path of known) {
+    if (!talkDirs.has(path) && !ancestorsOf(path).some(parent => talkDirs.has(parent))) add(path)
+  }
   return [...all].sort(compareNames)
 }
-/** Recursive count of known talks under a folder. */
-export const knownTalkCount = (talks: GalleryTalk[], folder: string): number => talks.filter(t => within(talkFolder(t), folder)).length
+/** The same descendants contribute to the folder count and title mosaic. */
+export function folderTalks(talks: GalleryTalk[], folder: string, showSystem = false): GalleryTalk[] {
+  return talks.filter(t => {
+    const path = talkFolder(t)
+    return within(path, folder) && (showSystem || !inspectOnlyPath(path))
+  })
+}
+export const knownTalkCount = (talks: GalleryTalk[], folder: string, showSystem = false): number => folderTalks(talks, folder, showSystem).length
 
 export interface TreeNode { path: string; name: string; depth: number; count: number; hasChildren: boolean; expanded: boolean }
-export function treeNodes(talks: GalleryTalk[], folders: string[], expanded: ReadonlySet<string>): TreeNode[] {
+export function treeNodes(talks: GalleryTalk[], folders: string[], expanded: ReadonlySet<string>, showSystem = false): TreeNode[] {
   const out: TreeNode[] = []
   const walk = (parent: string, depth: number) => {
     const children = folders.filter(f => parentOf(f) === parent).sort((a, b) => compareNames(leafName(a), leafName(b)))
     for (const path of children) {
       const hasChildren = folders.some(f => parentOf(f) === path)
       const open = expanded.has(path)
-      out.push({ path, name: leafName(path), depth, count: knownTalkCount(talks, path), hasChildren, expanded: open })
+      out.push({ path, name: leafName(path), depth, count: knownTalkCount(talks, path, showSystem), hasChildren, expanded: open })
       if (hasChildren && open) walk(path, depth + 1)
     }
   }
@@ -52,7 +61,7 @@ export function ancestorsOf(path: string): string[] {
 export interface FolderRow { path: string; name: string; count: number }
 export interface BrowseRows { folders: FolderRow[]; talks: GalleryTalk[]; flat: boolean }
 /** Direct contents of a folder (no descendants) and, for All talks or a search, a flat recursive list. */
-export function browseRows(talks: GalleryTalk[], folders: string[], scope: BrowseScope, query: string): BrowseRows {
+export function browseRows(talks: GalleryTalk[], folders: string[], scope: BrowseScope, query: string, showSystem = false): BrowseRows {
   const needle = query.trim().toLocaleLowerCase()
   const base = scope.kind === 'all' ? '' : scope.path
   const hit = (text: string) => text.toLocaleLowerCase().includes(needle)
@@ -68,7 +77,7 @@ export function browseRows(talks: GalleryTalk[], folders: string[], scope: Brows
   }
   return {
     flat: false,
-    folders: folders.filter(f => parentOf(f) === base).map(path => ({ path, name: leafName(path), count: knownTalkCount(talks, path) })),
+    folders: folders.filter(f => parentOf(f) === base).map(path => ({ path, name: leafName(path), count: knownTalkCount(talks, path, showSystem) })),
     talks: talks.filter(t => talkFolder(t) === base)
   }
 }

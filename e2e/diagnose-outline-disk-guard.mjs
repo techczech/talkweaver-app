@@ -65,6 +65,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const BAR = '[data-testid="outline-disk-change-bar"]'
 const diskNoticeTimeout = 60_000
 const review = () => page.getByTestId('outline-merge-sheet')
+const card = title => review().locator('article').filter({ has: page.getByRole('heading', { name: title, exact: true }) })
+const apply = () => review().getByRole('button', { name: 'Apply to the file', exact: true })
 const testTrash = join(tempRoot, 'trash')
 const recoveryCopies = () => { try { return readdirSync(recoveryDir).filter((f) => f.endsWith('-outline.md')) } catch { return [] } }
 
@@ -152,12 +154,12 @@ async function stageConflict(mine, theirs, extra, typeMarker = typeAtEndOf) {
   return { bar, outside }
 }
 async function stayHere() {
-  await review().getByRole('button', { name: 'Stay here', exact: true }).click()
+  await review().getByRole('button', { name: 'Decide later', exact: true }).click()
   await review().waitFor({ state: 'hidden' })
 }
 async function chooseVersion(choice) {
   await review().getByRole('button', { name: choice, exact: true }).click()
-  await review().getByRole('button', { name: 'Apply merge', exact: true }).click()
+  await review().getByRole('button', { name: 'Apply to the file', exact: true }).click()
   await review().waitFor({ state: 'hidden' })
 }
 function hasMergeSnapshot(marker) {
@@ -194,22 +196,28 @@ try {
 
   // (S) Both sides edited the same slide. An unresolved merge cannot overwrite the outside bytes.
   const conflict = await stageConflict('MINEMARK', 'THEIRMARK')
-  const mineInReview = await review().getByRole('textbox', { name: 'Mine 1', exact: true }).inputValue()
-  const theirsInReview = await review().getByRole('textbox', { name: 'On disk 1', exact: true }).inputValue()
+  await card('Second slide').getByRole('img', { name: 'Second slide — This window' }).waitFor({ timeout: diskNoticeTimeout })
+  await card('Second slide').getByRole('img', { name: 'Second slide — On disk' }).waitFor({ timeout: diskNoticeTimeout })
+  const unresolvedWindow = await editorText()
+  await page.keyboard.press('ControlOrMeta+z')
+  record('an open merge review keeps workspace Undo from changing its input', await editorText() === unresolvedWindow)
+  const mineInReview = await card('Second slide').locator('del').allTextContents()
+  const theirsInReview = await card('Second slide').locator('ins').allTextContents()
   await sleep(1800)
   record('an unresolved conflict keeps the typed and outside versions and writes neither over the other',
-    conflict.bar !== null && disk() === conflict.outside && mineInReview.includes('MINEMARK') &&
-      theirsInReview.includes('THEIRMARK') && await review().getByRole('button', { name: 'Apply merge', exact: true }).isDisabled(),
+    conflict.bar !== null && disk() === conflict.outside && mineInReview.join('').includes('MINEMARK') &&
+      theirsInReview.join('').includes('THEIRMARK') && await review().getByRole('button', { name: 'Apply to the file', exact: true }).isDisabled(),
     'outside file unchanged=' + (disk() === conflict.outside))
   record('conflicting text is kept in a durable recovery bundle', hasMergeSnapshot('MINEMARK'))
 
-  // (R) Reopen the review from the bar. Disk adoption has no undo entry; recovery retains both versions.
+  // (R) Decide later writes nothing. Reopen and choose the disk slide, then verify the archived inputs.
   const beforeReview = await editorText()
   await stayHere()
+  record('Decide later leaves the file and window bytes as reviewed', disk() === conflict.outside && await editorText() === beforeReview)
   await page.locator(BAR).getByRole('button', { name: 'Review merge', exact: true }).click()
-  await chooseVersion('Use on disk')
+  await chooseVersion('Take the disk version')
   const reloaded = await waitFor(async () => (await editorText()) === conflict.outside && !(await barVisible()), 4000)
-  record('Use on disk adopts the outside version and clears the notice', reloaded !== null)
+  record('Take the disk version adopts the outside version and clears the notice', reloaded !== null)
   const snapshots = readdirSync(join(recoveryDir, 'merges')).filter(file => file.endsWith('.json'))
     .map(file => JSON.parse(readFileSync(join(recoveryDir, 'merges', file), 'utf8')))
   record('the pre-merge editor and disk bytes remain available in recovery',
@@ -223,13 +231,31 @@ try {
     `marker on disk=${disk().includes('AFTER_ACCEPT')}, editor matches disk=${disk() === await editorText()}, bar=${await barVisible()}`)
 
   // (K) Take the editor's slide and keep an independent new disk slide in the same merge.
-  const mixed = await stageConflict('KEEPMARK', 'OVERLAPMARK',
-    '\n### Independent disk slide {id=grd4}\n\nAnother outside edit.\n')
-  await chooseVersion('Use mine')
+  const mixed = await stageConflict('KEEPMARK', 'OVERLAPMARK')
+  const windowBeforeMerge = await editorText()
+  const nextDisk = mixed.outside.replace('### Their slide', '### Independent disk slide {id=grd4}\n\nAnother outside edit.\n\n### Their slide')
+  writeFileSync(OUTLINE_PATH, nextDisk)
+  const refresh = review().getByRole('button', { name: 'Refresh review', exact: true })
+  await refresh.waitFor({ timeout: diskNoticeTimeout })
+  record('a further disk edit waits for an explicit refresh', await apply().isDisabled() && await card('Independent disk slide').count() === 0)
+  await refresh.click()
+  const independent = card('Independent disk slide').getByRole('button', { name: 'Take the new slide from disk', exact: true })
+  await independent.waitFor()
+  record('the independent disk slide is preset to keep the change', await independent.getAttribute('aria-pressed') === 'true')
+  await card('Second slide').getByRole('button', { name: "Keep this window's version", exact: true }).click()
+  await apply().click()
+  await review().waitFor({ state: 'hidden' })
   const kept = await waitFor(async () => disk().includes('KEEPMARK') && !(await barVisible()), 5000)
-  record('Use mine saves the typed slide and carries forward the independent disk slide',
+  record('Keep this window’s version saves the typed slide and carries forward the independent disk slide',
     mixed.bar !== null && kept !== null && disk().includes('Another outside edit.') &&
       !disk().includes('OVERLAPMARK') && disk() === await editorText())
+
+  await page.locator('.cm-content[contenteditable="true"]').focus()
+  await page.keyboard.press('ControlOrMeta+z')
+  const undone = await waitFor(async () => await editorText() === windowBeforeMerge && disk() === windowBeforeMerge, 6000)
+  record('one Undo restores the exact window text and the disk edits remain in the archive', undone !== null &&
+    readdirSync(join(recoveryDir, 'merges')).some(file => file.endsWith('.json') &&
+      JSON.parse(readFileSync(join(recoveryDir, 'merges', file), 'utf8')).disk === nextDisk))
 
   // (G) A temp file renamed over the outline still raises the notice in Grid view.
   await page.getByTestId('grid-toggle').click()
@@ -251,10 +277,10 @@ try {
   await clickTalkRow(OTHER)
   await review().waitFor()
   const stayed = (await activeTitle()) === TITLE && disk() === switchConflict.outside &&
-    (await review().getByRole('textbox', { name: 'Mine 1', exact: true }).inputValue()).includes('SWITCHMARK')
+    (await card('Second slide').locator('del').allTextContents()).join('').includes('SWITCHMARK')
   record('switching talks with a conflict opens review and keeps the current talk and typing',
     switchConflict.bar !== null && stayed)
-  await chooseVersion('Use mine')
+  await chooseVersion("Keep this window's version")
   await clickTalkRow(OTHER)
   const switched = await waitFor(async () => (await activeTitle()) === OTHER, 5000)
   record('after resolving the conflict the switch saves the typing', switched !== null &&
@@ -270,7 +296,7 @@ try {
   await editorWindow.evaluate((w) => w.close())
   await review().waitFor()
   const heldOpen = !pageClosed && disk() === closeConflict.outside
-  await chooseVersion('Use mine')
+  await chooseVersion("Keep this window's version")
   await editorWindow.evaluate((w) => w.close())
   const closed = await waitFor(async () => pageClosed, 5000)
   record('closing with a merge conflict keeps the window open; resolving it allows close with the edits saved',
@@ -315,8 +341,8 @@ try {
   await askRename()
   await review().waitFor()
   const notRenamed = existsSync(OUTLINE_PATH) && !existsSync(NEW_PATH) && disk() === renameConflict.outside &&
-    (await review().getByRole('textbox', { name: 'Mine 1', exact: true }).inputValue()).includes('RENAMEMARK')
-  await chooseVersion('Use mine')
+    (await card('Second slide').locator('del').allTextContents()).join('').includes('RENAMEMARK')
+  await chooseVersion("Keep this window's version")
   const mergedBeforeRename = await waitFor(() => disk().includes('RENAMEMARK') &&
     !disk().includes('DISKRENAME') && recoveryCopies().length === 0, 5000)
   await askRename()

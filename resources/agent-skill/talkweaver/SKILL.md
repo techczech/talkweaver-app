@@ -1,6 +1,6 @@
 ---
 name: talkweaver
-description: Use TalkWeaver, a presentation app. Create and revise talks as Markdown outlines, cut Pathways, convert PowerPoint decks, make handouts (including any handout or follow-up notes after a delivered talk or workshop), process recordings into Scripts or Notes, set up publishing and read or change the app's settings through its command line. Content and app use, not TalkWeaver development.
+description: Use TalkWeaver, a presentation app. Create and revise talks as Markdown outlines, cut Pathways, convert PowerPoint decks, make handouts (including any handout or follow-up notes after a delivered talk or workshop), process recordings into Scripts or Notes, publish authorised Talk handouts and read or change the app's settings through its command line. Content and app use, not TalkWeaver development.
 metadata:
   app: talkweaver
   app-version: 0.44.0
@@ -14,11 +14,13 @@ Markdown outline = canonical source. Slides and exported decks are projections. 
 
 - Command: `talkweaver <command>`. Installed with this skill by the app (a small script in `~/.local/bin`; add that folder to `PATH` if the command is not found).
 - Fallback: the app's own binary with the same arguments: `/Applications/TalkWeaver.app/Contents/MacOS/TalkWeaver <command>`.
-- Three command families, all in [CLI](references/cli.md): `setup` (publishing, live service, recording storage, transcription), `settings` (read and change preferences and shortcuts), `agent` (this skill's own install state).
+- See [CLI](references/cli.md) for `publish` (Talk handouts), `setup` (Cloudflare, live service, recording storage, transcription), `settings` (preferences and shortcuts) and `agent` (this skill's install state).
+- Publish only when the owner asks.
+- Use `talkweaver publish <talk path or id>` for that Talk and its configured site. Use `--dry-run` to build and check before sending and `--status` to read previous attempts and diagnostics.
 - Check before acting: `talkweaver setup status --json`, `talkweaver settings list --json`. Do only what the states call for.
-- `setup` refuses while TalkWeaver is open. `settings` and `agent` run beside the open app.
+- On Mac and Unix, `publish` and `publish --dry-run` use TalkWeaver when it is open. Both use the saved outline and warn about unsaved edits. On Windows, close TalkWeaver for either command. `setup` also requires TalkWeaver to be closed.
 - Never ask for a token or key in chat; never put one in an argument. See [set-up procedure](references/talkweaver-setup.md).
-- No command edits outlines, builds decks or exports handouts. Those are file work plus the app's own UI: see [available surfaces](references/available-surfaces.md).
+- Use the app for deck previews and local handout exports. See [available surfaces](references/available-surfaces.md).
 
 ## Search the knowledge stores first
 

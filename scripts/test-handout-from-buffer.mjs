@@ -1,3 +1,4 @@
+import { withTalkPublishOperation } from './lib/read-ipc-registration.mjs'
 import { readMainSource } from './lib/read-source.mjs'
 import { hasGitConflictMarkers } from '../src/main/conflict-copies.mjs'
 import { publicationMediaReview, publicationBuildWarnings } from '../src/shared/publication-files.ts'
@@ -20,7 +21,8 @@ import { basename, dirname, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import ts from 'typescript'
 import { configureTalkWriter, flushTalkForPublish, withTalkFileLock, writeTalkOutline } from '../src/main/talk-writer.ts'
-import { canonicalOutlinePath } from '../src/main/outline-identity.ts'
+import { canonicalOutlinePath, outlineIdentity } from '../src/main/outline-identity.ts'
+import { redactPublishException, redactPublishText } from '../src/shared/publish-diagnostic.ts'
 import { createOutlineMutator } from '../src/renderer/src/lib/outlineMutation.ts'
 import { outlineWritesSettled, queueOutlineWrite, setOutlinePathResolver } from '../src/renderer/src/lib/saveQueue.ts'
 import { buildRedirects, generateShortId, pickShortId, publishUrl, readHandoutUrl, recoverIdFromUrl, resolveBase } from '../src/main/publishing-logic.ts'
@@ -59,10 +61,11 @@ function loadHandler(channel, dependencies) {
   }
   visit(sourceFile)
   assert.ok(callback, `${channel}: handler is registered`)
-  const transpiled = ts.transpileModule(`const handler = ${callback.getText(sourceFile)}`, {
+  const transpiled = ts.transpileModule(withTalkPublishOperation(channel, `const handler = ${callback.getText(sourceFile)}`), {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext },
   }).outputText
-  return Function(...Object.keys(dependencies), `${transpiled}\nreturn handler`)(...Object.values(dependencies))
+  const ports = channel === 'talk:publish-handout' ? { ...dependencies, host: dependencies } : dependencies
+  return Function(...Object.keys(ports), `${transpiled}\nreturn handler`)(...Object.values(ports))
 }
 
 const root = mkdtempSync(join(tmpdir(), 'tw-handout-buffer-'))
@@ -164,6 +167,7 @@ function publishDeps(siteDir, trace) {
     ? { readHandoutUrl, recoverIdFromUrl, readHandoutRegistry: () => ({ ...trace.registry.kept }), writeHandoutRegistry: (next) => { trace.registry.kept = { ...next } }, pickShortId, generateShortId, randomBytes, buildRedirects }
     : null
   return {
+    outlineIdentity, redactPublishText, redactPublishException,
     unresolvedOutboundFailure, hasGitConflictMarkers, publicationMediaReview, publicationBuildWarnings,
     // The real outline guard, with the temp root as the vault (every talk here lives inside it).
     outlineRefused: (p) => outlineRefusal(root, p),
@@ -411,7 +415,8 @@ for (const name of ['http:127.0.0.1', 'http:127.0.0.1#']) {
   try {
     const publish = loadHandler('talk:publish-handout', publishDeps(siteDir, trace))
     const result = await publish(null, path, OUTLINE)
-    assert.deepEqual(result, { success: false, error: 'The talk could not be saved to disk, so nothing was published. Your edits are still in the editor.' })
+    assert.deepEqual([result.success, result.error], [false, 'The talk could not be saved to disk, so nothing was published. Your edits are still in the editor.'])
+    assert.equal(result.diagnostic.step, 'preparing')
     assert.ok(!/⌘Z|undo/i.test(result.error))
     assert.equal(handoutOf(siteDir, path), null, 'no handout was built')
     assert.deepEqual([trace.deploys, trace.sealed.length, trace.liveWorker], [0, 0, 0])
@@ -431,7 +436,9 @@ for (const name of ['http:127.0.0.1', 'http:127.0.0.1#']) {
   try {
     const publish = loadHandler('talk:publish-handout', publishDeps(siteDir, trace))
     const result = await publish(null, path, OUTLINE)
-    assert.deepEqual(result, BROKEN, 'the buffer is gated, not only the renderer\'s copy')
+    const { diagnostic, ...reply } = result
+    assert.deepEqual(reply, BROKEN, 'the buffer is gated, not only the renderer\'s copy')
+    assert.equal(diagnostic.untouched, true)
     assert.equal(handoutOf(siteDir, path), null)
     assert.equal(trace.deploys, 0)
   } finally {
@@ -450,7 +457,8 @@ for (const [label, setup] of [
   try {
     const publish = loadHandler('talk:publish-handout', publishDeps(siteDir, trace))
     const result = await publish(null, path, OUTLINE)
-    assert.deepEqual(result, { success: false, error: 'The talk is empty, so nothing was published.' }, label)
+    assert.deepEqual([result.success, result.error], [false, 'The talk is empty, so nothing was published.'], label)
+    assert.equal(result.diagnostic.untouched, true, label)
     assert.deepEqual([trace.deploys, trace.sealed.length, handoutOf(siteDir, path)], [0, 0, null], label)
   } finally {
     closeAll()

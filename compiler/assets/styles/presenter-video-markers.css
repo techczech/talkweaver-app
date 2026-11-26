@@ -71,6 +71,10 @@
   grid-template-rows: auto auto minmax(0, 1fr);
 }
 .presenter-panel > #presenterFollowing[data-markers] { padding: 8px 0 0; }
+.presenter-root[data-notes-placement="bottom"]:not([data-preview-size="off"]):has(> .presenter-side > #presenterFollowing[data-markers]) {
+  /* Let the marker row absorb the height of the spanning Current panel. */
+  grid-template-rows: auto max-content minmax(min-content, 0fr) minmax(0, 1fr) auto;
+}
 .presenter-root[data-notes-placement="bottom"] > .presenter-side > #presenterFollowing[data-markers] {
   max-height: 100%;
 }

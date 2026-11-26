@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import ts from 'typescript'
-import { readMainSource } from './read-source.mjs'
+import { functionBody, readMainSource } from './read-source.mjs'
 
 const registrations = new Map()
 
@@ -28,4 +28,15 @@ export function readIpcRegistration(channel) {
   })
   assert.equal(matches.length, 1, `one registration for ${channel}`)
   return matches[0]
+}
+
+export function readTalkPublishOperation() {
+  return functionBody(readMainSource(), 'publishTalkHandout').replace(/^export /u, '')
+}
+
+// Source-level handler tests inject the same ports into the extracted operation as into IPC.
+export function withTalkPublishOperation(channel, handlerSource) {
+  return channel === 'talk:publish-handout'
+    ? readTalkPublishOperation() + '\n' + handlerSource
+    : handlerSource
 }

@@ -24,7 +24,7 @@ import type { PublishSiteCheck } from '../shared/publish-history'
 import { readPublishingInventory } from './publishing-inventory'
 import { relative } from 'node:path'
 import { acquireGallerySite, gallerySiteScope } from './gallery-site'
-import { galleryCoverFile } from './vault-gallery-cover'
+import { galleryCoverFile, galleryCoverIndex } from './vault-gallery-cover'
 import { readGallerySource } from './vault-gallery-read'
 import { createGalleryAdmission } from './vault-gallery-admission'
 import { registerGalleryStorageIPC } from './vault-gallery-storage-ipc'
@@ -72,18 +72,23 @@ if (SETTINGS_ARGS) app.dock?.hide()
 // same module as the Settings card. No window and no instance lock, like `settings`: it runs beside an open app.
 const AGENT_ARGS = SETUP_ARGS || SETTINGS_ARGS ? null : agentArguments(process.argv, Boolean(process.defaultApp))
 if (AGENT_ARGS) app.dock?.hide()
+const PUBLISH_ARGS = commandArguments(process.argv, Boolean(process.defaultApp), 'publish')
+const PUBLISH_COMMAND = PUBLISH_ARGS ? parsePublishArgs(PUBLISH_ARGS) : null
+const publishNeedsLock = PUBLISH_COMMAND?.command === 'publish' || PUBLISH_COMMAND?.command === 'dry-run'
+if (PUBLISH_ARGS) app.dock?.hide()
 
 // One TalkWeaver per user-data folder (ticket 12): two instances on one folder would share the
 // share registry, the owner-token store and every other file there, each holding its own copy in
 // memory. The lock is Electron's, held per user-data folder, so a run started with its own
 // --user-data-dir (every e2e harness) is unaffected. A second launch on the same folder hands
 // over to the first (its window comes forward) and quits before it touches anything.
-// A setup command says so in the lock's data, so an open TalkWeaver does not bring its window
-// forward for a command it is refusing.
+// Setup and headless publishing use a quiet lock request. A publish that loses the lock uses
+// the primary's local socket for the operation and its replies.
 const SETUP_LOCK_DATA = { talkweaverSetup: true }
-const holdsInstanceLock = SETTINGS_ARGS || AGENT_ARGS ? false : app.requestSingleInstanceLock(SETUP_ARGS ? SETUP_LOCK_DATA : undefined)
-if (SETTINGS_ARGS || AGENT_ARGS) {
-  // No lock, no window: the command runs once the app is ready and exits (app.whenReady below).
+const holdsInstanceLock = SETTINGS_ARGS || AGENT_ARGS || (PUBLISH_ARGS && !publishNeedsLock)
+  ? false : app.requestSingleInstanceLock(SETUP_ARGS || publishNeedsLock ? SETUP_LOCK_DATA : undefined)
+if (PUBLISH_COMMAND || SETTINGS_ARGS || AGENT_ARGS) {
+  // A command runs without an editor window and exits when it has answered.
 } else if (SETUP_ARGS) {
   if (!holdsInstanceLock) {
     // TalkWeaver is open on this folder: refused before anything is parsed, read from standard input
@@ -98,7 +103,7 @@ if (SETTINGS_ARGS || AGENT_ARGS) {
   app.exit(0)
 } else {
   app.on('second-instance', (_event, _argv, _cwd, data) => {
-    // A `setup` command that lost the lock refuses on its own: nothing comes forward for it.
+    // Headless setup and publish launches ask quietly, without bringing any window forward.
     if ((data as { talkweaverSetup?: unknown } | null)?.talkweaverSetup === true) return
     // Editor windows only (round 4): a hidden utility window (the thumbnail renderer) is never shown.
     const win = targetEditorFor(null)
@@ -373,6 +378,10 @@ import { editFrontmatterText } from '../shared/frontmatter-editor'
 import { commandElectronAccelerator, menuCommands } from '../shared/command-registry'
 import { registerVaultIpc } from './vault-ipc'
 import { registerTalkIpc } from './talk-ipc'
+import { publishTalkHandout } from './talk-handout-publish'
+import { parsePublishArgs, publishConnectionFailure, publishFromRunningApp, resolvePublishTalk, runPublishCli } from './publish-cli'
+import { forwardPublish, listenForPublish } from './publish-socket'
+import type { AgentCliIO } from './agent-skill/cli'
 import { registerPreferencesIpc } from './preferences-ipc'
 import type { EditorViewMode } from '../shared/editor-view-mode'
 import { actionBarVisibleFrom } from '../shared/action-bar-settings'
@@ -485,7 +494,7 @@ import { SHARE_LINK_NOT_NOW, type CloudflareStatus } from '../shared/cloudflare-
 import { LEGACY_OUTLINE_ADAPTER } from '../shared/run-extra-slides'
 import { createRecordingStorage, type RecordingStorage } from './recording-storage'
 import type { RecordingStorageRow } from '../shared/recording-storage-status'
-import { appOpenRefusal, runSetup, setupArguments, type ImporterRow } from './setup-cli'
+import { appOpenRefusal, commandArguments, runSetup, setupArguments, type ImporterRow } from './setup-cli'
 import { runTalkWeaverSettings, settingsArguments } from './settings-cli'
 import { agentArguments, agentIdsArg, agentSkillStateStore, createTalkWeaverAgentSkills, decideOnboarding, runTalkWeaverAgent } from './agent-skill-host'
 import { folderInside, separateFolderProblem } from '../shared/settings-folders'
@@ -2867,10 +2876,10 @@ const galleryFacts = createGalleryFacts({
       .update(JSON.stringify([t.vaultId, t.root, t.outlinePath, t.epoch]))
     const entry = searchCache.get(t.outlinePath)
     const fresh = entry && isSearchIndexEntryFresh(entry, stat.mtimeMs, thumbCacheRoot())
-    const first = fresh ? entry.rows[0] : null
-    const file = galleryCoverFile(talkThumbCacheDir(t.outlinePath,t.slug), first)
+    const cover = fresh ? entry.rows[galleryCoverIndex(entry.rows)] ?? null : null
+    const file = galleryCoverFile(talkThumbCacheDir(t.outlinePath,t.slug), cover)
     const media = mediaFingerprint(t.outlinePath, resolvePooledRefs(text, t.outlinePath))
-    const baseRevision = digest.update(media).update(JSON.stringify([first?.thumbnail_hash ?? null, file])).digest('hex')
+    const baseRevision = digest.update(media).update(JSON.stringify([cover?.thumbnail_hash ?? null, file])).digest('hex')
     const certified = galleryArtwork.get(baseRevision)
     const artwork = certified && existsSync(certified.file) ? certified : null
     const revision = baseRevision + (certified && !artwork ? ':missing' : '')
@@ -2893,7 +2902,9 @@ const galleryFacts = createGalleryFacts({
     if (!prepared || !prepared.rows || !vaultRegistry.get(t.vaultId)?.open || t.epoch !== galleryEpoch) return null
     const fullHtml = prepared.model.fullHtml
     if (typeof fullHtml !== 'string') return null
-    const slides = thumbnailSlides(prepared.rows, thumbnailDocumentId(fullHtml, prepared.previewKey)).slice(0,1)
+    const coverIndex = galleryCoverIndex(prepared.rows)
+    if (coverIndex < 0) return { slideCount: prepared.rows.length, coverUrl: null }
+    const slides = thumbnailSlides(prepared.rows, thumbnailDocumentId(fullHtml, prepared.previewKey)).filter(slide => slide.index === coverIndex)
     const { rendered } = await renderThumbnailsIdle({fullHtml,deckKey:prepared.previewKey,slides,cacheDir:talkThumbCacheDir(t.outlinePath,t.slug),requestKey:`gallery:${t.vaultId}:${t.relativeOutline}`})
     const file = slides[0] && rendered[slides[0].key]
     if (file) {
@@ -6181,6 +6192,10 @@ function handoutPublishing(): HandoutPublishing {
     inventory: authorisation => readPublishingInventory(authorisation, standInApiBase(cloudflareTestContext())),
     authorise: () => cloudflareConnection().authorisePublish(),
     live: async () => (publishRehearsal() ? { baseUrl: getConfig('liveWorkerBaseUrl', undefined) ?? '' } : ensureLiveWorker()),
+    livePreview: () => {
+      const { baseUrl, accountId } = recordedLiveService()
+      return { baseUrl: baseUrl ?? '', accountId }
+    },
     bundlingHazard: (siteDir) => pagesBundlingBlock(siteDir),
     pages: () => ({
       fetch, apiBase: cloudflareApiBase(cloudflareTestContext()), allowLoopbackForTests: standInApiBase(cloudflareTestContext()) !== null,
@@ -6196,8 +6211,11 @@ function handoutPublishing(): HandoutPublishing {
     headers: () => { try { return readFileSync(join(publishSiteDir(), '_headers'), 'utf8') } catch { return '' } },
     computerName: () => computerName(),
     appVersion: () => app.getVersion(),
-    observe: event => publishingHistory().record(event),
-    log: (line) => console.log(line),
+    observe: event => {
+      publishingHistory().record(event)
+      if (event.stage === 'started' || event.stage === 'finished') broadcastToWindows('publish:history-changed', null)
+    },
+    ...(PUBLISH_ARGS ? {} : { log: (line: string) => console.log(line) }),
     rehearsal: () => publishRehearsal(),
     stagingRoot: () => join(app.getPath('userData'), 'publish-staging'),
   })
@@ -7180,6 +7198,7 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
     if (!outcome.localRecordFailed) openPostWorkFor(asked.talkSlug, asked.id, vault)
     const warning = [
       outcome.localRecordFailed ? `The Run handout is live at ${url}. TalkWeaver could not save its link on this Mac.` : null,
+      outcome.localWarning,
       preworkWarning,
     ].filter(Boolean).join(' ')
     return {
@@ -8088,7 +8107,7 @@ configureTalkWriter({
     return editor ? editorOutlineDocument(editor.win, editor.outlinePath) : null
   },
   trace({ outlinePath, origin, result }) {
-    if (origin === 'editor' && result.ok) return
+    if (PUBLISH_ARGS || (origin === 'editor' && result.ok)) return
     console.log(`[talk-writer] ${origin} ${outlinePath}: ${result.ok ? `${result.changed ? 'written' : 'unchanged'} via ${result.via}` : `refused: ${result.error}`}`)
   },
 })
@@ -8949,9 +8968,10 @@ function talkIpcHost() {
     outlineRefused, outlineUrlOnDisk, pendingOrigins, pictureTextForCompile, plannedRunOf, prepareTalk,
     preparedTalkCache, presentWindows, presentedVaultDeps, presenterAudienceWindows, presenterGuide,
     presenterPublications, provenanceStore, readHandoutRegistry, refreshDeckFromEditor, resolveOcrBin,
+    publishingHistory,
     resolvePooledRefs, rootFs, screen, shell, talkActivity, talkThumbCacheDir, thumbNamespaceDir,
     thumbnailDocumentId, thumbnailTalkOwner, timerSettings, vaultAvailable, vaultIdOf, vaultNameOf,
-    vaultRegistry, vaultRootFor, verifiedRunSource, writableRootFor, writableTalkRoot, writableVaultRoot,
+    variantMedia, vaultRegistry, vaultRootFor, verifiedRunSource, writableRootFor, writableTalkRoot, writableVaultRoot,
     writeHandoutRegistry, writeOutlineFromEditor,
     captureOfflinePage, clearThumbnailFocus, guardDeckWindowTree, offlineSource, parseRetake,
     recordingAudioArmed, registerRecordingContext, renderThumbnails, sendRecordingCloseOffer,
@@ -8971,12 +8991,84 @@ export type { EmbedStatus }
 
 registerTalkIpc(talkIpcHost())
 
+async function runLocalPublish(args: string[], cwd: string, io: AgentCliIO, signal: AbortSignal, running = false): Promise<number> {
+  // Listing a legacy vault can migrate config. The lock-free status command uses an in-memory view.
+  const registry = PUBLISH_COMMAND?.command === 'status'
+    ? createVaultRegistry({ read: readConfig, write: () => {}, realpath: path => realpathSync(path), files: vaultFiles })
+    : vaultRegistry
+  const libraryFor = (path: string) => {
+    const hit = registry.resolve(path)
+    return hit && vaultAvailable(hit.vault) ? hit.vault.root : undefined
+  }
+  return runPublishCli(args, {
+    resolve: input => resolvePublishTalk(input, cwd, {
+      findOutlineIn: dir => {
+        const root = libraryFor(dir)
+        return root && pathStaysInside(root, dir) ? findOutlineIn(dir) : null
+      },
+      isTalk: path => !outlineRefusal(libraryFor(path), path),
+      listTalks: () => registry.list().filter(vaultAvailable).flatMap(vault => findTalks(vault.root)),
+    }),
+    status: path => publishingHistory().forOutline(outlineIdentity(path).key),
+    async publish(path, options) {
+      const settingsUnavailable = {
+        success: false as const, error: 'The TalkWeaver settings file could not be opened.',
+        notReady: { kind: 'not-ready' as const, title: 'Publishing settings are unavailable', detail: 'Check Settings → Cloudflare in TalkWeaver.', fix: { action: 'open-settings' as const, label: 'Open Settings' } },
+      }
+      const handout = (outlinePath: string, input: typeof options) => publishTalkHandout(talkIpcHost(), outlinePath, '', undefined, input)
+      if (running) return publishFromRunningApp(path, options, (outline, input) =>
+        sharedSettings && !sharedSettings.store.problem() ? handout(outline, input) : Promise.resolve(settingsUnavailable), update => {
+        const editor = editorWindowForOutline(path)
+        if (!editor) return
+        try { editor.win.webContents.send('talk:cli-publish', { ...update, outlinePath: editor.outlinePath }) }
+        catch { /* the editor can close without affecting the publish */ }
+      })
+      const opened = await openSettings({
+        dir: app.getPath('userData'), appVersion: app.getVersion(), watch: false, log: () => {},
+        file: { read: () => configFile().read() as Record<string, unknown>, write: patch => configFile().write(patch as Partial<Config>) },
+      }).catch(() => null)
+      try {
+        if (!opened || opened.problem) return settingsUnavailable
+        settingsOverlay = opened.overlay
+        return await handout(path, options)
+      } finally {
+        if (opened) {
+          const closed = await opened.close().catch(() => null)
+          if (!closed || closed.unsaved.length) io.stderr('Some TalkWeaver settings could not be saved. Check Settings → Cloudflare.\n')
+        }
+      }
+    },
+  }, io, signal)
+}
+
+let closePublishSocket: (() => void) | undefined
+async function runPublishCommand(args: string[]): Promise<void> {
+  const controller = new AbortController()
+  const cancel = () => controller.abort()
+  process.on('SIGINT', cancel)
+  const io = {
+    stdout: (value: string) => process.stdout.write(value),
+    stderr: (value: string) => process.stderr.write(value),
+  }
+  const cwd = process.cwd()
+  const result = publishNeedsLock && !holdsInstanceLock
+    ? await forwardPublish(app.getPath('userData'), { args, cwd }, io, controller.signal)
+    : await runLocalPublish(args, cwd, io, controller.signal)
+  const code = typeof result === 'number' ? result : publishConnectionFailure(args, io, result)
+  await Promise.all([process.stdout, process.stderr].map(stream => new Promise<void>(done => {
+    try { stream.write('', () => done()) } catch { done() }
+  })))
+  process.removeListener('SIGINT', cancel)
+  app.exit(code)
+}
+
 // Keep app.name unchanged: userData and the Keychain entry depend on it.
 app.setAboutPanelOptions({ applicationName: PRODUCT_NAME })
 
 app.whenReady().then(async () => {
   // A setup refused because the app is open has already exited (app.exit above); one holding the
   // lock runs its command and exits.
+  if (PUBLISH_ARGS) { await runPublishCommand(PUBLISH_ARGS); return }
   if (SETTINGS_ARGS) {
     let code = 1
     try {
@@ -9384,6 +9476,12 @@ app.whenReady().then(async () => {
     callback({ error: -2 })
   })
   createWindow()
+  if (process.getuid) {
+    const receive = restartHolds.during('publishing', ({ args, cwd }: { args: string[]; cwd: string }, io: AgentCliIO, signal: AbortSignal) =>
+      quitting ? publishConnectionFailure(args, io, 'unavailable') : runLocalPublish(args, cwd, io, signal, true))
+    void listenForPublish(app.getPath('userData'), receive).then(close => { closePublishSocket = close })
+      .catch(() => { console.warn('[publish] The local command connection could not be opened.') })
+  }
 
   // Recording uploads are ON REQUEST ONLY (never automatic) — no launch drain, no retry loop.
   // A recording uploads only when the user clicks Upload in Studio (recording:upload).
@@ -9479,11 +9577,12 @@ quitSequence.add({
   },
 })
 // An in-flight publish or live-service setup runs in a process group that would outlive the app.
+quitSequence.add({ name: 'Close the publishing command socket', stage: 'will-quit', timeoutMs: 0, run: () => closePublishSocket?.() })
 quitSequence.add({ name: 'Stop publish and setup tools', stage: 'will-quit', timeoutMs: 0, run: () => { endAllWranglerRuns() } })
 
 app.on('activate', () => {
-  // The setup command never opens a window, whatever macOS asks of it.
-  if (SETUP_ARGS || !holdsInstanceLock) return
+  // A headless command may own the instance lock without opening an editor.
+  if (SETUP_ARGS || PUBLISH_ARGS || !holdsInstanceLock) return
   // Settings and hidden utility windows are not editors. createWindow keeps E2E runs hidden.
   if (!targetEditorFor(null)) createWindow()
 })

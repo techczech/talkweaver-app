@@ -5118,13 +5118,26 @@
       if (more) syncMoreMenu(more);
     } catch {}
   }
+  // Mod is Command on Mac and Control elsewhere, including in an exported deck.
+  const presenterModIsMeta = /Mac/.test(navigator.platform);
+  function presenterShortcutMatches(event, id) {
+    const chord = presenterChord(event);
+    const command = PRESENTER_COMMAND_KEYS.find(item => item.id === id);
+    return Boolean(chord && command?.codes.some(code => presenterCodeChord(code, presenterModIsMeta) === chord));
+  }
   function paletteKeyEvent(code) {
     const parts = code.split('-');
     const base = parts.pop();
     const mods = new Set(parts);
     const shift = mods.has('Shift');
     const key = base.length === 1 ? (shift ? base.toUpperCase() : base.toLowerCase()) : base;
-    const event = new KeyboardEvent('keydown', { key, shiftKey: shift, metaKey: mods.has('Mod') || mods.has('Meta'), altKey: mods.has('Alt'), ctrlKey: mods.has('Ctrl'), bubbles: true, cancelable: true });
+    const mod = mods.has('Mod');
+    const event = new KeyboardEvent('keydown', {
+      key, shiftKey: shift, altKey: mods.has('Alt'),
+      metaKey: mods.has('Meta') || (mod && presenterModIsMeta),
+      ctrlKey: mods.has('Ctrl') || (mod && !presenterModIsMeta),
+      bubbles: true, cancelable: true
+    });
     shortcutForwarded.add(event);
     return event;
   }
@@ -5224,7 +5237,7 @@
   // everything else types into the search field.
   function paletteKey(event) {
     const key = event.key;
-    if (event.metaKey && event.shiftKey && key === ',' && paletteHighlight) {
+    if (presenterShortcutMatches(event, 'presenter.rebind') && paletteHighlight) {
       event.preventDefault();
       const entry = PRESENTER_PALETTE.flatMap(([, entries]) => entries).find(item => item.id === paletteHighlight.dataset.paletteId);
       presenterShortcuts.rebind(entry.shortcut || `palette.${entry.id}`, entry.name, entry.id);
@@ -7700,11 +7713,11 @@
   }
   function handleKey(event) {
     if (isReplay) { event.preventDefault(); return; }
-    if (isPresenter && event.metaKey && event.shiftKey && !event.altKey && event.key.toLowerCase() === 'p') { event.preventDefault(); togglePresenterCommands(); return; }
+    if (isPresenter && presenterShortcutMatches(event, 'presenter.command-palette')) { event.preventDefault(); togglePresenterCommands(); return; }
     if (isPresenter && !commandPalette.hidden) { paletteKey(event); return; }
     if (isPresenter && event.key === "Escape" && notesMenuOpen()) { event.preventDefault(); toggleNotesMenu(false); return; }
     if (isPresenter && event.key === "Escape" && questionsTray.open && instantCompose.hidden && instantPaste.hidden && !(els.presenterQuickPollCompose && !els.presenterQuickPollCompose.hidden)) { event.preventDefault(); event.stopPropagation(); openQuestionsTray(false); return; }
-    if (isPresenter && event.metaKey && event.altKey && !event.shiftKey && event.key.toLowerCase() === 'i') { event.preventDefault(); openInstantCompose(); return; }
+    if (isPresenter && presenterShortcutMatches(event, 'presenter.instant-compose')) { event.preventDefault(); openInstantCompose(); return; }
     if (isPresenter && (!instantCompose.hidden || !instantPaste.hidden)) {
       if (event.key === 'Escape') { event.preventDefault(); closeInstantPanels(); return; }
       if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); showInstantDraft(); return; }
@@ -8532,7 +8545,7 @@
     if (!guideChords) {
       guideChords = new Map();
       for (const command of PRESENTER_COMMAND_KEYS) {
-        for (const code of command.codes) { const c = presenterCodeChord(code); if (c && !guideChords.has(c)) guideChords.set(c, command.id); }
+        for (const code of command.codes) { const c = presenterCodeChord(code, presenterModIsMeta); if (c && !guideChords.has(c)) guideChords.set(c, command.id); }
       }
     }
     const id = guideChords.get(chord) ?? null;

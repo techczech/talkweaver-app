@@ -555,6 +555,14 @@ export async function writeTalkOutline(
 
 export const PUBLISH_EMPTY_TALK = 'The talk is empty, so nothing was published.'
 
+/** Read one complete disk save under the writer's lock. The editor check never saves its buffer. */
+export async function readSavedTalkForPublish(outlinePath: string): Promise<{ text: string; editorDiffers: boolean | 'unknown' }> {
+  const text = await withTalkFileLock(outlinePath, held => readFile(held.realPath, 'utf8'))
+  const buffer = routes.editorBufferFor(outlinePath)
+  try { return { text, editorDiffers: !!buffer && await buffer.read() !== text } }
+  catch { return { text, editorDiffers: 'unknown' } }
+}
+
 /** Publish's flush (spec round 5, fix b; handout-built-from-the-buffer 2026-09-28): puts the talk's
  *  CURRENT text on disk before a publish and returns it (`result.text`) — the text the handout is
  *  built from and sealed. For an open talk that is the editor's buffer as it stands — never the text

@@ -52,6 +52,7 @@ import type {
   ObjectEditorCommitOptions,
   ObjectEditorCommitResult,
   ObjectEditorCommitContext,
+  MountSourceEditor,
   ShellCheatSheet
 } from '../../objects/shell.ts'
 
@@ -63,6 +64,7 @@ export type ObjectBlocksOptions = {
   onInsertMenu?: (coords: { x: number; y: number }, consumeFence: ConsumeInsertFence) => void
   onZoom?: (block: ObjectBlock) => void
   cheatSheet?: ShellCheatSheet
+  mountSource?: MountSourceEditor
 }
 
 // Parsing depends on the immutable document, not the cursor or object UI state. Share one
@@ -338,13 +340,13 @@ function blockIsInsideFocus(block: ObjectBlock, state: EditorState): boolean {
 
 export class ObjectEditorWidget extends WidgetType {
   readonly block: ObjectBlock
-  readonly cheatSheet?: ShellCheatSheet
+  private readonly options: ObjectBlocksOptions
   private view?: EditorView
 
-  constructor(block: ObjectBlock, cheatSheet?: ShellCheatSheet) {
+  constructor(block: ObjectBlock, options: ObjectBlocksOptions = {}) {
     super()
     this.block = block
-    this.cheatSheet = cheatSheet
+    this.options = options
   }
 
   eq(other: WidgetType): boolean {
@@ -354,7 +356,8 @@ export class ObjectEditorWidget extends WidgetType {
       && other.block.to === this.block.to
       && other.block.source === this.block.source
       && other.block.simulationVersion === this.block.simulationVersion
-      && other.cheatSheet === this.cheatSheet
+      && other.options.cheatSheet === this.options.cheatSheet
+      && other.options.mountSource === this.options.mountSource
   }
 
   private editorApi(view: EditorView): ObjectEditorApi {
@@ -384,8 +387,7 @@ export class ObjectEditorWidget extends WidgetType {
       if (focusRefusal) return { ok: false, reason: focusRefusal }
       const plan = planObjectEditorCommit(this.block, view.state.doc.toString(), inner, options, commitFacts(view))
       if (!plan.ok) return plan
-      const card = isCardBlock(this.block)
-      if (card && plan.change.insert === view.state.doc.sliceString(plan.change.from, plan.change.to)) {
+      if (plan.change.insert === view.state.doc.sliceString(plan.change.from, plan.change.to)) {
         // A no-op commit writes nothing: no transaction, no undo step, no autosave (ADR-0042).
         view.dispatch({ selection: { anchor: this.block.from }, effects: setOpenObjectBlock.of(null) })
         view.focus()
@@ -399,8 +401,8 @@ export class ObjectEditorWidget extends WidgetType {
         selection: { anchor: this.block.from },
         effects: setOpenObjectBlock.of(null),
         userEvent: 'input',
-        // A card's commit is one undo step of its own: never merged with typing before or after it.
-        ...(card ? { annotations: isolateHistory.of('full') } : {}),
+        // Each object edit is one undo step, isolated from typing before or after it.
+        annotations: isolateHistory.of('full'),
         scrollIntoView: true
       })
       if (view.state.doc.sliceString(
@@ -431,7 +433,7 @@ export class ObjectEditorWidget extends WidgetType {
 
   toDOM(view: EditorView): HTMLElement {
     this.view = view
-    return mountObjectEditor(this.block, this.editorApi(view), this.cheatSheet)
+    return mountObjectEditor(this.block, this.editorApi(view), this.options.cheatSheet, this.options.mountSource)
   }
 
   updateDOM(dom: HTMLElement, view: EditorView, from: this): boolean {
@@ -460,13 +462,14 @@ export class ObjectEditorWidget extends WidgetType {
     // A surviving block is handled by updateDOM, which can veto teardown and keep this exact shell.
     // If the block disappeared (or the whole editor was destroyed), no host remains for the typed
     // content. That case is unrecoverable by definition, so surface it as a visible persistent toast.
-    const commit = (dom as HTMLElement & {
+    const shell = dom as HTMLElement & {
       __twCommit?: (context?: ObjectEditorCommitContext) => ObjectEditorCommitResult
-    }).__twCommit
-    if (!commit) return
+      __twDispose?: () => void
+    }
     queueMicrotask(() => {
-      const result = commit('teardown')
-      if (result.ok) return
+      const result = shell.__twCommit?.('teardown')
+      if (!result || result.ok) return
+      shell.__twDispose?.()
       const blockStillExists = detectObjectBlocks(this.view?.state.doc.toString() ?? '')
         .some((candidate) =>
           candidate.kind === this.block.kind && candidate.source === this.block.source
@@ -530,10 +533,7 @@ function buildObjectBlockState(state: EditorState): ObjectBlockState {
     if (open?.from === block.from) {
       ranges.push(
         Decoration.replace({
-          widget: new ObjectEditorWidget(
-            block,
-            options.cheatSheet
-          ),
+          widget: new ObjectEditorWidget(block, options),
           block: true
         }).range(block.from, lastLineEnd)
       )
@@ -570,11 +570,19 @@ function buildObjectBlockState(state: EditorState): ObjectBlockState {
   }
   // Constructs left as text: a warning mark, never a fold (an unclosed `<!--` or `:::notes`).
   const markdown = state.facet(editNotesAsSource)
+  const markSourceMarker = (line: ReturnType<Text['line']>) => {
+    const prefix = /^\s*\[(Marker:)/i.exec(line.text)
+    if (!prefix) return
+    const end = line.from + prefix[0].length
+    ranges.push(Decoration.line({ class: 'tw-video-marker-source' }).range(line.from))
+    ranges.push(Decoration.mark({ class: 'tw-video-marker-source-token' }).range(end - prefix[1].length, end))
+  }
   if (markdown) {
     const playback = state.facet(videoSourceDuration)
     for (const block of objects.blocks) {
       const video = block.video
       if (!video?.markers.length) continue
+      for (const marker of video.markers) markSourceMarker(state.doc.line(marker.line + 1))
       const line = state.doc.line(video.markers.at(-1)!.line + 1)
       const detail = [
         videoFileName(video.ref),
@@ -590,9 +598,12 @@ function buildObjectBlockState(state: EditorState): ObjectBlockState {
   }
   for (const warning of objects.warnings) {
     if (warning.kind === 'orphan-video-marker') {
-      if (markdown) ranges.push(Decoration.widget({
-        widget: new VideoMarkerSourceNote(ORPHAN_VIDEO_MARKER, true), side: 1
-      }).range(warning.to))
+      if (markdown) {
+        markSourceMarker(state.doc.lineAt(warning.from))
+        ranges.push(Decoration.widget({
+          widget: new VideoMarkerSourceNote(ORPHAN_VIDEO_MARKER, true), side: 1
+        }).range(warning.to))
+      }
       continue
     }
     if (focus && (warning.from < focus.from || warning.to > focus.to)) continue

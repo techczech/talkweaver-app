@@ -13,7 +13,7 @@ import { createOutlineSlideMerge } from '../src/main/outline-slide-merge.ts'
 import { canonicalOutlinePath } from '../src/main/outline-identity.ts'
 import { configureTalkWriter, withTalkFileLock, writeTalkOutline } from '../src/main/talk-writer.ts'
 import { applySlideMerge, planSlideMerge } from '../src/shared/outline-merge.ts'
-import { summarizeSlideMerge } from '../src/shared/outline-slide-merge.ts'
+import { summarizeSlideMerge, WHOLE_TALK_MERGE_KEY } from '../src/shared/outline-slide-merge.ts'
 import { slideMergeHistory, slideMergeTransaction } from '../src/renderer/src/lib/slideMergeTransaction.ts'
 
 const block = (id, text) => `## ${id.toUpperCase()} {id=${id}}\n\n${text}\n\n`
@@ -123,6 +123,10 @@ test('missing choices, a superseded plan, and a newer disk version make no write
   const choices = { 'id:a': 'mine', 'id:b': 'disk' }
   assert.equal((await f.service.apply('win', f.path, first.generation, choices)).reason, 'stale-plan')
   assert.equal((await f.service.apply('other-window', f.path, second.generation, choices)).reason, 'ownership')
+  assert.equal((await f.apply({ [WHOLE_TALK_MERGE_KEY]: 'mine' })).reason, 'invalid-choice')
+  assert.equal(f.service.pictureSource('other-window', f.path, second.generation, 'mine'), null)
+  assert.equal(f.service.pictureSource('win', f.path, first.generation, 'mine'), null)
+  assert.deepEqual(f.service.pictureSource('win', f.path, second.generation, 'mine'), { text: mine, lines: [1, 5] })
   assert.deepEqual(await f.apply({ 'id:a': 'mine' }), { ok: false, reason: 'unresolved', keys: ['id:b'] })
   assert.equal(readFileSync(f.path, 'utf8'), disk)
   // Even if the changed bytes now equal the proposed result, they were not the reviewed disk.
@@ -150,12 +154,16 @@ test('duplicate IDs and unsafe structure fail before any write', async t => {
     assert.deepEqual((await f.plan()).duplicateIds, ['a'])
     assert.deepEqual(await f.apply({}), { ok: false, reason: 'duplicate-ids', ids: ['a'] })
     assert.equal(f.writes(), 0)
+    assert.equal((await f.apply({ [WHOLE_TALK_MERGE_KEY]: 'mine' })).ok, true)
+    assert.equal(readFileSync(f.path, 'utf8'), mine)
   })
   await t.test('unsafe mixed structure', async t => {
     const f = fixture(t, { base: block('a', 'original'), mine: block('a', '\x60\x60\x60md\nunfinished').trimEnd(), disk })
     await f.plan()
     assert.equal((await f.apply({ 'id:a': 'mine', 'id:b': 'disk' })).reason, 'unsafe-structure')
     assert.equal(f.writes(), 0)
+    assert.equal((await f.apply({ [WHOLE_TALK_MERGE_KEY]: 'disk' })).ok, true)
+    assert.equal(readFileSync(f.path, 'utf8'), disk)
   })
 })
 

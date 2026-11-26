@@ -10,6 +10,7 @@ import { editInlinePicture, pooledImageOnLine, replaceEditedImageUse } from '../
 import { selectOfflinePage, offlinePageReplacement, type OfflinePageSelection } from '../lib/offlinePage'
 import { outlineDiskChanges } from '../lib/outlineDiskChange'
 import { isWorkspaceCovered } from '../lib/workspaceCover'
+import { isSlideMergeReviewOpen } from '../lib/slideMergeTransaction'
 import { clipboardHasText, htmlClipboardText } from '../lib/clipboardText'
 import { projectGridMove } from '../../../shared/slide-handling/grid-move-projection'
 import { runSetAside, type SetAsideHost } from '../lib/slideSetAside'
@@ -80,6 +81,9 @@ import PropagationChecklist, { type AdoptVersion } from './PropagationChecklist'
 import MergeConfirm from './MergeConfirm'
 import ShareSheet from './ShareSheet'
 import PublishNotReadySheet from './PublishNotReadySheet'
+import PublishDetailsSheet from './PublishDetailsSheet'
+import { interruptedPublishDiagnostic, publishDiagnosticTitle, type PublishDiagnostic } from '../../../shared/publish-diagnostic'
+import { useHandoutPublishProgress } from '../lib/useHandoutPublishProgress'
 import PublishWorkNoticeSheet from './PublishWorkNoticeSheet'
 import { publishWorkNotice } from '../../../shared/publish-work-notice.ts'
 import { readTalkWorkNames } from '../../../shared/work-files-view.ts'
@@ -169,6 +173,7 @@ import type { EditorViewMode } from '../../../shared/editor-view-mode'
 import OutlineDiskChangeBar, { OutlineDiskChangeChip, OutlineDiskChangeSheet } from './OutlineDiskChangeBar'
 import { useOutlineDiskChange } from './useOutlineDiskChange'
 import OutlineMergeSheet from './OutlineMergeSheet'
+import SlideMergeCards from './SlideMergeCards'
 import SlideDiskReview from './SlideDiskReview'
 import { singleSlideDiskReview } from '../lib/slideDiskReview'
 import { noteOutlineSaveReply } from '../lib/outlineDiskChange'
@@ -432,12 +437,14 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   }, [])
   useEffect(() => window.tw.settings.onPlaceChipChanged((state) => setPlaceChipVisible(state.visible)), [])
   const runRegisteredCommand = useCallback((handlerId: PaletteCommandHandlerId): void => {
+    if (isSlideMergeReviewOpen()) return
     commandHandlersRef.current?.[handlerId]()
   }, [])
   // A palette row runs its handler; a command only a key reaches (the outline's move and jump keys,
   // the sidebar and find keys) is run by sending its effective key to the editor, as the presenter
   // palette does for its viaKey entries.
   const runListedCommand = useCallback((command: CommandDefinition): void => {
+    if (isSlideMergeReviewOpen()) return
     const handler = commandHandlersRef.current?.[command.handlerId as PaletteCommandHandlerId]
     if (handler) { handler(); return }
     if (!command.shortcutId) return
@@ -445,6 +452,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     if (!code) return
     const keys = effectiveKeys(command.shortcutId) || code
     window.setTimeout(() => {
+      if (isSlideMergeReviewOpen()) return
       const target = document.querySelector<HTMLElement>('.cm-content')
       target?.focus()
       ;(target ?? document.body).dispatchEvent(new KeyboardEvent('keydown', chordEventInit(keys)))
@@ -588,12 +596,40 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
 
   const [buildStatus, setBuildStatus] = useState<'idle' | 'building' | 'done' | 'error'>('idle')
   const [buildPath, setBuildPath] = useState<string | null>(null)
-  // Publishing is a long, opaque wrangler deploy (no streamed progress) — show a prominent
-  // blocking overlay with an elapsed-seconds ticker so it never looks hung.
+  // The build chip names the local action that failed.
+  const [buildErrorLabel, setBuildErrorLabel] = useState('Build failed')
+  const [publishIssue, setPublishIssue] = useState<{ diagnostic: PublishDiagnostic; outlinePath: string } | null>(null)
+  const [publishDetails, setPublishDetails] = useState(false)
+  const publishProgress = useHandoutPublishProgress()
   const [publishing, setPublishing] = useState<boolean>(false)
   // Re-entry guard for Publish: a ref, so the command registry's (possibly older) closure sees it too.
   // Two overlapping publishes of one talk would race on its slide-assets/ folder.
   const publishingRef = useRef(false)
+  useEffect(() => {
+    publishProgress.observe()
+    return window.tw.talk.onCliPublish?.(update => {
+      if (update.outlinePath !== activeTalk?.outlinePath) return
+      if (update.kind === 'progress') {
+        if (!publishingRef.current && update.progress.step === 'preparing') {
+          setBuildStatus('idle')
+          setPublishIssue(null)
+          setPublishDetails(false)
+        }
+        publishProgress.observe(update.progress)
+      } else {
+        publishProgress.observe()
+        if (publishingRef.current) return
+        if (update.url) {
+          setPublishIssue(null)
+          setBuildStatus('done')
+          setBuildPath(update.url)
+        } else if (update.diagnostic) {
+          setBuildStatus('idle')
+          setPublishIssue({ diagnostic: update.diagnostic, outlinePath: update.outlinePath })
+        }
+      }
+    })
+  }, [activeTalk?.outlinePath])
   // Share for comments (ticket 03): the sheet, and every shared talk (status bar chip).
   const [shareSheetOpen, setShareSheetOpen] = useState<boolean>(false)
   // Publish handout could not start: what is missing, for the sheet (spec: the "not ready" table).
@@ -803,7 +839,6 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const [researchHighlight, setResearchHighlight] = useState<string | null>(null)
   const researchCaptureDropRef = useRef<{ body: string; artefact?: string } | null>(null)
   const sharedTalks = useSharedTalks()
-  const [publishElapsed, setPublishElapsed] = useState<number>(0)
   const [wordCount, setWordCount] = useState<number>(0)
   const [lastSaved, setLastSaved] = useState<Date | null>(null)
   // Shared talk facts (T29): the status bar's dates segment reads the SAME store as the Talks
@@ -881,7 +916,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // takeFocus distinguishes deliberate "go edit this" jumps (outline sidebar, deck ⌘E — the caret
   // should land in the editor) from strip/grid card CLICKS, which only aim the editor's viewport:
   // stealing focus there killed the strip's own arrow-key navigation for mouse users.
-  const [focusLine, setFocusLine] = useState<{ line: number; takeFocus: boolean; editTitle?: boolean } | null>(null)
+  const [focusLine, setFocusLine] = useState<{ line: number; takeFocus: boolean; editTitle?: boolean; selectPlaceholder?: boolean } | null>(null)
   const [imageMetaId, setImageMetaId] = useState<string | null>(null)
   const [imageEditRequested, setImageEditRequested] = useState(false)
   const imageMetaTalkRef = useRef<string | null>(null)
@@ -974,7 +1009,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const editorReadRef = useRef<ReadEditorDoc | null>(null)
   const editorLayoutContextRef = useRef<(() => LayoutPickerContext | null) | null>(null)
   const editorApplyLayoutRef = useRef<((initial: LayoutDef[], selected: LayoutDef[]) => void) | null>(null)
-  const editorApplyOptionRef = useRef<((entry: LayoutDef | undefined, group: OptionGroup, token: string, headingLine?: number, slideId?: string | null, compiledLayout?: string) => string | null) | null>(null)
+  const editorApplyOptionRef = useRef<((group: OptionGroup, token: string, headingLine?: number, slideId?: string | null, compiledLayout?: string) => string | null) | null>(null)
   // Editor-only commands (fold/unfold all + line-targeted outline ops) exposed to the command palette and Slides organizer.
   const editorCmdsRef = useRef<{
     foldAll: () => void; unfoldAll: () => void
@@ -998,6 +1033,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     flushSave: () => Promise<void>
     settleSave: (signal?: AbortSignal) => Promise<void>
     forceSave: (signal?: AbortSignal) => Promise<boolean>
+    cancelDebouncedSave: (outlinePath: string) => void
     commitSlideMerge: CommitSlideMerge
     scrollCursorIntoView: () => void
     cursorCoords: () => { x: number; y: number } | null
@@ -1875,6 +1911,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     flush: async () => { await editorCmdsRef.current?.flushSave() },
     settle: async (signal) => { await editorCmdsRef.current?.settleSave(signal) },
     forceSave: async (signal) => (await editorCmdsRef.current?.forceSave(signal)) ?? false,
+    cancelDebouncedSave: path => editorCmdsRef.current?.cancelDebouncedSave(path),
     hasPendingSketch: sketch.hasPending,
     saveSketch: () => sketchApplyInFlight.current ? Promise.resolve(false) : sketch.flush(),
     onDiscardTalk: () => onDiscardTalk?.(),
@@ -2189,7 +2226,9 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // Global keyboard handler
   useEffect(() => {
     function handleGlobalKey(e: KeyboardEvent) {
-      if (isWorkspaceCovered()) return
+      if (isWorkspaceCovered() || isSlideMergeReviewOpen()) return
+      // The edit shell owns keystrokes while its draft is focused, including Escape and Done.
+      if (e.target instanceof HTMLElement && e.target.closest('.oe')) return
       // ⌃/ toggles the keyboard-shortcuts list — works even WHILE typing in the editor (unlike
       // "?", which is a real character there). ⌘/ is deliberately left to CodeMirror's
       // toggle-comment. Capture-phase here means we see it before the editor's own keymap.
@@ -3063,6 +3102,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   async function handleBuild() {
     if (!activeTalk || !outlineContent) return
     if (blockedByUnresolved(outlineContent)) return
+    setBuildErrorLabel('Build failed')
     setBuildStatus('building')
     const result = await window.tw.talk.buildVariants(activeTalk.outlinePath, outlineContent)
     if (result?.success) {
@@ -3084,6 +3124,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   async function handleExportHandout() {
     if (!activeTalk || !outlineContent) return
     if (blockedByUnresolved(outlineContent)) return
+    setBuildErrorLabel('Handout export failed')
     setBuildStatus('building')
     const result = await window.tw.talk.exportHandout(activeTalk.outlinePath, outlineContent)
     if (result?.success && result.path) {
@@ -3124,12 +3165,19 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     if (blockedByUnresolved(outlineContent)) return
     const outlinePath = activeTalk.outlinePath
     publishingRef.current = true
-    setBuildStatus('building')
-    setPublishElapsed(0)
+    setBuildStatus('idle')
+    dismissToast('publish-failed')
+    setPublishIssue(null)
+    setPublishDetails(false)
     setPublishing(true)
-    const ticker = setInterval(() => setPublishElapsed((s) => s + 1), 1000)
+    const showIssue = (diagnostic: PublishDiagnostic): void => {
+      setPublishIssue({ diagnostic, outlinePath })
+      notify(publishDiagnosticTitle(diagnostic), diagnostic.kind === 'cancelled' ? 'info' : 'error', 'publish-failed', {
+        label: 'Details', onAction: () => { setPublishIssue({ diagnostic, outlinePath }); setPublishDetails(true) },
+      })
+    }
     try {
-      const res = await window.tw.talk.publishHandout(outlinePath, outlineContent, mediaChoice)
+      const res = await publishProgress.run(id => window.tw.talk.publishHandout(outlinePath, outlineContent, mediaChoice, id))
       if (res?.success && res.url) {
         const url = res.url
         const stamped = await applyOutlineMutation(outlinePath, (current) => stampHandoutUrl(current, url))
@@ -3160,19 +3208,14 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       } else if (res?.notReady) {
         // Publishing could not start (not connected, or one thing missing): the sheet, not a failure toast.
         setBuildStatus('idle')
+        if (res.diagnostic) setPublishIssue({ diagnostic: res.diagnostic, outlinePath })
         setPublishNotReady({ warning: res.notReady, outlinePath })
       } else {
-        setBuildStatus('error')
-        if (res?.display || res?.url) setBuildPath(res.display || res.url || null)
-        console.warn('[publish-handout]', res?.error)
-        // What lies behind the message (e.g. which bundled file is missing) is shown on request.
-        const details = res?.details
-        notify('Publish failed: ' + (res?.error || 'unknown error'), 'error', 'publish-failed', details
-          ? { label: 'Details', onAction: () => notify(details, 'info', 'publish-failed-details') }
-          : undefined)
+        showIssue(res?.diagnostic ?? interruptedPublishDiagnostic(res?.error))
       }
+    } catch {
+      showIssue(interruptedPublishDiagnostic())
     } finally {
-      clearInterval(ticker)
       publishingRef.current = false
       setPublishing(false)
     }
@@ -4596,16 +4639,14 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // editorHostRef), so an option commit goes into that buffer in the slides-only view as well. The
   // old editor-less fallback changed only outlineContent: the buffer's next save — an "Add to talk"
   // made at once, or any later keystroke — wrote the older text and dropped the option.
-  function applyOption(entry: LayoutDef | undefined, group: OptionGroup, token: string, targetHeadingLine?: number, targetSlideId?: string | null): string | null {
-    return editorApplyOptionRef.current?.(entry, group, token, targetHeadingLine, targetSlideId, targetHeadingLine == null ? undefined : compiledLayoutAtLine(targetHeadingLine)) ?? null
-  }
-
-  function applyInspectorOption(entry: LayoutDef | undefined, group: OptionGroup, token: string): string | null {
+  function applyInspectorOption(group: OptionGroup, token: string): string | null {
     const path = activeTalkRef.current?.outlinePath
-    const id = compiledSlidesRef.current?.[activeSlideRef.current]?.slide_id ?? null
+    const row = compiledSlidesRef.current?.[activeSlideRef.current]
+    const id = row?.slide_id ?? null
     const headingLine = headingLineForSlideId(outlineContentRef.current, id, group.key === 'arrival-mode')
     if (!path || headingLine == null) return null
-    return commitPanelEdit(path, () => applyOption(entry, group, token, headingLine, id))
+    const layout = row?.has_table && (!row.layout || row.layout === 'list') ? 'table' : row?.layout
+    return commitPanelEdit(path, () => editorApplyOptionRef.current?.(group, token, headingLine, id, layout) ?? null)
   }
   // ADR-0032 (ticket 01): the Board section edits the slide BODY, not only its Trigger line. The
   // edit is computed against the editor's own buffer (never the outlineContent mirror), for the
@@ -4785,6 +4826,29 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       return false
     }
   }
+  function keepPanelDesign(slide: SlideRef, layout: string, design: Design): void {
+    let firstSide: { id: string; line: number } | undefined
+    const applied = changePanelSlide(outlineContent, text => {
+      const next = panelEdit(text, slide, design, layout)
+      if (next === text || design.structure !== 'split-into-groups') return next
+      const { nodes, lines } = structureOf(next)
+      const owner = nodes.findIndex(node => typeof slide === 'string' ? node.id === slide : node.line + 1 === slide.headingLine)
+      if (owner < 0) return next
+      // Autosave can move Trigger tokens to their own lines, so keep the sides by id.
+      for (const side of nodes.filter(node => node.folded && node.ancestors.at(-1) === owner)) {
+        const id = crypto.randomUUID().slice(0, 8)
+        firstSide ??= { id, line: side.line + 1 }
+        lines[side.line] = lines[side.line].replace(/\r?$/, ` {id=${id}}$&`)
+      }
+      return lines.join('\n')
+    }, design.label)
+    if (!applied || !firstSide || !activeTalk) return
+    const { line } = firstSide
+    showWorkspaceView('slide')
+    setSelectedSubslide({ path: activeTalk.outlinePath, ...firstSide })
+    activeLineReporter.report(line)
+    setFocusLine({ line, takeFocus: true, editTitle: true, selectPlaceholder: true })
+  }
   function applyPanelIcon(line: number, key: string | null, base: string): void {
     changePanelSlide(base, text => {
       const result = key ? setLineIcon(text, line, key, isKnownIcon) : clearLineIcon(text, line)
@@ -4842,7 +4906,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   if (!activeTalk) {
     return (
       <div className="workspace">
-        <div className="workspace-toolbar">
+        <div className="workspace-toolbar workspace-welcome-titlebar">
           <span className="workspace-title" style={{ color: 'var(--text-2)', fontWeight: 500 }}>TalkWeaver</span>
           <div className="toolbar-actions">
             <ToolbarMenu
@@ -5267,7 +5331,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         preview={activePanelTry}
         applied={activePanelApplied?.label}
         onTry={previewPanelDesign}
-        onKeep={(slide, layout, design) => changePanelSlide(outlineContent, text => panelEdit(text, slide, design, layout), design.label)}
+        onKeep={keepPanelDesign}
         onUndo={undoPanelEdit}
         onIcon={applyPanelIcon}
         onCropPicture={(line, id) => {
@@ -5289,6 +5353,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         onMarkdown={() => runRegisteredCommand('view-markdown')}
         structure={inspectorNode && inspectorLine != null ? {
           section: !!isSectionSlide,
+          hasSubslides: inspectorNode.container,
           childCount: inspectorChildren.length,
           carousel: sectionCarousel,
           panes: inspectorSubslides,
@@ -5599,9 +5664,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       {createPortal(<PathwaysView key={activeTalk.outlinePath} talk={activeTalk} model={pathways} thumbnails={thumbnails}
         docked={pathwaysMode} onBack={backFromPathways} canAddSelected={gridMode && hasPathwayGridSelection}
         onAddSelected={() => runRegisteredCommand('add-to-pathway')} />, leftPathwaysHost ?? document.body)}
-      {publishing && (
-        // Non-modal: a corner status toast that NEVER blocks the app — pointer-events off so you can
-        // launch Presenter view, edit, etc. while the deploy runs in the background.
+      {publishProgress.text && (
+        // Only Cancel takes pointer events. The rest of the app stays available during upload.
         <div
           role="status"
           aria-live="polite"
@@ -5617,12 +5681,14 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
           <div className="spinner" style={{ width: 22, height: 22, flexShrink: 0 }} />
           <div style={{ minWidth: 0 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink)' }}>
-              Publishing… <span style={{ color: 'var(--faint)', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>{publishElapsed}s</span>
+              Publishing… <span aria-hidden="true" style={{ color: 'var(--faint)', fontWeight: 500, fontFamily: 'var(--font-mono)' }}>{publishProgress.elapsed}s</span>
             </div>
-            <div style={{ fontSize: 11.5, color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              Deploying to Cloudflare — you can keep working.
+            <div style={{ fontSize: 12, color: 'var(--muted)' }}>
+              {publishProgress.text}
             </div>
           </div>
+          {publishProgress.canCancel && <button type="button" className="toolbar-btn" style={{ pointerEvents: 'auto', flexShrink: 0 }}
+            disabled={publishProgress.cancelling} onClick={() => void publishProgress.cancel()}>Cancel publish</button>}
         </div>
       )}
       <div className="workspace-row">
@@ -5794,6 +5860,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         compiling={compiling}
         buildStatus={buildStatus}
         buildPath={buildPath}
+        buildErrorLabel={buildErrorLabel}
+        publishIssue={publishIssue ? { diagnostic: publishIssue.diagnostic, onClick: () => setPublishDetails(true) } : null}
         dates={talkDates}
         runChips={activeTalk && activeConflicts > 0 ? (
           <ConflictLine talk={{ ...activeTalk, conflicts: activeConflicts }} className="tw-status-conflict" />
@@ -5858,8 +5926,13 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         ? <SlideDiskReview key={diskGuard.mergeReview.generation} path={activeTalk.outlinePath} review={diskGuard.mergeReview} change={reviewedSlide}
           busy={diskGuard.busy} close={diskGuard.dismissMerge} keep={() => diskGuard.applyMerge(diskGuard.mergeReview!.generation, {})}
           putBack={() => diskGuard.applyMerge(diskGuard.mergeReview!.generation, {}, 'put-back')} />
-        : <OutlineMergeSheet key={diskGuard.mergeReview.generation} review={diskGuard.mergeReview} initialChoices={diskGuard.mergeChoices}
-          busy={diskGuard.busy} onApply={diskGuard.applyMerge} onDismiss={diskGuard.dismissMerge} onDraft={diskGuard.keepMergeDraft} />)}
+        : <OutlineMergeSheet key={diskGuard.mergeReview.generation} review={diskGuard.mergeReview}
+          busy={diskGuard.busy} onApply={() => diskGuard.applyMerge(diskGuard.mergeReview!.generation, {})} onDismiss={diskGuard.dismissMerge} />)}
+      {handoff?.path !== activeTalk.outlinePath && diskGuard.slideReview &&
+        <SlideMergeCards key={diskGuard.slideReview.generation} path={activeTalk.outlinePath} title={activeTalk.title}
+          review={diskGuard.slideReview} busy={diskGuard.busy} saving={diskGuard.savingMerge} stale={diskGuard.slideReviewStale}
+          error={diskGuard.slideReviewError} wholeTalk={diskGuard.slideReviewWholeTalk}
+          onApply={diskGuard.applySlideReview} onDismiss={diskGuard.dismissMerge} onRefresh={diskGuard.refreshSlideReview} />}
       {diskGuard.sheet && <OutlineDiskChangeSheet change={diskGuard.sheet} onAnswer={diskGuard.answerSheet} />}
       <SearchPalette
         isOpen={searchOpen}
@@ -6011,6 +6084,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
           }
         }}
       />
+      {publishDetails && publishIssue && <PublishDetailsSheet diagnostic={publishIssue.diagnostic} close={() => setPublishDetails(false)}
+        retry={activeTalk.outlinePath === publishIssue.outlinePath ? () => void handlePublishHandout() : undefined} />}
       {publishNotReady && (
         <PublishNotReadySheet
           what="Publish handout"

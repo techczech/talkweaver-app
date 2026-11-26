@@ -27,9 +27,9 @@
 // without reopening ADR-0032.
 // =============================================================================
 import { LIST_LAYOUT_STRUCTURES, planListStructure, type ListLayoutStructure } from './list-layout-structure.ts'
-import { LAYOUTS } from './layout-registry/entries.ts'
+import { GLOBAL_OPTION_GROUPS, LAYOUTS } from './layout-registry/entries.ts'
 import type { LayoutDef, OptionGroup } from './layout-registry/entries.ts'
-import { optionGroupsForSlide, registryOptionGroups } from './layout-registry/options.ts'
+import { layoutEntryFor, optionGroupsForSlide, registryOptionGroups } from './layout-registry/options.ts'
 import { winningAuthoredLayout } from './layout-registry/vocabulary.ts'
 import { deckCommitContext } from './deck-frame.ts'
 import { compilerFactsOf, type CompilerFacts, type SlideLayoutFacts, type SlideToken } from './plain-view-compiler-facts.ts'
@@ -38,6 +38,7 @@ import { readOutlineSlides, slideEffectiveAttrs, type OutlineSlide, type Outline
 import { applyLayoutSelection, commitOptionSelection, isOptionTokenForGroup, logicalTriggerBlockAfterHeading, parseTriggerLine } from './trigger-line.ts'
 import { commitLayoutSelection, selectionFromTriggerLine, toggleLayoutSelection } from './layout-selection.ts'
 import { applyQuoteTitleAttribution, parseHeadingAttrs } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
+import { authoredLayoutDecision } from '../../compiler/scripts/lib/authored-layout.mjs'
 import { preContentWindow } from '../../compiler/scripts/lib/slide-id.mjs'
 import { contentTriggerLines } from '../../compiler/scripts/lib/slide-attrs.mjs'
 import {
@@ -726,7 +727,12 @@ function lineEdits(onLine: readonly SlideToken[], gone: ReadonlySet<SlideToken>,
       // The whole group goes, with the space that set it apart: after it when it opens the line, before it otherwise.
       let from = groupFrom
       let to = tokens[0].groupTo
-      if (line.slice(0, from).trim() === '') { while (to < line.length && /[ \t]/.test(line[to])) to += 1 } else { while (from > 0 && /[ \t]/.test(line[from - 1])) from -= 1 }
+      if (line.slice(0, from).trim() === '') {
+        while (to < line.length && /[ \t]/.test(line[to])) to += 1
+      } else if (!tokens[0].onHeading || line[to] !== '{') {
+        // Adjacent heading attributes share the space between the title and their first group.
+        while (from > 0 && /[ \t]/.test(line[from - 1])) from -= 1
+      }
       edits.push({ from, to, insert: '' })
       continue
     }
@@ -756,8 +762,9 @@ function lineEdits(onLine: readonly SlideToken[], gone: ReadonlySet<SlideToken>,
  */
 function editLayoutTokens(outline: string, slide: SlideLayoutFacts, swap: SlideToken | null, put: string,
   remove: (token: SlideToken) => boolean = token => token.writesLayout): string {
-  const lines = outline.split('\n')
   const gone = new Set(slide.tokens.filter(token => remove(token) && token !== swap))
+  if (!gone.size && !swap) return outline
+  const lines = outline.split('\n')
   const byLine = new Map<number, SlideToken[]>()
   for (const token of slide.tokens) {
     const list = byLine.get(token.line)
@@ -781,6 +788,72 @@ function editLayoutTokens(outline: string, slide: SlideLayoutFacts, swap: SlideT
   for (const index of dropped.sort((a, b) => b - a)) lines.splice(index, 1)
   if (lastGone && lines.length) lines[lines.length - 1] = lines[lines.length - 1].replace(/\r$/, '')
   return lines.join('\n')
+}
+
+const listTreatment = (group: OptionGroup): boolean => group.key === 'iconlist-variant' || group.key === 'number-style'
+const designOptionGroups = [...new Set([
+  ...LAYOUTS.filter(entry => entry.kind === 'layout').flatMap(entry => entry.options ?? [])
+    .filter(group => !GLOBAL_OPTION_GROUPS.includes(group)),
+  ...GLOBAL_OPTION_GROUPS.filter(listTreatment)
+])]
+
+function designOptionToken(group: OptionGroup, raw: string): boolean {
+  return isOptionTokenForGroup(raw, group) || (group.dictionaryTokens ?? []).includes(raw)
+}
+
+/**
+ * Prepare a Slide panel edit against all the attribute locations the compiler reads. Layout verbs
+ * write to the Trigger block, so an explicit choice also clears competing layout tags on the
+ * heading and stray Trigger lines. An option-only edit keeps the layout already written there.
+ */
+export function reconcileSlideDesign(outline: string, slide: SlideRef, currentLayout?: string, chosenLayout?: string,
+  options: readonly LayoutOptionChoice[] = []): string {
+  const at = locate(outline, slide)
+  const facts = compilerFactsOf(outline).slideLayouts.get(at.slide.start)
+  if (!facts?.tokens.length) return outline
+
+  const chosen = chosenLayout ? entryNamed(chosenLayout) : undefined
+  const columnsForList = chosenLayout === '2col' || chosenLayout === '3col'
+  const target = columnsForList ? 'list' : chosen && layoutDecisionOfEntry(chosen)?.layout
+  const keep = target ? facts.tokens.filter(token =>
+    token.attrs.layout === target && token.line >= at.blockStart && token.line < at.blockEnd).at(-1) : undefined
+  // Cards can draw as a carousel or a section divider. Read the slide's own attributes
+  // before falling back to its drawing, so an unrelated option edit keeps the Cards settings.
+  const ownAttrs = target ? null : Object.assign({}, ...facts.tokens.map(token => token.attrs))
+  const authored = ownAttrs && authoredLayoutDecision(ownAttrs, Object.keys(ownAttrs))
+  const layout = target ?? (authored ? String(authored.layout) : currentLayout ?? facts.final?.layout)
+  const current = layoutEntryFor(layout)
+  const groups = optionGroupsForSlide({
+    layoutName: current?.resolvesTo?.key === 'layout' ? String(current.resolvesTo.value) : layout,
+    headingLevel: at.slide.level,
+    hasChildren: at.slide.opensSection || at.slide.container
+  }).map(binding => binding.group)
+  const listOptions = groups.some(group => group.key === 'list-style')
+  const eligible = new Set(groups.filter(group => listOptions || !listTreatment(group)))
+  const outsideBlock = (token: SlideToken): boolean => token.line < at.blockStart || token.line >= at.blockEnd
+  const replaced = options.flatMap(choice => groups
+    .filter(group => group.key === choice.group)
+    .map(group => ({ group, token: choice.token })))
+  const remove = (token: SlideToken): boolean => {
+    if (typeof token.attrs.layout === 'string') return Boolean(target) && token !== keep
+
+    // Value-form layout tags (e.g. {contrast=rows}) are part of the same layout choice.
+    const implied = token.writesLayout && authoredLayoutDecision(token.attrs, Object.keys(token.attrs))
+    if (target && implied && implied.layout !== target) return true
+
+    if (outsideBlock(token) && replaced.some(choice =>
+      !(choice.group.key === 'title-placement' && choice.token.startsWith('split=') && token.raw === 'sidebar') &&
+      designOptionToken(choice.group, token.raw))) return true
+    if (!target && implied) return false
+    return designOptionGroups.some(group => !eligible.has(group) && designOptionToken(group, token.raw)) &&
+      !groups.some(group => eligible.has(group) && designOptionToken(group, token.raw))
+  }
+  const removed = new Set(facts.tokens.filter(remove))
+  if ([...removed].some(token => !token.readWhole)) {
+    const reason = 'An attribute is on a line that is partly inside a comment. Edit it in Markdown.'
+    throw new LayoutVerbError('cannot-take', reason, reason)
+  }
+  return editLayoutTokens(outline, facts, null, '', token => removed.has(token))
 }
 
 const tokenSources = (slide: SlideLayoutFacts): string => JSON.stringify(slide.tokens.filter((token) => !token.writesLayout).map((token) => token.source).sort())

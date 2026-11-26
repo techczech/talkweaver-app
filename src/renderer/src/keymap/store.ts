@@ -152,11 +152,11 @@ export function eventMatchesEffectiveShortcut(
   )
 }
 
-export function buildEditorKeyBindings(): KeyBinding[] {
+export function buildEditorKeyBindings(only?: ReadonlySet<string>): KeyBinding[] {
   const o = readOverrides()
   return EDITOR_COMMANDS.flatMap((c) => {
     // A surface command's key belongs to its DOM owner (the slide picker, the workspace).
-    if (c.surface) return []
+    if (c.surface || (only && !only.has(c.id))) return []
     const override = o[c.id]
     if (override === '') return [] // removed on purpose: no key, not the default
     // Only honour a VALID override; otherwise fall back to the registry default. An invalid override

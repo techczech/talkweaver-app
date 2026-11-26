@@ -1,6 +1,7 @@
-import type { SlideMergeChoices } from '../shared/outline-merge'
+import type { SlideMergeChoices, SlideMergeSide } from '../shared/outline-merge'
 import type { SlideMergeApplyReply, SlideMergeReviewReply } from '../shared/outline-slide-merge'
 import type { PublishHistoryAttempt, PublishSiteCheck } from '../shared/publish-history'
+import type { CliPublishUpdate, PublishDiagnostic, PublishProgress } from '../shared/publish-diagnostic'
 import type { SlideTabView, SlidesPanelView, WorkspaceView } from '../shared/workspace-view'
 import type { ImageEditPreview, ImageEditRecipe, ImageEditResult } from '../shared/image-edit'
 import type { OfflinePageInput, OfflinePageSaveResult } from '../shared/offline-page'
@@ -112,6 +113,18 @@ export type PublishReplyExtras = {
   /** Their names, one to a line; shown on request. */
   earlierDetails?: string
 }
+
+type HandoutPublishReply = {
+  success: boolean
+  url?: string
+  display?: string
+  error?: string
+  details?: string
+  updatedOutline?: string
+  warning?: string
+  diagnostic?: PublishDiagnostic
+  cancelled?: true
+} & PublishReplyExtras
 // What every Settings → Cloudflare call answers. `error` is always a fixed sentence from the main
 // process. The state itself (CloudflareStatus) is a shared type, as SharedTalkState and
 // TalkSearchResult are; the reply that carries it over IPC is typed here.
@@ -997,6 +1010,8 @@ const api = {
       ipcRenderer.invoke('talk:outline-plan-slide-merge', outlinePath),
     applySlideMerge: (outlinePath: string, generation: string, choices: SlideMergeChoices): Promise<SlideMergeApplyReply> =>
       ipcRenderer.invoke('talk:outline-apply-slide-merge', outlinePath, generation, choices),
+    slideMergePictures: (outlinePath: string, generation: string, side: SlideMergeSide): Promise<Record<number, string>> =>
+      ipcRenderer.invoke('talk:slide-merge-pictures', outlinePath, generation, side),
     // `keepPending`: a save follows. `revision`: captured immediately after a no-write adoption,
     // acknowledging that revision only, not typing made while the acknowledgement was pending.
     acceptOutlineDiskVersion: (outlinePath: string, hash: string, opts?: { keepPending?: boolean; revision?: number }): Promise<OutlineDiskAccept> =>
@@ -1155,17 +1170,22 @@ const api = {
     publishHandout: (
       outlinePath: string,
       content: string,
-      mediaChoice?: MediaPublishChoice
-    ): Promise<{
-      success: boolean
-      url?: string
-      display?: string
-      error?: string
-      /** What lies behind `error` (e.g. which bundled file is missing); shown on request, never as the message. */
-      details?: string
-      updatedOutline?: string
-      warning?: string
-    } & PublishReplyExtras> => ipcRenderer.invoke('talk:publish-handout', outlinePath, content, mediaChoice),
+      mediaChoice?: MediaPublishChoice,
+      requestId?: string,
+    ): Promise<HandoutPublishReply> => ipcRenderer.invoke('talk:publish-handout', outlinePath, content, mediaChoice, { requestId }),
+    retryHandoutPublish: (attemptId: string, requestId: string): Promise<HandoutPublishReply> =>
+      ipcRenderer.invoke('talk:publish-handout', '', '', undefined, { requestId, retryAttemptId: attemptId }),
+    cancelHandoutPublish: (requestId: string): Promise<boolean> => ipcRenderer.invoke('talk:cancel-publish-handout', requestId),
+    onPublishProgress: (requestId: string, callback: (progress: PublishProgress) => void): (() => void) => {
+      const listener = (_event: unknown, id: string, progress: PublishProgress): void => { if (id === requestId) callback(progress) }
+      ipcRenderer.on('talk:publish-progress', listener)
+      return () => ipcRenderer.removeListener('talk:publish-progress', listener)
+    },
+    onCliPublish: (callback: (update: CliPublishUpdate) => void): (() => void) => {
+      const listener = (_event: unknown, update: CliPublishUpdate): void => callback(update)
+      ipcRenderer.on('talk:cli-publish', listener)
+      return () => ipcRenderer.removeListener('talk:cli-publish', listener)
+    },
     // `lane` separates independent requesters inside ONE window: the editor strip and the Slide
     // Browser's background per-talk render must not supersede each other (2026-09-15).
     thumbnails: (outlinePath: string, content: string, opts?: { lane?: string; requestId?: string }): Promise<Record<string, string> | null> =>
@@ -1260,6 +1280,11 @@ const api = {
   },
   publish: {
     history: (): Promise<{ ok: true; attempts: PublishHistoryAttempt[] } | { ok: false; error: string }> => ipcRenderer.invoke('publish:history'),
+    onHistoryChanged: (callback: () => void): (() => void) => {
+      const listener = () => callback()
+      ipcRenderer.on('publish:history-changed', listener)
+      return () => ipcRenderer.removeListener('publish:history-changed', listener)
+    },
     checkSite: (): Promise<PublishSiteCheck> => ipcRenderer.invoke('publish:check-site'),
     getLibraryFiles: (outlinePath: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('publish:get-library-files', outlinePath),
     importSiteRecovery: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('publish:import-site-recovery'),

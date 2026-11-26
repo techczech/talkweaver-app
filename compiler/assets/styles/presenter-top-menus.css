@@ -27,8 +27,9 @@
   background: #16202a; border: 1px solid #ffffff26; border-radius: 10px; box-shadow: 0 18px 50px rgba(0, 0, 0, 0.55);
   font-family: var(--tb-ui); color: var(--tb-text); text-align: left; white-space: nowrap;
 }
-:is(#presenterTopBar, #presenterBottomBar) .tw-menu { width: 318px; padding: 6px; }
-:is(#presenterTopBar, #presenterBottomBar) .tw-menu.tw-menu-view { width: 348px; }
+/* Keep the drawn widths as minimums; labels and segmented controls use the platform UI font. */
+:is(#presenterTopBar, #presenterBottomBar) .tw-menu { width: max-content; min-width: 318px; padding: 6px; }
+:is(#presenterTopBar, #presenterBottomBar) .tw-menu.tw-menu-view { min-width: 348px; }
 :is(#presenterTopBar, #presenterBottomBar) .tw-menu-sec { font: 600 13px/1 var(--tb-ui); color: var(--tb-dim); padding: 10px 10px 6px; }
 :is(#presenterTopBar, #presenterBottomBar) .tw-menu-sec:first-child { padding-top: 6px; }
 :is(#presenterTopBar, #presenterBottomBar) .tw-menu-hr { height: 1px; background: #ffffff14; margin: 5px 4px; }

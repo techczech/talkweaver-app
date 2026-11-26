@@ -283,7 +283,7 @@ try {
   // 19: occlusion by the command palette.
   await presenter.evaluate(() => { location.hash = 'page' })
   await loadedPair(`${ORIGIN}/refused`)
-  await presenter.keyboard.press('Meta+Shift+KeyP')
+  await presenter.keyboard.press('ControlOrMeta+Shift+KeyP')
   const hidden = await waitFor(async () => (await views(`${ORIGIN}/refused`)).find((v) => roleOf(v) === 'presenter' && !v.visible), 2000, 100)
   await presenter.keyboard.press('Escape')
   const shownAgain = await waitFor(async () => (await views(`${ORIGIN}/refused`)).find((v) => roleOf(v) === 'presenter' && v.visible), 2000, 100)
