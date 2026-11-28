@@ -51,10 +51,17 @@ const slides = titles.map((title, i) => ({
   role: 'content', source_line: 9 + i * 4, render_hash: title, content_hash: title,
   source_markdown: '### ' + title
 }))
-const searchFixture = new URLSearchParams(location.search).has('sidebar-search')
+const fixture = new URLSearchParams(location.search)
+const searchFixture = fixture.has('sidebar-search')
+const entryFixture = fixture.has('entry-slide')
+if (entryFixture) slides.unshift(
+  { title, nav_title: title, slide_id: 'deck-title', role: 'title', render_hash: 'title' },
+  { title: 'Welcome', nav_title: 'Welcome', slide_id: 'welcome', role: 'section-title', source_line: 8, render_hash: 'welcome' }
+)
 const source = ['---', 'outline_version: 2', 'title: Garden notes',
-  'auto_title_slide: false', 'auto_thanks_slide: false', '---', '', '## Garden {id=garden}',
-  ...slides.flatMap((row, i) => ['### ' + row.title + ' {id=' + row.slide_id + '}', '',
+  'auto_title_slide: ' + entryFixture, 'auto_thanks_slide: false', '---', '',
+  entryFixture ? '## Welcome {id=welcome}' : '## Garden {id=garden}',
+  ...slides.slice(entryFixture ? 2 : 0).flatMap((row, i) => ['### ' + row.title + ' {id=' + row.slide_id + '}', '',
     searchFixture ? ['- Loosen compacted soil', '- Water the trays', '![Beans](harvest-photo.png)'][i] : '- Garden notes', '']),
   '| Crop | Count |', '| --- | --- |', '| Beans | 12 |', ''
 ].join('\\n')
@@ -102,6 +109,12 @@ createRoot(document.getElementById('root')).render(<WindowChrome><App /></Window
   const html = join(scratch, 'fixture.html')
   writeFileSync(html, '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="fixture.js"></script>')
   browser = await chromium.launch({ headless: true })
+  const entryPage = await browser.newPage({ viewport: { width: 1400, height: 900 }, reducedMotion: 'reduce' })
+  await entryPage.route(/^https?:/, route => route.abort())
+  await entryPage.goto(pathToFileURL(html).href + '?entry-slide')
+  await checkEntrySlide(entryPage)
+  await entryPage.close()
+
   const searchPage = await browser.newPage({ viewport: { width: 1000, height: 631 }, reducedMotion: 'reduce' })
   await searchPage.route(/^https?:/, route => route.abort())
   await searchPage.goto(pathToFileURL(html).href + '?sidebar-search')
@@ -339,6 +352,42 @@ createRoot(document.getElementById('root')).render(<WindowChrome><App /></Window
 } finally {
   await browser?.close()
   rmSync(scratch, { recursive: true, force: true })
+}
+
+async function checkEntrySlide(page) {
+  const slide = page.locator('[data-view="slide"]')
+  const crumb = slide.locator('.workspace-slide-crumb strong')
+  await crumb.waitFor()
+  assert.equal(await crumb.textContent(), 'Slide 1 of 5', 'a talk with a generated title followed by a section opens on slide 1')
+  const title = slide.getByTitle('Slide preview', { exact: true })
+  await title.waitFor()
+  await slide.locator('iframe[title="Slide preview"][src="about:blank#deck-title"]').waitFor()
+  console.log('PASS opening a talk shows the generated title at index zero')
+
+  const tab = name => page.getByRole('tab', { name, exact: true }).and(page.locator('.sidebar-mode-btn'))
+  const toolbar = page.locator('.workspace-view-titlebar')
+  const grid = page.locator('[data-view="grid"]')
+  await tab('Talks').click()
+  const row = page.locator('.tl-tree [data-talk-slug="garden-0"]')
+  await row.click()
+  await grid.locator('[data-slide-index="0"][data-active="true"]').waitFor()
+  const section = grid.locator('.grid-cell[data-slide-index="1"]')
+  await section.click()
+  await grid.press('Enter')
+  await crumb.filter({ hasText: 'Slide 2 of 5' }).waitFor()
+  await page.locator('[data-sidebar][data-slides-mode="previews"]').waitFor()
+  await tab('Talks').click()
+  assert.equal(await tab('Talks').getAttribute('aria-selected'), 'true')
+
+  await toolbar.getByRole('button', { name: 'Grid', exact: true }).click()
+  await page.getByRole('button', { name: 'Hide sidebar', exact: true }).click()
+  await toolbar.getByRole('button', { name: 'Slide', exact: true }).click()
+  await crumb.filter({ hasText: 'Slide 2 of 5' }).waitFor()
+  const showSidebar = page.getByRole('button', { name: 'Show sidebar', exact: true })
+  await showSidebar.waitFor()
+  await showSidebar.click()
+  await tab('Slides').and(page.locator('[aria-selected="true"]')).waitFor()
+  console.log('PASS reopening goes to Grid, Enter opens the selected slide with previews, and a collapsed sidebar stays collapsed')
 }
 
 async function checkSidebarSearch(page) {

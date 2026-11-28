@@ -5,6 +5,7 @@ import {
   renderChartBlock,
 } from '../../../../../compiler/scripts/lib/06-chart-renderer.mjs'
 import { objectLayoutEntryForBlockKind } from '../../../../shared/layout-registry/entries.ts'
+import { escapeHtml } from '../../../../shared/html-escape.ts'
 import { parseTable, type TableModel } from '../../../../shared/objects/object-markup.ts'
 import {
   sanitiseRenderedSvg,
@@ -82,26 +83,24 @@ function fillCell(cell: HTMLElement, value: string): void {
   })
 }
 
-function tableElement(model: TableModel): HTMLTableElement {
+function tableElement(model: TableModel, style?: ObjectBlock['tableStyle']): HTMLTableElement {
   const table = document.createElement('table')
   table.className = 'tw-obj-table'
-  const [header = [], ...rows] = model.cells
-  const headRow = table.createTHead().insertRow()
-  header.forEach((value, index) => {
-    const cell = document.createElement('th')
-    cell.style.textAlign = model.alignments[index] ?? 'left'
-    fillCell(cell, value)
-    headRow.appendChild(cell)
-  })
-  const body = table.createTBody()
-  rows.forEach((row) => {
-    const tableRow = body.insertRow()
-    header.forEach((_value, index) => {
-      const cell = tableRow.insertCell()
+  table.classList.toggle('tw-obj-table-accent-first', style?.firstColumnAccent !== false)
+  const columns = model.cells[0] ?? []
+  const addRow = (section: HTMLTableSectionElement, values: string[], tag: 'th' | 'td') => {
+    const row = section.insertRow()
+    columns.forEach((_column, index) => {
+      const cell = document.createElement(tag)
       cell.style.textAlign = model.alignments[index] ?? 'left'
-      fillCell(cell, row[index] ?? '')
+      fillCell(cell, values[index] ?? '')
+      row.appendChild(cell)
     })
-  })
+  }
+  const header = style?.header !== false
+  if (header) addRow(table.createTHead(), columns, 'th')
+  const body = table.createTBody()
+  model.cells.slice(header ? 1 : 0).forEach(row => addRow(body, row, 'td'))
   return table
 }
 
@@ -157,13 +156,19 @@ export function emptyObjectPrompt(kind: 'mermaid' | 'svg', source: string): stri
     : 'Empty SVG object — press ↵ to type the SVG markup.'
 }
 
-export async function transformMindmapSource(source: string): Promise<MarkmapRoot> {
+export async function transformMindmapSource(source: string, title?: string): Promise<MarkmapRoot> {
   const { Transformer } = await import('markmap-lib')
   const transformer = new Transformer()
   // markmap-lib 0.18 enables markdown-it HTML by default, and markmap-view inserts node content as
   // HTML. Disable authored HTML before transforming imported or pasted outline content.
   transformer.md.set({ html: false })
-  return transformer.transform(source.trimEnd()).root
+  const { root } = transformer.transform(source.trimEnd())
+  // Match the slide's synthetic root for multiple top-level subtrees.
+  const branches = root.children ?? []
+  if (title && !root.content && branches.length > 1 && branches.some(branch => branch.children?.length)) {
+    root.content = escapeHtml(title)
+  }
+  return root
 }
 
 function bodyElement(): HTMLDivElement {
@@ -200,6 +205,9 @@ export abstract class ObjectWidget extends WidgetType {
       && other.block.to === this.block.to
       && other.block.source === this.block.source
       && other.block.triggerToken === this.block.triggerToken
+      && other.block.tableStyle?.header === this.block.tableStyle?.header
+      && other.block.tableStyle?.firstColumnAccent === this.block.tableStyle?.firstColumnAccent
+      && other.block.mindmapTitle === this.block.mindmapTitle
       && other.block.simulationVersion === this.block.simulationVersion
       && other.selected === this.selected
       && other.raw === this.raw
@@ -333,7 +341,7 @@ export class GfmTableWidget extends ObjectWidget {
       return shell
     }
     const body = bodyElement()
-    body.appendChild(tableElement(parsed))
+    body.appendChild(tableElement(parsed, this.block.tableStyle))
     shell.appendChild(body)
     return shell
   }
@@ -347,7 +355,7 @@ export class TriggerTableWidget extends ObjectWidget {
       return shell
     }
     const body = bodyElement()
-    body.appendChild(tableElement(triggerTable(this.block.source)))
+    body.appendChild(tableElement(triggerTable(this.block.source), this.block.tableStyle))
     shell.appendChild(body)
     return shell
   }
@@ -365,18 +373,37 @@ export class MindmapWidget extends ObjectWidget {
     body.textContent = 'rendering diagram…'
     shell.appendChild(body)
 
-    void Promise.all([transformMindmapSource(this.block.source), import('markmap-view')])
+    let disposed = false
+    let stopWaiting: (() => void) | undefined
+    let disposeMap: (() => void) | undefined
+    this.stopSizing = () => {
+      disposed = true
+      stopWaiting?.()
+      disposeMap?.()
+    }
+    void Promise.all([transformMindmapSource(this.block.source, this.block.mindmapTitle), import('markmap-view')])
       .then(([root, { Markmap }]) => {
-        if (!shell.isConnected) return
-        this.stopSizing = whenSized(shell, () => {
-          if (!shell.isConnected) return
+        if (disposed) return
+        // CodeMirror can build a widget ahead of mounting its DOM. Keep waiting for its size.
+        stopWaiting = whenSized(shell, () => {
+          if (disposed || !shell.isConnected) return
           const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
           svg.setAttribute('width', '100%')
           svg.setAttribute('height', '340')
           body.replaceChildren(svg)
           // WriteFlex C4: d3-zoom otherwise swallows dblclick before the editor can open the block.
-          const map = Markmap.create(svg, { zoom: false, pan: false }, root)
-          void map.fit().then(() => requestAnimationFrame(() => recordHeight(shell, this.block.source)))
+          const map = new Markmap(svg, { zoom: false, pan: false, duration: 0 })
+          const { width, height } = svg.getBoundingClientRect()
+          // CodeMirror can detach the SVG between layout and the D3 fit callback.
+          map.zoom.extent([[0, 0], [width, height]])
+          disposeMap = () => map.destroy()
+          void map.setData(root).then(async () => {
+            if (!svg.isConnected) return
+            await map.fit()
+            if (svg.isConnected) recordHeight(shell, this.block.source)
+          }).catch(error => {
+            if (svg.isConnected) this.fail(shell, error instanceof Error ? error.message : String(error))
+          })
         })
       })
       .catch((error) => {

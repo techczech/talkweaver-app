@@ -1798,9 +1798,9 @@ button.tw-reveal-badge:focus-visible { outline: 2px solid var(--focus); outline-
 }
 .tw-obj-table th {
   border-bottom: 2px solid var(--oxford); padding: 4px 8px;
-  color: var(--accent-text); font: 700 10px/1.4 var(--font-mono);
-  letter-spacing: .08em; text-transform: uppercase;
+  color: var(--accent-text); font: 700 1em/1.4 var(--font-ui);
 }
+.tw-obj-table-accent-first tbody td:first-child { color: var(--accent-text); }
 .tw-obj-table td { border-bottom: 1px solid var(--line); padding: 5px 8px; vertical-align: top; }
 .tw-obj-table tbody tr:last-child td { border-bottom: 0; }
 .tw-obj-hint {

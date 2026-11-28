@@ -5,7 +5,7 @@
 import { _electron as electron } from 'playwright'
 import { openSettingsWindow, closeSettingsWindow } from './lib/settings-window.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { openTalkByTitle } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs'
@@ -56,7 +56,13 @@ try {
   await openFind(page)
   await page.getByRole('tab', { name: 'Slide', exact: true }).click()
   await button.waitFor({ timeout: 5000 })
-  record('the sidebar foot has Add vault… and a Guide button (closed)', (await page.locator('[data-add-vault]').count()) === 1 && /^Guide$/.test((await button.innerText()).trim()) && (await tabNames()) === expectedTabs)
+  record('the Slides footer has a closed Guide button',
+    await page.locator('[data-sidebar][data-slides-mode]').locator(button).isVisible() &&
+    /^Guide$/.test((await button.innerText()).trim()) && (await tabNames()) === expectedTabs)
+  await ensureTalksMode(page)
+  record('the Talks footer has both Add vault… and Guide',
+    (await page.locator('[data-add-vault]').count()) === 1 && await button.isVisible())
+  await page.getByRole('tab', { name: 'Slides', exact: true }).click()
 
   await button.click()
   await page.waitForSelector('[data-guide]', { timeout: 4000 })
@@ -118,8 +124,7 @@ try {
   await page.waitForSelector('[data-guide-button]', { timeout: 3000 }).catch(() => {})
   record('"Get started: show the Guide button" brings the button back (reading "Guide open", the tab being up)', (await page.locator('[data-guide-button]').count()) === 1 && /open/.test(await button.innerText()))
 
-  // First launch, "Open example vault": the Guide opens once, with the third step ticked. With the
-  // button switched off beforehand, the Guide does not open. Homes are temporary (TW_E2E_HOME).
+  // First launch shows examples without opening a talk. The third step ticks when one is picked.
   for (const buttonOn of [true, false]) {
     const dir = realpathSync(mkdtempSync(join(tempRoot, 'first-')))
     const home = join(dir, 'home'); const userData = join(dir, 'userData')
@@ -132,22 +137,30 @@ try {
       await second.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
       await p2.getByRole('region', { name: 'Vault Explorer', exact: true })
         .getByRole('button', { name: /Open examples$/ }).click()
-      await p2.getByRole('button', { name: 'The Saturday market', exact: true }).and(p2.getByTitle('Talk menu', { exact: true })).waitFor({ timeout: 15000 })
       if (buttonOn) {
+        await p2.locator('[data-vault-header][data-vault-example="true"]').waitFor({ timeout: 15000 })
         await p2.waitForSelector('[data-guide]', { timeout: 8000 })
         const guideTab = p2.locator('[data-rc-tab="guide"]')
         const autoOpened = await guideTab.evaluate(tab => tab.classList.contains('rc-tab--on'))
+        record('Open examples shows the Guide and leaves the talk step unticked',
+          (await p2.getByTitle('Talk menu', { exact: true }).count()) === 0 &&
+          await p2.locator('[data-guide-step="example-talk"]').getAttribute('data-done') === 'false')
+        await openTalkByTitle(p2, 'The Saturday market', { editable: false })
         await openFind(p2)
         await guideTab.getByRole('button', { name: 'Guide', exact: true }).click()
         const names = await tabNames(p2)
         await p2.waitForSelector('[data-guide-step="example-talk"][data-done="true"]', { timeout: 8000 }).catch(() => {})
         const done = await p2.locator('[data-guide-step]').evaluateAll((els) => els.map((e) => e.getAttribute('data-done')))
-        record('Open example vault: the Guide opens as a tab of the right sidebar, with only the example talk step ticked', autoOpened && names === expectedTabs && done.join(',') === 'false,false,true', `${names} ${done}`)
+        record('choosing an example talk ticks its step and keeps the Guide in the right sidebar', autoOpened && names === expectedTabs && done.join(',') === 'false,false,true', `${names} ${done}`)
         await shot(p2, 'guide-example-open.png')
         record('the progress is kept in app config, outside the vault', JSON.parse(readFileSync(join(userData, 'config.json'), 'utf8')).guideProgress?.exampleTalkOpened === true)
       } else {
-        await p2.waitForTimeout(1500)
-        record('Open example vault with the Guide button switched off: no Guide tab, no button', (await p2.locator('[data-guide]').count()) === 0 && (await p2.locator('[data-guide-button]').count()) === 0)
+        const explorer = p2.getByRole('region', { name: 'Vault Explorer', exact: true })
+        await explorer.getByRole('group', { name: 'Talks in folder', exact: true })
+          .getByRole('button', { name: 'The Saturday market', exact: true }).waitFor({ timeout: 15000 })
+        record('with the Guide switched off, Open examples shows the example vault in Explorer',
+          (await p2.locator('[data-guide]').count()) === 0 && (await p2.locator('[data-guide-button]').count()) === 0 &&
+          (await p2.getByTitle('Talk menu', { exact: true }).count()) === 0)
       }
     } finally {
       await second.close()

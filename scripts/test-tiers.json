@@ -165,7 +165,6 @@
     "test:result-beside",
     "test:insert-section",
     "test:talk-facts",
-    "test:outline-switch",
     "test:thumb-key",
     "test:slide-browser-picture-key",
     "test:vault-index-handler",
@@ -941,6 +940,7 @@
     ]
   },
   "e2e": [
+    "test:object-matrix:e2e",
     "test:window-chrome:e2e",
     "test:images:e2e",
     "test:media-permission:e2e",

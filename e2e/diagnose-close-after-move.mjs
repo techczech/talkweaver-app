@@ -66,7 +66,7 @@ try {
     const page = await app.firstWindow()
     page.setDefaultTimeout(10000)
     assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(w => !w.isVisible())), true)
-    await openTalkByTitle(page, 'Garden notes')
+    await openTalkByTitle(page, 'Garden notes', { view: 'outline' })
     await page.locator('.cm-content').waitFor()
     await page.getByTestId('grid-toggle').click()
     const cards = page.locator('.grid-view .grid-cell[draggable="true"]')

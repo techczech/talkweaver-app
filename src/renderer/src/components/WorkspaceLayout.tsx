@@ -276,6 +276,7 @@ interface Props {
   onSketchStarted?: () => void
   startView?: WorkspaceView
   defaultView?: WorkspaceView
+  talkOpening?: { sequence: number; view?: 'grid' }
   welcome?: React.ReactNode
   slideTabView?: SlideTabView
   onChooseSlideTabView?: (view: SlideTabView) => void
@@ -293,10 +294,8 @@ interface Props {
   /** Switch the active Talk (App owns activeTalk). Slide Focus uses it to open a DIFFERENT talk's
    *  slide picked in the Browser before scoping onto it. */
   onSelectTalk?: (talk: TalkInfo) => void
-  /** T29b: editor engagement ping (first pointerdown in the editor / first user document change),
-   *  fired by the Editor; App consumes it to switch the sidebar to the Slide outline once per
-   *  opened talk. Pure pass-through. */
-  onEditorEngaged?: (path: string) => void
+  /** Switch the Talks sidebar when the workspace enters Slide, Outline or Markdown. */
+  onEnterEditingView?: (path: string) => void
   /** Hand App a "flush the current editor's pending edit" fn. App calls it BEFORE a genuine talk
    *  switch so a sub-1.5s edit made just before switching is persisted to the OUTGOING talk's file
    *  (data-loss guard, 2026-07-05). No-op when nothing is pending. */
@@ -370,7 +369,7 @@ function readGridColumns(): number {
   }
 }
 
-export default function WorkspaceLayout({ researchJump, onResearchJump, activeTalk, vaultRoot, onOpenSettings, onSelectTalk, onEditorEngaged, registerFlushSave, onMetadataSaved, registerLeaveGuard, onDiscardTalk, guide, leftSidebarShown = false, onNeedRoom, startView, onSketchStarted, defaultView = 'slide', welcome, leftPreviewsHost, leftPathwaysHost, onOpenPathways, onClosePathways, slidesPanelView = 'previews', onChooseSlidesPanelView, slideTabView = 'pages', onChooseSlideTabView }: Props) {
+export default function WorkspaceLayout({ researchJump, onResearchJump, activeTalk, vaultRoot, onOpenSettings, onSelectTalk, onEnterEditingView, registerFlushSave, onMetadataSaved, registerLeaveGuard, onDiscardTalk, guide, leftSidebarShown = false, onNeedRoom, startView, onSketchStarted, defaultView = 'slide', talkOpening, welcome, leftPreviewsHost, leftPathwaysHost, onOpenPathways, onClosePathways, slidesPanelView = 'previews', onChooseSlidesPanelView, slideTabView = 'pages', onChooseSlideTabView }: Props) {
   const commandHandlersRef = useRef<Record<PaletteCommandHandlerId, () => void> | null>(null)
   const [, setKeymapRevision] = useState(0)
   useEffect(
@@ -408,8 +407,6 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const [notesVisibility, setNotesVisibility] = useState<{ row: string; open: boolean } | null>(null)
   const pastedRow = useRef<{ path: string; refs: string[]; keepFirst: boolean } | null>(null)
   const pendingSlide = useRef<{ path: string; id: string } | null>(null)
-  const rememberedSlides = useRef(new Map<string, string>())
-  const entrySlideChosen = useRef<string | null>(null)
   const [plainLook, setPlainLook] = useState<PlainLook>(PLAIN_LOOK_DEFAULT)
   useEffect(() => {
     let cancelled = false
@@ -582,7 +579,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const [selectingSeveral, setSelectingSeveral] = useState(false)
   const [selectedSubslide, setSelectedSubslide] = useState<{ path: string; id: string; line: number } | null>(null)
   const clearSelection = selection.clear
-  useEffect(() => { clearSelection(); setSelectingSeveral(false) }, [activeTalk?.outlinePath, selectedPathway?.id, clearSelection])
+  useEffect(() => { clearSelection(); setSelectingSeveral(false) }, [activeTalk?.outlinePath, talkOpening, selectedPathway?.id, clearSelection])
   const [failedCompilePath, setFailedCompilePath] = useState<string | null>(null)
   const compiledSourceRef = useRef<string | null>(null)
   const [triggerFindings, setTriggerFindings] = useState<LayoutDoctorFinding[]>([])
@@ -2125,10 +2122,6 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const slidesPaneRef = useRef<PaneState>(savedPaneState === 'strip' ? 'both' : savedPaneState)
   useEffect(() => { if (savedPaneState !== 'strip') slidesPaneRef.current = savedPaneState }, [savedPaneState])
 
-  // A pane-toggle picks a normal pane layout AND leaves grid mode. The Grid button
-  // and ⌘4 are the only controls that enter grid mode. Both preserve the editor's scroll
-  // position (it survives the reverse-portal reparent — see restoreEditorScroll) so switching
-  // views keeps you where you were instead of snapping to the top.
   // Set when Enter/double-click in the grid sent you to the editor; the next Escape there
   // returns to the grid. One-shot, and any MANUAL view switch cancels it — after ⌘1/⌘4 the
   // user has chosen a view themselves, so Esc must not yank them back.
@@ -2164,10 +2157,27 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     }
   }
 
+  const workspaceView = gridMode ? 'grid' : paneState === 'strip' ? null : textView
+  const lastWorkspace = useRef<{ path?: string; opening?: typeof talkOpening; startView?: WorkspaceView; view: WorkspaceView | null }>({ view: null })
+  const openingTalk = lastWorkspace.current.path !== activeTalk?.outlinePath || lastWorkspace.current.opening !== talkOpening
   useEffect(() => {
-    if (!activeTalk) return
-    showWorkspaceView(startView ?? defaultView)
-  }, [activeTalk?.outlinePath, startView]) // Views are selected on open, never in response to typing.
+    const path = activeTalk?.outlinePath
+    const previous = lastWorkspace.current
+    lastWorkspace.current = { path, opening: talkOpening, startView, view: workspaceView }
+    if (!path) return
+    if (openingTalk || previous.startView !== startView) {
+      const initialView = talkOpening?.view ?? startView ?? defaultView
+      if (openingTalk && previous.path === path) {
+        // Reopening the same file retains its editor and compiled rows.
+        pathways.setPathwayId(null)
+        if (outlineOwner === path && compiledSlides?.length) selectSlideRef.current(0)
+      }
+      showWorkspaceView(initialView)
+      if (initialView !== 'grid') onEnterEditingView?.(path)
+    } else if (workspaceView !== previous.view && workspaceView && workspaceView !== 'grid') {
+      onEnterEditingView?.(path)
+    }
+  }, [activeTalk?.outlinePath, talkOpening, startView, workspaceView])
 
   function selectSlides(): void { selectWorkspaceView('slide') }
 
@@ -2801,6 +2811,8 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // never leave the scoped editor pointing at the previous talk's offsets.
   useEffect(() => {
     activeSlideRef.current = 0
+    cursorLineRef.current = null
+    cursorAwaitsCompileRef.current = false
     compiledSlidesRef.current = null
     compiledSourceRef.current = null
     slideLinesRef.current = []
@@ -3342,9 +3354,6 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     if (idx >= 0) {
       activeSlideRef.current = idx
       setActiveSlide(idx)
-      const path = activeTalkRef.current?.outlinePath
-      const row = compiledSlidesRef.current?.[idx]
-      if (row && path && entrySlideChosen.current === path) rememberedSlides.current.set(path, row.slide_id)
     }
   }
 
@@ -4169,21 +4178,19 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     if (line != null) setFocusLine({ line, takeFocus: true, editTitle: true })
   }, [compiledSlides])
 
+  // “Start with a slide” creates a blank authored slide and puts the caret there.
+  const startedWithSlide = useRef<string | null>(null)
   useEffect(() => {
     const path = activeTalk?.outlinePath
-    if (!path) { entrySlideChosen.current = null; return }
-    if (entrySlideChosen.current === path || outlineOwner !== path || !compiledSlides) return
-    const remembered = rememberedSlides.current.get(path)
-    const prior = remembered ? compiledSlides.findIndex(row => row.slide_id === remembered) : -1
-    const editable = compiledSlides.findIndex((row, index) =>
-      row.slide_id !== 'deck-title' && focusRangeForSlideLine(outlineContentRef.current, slideLines[index] ?? null) != null)
-    const first = prior >= 0 ? prior : editable
-    entrySlideChosen.current = path
+    if (!path || startView !== 'slide' || outlineOwner !== path || !compiledSlides || startedWithSlide.current === path) return
+    startedWithSlide.current = path
+    const first = compiledSlides.findIndex((row, index) =>
+      row.slide_id !== 'deck-title' && focusRangeForSlideLine(outlineContent, slideLines[index] ?? null) != null)
     if (first < 0) return
     selectSlideRef.current(first)
     const line = slideLines[first]
-    if (line != null && startView && startView !== 'outline') setFocusLine({ line, takeFocus: true, editTitle: true })
-  }, [compiledSlides, outlineOwner, activeTalk?.outlinePath, startView])
+    if (line != null) setFocusLine({ line, takeFocus: true, editTitle: true })
+  }, [startView, activeTalk?.outlinePath, outlineOwner, compiledSlides, outlineContent, slideLines])
 
   const landedExplorerJump = useRef<number | null>(null)
   useEffect(() => {
@@ -5148,7 +5155,6 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         })
       }}
       registerInsertObject={(fn) => { editorInsertObjectRef.current = fn }}
-      onEditorEngaged={onEditorEngaged}
       compiledLayoutAt={compiledLayoutAtLine}
       onOpenObjectLayoutFamily={(kind) => openLayoutPicker(kind === 'diagram' ? 'smartart' : kind)}
       onInsertObjectMenu={(coords, consumeFence) => openSlideMenu({
@@ -5258,7 +5264,6 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       navigationShortcuts={navigationShortcuts}
       notes={speakerNotes} notesKey={slideNoteKey} notesOpen={notesVisibility?.row === slideNoteKey ? notesVisibility.open : speakerNotes.length > 0}
       onToggleNotes={() => runRegisteredCommand('edit-speaker-notes')} onNotesChange={editSlideNotes}
-      onNotesEngaged={() => onEditorEngaged?.(activeTalk.outlinePath)}
       attachEditor={attachEditorSlot} editable={ownsOutline && (!!activeRow && viewScope !== null || sourceRecovery)}
       sourceRecovery={sourceRecovery}
       section={sectionSlide && authoredNode ? { label: authoredNode.level === 2 ? 'Section' : 'Subsection',
@@ -5351,7 +5356,6 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     setSelectedSubslide(null)
     activeSlideRef.current = i
     setActiveSlide(i)
-    if (activeTalk && compiledSlides?.[i]) rememberedSlides.current.set(activeTalk.outlinePath, compiledSlides[i].slide_id)
     // Preview cards keep keyboard navigation. Clicking a source heading moves focus to the editor.
     const target = outlineLine ?? lineOfSlideIndex(i)
     activeLineReporter.report(target)
@@ -5381,15 +5385,15 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   function editSlide(i: number): void {
     selectSlide(i)
     const target = lineOfSlideIndex(i)
-    if (target == null) return
     if (gridModeRef.current) {
-      returnToGridRef.current = true
+      setTextView('slide')
+      returnToGridRef.current = target != null
       setGridMode(false)
       if (paneState === 'strip') setPaneState('both')
     } else if (paneState === 'strip') {
       setPaneState('both')
     }
-    setFocusLine({ line: target, takeFocus: true })
+    if (target != null) setFocusLine({ line: target, takeFocus: true })
   }
 
   function handleDoctorJumpToLine(line: number): void {
@@ -5732,6 +5736,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   const gridPane = (
     <div className="pane pane--grid">
       <GridView
+        key={JSON.stringify([activeTalk.outlinePath, talkOpening?.sequence])}
         slideOrder={pathwaysMode ? undefined : pathwayOrder}
         pathwayIds={pathwaysMode ? selectedPathway?.slideIds : undefined}
         onAddToPathway={pathwaysMode ? pathways.setAdding : undefined}
@@ -5742,14 +5747,14 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         makeSectionReason={groupReason}
         rowStructureItems={structureRowItems}
         talk={activeTalk}
-        compiledSlides={compiledSlides}
+        compiledSlides={ownsOutline ? compiledSlides : null}
         triggerFindings={triggerFindings}
         thumbnails={thumbnails}
         onStructureDrop={pathwaysMode || pathwayOrder ? undefined : handleGridStructureDrop}
         structureSource={outlineContent}
         structureDropLabel={(line, side) => structureDrop(structure, line, side)?.label}
         previewsPending={previewsPending}
-        activeIndex={activeSlide}
+        activeIndex={openingTalk ? 0 : activeSlide}
         onSelectSlide={handleSelectSlide}
         onEdit={handleEditSlide}
         slideRefOf={slideRefOf}
@@ -5856,7 +5861,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
             <span className="toolbar-btn-content"><Icon name="insert" size={15} /><span>Pathway</span></span>
           </button>
         )}
-        <EditorTabs mode={gridMode ? 'grid' : paneState === 'strip' ? null : textView}
+        <EditorTabs mode={workspaceView}
           onChange={view => runRegisteredCommand(VIEW_COMMANDS[view])}
           shortcut={view => liveCommandShortcutLabel(COMMAND_REGISTRY.find(command => command.id === VIEW_COMMANDS[view])!)} />
         <button

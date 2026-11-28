@@ -1,5 +1,5 @@
 // Onboarding 0.38.1 ticket 11, in the real app: How it works, Features to delight you, What it connects to.
-// A profile with a vault of its own opens the example vault and its start talk, then the Guide.
+// A profile with a vault of its own opens the example vault and the Guide, then selects a practice talk.
 //   - How it works lists fifteen topics, 0 of 15 read; opening topic 3 shows its heading, two sentences, one
 //     picture and a Try it; back on the list they read Read, and the marks are in app config;
 //   - Try it on topic 3 (the start talk is open here) brings that window forward; Try it on topic 5 opens
@@ -81,8 +81,10 @@ try {
     await sheet.waitFor({ state: 'visible', timeout: 8000 })
     await sheet.locator('[data-open-example]').click()
     await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
-    record('the example vault opens with its start talk', await waitFor(async () => (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label', { timeout: 1000 }).catch(() => '')) === 'The Saturday market', 15000))
+    record('the example vault appears and Alpha Talk stays open',
+      (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label')) === 'Alpha Talk')
     await page.waitForSelector('[data-guide]', { timeout: 6000 })
+    await openTalkByTitle(page, 'The Saturday market', { view: 'grid' })
 
     // How it works, state 08.
     await page.locator('[data-guide-segment="how"]').click()

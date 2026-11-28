@@ -41,7 +41,7 @@ export async function launchWorld({ width = 1280, height = 800, viewMode = 'mark
       const url = target.url()
       await app.evaluate(({ BrowserWindow }, { id: c, url: u }) => { BrowserWindow.getAllWindows().find((w) => !w.isDestroyed() && w.webContents.getURL() === u)?.webContents.send('app:run-command', c) }, { id, url })
     },
-    async openTalk(title = 'TalkWeaver Layout Showcase') { await openTalkByTitle(page, title); await page.waitForTimeout(1500) },
+    async openTalk(title = 'TalkWeaver Layout Showcase') { await openTalkByTitle(page, title, { view: viewMode === 'plain' ? 'outline' : viewMode }); await page.waitForTimeout(1500) },
     rcTab: (tab) => page.locator(`[data-rc-tab="${tab}"] button`).first(),
     sideTab: (re) => page.locator('.sidebar-mode-btn').filter({ hasText: re }).first(),
     /** The presenter's window once it has appeared. */

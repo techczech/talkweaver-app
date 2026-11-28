@@ -126,6 +126,14 @@ try {
     }
   }
 
+  const mapSource = '## Planning {id=map}\n{mindmap}\n\n- Models\n  - Drafting\n- Tools\n  - Terminal\n'
+  await h.mount(mapSource.replace('\n{mindmap}', '\n|{mindmap}'), 'markdown')
+  const labels = h.page.locator('[data-object-block="mindmap"] .markmap-node foreignObject')
+  await labels.getByText('Planning', { exact: true }).waitFor()
+  await h.page.evaluate(() => window.view().dispatch({ changes: { from: 3, to: 11, insert: 'Revision' } }))
+  await labels.getByText('Revision', { exact: true }).waitFor()
+  assert.equal(await labels.getByText('Planning', { exact: true }).count(), 0)
+
   const big = '## Start\n|' + '\nOrdinary text.\n'.repeat(200)
     + Array.from({ length: 300 }, (_, i) => `\n## Slide ${i}\n\n[Embed: assets/slide-${i}.html]\n`).join('')
   await h.page.evaluate(() => { window.previewReads = [] })

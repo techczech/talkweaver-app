@@ -1,6 +1,6 @@
 // Real built App/Workspace/Editor, hidden Electron, synthetic vault only.
 import assert from 'node:assert/strict'
-import { openTalkByTitle, showTalksBeforeOpening } from './lib/talklist.mjs'
+import { openTalkByTitle, showTalksBeforeOpening, showTalkView } from './lib/talklist.mjs'
 import { _electron as electron } from 'playwright'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -30,9 +30,9 @@ try{
  assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().every(w=>!w.isVisible()&&!w.webContents.getWebPreferences().backgroundThrottling)),true,'fixture windows stay hidden and unthrottled')
  const page=await app.firstWindow();page.setDefaultTimeout(15000)
  const errors=[];page.on('pageerror',e=>errors.push(e.message))
- // The one-shot switch is armed by a Talks panel row, after that route accepts the open.
+ // Start on the Talks list, then enter the editor view this case exercises.
  await showTalksBeforeOpening(page)
- await openTalkByTitle(page, 'Editor follow fixture')
+ await openTalkByTitle(page, 'Editor follow fixture', { view: mode === 'plain' ? 'outline' : mode })
  await page.locator('[data-guide-close]').click()
  const slideTab = page.getByRole('tab', { name: 'Slide', exact: true })
  if (!(await slideTab.isVisible())) await page.getByTestId('sidebar-toggle').click()
@@ -42,6 +42,8 @@ try{
  const firstBody = page.locator('.cm-line').filter({ hasText: 'First slide body.' })
  const clickBody = text => page.locator('.cm-line').filter({ hasText: text }).click({ position: { x: 30, y: 8 } })
  const dockedOutline = page.locator('[data-slides-mode="outline"]')
+ const showOutlineList = () => page.getByRole('button', { name: 'Show slides as an outline' }).click()
+ await showOutlineList()
  await firstBody.waitFor()
  // Opening places the caret at the first compiled slide. For the current-slide assertions,
  // first wait for that open to finish. The delayed-claim case below covers pre-adoption clicks.
@@ -53,7 +55,7 @@ try{
    await talks.click()
    await notes.click()
    assert.equal(await talks.getAttribute('aria-selected'), 'true')
-   console.log('PASS Slide notes engage the sidebar once. An explicit return to Talks is respected.')
+   console.log('PASS Slide opens the Slides sidebar. An explicit return to Talks survives interaction with notes.')
  } else {
  await clickBody('Second slide body.')
  await page.locator('[data-slides-mode="outline"]').waitFor()
@@ -74,20 +76,23 @@ try{
  await clickBody('Second slide body.')
  await page.waitForFunction(()=>document.querySelector('.so-row--current')?.textContent.includes('Second slide'))
  await capture('outline selection then editor click: expected second slide')
- // A deliberate return to Talks is governed by the existing once-per-open rule.
+ // The user can switch the sidebar while remaining in the same editor view.
  await page.getByRole('tab',{name:'Talks',exact:true}).click()
  await clickBody('Third slide body.')
  assert.equal(await page.getByRole('tab',{name:'Talks',exact:true}).getAttribute('aria-selected'),'true','a deliberate return to Talks is preserved until the talk is reopened')
- await capture('return to Talks then editor click: existing one-shot switch rule')
- // Reopening the talk from Talks re-arms the existing switch.
+ await capture('return to Talks then editor click: manual sidebar choice persists')
+ // A same-talk open returns to Grid. Entering the editing view switches the sidebar again.
  await talksTree.locator('[data-talk-slug="outline-follow"]').click()
+ await page.locator('[data-view="grid"]').waitFor()
+ await showTalkView(page, mode === 'plain' ? 'outline' : mode)
+ await showOutlineList()
  await clickBody('Second slide body.')
  await page.waitForFunction(()=>document.querySelector('.so-row--current')?.textContent.includes('Second slide'))
  await capture('same talk reopened from Talks: expected second slide')
  await talks.click()
 
  // Hold the real claim response after the incoming request reaches main, while the
- // outgoing editor is still painted. A click in that editor must not consume the next arm.
+ // outgoing editor is still painted. The open must leave the outgoing view and sidebar alone.
  await app.evaluate(({ ipcMain }, path) => {
    const channel = 'window:claim-talk'
    const original = ipcMain._invokeHandlers.get(channel)
@@ -116,15 +121,19 @@ try{
  await clickBody('First slide body.')
  assert.equal(await talks.getAttribute('aria-selected'), 'true', 'outgoing editor click must stay on Talks')
  await app.evaluate(() => globalThis.releaseOutlineFollowClaim())
+ await page.getByTitle('Talk menu', { exact: true }).getByText('Incoming fixture', { exact: true }).waitFor()
+ await page.locator('[data-view="grid"]').waitFor()
+ await showTalkView(page, mode === 'plain' ? 'outline' : mode)
+ await showOutlineList()
  await clickBody('Incoming slide body.')
  await dockedOutline.waitFor()
  await page.waitForFunction(() => document.querySelector('.so-row--current')?.textContent.includes('First slide'))
- console.log('PASS a click in the outgoing editor during a delayed talk open leaves the incoming editor armed.')
+ console.log('PASS a delayed talk open preserves the outgoing workspace until the claim succeeds.')
 
  }
  assert.deepEqual(errors,[])
  if(process.env.SHOTS)await page.screenshot({path:join(resolve(process.env.SHOTS),`talkweaver-editor-outline-follow-${mode}.png`)})
- console.log('PASS real App editor clicks follow the active slide; one-shot sidebar-switch distinction recorded')
+ console.log('PASS real App editor clicks follow the active slide; sidebar follows view changes and respects manual tab changes')
 }finally{try{await app?.close()}finally{rmSync(scratch,{recursive:true,force:true})}}
 
 }

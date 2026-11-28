@@ -294,3 +294,10 @@ jobs:
           ], { stdio: 'inherit' })
           process.exitCode = result.status ?? 1
           NODE
+      - name: Upload object matrix results and screenshots
+        if: ${{ always() && matrix.tier == 'e2e' && contains(inputs.e2e_scripts, 'test:object-matrix:e2e') }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: object-matrix
+          path: artefacts/objects-matrix/
+          retention-days: 7

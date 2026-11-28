@@ -1,6 +1,6 @@
 {
   "name": "talk-weaver",
-  "version": "0.45.3-alpha.10",
+  "version": "0.45.3-alpha.11",
   "description": "Desktop authoring app for the presentation ecosystem",
   "main": "./out/main/index.js",
   "engines": {
@@ -136,6 +136,8 @@
     "test:trigger-table": "node scripts/test-trigger-table.mjs",
     "test:e2e-check-ledger": "node scripts/test-e2e-check-ledger.mjs",
     "test:journey-policy": "node scripts/test-journey-policy.mjs",
+    "pretest:object-matrix:e2e": "npm run generate:deck-styles",
+    "test:object-matrix:e2e": "node e2e/diagnose-object-matrix.mjs",
     "test:object-widgets:e2e": "node e2e/diagnose-object-widgets.mjs",
     "test:objects:e2e": "node e2e/diagnose-objects.mjs",
     "test:embeds": "npm run -s test:embed-inline",
@@ -476,7 +478,6 @@
     "test:slidewell-query": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-slidewell-query.mjs",
     "test:talklist-hover": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-talklist-hover-intent.mjs",
     "test:talk-facts": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-talk-facts.mjs",
-    "test:outline-switch": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-outline-switch.mjs",
     "test:vault-index-handler": "node scripts/test-vault-list-handler.mjs",
     "test:vault-index": "node scripts/test-vault-index.mjs",
     "test:vault-caches": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-vault-caches.mjs",

@@ -1746,7 +1746,7 @@ ${hasMermaid ? mermaidVendorSource : ""}
   // collapse: every unit is a simulation step (.sim .sim-step), which never dims, so the extra
   // "all full" step would change nothing on screen; it folds onto the last reveal (deck runtime same).
   function maxStepFor(count, collapse) { return count <= 1 || collapse ? count : count + 1; }
-  function collapsesFullStep(units) { return units.length > 0 && units.every(function (el) { return el.matches(".sim .sim-step"); }); }
+  function collapsesFullStep(units) { return units.length > 0 && units.every(function (el) { return el.matches(".sim .sim-step, .mindmap-mm > .mm-step"); }); }
   function clampStep(step, total, collapse) { return Math.max(0, Math.min(maxStepFor(total, collapse), Number(step) || 0)); }
   function unitState(kind, step, total, i, collapse) {
     if (step >= maxStepFor(total, collapse) && step >= total) return "full";
@@ -1817,28 +1817,32 @@ ${hasMermaid ? mermaidVendorSource : ""}
     });
     if (emphasis) {
       const blockStates = emphasis.states.filter((_, i) => stepUnitIsBlock(emphasis.units[i]));
-      const blocksOn = blockStates.some((value) => value === "full") ? units.length + 1 : blockStates.filter((value) => value === "soft" || value === "current").length;
-      applyMindmapRevealForSlide(slide, kind, kind ? blocksOn : 0);
-      if (!kind || units.length === 0) return;
+      if (!kind || units.length === 0) {
+        applyMindmapRevealForSlide(slide);
+        return;
+      }
       var newest = null;
       units.forEach((el, i) => {
         if (!el.classList.contains("mode-el")) el.classList.add("mode-el");
         if (blockStates[i] === "current") newest = el;
         if (el.getAttribute("data-mode-state") !== blockStates[i]) el.setAttribute("data-mode-state", blockStates[i]);
       });
+      applyMindmapRevealForSlide(slide);
       if (newest) scrollCurrentUnitIntoView([newest], 1);
       return;
     }
-    // Mindmap unfold rides the same step as the .mm-step markers (counted in units).
     var collapse = collapsesFullStep(units);
-    applyMindmapRevealForSlide(slide, modeKind, clampStep(modeStep, units.length, collapse));
-    if (!modeKind || units.length === 0) return;
+    if (!modeKind || units.length === 0) {
+      applyMindmapRevealForSlide(slide);
+      return;
+    }
     modeStep = clampStep(modeStep, units.length, collapse);
     units.forEach((el, i) => {
       if (!el.classList.contains("mode-el")) el.classList.add("mode-el");
       var want = unitState(modeKind, modeStep, units.length, i, collapse);
       if (el.getAttribute("data-mode-state") !== want) el.setAttribute("data-mode-state", want);
     });
+    applyMindmapRevealForSlide(slide);
     // Scroll-follow (Fix 3): bring the newly-current unit into view inside its scroll container
     // (tall .trace / .slide-code panel, tall card, any overflow-y:auto box, or the slide). Same
     // mechanics as the deck runtime; block:"nearest" leaves already-visible units untouched.
@@ -2154,9 +2158,9 @@ ${hasMermaid ? mermaidVendorSource : ""}
   }
   function initMarkmaps(root) {
     if (!root) return;
-    if (slideFit.afterFonts(root, initMarkmaps)) return;
     const mm = window.markmap;
     if (!mm || !mm.Transformer || !mm.Markmap) return;
+    if (slideFit.afterFonts(root, initMarkmaps)) return;
     const hosts = root.querySelectorAll ? root.querySelectorAll(".mindmap-mm") : [];
     hosts.forEach((host) => {
       // Drawn ahead of time for paper (predrawDiagrams): on its slide's first show it is drawn afresh,
@@ -2172,22 +2176,27 @@ ${hasMermaid ? mermaidVendorSource : ""}
         host.__mmAhead = false;
         delete host.dataset.mmAhead;
         delete host.dataset.mmDone;
+        delete host.dataset.mmPainted;
       }
-      if (host.dataset.mmDone) return;
+      if (host.dataset.mmDone) {
+        if (host.__mmInstance && !host.__mmAhead) paintMarkmap(host);
+        return;
+      }
       const box = host.getBoundingClientRect();
-      if (box.width <= 0 || box.height <= 0) return;
+      if (box.width <= 0 || box.height <= 0) return; // hidden/unsized — try again on next activation
       const outline = host.getAttribute("data-mm-outline") || "";
       if (!outline.trim()) { host.dataset.mmDone = "1"; return; }
       let node;
       try { node = new mm.Transformer().transform(outline).root; }
       catch (e) { if (typeof console !== "undefined") console.error("MARKMAP-FAIL:", e && e.message); return; }
+      // Section-palette colours, rotated to start from this slide's accent.
       const slide = host.closest(".slide");
       let accent = "";
-      try { accent = (getComputedStyle(slide).getPropertyValue("--sec-accent") || "").trim().toLowerCase(); } catch (e) { /* noop */ }
+      try { accent = slide.ownerDocument.defaultView.getComputedStyle(slide).getPropertyValue("--sec-accent").trim().toLowerCase(); } catch (e) { /* noop */ }
       let start = MM_ACCENTS.findIndex((c) => c.toLowerCase() === accent);
       if (start < 0) start = 0;
       const colors = [0, 1, 2].map((i) => MM_ACCENTS[(start + i) % MM_ACCENTS.length]);
-      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      const svg = host.ownerDocument.createElementNS("http://www.w3.org/2000/svg", "svg");
       host.appendChild(svg);
       try {
         const opts = mm.deriveOptions({ colorFreezeLevel: 2, maxWidth: 340, color: colors, fitRatio: 0.92 });
@@ -2200,18 +2209,16 @@ ${hasMermaid ? mermaidVendorSource : ""}
         if (ahead) opts.duration = 0;
         const inst = new mm.Markmap(svg, opts);
         fitMarkmapInCanvas(inst);
-        // Markmap re-measures its labels when they resize; with its slide hidden (left, or drawn ahead of
-        // time) that measures every label at zero and a print shows the map collapsed. Skip it then.
+        // ResizeObserver must not re-measure labels after the slide has gone out of layout.
         const renderData = inst.renderData.bind(inst);
-        inst.renderData = (...args) => { const box = host.getBoundingClientRect(); return !inst.__twGone && box.width > 0 && box.height > 0 ? renderData(...args) : Promise.resolve(); };
-        host.__mmDrawn = inst.setData(node).then(() => inst.__twGone ? undefined : inst.fit()).then(() => { if (ahead && inst.options && !inst.__twGone) inst.options.duration = duration; });
+        inst.renderData = (...args) => host.isConnected && !inst.__twGone && host.clientWidth && host.clientHeight
+          ? renderData(...args) : Promise.resolve();
         if (ahead) { host.__mmAhead = true; host.dataset.mmAhead = "1"; }
         host.__mmInstance = inst;
         host.__mmFullRoot = node;
         host.dataset.mmDone = "1";
-        // A slide drawn ahead of time (not on screen) keeps its whole tree, as paper shows it.
-        const ownSlide = host.closest(".slide");
-        if (ownSlide && ownSlide.classList.contains("active")) applyMindmapRevealForSlide(ownSlide, modeKind, modeStep);
+        paintMarkmap(host);
+        if (ahead) host.__mmDrawn.then(() => { if (!inst.__twGone) inst.options.duration = duration; });
       } catch (e) {
         svg.remove();
         if (typeof console !== "undefined") console.error("MARKMAP-FAIL:", e && e.message);
@@ -2219,31 +2226,35 @@ ${hasMermaid ? mermaidVendorSource : ""}
     });
   }
 
-  // ADR-0005 amend (2026-07-19): reveal a mindmap one top-level branch per step. Mirrors the
-  // presenter template runtime (kept in parity by mode-selector-parity / reveal-cross-runtime): the
-  // compile-time .mm-step markers are the reveal units the shared machinery counts, and this
-  // translates the current step into how many branches markmap renders.
-  function pruneMarkmapBranches(fullRoot, showN) {
-    const kids = (fullRoot.children || []).slice(0, Math.max(0, showN));
-    return Object.assign({}, fullRoot, { children: kids });
+  // The reveal plan already stamps each branch marker, including in a presenter pane.
+  // Reading those states also preserves ordering when a slide has other stepped objects.
+  function paintMarkmap(host) {
+    const inst = host.__mmInstance;
+    const root = host.__mmFullRoot;
+    const children = root.children || [];
+    const count = host.closest(".slide").classList.contains("mode-reveal")
+      ? host.querySelectorAll(':scope > .mm-step:not([data-mode-state="hidden"])').length
+      : children.length;
+    if (host.__mmShown === count) return;
+    host.__mmShown = count;
+    delete host.dataset.mmPainted;
+    // Layout and fit are asynchronous. Finish the running draw and discard superseded requests.
+    host.__mmDrawn = Promise.resolve(host.__mmDrawn).then(async () => {
+      if (inst.__twGone || host.__mmShown !== count) return;
+      await inst.setData({ ...root, children: children.slice(0, count) });
+      if (inst.__twGone || host.__mmShown !== count) return;
+      await inst.fit();
+      if (inst.__twGone || host.__mmShown !== count) return;
+      if (host.clientWidth && host.clientHeight) host.dataset.mmPainted = "1";
+      else delete host.__mmShown;
+    }).catch((e) => console.error("MARKMAP-REVEAL-FAIL:", e && e.message));
   }
-  function applyMindmapRevealForSlide(slide, kind, step) {
-    if (!slide) return;
+
+  function applyMindmapRevealForSlide(slide) {
     const host = slide.querySelector(".mindmap-mm");
-    // A map drawn ahead of time is for paper only; it is drawn afresh when its slide is first shown.
-    if (!host || !host.__mmInstance || !host.__mmFullRoot || host.__mmAhead) return;
-    const total = (host.__mmFullRoot.children || []).length;
-    const showN = kind === "reveal" ? Math.max(0, Math.min(Number(step) || 0, total)) : total;
-    if (host.__mmShown === showN) return;
-    host.__mmShown = showN;
-    try {
-      // fit once the new branches are laid out (fit() reads the drawing's extent, which setData updates when it resolves)
-      const inst = host.__mmInstance;
-      Promise.resolve(inst.setData(pruneMarkmapBranches(host.__mmFullRoot, showN))).then(() => {
-        if (!inst.__twGone && host.__mmShown === showN && typeof inst.fit === "function") return inst.fit();
-      }).catch((e) => { if (typeof console !== "undefined") console.error("MARKMAP-REVEAL-FAIL:", e && e.message); });
-    } catch (e) { if (typeof console !== "undefined") console.error("MARKMAP-REVEAL-FAIL:", e && e.message); }
+    if (host?.__mmInstance && !host.__mmAhead) paintMarkmap(host);
   }
+
   window.addEventListener("resize", () => {
     densifyActiveCards();
     drawSystemLinks(slides[index]);

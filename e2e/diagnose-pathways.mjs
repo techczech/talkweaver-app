@@ -60,6 +60,8 @@ try {
   assert.equal(await badge.textContent(),'1'); pass('pathway mutation pushes the talk badge count')
   assert.equal(await badge.getAttribute('title'),'Pathways: Short probe'); pass('talk badge tooltip lists the manifest name')
   await badge.click(); await dock.waitFor()
+  await page.locator('[data-view="grid"]').waitFor()
+  assert.equal(await dock.locator('select').inputValue(), manifest().pathways[0].id, 'the badge keeps the selected pathway')
   assert.equal((await app.windows()).length,oldCount); pass('talk badge navigates to that talk’s main-window dock')
   sameOutline(); pass('create stores a manifest pathway without touching the outline')
   const names = ['Where the plot is','What we grow','Seedlings in May','The plant stall']

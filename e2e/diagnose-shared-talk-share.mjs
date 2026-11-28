@@ -7,7 +7,7 @@
 // the PUT) sends the close at once, closes the sheet, and leaves the talk unshared with no share_url.
 // No production credentials, remote Worker or user vault are used.
 import assert from 'node:assert/strict'
-import { openTalkByTitle } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -126,7 +126,7 @@ try {
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.waitForLoadState('domcontentloaded')
-  await openTalkByTitle(page, 'Share probe')
+  await openTalkByTitle(page, 'Share probe', { view: 'outline' })
   await page.waitForSelector('.workspace')
   await page.waitForSelector('.cm-content')
   await page.evaluate(() => {
@@ -177,6 +177,8 @@ try {
   await sheet.waitFor({ state: 'detached' })
   await page.getByTestId('status-shared').waitFor()
   assert.match(await page.getByTestId('status-shared').textContent(), /^Shared for comments · 127\.0\.0\.1:\d+\/shares\//)
+  await ensureTalksMode(page)
+  await page.getByTestId('talk-row-shared').first().waitFor()
   assert.equal(await page.getByTestId('talk-row-shared').first().isVisible(), true, 'the talk row shows the Shared badge')
   log('status bar says "Shared for comments · <link>"; talk row shows Shared')
 

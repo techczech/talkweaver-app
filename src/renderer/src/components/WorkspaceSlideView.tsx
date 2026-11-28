@@ -28,7 +28,6 @@ interface Props {
   notesOpen: boolean
   onToggleNotes: () => void
   onNotesChange: (body: string, position: number, expectedHash?: string, leaving?: boolean) => string | null
-  onNotesEngaged: () => void
   attachEditor: (el: HTMLDivElement | null) => void
   onTalkDetails: () => void
   editable: boolean
@@ -43,7 +42,7 @@ interface Props {
 
 // WN1 / NT1 use Slide Focus's stage and the same scoped editor, with the editor under the stage.
 export default function WorkspaceSlideView({
-  path, outline, markerPreview, trying, applied, layoutGallerySlot, onUndoDesign, onOpenReveal, row, index, count, pathwayNavigation, navigationShortcuts, place, notes, notesKey, notesOpen, onToggleNotes, onNotesChange, onNotesEngaged,
+  path, outline, markerPreview, trying, applied, layoutGallerySlot, onUndoDesign, onOpenReveal, row, index, count, pathwayNavigation, navigationShortcuts, place, notes, notesKey, notesOpen, onToggleNotes, onNotesChange,
   attachEditor, onTalkDetails, editable, emptySlide, sourceRecovery, section, subslides, addSubslide, subslide, headingLine
 }: Props) {
   const preview = useMemo(() => authoringVideoPreview(trying?.text ?? outline, headingLine ?? null), [trying?.text, outline, headingLine])
@@ -124,7 +123,7 @@ export default function WorkspaceSlideView({
                 <div hidden={!open}>
                   {(notes.length ? notes : [undefined]).map((note, index) =>
                     <SlideNote key={`${notesKey}:${index}`} note={note} index={index} count={notes.length}
-                      onChange={onNotesChange} onEngaged={onNotesEngaged} />)}
+                      onChange={onNotesChange} />)}
                 </div>
               </div>}
             </>
@@ -141,12 +140,11 @@ export default function WorkspaceSlideView({
   )
 }
 
-function SlideNote({ note, index, count, onChange, onEngaged }: {
+function SlideNote({ note, index, count, onChange }: {
   note: NotesEntry | undefined
   index: number
   count: number
   onChange: Props['onNotesChange']
-  onEngaged: Props['onNotesEngaged']
 }) {
   const [refused, setRefused] = useState<{ body: string; error: string } | null>(null)
   const [blankDraft, setBlankDraft] = useState('')
@@ -161,13 +159,12 @@ function SlideNote({ note, index, count, onChange, onEngaged }: {
     <>
       <textarea aria-label={count > 1 ? `Speaker notes ${index + 1} of ${count}` : 'Speaker notes'}
         placeholder="What you want to say on this slide" value={refused?.body ?? note?.body ?? blankDraft}
-        disabled={note?.closed === false} onClick={onEngaged}
+        disabled={note?.closed === false}
         onBlur={removeEmptyNote}
         onKeyDown={event => {
           if (event.key === 'Escape' && !event.currentTarget.value.trim()) event.currentTarget.blur()
         }}
         onChange={event => {
-          onEngaged()
           const body = event.currentTarget.value
           setBlankDraft(body.trim() ? '' : body)
           const error = onChange(body, index, note?.hash)

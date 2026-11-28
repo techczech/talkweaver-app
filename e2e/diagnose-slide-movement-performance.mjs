@@ -81,7 +81,7 @@ try {
     return true
   }, outlinePath), 'real compile IPC handler is available for fault injection')
   const openingAt = Date.now()
-  await openTalkByTitle(page, 'Movement performance fixture')
+  await openTalkByTitle(page, 'Movement performance fixture', { view: 'outline' })
   const editor = page.locator('[data-view="outline"] .cm-content[contenteditable="true"]')
   await editor.waitFor()
   await page.getByText('Couldn’t compile this talk', {exact:false}).waitFor()

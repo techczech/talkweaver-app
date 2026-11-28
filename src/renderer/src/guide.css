@@ -1,8 +1,9 @@
 /* The Guide (onboarding 0.38.1 ticket 07): the sidebar foot button, the right column's tab row, the
    Guide's segments and First steps card, and the Settings switch. Drawn in states 02, 03, 16, 19. */
 
-/* The foot of the Talks panel: "+ Add vault…" beside the Guide button. */
+/* The Guide button in the Talks and Slides footers. */
 .tl-foot { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; border-top: 1px solid var(--line); background: var(--paper); padding-right: 8px; }
+.sidebar-wrap > .tl-foot { justify-content: flex-end; padding: 6px 8px; }
 .tl-foot .tl-addvault { flex: 1 1 auto; width: auto; min-width: 0; border-top: 0; }
 .tl-guide {
   flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px;

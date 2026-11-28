@@ -1105,13 +1105,14 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // never hand-positioned. We emit ONLY a host div carrying the slide's nested list as markdown in
     // `data-mm-outline`; the presenter/share runtimes lazily build a markmap SVG into it on the
     // slide's first activation (see `initMarkmaps`). CONVENTION (unchanged from the old grid): the
-    // first depth-0 item is the CENTRE (root idea); its children are the branches — unless the first
-    // item has no children, in which case the remaining depth-0 items become its branches.
+    // A single nested root (or the first item in a flat list) supplies the centre. Multiple
+    // top-level subtrees are independent branches, just as in the Markdown card.
     const all = (block.nodes || []).filter((n) => n && (n.text || (n.children || []).length));
     if (!all.length) return "";
-    const root = all[0];
-    let branches = (root.children || []).filter((c) => c && (c.text || (c.children || []).length));
-    if (!branches.length && all.length > 1) branches = all.slice(1);
+    const siblingBranches = all.length > 1 && all.some((node) => node.children?.length);
+    const root = siblingBranches ? { text: block.rootLabel || "Mind map" } : all[0];
+    const rootedBranches = (root.children || []).filter((node) => node && (node.text || node.children?.length));
+    const branches = siblingBranches ? all : rootedBranches.length ? rootedBranches : all.slice(1);
     // Build markmap markdown from the node model: root = `#`, each branch = `##`, everything beneath
     // a branch = nested `-` bullets (markmap nests deeper lists cleanly, so we recurse rather than
     // flatten). Node text stays raw markdown (markmap renders inline **bold**/`code`); we only

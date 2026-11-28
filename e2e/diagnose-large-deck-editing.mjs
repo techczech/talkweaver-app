@@ -36,7 +36,7 @@ const rapid = await page.evaluate(async({path,source})=> {
 assert.equal(Object.keys(rapid[0]).length,0,'obsolete request is cancelled')
 assert.equal(Object.keys(rapid[1]).length,162,'latest request completes')
 // Exercise the real editor and autosave after the direct IPC timing comparison.
-await openTalkByTitle(page, 'Large deck')
+await openTalkByTitle(page, 'Large deck', { view: 'outline' })
 const editorSelector = '[data-view="outline"] .cm-content[contenteditable="true"]'
 const editor = page.locator(editorSelector)
 const edit = 'Editing remains responsive after 160 slides.'

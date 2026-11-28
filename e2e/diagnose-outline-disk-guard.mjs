@@ -20,7 +20,7 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-outline-disk-guard.mjs
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
-import { openTalkByTitle, waitForTalkList } from './lib/talklist.mjs'
+import { openTalkByTitle, showTalkView, waitForTalkList } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'fs'
@@ -128,7 +128,7 @@ async function waitFor(fn, ms, step = 50) {
   return null
 }
 async function openTalk(title) {
-  await openTalkByTitle(page, title)
+  await openTalkByTitle(page, title, { view: 'outline' })
   if (await waitFor(async () => (await activeTitle()) === title && (await editorText())?.includes('First slide body text.'), 6000) === null) {
     throw new Error(`The Outline editor did not open ${title}`)
   }
@@ -347,6 +347,7 @@ try {
     !disk().includes('DISKRENAME') && recoveryCopies().length === 0, 5000)
   await askRename()
   const renamed = await waitFor(() => existsSync(NEW_PATH) && !existsSync(OUTLINE_PATH), 10_000)
+  if (renamed !== null) await showTalkView(page, 'outline')
   const newText = renamed !== null ? readFileSync(NEW_PATH, 'utf8') : ''
   // The moved-editor handoff deliberately preserves its last buffer at the new path before adoption.
   const savedHandoff = renamed === null ? null : await waitFor(() => recoveryCopies().some(file => {

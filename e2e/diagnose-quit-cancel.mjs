@@ -57,7 +57,7 @@ try {
       assert.equal(await app.evaluate(({ BrowserWindow, app }, ud) => app.getPath('userData') === ud && BrowserWindow.getAllWindows().every(w => !w.isVisible()), userData), true)
       await app.evaluate(({ app }) => { globalThis.quitEvents = 0; app.on('before-quit', () => { globalThis.quitEvents++ }) })
       let page = await app.firstWindow(); page.setDefaultTimeout(15000)
-      await openTalkByTitle(page, 'Garden notes'); await page.locator('.cm-content').waitFor()
+      await openTalkByTitle(page, 'Garden notes', { view: 'outline' }); await page.locator('.cm-content').waitFor()
       const quit = async () => {
         const before = await app.evaluate(() => globalThis.quitEvents)
         await app.evaluate(({ Menu, app }, { addon, pid, userData }) => {
@@ -83,7 +83,7 @@ try {
       }
       const restoredEditor = async () => {
         await until(async () => { page = app.windows().find(p => !p.isClosed() && p.url().includes('/renderer/index.html')); return page }, 'new editor not opened')
-        await openTalkByTitle(page, 'Garden notes')
+        await openTalkByTitle(page, 'Garden notes', { view: 'outline' })
       }
       if (scenario === 'restart') {
         stage('restart closes editors')

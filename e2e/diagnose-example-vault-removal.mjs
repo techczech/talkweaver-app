@@ -18,7 +18,7 @@
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-example-vault-removal.mjs
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openSettingsWindow, closeSettingsWindow } from './lib/settings-window.mjs'
-import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle, showTalkView } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, writeFileSync } from 'fs'
@@ -86,7 +86,7 @@ async function waitFor(page, fn, arg, timeout = 15000) {
 /** Window 1 on Alpha Talk with the example listed; window 2 on The Saturday market. */
 async function setUp(p) {
   const { app, page } = await launch(p)
-  await openTalkByTitle(page, 'Alpha Talk')
+  await openTalkByTitle(page, 'Alpha Talk', { view: null })
   await ensureTalksMode(page)
   const opened = await page.evaluate(() => window.tw.vault.openExample())
   if (!opened.ok) throw new Error(`open example: ${opened.message}`)
@@ -97,7 +97,7 @@ async function setUp(p) {
   await page.evaluate((outlinePath) => window.tw.windows.openInNewWindow({ kind: 'talk', outlinePath }), outline)
   const win2 = await second
   await win2.waitForLoadState('domcontentloaded')
-  await win2.waitForSelector('.cm-content', { timeout: 15000 }).catch(async (error) => { console.error('new-window diagnostic', JSON.stringify({ received: win2.url(), windows: app.windows().map((w) => w.url()) })); throw error })
+  await showTalkView(win2, 'slide', { editable: false, timeout: 15000 }).catch(async (error) => { console.error('new-window diagnostic', JSON.stringify({ received: win2.url(), windows: app.windows().map((w) => w.url()) })); throw error })
   await waitFor(win2, () => document.title.includes('The Saturday market'))
   return { app, page, win2, outline }
 }
@@ -108,7 +108,7 @@ async function openExampleWindow(app, page, root, slug, title) {
   await page.evaluate((path) => window.tw.windows.openInNewWindow({ kind: 'talk', outlinePath: path }), outlinePath)
   const win = await next
   await win.waitForLoadState('domcontentloaded')
-  await win.waitForSelector('.cm-content', { timeout: 15000 })
+  await showTalkView(win, 'slide', { editable: false, timeout: 15000 })
   await waitFor(win, (t) => document.title.includes(t), title)
   return win
 }
@@ -203,6 +203,7 @@ try {
     await shot(settings, '12-state-16-settings.png')
     await closeSettingsWindow(app)
     await page.waitForTimeout(300)
+    await showTalkView(page, 'slide')
     await page.locator('.cm-content').first().click()
     await page.keyboard.press('Meta+Shift+P')
     await page.waitForTimeout(250)

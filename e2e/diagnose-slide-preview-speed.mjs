@@ -117,7 +117,7 @@ await page.addInitScript(({ active }) => {
   requestAnimationFrame(frame)
 }, { active })
 
-await openTalkByTitle(page, 'Field notes')
+await openTalkByTitle(page, 'Field notes', { view: 'markdown' })
 
 async function watch(view, id, before, after, navigation = false) {
   await page.evaluate(({ selector, id, before, after, navigation }) => {

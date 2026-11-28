@@ -815,6 +815,11 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
       }
     }
     let blocks = mapBlocksToLayout(layout, rawBlocks);
+    for (const block of blocks) {
+      if (block.type === "mindmap" && block.nodes?.length > 1 && block.nodes.some((node) => node.children?.length)) {
+        block.rootLabel = slide.title;
+      }
+    }
     let iconlistVariant = "";
     let statementOptions = null;
     let backgroundTint = "";

@@ -8,7 +8,7 @@
 //   2. Line chart: the line, dots and baseline are drawn (accent line, accent dots, ink baseline); the value and month
 //      text is regular weight; the chart is centred on the stage and sits inside the stage.
 //   3. Table: banded rows (every second body row tinted), first column in the accent at regular weight, no bold cell,
-//      mono uppercase column head over an ink rule, hairline rules between rows, no column rules; a long table keeps the
+//      sentence-case accent column head over an accent rule, hairline rules between rows, no column rules; a long table keeps the
 //      banding and fits the stage.
 // =============================================================================
 
@@ -168,9 +168,9 @@ try {
       })
       t.weights.forEach((w) => assert(parseInt(w, 10) <= 400, `${label}: no bold body cell (${w})`))
       t.first.forEach((f, i) => { assert.notEqual(f.color, t.other, `${label}: row ${i + 1} first column is in the accent`) })
-      assert.equal(t.th.transform, 'uppercase', `${label}: column head uppercase`)
-      assert(parseInt(t.th.w, 10) <= 400, `${label}: column head regular weight`)
-      assert(t.th.rule >= (id === 'table' ? 1.5 : 1) && t.th.ruleStyle === 'solid', `${label}: ink rule under the head (${t.th.rule.toFixed(2)}px)`)
+      assert.equal(t.th.transform, 'none', `${label}: column head keeps the authored case`)
+      assert(parseInt(t.th.w, 10) >= 700, `${label}: column head bold`)
+      assert(t.th.rule >= (id === 'table' ? 1.5 : 1) && t.th.ruleStyle === 'solid', `${label}: accent rule under the head (${t.th.rule.toFixed(2)}px)`)
       assert(t.td.bottom >= 0.5 && t.td.bottom < 3, `${label}: hairline between rows (${t.td.bottom.toFixed(2)}px)`)
       assert.equal(t.td.left, 0, `${label}: no column rule`)
       assert(t.th.px >= t.floor - 0.01, `${label}: column head at the type floor or above`)

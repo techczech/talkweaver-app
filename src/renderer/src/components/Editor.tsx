@@ -332,7 +332,6 @@ interface Props {
   // Protected-token click (2026-07-03): clicking a `{…}` chip reports the token instead of
   // placing a cursor inside it — the parent routes id → where-used panel, trigger → ⌘L picker.
   onProtectedTokenClick?: (token: string, kind: 'id' | 'trigger') => void
-  // T29b: the editor's two ENGAGEMENT triggers, reported up (App switches the sidebar to the
   // Slide outline once per opened talk — armed only for opens that came from the Talks panel):
   //   1. the first pointerdown anywhere in the editor surface (.cm-editor, incl. .cm-content);
   //   2. the first document change made by the USER (typing/paste/drop — the keyboard-only path,
@@ -340,7 +339,6 @@ interface Props {
   //      userEvent and never fire this).
   // Fired AT MOST as often as the parent cares: it is a plain notification, it never consumes the
   // underlying event, and per-mount dedup is the parent's business (it consumes on first hit).
-  onEditorEngaged?: (path: string) => void
   /** Plain editing view (spec T1): Plain or Markdown. Reconfigures `viewCompartment`; never remounts. */
   viewMode: EditorViewMode
   /** Plain tab font and text size (spec T13). Reconfigures `plainTypeCompartment`; never remounts. */
@@ -514,7 +512,6 @@ export default function Editor({
   registerApplyLayout,
   registerApplyOption,
   onProtectedTokenClick,
-  onEditorEngaged,
   viewMode,
   plainLook = PLAIN_LOOK_DEFAULT,
   onMarginLevelMenu,
@@ -651,8 +648,6 @@ export default function Editor({
   researchDropRef.current = onResearchDrop
   // Ref, not closure: the engagement triggers live in the mount-once view (domEventHandlers +
   // updateListener below), so a prop re-render must be visible there without re-creating the view.
-  const onEditorEngagedRef = useRef(onEditorEngaged)
-  useEffect(() => { onEditorEngagedRef.current = onEditorEngaged }, [onEditorEngaged])
   const compiledLayoutAtRef = useRef(compiledLayoutAt)
   useEffect(() => { compiledLayoutAtRef.current = compiledLayoutAt }, [compiledLayoutAt])
 
@@ -1168,13 +1163,6 @@ export default function Editor({
             let authoredEdit: string | undefined
             if (update.docChanged) {
               if (mergeSavingRef.current) return
-              // T29b engagement trigger 2: a document change made BY THE USER — typing into an
-              // already-focused editor is a keydown that edits the doc, so a keyboard-only user
-              // engages exactly like a pointer user. Programmatic dispatches (load, adoption,
-              // replaceDoc, undo) carry no 'input' userEvent and never fire this.
-              if (loadedPathRef.current === currentTalkRef.current && update.transactions.some(tr => tr.isUserEvent('input'))) {
-                onEditorEngagedRef.current?.(currentTalkRef.current)
-              }
               const content = update.state.doc.toString()
               if (adoptingDiskRef.current) { onContentChange(content); return }
               if (update.transactions.some(tr => tr.annotation(provisionalRollback))) return
@@ -1497,6 +1485,7 @@ export default function Editor({
         }
         viewRef.current.dispatch({
           changes: { from: 0, to: viewRef.current.state.doc.length, insert: content },
+          selection: { anchor: 0 },
           filter: false // Only the owning load may replace text while mutation admission is closed.
         })
         // RESET the undo stack across the talk boundary: detach + re-attach history() so the
@@ -2155,9 +2144,5 @@ export default function Editor({
     if (focusLine.takeFocus) view.focus()
   }, [focusLine])
 
-  return <div ref={containerRef} className="editor-container" data-place-region="editor" onClickCapture={() => {
-    // Let CodeMirror place the caret before changing the side panels around it.
-    // Capture also observes clicks on widgets that handle their own events.
-    if (loadedPathRef.current === currentTalkRef.current) onEditorEngagedRef.current?.(currentTalkRef.current)
-  }} />
+  return <div ref={containerRef} className="editor-container" data-place-region="editor" />
 }

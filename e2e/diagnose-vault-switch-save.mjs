@@ -91,7 +91,7 @@ try {
   record('DIRECT: nothing was written anywhere', snapshot() === before)
 
   // ── (S) SWITCH: an open talk from the previous vault is never saved, and says so ──
-  await openTalkByTitle(page, TITLE)
+  await openTalkByTitle(page, TITLE, { view: 'outline' })
   await page.waitForSelector('.cm-content', { timeout: 8000 })
   await page.waitForTimeout(1500)
   const beforeSwitch = snapshot()
@@ -103,7 +103,7 @@ try {
   await page.waitForTimeout(2600) // > 1500ms autosave debounce
   const text = await toastText()
   record('SWITCH: typing after the vault changed shows the not-saved notice',
-    /not in your current vault; it was not saved/.test(text), JSON.stringify(text.slice(0, 200)))
+    /editing access changed, so it was not saved\. Your edits remain in the editor\./.test(text), JSON.stringify(text.slice(0, 200)))
   const after = snapshot()
   record('SWITCH: nothing was written in either vault or outside',
     after === beforeSwitch && !readFileSync(OUTLINE_PATH, 'utf8').includes('TYPED-AFTER-SWITCH'))

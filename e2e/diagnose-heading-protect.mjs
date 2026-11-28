@@ -76,7 +76,7 @@ async function readDoc() {
   )
 }
 async function selectTalk(name) {
-  await openTalkByTitle(page, name)
+  await openTalkByTitle(page, name, { view: 'markdown' })
   await page.waitForTimeout(400)
 }
 async function reset() {

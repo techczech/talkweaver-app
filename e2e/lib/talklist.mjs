@@ -173,10 +173,32 @@ async function otherTalkRow(page, title, timeout) {
   )
 }
 
+// Editor journeys pick the view they exercise. Slide editing usually needs a source-backed
+// card because the generated title has its own editor in the Talk details panel.
+export async function showTalkView(page, view, { timeout = TALK_OPEN_TIMEOUT, editable = view === 'slide' } = {}) {
+  const titleBar = page.locator('.workspace-view-titlebar')
+  const pane = page.locator(`[data-view="${view}"]`)
+  const select = async name => {
+    const button = titleBar.getByRole('button', { name, exact: true })
+    if (await button.getAttribute('aria-pressed', { timeout }) !== 'true') await button.click({ timeout })
+  }
+  await select(view[0].toUpperCase() + view.slice(1))
+  if (view === 'slide') {
+    await pane.locator('.workspace-slide-crumb strong').waitFor({ timeout })
+    if (editable && !await pane.locator('.cm-content').isVisible()) {
+      await select('Grid')
+      await page.locator('[data-view="grid"] .grid-cell[data-block-index]:not([data-block-index=""])')
+        .first().dblclick({ timeout })
+    }
+  }
+  if (view === 'grid') await pane.waitFor({ timeout })
+  else if (editable || view !== 'slide') await pane.locator('.cm-content').waitFor({ timeout })
+}
+
 export async function openTalkByTitle(
   page,
   title,
-  { timeout = DEFAULT_TIMEOUT, forceReload = false } = {}
+  { timeout = DEFAULT_TIMEOUT, forceReload = false, view = 'slide', editable } = {}
 ) {
   const start = startScreen(page)
   const menu = talkMenu(page)
@@ -189,7 +211,7 @@ export async function openTalkByTitle(
     await result.click({ timeout, noWaitAfter: true })
     await start.waitFor({ state: 'hidden', timeout: TALK_OPEN_TIMEOUT })
     await menu.getByText(label, { exact: true }).waitFor({ timeout: TALK_OPEN_TIMEOUT })
-    await page.locator('.cm-content').first().waitFor({ state: 'visible', timeout })
+    if (view) await showTalkView(page, view, { editable })
     return true
   }
 
@@ -215,11 +237,11 @@ export async function openTalkByTitle(
   // focus into CodeMirror before that key arrives, so use the filter's button.
   const clearFilter = page.locator(TALKS_PANEL).first().getByRole('button', { name: 'Clear filter', exact: true })
   if (await clearFilter.isVisible()) await clearFilter.click({ noWaitAfter: true })
-  await page.locator('.cm-content').first().waitFor({ state: 'visible', timeout })
+  if (view) await showTalkView(page, view, { editable })
   return true
 }
 
-export async function openFirstTalk(page, { timeout = DEFAULT_TIMEOUT } = {}) {
+export async function openFirstTalk(page, { timeout = DEFAULT_TIMEOUT, view = 'slide', editable } = {}) {
   const start = startScreen(page)
   await start.or(talkMenu(page)).or(page.locator(TALKS_PANEL)).filter({ visible: true }).first().waitFor({ timeout })
   if (await start.isVisible()) {
@@ -227,7 +249,7 @@ export async function openFirstTalk(page, { timeout = DEFAULT_TIMEOUT } = {}) {
       .locator('button.vx-talk-open:enabled').first()
     await recent.click({ timeout, noWaitAfter: true })
     await start.waitFor({ state: 'hidden', timeout: TALK_OPEN_TIMEOUT })
-    await page.locator('.cm-content').first().waitFor({ timeout })
+    if (view) await showTalkView(page, view, { editable })
     return true
   }
 
@@ -242,6 +264,7 @@ export async function openFirstTalk(page, { timeout = DEFAULT_TIMEOUT } = {}) {
   }
 
   await row.click()
-  await page.locator('.cm-content').first().waitFor({ state: 'visible', timeout })
+  await row.and(page.locator('[aria-selected="true"]')).waitFor({ timeout: TALK_OPEN_TIMEOUT })
+  if (view) await showTalkView(page, view, { editable })
   return true
 }

@@ -227,6 +227,8 @@ async function ensureDeckLoaded(deck: string | PreviewVariant, signal: AbortSign
       show: false,
       width: 1280,
       height: 720,
+      // Capture the full 16:9 content area, independent of the window frame.
+      useContentSize: true,
       // disableDialogs: an alert / confirm / prompt from a page in a slide would otherwise put a
       // dialog on screen from a window nobody sees and hold the capture until it is dismissed.
       webPreferences: { ...livePageWebPreferences(isolated, false), offscreen: false, disableDialogs: true }
@@ -265,6 +267,22 @@ async function ensureDeckLoaded(deck: string | PreviewVariant, signal: AbortSign
     await rendererWork(win.loadFile(tmpHtmlPath ?? (deck as PreviewVariant).path), signal)
     checkCancelled()
     if (!await rendererWork(captureNetworkReady(win.webContents), signal)) throw Error('Thumbnail capture containment unavailable')
+    // Online players cannot load in this network-isolated capture window. Keep their
+    // slide recognisable in Grid and the design picker with a static label.
+    await rendererWork(win.webContents.insertCSS(`
+      figure.slide-embed-video::after {
+        content: "Online video";
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        background: var(--paper, white);
+        color: var(--ink, black);
+        font: 600 clamp(16px, 3cqw, 44px)/1.2 var(--sans, sans-serif);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+      }
+    `), signal)
     checkCancelled()
     renderWinHtmlKey = key
     return win
@@ -494,7 +512,7 @@ async function renderThumbnailsInWindow(
         // unloaded, skip the cache write: the slide stays uncached and the next compile re-renders
         // it (and succeeds once the machine is idle). A transient blank can no longer become permanent.
         if (stillPending > 0) {
-          console.warn(`[thumbnails] slide ${item.index} (${item.key}): ${stillPending} image(s) not loaded in time — NOT caching (will retry next compile)`)
+          console.warn(`[thumbnails] slide ${item.index} (${item.key}): ${stillPending} item(s) not painted in time — NOT caching (will retry next compile)`)
           continue
         }
         // RIGHT-SLIDE GUARANTEE: re-assert the target as the SOLE active slide immediately before
@@ -627,7 +645,8 @@ async function settle(win: BrowserWindow): Promise<{ pending: number }> {
       // Scope to '.slide.active img' and drop hidden ones (e.g. inactive carousel sub-cards).
       const isVisible = (i) => { try { return i.checkVisibility ? i.checkVisibility() : (i.offsetParent !== null || i.offsetWidth > 0 || i.offsetHeight > 0); } catch { return true; } };
       const collect = () => Array.from(document.querySelectorAll('.slide.active img')).filter(isVisible);
-      const stillPending = () => collect().filter((i) => !(i.complete && i.naturalWidth > 0)).length;
+      const pendingDiagrams = () => Array.from(document.querySelectorAll('.slide.active .mindmap-mm:not([data-mm-painted]), .slide.active .mermaid-mm:not(:has(svg, .mmd-error))')).filter(isVisible).length;
+      const stillPending = () => collect().filter((i) => !(i.complete && i.naturalWidth > 0)).length + pendingDiagrams();
       // A clip paints its POSTER (a data: jpeg) until played; it's a <video poster> attribute, not an
       // <img>, so decode it explicitly before capture or the strip thumbnail is a blank frame (ADR-0028).
       const posterDecodes = Array.from(document.querySelectorAll('.slide.active video')).filter(isVisible).map((v) => {
@@ -635,7 +654,12 @@ async function settle(win: BrowserWindow): Promise<{ pending: number }> {
         const im = new Image(); im.src = src; return im.decode ? im.decode().catch(() => {}) : Promise.resolve();
       });
       const pagePaint = document.querySelector('.slide.active figure[data-embed="local"] iframe[srcdoc]') ? new Promise(r => setTimeout(r, 700)) : Promise.resolve();
-      const done = () => Promise.all([...posterDecodes, pagePaint]).then(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve({ pending: stillPending() }))));
+      const diagramPaint = pendingDiagrams() ? new Promise((resolveDiagram) => {
+        const limit = performance.now() + 3000;
+        const check = () => pendingDiagrams() && performance.now() < limit ? requestAnimationFrame(check) : resolveDiagram();
+        check();
+      }) : Promise.resolve();
+      const done = () => Promise.all([...posterDecodes, pagePaint, diagramPaint]).then(() => requestAnimationFrame(() => requestAnimationFrame(() => resolve({ pending: stillPending() }))));
       const imgs = collect();
       const pending = imgs.filter((i) => !(i.complete && i.naturalWidth > 0));
       if (pending.length === 0) { done(); return; }

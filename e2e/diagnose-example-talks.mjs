@@ -74,18 +74,15 @@ try {
   // ── (A) opening changes no byte ──
   await page.getByRole('region', { name: 'Vault Explorer', exact: true })
     .getByRole('button', { name: /Open examples$/ }).click()
-  await page.getByTitle('Talk menu', { exact: true }).filter({ hasText: 'The Saturday market' }).waitFor({ timeout: 15000 })
   await ensureTalksMode(page)
   await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
-  await page.waitForFunction(() => document.title.includes('The Saturday market'), null, { timeout: 15000 }).catch(() => {})
-  await page.waitForSelector('.cm-content', { timeout: 8000 })
   const before = contents(exampleRoot)
   record('the example vault holds the five talks, the version store, the pathway and the kept delivery',
     ['the-saturday-market/the-saturday-market-outline.md', '_SLIDE-VERSIONS/s4/20260912-090000--garden-notes.md', '_PRESENTATIONS/walking-the-old-town/manifest.json', '_PRESENTATIONS/lightning-round/delivery-2026-09-26.json'].every((f) => f in before),
     `${Object.keys(before).length} files`)
   for (const [title] of TALKS) {
     await ensureTalksMode(page)
-    await openTalkByTitle(page, title)
+    await openTalkByTitle(page, title, { view: 'grid' })
     const shown = await waitFor(async () => (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label', { timeout: 1000 }).catch(() => '')) === title, 15000)
     await page.waitForTimeout(2500) // past the 1.5 s autosave delay
     record(`${title} opens in the editor`, shown)

@@ -136,7 +136,7 @@ const draggableAt = (x, y) => page.evaluate(([px, py]) => {
 }, [x, y])
 
 try {
-  await openTalkByTitle(page, 'Working talk')
+  await openTalkByTitle(page, 'Working talk', { view: 'outline' })
   await waitBuffer(working)
   const insertionPoint = 'Fixture insert point.'
   const caret = working.indexOf(insertionPoint) + insertionPoint.length

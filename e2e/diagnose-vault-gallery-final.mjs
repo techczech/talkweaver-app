@@ -29,7 +29,7 @@ try{
  assert.equal(await app.evaluate(({app})=>app.getPath('userData')),ud);assert(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().every(w=>!w.isVisible())))
  await app.evaluate(async ({shell},{vault,trash})=>{const fs=process.getBuiltinModule('fs');shell.trashItem=async path=>{if(!path.startsWith(vault+'/'))throw Error('Fixture Trash boundary');fs.renameSync(path,trash+'/'+Date.now()+'-'+path.split('/').pop())}},{vault,trash})
  await page.route('http://**',route=>route.abort());await page.route('https://**',route=>route.abort())
- await openTalkByTitle(page,'Set aside fixture')
+ await openTalkByTitle(page,'Set aside fixture', { view: 'outline' })
  await typeAtOutlineLineEnd(page, 'Gamma body.', ' FINAL LATEST TYPED TEXT')
  const from=join(vault,'target/target-outline.md');let moved
  await record('actual active move produces recoverable receipt and preserves current editor via production recovery event',async()=>{

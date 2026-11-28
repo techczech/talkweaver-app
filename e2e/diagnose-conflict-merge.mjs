@@ -136,7 +136,7 @@ try {
   await row('Cancel talk').waitFor({ state: 'attached', timeout: 10000 })
 
   // ── (A) keep Mine, the talk open ──
-  await openTalkByTitle(page, A.title)
+  await openTalkByTitle(page, A.title, { view: 'outline' })
   await page.waitForTimeout(800)
   await openCompare(A.title)
   const step1 = await page.locator('[data-conflict-step="1"]').innerText()
@@ -195,7 +195,7 @@ try {
   record('…no text lost', lostLines([B.mine, B.air], bOut, bTrash).length === 0)
 
   // ── (C) Git markers, the talk open (the merge goes through the editor, whose save reaches disk) ──
-  await openTalkByTitle(page, C.title)
+  await openTalkByTitle(page, C.title, { view: 'outline' })
   await page.waitForTimeout(800)
   await openCompare(C.title)
   const cSub = await page.locator('.cc-top-sub').innerText()

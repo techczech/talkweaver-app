@@ -23,7 +23,8 @@ import {
   isCaptureViewsMarker,
   readCaptureLine
 } from '../../../../../compiler/scripts/lib/live-page-capture-markup.mjs'
-import { isBareUrl } from '../../../../../compiler/scripts/lib/02-triggers-layout.mjs'
+import { isBareUrl, parseHeadingAttrs } from '../../../../../compiler/scripts/lib/02-triggers-layout.mjs'
+import { plainInlineText } from '../../../../../compiler/scripts/lib/00-inline-render.mjs'
 import {
   chartObjectTokenAt,
   parseChartFenceOpeningLine,
@@ -72,6 +73,8 @@ export type ObjectBlock = {
   bodyTo?: number
   triggerLine?: number
   triggerToken?: string
+  tableStyle?: { header: boolean; firstColumnAccent: boolean }
+  mindmapTitle?: string
   /** A fence card: its info string as written (language for code). */
   info?: string
   /** A chat or terminal session fence: the slide's simulation design. */
@@ -274,6 +277,13 @@ export function detectOutlineObjects(doc: string, includePictures = false): Outl
     if (chartKinds.has(object.kind)) slidesWithChartFences.add(ownerByLine[extent.start])
   }
   const canonicalTriggerLines = new Set<number>()
+  const tableStyleFor = (index: number) => {
+    const heading = ownerByLine[index]
+    const trigger = logicalTriggerBlockAfterHeading(rawLines, heading)
+    const { attrs } = parseHeadingAttrs([lines[heading]?.text ?? '', trigger?.line ?? ''].join(' '))
+    const isOff = (key: string) => String(attrs[key] ?? '').trim().toLowerCase() === 'off'
+    return { header: !isOff('table-header'), firstColumnAccent: !isOff('table-first-column') }
+  }
   for (let index = 0; index < lines.length; index += 1) {
     if (fenced[index] || !/^(#{2,6})\s+/.test(lines[index].text)) continue
     const triggerBlock = logicalTriggerBlockAfterHeading(rawLines, index)
@@ -394,7 +404,11 @@ export function detectOutlineObjects(doc: string, includePictures = false): Outl
           to,
           source: doc.slice(from, to),
           triggerLine: index + 1,
-          triggerToken: trigger.triggerToken
+          triggerToken: trigger.triggerToken,
+          ...(trigger.kind === 'trigger-table' ? { tableStyle: tableStyleFor(index) } : {}),
+          ...(trigger.kind === 'mindmap' ? {
+            mindmapTitle: plainInlineText(parseHeadingAttrs((lines[ownerByLine[index]]?.text ?? '').replace(/^#{2,6}\s+/, '')).title)
+          } : {})
         })
         index = cursor
         continue
@@ -411,6 +425,7 @@ export function detectOutlineObjects(doc: string, includePictures = false): Outl
       const to = lines[end - 1].to
       blocks.push({
         kind: 'gfm-table',
+        tableStyle: tableStyleFor(index),
         from: line.from,
         to,
         source: doc.slice(line.from, to)

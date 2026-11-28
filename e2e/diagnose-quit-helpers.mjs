@@ -112,7 +112,7 @@ try {
       let crashed = false
       page.once('crash', () => { crashed = true })
       await app.evaluate((_, repo) => process.getBuiltinModule('module').createRequire(repo + '/package.json')(repo + '/e2e/lib/quit-lifecycle.cjs'), repo)
-      await openTalkByTitle(page, 'Garden notes'); await page.locator('.cm-content').waitFor()
+      await openTalkByTitle(page, 'Garden notes', { view: 'outline' }); await page.locator('.cm-content').waitFor()
       const text = () => page.evaluate(() => document.querySelector('.cm-content').cmTile.root.view.state.doc.toString())
       if (scenario === 'move' || scenario === 'move-undo') {
         await page.getByTestId('grid-toggle').click()

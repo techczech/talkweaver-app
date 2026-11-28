@@ -1,5 +1,6 @@
 // Real BrowserWindows and production routes. Captures show renderer content of hidden windows.
 import assert from 'node:assert/strict'
+import { showTalkView } from './lib/talklist.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { once } from 'node:events'
@@ -225,7 +226,7 @@ try {
   }
   await start.getByRole('button', { name: title, exact: true }).click()
   await editor.locator('.workspace-view-titlebar').waitFor()
-  await editor.locator('.cm-content').waitFor()
+  await showTalkView(editor, 'slide')
   // Crossing the narrow breakpoint can collapse the editor sidebar.
   const expand = editor.locator('[data-sidebar-expand]')
   if (!baseline && await expand.isVisible()) await expand.click()

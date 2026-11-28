@@ -65,7 +65,7 @@ async function waitFor(fn, ms, step = 50) {
   return null
 }
 async function openTalk() {
-  await openTalkByTitle(page, TITLE)
+  await openTalkByTitle(page, TITLE, { view: 'outline' })
   await waitFor(async () => (await editorText())?.includes('First slide body text.'), 6000)
 }
 async function typeAtEndOfBody(text) {

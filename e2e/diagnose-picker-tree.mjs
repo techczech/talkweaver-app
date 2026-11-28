@@ -9,7 +9,7 @@ import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { openPickerFolders } from './lib/picker-tree.mjs'
-import { openTalkByTitle } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 
 await using appScratch = createAppScratch()
 const root = appScratch.root
@@ -54,7 +54,8 @@ const storedState = () => {
 }
 
 try {
-  await openTalkByTitle(page, 'The Age of the Claw')
+  await openTalkByTitle(page, 'The Age of the Claw', { view: null })
+  await ensureTalksMode(page)
   await page.waitForTimeout(400)
   if (shots) await page.locator('aside.talk-list.tl-panel').first().screenshot({ path: join(shots, 'file-list-tree.png') })
   await page.keyboard.press('Meta+s')

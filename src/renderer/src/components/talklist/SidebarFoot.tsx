@@ -1,17 +1,15 @@
 import { GUIDE_TEXT } from '../../../../shared/guide'
 import { IcGraduationCap, IcPlus } from './icons'
 
-// The foot of the Talks panel (onboarding ticket 07; states 02, 03, 16, 19): "+ Add vault…" and, beside
-// it, the Guide button. The button reads "Guide" and, while the Guide tab is up, "Guide open" on the
-// filled style. `guide` is null when the Settings switch has removed the button.
+// The Guide is available from both sidebar tabs. Talks also offers Add vault….
 export interface GuideButtonState { open: boolean; onToggle: () => void }
 
-export default function SidebarFoot({ onAddVault, guide }: { onAddVault: () => void; guide: GuideButtonState | null }) {
+export default function SidebarFoot({ onAddVault, guide }: { onAddVault?: () => void; guide: GuideButtonState | null }) {
   return (
     <div className="tl-foot" data-sidebar-foot>
-      <button type="button" className="tl-addvault" onClick={onAddVault} data-add-vault>
+      {onAddVault && <button type="button" className="tl-addvault" onClick={onAddVault} data-add-vault>
         <IcPlus size={11} />Add vault…
-      </button>
+      </button>}
       {guide && (
         <button
           type="button"

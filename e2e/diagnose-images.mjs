@@ -71,7 +71,7 @@ try {
   writeFileSync(outlinePath, outline)
 
   // Open the talk (toggle selection forces a fresh load from disk).
-  await openTalkByTitle(page, 'Img Fixture')
+  await openTalkByTitle(page, 'Img Fixture', { view: 'outline' })
   await page.waitForFunction(() => {
     const images = [...document.querySelectorAll('.cm-content .cm-image-widget img')]
     return images.length >= 4 && images.every(image => image.complete)

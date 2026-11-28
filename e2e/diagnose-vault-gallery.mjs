@@ -1,5 +1,6 @@
 // Hidden source Electron; every runtime write is confined to the integration fixture.
 import assert from 'node:assert/strict'
+import { showTalkView } from './lib/talklist.mjs'
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { openVaultStorage } from './lib/vault-storage.mjs'
 import {mkdirSync, cpSync, writeFileSync, readFileSync} from 'node:fs'
@@ -28,7 +29,7 @@ try {
  assert(menuEntry)
  await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Search talks')
  pass('actual registry-derived native menu focuses Explorer search before a talk is selected')
- await initialTalk.click();await page.locator('.cm-content').waitFor()
+ await initialTalk.click();await showTalkView(page, 'markdown')
  await page.locator('.cm-content').click();await page.keyboard.press('Meta+End');await page.keyboard.type(' gallery continuity');await page.keyboard.press('Shift+ArrowLeft');await page.keyboard.press('Shift+ArrowLeft')
  const before=await page.locator('.cm-content').evaluate(el=>{window.galleryEditor=el;const selection=getSelection();return {text:el.textContent,anchor:selection.anchorOffset,focus:selection.focusOffset,scroll:el.closest('.cm-scroller').scrollTop}})
  const explorer=page.getByRole('dialog',{name:'Vault Explorer',exact:true})

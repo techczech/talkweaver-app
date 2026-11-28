@@ -52,7 +52,7 @@ const palette = async (label) => {
 
 try {
   // (a) the demo talk
-  await openTalkByTitle(page, 'TalkWeaver **Pre-work Workshop**')
+  await openTalkByTitle(page, 'TalkWeaver **Pre-work Workshop**', { view: 'markdown' })
   await page.waitForFunction(() => document.querySelector('[data-work-strip="pre"]')?.textContent?.includes('not sent'), null, { timeout: 10_000 }).catch(() => {})
   const pre = await text('pre')
   rec('demo talk: pre-work strip', pre.startsWith('Pre-work · Pre-work workshop intake · 5 steps · not sent to anyone'), pre)
@@ -60,7 +60,7 @@ try {
   rec('demo talk: post-work strip', post.startsWith('Post-work · Pre-work workshop: what was learnt · 2 steps'), post)
 
   // (b) the Doctor's move
-  await openTalkByTitle(page, 'Legacy Section')
+  await openTalkByTitle(page, 'Legacy Section', { view: 'markdown' })
   await page.waitForSelector('.cm-content', { timeout: 10_000 })
   await page.waitForTimeout(2500) // the compile that carries the warning
   await palette('Layout Doctor (trigger-line health)…')

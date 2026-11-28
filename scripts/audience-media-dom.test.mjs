@@ -189,7 +189,7 @@ try {
         const root = createRoot(document.getElementById('root'))
         window.showSlide = id => root.render(<WorkspaceSlideView path="/fixture-outline.md" outline="Fixture"
           row={{ slide_id: id }} index={1} count={4} place="Audience media" notes={[]} notesKey="" notesOpen={false}
-          onOpenReveal={noop} onToggleNotes={noop} onNotesChange={noop} onNotesEngaged={noop}
+          onOpenReveal={noop} onToggleNotes={noop} onNotesChange={noop}
           attachEditor={noop} onTalkDetails={noop} editable emptySlide={false} sourceRecovery={false} />)
         const inspector = new URL(location.href).searchParams.has('inspector')
         if (inspector) {

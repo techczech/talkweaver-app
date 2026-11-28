@@ -34,7 +34,7 @@ interface Props {
   initialLocation?: ExplorerPlace
   activeTitle?: string
   onClose?(): void
-  onOpen(talk: TalkInfo, guard: GalleryOpenGuard<TalkInfo>, slide?: ExplorerSlideTarget): Promise<boolean>
+  onOpen(talk: TalkInfo, guard: GalleryOpenGuard<TalkInfo>, slide?: ExplorerSlideTarget, recent?: boolean): Promise<boolean>
   onStorage?(place: ExplorerPlace | null): void
   onDefaultVault(): Promise<string | null>
   onSettings(): void
@@ -211,7 +211,7 @@ export default function VaultExplorer({ management = EMPTY, actions, searchRef, 
     return true
   }
   const runStart = (op: () => Promise<string | null>) => { run(async () => { setError(await op() ?? '') }) }
-  const open = (row: ExplorerResult, newWindow: boolean) => {
+  const open = (row: ExplorerResult, newWindow: boolean, recent = false) => {
     if (row.talk.vault.unavailable) return
     run(async () => {
       const expected = row.talk.info.outlinePath
@@ -226,12 +226,12 @@ export default function VaultExplorer({ management = EMPTY, actions, searchRef, 
         if (!reply.ok) throw new Error('Couldn’t open the talk in a new window.')
       } else {
         const catalogue = await window.tw.vault.galleryCatalogue(0)
-        if (await openGalleryTalk(row.talk, catalogue.rootGeneration, stillHere, (talk, guard) => onOpen(talk, guard, targetSlide))) onClose?.()
+        if (await openGalleryTalk(row.talk, catalogue.rootGeneration, stillHere, (talk, guard) => onOpen(talk, guard, targetSlide, recent))) onClose?.()
       }
     })
   }
 
-  const activateRecent = (talk: ExplorerTalk, newWindow: boolean) => open({ talk }, newWindow)
+  const activateRecent = (talk: ExplorerTalk, newWindow: boolean) => open({ talk }, newWindow, true)
   const searchKeys = (event: KeyboardEvent<HTMLInputElement>) => {
     // SCAN_IGNORE: movement and activation in the focused results list.
     if (event.nativeEvent.isComposing) return
@@ -274,9 +274,9 @@ export default function VaultExplorer({ management = EMPTY, actions, searchRef, 
   const sortTalks = (entries: ExplorerTalk[]) => [...entries].sort((a, b) => sort === 'name'
     ? a.title.localeCompare(b.title, undefined, { numeric: true })
     : sort === 'slides' ? (meta[b.info.outlinePath]?.slideCount ?? 0) - (meta[a.info.outlinePath]?.slideCount ?? 0) : edited(b) - edited(a))
-  const rows = (rows: ExplorerResult[], label: string, mode: BrowseView = view, location?: ExplorerPlace) => <ExplorerRows rows={rows} group={label} view={mode} location={location}
+  const rows = (rows: ExplorerResult[], label: string, mode: BrowseView = view, location?: ExplorerPlace, recent = false) => <ExplorerRows rows={rows} group={label} view={mode} location={location}
     known={known} meta={meta} query={query} terms={queried ? scope === 'slides' ? search.slideTerms : search.titleTerms : []}
-    slideCounts={slideCounts} active={queried && active ? resultKey(active) : undefined} busy={busy} onOpen={open}
+    slideCounts={slideCounts} active={queried && active ? resultKey(active) : undefined} busy={busy} onOpen={(row, newWindow) => open(row, newWindow, recent)}
     onMenu={(row, event) => menuAt({ kind: 'talk', talk: row.talk }, row.talk.vaultId, event, row)} />
   const folders = (item: ExplorerVault, path: string) => <ExplorerFolderCards item={item} folder={path} known={known}
     onOpen={folder => go({ vaultId: item.vault.id, folder })}
@@ -464,7 +464,7 @@ export default function VaultExplorer({ management = EMPTY, actions, searchRef, 
         {!direct.length && !current.folders.some(path => !all && parentOf(path) === folder) && <div className="vx-empty"><Folder size={32} /><h2>No talks here yet</h2><p>Create or import a talk to see it here.</p>
           <button className="vx-button" type="button" onClick={() => { setStartOpen(true); if (narrow) setSidebar(false) }}>Start a new talk</button></div>}
       </> : unavailable(current) : <>
-        {recents.length > 0 && <section aria-label="Recent talks"><h2>Recent talks</h2>{rows(recents.map(talk => ({ talk })), 'Recent talks')}</section>}
+        {recents.length > 0 && <section aria-label="Recent talks"><h2>Recent talks</h2>{rows(recents.map(talk => ({ talk })), 'Recent talks', view, undefined, true)}</section>}
         {vaults.map(item => <section className="vx-vault-section" key={item.vault.id} aria-label={item.vault.name} style={{ '--vc': item.vault.color } as CSSProperties}>
           <button className={`vx-vault-heading${usable(item) ? '' : ' vx-vault-unavailable'}`} type="button" aria-label={`Browse ${item.vault.name}`}
             onClick={() => go({ vaultId: item.vault.id, folder: '' })}><VaultBadge vault={item.vault} size={24} />

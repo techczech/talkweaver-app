@@ -52,5 +52,17 @@
   "look": "ocean",
   "state": "r-loop5-long-reveal#11",
   "why": "The Ocean loop is one ring whose numbered stops appear one by one; the 0.43 cycle also revealed each arrow as its own step, so it had five more steps. Classic keeps them."
+ },
+ {
+  "outline": "sampler",
+  "look": "ocean",
+  "state": "mind-map#4",
+  "why": "The third branch already completes the map. Reveal now advances directly after that branch."
+ },
+ {
+  "outline": "sampler",
+  "look": "classic",
+  "state": "mind-map#4",
+  "why": "The third branch already completes the map. Reveal now advances directly after that branch."
  }
 ]

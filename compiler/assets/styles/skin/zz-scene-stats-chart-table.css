@@ -114,17 +114,14 @@
 }
 .slide .slide-table thead th {
   background: none;
-  font-family: var(--mono);
-  font-size: max(var(--type-floor), 1.35cqw);
-  font-weight: 400;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  color: var(--muted);
+  font-family: var(--sans);
+  font-size: inherit;
+  font-weight: 700;
+  color: var(--accent);
+  text-transform: none;
   text-align: left;
   border: 0;
-  border-bottom: .1563cqw solid var(--ink);
-  padding-top: 0;
-  padding-bottom: calc(.8333cqw * var(--list-gap, 1));   /* steps with the rows when the table is fitted */
+  border-bottom: .1563cqw solid var(--accent);
 }
 .slide .slide-table tbody td,
 .slide .slide-table tbody th {

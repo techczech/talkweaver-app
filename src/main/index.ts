@@ -3051,8 +3051,8 @@ function thumbCacheRoot(): string {
       tag = 'base'
     }
   }
-  // v10: live local widget previews replace old grey placeholders in persistent pictures too.
-  thumbCacheTag = 'thumb-cache-v10-' + tag
+  // v11: capture the full 16:9 canvas and label online videos in offline thumbnails.
+  thumbCacheTag = 'thumb-cache-v11-' + tag
   return thumbCacheTag
 }
 

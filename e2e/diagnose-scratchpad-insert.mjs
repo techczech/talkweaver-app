@@ -88,7 +88,7 @@ try {
       .catch(async () => { throw new Error(`${what}: the status bar never settled at ${n} slides`) })
   }
 
-  await openTalkByTitle(page, 'Target talk')
+  await openTalkByTitle(page, 'Target talk', { view: mode === 'plain' ? 'outline' : mode })
   await page.locator('.cm-content').waitFor()
   await settledCount(3, 'after opening')
   await page.getByRole('tab', { name: 'Slides', exact: true }).click()
@@ -311,7 +311,7 @@ try {
   app = await launch()
   assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(w => !w.isVisible())), true)
   const reopened = await app.firstWindow()
-  await openTalkByTitle(reopened, 'Target talk')
+  await openTalkByTitle(reopened, 'Target talk', { view: mode === 'plain' ? 'outline' : mode })
   await reopened.getByRole('tab', { name: 'Scratchpad', exact: true }).click()
   await reopened.getByLabel('Select Chart', { exact: true }).waitFor()
   assert.deepEqual(await candidateOrder(reopened), arranged, 'the docked Scratchpad restores manual order after an app relaunch')

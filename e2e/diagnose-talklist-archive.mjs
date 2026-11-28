@@ -6,7 +6,7 @@
 // outside the list (focus not in the talk editor or a field) puts the caret in the search box.
 // Fixture vault and a throwaway --user-data-dir; set TW_SHOTS=<dir> to save screenshots.
 import assert from 'node:assert/strict'
-import { showTalksBeforeOpening } from './lib/talklist.mjs'
+import { ensureTalksMode, showTalksBeforeOpening, showTalkView } from './lib/talklist.mjs'
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -157,14 +157,9 @@ try {
   // / from outside the list (0.34.0-preview.2 check). In the talk editor / is text; with focus
   // outside the editor and any field (nothing focused, or a plain button), / puts the caret in the
   // file list's search box.
-  // The first engagement with a just-opened talk's editor turns the sidebar to the slide outline;
-  // / is the file list's only while the list is open, so engage once and come back to Talks.
-  await page.locator('.cm-content').first().click()
-  await page.waitForTimeout(300)
-  if (!await page.locator('aside.talk-list.tl-panel').isVisible().catch(() => false)) {
-    await page.locator('.sidebar-mode-btn').filter({ hasText: /^Talks$/ }).first().click()
-    await page.locator('aside.talk-list.tl-panel').waitFor()
-  }
+  await page.locator('[data-view="grid"]').waitFor()
+  await showTalkView(page, 'slide')
+  await ensureTalksMode(page)
   const search = page.locator('.tl-search input[aria-label="Filter talks"]').first()
   const searchFocused = () => search.evaluate((el) => document.activeElement === el)
   await page.locator('.cm-content').first().click()

@@ -5,7 +5,7 @@
 //   (A) FIRST LAUNCH — a fresh profile shows the Vault Explorer setup with an examples choice.
 //       Open examples writes the five talks to <home>/Documents/TalkWeaver/
 //       Example vault, lists them under the Example vault section (Example pill, "Removable · local
-//       folder"), and opens the start talk, The Saturday market.
+//       folder"), and lists the talks for browsing.
 //   (B) SECOND LAUNCH — no byte or modified time changes in the example folder; the vault is still
 //       listed and no setup screen shows.
 //   (C) ADD VAULT… — a profile with a vault of its own: Add vault… offers the example vault; opening it
@@ -97,8 +97,8 @@ try {
       await setupHeading(page).isVisible() && await examples.isVisible())
     await shot(page, '06-first-launch.png')
     await examples.click()
-    await page.getByTitle('Talk menu', { exact: true }).filter({ hasText: 'The Saturday market' }).waitFor({ timeout: 15000 })
     await ensureTalksMode(page)
+    await startScreen(page).waitFor({ state: 'hidden', timeout: 15000 })
     await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
     await waitForTitles(page, TITLES)
     const listed = await titlesListed(page)
@@ -106,8 +106,8 @@ try {
     const headerText = await page.locator('[data-vault-header][data-vault-example="true"]').innerText()
     record('the vault header reads Example vault, with the Example pill and “Removable · local folder”',
       headerText.includes('Example vault') && headerText.includes('Example') && headerText.includes('Removable · local folder'), JSON.stringify(headerText))
-    await page.waitForFunction(() => document.title.includes('The Saturday market'), null, { timeout: 15000 }).catch(() => {})
-    record('the start talk, The Saturday market, is open', (await page.title()).includes('The Saturday market'), await page.title())
+    record('Open examples leaves the chooser in Talks without opening a talk',
+      (await page.getByTitle('Talk menu', { exact: true }).count()) === 0, await page.title())
     const files = existsSync(a.root) ? readdirSync(a.root).sort() : []
     record('the folder is written in the stand-in home', files.includes('the-saturday-market') && files.includes('.talkweaver') && files.length === readdirSync(join(REPO, 'resources', 'example-vault')).filter((n) => n !== '.DS_Store').length + 1, JSON.stringify(files))
     const homeTop = readdirSync(a.home).sort()
@@ -141,7 +141,7 @@ try {
   const c = profile('own', { vaults: [personal] })
   ;({ app, page } = await launch(c))
   try {
-    await openTalkByTitle(page, 'Alpha Talk')
+    await openTalkByTitle(page, 'Alpha Talk', { view: null })
     await ensureTalksMode(page)
     await waitForTitles(page, ['Alpha Talk'])
     await page.locator('[data-add-vault]').click()
@@ -154,6 +154,8 @@ try {
     await waitForTitles(page, [...TITLES, 'Alpha Talk'])
     const listed = await titlesListed(page)
     record('both vaults side by side: Personal and the example vault', listed.includes('Alpha Talk') && TITLES.every((t) => listed.includes(t)), JSON.stringify(listed))
+    record('adding the examples keeps the existing talk open',
+      (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label')) === 'Alpha Talk')
     record('the sheet closed', await page.locator('[data-vault-sheet="add"]').count() === 0)
     const vaults = await page.evaluate(() => window.tw.vault.list())
     record('Personal is still the first vault; the example is added after it', vaults.length === 2 && vaults[0].root === realpathSync(personal) && vaults[1].example === true)

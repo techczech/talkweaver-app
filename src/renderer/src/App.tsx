@@ -13,6 +13,7 @@ import type { TalkInfo, VaultView } from '../../preload/index'
 import { WELCOME_COMMANDS, type SlideTabView, type SlidesPanelView, type StartingView, type WorkspaceView } from '../../shared/workspace-view'
 import { safeTalkSlug } from '../../shared/vault-gallery-browse'
 import TalkList, { PromptModal } from './components/talklist/TalkList'
+import SidebarFoot from './components/talklist/SidebarFoot'
 import WorkspaceLayout from './components/WorkspaceLayout'
 import NewTalkDialog, { createdTalk, newTalkSlug } from './components/NewTalkDialog'
 import Studio from './components/Studio'
@@ -53,7 +54,6 @@ import { GUIDE_DEFAULT_SEGMENT, GUIDE_TEXT, EMPTY_GUIDE_PROGRESS, firstSteps, ty
 import type { OpenInNewWindowTarget } from '../../shared/open-in-new-window'
 import { encodeFocus } from './components/talklist/vaultSections'
 import { editWindowTitle } from '../../shared/talk-title-text.ts'
-import { armOutlineSwitch, consumeEditorEngagement } from './lib/outlineSwitch'
 import { effectiveKeys, eventToCMKey, KEYMAP_CHANGED_EVENT, startKeymapSync } from './keymap/store'
 
 // The flat "Outline" view was retired: every slide already lives in the file, and the Slides
@@ -450,7 +450,7 @@ function MainApp() {
   const [welcomeStart, setWelcomeStart] = useState<{ path: string; view: WorkspaceView } | null>(null)
   const [previewsHost, setPreviewsHost] = useState<HTMLDivElement | null>(null)
   const [pathwaysHost, setPathwaysHost] = useState<HTMLDivElement | null>(null)
-  const outlineSwitchArmedRef = useRef<string | null>(null)
+  const [talkOpening, setTalkOpening] = useState<{ sequence: number; view?: 'grid' }>({ sequence: 0 })
   const [slidesPanelView, setSlidesPanelView] = useState<SlidesPanelView>('previews')
   const [slideTabView, setSlideTabView] = useState<SlideTabView>('pages')
   const [openInView, setOpenInView] = useState<WorkspaceView>('slide')
@@ -467,7 +467,6 @@ function MainApp() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false)
   const visibleSidebarMode = sidebarMode === 'pathways' && !activeTalk ? 'talks' : sidebarMode
   const openPathwaysTab = useCallback(() => {
-    outlineSwitchArmedRef.current = null
     setSidebarMode('pathways')
     setSidebarCollapsed(false)
   }, [])
@@ -539,12 +538,12 @@ function MainApp() {
     document.title = editWindowTitle(activeTalk?.title)
   }, [activeTalk])
   /** True when the window switched to `talk`; false when the switch was held (Stay here, or another window has it). */
-  const selectTalk = useCallback(async (talk: TalkInfo | null, gallery?: GalleryOpenGuard<TalkInfo> | string, fromTalksPanel = false): Promise<boolean> => {
+  const selectTalk = useCallback(async (talk: TalkInfo | null, gallery?: GalleryOpenGuard<TalkInfo> | string, openingView?: WorkspaceView): Promise<boolean> => {
     const adopt = (next: TalkInfo | null): void => {
-      // The outgoing editor can still receive clicks while the leave guard or window claim waits.
-      // Arm only when the panel's request has succeeded, including moved and same-talk reopens.
       activeTalkRef.current = next
-      outlineSwitchArmedRef.current = armOutlineSwitch(fromTalksPanel ? next?.outlinePath ?? null : null)
+      setResearchJump(null)
+      setTalkOpening(previous => ({ sequence: previous.sequence + 1, view: openingView === 'grid' ? 'grid' : undefined }))
+      setWelcomeStart(next && openingView && openingView !== 'grid' ? { path: next.outlinePath, view: openingView } : null)
       setActiveTalk(next)
     }
     if (typeof gallery === 'string') {
@@ -577,23 +576,16 @@ function MainApp() {
   useEffect(() => {
     const open = (event: Event): void => {
       const talk = (event as CustomEvent<TalkInfo>).detail
-      void selectTalk(talk).then(ok => {
-        if (ok) requestAnimationFrame(() => window.dispatchEvent(new CustomEvent('tw-show-pathways', { detail: talk.outlinePath })))
-      })
+      const show = () => window.dispatchEvent(new CustomEvent('tw-show-pathways', { detail: talk.outlinePath }))
+      if (activeTalkRef.current?.outlinePath === talk.outlinePath) show()
+      else void selectTalk(talk).then(ok => { if (ok) requestAnimationFrame(show) })
     }
     window.addEventListener('tw-open-pathways', open)
     return () => window.removeEventListener('tw-open-pathways', open)
   }, [selectTalk])
 
-  // T29b (2026-09-19): opening a talk from the Talks panel leaves the sidebar on Talks — the user
-  // scrolls the editor to see if it is the right file — and the FIRST engagement with the editor
-  // (a click inside it, or the first document-changing keydown) then switches the sidebar to
-  // the Slide outline, once per opened talk. Armed ONLY in this panel wrapper: the shared
-  // selectTalk above serves every open route (launch restore, deep links, History/Studio, ⌘N
-  // windows, new-talk creation) and none of those may arm. Keyed by outlinePath, so an arm goes
-  // stale (and is dropped) if a non-panel route changes the active talk before engagement.
   const selectTalkFromPanel = useCallback((talk: TalkInfo | null, movedFrom?: string) =>
-    selectTalk(talk, movedFrom, true), [selectTalk])
+    selectTalk(talk, movedFrom, movedFrom === undefined ? 'grid' : undefined), [selectTalk])
 
   const jumpToSlide = useCallback((file: string, slide: ExplorerSlideTarget) => {
     setResearchJump({ file, ...slide, nonce: Date.now() })
@@ -640,17 +632,10 @@ function MainApp() {
     return () => window.clearTimeout(timer)
   }, [openRequest, state, selectTalk, jumpToSlide])
 
-  // WorkspaceLayout calls this on the editor's two engagement triggers (see Editor.onEditorEngaged).
-  // Talks-panel folder position is untouched: the panel unmounts on the switch and talkFocusPathRef
-  // restores it when the user comes back via the tab or sidebar.talks.
-  const onEditorEngaged = useCallback((path: string) => {
-    if (path !== activeTalkRef.current?.outlinePath) return
-    const result = consumeEditorEngagement(outlineSwitchArmedRef.current, path)
-    outlineSwitchArmedRef.current = result.armed
-    if (result.switchToOutline) {
-      setSidebarMode('slides')
-      setSidebarCollapsed(false)
-    }
+  const onEnterEditingView = useCallback((path: string) => {
+    if (path !== activeTalkRef.current?.outlinePath || sidebarModeRef.current !== 'talks') return
+    setSlidesPanelView('previews')
+    setSidebarMode('slides')
   }, [])
 
   useEffect(() => { window.localStorage.setItem('tw-sidebar-mode', sidebarMode) }, [sidebarMode])
@@ -932,19 +917,18 @@ function MainApp() {
     if (!exampleListedRef.current) { setVaultSheet({ mode: 'add' }); return }
     await pickVaultFolder()
   }
-  // Open example vault (onboarding ticket 06): main writes it (or finds it) at its fixed path and adds
-  // it to the list; the start talk opens once the list holds it. Resolves with the one sentence to
-  // show when nothing was opened, else null. Never a dialog.
+  // Add the example vault and show its talks. The person chooses which example to open.
   async function openExampleVault(): Promise<string | null> {
     const wasListed = exampleListedRef.current
     const result = await window.tw.vault.openExample()
     if (!result.ok) return result.message
     // Opening the example vault for the first time opens the Guide, unless the person has removed its button.
     if (!wasListed && guideButtonOnRef.current) openGuide()
-    if (result.startTalk) {
-      openRequestAtRef.current = Date.now()
-      setOpenRequest({ kind: 'talk', outlinePath: result.startTalk })
-    }
+    setSidebarMode('talks')
+    setSidebarCollapsed(false)
+    setExplorerPlace({ vaultId: result.vaultId, folder: '' })
+    setGalleryOpen(false)
+    setStorageOpen(false)
     await loadVaults({ force: true })
     return null
   }
@@ -1058,8 +1042,7 @@ function MainApp() {
     if (!place || state.phase !== 'ready' || !state.vaults.some(v => v.id === place.vaultId && v.open && !v.unavailable)) return 'Choose an available vault before creating a talk.'
     const talk = await window.tw.vault.createTalk({ title, slug, vaultId: place.vaultId, topicFolder: place.folder, startWithSketch: view === 'outline' })
     if (!talk) return 'A folder with that name already exists, or this location is unavailable. Change the name or folder and try again.'
-    setWelcomeStart({ path: talk.outlinePath, view })
-    if (!await selectTalk(createdTalk(talk, place.vaultId))) { void refreshTalks(); return 'The talk was created. Open it from your talks list.' }
+    if (!await selectTalk(createdTalk(talk, place.vaultId), undefined, view)) { void refreshTalks(); return 'The talk was created. Open it from your talks list.' }
     setGalleryOpen(false)
     setSidebarMode('slides')
     setSidebarCollapsed(false)
@@ -1082,8 +1065,8 @@ function MainApp() {
     await loadVaults({ force: true })
     return null
   }
-  const openFromExplorer = async (talk: TalkInfo, guard: GalleryOpenGuard<TalkInfo>, slide?: ExplorerSlideTarget): Promise<boolean> => {
-    if (!await selectTalk(talk, guard)) return false
+  const openFromExplorer = async (talk: TalkInfo, guard: GalleryOpenGuard<TalkInfo>, slide?: ExplorerSlideTarget, recent = false): Promise<boolean> => {
+    if (!await selectTalk(talk, guard, recent ? 'grid' : undefined)) return false
     if (slide) jumpToSlide(talk.outlinePath, slide)
     setGalleryOpen(false)
     return true
@@ -1191,7 +1174,7 @@ function MainApp() {
           if (opened) setGalleryOpen(false)
           return opened
         }} management={galleryManagement} />
-        : (galleryOpen || (!activeTalk && !guideOpen)) && <VaultExplorer management={galleryManagement} actions={explorerActions}
+        : (galleryOpen || (!activeTalk && !guideOpen)) && <VaultExplorer key={explorerPlace?.vaultId} management={galleryManagement} actions={explorerActions}
           searchRef={welcomeSearchRef} preferredVaultId={welcomeVaultId} initialLocation={explorerPlace ?? undefined} activeTitle={activeTalk?.title}
           onClose={activeTalk ? () => setGalleryOpen(false) : undefined} onOpen={openFromExplorer}
           onStorage={place => { setExplorerPlace(place); setStorageOpen(true) }} onDefaultVault={onDefaultVault} onSettings={openSettingsWindow} />}
@@ -1280,7 +1263,10 @@ function MainApp() {
               guideButton={guideButton}
             />
           )}
-          {visibleSidebarMode === 'slides' && <div className="sidebar-nav-body" ref={setPreviewsHost} />}
+          {visibleSidebarMode === 'slides' && <>
+            <div className="sidebar-nav-body" ref={setPreviewsHost} />
+            {guideButton && <SidebarFoot guide={guideButton} />}
+          </>}
           {visibleSidebarMode === 'pathways' && <div className="sidebar-nav-body" ref={setPathwaysHost} />}
 
           <div
@@ -1353,6 +1339,7 @@ function MainApp() {
         startView={welcomeStart?.path === activeTalk?.outlinePath ? welcomeStart?.view : undefined}
         onSketchStarted={() => setWelcomeStart(null)}
         defaultView={openInView}
+        talkOpening={talkOpening}
         leftPreviewsHost={sidebarMode === 'slides' && !sidebarCollapsed ? previewsHost : null}
         leftPathwaysHost={visibleSidebarMode === 'pathways' && !sidebarCollapsed ? pathwaysHost : null}
         onOpenPathways={openPathwaysTab}
@@ -1366,7 +1353,7 @@ function MainApp() {
         onNeedRoom={() => setSidebarCollapsed(true)}
         onOpenSettings={() => openSettingsWindow()}
         onSelectTalk={selectTalk}
-        onEditorEngaged={onEditorEngaged}
+        onEnterEditingView={onEnterEditingView}
         registerFlushSave={(fn) => { flushSaveRef.current = fn }}
         onMetadataSaved={() => { void refreshTalks() }} // sidebar title/subtitle/event may have changed
         registerLeaveGuard={(fn) => { leaveGuardRef.current = fn }}

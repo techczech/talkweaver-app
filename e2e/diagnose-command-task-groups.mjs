@@ -60,7 +60,7 @@ try {
     await page.locator('[data-task-group="Build a slide"]').click()
     assert.ok(await page.locator('.command-menu-subgroup').count() > 0)
     await input.press('Escape')
-    assert.equal(await page.locator('[data-active=true]').getAttribute('data-task-group'), 'Build a slide')
+    assert.equal(await palette.locator('[data-active=true]').getAttribute('data-task-group'), 'Build a slide')
   })
   await check('composition Enter leaves the real palette and document untouched', async () => {
     await input.fill('Insert table')

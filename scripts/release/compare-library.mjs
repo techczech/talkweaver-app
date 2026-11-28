@@ -1,5 +1,6 @@
 // Run on the laptop with dependencies and generated compiler assets in both checkouts.
 // TW_LIBRARY_ROOT=<read-only vault> node scripts/release/compare-library.mjs <baseline checkout>
+// Pass --allow-table-and-mindmap after the baseline to permit those two render changes.
 // Output is counts only. The compiler receives the same source and file scope on both sides.
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
@@ -9,6 +10,11 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 const candidateRoot = fileURLToPath(new URL('../../', import.meta.url))
 const libraryRoot = process.env.TW_LIBRARY_ROOT
 const baselineRoot = process.argv[2]
+const allowTableAndMindmap = process.argv[3] === '--allow-table-and-mindmap'
+
+function digest(content) {
+  return createHash('sha256').update(content).digest('hex')
+}
 
 async function loadCheckout(root) {
   const load = (file) => import(pathToFileURL(join(root, file)).href)
@@ -22,6 +28,9 @@ async function loadCheckout(root) {
     const path = join(dir, outlineName)
     return [relative(libraryRoot, path), path]
   })
+  // These sheets change table paint without changing the section markup or picture key.
+  const tableStyles = await Promise.all(['table.css', 'zz-scene-stats-chart-table.css'].map(async name =>
+    digest(await readFile(join(root, 'compiler/assets/styles/skin', name)))))
   return {
     paths: new Map(paths),
     async compile(path, text, sourceStat) {
@@ -32,17 +41,25 @@ async function loadCheckout(root) {
       })
       const slides = sections.findSlideSections(model.fullHtml)
       if (slides.length !== model.pictureKeys.length) throw new Error('Section and picture counts differ.')
-      return slides.map(({ html }, index) => ({
-        markup: createHash('sha256').update(html).digest('hex'),
-        picture: model.pictureKeys[index],
-      }))
+      return slides.map(({ html }, index) => {
+        const opener = html.slice(0, html.indexOf('>'))
+        const hasTable = /<table class="slide-table[ "]/.test(html)
+        const layout = opener.includes(' data-layout="mindmap"') ? 'mindmap' : hasTable ? 'table' : 'other'
+        return {
+          id: opener.match(/ data-id="([^"]*)"/)?.[1],
+          layout,
+          markup: digest(html),
+          picture: model.pictureKeys[index],
+          tableStyle: hasTable ? tableStyles.join(':') : null,
+        }
+      })
     },
   }
 }
 
 async function compare() {
-  if (!libraryRoot || !baselineRoot || process.argv.length !== 3) {
-    console.error('Set TW_LIBRARY_ROOT and pass the baseline checkout as the only argument.')
+  if (!libraryRoot || !baselineRoot || process.argv.length !== (allowTableAndMindmap ? 4 : 3)) {
+    console.error('Set TW_LIBRARY_ROOT and pass the baseline checkout and optional --allow-table-and-mindmap.')
     return 2
   }
   if (!(await stat(libraryRoot)).isDirectory()) return 2
@@ -55,6 +72,9 @@ async function compare() {
     baselineSections: 0,
     candidateSections: 0,
     changedSections: 0,
+    changedTableSections: 0,
+    changedMindmapSections: 0,
+    changedOtherSections: 0,
     changedPictureKeys: 0,
     unmatchedTalks: 0,
     unmatchedSections: 0,
@@ -74,8 +94,21 @@ async function compare() {
       counts.candidateSections += after.length
       counts.unmatchedSections += Math.abs(before.length - after.length)
       for (let index = 0; index < Math.min(before.length, after.length); index += 1) {
-        counts.changedSections += Number(before[index].markup !== after[index].markup)
-        counts.changedPictureKeys += Number(before[index].picture !== after[index].picture)
+        const oldSection = before[index]
+        const newSection = after[index]
+        if (!oldSection.id || oldSection.id !== newSection.id) {
+          counts.unmatchedSections += 1
+          continue
+        }
+        const pictureChanged = oldSection.picture !== newSection.picture
+        counts.changedPictureKeys += Number(pictureChanged)
+        if (oldSection.markup === newSection.markup && !pictureChanged &&
+            oldSection.tableStyle === newSection.tableStyle) continue
+
+        counts.changedSections += 1
+        if (oldSection.layout === 'table' && newSection.layout === 'table') counts.changedTableSections += 1
+        else if (oldSection.layout === 'mindmap' && newSection.layout === 'mindmap') counts.changedMindmapSections += 1
+        else counts.changedOtherSections += 1
       }
     } catch {
       // Exceptions can contain source text or file names.
@@ -83,8 +116,9 @@ async function compare() {
     }
   }
   console.log(JSON.stringify(counts))
-  const { changedSections, changedPictureKeys, unmatchedTalks, unmatchedSections, errors } = counts
-  return paths.size > 0 && !(changedSections || changedPictureKeys || unmatchedTalks || unmatchedSections || errors) ? 0 : 1
+  const { changedSections, changedOtherSections, unmatchedTalks, unmatchedSections, errors } = counts
+  const unexpectedChanges = allowTableAndMindmap ? changedOtherSections : changedSections
+  return paths.size > 0 && !(unexpectedChanges || unmatchedTalks || unmatchedSections || errors) ? 0 : 1
 }
 
 try {

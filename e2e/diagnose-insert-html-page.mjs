@@ -49,7 +49,7 @@ for (const mode of process.env.TW_TEST_EDITOR_MODE ? [process.env.TW_TEST_EDITOR
       await page.getByRole('menuitem', { name: /HTML page…/ }).click()
     }
 
-    await openTalkByTitle(page, 'HTML page fixture')
+    await openTalkByTitle(page, 'HTML page fixture', { view: mode === 'plain' ? 'outline' : mode })
     await page.locator('.cm-content').waitFor()
     // Unsaved typing at the caret: the insert must keep it.
     await page.locator('.cm-line').filter({ hasText: 'Map slide body.' }).click()

@@ -42,7 +42,7 @@ const chipCount = async () => {
 const gone = async () => page.waitForSelector('[data-actions-here]', { state: 'detached', timeout: 3000 }).then(() => true).catch(() => false)
 
 try {
-  await openTalkByTitle(page, 'Actions Fixture')
+  await openTalkByTitle(page, 'Actions Fixture', { view: 'outline' })
   await page.waitForSelector('.cm-content', { timeout: 8000 })
   const line = (text) => page.locator('.cm-content .cm-line', { hasText: text }).first()
 

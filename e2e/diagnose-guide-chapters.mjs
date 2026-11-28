@@ -1,5 +1,5 @@
 // Onboarding 0.38.1 ticket 08, in the real app: Learn the commands. A profile with a vault of its own and six
-// ticks already made (the drawing's state 04: "6 of N tried") opens the example vault and its start talk.
+// ticks already made (the drawing's state 04: "6 of N tried") opens the example vault and selects a practice talk.
 //   - the ten chapters list with their history; Write the outline reads 6 of N tried;
 //   - opened as This chapter: the practice line says the talk is open now, and there is no Open this talk;
 //   - ⌘⇧↓ in the start talk ticks Move slide or item down: its row flashes, a toast says "Ticked · …", the
@@ -94,8 +94,9 @@ try {
     await sheet.waitFor({ state: 'visible', timeout: 8000 })
     await sheet.locator('[data-open-example]').click()
     await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
-    const startTalk = await waitFor(async () => (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label', { timeout: 1000 }).catch(() => '')) === 'The Saturday market', 15000)
-    record('Open example vault opens the start talk, The Saturday market', startTalk)
+    record('Open example vault keeps the current talk while showing the examples',
+      (await page.getByTitle('Talk menu', { exact: true }).getAttribute('aria-label')) === 'Alpha Talk')
+    await openTalkByTitle(page, 'The Saturday market')
     await page.waitForSelector('.cm-content', { timeout: 8000 })
     await page.waitForSelector('[data-guide]', { timeout: 6000 })
 

@@ -151,7 +151,7 @@ try {
   record('the talk’s vault says where each value comes from', !!origin && origin.values.filter((v) => v.source === 'vault').length === 3 && origin.values.some((v) => v.key === 'author' && v.source === 'personal'), JSON.stringify(origin))
   await page.locator('aside.talk-list button[aria-label="Refresh"]').click()
   await page.waitForTimeout(800)
-  const opened = await openTalkByTitle(page, 'Untitled talk').then(() => true).catch(() => false)
+  const opened = await openTalkByTitle(page, 'Untitled talk', { editable: false }).then(() => true).catch(() => false)
   if (opened) {
     const toggle = page.getByTestId('sidebar-toggle')
     if (await toggle.getAttribute('aria-pressed') === 'false') await toggle.click()

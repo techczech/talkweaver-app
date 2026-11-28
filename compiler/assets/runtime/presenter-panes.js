@@ -331,6 +331,17 @@ export function createPresenterPanes(deck) {
     // to fit the box instead, so internal autofit must not fight the outer scale (D8).
     clone.querySelectorAll(".slide-content").forEach((node) => { node.style.zoom = ""; });
     clone.querySelectorAll("aside.notes").forEach((node) => node.remove());
+    // A predrawn map belongs to the source canvas and can be at a different reveal step.
+    clone.querySelectorAll(".mindmap-mm").forEach((host) => {
+      host.querySelector(":scope > svg")?.remove();
+      delete host.dataset.mmDone;
+      delete host.dataset.mmAhead;
+      delete host.dataset.mmPainted;
+    });
+    clone.querySelectorAll(".mermaid-mm:not(:has(svg, .mmd-error))").forEach((host) => {
+      // The draw in the source deck might have started but has not yet produced its SVG.
+      delete host.dataset.mmdDone;
+    });
     // Audio chips: the preview never carries the <audio> (it must stay silent); on the live slide's
     // preview the chip shows the state the projector last reported.
     clone.querySelectorAll("audio").forEach((node) => node.remove());
@@ -489,7 +500,7 @@ export function createPresenterPanes(deck) {
       if (!awaitingLoad) { awaitingLoad = true; iframe.addEventListener("load", onPictureLoad, { once: true }); }
       iframe.srcdoc = pictureDoc(`<style>${styles}</style>`);
     };
-    const onPictureLoad = () => {
+    const onPictureLoad = async () => {
       awaitingLoad = false;
       // The shared stylesheet did not load: this picture is drawn again with the text inline
       // (as before 0.45.1), before it is fitted or shown, and so is every later one.
@@ -499,6 +510,17 @@ export function createPresenterPanes(deck) {
         previewStylesRefused = true;
         drawWithInlineStyles();
         return;
+      }
+      const picture = iframe.contentDocument;
+      if (picture?.querySelector(".mindmap-mm, .mermaid-mm:not([data-mmd-done])")) {
+        await picture.fonts?.ready;
+        if (!iframe.isConnected || iframe.contentDocument !== picture) return;
+        initMarkmaps(picture, true);
+        await Promise.all([
+          initMermaids(picture, true),
+          ...[...picture.querySelectorAll(".mindmap-mm")].map((host) => host.__mmDrawn)
+        ]);
+        if (!iframe.isConnected || iframe.contentDocument !== picture) return;
       }
       pictureLoaded = true;
       // A successor is shown only once its own fit has run (two frames after its script, then again

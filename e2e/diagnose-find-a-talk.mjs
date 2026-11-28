@@ -11,7 +11,7 @@ import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { pickerTalkRow } from './lib/picker-tree.mjs'
-import { openTalkByTitle, talkSearchInput } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle, talkSearchInput } from './lib/talklist.mjs'
 
 const root = mkdtempSync(join(realpathSync(tmpdir()), 'tw-find-a-talk-'))
 const userData = join(root, 'userData'), vault = join(root, 'vault')
@@ -63,7 +63,8 @@ const settle = async () => {
 }
 
 try {
-  await openTalkByTitle(page, 'The Age of the Claw')
+  await openTalkByTitle(page, 'The Age of the Claw', { view: null })
+  await ensureTalksMode(page)
   // The file list's answer for "claw" (after the slide-text warm pass has read every talk).
   const listBox = talkSearchInput(page)
   await listBox.fill('claw')

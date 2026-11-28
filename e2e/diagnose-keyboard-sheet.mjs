@@ -38,7 +38,7 @@ const actions = page.locator('[data-actions-here]')
 const gone = (selector) => page.waitForSelector(selector, { state: 'detached', timeout: 3000 }).then(() => true).catch(() => false)
 
 try {
-  await openTalkByTitle(page, 'Sheet Fixture')
+  await openTalkByTitle(page, 'Sheet Fixture', { view: 'outline' })
   await page.waitForSelector('.cm-content', { timeout: 8000 })
   await page.locator('.cm-content .cm-line', { hasText: 'Four stalls' }).first().click()
   await page.waitForFunction(() => document.querySelector('[data-testid="status-place"]')?.getAttribute('data-place') === 'slide-heading', null, { timeout: 4000 })

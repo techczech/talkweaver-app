@@ -176,7 +176,7 @@ try {
   await page.waitForTimeout(200)
 
   // Slide Browser chip
-  await openTalkByTitle(page, 'Metaphor talk 2026')
+  await openTalkByTitle(page, 'Metaphor talk 2026', { view: 'outline' })
   await page.waitForTimeout(600)
   await page.locator('.cm-content .cm-line', { hasText: 'Body one.' }).first().click()
   await page.keyboard.press('Meta+s')
@@ -199,7 +199,7 @@ try {
   record('renamed back: the section is available again without a restart, with its talks', await hasTalk('Feedback that lands') && await page.locator('[data-vault-unavailable-note]').count() === 0)
 
   // ── (G) the first vault's folder goes away: no writes into it, no search of it ──
-  await openTalkByTitle(page, 'Marking with rubrics') // a talk in another vault stays open
+  await openTalkByTitle(page, 'Marking with rubrics', { view: 'outline' }) // a talk in another vault stays open
   await page.waitForTimeout(600)
   await ensureTalksMode(page)
   const personalId = (await vaultList()).find((v) => v.name === 'Personal').id

@@ -40,7 +40,7 @@ async function chipReads(place, timeout = 4000) {
 }
 
 try {
-  await openTalkByTitle(page, 'Place Fixture')
+  await openTalkByTitle(page, 'Place Fixture', { view: 'outline' })
   await page.waitForSelector('.cm-content', { timeout: 8000 })
 
   await page.locator('.cm-content .cm-line', { hasText: 'Four stalls' }).first().click()
