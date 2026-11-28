@@ -37,7 +37,7 @@ import { authoredLayoutOf, entryTriggerBody, isDrawnAs, isSettableLayout, layout
 import { readOutlineSlides, slideEffectiveAttrs, type OutlineSlide, type OutlineSlides } from './feedback-accept.ts'
 import { applyLayoutSelection, commitOptionSelection, isOptionTokenForGroup, logicalTriggerBlockAfterHeading, parseTriggerLine } from './trigger-line.ts'
 import { commitLayoutSelection, selectionFromTriggerLine, toggleLayoutSelection } from './layout-selection.ts'
-import { applyQuoteTitleAttribution, parseHeadingAttrs } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
+import { applyQuoteTitleAttribution, headingBraceGroups, parseHeadingAttrs } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
 import { authoredLayoutDecision } from '../../compiler/scripts/lib/authored-layout.mjs'
 import { preContentWindow } from '../../compiler/scripts/lib/slide-id.mjs'
 import { contentTriggerLines } from '../../compiler/scripts/lib/slide-attrs.mjs'
@@ -761,7 +761,8 @@ function lineEdits(onLine: readonly SlideToken[], gone: ReadonlySet<SlideToken>,
  * break; nothing else of the text is touched.
  */
 function editLayoutTokens(outline: string, slide: SlideLayoutFacts, swap: SlideToken | null, put: string,
-  remove: (token: SlideToken) => boolean = token => token.writesLayout): string {
+  remove: (token: SlideToken) => boolean = token => token.writesLayout,
+  preserveHeadingSpace = false): string {
   const gone = new Set(slide.tokens.filter(token => remove(token) && token !== swap))
   if (!gone.size && !swap) return outline
   const lines = outline.split('\n')
@@ -778,8 +779,10 @@ function editLayoutTokens(outline: string, slide: SlideLayoutFacts, swap: SlideT
     let body = cr ? written.slice(0, -1) : written
     for (const edit of lineEdits(tokens, gone, swap, put, body).reverse()) body = body.slice(0, edit.from) + edit.insert + body.slice(edit.to)
     // A layout line (never the heading) with no token left on it goes.
-    if (!tokens[0].onHeading && !tokens.some((token) => !gone.has(token)) && body.replace(/\{\s*\}/g, '').trim() === '') dropped.push(index)
-    else lines[index] = (tokens[0].onHeading ? body.trimEnd() : body) + cr
+    const drop = !tokens[0].onHeading && !tokens.some((token) => !gone.has(token)) && body.replace(/\{\s*\}/g, '').trim() === ''
+    const next = tokens[0].onHeading && !preserveHeadingSpace ? body.trimEnd() : body
+    if (drop) dropped.push(index)
+    else lines[index] = next + cr
   }
   // A removed line goes with its own line break. The document's last line has none, so it goes with
   // the one before it: all of it, a CRLF's carriage return too. (Left behind, that `\r` ended the
@@ -799,6 +802,22 @@ const designOptionGroups = [...new Set([
 
 function designOptionToken(group: OptionGroup, raw: string): boolean {
   return isOptionTokenForGroup(raw, group) || (group.dictionaryTokens ?? []).includes(raw)
+}
+
+/** Edit only the Doctor's selected tokens, leaving neighbouring options in place. */
+export function removeCompetingLayoutTags(outline: string, slide: SlideLayoutFacts, tokens: readonly SlideToken[]): string {
+  const removed = new Set(tokens)
+  if (tokens.some(token => !token.readWhole)) {
+    const reason = 'An attribute is on a line that is partly inside a comment. Edit it in Markdown.'
+    throw new LayoutVerbError('cannot-take', reason, reason)
+  }
+  const heading = outline.split('\n')[slide.headingLine]
+  const groups = headingBraceGroups(heading)
+  if (tokens.some(token => token.onHeading && !groups.some(group => group.authored && group.start === token.groupFrom))) {
+    const reason = 'A layout tag is attached to the heading text. Edit it in Markdown.'
+    throw new LayoutVerbError('cannot-take', reason, reason)
+  }
+  return editLayoutTokens(outline, slide, null, '', token => removed.has(token), true)
 }
 
 /**
@@ -830,6 +849,9 @@ export function reconcileSlideDesign(outline: string, slide: SlideRef, currentLa
   }).map(binding => binding.group)
   const listOptions = groups.some(group => group.key === 'list-style')
   const eligible = new Set(groups.filter(group => listOptions || !listTreatment(group)))
+  const orphan = (token: SlideToken): boolean =>
+    designOptionGroups.some(group => !eligible.has(group) && designOptionToken(group, token.raw)) &&
+    !groups.some(group => eligible.has(group) && designOptionToken(group, token.raw))
   const outsideBlock = (token: SlideToken): boolean => token.line < at.blockStart || token.line >= at.blockEnd
   const replaced = options.flatMap(choice => groups
     .filter(group => group.key === choice.group)
@@ -845,8 +867,7 @@ export function reconcileSlideDesign(outline: string, slide: SlideRef, currentLa
       !(choice.group.key === 'title-placement' && choice.token.startsWith('split=') && token.raw === 'sidebar') &&
       designOptionToken(choice.group, token.raw))) return true
     if (!target && implied) return false
-    return designOptionGroups.some(group => !eligible.has(group) && designOptionToken(group, token.raw)) &&
-      !groups.some(group => eligible.has(group) && designOptionToken(group, token.raw))
+    return orphan(token)
   }
   const removed = new Set(facts.tokens.filter(remove))
   if ([...removed].some(token => !token.readWhole)) {

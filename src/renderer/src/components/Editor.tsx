@@ -76,7 +76,7 @@ import { notify } from '../lib/notify'
 import { queueOutlineWrite } from '../lib/saveQueue'
 import { lookForRecovery, noteOutlineSaveReply, outlineDiskChanges } from '../lib/outlineDiskChange'
 import { replaceDocTransaction } from '../lib/replaceDocTransaction'
-import { isSlideMergeReviewOpen, slideMergeHistory, slideMergeTransaction } from '../lib/slideMergeTransaction'
+import { isSlideMergeReviewOpen, slideMergeHistory, slideMergeSaveReply, slideMergeTransaction } from '../lib/slideMergeTransaction'
 import type { EditorDocumentReply, EditorDocumentRequestBody } from '../../../shared/editor-document'
 
 import { clipboardHasText, htmlClipboardText } from '../lib/clipboardText'
@@ -375,6 +375,7 @@ export type { PlainIconTools }
 export type ReplaceEditorDoc = (text: string, opts?: {
   save?: boolean
   savedFrom?: string
+  reviewedLayoutRepair?: true
   ownUndoStep?: boolean
   headingOrder?: readonly number[]
   fromDisk?: boolean
@@ -1713,7 +1714,9 @@ export default function Editor({
         clearTimeout(saveTimerRef.current)
         saveTimerRef.current = null
       },
-      commitSlideMerge: ({ outlinePath, base, next, generation }) => queueOutlineWrite(outlinePath, async () => {
+      commitSlideMerge: ({ outlinePath, base, next, generation, deadline }) => queueOutlineWrite(outlinePath, async () => {
+        const save = slideMergeSaveReply(generation)
+        if (Date.now() >= deadline) return { ok: false, error: 'This merge review expired.' }
         const view = viewRef.current
         const active = () => viewRef.current === view && loadedPathRef.current === outlinePath && currentTalkRef.current === outlinePath
         const before = view?.state
@@ -1735,20 +1738,23 @@ export default function Editor({
           view.dispatch(transaction)
           const text = view.state.doc.toString()
           const identity = captureOutlineIdentity(view.state, text, acknowledgedIds.current)
-          let reply: Awaited<ReturnType<typeof window.tw.talk.writeOutline>> | null = null
+          let outcome: 'saved' | 'refused' | 'unconfirmed' = 'unconfirmed'
           try {
-            reply = await window.tw.talk.writeOutline(outlinePath, text, {
+            const write = window.tw.talk.writeOutline(outlinePath, text, {
               revision: transaction.docChanged ? editorRevision.bump() : editorRevision.current(),
               slideMergeGeneration: generation,
-            })
+            }).then(reply => reply && reply.ok ? 'saved' as const : 'refused' as const)
+            const fallback = save?.then(reply => reply.ok ? 'saved' as const
+              : reply.reason === 'save-timeout' ? 'refused' as const : 'unconfirmed' as const)
+            outcome = await (fallback ? Promise.race([write, fallback]) : write)
           } catch {
             // The file may already hold the merge. Keep the staged text dirty for the next guarded save.
           }
-          if (reply === false || reply?.ok === false) {
+          if (outcome === 'refused') {
             refused = true
             return { ok: false, error: 'The reviewed merge could not be saved.' }
           }
-          const saved = reply?.ok === true
+          const saved = outcome === 'saved'
           if (active() && cleanDocumentRef.current === staged) {
             if (saved) {
               identity.acknowledge(text)
@@ -2077,7 +2083,9 @@ export default function Editor({
       // The editor is not tidied here: the caller adopts what the save wrote (`savedFrom` above), and
       // the tidy-up comes back with the save's ids as one undo step.
       const current = view.state.doc.toString()
-      const normalized = textForSave(view.state, current)
+      if (opts.reviewedLayoutRepair && current !== text) return null
+      // Layout Doctor has already tidied and reviewed the selected slide’s exact text.
+      const normalized = opts.reviewedLayoutRepair ? current : textForSave(view.state, current)
       seamSaveRef.current = { sent: normalized, doc: view.state.doc, identity: captureOutlineIdentity(view.state, normalized, acknowledgedIds.current) }
       return normalized
     })

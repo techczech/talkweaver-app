@@ -20,9 +20,13 @@ import type { OutlineRecoveryCopy } from '../shared/outline-disk-change.ts'
 import { stageTextAtomic, writeTextAtomic, type StagedWrite } from './atomic-file.ts'
 import { trackWrite } from './write-queues.ts'
 
+interface MergeSnapshot { base: string; mine: string; disk: string; draft?: string }
+interface MergeArchiveUse { owner: object; inUse(file: string): boolean }
+interface MergeArchive { name: string; at: number }
+
 export interface OutlineRecovery {
-  /** Immutable merge inputs; last 20 per talk, up to 14 days. Separate from latest-unsaved copies. */
-  preserveMerge(realPath: string, snapshot: { base: string; mine: string; disk: string; draft?: string }): Promise<string>
+  /** Immutable merge inputs. Keep the newest 20 per talk for up to 14 days and protect referenced copies. */
+  preserveMerge(realPath: string, snapshot: MergeSnapshot, use?: MergeArchiveUse): Promise<string>
   /** Keeps `text` as the recovery copy for the talk at `realPath` (replacing an older one). */
   save(realPath: string, text: string): Promise<void>
   /** Deletes the talk's recovery copy, if any (after a successful save, Reload, or Discard). */
@@ -59,24 +63,43 @@ export function createOutlineRecovery(dir: string, now: () => number = Date.now,
     return run
   }
 
+  const mergeFolder = join(dir, 'merges')
+  const lastMergeByTalk = new Map<string, string>()
+  const archiveUses = new Map<string, Map<object, MergeArchiveUse['inUse']>>()
+
   // Only our archive filenames are eligible; latest-unsaved copies and unknown files stay intact.
   // New names carry the timestamp so pruning need not load potentially large text snapshots.
-  const pruneMerges = async (keep?: string): Promise<void> => {
-    const folder = join(dir, 'merges')
-    const names = await readdir(folder, { withFileTypes: true }).catch(() => [])
-    const groups = new Map<string, Array<{ name: string; at: number }>>()
+  const mergeArchives = async (): Promise<Map<string, MergeArchive[]>> => {
+    const names = await readdir(mergeFolder, { withFileTypes: true }).catch(() => [])
+    const groups = new Map<string, MergeArchive[]>()
     for (const file of names) {
       const match = file.isFile() && MERGE_FILE.exec(file.name)
       if (!match) continue
-      const at = match[2] ? parseStamp(match[2]) : await stat(join(folder, file.name)).then(s => s.mtimeMs, () => NaN)
+      const at = match[2] ? parseStamp(match[2]) : await stat(join(mergeFolder, file.name)).then(s => s.mtimeMs, () => NaN)
       if (!Number.isFinite(at)) continue
       const group = groups.get(match[1]) ?? []
       group.push({ name: file.name, at }); groups.set(match[1], group)
     }
-    for (const group of groups.values()) {
-      group.sort((a, b) => Number(b.name === keep) - Number(a.name === keep) || b.at - a.at || b.name.localeCompare(a.name))
+    return groups
+  }
+
+  const newestFirst = (a: MergeArchive, b: MergeArchive): number => b.at - a.at || b.name.localeCompare(a.name)
+
+  const pruneMerges = async (groups: Map<string, MergeArchive[]>, keep?: string): Promise<void> => {
+    const protectedNames = new Set(keep ? [keep] : [])
+    for (const [name, uses] of archiveUses) {
+      for (const [owner, inUse] of uses) {
+        if (!inUse(join(mergeFolder, name))) uses.delete(owner)
+      }
+      if (uses.size) protectedNames.add(name)
+      else archiveUses.delete(name)
+    }
+    for (const [hash, group] of groups) {
+      group.sort((a, b) => Number(protectedNames.has(b.name)) - Number(protectedNames.has(a.name)) || newestFirst(a, b))
       for (const [i, file] of group.entries()) {
-        if (file.name !== keep && (i >= 20 || file.at < now() - 14 * 86400000)) await unlink(join(folder, file.name)).catch(() => undefined)
+        if (protectedNames.has(file.name) || (i < 20 && file.at >= now() - 14 * 86400000)) continue
+        await unlink(join(mergeFolder, file.name)).catch(() => undefined)
+        if (lastMergeByTalk.get(hash) === file.name) lastMergeByTalk.delete(hash)
       }
     }
   }
@@ -161,24 +184,48 @@ export function createOutlineRecovery(dir: string, now: () => number = Date.now,
   }
 
   return {
-    preserveMerge: (realPath, snapshot) => serial(async () => {
-      const folder = join(dir, 'merges')
-      await mkdir(folder, { recursive: true, mode: 0o700 })
-      const at = now()
-      const file = join(folder, `${slugOf(realPath)}-${recoveryPathHash(realPath)}-${stamp(at)}-${randomUUID()}.json`)
-      writeTextAtomic(file, JSON.stringify({ outlinePath: realPath, savedAt: at, ...snapshot }), {
-        mode: 0o600,
-        createParent: false,
-      })
-      if (process.platform !== 'win32') {
-        // Some filesystems refuse directory fsync (EINVAL/EBADF). The parent sync is best-effort.
-        await (options.syncDirectory ?? (async (path: string) => {
-          const parent = await open(path, 'r')
-          try { await parent.sync() } finally { await parent.close() }
-        }))(folder).catch(() => undefined)
+    preserveMerge: (realPath, snapshot, use) => serial(async () => {
+      const hash = recoveryPathHash(realPath)
+      const groups = await mergeArchives()
+      const group = groups.get(hash) ?? []
+      const last = lastMergeByTalk.get(hash)
+      const previous = group.find(file => file.name === last) ?? group.sort(newestFirst)[0]
+      const matches = async (name: string): Promise<boolean> => {
+        try {
+          const saved = JSON.parse(await readFile(join(mergeFolder, name), 'utf8'))
+          return saved.outlinePath === realPath && saved.base === snapshot.base && saved.mine === snapshot.mine &&
+            saved.disk === snapshot.disk && saved.draft === snapshot.draft
+        } catch { return false }
       }
-      await pruneMerges(basename(file)).catch(() => undefined)
-      return file
+      let name: string
+      if (previous && await matches(previous.name)) {
+        name = previous.name
+      } else {
+        await mkdir(mergeFolder, { recursive: true, mode: 0o700 })
+        const at = now()
+        name = `${slugOf(realPath)}-${hash}-${stamp(at)}-${randomUUID()}.json`
+        writeTextAtomic(join(mergeFolder, name), JSON.stringify({ outlinePath: realPath, savedAt: at, ...snapshot }), {
+          mode: 0o600,
+          createParent: false,
+        })
+        if (process.platform !== 'win32') {
+          // Some filesystems refuse directory fsync (EINVAL/EBADF). The parent sync is best-effort.
+          await (options.syncDirectory ?? (async (path: string) => {
+            const parent = await open(path, 'r')
+            try { await parent.sync() } finally { await parent.close() }
+          }))(mergeFolder).catch(() => undefined)
+        }
+        group.push({ name, at })
+        groups.set(hash, group)
+      }
+      lastMergeByTalk.set(hash, name)
+      if (use) {
+        const uses = archiveUses.get(name) ?? new Map()
+        uses.set(use.owner, use.inUse)
+        archiveUses.set(name, uses)
+      }
+      await pruneMerges(groups, name).catch(() => undefined)
+      return join(mergeFolder, name)
     }),
     save: (realPath, text) => serial(async () => {
       const idx = await load()
@@ -208,7 +255,7 @@ export function createOutlineRecovery(dir: string, now: () => number = Date.now,
       await removeAll(hash)
     }),
     read: (realPath) => serial(async () => {
-      await pruneMerges().catch(() => undefined)
+      await pruneMerges(await mergeArchives()).catch(() => undefined)
       const entry = (await load())[recoveryPathHash(realPath)]
       if (!entry) return null
       try { return { text: await readFile(join(dir, entry.file), 'utf8'), savedAt: entry.savedAt } } catch { return null }

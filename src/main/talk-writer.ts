@@ -111,7 +111,7 @@ class StaleOutlineDisk extends Error {
 }
 
 export interface TalkWriteOptions {
-  /** A slide merge may replace only its reviewed disk generation, even if the new text equals disk. */
+  /** A reviewed edit may replace only its observed disk generation, even if the new text equals disk. */
   observedDisk?: ObservedOutlineDisk
   /** The raw disk version the buffer adopted; compare under the write lock, even after a revert. */
   expectedDiskHash?: string
@@ -461,7 +461,7 @@ async function viaDisk(outlinePath: string, next: TalkWriteNext, origin: TalkWri
       createHash('sha256').update(current, 'utf8').digest('hex') !== opts.observedDisk.hash)) {
     return { ok: false, error: new StaleOutlineDisk().message, untouched: true, staleDisk: true }
   }
-  if (guarded && !opts.observedDisk) {
+  if (guarded && (!opts.observedDisk || opts.expectedDiskHash)) {
     let change: OutlineDiskChange | null = null
     try { change = await guard!.conflict(realPath, absent ? null : current, text, opts.expectedDiskHash) } catch {
       if (opts.expectedDiskHash) return { ok: false, error: 'The observed disk version could not be checked. Nothing was saved.', untouched: true }

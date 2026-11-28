@@ -1,7 +1,7 @@
 // Real outline/recovery files, the guarded writer, and CodeMirror's own Undo.
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { history, undo } from '@codemirror/commands'
@@ -29,7 +29,7 @@ function fixture(t, options = {}) {
   writeFileSync(path, options.base ?? base)
   const savedAt = statSync(path).mtimeMs
   let state = EditorState.create({ doc: options.mine ?? mine, extensions: [history(), slideMergeHistory] })
-  const recovery = createOutlineRecovery(join(root, 'recovery'))
+  const recovery = createOutlineRecovery(join(root, 'recovery'), options.now)
   const guard = createOutlineDiskGuard({
     canonical: canonicalOutlinePath,
     readText: async file => {
@@ -60,7 +60,8 @@ function fixture(t, options = {}) {
     vaultFor: () => vault,
     readWindow: async () => state.doc.toString(),
     reservedIds: async root => idsInVault(root),
-    stageInWindow: async (owner, request) => {
+    saveTimeoutMs: options.saveTimeoutMs,
+    stageInWindow: options.stageInWindow ?? (async (owner, request) => {
       const before = state
       if (before.doc.toString() !== request.base) return { ok: false, error: 'Window changed.', moved: true }
       const transaction = slideMergeTransaction(before, request.next)
@@ -74,11 +75,12 @@ function fixture(t, options = {}) {
       })
       staged.finish(result)
       if (!result.ok) state = before
+      if (options.dropReply) await new Promise(() => {})
       return result.ok ? { ok: true } : { ok: false, error: result.error }
-    },
+    }),
   })
   return {
-    path, vault, guard, savedAt,
+    path, vault, guard, recovery, savedAt,
     buffer: () => state.doc.toString(), writes: () => writes,
     undo: () => undo({ state, dispatch: tr => { state = tr.state } }),
     plan: async () => { review = await service.plan('win', path); return review },
@@ -200,4 +202,64 @@ test('a BOM and CRLF in the loaded outline do not make a clean editor appear dir
   const f = fixture(t, { base: '\uFEFF' + base.replaceAll('\n', '\r\n'), mine: '\uFEFF' + base })
   assert.equal((await f.plan()).reason, 'no-conflict')
   assert.equal(f.writes(), 0)
+})
+
+test('a silent editor releases a claimed merge write and revokes its authority', async t => {
+  let claimed
+  const f = fixture(t, {
+    saveTimeoutMs: 30,
+    stageInWindow: (_owner, request) => {
+      claimed = f.service.takeWrite('win', f.path, request.generation, request.next)
+      return new Promise(() => {})
+    },
+  })
+  const review = await f.plan()
+  const result = await Promise.race([
+    f.apply({ 'id:a': 'mine', 'id:b': 'disk' }),
+    new Promise(resolve => { const timer = setTimeout(() => resolve(null), 250); t.after(() => clearTimeout(timer)) }),
+  ])
+  assert.equal(result?.reason, 'save-timeout')
+  assert.ok(claimed)
+  assert.throws(() => claimed.authorize(), /expired/)
+  assert.equal(f.service.takeWrite('win', f.path, review.generation, mine), null)
+  assert.equal(f.writes(), 0)
+  assert.equal(readFileSync(f.path, 'utf8'), disk)
+  assert.equal(f.buffer(), mine)
+})
+
+test('a completed write stays a successful merge when the editor never replies', async t => {
+  const f = fixture(t, { saveTimeoutMs: 500, dropReply: true })
+  await f.plan()
+  const result = await f.apply({ 'id:a': 'mine', 'id:b': 'disk' })
+  assert.equal(result.ok, true)
+  assert.equal(f.writes(), 1)
+  assert.equal(readFileSync(f.path, 'utf8'), block('a', 'window A') + block('b', 'disk B'))
+  f.undo()
+  assert.equal(f.buffer(), mine)
+})
+
+test('refresh reuses exact snapshots and preserves the archives for Apply and Undo', async t => {
+  let clock = Date.now()
+  const f = fixture(t, { now: () => clock })
+  const first = await f.plan()
+  clock++
+  const refreshed = await f.plan()
+  assert.equal(refreshed.recovery.path, first.recovery.path)
+  assert.notEqual(refreshed.generation, first.generation)
+  assert.equal((await f.apply({ 'id:a': 'mine', 'id:b': 'disk' })).ok, true)
+  f.undo()
+  assert.equal(f.buffer(), mine)
+  writeFileSync(f.path, disk + 'External addition\n')
+  clock++
+  const current = await f.plan()
+  assert.equal(current.ok, true)
+  assert.notEqual(current.recovery.path, first.recovery.path)
+  clock += 15 * 86400000
+  for (let i = 0; i < 22; i++) {
+    clock++
+    await f.recovery.preserveMerge(f.path, { base, mine, disk: `different ${i}` })
+  }
+  await f.recovery.read(f.path)
+  assert.equal(existsSync(first.recovery.path), true, 'Undo keeps its original disk archive available')
+  assert.equal(existsSync(current.recovery.path), true, 'the current review keeps its archive even while other copies are written')
 })

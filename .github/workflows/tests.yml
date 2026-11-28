@@ -192,49 +192,61 @@ jobs:
           fi
 
   nightly-dom-issue:
-    needs: nightly-dom
-    if: always() && github.event_name == 'schedule' && github.ref == 'refs/heads/main' && needs.nightly-dom.result == 'failure'
+    needs: [nightly-dom, browser-tiers]
+    if: >-
+      always() && !cancelled() && github.event_name == 'schedule' && github.ref == 'refs/heads/main' &&
+      (needs.nightly-dom.result == 'failure' || needs.browser-tiers.result == 'failure')
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 5
     permissions:
       issues: write
     steps:
-      - name: Open or update the nightly DOM issue
+      - name: Open or update nightly failure issues
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          DOM_RESULT: ${{ needs.nightly-dom.result }}
           DOM_FAILURES: ${{ needs.nightly-dom.outputs.failures }}
+          ELECTRON_RESULT: ${{ needs.browser-tiers.result }}
+          ELECTRON_FAILURES: ${{ needs.browser-tiers.outputs.failures }}
         run: |
           export PATH="$HOME/.local/bin:$PATH"
-          title='TalkWeaver nightly DOM failures'
-          existing=$(gh issue list --state all --search "\"$title\" in:title" --json number,title,state \
-            --jq 'map(select(.title == "TalkWeaver nightly DOM failures")) | first | select(. != null) | "\(.number) \(.state)"')
-          read -r issue state <<< "$existing"
-          body="$RUNNER_TEMP/nightly-dom-issue.md"
-          {
-            printf 'The nightly Studio DOM job failed on %s.\n\n' "$GITHUB_SHA"
-            if test -n "$DOM_FAILURES"; then
-              read -r -a failures <<< "$DOM_FAILURES"
-              printf -- '- %s\n' "${failures[@]}"
+          report_failure() {
+            local tier="$1" failed_scripts="$2"
+            local title="TalkWeaver nightly $tier failures"
+            local existing issue state failures
+            local body="$RUNNER_TEMP/nightly-$tier-issue.md"
+            existing=$(gh issue list --state all --search "\"$title\" in:title" --json number,title,state \
+              --jq "map(select(.title == \"$title\")) | first | select(. != null) | \"\(.number) \(.state)\"")
+            read -r issue state <<< "$existing"
+            {
+              printf 'The nightly Studio %s job failed on %s.\n\n' "$tier" "$GITHUB_SHA"
+              if test -n "$failed_scripts"; then
+                read -r -a failures <<< "$failed_scripts"
+                printf -- '- %s\n' "${failures[@]}"
+              else
+                printf 'The job failed before it emitted a list of failed scripts.\n'
+              fi
+              printf '\n[Actions run](%s/%s/actions/runs/%s)\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            } > "$body"
+            if test -n "$issue"; then
+              gh issue edit "$issue" --body-file "$body"
+              if test "$state" = CLOSED; then gh issue reopen "$issue"; fi
             else
-              printf 'The job failed before it emitted a list of failed scripts.\n'
+              gh issue create --title "$title" --body-file "$body"
             fi
-            printf '\n[Actions run](%s/%s/actions/runs/%s)\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
-          } > "$body"
-          if test -n "$issue"; then
-            gh issue edit "$issue" --body-file "$body"
-            if test "$state" = CLOSED; then gh issue reopen "$issue"; fi
-          else
-            gh issue create --title "$title" --body-file "$body"
-          fi
+          }
+          if test "$DOM_RESULT" = failure; then report_failure DOM "$DOM_FAILURES"; fi
+          if test "$ELECTRON_RESULT" = failure; then report_failure Electron "$ELECTRON_FAILURES"; fi
 
   browser-tiers:
     # Nightly and manual Playwright and Electron coverage on macOS.
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && !inputs.nightly_dom)
     runs-on: ${{ inputs.hosted && 'macos-15' || fromJSON('["self-hosted","macOS","ARM64"]') }}
     timeout-minutes: 60
-    continue-on-error: true
+    outputs:
+      failures: ${{ steps.summary.outputs.failures }}
     strategy:
       fail-fast: false
       matrix:
@@ -271,8 +283,22 @@ jobs:
         run: npm run build:ocr
       # Build once up front so parallel Electron tests do not race to rebuild out/.
       - run: npm run build
-      - run: npm run test:${{ matrix.tier }}
+      - name: Run the full browser tier
         if: matrix.tier != 'e2e' || !inputs.e2e_scripts
+        shell: bash
+        run: |
+          npm run test:${{ matrix.tier }} | tee "$TMPDIR/browser-tier.log"
+      - name: Record nightly Electron failures
+        id: summary
+        if: always() && !cancelled() && github.event_name == 'schedule' && matrix.tier == 'e2e'
+        shell: bash
+        run: |
+          log="$TMPDIR/browser-tier.log"
+          if test -f "$log"; then
+            grep -E '^[0-9]+ passed, |^not run: |^failed: ' "$log" >> "$GITHUB_STEP_SUMMARY" || true
+            failures="$(sed -n 's/^failed: //p' "$log" | tail -1)"
+            printf 'failures=%s\n' "$failures" >> "$GITHUB_OUTPUT"
+          fi
       - name: Run selected desktop specs
         if: matrix.tier == 'e2e' && inputs.e2e_scripts
         env:

@@ -36,11 +36,12 @@ const LONE_SURROGATE_RE = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF
 
 /**
  * The step of the save that would change `text`, or null when the file would hold `text` exactly.
+ * Pass a zero-based heading index for the Layout Doctor’s slide-scoped save.
  * Throws when the text cannot be read (a caller that writes must treat that as "would change").
  */
-export function outlineSaveChange(text: string): OutlineSaveChange | null {
+export function outlineSaveChange(text: string, headingIndex?: number): OutlineSaveChange | null {
   if (text.includes('\r')) return 'line-endings'
-  if (normalizePositions(text) !== text) return 'tidy-up'
+  if (normalizePositions(text, headingIndex) !== text) return 'tidy-up'
   if (headingsMissingIds(text).length > 0) return 'ids'
   if (LONE_SURROGATE_RE.test(text)) return 'encoding'
   return null

@@ -1,6 +1,6 @@
 {
   "name": "talk-weaver",
-  "version": "0.45.3-alpha.11",
+  "version": "0.45.3-alpha.12",
   "description": "Desktop authoring app for the presentation ecosystem",
   "main": "./out/main/index.js",
   "engines": {
@@ -189,6 +189,7 @@
     "test:layout-precedence-parity": "node scripts/test-layout-precedence-parity.mjs",
     "test:structure-vs-tokens": "node scripts/test-structure-vs-tokens.mjs",
     "test:layout-doctor": "node scripts/test-layout-doctor.mjs",
+    "test:layout-doctor-competing-layouts": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-layout-doctor-competing-layouts.mjs",
     "test:layout-doctor-render": "node scripts/test-layout-doctor-render.mjs",
     "test:slide-number-gutter": "node scripts/test-slide-number-gutter.mjs",
     "test:editor-fold-gutter": "node scripts/test-editor-fold-gutter.mjs",
@@ -402,6 +403,8 @@
     "check:whats-new": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-whats-new.mjs",
     "check:update-feed": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-update-feed.mjs",
     "test:update-feed": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-update-feed.mjs",
+    "pretest:compare-library": "npm run generate:deck-styles",
+    "test:compare-library": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-compare-library.mjs",
     "test:update-check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-update-check.mjs",
     "test:update-channels": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-update-channels.mjs",
     "test:update-install": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-update-install.mjs",
@@ -615,7 +618,7 @@
     "test:slide-preview-speed:e2e": "node e2e/diagnose-slide-preview-speed.mjs",
     "test:object-block-performance": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-object-block-performance.mjs",
     "test:prepared-talk-cache": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-prepared-talk-cache.mjs",
-    "test:performance": "npm run test:strip-render-budget && npm run test:thumbnail-cache-contract && npm run test:thumbnail-incremental && npm run test:thumbnail-queue && npm run test:thumbnail-priority && npm run test:prepared-talk-cache && npm run test:object-block-performance && npm run test:slide-search-performance && npm run test:runs-list-performance && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-focused-slide-preview.mjs",
+    "test:performance": "npm run test:strip-render-budget && npm run test:thumbnail-cache-contract && npm run test:thumbnail-incremental && npm run test:thumbnail-queue && npm run test:thumbnail-priority && npm run test:prepared-talk-cache && npm run test:layout-variant-thumbnail && npm run test:object-block-performance && npm run test:slide-search-performance && npm run test:runs-list-performance && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-focused-slide-preview.mjs",
     "test:preparation-sharing:e2e": "node e2e/diagnose-preparation-sharing.mjs",
     "check:performance": "npm run test:performance && npm run build && npm run test:large-deck:e2e && npm run test:preparation-sharing:e2e && npm run test:thumbnail-cache-upgrade:e2e && npm run test:slide-movement-performance:e2e && npm run test:slide-preview-speed:e2e",
     "test:thumbnail-cache-contract": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/test-thumbnail-cache-contract.mjs",

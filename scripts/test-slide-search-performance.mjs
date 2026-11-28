@@ -11,6 +11,44 @@ import { pathStaysInside } from '../src/main/path-containment.ts'
 import { createSlideSearch, matchHay, normalizeSearchQuery } from '../src/main/slide-search.ts'
 import { extractImageRefs, resolveImagePaths } from '../src/main/slide-image-refs.ts'
 import { compactSlideSearchReply, expandSlideSearchReply } from '../src/shared/slide-search-reply.ts'
+import { createSearchRowsPreparation } from '../src/main/search-rows-off-process.ts'
+
+// A cold Explorer search can catch the background warmer at the same talk. Count actual
+// preparations instead of imposing a wall-clock budget on two independently scheduled callers.
+{
+  const prepare = createSearchRowsPreparation()
+  let revision = 'first'
+  let vaultOpen = true
+  const waiters = []
+  const deps = {
+    stamp: () => ({ vaultOpen, revision }),
+    read: () => revision,
+    fingerprint: source => source,
+    compile: source => new Promise((resolve, reject) => waiters.push({ source, resolve, reject }))
+  }
+  const warming = prepare('/vault/talk-outline.md', deps)
+  const searching = prepare('/vault/talk-outline.md', deps)
+  assert.equal(waiters.length, 1, 'the same outline revision enters the worker once')
+  revision = 'second'
+  const updated = prepare('/vault/talk-outline.md', deps)
+  assert.equal(waiters.length, 2, 'a new revision is eligible while the old one is running')
+  waiters[0].resolve(['old'])
+  await new Promise(setImmediate)
+  assert.equal(waiters.length, 2, 'the stale preparation joins the current revision for its retry')
+  waiters[1].resolve(['new'])
+  for (const caller of [warming, searching, updated]) {
+    assert.deepEqual(await caller, { rows: ['new'], source: 'second', stale: false })
+  }
+  const failed = prepare('/vault/talk-outline.md', deps)
+  waiters[2].reject(new Error('compile failed'))
+  await assert.rejects(failed, /compile failed/)
+  const retry = prepare('/vault/talk-outline.md', deps)
+  assert.equal(waiters.length, 4, 'a rejected preparation frees its slot')
+  vaultOpen = false
+  waiters[3].resolve(['closed'])
+  assert.deepEqual(await retry, { rows: null, stale: false })
+  console.log('Overlapping cold search and warm-up share one compile per outline revision.')
+}
 
 let seed = 7
 const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 2 ** 32 }

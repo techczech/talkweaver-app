@@ -23,8 +23,8 @@
 //     retains the variant's, and the live deck's compile never waits behind a variant's.
 //
 // Cached by content: the key hashes the modified outline text, the slide and a fingerprint of the
-// local media the outline references (mtime and size), so a repeat try answers from memory without a
-// compile, and a replaced image is drawn again. The PNG itself is content-addressed by the renderer.
+// local media the outline references (mtime and size), plus the fit check. A repeat try reuses a
+// picture or measured refusal. A replaced image is drawn again. The PNG itself is content-addressed.
 // Everything Electron-bound is passed in, so the module and its IPC handler run headless under test.
 import { createHash } from 'crypto'
 import { existsSync, statSync } from 'fs'
@@ -94,8 +94,18 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
   const { maxPending, maxPendingPerKey, maxMemoryEntries } = { ...DEFAULT_LIMITS, ...limits }
   const fileExists = deps.fileExists ?? existsSync
   const fingerprint = deps.inputsFingerprint ?? ((outlinePath: string, outline: string) => mediaFingerprint(outlinePath, outline))
-  // content hash → { url, png }: least recently used out.
-  const served = new Map<string, { url: string; png: string; reveal?: true; revealSteps?: number }>()
+  type Served = { url: string; png: string; reveal?: true; revealSteps?: number } | { reason: string }
+  const served = new Map<string, Served>()
+
+  function remember(hash: string, result: Served): void {
+    served.delete(hash)
+    served.set(hash, result)
+    while (served.size > maxMemoryEntries) {
+      const oldest = served.keys().next().value
+      if (oldest === undefined) break
+      served.delete(oldest)
+    }
+  }
 
   interface Job {
     hash: string
@@ -152,9 +162,12 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
       .update('\0').update(JSON.stringify(request.check ?? null))
       .digest('hex')
     const hit = served.get(hash)
+    if (hit && 'reason' in hit) {
+      remember(hash, hit)
+      return { status: 'cannot-take', slideId, reason: hit.reason }
+    }
     if (hit && fileExists(hit.png)) {
-      served.delete(hash)
-      served.set(hash, hit)
+      remember(hash, hit)
       return { status: 'ok', slideId, url: hit.url, cached: true, ...(hit.reveal ? { reveal: true, revealSteps: hit.revealSteps } : {}) }
     }
     // The same try asked twice at once (a row and its neighbour) shares one job.
@@ -213,18 +226,18 @@ export function createVariantThumbnailRenderer(deps: VariantThumbnailDeps, limit
       fullHtml, preview: prepared.preview, slides: [selected], cacheDir, background: true, inspect,
       onRevealSteps: reveal ? count => { revealSteps = count } : undefined
     })
-    if (refusal) return { status: 'cannot-take', slideId: request.slideId, reason: refusal }
+    if (refusal) {
+      // A measured refusal is as specific to these inputs as a successful picture. A render
+      // failure or an uninspected slide still follows the caller's retry policy.
+      remember(hash, { reason: refusal })
+      return { status: 'cannot-take', slideId: request.slideId, reason: refusal }
+    }
     if (inspect && !inspected) return failed
     const png = rendered[selected.key]
     if (!png) return failed
     const url = deps.urlFor(prepared.slug, pngName(png), request.outlinePath)
     const preview = reveal ? { reveal, revealSteps } : {}
-    served.set(hash, { url, png, ...preview })
-    while (served.size > maxMemoryEntries) {
-      const oldest = served.keys().next().value
-      if (oldest === undefined) break
-      served.delete(oldest)
-    }
+    remember(hash, { url, png, ...preview })
     return { status: 'ok', slideId: request.slideId, url, cached: false, ...preview }
   }
 

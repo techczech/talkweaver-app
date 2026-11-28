@@ -34,7 +34,7 @@ export interface SlideMergeSummary {
 
 export type SlideMergeFailure =
   | Extract<SlideMergeResult, { ok: false }>
-  | { ok: false; reason: 'ownership' | 'no-conflict' | 'stale-plan' | 'stale-disk' | 'window-changed' | 'recovery-failed' | 'save-failed'; error: string }
+  | { ok: false; reason: 'ownership' | 'no-conflict' | 'stale-plan' | 'stale-disk' | 'window-changed' | 'recovery-failed' | 'save-failed' | 'save-timeout'; error: string }
 
 export type SlideMergeReviewReply = ({ ok: true } & SlideMergeReview) | SlideMergeFailure
 export type SlideMergeApplyReply = { ok: true; summary: SlideMergeSummary; savedAt: number } | SlideMergeFailure

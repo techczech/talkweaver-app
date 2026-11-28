@@ -158,7 +158,7 @@ function headingKeepsOnlyTitleIcons(line: string): boolean {
     && groups.every((group) => tokenizeTriggerBody(group.inner).every((token) => token.raw.startsWith('icon=')))
 }
 
-export function normalizeTriggerLines(text: string): string {
+export function normalizeTriggerLines(text: string, headingIndex?: number): string {
   const lines = text.split('\n')
   const fenced = fencedLineFlags(lines)
   const out: string[] = []
@@ -167,9 +167,9 @@ export function normalizeTriggerLines(text: string): string {
     const line = lines[i]
     // Act on any slide heading (##–######) that has trailing brace groups; skip the deck title (#)
     // and anything inside a fence or HTML comment (heading-shaped code lines).
-    const isSlideHeading = !fenced[i] && /^#{2,6} /.test(line)
+    const isSlideHeading = (headingIndex === undefined || i === headingIndex) && !fenced[i] && /^#{2,6} /.test(line)
     if (!isSlideHeading) { out.push(line); i += 1; continue }
-const tail = headingTail(line)
+    const tail = headingTail(line)
     if (!tail || tail.kind === 'keep') { out.push(line); i += 1; continue }
     // Strip the moved braces from the title; a title-icon group stays where the compiler reads it.
     const cleanTitle = tail.heading
@@ -205,10 +205,10 @@ const tail = headingTail(line)
 /**
  * Position-only pass (silent, ADR-0020 D4): pull title-line braces down and make an existing
  * Trigger line adjacent to its heading. Authored tokens are never added, removed, reordered
- * or rewritten.
+ * or rewritten. Pass a zero-based heading index to tidy only that heading’s layout line.
  */
-export function normalizePositions(text: string): string {
-  const normalized = normalizeTriggerLines(text)
+export function normalizePositions(text: string, headingIndex?: number): string {
+  const normalized = normalizeTriggerLines(text, headingIndex)
   const lines = normalized.split('\n')
   const fenced = fencedLineFlags(lines)
   const out: string[] = []
@@ -217,7 +217,8 @@ export function normalizePositions(text: string): string {
   while (i < lines.length) {
     const line = lines[i]
     const isCleanSlideHeading =
-      !fenced[i]
+      (headingIndex === undefined || i === headingIndex)
+      && !fenced[i]
       && /^#{2,6} /.test(line)
       && headingIsSettled(line)
     if (!isCleanSlideHeading) {

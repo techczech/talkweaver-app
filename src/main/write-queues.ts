@@ -53,6 +53,7 @@ export const QUEUE_SOURCES: Record<string, ReadonlyArray<WriteQueueName | NotAQu
   'src/main/handout-publishing.ts': ['not a write queue: a publish run; the publishing blocker holds the restart while one runs'],
   'src/main/scratchpad-html-thumb.ts': ['not a write queue: thumbnail pictures in a cache folder, made again when missing', 'not a write queue: the same thumbnail captures, one at a time'],
   'src/main/prepare-talk-worker.ts': ['not a write queue: compiler modules loaded once'],
+  'src/main/search-rows-off-process.ts': ['not a write queue: shared read-only compiles for the rebuildable search index'],
   'src/main/local-address-filter.ts': ['not a write queue: address lookups in flight'],
   'src/main/recording-video.ts': ['not a write queue: loudness measures kept in memory', 'not a write queue: playback copies in the app’s cache, made again when missing', 'not a write queue: the same playback copies, levelled'],
   'src/main/gallery-site.ts': ['not a write queue: site listings read for the gallery'],

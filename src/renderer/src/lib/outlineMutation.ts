@@ -23,6 +23,7 @@
 // the live caret, exactly like typing it — and then saves the buffer as it stands through the same
 // path (steps 1, 2, 5 and 6 with the identity change), superseding the debounced autosave.
 
+import type { CompetingLayoutSave } from '../../../shared/competing-layout-repair.ts'
 import { changeNoun, INSTANT_SLIDE_ORIGIN } from '../../../shared/editor-document.ts'
 
 /** The open editor's buffer (WorkspaceLayout wires it to the Editor's registered read / replace). */
@@ -32,7 +33,7 @@ export interface OutlineEditorBuffer {
   /** Puts `next` into the buffer as one minimal change, supersedes the pending debounced autosave (the
    *  caller saves the whole buffer at once) and returns the buffer text to save, or null when the
    *  editor is not ready. */
-  apply(outlinePath: string, next: string, opts?: { ownUndoStep?: boolean; headingOrder?: readonly number[] }): string | null
+  apply(outlinePath: string, next: string, opts?: { ownUndoStep?: boolean; headingOrder?: readonly number[]; reviewedLayoutRepair?: true }): string | null
   /** After a save of `sent`: adopts `saved` (what was written: tidied, ids stamped) only while the buffer
    *  is still the text `sent` was made from. */
   adopt(outlinePath: string, sent: string, saved: string): void
@@ -42,7 +43,7 @@ export interface OutlineEditorBuffer {
 }
 
 /** What a queued outline save answers (window.tw.talk.writeOutline): `content` is the stamped text. */
-export type OutlineSaveReply = { ok: boolean; content?: string } | false | null | undefined
+export type OutlineSaveReply = { ok: boolean; content?: string; error?: string } | false | null | undefined
 
 export interface OutlineMutatorDeps<R extends OutlineSaveReply> {
   /** The open editor's buffer when this window has `outlinePath` open, else null. */
@@ -50,7 +51,7 @@ export interface OutlineMutatorDeps<R extends OutlineSaveReply> {
   /** Resolves once every save queued so far for this file has finished (lib/saveQueue outlineWritesSettled). */
   settled(outlinePath: string): Promise<void>
   /** Saves `text` through the file's save queue (WorkspaceLayout.writeOutline). */
-  write(outlinePath: string, text: string): Promise<R>
+  write(outlinePath: string, text: string, layoutRepair?: CompetingLayoutSave): Promise<R>
   /** Called after every save this module made that reached the disk (save indicator, collisions). */
   onSaved?(outlinePath: string, reply: R): void
   /** Called when a save this module made did not reach the disk (the change stays in the buffer). */
@@ -70,6 +71,8 @@ export interface OutlineMutationOptions {
   attempts?: number
   /** The change is an undo step of its own, never joined to typing or another change (a slide move). */
   ownUndoStep?: boolean
+  /** The repair preview includes its own position tidy-up. Save exactly those bytes. */
+  layoutRepair?: CompetingLayoutSave
 }
 
 export type OutlineMutationFailure = 'not-open' | 'refused' | 'moved' | 'save-failed'
@@ -143,13 +146,17 @@ export function createOutlineMutator<R extends OutlineSaveReply>(deps: OutlineMu
       if (buffer.read(outlinePath) !== base) continue
       if (next === base && !opts.force) return { ok: true, changed: false, base, text: base }
       const headingOrder = typeof edit === 'string' ? undefined : edit.headingOrder
-      const applyOpts = headingOrder ? { ownUndoStep: opts.ownUndoStep, headingOrder } : opts.ownUndoStep ? { ownUndoStep: true } : undefined
+      const applyOpts = opts.layoutRepair
+        ? { ownUndoStep: true, reviewedLayoutRepair: true as const }
+        : headingOrder ? { ownUndoStep: opts.ownUndoStep, headingOrder } : opts.ownUndoStep ? { ownUndoStep: true } : undefined
       const text = buffer.apply(outlinePath, next, applyOpts)
       if (text == null) return notOpen
-      const saved = await deps.write(outlinePath, text)
+      const saved = await (opts.layoutRepair
+        ? deps.write(outlinePath, text, opts.layoutRepair)
+        : deps.write(outlinePath, text))
       if (!saved || saved.ok !== true) {
         deps.onSaveFailed?.(outlinePath, saved)
-        return { ok: false, reason: 'save-failed', error: SAVE_FAILED, applied: true, base, saved }
+        return { ok: false, reason: 'save-failed', error: opts.layoutRepair && saved ? saved.error ?? SAVE_FAILED : SAVE_FAILED, applied: true, base, saved }
       }
       // What the save wrote: the stamped text, else the text sent. Adopted even when that is the text
       // sent: the buffer holds it untidied (the save's tidy-up comes back with the adoption).

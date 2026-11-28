@@ -1,7 +1,8 @@
 // Run on the laptop with dependencies and generated compiler assets in both checkouts.
 // TW_LIBRARY_ROOT=<read-only vault> node scripts/release/compare-library.mjs <baseline checkout>
-// Pass --allow-table-and-mindmap after the baseline to permit those two render changes.
-// Output is counts only. The compiler receives the same source and file scope on both sides.
+// Pass --allow-table-and-mindmap to permit those two render changes.
+// Pass --signatures for one before/after structural signature per changed section, followed by the counts.
+// By default only the counts are printed. Both compilers receive the same source and file scope.
 import { createHash } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
 import { join, relative } from 'node:path'
@@ -9,8 +10,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const candidateRoot = fileURLToPath(new URL('../../', import.meta.url))
 const libraryRoot = process.env.TW_LIBRARY_ROOT
-const baselineRoot = process.argv[2]
-const allowTableAndMindmap = process.argv[3] === '--allow-table-and-mindmap'
+const [, , baselineRoot, ...flags] = process.argv
+const allowTableAndMindmap = flags.includes('--allow-table-and-mindmap')
+const showSignatures = flags.includes('--signatures')
 
 function digest(content) {
   return createHash('sha256').update(content).digest('hex')
@@ -51,6 +53,7 @@ async function loadCheckout(root) {
           markup: digest(html),
           picture: model.pictureKeys[index],
           tableStyle: hasTable ? tableStyles.join(':') : null,
+          ...(showSignatures ? { html, sourceMarkdown: model.slides?.[index]?.sourceMarkdown } : {}),
         }
       })
     },
@@ -58,13 +61,14 @@ async function loadCheckout(root) {
 }
 
 async function compare() {
-  if (!libraryRoot || !baselineRoot || process.argv.length !== (allowTableAndMindmap ? 4 : 3)) {
-    console.error('Set TW_LIBRARY_ROOT and pass the baseline checkout and optional --allow-table-and-mindmap.')
+  if (!libraryRoot || !baselineRoot || flags.length !== Number(allowTableAndMindmap) + Number(showSignatures)) {
+    console.error('Set TW_LIBRARY_ROOT and pass the baseline checkout [--allow-table-and-mindmap] [--signatures].')
     return 2
   }
   if (!(await stat(libraryRoot)).isDirectory()) return 2
 
   const [baseline, candidate] = await Promise.all([loadCheckout(baselineRoot), loadCheckout(candidateRoot)])
+  const sectionSignature = showSignatures ? (await import('./section-signature.mjs')).sectionSignature : null
   const paths = new Set([...baseline.paths.keys(), ...candidate.paths.keys()])
   const counts = {
     baselineTalks: baseline.paths.size,
@@ -80,7 +84,9 @@ async function compare() {
     unmatchedSections: 0,
     errors: 0,
   }
+  let talk = 0
   for (const key of paths) {
+    talk += 1
     const beforePath = baseline.paths.get(key)
     const afterPath = candidate.paths.get(key)
     if (!beforePath || !afterPath) counts.unmatchedTalks += 1
@@ -109,6 +115,14 @@ async function compare() {
         if (oldSection.layout === 'table' && newSection.layout === 'table') counts.changedTableSections += 1
         else if (oldSection.layout === 'mindmap' && newSection.layout === 'mindmap') counts.changedMindmapSections += 1
         else counts.changedOtherSections += 1
+        if (sectionSignature) {
+          console.log(JSON.stringify({
+            talk,
+            section: index + 1,
+            before: sectionSignature(oldSection),
+            after: sectionSignature(newSection),
+          }))
+        }
       }
     } catch {
       // Exceptions can contain source text or file names.

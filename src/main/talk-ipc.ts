@@ -1,6 +1,7 @@
 import { TAKES_OFF_ERROR } from '../shared/recording-takes'
 import { saveOfflinePage } from './offline-page'
 import type { MediaPublishChoice } from '../shared/publish-status'
+import type { CompetingLayoutSave } from '../shared/competing-layout-repair'
 import { parseOutlineSaveIdentity } from '../shared/outline-save-identity'
 import type { SlideMergeChoices } from '../shared/outline-merge'
 import { join, basename, dirname, extname } from 'path'
@@ -43,7 +44,16 @@ import { pageTitleOf } from '../shared/page-title.ts'
 import { plainInlineText } from '../../compiler/scripts/lib/00-inline-render.mjs'
 import { withTalkTitle } from './present-title'
 import { publishTalkHandout } from './talk-handout-publish'
+import { loadCompiledSlidesSignature } from './compiled-slides-match'
 import type { TalkIpcHost, EmbedStatus, ProjectionRowMain } from './index'
+
+function readLayoutRepair(value: unknown): CompetingLayoutSave | null {
+  if (!value || typeof value !== 'object' || !('before' in value) || !('headingLine' in value)) return null
+  const { before, headingLine } = value
+  if (typeof before !== 'string' || typeof headingLine !== 'number' ||
+      !Number.isSafeInteger(headingLine) || headingLine < 1) return null
+  return { before, headingLine }
+}
 
 /** Registers talk channels on the app's already guarded IPC object. */
 export function registerTalkIpc(host: TalkIpcHost): void {
@@ -98,6 +108,30 @@ export function registerTalkIpc(host: TalkIpcHost): void {
     } catch (e) {
       if (isSuperseded(e)) return { superseded: true as const }
       console.error('[compile]', e)
+      return null
+    }
+  })
+
+  ipcMain.handle('talk:verify-layout-repair', async (event, outlinePath: string, before: string, after: string): Promise<boolean | null> => {
+    const isOpen = () => editorWindows.get(event.sender.id)?.outlinePath === outlinePath && !outlineRefused(outlinePath)
+    if (typeof outlinePath !== 'string' || typeof before !== 'string' || typeof after !== 'string' || !isOpen()) return null
+    try {
+      const compilerDir = getCompilerPath()
+      if (!compilerDir) return null
+      const signature = await loadCompiledSlidesSignature(compilerDir)
+      if (!isOpen()) return null
+      // These are verification compiles. Keep both outside the live preview cache and avoid writing
+      // any preview files. Retain only the compiled signature between the two passes.
+      const read = async (text: string) => {
+        const build = await prepareTalk(outlinePath, text, undefined, undefined, 'variant', undefined, { preview: false })
+        return build ? signature(build.model) : null
+      }
+      const original = await read(before)
+      if (original === null || !isOpen()) return null
+      const repaired = await read(after)
+      if (repaired === null || !isOpen()) return null
+      return original === repaired
+    } catch {
       return null
     }
   })
@@ -394,7 +428,7 @@ export function registerTalkIpc(host: TalkIpcHost): void {
   // talk-writer.ts, which applies the same backstop to every other origin's writes.
   // Each editor window's last save: failed or not (an update's restart counts an editor as saved only if it did not).
   // Each save carries the revision of the text it sent (editor-revisions.ts): what a close confirms against.
-  ipcMain.handle('talk:write-outline', async (event, outlinePath: string, content: string, opts?: { revision?: unknown; expectedDiskHash?: unknown; identity?: unknown; slideMergeGeneration?: unknown }) => {
+  ipcMain.handle('talk:write-outline', async (event, outlinePath: string, content: string, opts?: { revision?: unknown; expectedDiskHash?: unknown; identity?: unknown; slideMergeGeneration?: unknown; layoutRepair?: unknown }) => {
     const finished = editorRevisions.writeStarted(event.sender.id, opts?.revision)
     try {
       await updateTestSaveDelay() // the update-test flavour's slow save, and a test run's from source; nothing in a release
@@ -402,11 +436,17 @@ export function registerTalkIpc(host: TalkIpcHost): void {
       const identity = parseOutlineSaveIdentity(opts?.identity)
       if (opts?.identity !== undefined && !identity) { lastSaveFailed.add(event.sender.id); finished(false); return { ok: false as const, refused: 'ownership' as const } }
       const generation = opts?.slideMergeGeneration
+      const repair = opts?.layoutRepair === undefined ? undefined : readLayoutRepair(opts.layoutRepair)
+      if (repair === null || (repair && generation !== undefined)) {
+        lastSaveFailed.add(event.sender.id)
+        finished(false)
+        return { ok: false as const, refused: 'ownership' as const }
+      }
       const merge = typeof generation === 'string' && typeof outlinePath === 'string' && typeof content === 'string'
         ? outlineSlideMerge.takeWrite(String(event.sender.id), outlinePath, generation, content) : null
       if (generation !== undefined && !merge) { finished(false); return { ok: false as const, refused: 'ownership' as const } }
       try {
-        const result = await writeOutlineFromEditor(event, outlinePath, merge?.text ?? content, opts?.expectedDiskHash as string | undefined, identity, merge ?? undefined)
+        const result = await writeOutlineFromEditor(event, outlinePath, merge?.text ?? content, opts?.expectedDiskHash as string | undefined, identity, merge ?? undefined, repair)
         const ok = !!result && typeof result === 'object' && result.ok === true
         if (ok) lastSaveFailed.delete(event.sender.id)
         else lastSaveFailed.add(event.sender.id)

@@ -15,6 +15,7 @@ import { editorRevision } from '../lib/editorRevision'
 import { updateRestartDraft } from '../lib/talkDrafts'
 import { applyOutlineMerge, prepareOutlineMerge, type OutlineMergeReview, type OutlineReconcileDeps } from '../lib/outlineReconcile'
 import { singleSlideDiskReview } from '../lib/slideDiskReview'
+import { trackSlideMergeSave } from '../lib/slideMergeTransaction'
 import { normalizeOutlineMergeText, type SlideMergeChoices } from '../../../shared/outline-merge'
 import type { SlideMergeReview } from '../../../shared/outline-slide-merge'
 import { mergeResultText, revealMergeArchive } from './outlineMergeCopy'
@@ -97,6 +98,14 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
   const applyingRef = useRef<Promise<void> | null>(null)
   const sheetAnswerRef = useRef<((choice: OutlineDiskChoice) => void) | null>(null)
 
+  const resumeAutosave = useCallback((outlinePath: string): void => {
+    const doc = wiringRef.current.readDoc()
+    if (outlinePath !== wiringRef.current.activeOutlinePath || doc?.path !== outlinePath ||
+        doc.dirty === false || outlineDiskChanges.get(outlinePath)) return
+    void saveAfterDiskCleared(outlinePath, { ...depsRef.current!, busy: busyRef.current })
+      .catch(error => notify(error instanceof Error ? error.message : String(error), 'warning', TOAST))
+  }, [])
+
   // Main's push (the watcher, focus checks, a refused write) → this window's store. A difference that
   // clears on its own (the other side reverted the file) while no choice is under way leaves typing
   // made meanwhile unsaved: save the buffer so it lands.
@@ -129,12 +138,8 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
     outlineDiskChanges.clear(outlinePath)
     // A late acknowledgement after Reload or explicit discard must not save the
     // newly adopted, clean buffer back over the disk bytes (for example CRLF).
-    const doc = wiringRef.current.readDoc()
-    if (had && outlinePath === wiringRef.current.activeOutlinePath && doc?.path === outlinePath && doc.dirty !== false) {
-      void saveAfterDiskCleared(outlinePath, { ...depsRef.current!, busy: busyRef.current })
-        .catch(error => notify(error instanceof Error ? error.message : String(error), 'warning', TOAST))
-    }
-  }), [])
+    if (had) resumeAutosave(outlinePath)
+  }), [resumeAutosave])
   useEffect(() => {
     const sync = (): void => setChange(activeOutlinePath ? outlineDiskChanges.get(activeOutlinePath) : null)
     sync()
@@ -185,6 +190,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
     const path = wiringRef.current.activeOutlinePath
     if (!path || busyRef.current) return Promise.resolve()
     const run = (async (): Promise<void> => {
+      let diskReverted = false
       busyRef.current = true; setBusy(true)
       try {
         await outlineWritesSettled(path)
@@ -195,6 +201,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
           if (old?.path === path && refresh) {
             autoVersionRef.current = null
             closeSlideReview()
+            diskReverted = !observed
           }
           return
         }
@@ -234,6 +241,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
               autoVersionRef.current = null
               outlineDiskChanges.clear(path, observed.hash)
               closeSlideReview()
+              diskReverted = true
             } else {
               setSlideReviewError(planned.error)
               notify(planned.error, 'warning', TOAST)
@@ -277,12 +285,15 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
         const message = error instanceof Error ? error.message : String(error)
         setSlideReviewError(message)
         notify(message, 'warning', TOAST)
-      } finally { busyRef.current = false; setBusy(false) }
+      } finally {
+        busyRef.current = false; setBusy(false)
+        if (diskReverted) resumeAutosave(path)
+      }
     })()
     reconciliationRef.current = run
     void run.then(() => { if (reconciliationRef.current === run) reconciliationRef.current = null })
     return run
-  }, [closeSlideReview, markRemoved])
+  }, [closeSlideReview, markRemoved, resumeAutosave])
 
   useEffect(() => {
     if (busy) return
@@ -315,7 +326,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
     busyRef.current = true; setBusy(true); setSavingMerge(true); setSlideReviewError(null)
     applyingRef.current = (async () => {
       try {
-        const result = await window.tw.talk.applySlideMerge(current.path, generation, choices)
+        const result = await trackSlideMergeSave(generation, window.tw.talk.applySlideMerge(current.path, generation, choices))
         if (wiringRef.current.activeOutlinePath !== current.path || slideReviewRef.current !== current) return
         if (result.ok) {
           outlineDiskChanges.clear(current.path, current.review.diskHash)

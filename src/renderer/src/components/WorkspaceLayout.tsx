@@ -136,6 +136,8 @@ import WhereUsedPanel from './WhereUsedPanel'
 import EmbedCheckPanel from './EmbedCheckPanel'
 import LayoutDoctorPanel from './LayoutDoctorPanel'
 import { applyScannedTitleIconRestore } from '../../../shared/title-icon-restore'
+import type { CompetingLayoutSave } from '../../../shared/competing-layout-repair'
+import { applyCompetingLayoutRepair } from '../lib/competingLayoutRepair'
 import ResizablePanes from './ResizablePanes'
 import ImageMetaPanel from './ImageMetaPanel'
 import AbstractPanel from './AbstractPanel'
@@ -1744,7 +1746,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
   // Every outline write from the workspace goes through the outline's shared save queue — the
   // same queue as the Editor's saves — so a workspace write made before an instant-slide save
   // ("Add to talk") can never land on disk after it (live-presenting ticket 07).
-  function writeOutline(outlinePath: string, text: string): ReturnType<typeof window.tw.talk.writeOutline> {
+  function writeOutline(outlinePath: string, text: string, layoutRepair?: CompetingLayoutSave): ReturnType<typeof window.tw.talk.writeOutline> {
     const before = editorReadRef.current?.({ saveText: text })
     const currentBaseline = (): boolean => {
       const current = editorReadRef.current?.()
@@ -1756,7 +1758,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
       const identity = before?.path === outlinePath ? before.saveIdentity : undefined
       const reply = await window.tw.talk.writeOutline(outlinePath, text, {
         expectedDiskHash: doc?.path === outlinePath ? doc.diskHash : undefined,
-        identity: identity?.options()
+        identity: identity?.options(), ...(layoutRepair ? { layoutRepair } : {})
       })
       if (reply && reply.ok && currentBaseline()) identity?.acknowledge(reply.content ?? text)
       return reply
@@ -1782,7 +1784,10 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
           if (!doc || doc.path !== path) return null
           // A completed move/cut is one deliberate edit, so its new order need not wait for a typing pause.
           if (applyOpts?.ownUndoStep && next !== doc.text) compileImmediatelyRef.current = true
-          return editorReplaceRef.current?.(next, { save: true, ownUndoStep: applyOpts?.ownUndoStep, headingOrder: applyOpts?.headingOrder }) ?? null
+          return editorReplaceRef.current?.(next, {
+            save: true, ownUndoStep: applyOpts?.ownUndoStep, headingOrder: applyOpts?.headingOrder,
+            reviewedLayoutRepair: applyOpts?.reviewedLayoutRepair
+          }) ?? null
         },
         adopt: (path, sent, saved) => {
           // What the save wrote (tidied, ids stamped): the editor adopts it only while its buffer is
@@ -1801,7 +1806,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         },
       },
       settled: (outlinePath) => outlineWritesSettled(outlinePath),
-      write: (outlinePath, text) => writeOutline(outlinePath, text),
+      write: writeOutline,
       onSaved: (_outlinePath, reply) => {
         setLastSaved(new Date())
         setDirty(false)
@@ -1813,7 +1818,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
           notify('Not saved: this talk’s file differs from what TalkWeaver has open. Choose in the bar at the top of the talk.', 'warning', 'changed-on-disk')
           return
         }
-        if (reply && reply.ok === false && reply.refused === 'outside-vault') notify(reply.error, 'error', 'save-failed')
+        if (reply && reply.ok === false && (reply.refused === 'outside-vault' || reply.refused === 'layout-repair')) notify(reply.error, 'error', 'save-failed')
         else if (reply && reply.ok === false) notify('Save skipped — the app refused to overwrite the outline with empty content. Your file on disk is unchanged.', 'warning', 'save-refused')
         else notify('Save FAILED — the outline could not be written to disk. Your recent edits are not saved.', 'error', 'save-failed')
       },
@@ -5404,7 +5409,7 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
     setFocusLine({ line, takeFocus: true })
   }
 
-  // Layout Doctor's one fix (plain view ticket 15): a title's icon goes from its layout line to the
+  // Layout Doctor's title icon fix (plain view ticket 15): a title's icon goes from its layout line to the
   // title. Worked out on the buffer as it stands (D1 seam) by a verb that keeps the move only when
   // it has read the result back (shared/title-icon-restore.ts); a refusal leaves the buffer as it is.
   // The finding is bound to the talk and the exact text the Doctor read it from (`scan`): the move is
@@ -6299,6 +6304,16 @@ export default function WorkspaceLayout({ researchJump, onResearchJump, activeTa
         slideRows={compiledSlides}
         onJumpToLine={handleDoctorJumpToLine}
         onRestoreTitleIcon={handleDoctorRestoreTitleIcon}
+        onApplyLayoutRepair={async (scan, plan, signal, onSaving) => {
+          const doc = editorReadRef.current?.()
+          if (doc?.path === scan.outlinePath && doc.base !== scan.text) {
+            return 'Save the talk’s other edits, then review the fix again.'
+          }
+          const error = await applyCompetingLayoutRepair(applyOutlineMutation, scan.outlinePath, scan.text, plan,
+            (before, after) => window.tw.layoutDoctor.verifyRepair(scan.outlinePath, before, after), { signal, onSaving })
+          if (!error) notify('Fixed the competing layout tags. Undo in the editor to restore the previous text.', 'info')
+          return error
+        }}
       />
       {unresolvedBlock && createPortal(
         <div

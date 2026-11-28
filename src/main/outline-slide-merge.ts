@@ -14,22 +14,26 @@ import type { ObservedOutlineDisk, TalkWriteResult } from './talk-writer.ts'
 interface SlideMergeDeps {
   guard: OutlineDiskGuard
   recovery: Pick<OutlineRecovery, 'preserveMerge'>
+  saveTimeoutMs?: number
   vaultFor(owner: string, path: string): string | null
   readWindow(owner: string, path: string): Promise<string>
   reservedIds(vault: string): Promise<Iterable<string>>
-  stageInWindow(owner: string, request: Extract<EditorDocumentRequestBody, { kind: 'slide-merge' }>): Promise<EditorDocumentReply | null>
+  stageInWindow(owner: string, request: Extract<EditorDocumentRequestBody, { kind: 'slide-merge' }>, signal: AbortSignal): Promise<EditorDocumentReply | null>
 }
 
 type Refusal = Extract<SlideMergeFailure, { error: string }>['reason']
 const refuse = (reason: Refusal, error: string): SlideMergeFailure => ({ ok: false, reason, error })
 const ownership = () => refuse('ownership', 'This window no longer has that talk open in its vault.')
 const stalePlan = () => refuse('stale-plan', 'This merge review expired. Review the changes again.')
+const SAVE_TIMEOUT_MS = 20_000
+const saveTimeout = () => refuse('save-timeout', "Couldn't save the merge. Your window text and the disk version are both kept. Try again or Decide later.")
 const staleDisk = () => refuse('stale-disk', 'The talk changed on disk after this review. Review it again.')
 const detail = (error: unknown) => error instanceof Error ? error.message : String(error)
 
 interface PendingWrite {
   text?: string
   result?: Promise<TalkWriteResult>
+  committing?: boolean
 }
 
 interface Review {
@@ -56,6 +60,7 @@ const idsIn = (text: string) => Array.from(text.matchAll(new RegExp(ID_TOKEN_RE.
 export function createOutlineSlideMerge(deps: SlideMergeDeps) {
   const reviews = new WeakMap<object, Review>()
   const latest = new WeakMap<object, string>()
+  const lastAppliedArchive = new WeakMap<object, string>()
   const reservedByVault = new Map<string, Set<string>>()
 
   return {
@@ -83,7 +88,13 @@ export function createOutlineSlideMerge(deps: SlideMergeDeps) {
         const plan = planSlideMerge(sources.base, sources.mine, sources.disk)
         let recovery: { path: string; savedAt: number }
         try {
-          const file = await deps.recovery.preserveMerge(outlineIdentity(path).realPath, sources)
+          const file = await deps.recovery.preserveMerge(outlineIdentity(path).realPath, sources, {
+            owner: session,
+            inUse: file => deps.guard.session(owner, path) === session && (
+              latest.get(session) === generation || reviews.get(session)?.view.recovery.path === file ||
+              lastAppliedArchive.get(session) === file
+            ),
+          })
           recovery = { path: file, savedAt: statSync(file).mtimeMs }
         } catch (error) {
           return refuse('recovery-failed', `Could not save the three versions in recovery. ${detail(error)}`)
@@ -130,6 +141,8 @@ export function createOutlineSlideMerge(deps: SlideMergeDeps) {
       review.writing = writing
       let reserved: Set<string> | undefined
       let freshIds: string[] = []
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const editorRequest = new AbortController()
       try {
         // Resolve invalid choices before invoking the editor or risking a write. The second pass
         // allocates copy IDs against the destination vault and merges already in flight.
@@ -162,10 +175,22 @@ export function createOutlineSlideMerge(deps: SlideMergeDeps) {
           return refuse('recovery-failed', 'The recovery copy is missing. Open a new merge review to save a fresh copy.')
         }
         writing.text = merged.text
-        const reply = await deps.stageInWindow(owner, {
-          kind: 'slide-merge', outlinePath: path, base: review.view.sources.mine, next: merged.text, generation,
-        })
-        const result = await writing.result
+        const timeoutMs = deps.saveTimeoutMs ?? SAVE_TIMEOUT_MS
+        const deadline = Date.now() + timeoutMs
+        const expired = new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), timeoutMs) })
+        const save = (async () => {
+          const reply = await deps.stageInWindow(owner, {
+            kind: 'slide-merge', outlinePath: path, base: review.view.sources.mine, next: merged.text, generation, deadline,
+          }, editorRequest.signal)
+          return { reply, result: await writing.result }
+        })()
+        const completed = await Promise.race([save, expired])
+        // Once the writer has crossed its final authority check we owe the editor the actual
+        // outcome. A silent renderer must not turn a landed write into a rollback.
+        if (!completed && !writing.committing) return saveTimeout()
+        const reply = completed?.reply
+        const result = completed ? completed.result : await writing.result
+        if (!completed && result?.ok === false && result.untouched) return saveTimeout()
         if (result?.ok) {
           return { ok: true, savedAt: Date.now(), summary: summarizeSlideMerge(review.view, choices) }
         }
@@ -177,12 +202,14 @@ export function createOutlineSlideMerge(deps: SlideMergeDeps) {
         if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') return staleDisk()
         return refuse('save-failed', detail(error))
       } finally {
+        clearTimeout(timer)
         // An attempt sent to the editor is single-use, including a late or missing reply.
         if (writing.text !== undefined) {
           if (reviews.get(session) === review) reviews.delete(session)
         } else {
           review.writing = undefined
         }
+        editorRequest.abort()
         if (reserved) {
           for (const id of freshIds) reserved.delete(id)
           if (!reserved.size) reservedByVault.delete(vault)
@@ -204,8 +231,12 @@ export function createOutlineSlideMerge(deps: SlideMergeDeps) {
           if (!review.current() || review.writing !== write || reviews.get(session) !== review) {
             throw new Error('This merge review expired. Nothing was saved.')
           }
+          write.committing = true
         },
-        finish,
+        finish(result: TalkWriteResult) {
+          if (result.ok) lastAppliedArchive.set(session, review.view.recovery.path)
+          finish(result)
+        },
       }
     },
   }

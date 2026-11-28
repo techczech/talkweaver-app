@@ -42,6 +42,7 @@ function checkRegistration(namespace, registrar, register, requiredChannels = []
 
 checkRegistration('vault', 'registerVaultIpc', registerVaultIpc)
 checkRegistration('talk', 'registerTalkIpc', registerTalkIpc, [
+  'talk:verify-layout-repair',
   'talk:outline-plan-slide-merge',
   'talk:outline-apply-slide-merge',
 ])

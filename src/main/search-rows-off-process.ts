@@ -33,22 +33,40 @@ export class StaleSearchRowsError extends Error {
   constructor(path: string) { super(`the outline changed while its search rows were made: ${path}`); this.name = 'StaleSearchRowsError' }
 }
 
-export async function prepareSearchRows<Row, Source>(deps: {
+type SearchRowsPreparation<Row, Source> = {
   stamp: () => SearchRowsStamp
   /** Reads the current source (synchronously, right after the stamp). */
   read: () => Source
   /** The projections-only compile of `source`, off the main process's thread. */
-  compile: (source: Source) => Promise<Row[] | null>
-}, attempts = 2): Promise<SearchRowsOutcome<Row, Source>> {
+  compile: (source: Source, stamp: SearchRowsStamp) => Promise<Row[] | null>
+}
+
+export async function prepareSearchRows<Row, Source>(deps: SearchRowsPreparation<Row, Source>, attempts = 2): Promise<SearchRowsOutcome<Row, Source>> {
   for (let attempt = 0; attempt < attempts; attempt++) {
     const before = deps.stamp()
     if (!before.vaultOpen) return { rows: null, stale: false }
     const source = deps.read()
-    const rows = await deps.compile(source)
+    const rows = await deps.compile(source, before)
     if (!rows) return { rows: null, stale: false }
     const after = deps.stamp()
     if (!after.vaultOpen) return { rows: null, stale: false }
     if (after.revision === before.revision) return { rows, source, stale: false }
   }
   return { rows: null, stale: true }
+}
+
+/** The warm-up and interactive search share work only while the same revision is compiling. */
+export function createSearchRowsPreparation<Row>() {
+  const pending = new Map<string, Promise<Row[] | null>>()
+  return <Source>(scope: string, deps: SearchRowsPreparation<Row, Source> & { fingerprint(source: Source): string }): Promise<SearchRowsOutcome<Row, Source>> => prepareSearchRows({
+    ...deps,
+    compile(source, stamp) {
+      const key = `${scope}\0${stamp.revision}\0${deps.fingerprint(source)}`
+      const running = pending.get(key)
+      if (running) return running
+      const task = deps.compile(source, stamp).finally(() => { pending.delete(key) })
+      pending.set(key, task)
+      return task
+    },
+  })
 }

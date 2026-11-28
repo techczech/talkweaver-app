@@ -19,7 +19,7 @@ const path = join(scratch, 'outline.md')
 const base = '# Talk\n\n## One\n{id=a}\n\n- alpha\n- second\n\n## Two\n{id=b}\n\n- beta\n'
 const recovery = createOutlineRecovery(join(scratch, 'recovery'))
 let browser, page, writes = 0, plans = 0, replaceDiskOnPlan, removeAtPlan = false, removeAtApply = false
-let holdMergeWrite = false, mergeWriteWaiting = false, resumeMergeWrite
+let holdMergeWrite = false, mergeWriteWaiting = false, resumeMergeWrite, mergeTimeoutMs
 const guard = createOutlineDiskGuard({
   canonical: canonicalOutlinePath,
   readText: async p => { try { return await readFile(p, 'utf8') } catch (e) { if (e.code === 'ENOENT') return null; throw e } },
@@ -30,12 +30,13 @@ const guard = createOutlineDiskGuard({
 })
 configureTalkWriter({ editorBufferFor: () => null, diskGuard: guard })
 const slideMerge = createOutlineSlideMerge({
-  guard, recovery: { async preserveMerge(path, sources) {
+  guard, recovery: { async preserveMerge(path, sources, use) {
     if (await page.evaluate(() => window.failRecovery)) throw new Error('unwritable archive')
-    return recovery.preserveMerge(path, sources)
+    return recovery.preserveMerge(path, sources, use)
   } }, vaultFor: () => scratch,
   readWindow: async () => page.evaluate(() => window.read().text),
   reservedIds: async () => [],
+  get saveTimeoutMs() { return mergeTimeoutMs },
   stageInWindow: (_owner, request) => page.evaluate(request => window.commands.current.commitSlideMerge(request), request),
 })
 let writeDuringSlideMerge, loseMergeWriteReply = false
@@ -281,14 +282,18 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   const incoming = readFileSync(path,'utf8').replace('external clean','disk conflict')
   await external(incoming)
   await cards.waitFor()
-  await page.evaluate(() => window.commands.current.undo())
-  assert.equal(await page.evaluate(() => window.read().text),preMerge,'editor Undo cannot change an open review’s input')
+  await cards.evaluate(dialog => {
+    dialog.classList.remove('merge-cards')
+    try { window.commands.current.undo() }
+    finally { dialog.classList.add('merge-cards') }
+  })
+  assert.equal(await page.evaluate(() => window.read().text),preMerge,'editor Undo is blocked by review state even without the CSS class')
   assert.match((await cards.locator('article').first().locator('.merge-cards-diff pre del').allTextContents()).join(' '), /\bmine\b/)
   assert.match((await cards.locator('article').first().locator('.merge-cards-diff pre ins').allTextContents()).join(' '), /\bdisk\b/)
   assert.equal(await cards.locator('article').last().getByRole('button',{name:"Keep this window's version",exact:true}).getAttribute('aria-pressed'),'true')
   assert.equal(await apply().isDisabled(),true)
   assert.match(await cards.innerText(),/Discards your edit to this slide/)
-  assert.match(await cards.innerText(),/20 copies per talk, up to 14 days/)
+  assert.match(await cards.innerText(),/up to 14 days \(20 copies per talk\)/)
   await cards.getByRole('button',{name:'Show recovery copy',exact:true}).click()
   assert.equal(await page.evaluate(() => window.revealed), await page.evaluate(() => window.guard.slideReview.recovery.path))
   const planCount = plans
@@ -322,6 +327,11 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   assert.equal(await page.evaluate(() => document.activeElement === window.view().contentDOM),false,'the editor is inert during save')
   await page.keyboard.type('typing during save')
   await page.keyboard.press('Escape')
+  await page.keyboard.press('Escape')
+  // Exercise the non-cancelable close event too. Chromium can close an already
+  // pending close request during a second Escape.
+  await cards.evaluate(dialog => dialog.close())
+  await cards.waitFor({ timeout: 1500 })
   assert.equal(await page.evaluate(() => window.read().text),staged)
   assert.equal(await cards.isVisible(),true)
   await page.evaluate(()=>{window.leaveResult=null;window.guard.guardLeave().then(ok=>window.leaveResult=ok)})
@@ -456,6 +466,9 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   assert.ok(bundles().some(snapshot => snapshot.disk === recurring && snapshot.mine.includes('mine before revert')))
   await refresh().click()
   await cards.waitFor({state:'hidden'})
+  await page.waitForFunction(() => window.read()?.dirty === false, null, { timeout: 2000 })
+  assert.equal(readFileSync(path, 'utf8'), base.replace('alpha', 'mine before revert'))
+  await edit('mine before revert', 'new window edit after revert')
   await external(recurring)
   await cards.waitFor()
   await chooseDisk()
@@ -544,6 +557,38 @@ window.mount=()=>createRoot(document.getElementById('root')).render(<Fixture/>)
   assert.equal(readFileSync(path,'utf8'),pictureRight,'one Undo after moving back restores the saved right placement')
   await page.evaluate(async()=>{window.commands.current.undo();await window.commands.current.settleSave()})
   assert.equal(readFileSync(path,'utf8'),photoIncoming,'a second Undo restores the inherited placement after external Keep')
+  // Keep the renderer in its actual queued save until main's deadline expires.
+  await fresh()
+  const beforeTimeout = base.replace('alpha', 'window edit before timeout')
+  const diskAtTimeout = base.replace('alpha', 'disk edit before timeout')
+  await edit('alpha', 'window edit before timeout')
+  await external(diskAtTimeout)
+  await cards.waitFor()
+  await chooseDisk()
+  mergeTimeoutMs = 1500
+  holdMergeWrite = true; mergeWriteWaiting = false
+  await apply().click()
+  await page.evaluate(() => {
+    window.leaveResult = null
+    window.guard.guardLeave().then(ok => { window.leaveResult = ok })
+  })
+  await cards.getByText("Couldn't save the merge. Your window text and the disk version are both kept. Try again or Decide later.", { exact: true }).waitFor({ timeout: 5000 })
+  assert.equal(mergeWriteWaiting, true)
+  assert.equal(await page.evaluate(() => window.read().text), beforeTimeout)
+  assert.equal(readFileSync(path, 'utf8'), diskAtTimeout)
+  assert.equal(await cards.getByRole('button', { name: 'Decide later', exact: true }).isEnabled(), true)
+  assert.equal(await refresh().isEnabled(), true)
+  await page.waitForFunction(() => window.leaveResult === false)
+  await page.keyboard.press('Escape')
+  await cards.waitFor({ state: 'hidden' })
+  await page.evaluate(() => window.settled())
+  holdMergeWrite = false; mergeTimeoutMs = undefined; resumeMergeWrite()
+  await page.getByRole('button', { name: 'Review merge', exact: true }).click()
+  await cards.waitFor()
+  await chooseWindow()
+  await apply().click()
+  await closed()
+  assert.equal(readFileSync(path, 'utf8'), beforeTimeout)
   assert.deepEqual(errors,[])
   console.log('outline merge DOM: clean cursor-preserving reload, real unsaved editor + external file write, overlap UI, refresh, exact Undo, archived snapshots, and keyboard focus passed')
 } finally {

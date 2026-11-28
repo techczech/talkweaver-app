@@ -405,6 +405,7 @@ import {
   unresolvedTriggerBlock,
   type LayoutDoctorFinding
 } from '../shared/layout-doctor'
+import { competingLayoutFindings, planCompetingLayoutRepair, withCompetingLayoutFindings, type CompetingLayoutSave } from '../shared/competing-layout-repair'
 import { DEFAULT_IMPORTER_SETTINGS, type ImporterSettings } from '../shared/importer'
 import { registerImporterIpc } from './importer/ipc'
 import { vocabularyFromTagLists } from '../shared/tags'
@@ -485,7 +486,7 @@ import { slimHandoutHtml } from './handout-slimming'
 import { buildRunHandoutHtml, placedRunExtras, runCompileOption, runForHandoutOf, runHandoutSourceFrom, withRunExtraIds, type HandoutPagesJob, type HandoutPagesResult, type RunExtrasModel, type RunCompileOption, type RunForHandout, type RunHandoutSource } from './handout-pages'
 import { createPrepareTalkOffThread } from './prepare-talk-off-thread'
 import { createPreviewVariantFiles, openPreviewVariant, regularVariantFile, usablePreviewVariant, type PreviewVariant } from './preview-variant'
-import { prepareSearchRows, StaleSearchRowsError } from './search-rows-off-process'
+import { createSearchRowsPreparation, StaleSearchRowsError } from './search-rows-off-process'
 import { writeGeneratedFile } from './generated-file-write'
 import { forkCompileChild, forkHandoutPagesChild, forkHtmlPageImportChild, forkLivePageCaptureChild } from './prepare-talk-utility-process'
 import { createLivePageCaptureRunner, createLivePageCaptureSaver, encodeCapture, placeSavedView } from './live-page-capture'
@@ -3861,6 +3862,8 @@ function persistSearchIndexSoon(): void {
   }, 500)
 }
 
+const prepareSearchRows = createSearchRowsPreparation<ProjectionRowMain>()
+
 // Compile (or reuse cached) projection rows for one talk. Shared by the live handler and
 // the background warmer so they never diverge.
 async function ensureTalkRows(talk: TalkInfo, vaultRoot: string): Promise<ProjectionRowMain[] | null> {
@@ -3888,7 +3891,7 @@ async function ensureTalkRows(talk: TalkInfo, vaultRoot: string): Promise<Projec
   // (search-rows-off-process.ts): no deck reaches the main process. Rows are returned only when the
   // outline, compiler and index did not move while they were made (one retry on the current source);
   // otherwise this throws StaleSearchRowsError and the talk has no rows until the next look.
-  const outcome = await prepareSearchRows({
+  const outcome = await prepareSearchRows(`${vaultRoot}\0${talk.outlinePath}`, {
     stamp: () => {
       let mtimeMs: number | null = null
       try { mtimeMs = statSync(talk.outlinePath).mtimeMs } catch { /* gone */ }
@@ -3902,6 +3905,7 @@ async function ensureTalkRows(talk: TalkInfo, vaultRoot: string): Promise<Projec
       const content = readFileSync(talk.outlinePath, 'utf8')
       return { mtimeMs, compilerTag: thumbCacheRoot(), content, resolved: resolveImageRefs(content, vaultRoot, talk.outlinePath) }
     },
+    fingerprint: ({ resolved }) => createHash('sha256').update(resolved).digest('hex'),
     compile: (source) => preparePass.background(() => prepareTalkOffThread({
       compilerDir, outlinePath: talk.outlinePath, text: source.resolved, slug: talk.slug, rowsOnly: true,
       options: { projectionsOnly: true, allowedAssetRoots: assetRootsFor(talk.outlinePath) }
@@ -3910,6 +3914,7 @@ async function ensureTalkRows(talk: TalkInfo, vaultRoot: string): Promise<Projec
   if (outcome.stale) throw new StaleSearchRowsError(talk.outlinePath)
   if (!outcome.rows) return null
   const { rows, source: { mtimeMs, compilerTag: builtWith, content } } = outcome
+  if (searchCache.get(talk.outlinePath)?.rows === rows) return rows
   searchCache.set(talk.outlinePath, { mtimeMs, compilerTag: builtWith, rows, talkTitle: talk.title, slug: talk.slug, meta: parseTalkMeta(content), deckPictures: deckPicturesOf(content) })
   persistSearchIndexSoon()
   // New or changed pictures this rebuild brought in: read their text in the background.
@@ -4595,7 +4600,7 @@ ipcMain.handle('window:confirm-close', (event, opts?: { quit?: boolean; revision
 
 
 type EditorSlideMergeWrite = NonNullable<ReturnType<typeof outlineSlideMerge.takeWrite>>
-async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string, expectedDiskHash?: string, identity?: OutlineSaveIdentity, merge?: EditorSlideMergeWrite) {
+async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outlinePath: string, content: string, expectedDiskHash?: string, identity?: OutlineSaveIdentity, merge?: EditorSlideMergeWrite, layoutRepair?: CompetingLayoutSave) {
   renewEstablishedGalleryClaims()
   const saveEpoch = galleryEpoch
   const saveOwner = editorWindows.get(_event.sender.id)
@@ -4624,6 +4629,25 @@ async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outli
   // nothing is written, and the editor is told in the same shape as the empty-write backstop.
   const saveRefusal = outlineSaveRefusal(vaultRootFor(outlinePath), outlinePath)
   if (saveRefusal) return saveRefusal
+  const repairRefusal = (error: string) => ({ ok: false as const, refused: 'layout-repair' as const, error })
+  const staleRepair = 'The talk’s file no longer matches the reviewed text. Save or reload the talk, then review the fix again.'
+  let repairDisk: { key: string; mtime: number; hash: string } | undefined
+  if (layoutRepair) {
+    // Rebuild the bounded edit before writing. This checks the reviewed bytes outside the slide
+    // and checks for any change the save would still make, including slide IDs.
+    const plan = planCompetingLayoutRepair(layoutRepair.before, layoutRepair.headingLine)
+    if (!plan.ok) return repairRefusal(plan.error)
+    if (plan.text !== content) return repairRefusal('The text to save differs from the reviewed fix. Review it again.')
+    const acknowledged = outlineDiskGuard.acknowledged(String(_event.sender.id), outlinePath)
+    if (acknowledged?.text !== layoutRepair.before) return repairRefusal(staleRepair)
+    const disk = statSync(canonicalOutlinePath(outlinePath), { throwIfNoEntry: false })
+    if (!disk?.isFile()) return repairRefusal(staleRepair)
+    repairDisk = {
+      key: `${disk.dev}:${disk.ino}`,
+      mtime: disk.mtimeMs,
+      hash: createHash('sha256').update(layoutRepair.before, 'utf8').digest('hex')
+    }
+  }
   // HARD BACKSTOP: refuse to write a structurally-empty payload OVER a file that still holds real
   // content. This is the last line of defence against the data-loss bug (a full 58-slide outline was
   // emptied to 0 bytes during Slide Focus testing, then auto-committed by reposync). Absent/empty
@@ -4667,11 +4691,16 @@ async function writeOutlineFromEditor(_event: Electron.IpcMainInvokeEvent, outli
       }
     }
   } catch { /* stamping must never block a save */ }
+  if (layoutRepair && toWrite !== content) return repairRefusal('Saving would add slide IDs. Save the talk, then review the fix again.')
   // The editor's own queued save: written by the guarded writer under the file's lock, never routed.
   const written = await writeTalkOutline(outlinePath, toWrite, 'editor', {
     authorize: merge ? () => { authorize(); merge.authorize() } : authorize,
-    expectedDiskHash, observedDisk: merge?.disk,
+    expectedDiskHash: expectedDiskHash ?? repairDisk?.hash, observedDisk: merge?.disk ?? repairDisk,
   })
+  if (layoutRepair && !written.ok && written.staleDisk) {
+    void outlineDiskGuard.check(outlinePath).catch(() => undefined)
+    return repairRefusal(staleRepair)
+  }
   merge?.finish(written)
   // The renderer rolls back a refused merge. Its original buffer already has an immutable archive.
   if (merge && !written.ok) {
@@ -4825,7 +4854,10 @@ function layoutScan(root: string): LayoutDoctorTalk[] {
   for (const talk of findTalks(root)) {
     let text = ''
     try { text = readFileSync(talk.outlinePath, 'utf8') } catch { continue }
-    const findings = scanOutlineTriggers(text, LAYOUT_DOCTOR_VOCABULARY, { strandedTitleIcons: true })
+    const findings = withCompetingLayoutFindings(
+      scanOutlineTriggers(text, LAYOUT_DOCTOR_VOCABULARY, { strandedTitleIcons: true }),
+      competingLayoutFindings(text)
+    )
     if (findings.length > 0) report.push({ talk: talk.title, slug: talk.slug, outlinePath: talk.outlinePath, findings })
   }
   layoutScanCache = { root, at: Date.now(), report }
@@ -8042,15 +8074,23 @@ const editorDocumentReplies = new Map<string, { senderId: number; resolve(value:
 ipcMain.handle('outline:editor-reply', (event, requestId: unknown, value: unknown) => {
   const reply = typeof requestId === 'string' ? editorDocumentReplies.get(requestId) : undefined
   if (!reply || reply.senderId !== event.sender.id) return
-  editorDocumentReplies.delete(requestId as string)
   reply.resolve(value && typeof value === 'object' ? value as EditorDocumentReply : null)
 })
-function requestEditorDocument(win: BrowserWindow, request: EditorDocumentRequestBody): Promise<EditorDocumentReply | null> {
+function requestEditorDocument(win: BrowserWindow, request: EditorDocumentRequestBody, signal?: AbortSignal): Promise<EditorDocumentReply | null> {
   return new Promise((resolve) => {
+    if (signal?.aborted) { resolve(null); return }
     const requestId = randomBytes(12).toString('hex')
-    const timer = setTimeout(() => { editorDocumentReplies.delete(requestId); resolve(null) }, 10_000)
-    editorDocumentReplies.set(requestId, { senderId: win.webContents.id, resolve(value) { clearTimeout(timer); resolve(value) } })
-    try { win.webContents.send('outline:editor-request', { ...request, requestId }) } catch { clearTimeout(timer); editorDocumentReplies.delete(requestId); resolve(null) }
+    const finish = (value: EditorDocumentReply | null) => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', expire)
+      editorDocumentReplies.delete(requestId)
+      resolve(value)
+    }
+    const expire = () => finish(null)
+    const timer = signal ? undefined : setTimeout(expire, 10_000)
+    signal?.addEventListener('abort', expire, { once: true })
+    editorDocumentReplies.set(requestId, { senderId: win.webContents.id, resolve: finish })
+    try { win.webContents.send('outline:editor-request', { ...request, requestId }) } catch { expire() }
   })
 }
 // Also the talk writer's editor route (talk-writer.ts EditorBuffer): `origin` names the writer so the
@@ -8180,9 +8220,9 @@ const outlineSlideMerge = createOutlineSlideMerge({
     if (!ledger) throw new Error('The vault’s slide ledger is unavailable.')
     return ledger.idsInVault(root)
   },
-  stageInWindow(owner, request) {
+  stageInWindow(owner, request, signal) {
     const editor = editorWindows.get(Number(owner))
-    return editor ? requestEditorDocument(editor.win, request) : Promise.resolve(null)
+    return editor ? requestEditorDocument(editor.win, request, signal) : Promise.resolve(null)
   },
 })
 quitSequence.add({ name: 'Stop directory watch process', stage: 'will-quit', timeoutMs: 0, run: directoryWatchService.stop })

@@ -3,6 +3,7 @@ import { AlertTriangle, Check, CircleCheck, CodeXml, FileDiff, FileText, HardDri
 import type { SlideMergeChoice, SlideMergeChoices, SlideMergeDiffSpan, SlideMergeSide } from '../../../shared/outline-merge'
 import { summarizeSlideMerge, WHOLE_TALK_MERGE_KEY, type SlideMergeReview, type SlideMergeReviewRow } from '../../../shared/outline-slide-merge'
 import { changedAtLabel } from '../lib/outlineDiskChange'
+import { openSlideMergeReview } from '../lib/slideMergeTransaction'
 import { mergeResultText, mergeSideName, mergeStatusLabel, revealMergeArchive, slideChoiceWarning, slideSourceLabel } from './outlineMergeCopy'
 import ReviewChangedLines from './ReviewChangedLines'
 import './SlideMergeCards.css'
@@ -149,9 +150,11 @@ export default function SlideMergeCards({ path, title, review, busy, saving, sta
 
   useLayoutEffect(() => {
     const element = dialog.current
-    element?.showModal()
+    if (!element) return
+    element.showModal()
+    const release = openSlideMergeReview()
     heading.current?.focus({ preventScroll: true })
-    return () => { element?.close() }
+    return () => { release(); element.close() }
   }, [])
   useEffect(() => {
     if (whole) return
@@ -182,7 +185,14 @@ export default function SlideMergeCards({ path, title, review, busy, saving, sta
   const details = review.details
   const order = review.order
   return <dialog ref={dialog} className="merge-cards" aria-labelledby="merge-cards-title" data-testid="outline-merge-sheet"
-    onCancel={event => { event.preventDefault(); if (!busy) onDismiss() }}>
+    onCancel={event => { event.preventDefault(); if (!busy) onDismiss() }}
+    onClose={event => {
+      const element = event.currentTarget
+      if (!element.isConnected || element.open) return
+      // React owns dismissal. A native close request can arrive while Save is still rendering.
+      element.showModal()
+      heading.current?.focus({ preventScroll: true })
+    }}>
     <header className="merge-cards-titlebar tw-window-drag">
       <FileDiff size={17} /><h2 id="merge-cards-title" ref={heading} tabIndex={-1}>This talk was changed outside TalkWeaver</h2>
       <span className="merge-cards-talk-title" title={title}>{title}</span>
@@ -253,7 +263,7 @@ export default function SlideMergeCards({ path, title, review, busy, saving, sta
         <p><ShieldCheck size={13} /><span>Recovery saved at {changedAtLabel(review.recovery.savedAt)} with all three versions: last save, this window and disk. <button type="button" className="merge-cards-link" disabled={busy}
           onClick={() => { void revealMergeArchive(review.recovery.path).then(setArchiveMissing) }}>Show recovery copy</button></span></p>
         {archiveMissing && <p role="status">The recovery copy could not be opened. It may have expired.</p>}
-        <p><Undo2 size={13} /><span>Undo (⌘Z) restores this window. After Undo and autosave, disk edits are only in recovery (20 copies per talk, up to 14 days).</span></p>
+        <p><Undo2 size={13} /><span>Undo (⌘Z) restores this window. After Undo and autosave, disk edits are in the recovery copy. Older copies are kept for up to 14 days (20 copies per talk).</span></p>
       </div>
       <div className="merge-cards-footer-actions">
         <button type="button" disabled={busy} onClick={onDismiss} aria-label="Decide later" aria-description="Nothing is written. The disk version stays in the file and this window keeps your unsaved text.">

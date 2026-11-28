@@ -9,7 +9,6 @@ import {
   winningAuthoredLayout
 } from './layout-registry/vocabulary.ts'
 import type { TriggerVocabulary } from './layout-registry/vocabulary.ts'
-import { LAYOUTS } from './layout-registry/entries.ts'
 import {
   LIST_VALUE_KEYS,
   logicalTriggerBlockAfterHeading,
@@ -28,7 +27,7 @@ import { STRANDED_TITLE_ICON_MESSAGE, strandedTitleIcons } from './title-icon-re
 
 export type DoctorFindingKind =
   | 'unknown-word' | 'unregistered-key' | 'unregistered-value'
-  | 'trigger-conflict' | 'duplicate-layout' | 'duplicate-slide-id'
+  | 'trigger-conflict' | 'duplicate-layout' | 'competing-layouts' | 'duplicate-slide-id'
   | 'stranded-title-icon'
 
 export interface LayoutDoctorFinding {
@@ -64,14 +63,6 @@ export function listValueSpaceHint(raw: string): string {
   return `No space after the comma in {${key}=…}: write the list without spaces${key === 'reactions' ? ', as {reactions=agree,disagree}, and quote a label with spaces, as "Too fast"' : ''}`
 }
 export const LAYOUT_DOCTOR_FENCE_AUTHORITY = scanFencedLines
-const VALUE_FORM_LAYOUTS = new Map<string, string>()
-for (const entry of LAYOUTS) {
-  if (entry.kind !== 'layout') continue
-  for (const trigger of [entry.trigger, ...entry.aliases]) {
-    const raw = trigger.replace(/^\{|\}$/g, '')
-    if (raw.includes('=')) VALUE_FORM_LAYOUTS.set(raw, entry.name)
-  }
-}
 
 function leadingFrontmatter(lines: readonly string[]): {
   end: number
@@ -251,12 +242,7 @@ export function scanOutlineTriggers(
       return // not a legal token shape; parseHeadingAttrs skips it too
     }
     // Exclusivity + conflict bookkeeping (mirrors setKey at 02-triggers-layout.mjs:52-58).
-    const valueFormLayout = eq > 0 ? VALUE_FORM_LAYOUTS.get(raw) : undefined
-    const meaning = valueFormLayout
-      ? [{ key: 'layout', value: valueFormLayout }]
-      : eq > 0 || colon > 0
-        ? [{ key, value }]
-        : meaningForToken(raw)
+    const meaning = eq > 0 || colon > 0 ? [{ key, value }] : meaningForToken(raw)
     for (const pair of meaning) {
       if (pair.key === 'layout') {
         layoutTokens.push(raw)

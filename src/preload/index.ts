@@ -23,6 +23,7 @@ import type { ImageSearchResult, ImageSearchStatus, ImportedImage, MatchMode, Va
 import type { LayoutPreviewCheck } from '../shared/list-layout-suggestions'
 import type { VariantThumbnail } from '../shared/variant-thumbnail-result'
 import type { EditorDocumentReply, EditorDocumentRequest } from '../shared/editor-document'
+import type { CompetingLayoutSave } from '../shared/competing-layout-repair'
 import type { OutlineSaveIdentity } from '../shared/outline-save-identity'
 import type { RunQuestion, RunReaction } from '../shared/run-feedback'
 import type { RunBoard } from '../shared/run-board'
@@ -682,7 +683,9 @@ const api = {
       ipcRenderer.invoke('metadata:edit-frontmatter', outlinePath, edits)
   },
   layoutDoctor: {
-    scan: (): Promise<LayoutDoctorTalk[]> => ipcRenderer.invoke('layout:doctor')
+    scan: (): Promise<LayoutDoctorTalk[]> => ipcRenderer.invoke('layout:doctor'),
+    verifyRepair: (outlinePath: string, before: string, after: string): Promise<boolean | null> =>
+      ipcRenderer.invoke('talk:verify-layout-repair', outlinePath, before, after)
   },
   vault: {
     getRoot: (): Promise<string | null> => ipcRenderer.invoke('vault:get-root'),
@@ -1079,8 +1082,8 @@ const api = {
     writeOutline: (
       outlinePath: string,
       content: string,
-      opts?: { revision?: number; expectedDiskHash?: string; identity?: OutlineSaveIdentity; slideMergeGeneration?: string }
-    ): Promise<{ ok: true; collisions: string[]; content?: string } | { ok: false; refused: 'empty-over-nonempty' | 'ownership' } | { ok: false; refused: 'outside-vault'; error: string } | OutlineChangedOnDiskRefusal | false> =>
+      opts?: { revision?: number; expectedDiskHash?: string; identity?: OutlineSaveIdentity; slideMergeGeneration?: string; layoutRepair?: CompetingLayoutSave }
+    ): Promise<{ ok: true; collisions: string[]; content?: string } | { ok: false; refused: 'empty-over-nonempty' | 'ownership' } | { ok: false; refused: 'outside-vault' | 'layout-repair'; error: string } | OutlineChangedOnDiskRefusal | false> =>
       ipcRenderer.invoke('talk:write-outline', outlinePath, content, opts),
     // `{ superseded: true }`: a newer live-preview compile of the same talk from this window replaced
     // this one before it started (main's single-flight gate); ignore it, the newer reply follows.

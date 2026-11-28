@@ -10,10 +10,14 @@ import {
   type LayoutDoctorFinding
 } from '../../../shared/layout-doctor'
 import { STRANDED_TITLE_ICON_ACTION } from '../../../shared/title-icon-restore'
+import { competingLayoutFindings, planCompetingLayoutRepair, withCompetingLayoutFindings, type CompetingLayoutRepair } from '../../../shared/competing-layout-repair'
 import { MOVE_PREWORK_ACTION } from '../../../shared/prework-move'
 import { warningsForSurface } from '../../../../compiler/scripts/lib/warning-registry.mjs'
 import { usePausedScan } from '../lib/pausedScan'
 import { plainTalkTitle } from '../../../shared/plain-title'
+
+type DoctorScan = { outlinePath: string; text: string }
+type ApplyLayoutRepair = (scan: DoctorScan, plan: CompetingLayoutRepair, signal: AbortSignal, onSaving: () => void) => Promise<string | null>
 
 interface Props {
   isOpen: boolean
@@ -23,12 +27,13 @@ interface Props {
   slideRows: ProjectionRow[] | null
   onJumpToLine: (line: number) => void
   /**
-   * The one fix the doctor makes itself (plain view ticket 15): move a title's icon from its layout
+   * Move a title's icon from its layout
    * line to the title, in the open talk's buffer. Resolves to null when it was moved, or to the
    * words to show when it was not. `scan`: the talk and the exact outline text the finding was read
    * from; the move is refused unless the editor still holds that text.
    */
-  onRestoreTitleIcon?: (finding: LayoutDoctorFinding, scan: { outlinePath: string; text: string }) => Promise<string | null>
+  onRestoreTitleIcon?: (finding: LayoutDoctorFinding, scan: DoctorScan) => Promise<string | null>
+  onApplyLayoutRepair?: ApplyLayoutRepair
 }
 
 type CompilerNote = {
@@ -46,6 +51,7 @@ const KIND_ORDER: DoctorFindingKind[] = [
   'unregistered-key',
   'unregistered-value',
   'trigger-conflict',
+  'competing-layouts',
   'duplicate-layout',
   'duplicate-slide-id',
   'stranded-title-icon'
@@ -56,6 +62,7 @@ const KIND_LABELS: Record<DoctorFindingKind, string> = {
   'unregistered-key': 'Unregistered key',
   'unregistered-value': 'Unregistered value',
   'trigger-conflict': 'Trigger conflict',
+  'competing-layouts': 'Competing layouts',
   'duplicate-layout': 'Duplicate layout',
   'duplicate-slide-id': 'Duplicate slide id',
   'stranded-title-icon': 'Icon not on the title'
@@ -248,6 +255,98 @@ function FindingGroups({
   )
 }
 
+function RepairLines({ text }: { text: string }) {
+  return (
+    <code style={S.attributeLine}>
+      {text.split('\n').map((line, index) => <span key={index} style={S.previewLine}>{line}</span>)}
+    </code>
+  )
+}
+
+function CompetingLayoutRow({ finding, scan, waiting, onJump, onApply }: {
+  finding: LayoutDoctorFinding
+  scan: DoctorScan
+  waiting: boolean
+  onJump: () => void
+  onApply: ApplyLayoutRepair
+}) {
+  const [preview, setPreview] = useState<{ scan: DoctorScan; plan: CompetingLayoutRepair } | null>(null)
+  const [phase, setPhase] = useState<'checking' | 'saving' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const check = useRef<AbortController | null>(null)
+  useEffect(() => () => {
+    check.current?.abort()
+    check.current = null
+  }, [])
+
+  const current = preview && preview.scan.text === scan.text && !waiting ? preview : null
+  const review = () => {
+    setError(null)
+    const plan = planCompetingLayoutRepair(scan.text, finding.headingLine)
+    if (plan.ok) setPreview({ scan, plan })
+    else setError(plan.error)
+  }
+  const apply = async () => {
+    if (!current || check.current) return
+    const controller = new AbortController()
+    check.current = controller
+    setPhase('checking')
+    setError(null)
+    try {
+      const refusal = await onApply(current.scan, current.plan, controller.signal, () => setPhase('saving'))
+      if (!controller.signal.aborted) {
+        if (refusal) setError(refusal)
+        else setPreview(null)
+      }
+    } catch {
+      if (!controller.signal.aborted) setError('The repair could not be completed. Check the talk in the editor.')
+    } finally {
+      if (check.current === controller) {
+        check.current = null
+        setPhase(null)
+      }
+    }
+  }
+  const cancel = () => {
+    check.current?.abort()
+    setPreview(null)
+    setError(null)
+  }
+  return (
+    <div>
+      <FindingRow finding={finding} onJump={onJump} />
+      <div style={S.repairPreview}>
+        {current ? (
+          <>
+            {current.plan.lines.map(change => {
+              const last = change.line + change.before.split('\n').length - 1
+              return (
+                <div key={change.line}>
+                  <div>Before · {last === change.line ? `line ${last}` : `lines ${change.line}–${last}`}</div>
+                  <RepairLines text={change.before} />
+                  <div>After</div>
+                  {change.after === null ? <div>Lines removed</div> : <RepairLines text={change.after} />}
+                </div>
+              )
+            })}
+            <div style={S.repairActions}>
+              <button type="button" style={S.fixAction} disabled={phase !== null} onClick={apply}>
+                {phase === 'checking' ? 'Checking the compiled slides…' : phase === 'saving' ? 'Saving…' : 'Apply reviewed fix'}
+              </button>
+              <button type="button" style={S.closeAction} disabled={phase === 'saving'} onClick={cancel}>
+                Cancel
+              </button>
+            </div>
+          </>
+        ) : (
+          <button type="button" style={S.fixAction} disabled={waiting || phase !== null} onClick={review}>Review fix…</button>
+        )}
+        {error ? <div style={S.notFixed} role="alert">{error}</div> : null}
+      </div>
+    </div>
+  )
+}
+
 type EmptyStateScope = 'talk' | 'compiler' | 'vault'
 
 const EMPTY_STATE_COPY: Record<EmptyStateScope, string> = {
@@ -275,7 +374,8 @@ export default function LayoutDoctorPanel({
   outlineText,
   slideRows,
   onJumpToLine,
-  onRestoreTitleIcon
+  onRestoreTitleIcon,
+  onApplyLayoutRepair
 }: Props) {
   const [vaultReport, setVaultReport] = useState<LayoutDoctorTalk[] | null>(null)
   const [vaultError, setVaultError] = useState<string | null>(null)
@@ -293,9 +393,12 @@ export default function LayoutDoctorPanel({
   )
   const stranded = usePausedScan(isOpen ? outlineText : null, strandedTitleIconFindings, talk.outlinePath)
   const strandedFindings = stranded.scanned?.result
+  const competing = usePausedScan(isOpen ? outlineText : null, competingLayoutFindings, talk.outlinePath)
+  const competingScan = competing.scanned
+  const competingFindings = competingScan?.result
   const talkFindings = useMemo(
-    () => (strandedFindings?.length ? [...triggerFindings, ...strandedFindings] : triggerFindings),
-    [triggerFindings, strandedFindings]
+    () => withCompetingLayoutFindings([...triggerFindings, ...(strandedFindings ?? [])], competingFindings ?? []),
+    [triggerFindings, strandedFindings, competingFindings]
   )
   // The text the stranded-icon rows were read from, kept with them: a fix is bound to it (title-icon-restore.ts).
   const strandedText = stranded.scanned?.text
@@ -401,9 +504,8 @@ export default function LayoutDoctorPanel({
               <span style={S.sectionTitle}>This talk</span>
               <span style={S.sectionCount}>{talkFindings.length}</span>
             </div>
-            {talkFindings.length === 0 && stranded.pending ? (
-              // Nothing found so far, and the title icons are still to be read: not yet "all clear".
-              <div style={S.loading}>Checking where this talk’s title icons are written…</div>
+            {talkFindings.length === 0 && (stranded.pending || competing.pending) ? (
+              <div style={S.loading}>Checking this talk’s slide attributes…</div>
             ) : talkFindings.length === 0 ? (
               <EmptyState scope="talk" detail="" />
             ) : (
@@ -416,7 +518,16 @@ export default function LayoutDoctorPanel({
                     <div style={S.kindHeading}>
                       {KIND_LABELS[group.kind]} · {group.findings.length}
                     </div>
-                    {group.findings.map((finding, index) => (
+                    {group.findings.map((finding, index) => finding.kind === 'competing-layouts' && competingScan && onApplyLayoutRepair ? (
+                      <CompetingLayoutRow
+                        key={`${talk.outlinePath}:${finding.headingLine}`}
+                        finding={finding}
+                        scan={{ outlinePath: talk.outlinePath, text: competingScan.text }}
+                        waiting={competing.pending || competingScan.text !== outlineText}
+                        onJump={() => jump(finding.line)}
+                        onApply={onApplyLayoutRepair}
+                      />
+                    ) : (
                       <FindingRow
                         key={`${finding.headingLine}:${finding.line}:${finding.kind}:${finding.token}:${index}`}
                         finding={finding}
@@ -629,6 +740,10 @@ const S: Record<string, React.CSSProperties> = {
     color: OXFORD, padding: '3px 9px', fontSize: '0.7rem', fontWeight: 650, cursor: 'pointer'
   },
   fixActionWaiting: { color: FAINT, cursor: 'default' },
+  repairPreview: { padding: '6px 8px 10px', fontSize: '0.75rem', color: MUTED, display: 'grid', gap: 6 },
+  previewLine: { display: 'block', minHeight: '1lh' },
+  attributeLine: { display: 'block', padding: '3px 6px', fontFamily: MONO, whiteSpace: 'break-spaces', overflowWrap: 'anywhere', color: INK, background: PANEL },
+  repairActions: { display: 'flex', gap: 8 },
   loading: { color: FAINT, fontSize: '0.78rem', padding: '10px 11px' },
   errorBox: {
     color: ERROR, fontSize: '0.78rem', padding: '9px 11px',

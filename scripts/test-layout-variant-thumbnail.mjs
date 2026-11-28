@@ -352,6 +352,11 @@ console.log('ok: variants render, differ by layout and option, cache, and say wh
   const lostWord = await checked(['Five', 'Catalogue', 'Catalogue', 'Catalogue'])
   assert.equal(lostWord.status, 'cannot-take')
   assert.match(lostWord.reason, /leave out/)
+  const afterRefusal = prepares
+  assert.deepEqual(await checked(['Five', 'Catalogue', 'Catalogue', 'Catalogue']), lostWord)
+  assert.equal(prepares, afterRefusal, 'reopening the same fit check reuses its measured refusal')
+  await checked(['Five', 'Catalogue', 'Catalogue', 'Different'])
+  assert.equal(prepares, afterRefusal + 1, 'different fit requirements are measured independently')
   console.log('ok: the IPC handler gates, varies by layout and caches')
 }
 

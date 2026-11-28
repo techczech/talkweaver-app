@@ -135,6 +135,7 @@
     "test:opt-in-slide-designs",
     "test:sampler-report",
     "test:layout-doctor",
+    "test:layout-doctor-competing-layouts",
     "test:layout-doctor-restore-title-icon",
     "test:layout-doctor-stranded-icon-scan-callers",
     "test:layout-doctor-paused-icon-scan",
