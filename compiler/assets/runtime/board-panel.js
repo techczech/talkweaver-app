@@ -576,6 +576,14 @@ export function createBoardPanel(options) {
     const box = mode === 'beside' && actions.toastBox ? actions.toastBox() : null
     if (box) { toast.style.position = 'fixed'; toast.style.left = `${box.left}px`; toast.style.top = `${box.top}px` }
   }
+  function reposition() {
+    if (root.hidden || !frame) return
+    actions.place?.(root, mode)
+    const toast = frame.layer.querySelector('.bp-toast')
+    if (toast) placeToast(toast)
+    const menuBox = menu && frame.layer.querySelector('.bp-menu')
+    if (menuBox) placeMenu(menuBox)
+  }
 
   // ── Drag and drop (pointer) ────────────────────────────────────────────────────────────
   function dropAt(x, y) {
@@ -734,6 +742,7 @@ export function createBoardPanel(options) {
     mode: () => mode,
     setSlideLabel(value) { slideLabel = value || '' },
     render,
+    reposition,
     isOpen: () => shown && !root.hidden,
   }
 }

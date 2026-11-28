@@ -160,11 +160,21 @@ export function createPrepareTalkOffThread(childPath: string, spawn: SpawnCompil
     })
   }
 
-  function prepareTalkOffThread(request: PrepareTalkRequest): Promise<PrepareTalkAnswer> {
-    return submit<PrepareTalkAnswer>(request, ({ resolve, reject, finish, variantDeadline }) => {
+  function prepareTalkOffThread(request: PrepareTalkRequest, signal?: AbortSignal): Promise<PrepareTalkAnswer> {
+    if (signal?.aborted) return Promise.reject(signal.reason)
+    return submit<PrepareTalkAnswer>(request, ({ resolve, reject, finish, send, variantDeadline }) => {
+      const done = (): void => {
+        signal?.removeEventListener('abort', cancel)
+        finish()
+      }
+      const cancel = (): void => {
+        try { send({ kind: 'cancel-preview' }) } catch { /* the child has already stopped */ }
+        fail(new Error('Preview cancelled'))
+      }
+      signal?.addEventListener('abort', cancel, { once: true })
       let resolveVariant: ((preview?: PreviewVariant) => void) | undefined
       const fail = (error: Error): void => {
-        finish()
+        done()
         if (resolveVariant) resolveVariant()
         else reject(error)
       }
@@ -172,7 +182,7 @@ export function createPrepareTalkOffThread(childPath: string, spawn: SpawnCompil
         fail,
         reply: (answer) => {
           if (answer.kind === 'variant' && resolveVariant) {
-            finish()
+            done()
             resolveVariant(answer.preview)
           }
           if (answer.kind !== undefined || resolveVariant) return
@@ -182,7 +192,7 @@ export function createPrepareTalkOffThread(childPath: string, spawn: SpawnCompil
             previewReady = new Promise((ready) => { resolveVariant = ready })
             variantDeadline()
           } else {
-            finish()
+            done()
           }
           resolve({ model: answer.model, rows: answer.rows, previewKey: answer.previewKey, previewReady })
         }

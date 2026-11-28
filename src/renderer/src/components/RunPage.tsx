@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react'
-import { plainTalkTitle } from '../../../shared/plain-title'
+import { talkTitleText } from '../../../shared/talk-title-text'
 import { Check, CircleCheck, CircleDot, ClipboardCopy, Clock, Copy, CopyPlus, Eye, EyeOff, FolderOpen, Globe, LayoutGrid, ListChecks, LoaderCircle, Pencil, Presentation, Radio } from 'lucide-react'
 import type { ActionId, ChecklistAction, ChecklistStep, RunChecklist } from '../../../shared/run-checklist'
 import { runActionEffect, type RunPageEffect } from '../../../shared/run-page'
-import type { SessionSource } from '../../../shared/sessions-list'
+import { runTitleAndWhen, type SessionSource } from '../../../shared/sessions-list'
 import { RunAnswers } from './RunAnswers'
 import { RunExtrasSection } from './RunExtras'
 import { StateBadge, badgeStateOfPill } from './StateBadge'
@@ -136,12 +136,14 @@ export function RunPage({ source, checklist, onEffect, onCopy, onPlanLikeThis, o
     return () => cancelAnimationFrame(frame)
   }, [source.talkSlug, source.runId, phase, checklist.counter])
 
+  const { name } = runTitleAndWhen(source)
+  const talkTitle = talkTitleText(source.talkTitle)
   return (
     <div className="tw-sess-detail" data-sessions-detail={`${source.talkSlug}/${source.runId}`} data-run-phase={phase}>
       <div className="tw-sess-dhead">
         <div className="tw-sess-dtitle">
-          <h1>{plainTalkTitle(source.eventTitle || source.talkTitle)}</h1>
-          <div className="sub"><Presentation aria-hidden /><span>{plainTalkTitle(source.talkTitle)}</span><StateBadge state={checklist.phase === 'publishing' ? 'planned' : badgeStateOfPill(checklist.pill.kind)} data-run-pill data-pill-kind={checklist.pill.kind}>{checklist.pill.label}</StateBadge></div>
+          <h1>{name}</h1>
+          <div className="sub">{talkTitle && talkTitle !== name && <><Presentation aria-hidden /><span>{talkTitle}</span></>}<StateBadge state={checklist.phase === 'publishing' ? 'planned' : badgeStateOfPill(checklist.pill.kind)} data-run-pill data-pill-kind={checklist.pill.kind}>{checklist.pill.label}</StateBadge></div>
         </div>
         {onPlanLikeThis && <button type="button" className="tw-btn" data-run-plan-like-this disabled={busy} onClick={onPlanLikeThis}><CopyPlus aria-hidden />Plan the next Run like this</button>}
       </div>

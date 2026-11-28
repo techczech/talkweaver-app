@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { _electron as electron } from 'playwright'
+import { openTalkByTitle } from '../e2e/lib/talklist.mjs'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 const bundle = resolve(process.argv[2])
@@ -25,8 +26,7 @@ try {
   const state = await instance.evaluate(({ app, BrowserWindow }) => ({ packaged: app.isPackaged, hidden: BrowserWindow.getAllWindows().every(w => !w.isVisible()), windows: BrowserWindow.getAllWindows().length }))
   assert.equal(await instance.evaluate(({ app }) => app.getName()), 'TalkWeaver Security Test')
   assert.equal(state.packaged, true); assert.equal(state.hidden, true); assert.ok(state.windows > 0)
-  await page.locator('[data-talk-slug="fixture"]').first().dblclick()
-  await page.locator('.cm-content').waitFor()
+  await openTalkByTitle(page, 'Test flavour')
   await instance.evaluate((_electron, external) => { globalThis.__twE2eHtmlPagePick = external }, external)
   const imported = await page.evaluate(async outline => { const pick = await window.tw.htmlPage.choose(outline); if (!pick?.ok) return pick; return window.tw.htmlPage.import(pick.token, outline) }, outline)
   assert.equal(imported?.ok, true, JSON.stringify(imported))

@@ -63,6 +63,8 @@ export const WARNING_REGISTRY = [
   warning('logo-colour-unknown', 'warning', 'Unknown deck logo colour: {payload}.', 'Choose unified or brand for the logo colour.'),
   warning('media-budget-exhausted', 'hint', 'Slide {1} keeps {2} outside this export: the deck’s media budget is spent.', 'Keep the assets folder beside this copy, or trim the deck’s media.', ['doctor']),
   warning('missing-asset', 'error', 'Slide {1} cannot find asset {2}.', 'Restore the asset or update the source path.'),
+  warning('widget-media-omitted', 'warning', 'Slide {1} left out widget file {2} to fit the media budget.', 'Reduce the size of the widget’s files.', ['strip-badge', 'inspector', 'doctor']),
+  warning('missing-widget-dependency', 'warning', 'Slide {1} could not include widget resource {2}.', 'Restore the resource beside the widget and check its relative path.'),
   warning('missing-image', 'error', 'Slide {1} cannot find image {2}.', 'Restore the image or update the source path.'),
   warning('missing-source-ref', 'warning', 'Slide {payload} has no source reference.', 'Add a source reference or mark the slide as linking.'),
   warning('numbered-unknown', 'warning', 'Unknown number style: {payload}.', 'Choose a registered number style: mono, plain or styled.'),

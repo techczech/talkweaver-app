@@ -213,7 +213,6 @@
 @keyframes twsSlideSwap { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
 .tws-slide-missing { text-align: center; color: var(--lt-ink-faint); font-size: 13px; padding: 12px; }
 .tws-slide-missing .lt-icon { width: 24px; height: 24px; margin: 0 auto 8px; stroke-width: 1.4; }
-.tws-slide-missing .tws-sid { font-family: var(--lt-mono); font-size: 11px; }
 
 .tws-transcript-seam { flex: none; width: 296px; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--lt-hair); background: var(--panel); padding: 16px 0 0; }
 .tws-ts-head { display: flex; align-items: center; gap: 8px; padding: 0 16px 10px; }

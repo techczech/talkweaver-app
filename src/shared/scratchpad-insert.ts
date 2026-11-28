@@ -35,7 +35,7 @@ export interface ScratchVisual {
 }
 
 const IMAGE_RE = /!\[([^\]]*)\]\(\s*([^)\s]+)(?:\s+"[^"]*")?\s*\)/g
-const EMBED_RE = /^\[Embed:\s*(.+?)\]$/i
+const EMBED_RE = /^\[(?:Embed|Simulation):\s*(.+?)\]$/i
 const POOL_RE = /^(?:img-(?:img-)?[0-9a-f]{7}|vid-[0-9a-f]{7})$/i
 const VIDEO_RE = /\.(?:mp4|mov|m4v|webm)(?:[?#].*)?$/i
 const ADDRESS_RE = /^(?:[a-z][a-z0-9+.-]*:|\/\/)/i

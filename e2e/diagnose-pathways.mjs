@@ -1,5 +1,6 @@
 // Main-window Pathways on a COPY of a bundled fixture talk. All Electron windows stay hidden.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { _electron as electron } from 'playwright'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -27,7 +28,7 @@ try {
   page.on('pageerror', e => errors.push(e.message))
   const hidden = () => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(w => !w.isVisible()))
   assert.equal(await hidden(), true); pass('editor opens hidden on its own profile')
-  await page.getByText('Garden notes', { exact: true }).first().dblclick()
+  await openTalkByTitle(page, 'Garden notes')
   await page.locator('.cm-content').waitFor()
   await page.waitForTimeout(2000) // allow ordinary initial id stamping/autosave to settle
   const original = readFileSync(outline, 'utf8')

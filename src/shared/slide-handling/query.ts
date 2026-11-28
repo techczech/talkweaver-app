@@ -3,14 +3,79 @@
 // grid, the outline sidebar, the Slide Browser (its main-process scan) and the Scratchpad.
 //
 // What is typed:
-//  - a leading Browser operator, `t:` (title), `s:` (slide text), `i:` (picture text) or `e:` (exact phrase over all
+//  - a leading Browser operator, `t:` (title), `s:` (slide text), `i:` (picture text) `widget:` (widgets) or `e:` (exact phrase over all
 //    fields); the rest of the line is the text (surrounding quotes stripped);
 //  - Scratchpad prefixes anywhere: `slide: svg: html: pic:` (type) and `from:<word>` (source talk), the rest plain words
 //    (a double-quoted run stays one word).
 // The Browser takes operators and no prefixes, the Scratchpad prefixes and no operators (each keeps the vocabulary it
 // always had; `opts`), the grid and the outline take both.
 
-export type SlideScope = 'all' | 'title' | 'body' | 'image'
+/** Authored local files that need to keep their path when a slide changes talks. */
+export interface SlideFileRef { ref: string; kind: string; title?: string; start?: number }
+
+export function slideFiles(markdown: string): SlideFileRef[] {
+  const found: SlideFileRef[] = []
+  let fence = ''
+  // Keep source offsets while hiding commented-out objects.
+  const visible = markdown.replace(/<!--[^]*?(?:-->|$)/g, (comment) => comment.replace(/[^\r\n]/g, ' '))
+  for (const row of visible.matchAll(/[^\n]+/g)) {
+    const line = row[0].replace(/\r$/, '')
+    const marker = /^\s*(`{3,}|~{3,})(.*)$/.exec(line)
+    if (fence) {
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !marker[2].trim()) fence = ''
+      continue
+    }
+    if (marker) {
+      fence = marker[1]
+      const info = marker[2].trim()
+      if (/^(svg|html)(?:\s|$)/i.test(info)) found.push({ ref: '', kind: info.split(/\s/)[0].toLowerCase() })
+      if (/^(?:chat|terminal|trace)(?:\s|$)/i.test(info) || /\{(?:chat(?:-lanes)?|terminal(?:-agent)?|trace)(?:[\s}=])/i.test(info)) found.push({ ref: '', kind: 'chat simulation' })
+      continue
+    }
+    const directive = /^\s*\[(Embed|Simulation|Video|Audio):\s*(.+?)\]\s*(?:\{[^}]*\})?\s*$/i.exec(line)
+    if (directive) {
+      const ref = directive[2].trim()
+      found.push({ ref, kind: directive[1].toLowerCase(), start: row.index + line.indexOf(ref, line.indexOf(':') + 1) })
+      continue
+    }
+    for (const link of line.matchAll(/!?\[([^\]\n]*)\]\(\s*(?:<([^>]+)>|([^)]*?))(?:\s+"([^"]*)")?\s*\)/g)) {
+      const ref = (link[2] ?? link[3]).trim()
+      const kind = referencedFileKind(ref)
+      const start = row.index + link.index + link[0].indexOf(ref, link[0].indexOf('](') + 2)
+      if (kind) found.push({ ref, kind, title: [link[1], link[4]].filter(Boolean).join(' '), start })
+    }
+    for (const tag of line.matchAll(/<(?:iframe|audio|video|source|img|object|embed|a)\b(?:"[^"]*"|'[^']*'|[^'">])*?>/gi)) {
+      for (const attr of tag[0].matchAll(/\s(?:src|href|poster|data)\s*=\s*(?:"([^"]+)"|'([^']+)'|([^\s>]+))/gi)) {
+        const ref = (attr[1] ?? attr[2] ?? attr[3]).trim()
+        const kind = referencedFileKind(ref)
+        const start = row.index + tag.index + attr.index + attr[0].indexOf(ref, attr[0].indexOf('=') + 1)
+        if (kind) found.push({ ref, kind, start })
+      }
+    }
+  }
+  return found
+}
+
+function referencedFileKind(ref: string): string {
+  const path = ref.split(/[?#]/)[0]
+  if (/\.svg$/i.test(path)) return 'svg'
+  if (/\.html?$/i.test(path)) return 'html embed'
+  if (/(?:^|\/)widgets\//i.test(path)) return 'widget'
+  return /\.(?:mp3|wav|m4a|aac|ogg|opus|flac|csv|tsv|json|pdf)$/i.test(path) ? 'file' : ''
+}
+
+export function widgetSearchText(markdown: string): string {
+  // Most slides have no object markup. Avoid splitting those lines during a library scan.
+  if (!/[\[<]|`{3}|~{3}/.test(markdown)) return ''
+  return slideFiles(markdown).filter(({ kind }) => !['file', 'audio', 'video'].includes(kind))
+    .map(({ kind, ref, title }) => {
+      let readable = ref
+      try { readable = decodeURIComponent(ref) } catch { /* keep the authored spelling */ }
+      return ['widget', kind, ref, readable.replace(/[-_]/g, ' '), title].filter(Boolean).join(' ')
+    }).join('\n')
+}
+
+export type SlideScope = 'all' | 'title' | 'body' | 'image' | 'widget'
 export type SlideType = 'slide' | 'svg' | 'html' | 'pic'
 
 export interface SlideQuery {
@@ -27,8 +92,8 @@ export interface SlideQuery {
 
 export interface ParseOptions { operators?: boolean; prefixes?: boolean }
 
-const OPERATOR_RE = /^([tsie]):\s*([\s\S]*)$/i
-const OPERATOR_SCOPE: Record<string, SlideScope> = { t: 'title', s: 'body', i: 'image' }
+const OPERATOR_RE = /^([tsie]|widget):\s*([\s\S]*)$/i
+const OPERATOR_SCOPE: Record<string, SlideScope> = { t: 'title', s: 'body', i: 'image', widget: 'widget' }
 const PREFIX_RE = /^(svg|html|pic|pics|picture|pictures|slide|slides):(.*)$/i
 const TYPE_BY_PREFIX: Record<string, SlideType> = {
   svg: 'svg', html: 'html', pic: 'pic', pics: 'pic', picture: 'pic', pictures: 'pic', slide: 'slide', slides: 'slide'
@@ -97,7 +162,7 @@ export function parseQuery(raw: string, opts: ParseOptions = {}): SlideQuery {
 
 /** Nothing to look for: no words, no type, no talk. */
 export function isEmptyQuery(q: SlideQuery): boolean {
-  return q.terms.length === 0 && q.text.trim() === '' && q.types.length === 0 && q.from.length === 0
+  return q.scope !== 'widget' && q.terms.length === 0 && q.text.trim() === '' && q.types.length === 0 && q.from.length === 0
 }
 
 // ── Matching ────────────────────────────────────────────────────────────────────────────────
@@ -113,14 +178,16 @@ export function matchHay(hayLower: string, q: Pick<SlideQuery, 'exact' | 'text' 
   return termsMatch(hayLower, q.terms)
 }
 
-/** A slide's three searchable strings, lowercased once. */
+/** A slide's searchable strings, lowercased once. */
 // `notes` is the presenter's notes: only the presenter view and exported pages carry them (the app's own surfaces
 // leave it out, and then nothing below changes). They are searched with the whole slide (scope all, exact), not by `s:`.
-export interface PreparedFields { title: string; body: string; image: string; notes?: string }
-export interface SlideFields { title: string; body: string; image?: string; notes?: string }
+export interface PreparedFields { title: string; body: string; image: string; widget?: string; notes?: string }
+export interface SlideFields { title: string; body: string; image?: string; widget?: string; notes?: string }
 
 export function prepareFields(f: SlideFields): PreparedFields {
   const prepared: PreparedFields = { title: f.title.toLowerCase(), body: f.body.toLowerCase(), image: (f.image ?? '').toLowerCase() }
+  const widget = [widgetSearchText(f.body), f.widget].filter(Boolean).join('\n')
+  if (widget) prepared.widget = widget.toLowerCase()
   if (f.notes) prepared.notes = f.notes.toLowerCase()
   return prepared
 }
@@ -131,18 +198,20 @@ export function matchFields(row: PreparedFields, q: Pick<SlideQuery, 'scope' | '
     case 'title': return matchHay(row.title, q)
     case 'body': return matchHay(row.body, q)
     case 'image': return matchHay(row.image, q)
+    case 'widget': return Boolean(row.widget) && matchHay(row.widget ?? '', q)
     default: {
       // Terms (no whitespace, so no newline) are tested part by part; only a phrase or term that itself holds a
       // newline can span the joins, and then the joined text is the haystack.
       const notes = row.notes ?? ''
+      const widget = row.widget ?? ''
       if (q.exact ? q.text.includes('\n') : q.terms.some((t) => t.includes('\n'))) {
-        return matchHay(`${row.title}\n${row.body}\n${row.image}${notes ? `\n${notes}` : ''}`, q)
+        return matchHay(`${row.title}\n${row.body}\n${row.image}${notes ? `\n${notes}` : ''}${widget ? `\n${widget}` : ''}`, q)
       }
       if (q.exact) {
         const phrase = q.text.toLowerCase()
-        return row.title.includes(phrase) || row.body.includes(phrase) || row.image.includes(phrase) || notes.includes(phrase)
+        return row.title.includes(phrase) || row.body.includes(phrase) || row.image.includes(phrase) || notes.includes(phrase) || widget.includes(phrase)
       }
-      return q.terms.every((t) => row.title.includes(t) || row.body.includes(t) || row.image.includes(t) || notes.includes(t))
+      return q.terms.every((t) => row.title.includes(t) || row.body.includes(t) || row.image.includes(t) || notes.includes(t) || widget.includes(t))
     }
   }
 }
@@ -172,14 +241,17 @@ export function matchSlide(row: PreparedFields, q: SlideQuery, talkTitle = ''): 
 }
 
 /** Where a query hits one slide (the whole query is not tested, only each field). */
-export interface FieldHits { title: boolean; text: boolean; picture: boolean }
-export function fieldHits(row: PreparedFields, q: SlideQuery): FieldHits {
-  const hits = { title: false, text: false, picture: false }
+export interface FieldHits { title: boolean; text: boolean; picture: boolean; widget?: boolean }
+export interface SlideMatchEvidence { fields: FieldHits; resolvedPictureText?: string }
+export function fieldHits(row: PreparedFields, q: Pick<SlideQuery, 'scope' | 'exact' | 'text' | 'terms'>): FieldHits {
+  const hits: FieldHits = { title: false, text: false, picture: false }
+  if (q.scope === 'widget' && row.widget && matchHay(row.widget, q)) hits.widget = true
   if (q.terms.length === 0 && !(q.exact && q.text)) return hits
   const hit = (hay: string): boolean => (q.exact ? hay.includes(q.text.toLowerCase()) : hay !== '' && q.terms.some((t) => hay.includes(t)))
   if (q.scope === 'all' || q.scope === 'title') hits.title = hit(row.title)
   if (q.scope === 'all' || q.scope === 'body') hits.text = hit(row.body)
   if (q.scope === 'all' || q.scope === 'image') hits.picture = hit(row.image)
+  if (q.scope === 'all' && hit(row.widget ?? '')) hits.widget = true
   return hits
 }
 
@@ -216,7 +288,7 @@ export function highlightSegments(text: string, terms: readonly string[]): { tex
   return out
 }
 
-export interface Snippet { label: 'in text' | 'in notes' | 'in picture'; segments: { text: string; hit: boolean }[] }
+export interface Snippet { label: 'in text' | 'in notes' | 'in picture' | 'in widget'; segments: { text: string; hit: boolean }[] }
 
 const SNIPPET_MAX = 90
 
@@ -261,6 +333,10 @@ export function snippet(f: SlideFields, q: SlideQuery): Snippet | null {
   if (hits.picture && f.image) {
     const line = lineWithHit(f.image, terms, false)
     if (line) return make('in picture', line)
+  }
+  if (q.scope === 'all' || q.scope === 'widget') {
+    const line = lineWithHit([f.widget, widgetSearchText(f.body)].filter(Boolean).join('\n'), terms, false)
+    if (line) return make('in widget', line)
   }
   if (hits.notes && f.notes) {
     const line = lineWithHit(f.notes, terms, false)

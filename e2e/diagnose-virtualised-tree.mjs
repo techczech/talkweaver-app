@@ -1,6 +1,7 @@
 // Host verification for the virtualised Talks tree: 900-talk vault, real Electron.
 // HOST-RUN ONLY (launches Electron): node e2e/diagnose-virtualised-tree.mjs
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { showTalksBeforeOpening } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, writeFileSync } from 'fs'
@@ -39,6 +40,7 @@ await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(3000)
 
 try {
+  await showTalksBeforeOpening(page, { timeout: 30_000 })
   const headers = await page.locator('.tl-fhead').count()
   record('3 sticky depth-0 headers mounted', headers === 3, `headers=${headers}`)
 

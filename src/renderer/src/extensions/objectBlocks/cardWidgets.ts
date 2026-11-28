@@ -165,7 +165,10 @@ export class CardWidget extends ObjectWidget {
     this.expanded = expanded
     this.statuses = statuses
     this.preview = previews ? cardPreviewKind(block) : null
-    this.statusKey = cardStatusRefs(block).map((ref) => `${ref}=${statuses.get(ref)?.state ?? ''}`).join('|')
+    this.statusKey = JSON.stringify(cardStatusRefs(block).map((ref) => {
+      const status = statuses.get(ref)
+      return [ref, status?.state, status?.repairTitle, status?.repairCandidates]
+    }))
   }
 
   eq(other: WidgetType): boolean {
@@ -235,12 +238,31 @@ export class CardWidget extends ObjectWidget {
     const note = cardFileNote(own)
     const readPage = view.state.facet(cardMediaFacet).readPage
     if (note) header.append(el('span', `tw-obj-chip tw-obj-status tw-obj-status-${own?.state}`, note))
+    const copyPage = view.state.facet(cardMediaFacet).copyPage
+    if (own?.state === 'missing' && own.repairTitle && copyPage && this.block.embed && this.block.embed.variant !== 'video') {
+      const src = this.block.embed.src
+      const title = own.repairTitle
+      const button = el('button', 'tw-obj-action', `Copy it from ‘${title}’`)
+      button.type = 'button'
+      button.addEventListener('click', async () => {
+        button.disabled = true
+        try { await copyPage(src, title) } finally { button.disabled = false }
+      })
+      header.append(button)
+    }
     header.append(this.actions(view, mounted))
     header.append(this.toggle(view, 'tw-obj-raw', '</>', this.raw, this.raw ? 'Hide the source' : 'Show the source', () =>
       setRawObjectBlock.of({ from: mounted.block.from, raw: !this.raw })))
     header.append(this.toggle(view, 'tw-obj-expand', this.expanded ? '⌃' : '⌄', this.expanded, this.expanded ? 'Collapse' : 'Expand', () =>
       setExpandedObjectBlock.of({ from: mounted.block.from, expanded: !this.expanded })))
     shell.append(header)
+    if (own?.state === 'missing' && own.repairCandidates?.length && this.block.embed?.variant !== 'video') {
+      const sources = el('div', 'tw-obj-body')
+      const list = el('ul', 'tw-obj-repair-candidates')
+      for (const title of own.repairCandidates) list.append(el('li', '', title))
+      sources.append(el('div', 'tw-obj-step', 'Possible sources with different files'), list)
+      shell.append(sources)
+    }
     if (this.raw) {
       this.rawSource(shell)
     } else if (this.preview && this.preview !== 'page') {
@@ -378,6 +400,7 @@ export class CardWidget extends ObjectWidget {
 type CardMedia = {
   resolveImage?: (src: string) => string | null
   readPage?: (src: string) => Promise<string | null>
+  copyPage?: (src: string, expectedTitle: string) => Promise<void>
 }
 export const cardMediaFacet = Facet.define<CardMedia, CardMedia>({
   combine: (values) => values[0] ?? {}

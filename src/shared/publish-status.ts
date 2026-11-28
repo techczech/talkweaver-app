@@ -13,6 +13,22 @@ export const PUBLISHED_WITHOUT_LIVE = 'Published. Going live is not set up: Sett
 export const NOT_CONNECTED_TITLE = 'Publishing needs a Cloudflare account'
 export const OPEN_SETTINGS = 'Open Settings'
 export const SAVE_AS_FILE = 'Save as a file instead'
+export const PAGES_FALLBACK_LABEL = 'Cloudflare Pages fallback'
+
+/** A link safe to store and show in publishing history. */
+export function isPublicHandoutUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length > 8192 || !/^https?:\/\//i.test(value) || /[\s?#]/u.test(value)) return false
+  try {
+    const url = new URL(value)
+    return !!url.hostname && !url.username && !url.password
+  } catch { return false }
+}
+
+export function handoutAddressLabel(url: string): string {
+  if (!isPublicHandoutUrl(url)) return url
+  const host = new URL(url).hostname.replace(/\.$/u, '')
+  return host === 'pages.dev' || host.endsWith('.pages.dev') ? `${url} (${PAGES_FALLBACK_LABEL})` : url
+}
 
 /**
  * Why publishing cannot start. `not-connected`: no token (the sheet, with "Save as a file

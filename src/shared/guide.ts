@@ -148,21 +148,19 @@ export function firstStepsCount(steps: readonly FirstStep[]): string {
 
 // ── The right sidebar's tab row ─────────────────────────────────────────────────────────────────
 
-export type RightColumnTab = 'inspector' | 'slides' | 'talk' | 'scratchpad' | 'guide' | 'research' | 'images' | 'feedback' | 'whats-new'
+export type RightColumnTab = 'inspector' | 'slides' | 'talk' | 'scratchpad' | 'guide' | 'research' | 'find' | 'feedback' | 'whats-new'
 
 /**
- * The right sidebar's tabs (house rules R11a, R18). One sidebar with tabs: the Inspector first (the default),
- * the slide strip second ('slides', shown as "Strip"), the Talk tab third (a talk's details and design, house rule R11), then Research and Images, then the tabs that are
- * only there while they apply: the Guide while it is up, Feedback while the talk is shared, What's new while
- * it is up (update notices, ADR-0041). With no talk open there is no slide to show, so only the tabs that
- * are up (Guide, What's new) are listed.
+ * The right sidebar starts with Slide and Talk. Scratchpad, Feedback and What's new appear when
+ * available. Find is last whenever it is open. Without a talk, only an open Guide or What's new is listed.
  */
-export function rightColumnTabs(input: { guideUp: boolean; whatsNewUp?: boolean; hasTalk: boolean; shared?: boolean; scratchpad?: boolean }): RightColumnTab[] {
+export function rightColumnTabs(input: { guideUp: boolean; whatsNewUp?: boolean; hasTalk: boolean; shared?: boolean; scratchpad?: boolean; findOpen?: boolean }): RightColumnTab[] {
   const up: RightColumnTab[] = [...(input.guideUp ? ['guide' as const] : []), ...(input.whatsNewUp ? ['whats-new' as const] : [])]
   if (!input.hasTalk) return up
   return [
-    'inspector', 'talk', ...(input.scratchpad ? ['scratchpad' as const] : []), 'guide', 'research', 'images',
+    'inspector', 'talk', ...(input.scratchpad ? ['scratchpad' as const] : []), 'guide', 'research',
     ...(input.shared ? ['feedback' as const] : []),
-    ...(input.whatsNewUp ? ['whats-new' as const] : [])
+    ...(input.whatsNewUp ? ['whats-new' as const] : []),
+    ...(input.findOpen ? ['find' as const] : [])
   ]
 }

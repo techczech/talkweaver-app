@@ -47,3 +47,35 @@ export function extractImageRefs(markdown: string): ImageRef[] {
   return out
 }
 
+/** Searchable names, alternative text and captions written on a slide. */
+export function authoredPictureFields(markdown: string): { names: string[]; descriptions: string[] } {
+  const text = stripComments(markdown)
+  if (!text.includes('![') && !/<img\b/i.test(text)) return { names: [], descriptions: [] }
+  const names = extractImageRefs(text).filter(picture => picture.kind === 'picture')
+    .map(({ ref }) => ref.split(/[?#]/)[0].split(/[/\\]/).at(-1) ?? '')
+  const descriptions: string[] = []
+  for (const image of text.matchAll(/!\[([^\]]*)\]\(\s*([^)]+)\)/g)) {
+    descriptions.push(image[1])
+    const caption = /\s+(?:"([^"]*)"|'([^']*)')\s*$/.exec(image[2])
+    if (caption) descriptions.push(caption[1] ?? caption[2])
+  }
+  for (const image of text.matchAll(/<img\b[^>]*>/gi)) {
+    const alt = /\balt\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(image[0])
+    if (alt) descriptions.push(alt[1] ?? alt[2])
+  }
+  return { names: names.filter(Boolean), descriptions: descriptions.filter(Boolean) }
+}
+
+export function authoredPictureText(markdown: string): string {
+  const { names, descriptions } = authoredPictureFields(markdown)
+  return [...names, ...descriptions].join('\n')
+}
+
+/** Text that can be shown beside a slide hit. Headings and pictures have their own fields. */
+export function slideBodyForSearchDisplay(markdown: string): string {
+  return stripComments(markdown)
+    .replace(/^\s*#{1,6}[^\S\r\n]+[^\r\n]*/gm, '')
+    .replace(/!\[\[[^\]]*\]\]|!\[[^\]]*\]\(\s*(?:<[^>]*>|[^)]+)\)|<img\b[^>]*>/gi, ' ')
+    .replace(/^[^\S\r\n]*(?:[-*+]\s+|\d+[.)]\s+|[•–]\s*)/gm, '')
+}
+

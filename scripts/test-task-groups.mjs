@@ -53,6 +53,7 @@ const CURRENT_SUBGROUP_NAMES = {
 // The editor's Present menu renamed its launch and planning commands in November 2026.
 // history: the old name of the Runs command, kept as an alias (R5).
 const KNOWN_LABEL_DIFFERENCES = {
+  layout: 'Design…',
   'promote-heading': 'One level up',
   'demote-heading': 'One level down',
   'editor.promote': 'One level up',

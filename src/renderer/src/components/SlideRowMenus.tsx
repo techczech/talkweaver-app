@@ -318,8 +318,9 @@ export default function SlideRowMenus({ request, rows, ops, onClose, onActed, on
         navigator.clipboard.readText()
           .then((text) => {
             if (isCurrent?.() === false) return
-            const landed = ops?.paste(text, line) ?? null
-            if (landed != null) onLanded?.(landed)
+            const landed = ops?.paste(text, line)
+            if (typeof landed === 'number') onLanded?.(landed)
+            else if (landed) return landed.then((line) => { if (line != null) onLanded?.(line) })
           })
           .catch(() => notify('Couldn’t read the clipboard. Paste with ⌘V instead.', 'warning', 'slide-clipboard-failed'))
         break

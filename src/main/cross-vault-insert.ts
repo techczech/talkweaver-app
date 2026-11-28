@@ -20,6 +20,7 @@
 import { createHash } from 'crypto'
 import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'fs'
 import { basename, dirname, extname, isAbsolute, join } from 'path'
+import { copySlideLocalFiles } from './slide-local-files.ts'
 import { pathStaysInside } from './path-containment.ts'
 
 export type VaultSide = { id: string; name: string; root: string }
@@ -52,6 +53,8 @@ export type CrossVaultInput = {
   source: VaultSide
   target: VaultSide
   sourceOutlinePath: string
+  targetOutlinePath?: string
+  canCopyLocalFiles?: () => boolean
   sourceTalkTitle: string
   markdown: string
   /** The inserting person's display name for the target vault ('' or absent: not recorded). */
@@ -106,9 +109,16 @@ export async function prepareCrossVaultInsert(
   if (!pathStaysInside(source.root, input.sourceOutlinePath)) return { ok: false, error: 'The slide’s talk is not in its vault.' }
   const media = await copySlideMedia({
     readRoot: source.root, writeRoot: target.root, srcDir: dirname(input.sourceOutlinePath),
-    markdown: input.markdown, toWebp: opts.toWebp, warn
+    markdown: input.markdown, localSvg: Boolean(input.targetOutlinePath), toWebp: opts.toWebp, warn
   })
-  const scrubbed = scrubSourceRoot(cutUntravelledRefs(media.markdown), source.root)
+  if (input.canCopyLocalFiles?.() === false) return { ok: false, error: 'The target talk changed.' }
+  const travelled = new Set<string>()
+  const targetOutline = input.targetOutlinePath && pathStaysInside(target.root, input.targetOutlinePath)
+  const sourceOutline = pathStaysInside(source.root, input.sourceOutlinePath)
+  const local = targetOutline && sourceOutline
+    ? copySlideLocalFiles(dirname(sourceOutline), dirname(targetOutline), media.markdown, travelled)
+    : media.markdown
+  const scrubbed = scrubSourceRoot(cutUntravelledRefs(local, travelled), source.root)
   const ids = assignTargetIds(scrubbed, tools, [...tools.idsInVault(target.root), ...(input.extraTaken ?? [])], opts.rng ?? Math.random)
   const insertedAt = (opts.now ?? (() => new Date()))().toISOString()
   const insertedBy = input.insertedBy?.trim() ?? ''
@@ -165,8 +175,8 @@ export function assignTargetIds(
  * and destinations outside `writeRoot` are refused. A ref that cannot travel keeps its text, except
  * an absolute path inside the source vault, which is cut to its file name so it names no folder there.
  */
-export async function copySlideMedia({ readRoot, writeRoot, srcDir, markdown, toWebp, warn }: {
-  readRoot: string; writeRoot: string; srcDir: string; markdown: string
+export async function copySlideMedia({ readRoot, writeRoot, srcDir, markdown, localSvg = false, toWebp, warn }: {
+  readRoot: string; writeRoot: string; srcDir: string; markdown: string; localSvg?: boolean
   toWebp: (buf: Buffer) => Promise<Buffer>; warn: (msg: string) => void
 }): Promise<{ markdown: string; materialized: number; skipped: number }> {
   const readPool = join(readRoot, '_assets')
@@ -178,7 +188,7 @@ export async function copySlideMedia({ readRoot, writeRoot, srcDir, markdown, to
   ]
   for (const raw of candidates) {
     if (/^(https?:|data:)/i.test(raw)) continue
-    if (POOL_RE.test(raw) || MEDIA_EXT_RE.test(raw)) refs.add(raw)
+    if (POOL_RE.test(raw) || (MEDIA_EXT_RE.test(raw) && !(localSvg && /\.svg$/i.test(raw)))) refs.add(raw)
   }
   let out = markdown
   let materialized = 0
@@ -316,10 +326,10 @@ export function targetBasename(target: string): string {
  * <img>, <a>, <video>, <source> and <iframe> — that is not a web link, an anchor or a pool id is cut
  * to its file name, and dropped when it has none. A title after a markdown target is kept.
  */
-export function cutUntravelledRefs(markdown: string): string {
+export function cutUntravelledRefs(markdown: string, travelled: ReadonlySet<string> = new Set()): string {
   const cut = (target: string): string | null => {
     const bare = target.startsWith('<') && target.endsWith('>') ? target.slice(1, -1) : target
-    if (!bare || KEEP_TARGET_RE.test(bare) || POOL_RE.test(bare)) return target
+    if (!bare || KEEP_TARGET_RE.test(bare) || POOL_RE.test(bare) || travelled.has(bare)) return target
     const name = targetBasename(bare)
     return name ? name : null
   }

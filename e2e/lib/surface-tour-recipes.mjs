@@ -6,6 +6,7 @@
 // clicks), { skip } (never opened, with the reason), plus optional { verify(t, ctx) } and { observe: /regex/ }.
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { openVaultStorage } from './vault-storage.mjs'
 
 const DAY = 86_400_000
 const pad = (n) => String(n).padStart(2, '0')
@@ -404,18 +405,18 @@ R['pathway-rename'] = { run: async (t) => { await makePathway(t); await t.click(
 R['pathway-delete'] = { run: async (t) => { await makePathway(t); await t.click(t.page.getByRole('button', { name: /^Delete/ }).first()); t.note('Only the confirmation was opened; nothing was deleted.') } }
 R['plan-new-pathway'] = { run: async (t) => { await makePathway(t); await t.command('view-markdown'); await t.sleep(500); await t.command('plan-run'); await t.sleep(800); const sel = t.page.locator('[data-field="slide-set"]'); const opts = await sel.locator('option').evaluateAll((os) => os.map((o) => [o.value, o.textContent])); const m = opts.find(([, label]) => /New pathway/.test(label ?? '')); if (!m) t.missing('the Slides choice offers no New pathway option here'); await sel.selectOption(m[0]); await t.sleep(600); t.method = 'Plan a Run: choose New pathway… in Slides' } }
 
-// ---- Vault Gallery ------------------------------------------------------------------------------------------------------
+// ---- Vault details and storage ------------------------------------------------------------------------------------------
 const gallery = async (t, mode) => {
-  await t.command('vault-gallery'); await t.sleep(1000)
+  await openVaultStorage(t.page)
   if (mode === 'talk') { await t.click(t.page.locator('.vg-tr', { hasText: 'All talks' })); await t.sleep(900); await t.click(t.page.locator('.vault-gallery').getByText('Ai Chat And Terminal Slides').first()); await t.sleep(600) }
 }
-R['gallery-tree'] = { run: async (t) => { await gallery(t); t.method = 'Vault Gallery opens with its Folders tree on the left' }, verify: (t) => t.visible('.vg-tr') }
+R['gallery-tree'] = { run: async (t) => { await gallery(t); t.method = 'Details and storage opens with its Folders tree on the left' }, verify: (t) => t.visible('.vg-tr') }
 R['gallery-details'] = { run: async (t) => { await gallery(t, 'talk'); await t.click(t.page.getByRole('button', { name: 'Details' }).first()) } }
 R['gallery-actions'] = { run: async (t) => { await gallery(t, 'talk'); await t.click(t.page.locator('.vault-gallery').getByRole('button', { name: /More/ }).first()) } }
 R['gallery-move'] = { run: async (t) => { await gallery(t, 'talk'); await t.click(t.page.locator('.vault-gallery').getByRole('button', { name: /More/ }).first()); await t.click(t.page.getByText(/^Move/).first()) } }
 R['gallery-handouts'] = { run: async (t) => { await gallery(t, 'talk'); await t.click(t.page.locator('.vault-gallery').getByText('Handouts', { exact: true }).first()) } }
 R['gallery-storage'] = { run: async (t) => { await gallery(t); await t.click(t.page.getByRole('button', { name: 'Details' }).first()); await t.click(t.page.getByRole('button', { name: /Measure/ }).first()); await t.sleep(900) } }
-R['gallery-preview'] = { run: async (t) => { await gallery(t, 'talk'); await t.page.keyboard.press('Space'); await t.sleep(900); t.method = 'Vault Gallery: select a talk, press Space (Preview title slide)' } }
+R['gallery-preview'] = { run: async (t) => { await gallery(t, 'talk'); await t.page.keyboard.press('Space'); await t.sleep(900); t.method = 'Details and storage: select a talk, press Space (Preview title slide)' } }
 
 // ---- Guide, updates, agents -----------------------------------------------------------------------------------------------
 R['guide-chapters'] = { run: async (t) => { await t.command('get-started-open-guide'); await t.sleep(900); await t.click(t.page.getByText('Learn the commands', { exact: true })); await t.sleep(400) }, verify: (t) => t.page.getByText('Chapters', { exact: true }).first().isVisible() }

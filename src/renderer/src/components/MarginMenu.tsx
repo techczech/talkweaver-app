@@ -25,7 +25,7 @@ export default function MarginMenu({
   rows: readonly MarginMenuRow[]
   /** Rows (by key) with a separator under them. */
   separatorsAfter?: readonly string[]
-  /** A last row after a separator, e.g. "More in Inspector…". */
+  /** A last row after a separator, e.g. "All designs in the side panel…". */
   more?: string
   anchor: { left: number; bottom: number }
   onChoose: (key: string) => void

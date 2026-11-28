@@ -67,6 +67,7 @@ What this skill does require of any plan:
 - Sketch or Scratchpad request: follow [Sketches and the Slide Scratchpad](references/sketches-and-scratchpad.md). Work in the named Scratchpad file and leave the talk outline intact.
 - New content: a draft outline. Use registered layout and object syntax; do not invent triggers from their English names.
 - AI chat or terminal slide (a chat or shell transcript drawn as a slide): `{chat}`, `{chat-lanes}`, `{terminal}`, `{terminal-agent}` per [AI chat and terminal slides](references/talkweaver-ai-chat-and-terminal-slides.md). Strip secrets and personal data first.
+- Cross out an icon with `{icon=lucide:phone!}`. Keep `!` inside the braces, immediately after the icon name.
 - Formats: [outline and Pathway formats](references/content-formats.md). Research material: [research folder](references/research-folder.md).
 
 ## Conversion, handouts and recordings

@@ -188,7 +188,8 @@ body { margin: 0; }
   /* aspect-ratio reserves each row's height BEFORE its clone exists, so the list has its true
      scroll length from the start and lazy filling does not make it jump. */
   .pslide-canvas { position: relative; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; background: #fff; border-top: 1px solid #e3e2dc; border-bottom: 1px solid #e3e2dc; }
-  .pslide-inner { position: absolute; top: 0; left: 0; width: var(--slide-w); height: var(--slide-h); transform-origin: top left; pointer-events: none; }
+  /* Keep cqw/cqh and container queries tied to the same canvas as the desktop stage. */
+  .pslide-inner { container-type: size; position: absolute; top: 0; left: 0; width: var(--slide-w); height: var(--slide-h); transform-origin: top left; pointer-events: none; }
   .pslide-inner > .slide { display: grid !important; position: absolute; inset: 0; }
   /* Nothing sits above a slide — the label reads as a caption under it (ADR-0018). */
   .pslide-label { display: flex; align-items: baseline; gap: 8px; padding: 8px 14px 0; }

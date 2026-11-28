@@ -48,7 +48,8 @@ const design = read('src/renderer/src/components/DeckDesignPanel.tsx')
 assert.ok(!/Setting names/.test(design), 'the unexplained Setting names button is gone')
 const meta = read('src/renderer/src/components/MetadataPanel.tsx')
 assert.ok(!/managed key/.test(meta), 'Advanced counts are behind Details, in plain words')
-assert.match(meta, /\(dirty \|\| saving \|\| savedFlash\) && footerEl/, 'Advanced shows its own Save only while it has something to save')
+const talkTab = read('src/renderer/src/components/TalkTab.tsx')
+assert.match(talkTab, /metadata\.staged && <div[^>]*data-talk-draft-bar/, 'the Talk tab shows Save changes for staged fields')
 
 // The one name of the Slide Scratchpad (CONTEXT.md).
 for (const file of ['src/renderer/src/components/SlideRowMenus.tsx', 'src/renderer/src/components/slide-handling/BatchBar.tsx', 'src/shared/command-registry.ts', 'src/shared/shortcut-registry.ts', 'src/renderer/src/components/scratchpad/ScratchpadPanel.tsx']) {

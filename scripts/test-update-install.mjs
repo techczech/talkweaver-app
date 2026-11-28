@@ -508,7 +508,7 @@ await test('the app wires the restart\'s close through the editor\'s own close r
   assert.match(index, /function runBackupFor\([^)]*\): Promise<BackupRun> \{\n  return restartHolds\.during\('exporting', runBackupExports\)\(talks\)/, 'a backup run holds the restart as an export, from its first talk to its last')
   const hook = fs.readFileSync(new URL('../src/renderer/src/components/useOutlineDiskChange.ts', import.meta.url), 'utf8')
   assert.match(hook, /await closeFrozen\(\{ \.\.\.editorDeps, leave: async \(\) => \{\n          if \(update !== true && wiringRef\.current\.hasPendingSketch\?\.\(\)\) await window\.tw\.talk\.ackCloseRequest\?\.\(\)\n          const mayLeave = await leave\(\)\n          if \(update !== true\) await window\.tw\.talk\.ackCloseRequest\?\.\(\)/, 'every close goes through the freeze; ordinary close switches the fallback off after flushing, or before a pending sketch save')
-  assert.match(hook, /onCloseCancelled\?\.\(\(\) => \{ for \(const release of/, 'a called-off restart releases the frozen editor')
+  assert.match(hook, /onCloseCancelled\?\.\(\(\) => \{\s+metadataCloseRef\.current\?\.abort\(\)\s+for \(const release of/, 'a cancelled close dismisses its metadata prompt and releases any frozen editor')
   const editor = fs.readFileSync(new URL('../src/renderer/src/components/Editor.tsx', import.meta.url), 'utf8')
   assert.match(editor, /closeFrozenRef\.current && !tr\.annotation\(savedTextAdopted\) && !tr\.annotation\(closeFreezeExempt\)\)\) && tr\.docChanged \? \[\] : tr/, 'the freeze refuses every edit but Reload and a save\'s ids')
   assert.match(editor, /EditorView\.editable\.of\(false\),\n    EditorState\.readOnly\.of\(true\),/)

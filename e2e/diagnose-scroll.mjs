@@ -4,6 +4,7 @@
 // moves through an in-place edit, in a doc tall enough to be scrolled.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'; import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'; import { tmpdir } from 'os'
 
@@ -30,12 +31,7 @@ await page.waitForLoadState('domcontentloaded'); await page.waitForTimeout(1200)
 const scrollTop = () => page.evaluate(() => { const s = document.querySelector('.cm-scroller'); return s ? Math.round(s.scrollTop) : 0 })
 
 try {
-  await page.locator('.tl-search input').first().fill('Scroll Fixture')
-  await page.waitForTimeout(300)
-  await page.locator('.tl-row:not(.tl-row--folder)').filter({
-    has: page.locator('.tl-row-name').filter({ hasText: /^Scroll Fixture$/ })
-  }).first().click()
-  await page.waitForSelector('.cm-content', { timeout: 8000 })
+  await openTalkByTitle(page, 'Scroll Fixture')
   await page.locator('.cm-content').click()
   await page.waitForTimeout(200)
   // Scroll well down: jump to doc end, then climb back up into the middle.

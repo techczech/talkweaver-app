@@ -43,6 +43,21 @@ export function scratchSnapshotIdentity(path: string): string | null {
     ? `${parts[0]}/${parts[1]}` : null
 }
 
+// Importers accept checked private snapshots, including HTML, without reopening agent files.
+export function scratchSnapshotDirectory(path: string): string | null {
+  const identity = scratchSnapshotIdentity(path)
+  if (!cache || !identity) return null
+  const [hash, name] = identity.split('/')
+  const directory = join(cache, hash)
+  if (join(directory, name) !== path) return null
+  try {
+    const dir = lstatSync(directory)
+    const file = lstatSync(path)
+    if (!dir.isDirectory() || !file.isFile() || file.nlink > 1 || file.size > 64 * 1024 * 1024 || realpathSync(path) !== path) return null
+    return directory
+  } catch { return null }
+}
+
 // Only immutable private image snapshots are addressable. URLs carry no filesystem paths;
 // Chromium streams them on demand instead of main retaining base64 copies of the entire panel.
 export function scratchSnapshotUrl(path: string): string | undefined {
@@ -67,10 +82,7 @@ export function scratchSnapshotFileFor(address: string): string | null {
     if (parts.length !== 2 || !/^[a-f0-9]{64}$/.test(parts[0]) || !parts[1] || /[\\/\0]/.test(parts[1]) || parts[1].startsWith('.')) return null
     const path = join(cache, ...parts)
     if (scratchSnapshotUrl(path) !== address) return null
-    const dir = lstatSync(join(cache, parts[0]))
-    const file = lstatSync(path)
-    if (!dir.isDirectory() || dir.isSymbolicLink() || !file.isFile() || file.isSymbolicLink() || file.size > 64 * 1024 * 1024) return null
-    return path
+    return scratchSnapshotDirectory(path) ? path : null
   } catch { return null }
 }
 

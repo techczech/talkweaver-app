@@ -12,13 +12,12 @@ import { rightColumnTabs } from '../src/shared/guide.ts'
 import { COMMAND_REGISTRY } from '../src/shared/command-registry.ts'
 import { outlineMarksToPublish, outlineNumbers } from '../src/renderer/src/lib/stripNumbers.ts'
 import { titleHeadingLine } from '../src/shared/slide-lines.ts'
-import { clearDrafts, discardedNotice, keepDraft, restoreDraft, setStoredNotice, storedNotice } from '../src/renderer/src/lib/talkDrafts.ts'
 import { marginWord } from '../src/shared/plain-view-margin.ts'
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8')
 
 // R11: the tab and the aliases.
-assert.deepEqual(rightColumnTabs({ guideUp: false, hasTalk: true }), ['inspector', 'talk', 'guide', 'research', 'images'], 'Talk is beside Slide')
+assert.deepEqual(rightColumnTabs({ guideUp: false, hasTalk: true }), ['inspector', 'talk', 'guide', 'research'], 'Talk is beside Slide')
 for (const id of ['deck-design', 'metadata']) {
   const command = COMMAND_REGISTRY.find((c) => c.id === id)
   assert.ok(command, `${id} is still a command`)
@@ -55,64 +54,6 @@ assert.ok(!/slideCount\.textContent = `[^`]*beats\.length/.test(presenter), 'the
 assert.match(presenter, /presenterCount\.textContent = `\$\{slideNumberOfBeat\(state\.beat\)\} \/ \$\{slides\.length\}`/)
 assert.match(presenter, /function slideNumberOfBeat\(beatIndex\) \{\s*return slideIndexForBeat\(beatIndex\) \+ 1;/)
 
-// R11: unsaved Talk tab edits survive the tab or disclosure going away, per talk, and only the edited fields.
-const here = { title: true, event: true }
-clearDrafts('/a.md') // the workspace names the open talk
-keepDraft('design', '/a.md', { title: 'New', event: 'E' }, { title: 'Old', event: 'E' }, here)
-assert.deepEqual(restoreDraft('design', '/a.md', { title: 'Old', event: 'E2' }, here), { draft: { title: 'New', event: 'E2' }, discarded: [] }, 'the edited field is restored; a field left alone follows the text')
-assert.deepEqual(restoreDraft('advanced', '/a.md', { title: 'Old' }, here).draft, { title: 'Old' }, 'the Advanced part keeps its own')
-// never restored over a changed baseline, and only the changed field is dropped
-keepDraft('design', '/a.md', { title: 'B', event: 'Ev' }, { title: 'Old', event: '' }, here)
-assert.deepEqual(restoreDraft('design', '/a.md', { title: 'C', event: '' }, here), { draft: { title: 'C', event: 'Ev' }, discarded: ['title'] }, 'Title dropped and reported, Event stays')
-// absent is not the same as written empty
-keepDraft('design', '/a.md', { title: 'B' }, { title: '' }, { title: false })
-assert.deepEqual(restoreDraft('design', '/a.md', { title: '' }, { title: true }), { draft: { title: '' }, discarded: ['title'] }, 'title: "" added while away discards the draft')
-assert.deepEqual(restoreDraft('design', '/a.md', { title: '' }, { title: false }).draft, { title: 'B' }, 'still absent: the draft is kept')
-assert.equal(discardedNotice(['Title']), 'Your unsaved change to Title was discarded because the talk changed.')
-assert.equal(discardedNotice(['Title', 'Event']), 'Your unsaved changes to Title and Event were discarded because the talk changed.')
-keepDraft('design', '/a.md', { title: 'Old' }, { title: 'Old' }, here)
-assert.deepEqual(restoreDraft('design', '/a.md', { title: 'Old' }, here).draft, { title: 'Old' }, 'a saved or reverted field is forgotten')
-// one talk only: another path never sees it, and clearing (open talk changed, renamed, moved, deleted) empties it
-keepDraft('design', '/a.md', { title: 'New' }, { title: 'Old' }, here)
-assert.deepEqual(restoreDraft('design', '/b.md', { title: 'Old' }, here).draft, { title: 'Old' }, 'another talk gets none of it')
-clearDrafts('/b.md') // the workspace does this when another talk opens
-keepDraft('design', '/b.md', { title: 'Old' }, { title: 'Old' }, here)
-assert.deepEqual(restoreDraft('design', '/a.md', { title: 'Old' }, here).draft, { title: 'Old' }, 'opening another talk dropped the first talk\'s draft')
-clearDrafts('/a.md')
-// the notice is kept beside the drafts, per panel, until cleared or the talk changes
-setStoredNotice('design', '/a.md', 'N')
-keepDraft('design', '/a.md', { title: 'Old' }, { title: 'Old' }, here)
-assert.equal(storedNotice('design', '/a.md'), 'N', 'the notice outlives the drafts being emptied')
-assert.equal(storedNotice('advanced', '/a.md'), '', 'each panel has its own')
-setStoredNotice('design', '/a.md', '')
-assert.equal(storedNotice('design', '/a.md'), '', 'dismissed')
-setStoredNotice('design', '/a.md', 'N')
-assert.equal(storedNotice('design', '/b.md'), '', 'not in another talk')
-clearDrafts('/b.md') // the open talk's path changed (b is now open)
-assert.equal(storedNotice('design', '/a.md'), '', 'a path change drops it')
-// a stale caller (talk A's save resolving after talk B was opened and edited) never touches B's entry
-keepDraft('advanced', '/b.md', { event: 'Bev' }, { event: '' }, here)
-setStoredNotice('design', '/b.md', 'B notice')
-setStoredNotice('advanced', '/a.md', '')
-keepDraft('advanced', '/a.md', {}, {}, {})
-keepDraft('design', '/a.md', { title: 'A late' }, { title: 'A' }, here)
-assert.deepEqual(restoreDraft('advanced', '/b.md', { event: '' }, here).draft, { event: 'Bev' }, 'B keeps its draft')
-assert.equal(storedNotice('design', '/b.md'), 'B notice', 'B keeps its notice')
-assert.deepEqual(restoreDraft('design', '/a.md', { title: 'A' }, here).draft, { title: 'A' }, 'the stale call kept nothing for A')
-// a stale caller cannot claim a freshly reset store: B opened, then A's late save arrives before B's text has loaded
-clearDrafts('/b.md')
-setStoredNotice('advanced', '/a.md', '')
-keepDraft('advanced', '/a.md', {}, {}, {})
-keepDraft('design', '/b.md', { title: 'Bnew' }, { title: 'B' }, here)
-assert.deepEqual(restoreDraft('design', '/b.md', { title: 'B' }, here).draft, { title: 'Bnew' }, 'B still keeps its edit after the stale call')
-clearDrafts('/a.md')
-keepDraft('design', '/a.md', { title: 'New' }, { title: 'Old' }, here)
-setStoredNotice('design', '/a.md', 'N')
-clearDrafts(null)
-assert.deepEqual(restoreDraft('design', '/a.md', { title: 'Old' }, here).draft, { title: 'Old' }, 'clearing forgets it')
-assert.equal(storedNotice('design', '/a.md'), '', 'clearing forgets the notice')
-assert.match(read('src/renderer/src/components/WorkspaceLayout.tsx'), /useEffect\(\(\) => \{ clearDrafts\(activeTalk\?\.outlinePath \?\? null\) \}, \[activeTalk\?\.outlinePath\]\)/, 'the workspace clears drafts when the open talk or its path changes')
-assert.ok(!/talkDrafts/.test(read('src/renderer/src/components/talklist/actions.ts')), 'no per-operation draft plumbing')
 // R7: the margin says §n, as the outline does.
 assert.equal(marginWord({ kind: 'section', sectionNumber: '2.1' }), '§2.1')
 

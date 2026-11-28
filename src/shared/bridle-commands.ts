@@ -107,7 +107,12 @@ export const REBINDABLE: Readonly<Record<string, string>> = {
   'editor.delete-comment': 'delete-comment',
   'editor.insert-notes': 'insert-notes',
   'app.find-talk': 'find-talk',
+  'app.image-search': 'image',
+  'app.find-slides': 'find-slides',
+  'app.find-icons': 'find-icons',
+  'editor.go-to-line': 'go-to-line',
   'slide-picker.add-beside': 'add-beside',
+  'vault-explorer.open-window': 'vault-explorer.open-window',
   'slide-picker.talk-beside': 'talk-beside',
   'slide-picker.close-beside': 'close-beside',
   'slide-picker.select-whole-section': 'select-whole-section'
@@ -189,7 +194,7 @@ export function bridleDefs(commands: readonly CommandDefinition[] = COMMAND_REGI
       label: c.label,
       key,
       icon: 'command',
-      ...(c.scope === 'research' ? { scope: 'research' } : {}),
+      ...(c.scope === 'research' || c.scope === 'vault-explorer' ? { scope: c.scope } : {}),
       ...(reason ? { noMenu: true as const, noMenuReason: reason } : {}),
       ...(FIXED_IDS.has(c.id) || !rebindable ? { fixed: true as const } : {}),
       ...(FIXED_IDS.has(c.id) ? { typing: true as const } : {})

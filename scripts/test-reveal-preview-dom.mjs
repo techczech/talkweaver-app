@@ -63,7 +63,11 @@ try {
   await capture.locator('.slide.active[data-id="about"]').waitFor()
   assert.equal(await visibleCount(capture, 'hidden'), 0, 'a cold authoring preview shows all three points')
   assert.equal(await visibleCount(capture, 'full'), 3, 'the runtime paints the final state')
-  await openSlide(capture, 'next')
+  const atCommit = await capture.evaluate(() => {
+    location.hash = '#next'
+    return { hash: location.hash, active: document.querySelector('.slide.active')?.getAttribute('data-id') }
+  })
+  assert.deepEqual(atCommit, { hash: '#next', active: 'next' }, 'the preview switches slides as the fragment changes')
   assert.equal(await visibleCount(capture, 'full'), 2, 'hash navigation arrives at the final step of another slide')
   await openSlide(capture, 'always')
   assert.equal(await active(capture).locator('[data-mode-state]').count(), 0, 'nostep takes precedence')

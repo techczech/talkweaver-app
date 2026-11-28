@@ -89,8 +89,13 @@ for (const { slug, path, example } of sources) {
     console.error(`FAIL: ${slug} uses the title or paragraph icon syntax, so it cannot be an identity reference`)
     process.exit(1)
   }
+  // Keep this one instruction at its recorded wording so the golden hash checks the compiler
+  // independently of the renamed Vault Explorer command.
+  const referenceText = slug === 'harvest-supper-draft'
+    ? text.replace('**Vault Explorer** shows the talks in your vaults.', '**Vault Gallery** shows the talks in your vaults.')
+    : text
   // The reference was recorded before 0.44: compile in the classic look (slide-markup-identity.mjs).
-  const model = await prepareSource(path, inClassicLook(text), slug, statSync(path))
+  const model = await prepareSource(path, inClassicLook(referenceText), slug, statSync(path))
   // Stamps a later ticket added to every slide are left out (scripts/lib/slide-markup-identity.mjs).
   const referenceOptions = { talkNamesTitleLook: talkNamesTitleLook(text) }
   const sections = findSlideSections(model.fullHtml)

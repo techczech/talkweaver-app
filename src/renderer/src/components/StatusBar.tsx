@@ -1,3 +1,4 @@
+import { handoutAddressLabel } from '../../../shared/publish-status'
 import { AgentSkillMark } from './AgentSkillOffer'
 import { useState, useEffect, useRef, type ReactNode } from 'react'
 import { MapPin } from 'lucide-react'
@@ -136,7 +137,7 @@ export default function StatusBar({
       : buildStatus === 'done'
         ? buildPath
           ? buildIsUrl
-            ? `Published ✓ ${buildPath.replace(/^https?:\/\//, '')}`
+            ? `Published ✓ ${handoutAddressLabel(buildPath).replace(/^https?:\/\//, '')}`
             : `Built ✓ ${basename(buildPath)}`
           : 'Built'
         : buildStatus === 'error'
@@ -239,7 +240,7 @@ export default function StatusBar({
             <button
               onClick={handleBuildClick}
               style={{ ...styles.chip, ...styles.chipDone, ...styles.chipBtn }}
-              title={buildPath ?? undefined}
+              title={buildIsUrl && buildPath ? handoutAddressLabel(buildPath) : buildPath ?? undefined}
             >
               {buildLabel}
             </button>

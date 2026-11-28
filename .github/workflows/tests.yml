@@ -11,6 +11,10 @@ on:
         description: 'Optional space-separated e2e script names. Blank runs the full desktop tier.'
         type: string
         default: ''
+      e2e_output:
+        description: 'Include output from passing selected desktop specs.'
+        type: boolean
+        default: false
       nightly_dom:
         description: 'Run just the Studio nightly DOM job for qualification.'
         type: boolean
@@ -273,6 +277,7 @@ jobs:
         if: matrix.tier == 'e2e' && inputs.e2e_scripts
         env:
           TW_E2E_SCRIPTS: ${{ inputs.e2e_scripts }}
+          TW_E2E_OUTPUT: ${{ inputs.e2e_output }}
         run: |
           node --input-type=module <<'NODE'
           import { readFileSync } from 'node:fs'
@@ -284,7 +289,8 @@ jobs:
             throw new Error('Choose unique script names from the desktop tier in scripts/test-tiers.json.')
           }
           const result = spawnSync(process.execPath, [
-            'scripts/run-tests.mjs', '--jobs', '2', '--tail', '160', ...scripts,
+            'scripts/run-tests.mjs', '--jobs', '2', '--tail', '160',
+            ...(process.env.TW_E2E_OUTPUT === 'true' ? ['--show-output'] : []), ...scripts,
           ], { stdio: 'inherit' })
           process.exitCode = result.status ?? 1
           NODE

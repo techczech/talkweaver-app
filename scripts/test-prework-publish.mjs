@@ -73,6 +73,7 @@ import { RUN_FOLDER_UNCLEAR, RUN_FOLDER_UNPROVEN, UNPUBLISH_FOLDER_MISSING, lega
 import { buildNotAvailablePage } from '../src/main/work-page.ts'
 import { RUN_VAULT_NOT_OPEN, runVaultRoot } from '../src/main/run-page.ts'
 import { grantedPublishing } from './lib/publishing-fakes.mjs'
+import { pageTitleOf } from '../src/shared/page-title.ts'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { assetRootsForTalk } from '../src/main/asset-roots.ts'
 
@@ -770,7 +771,7 @@ for (const awkward of ['two words 1 run', 'two words #1 run']) {
 {
   const evergreen = { ...common, outlineRefused: (p) => outlineRefusal(vault, p),
     resolveImageRefs: (text) => text, resolvePooledRefs: (text) => text, readHandoutUrl: () => null, app: { getPath: () => root },
-    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
+    ledgerSeal: async () => {}, pageTitleOf, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
   const published = await loadHandler('talk:publish-handout', evergreen)(null, outlinePath, OUTLINE)
   assert.equal(published.success, true, published.error)
   const html = readFileSync(join(siteDir, slug, `${slug}.html`), 'utf8')
@@ -778,6 +779,8 @@ for (const awkward of ['two words 1 run', 'two words #1 run']) {
   assert.equal(exported.success, true, exported.error)
   const exportedHtml = readFileSync(exported.path, 'utf8')
   for (const [label, page] of [['published', html], ['exported', exportedHtml]]) {
+    assert.ok(page.includes('<title>The current state of AI agents</title>'), `${label}: the outline title is used`)
+    assert.ok(page.includes('<meta name="deck-title" content="The current state of AI agents">'), `${label}: deck title metadata matches`)
     assert.ok(page.includes('Kestrelwing'), `${label}: the talk's own slides are there`)
     assert.equal(page.includes('Zebrafinch'), false, `${label}: no pre-work step is a slide of the evergreen handout`)
     assert.equal(/data-id="pw/.test(page), false, `${label}: no pre-work slide id`)
@@ -792,7 +795,7 @@ for (const awkward of ['two words 1 run', 'two words #1 run']) {
   assert.notEqual(named, OUTLINE)
   const evergreen = { ...common, outlineRefused: (p) => outlineRefusal(vault, p),
     resolveImageRefs: (text) => text, resolvePooledRefs: (text) => text, readHandoutUrl: () => null, app: { getPath: () => root },
-    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
+    ledgerSeal: async () => {}, pageTitleOf, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
   const published = await loadHandler('talk:publish-handout', evergreen)(null, outlinePath, named)
   assert.equal(published.success, true, published.error)
   const exported = await loadHandler('talk:export-handout', evergreen)(null, outlinePath, named)
@@ -811,7 +814,7 @@ for (const awkward of ['two words 1 run', 'two words #1 run']) {
 {
   const evergreen = { ...common, outlineRefused: (p) => outlineRefusal(vault, p),
     resolveImageRefs: (text) => text, resolvePooledRefs: (text) => text, readHandoutUrl: () => null, app: { getPath: () => root },
-    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
+    ledgerSeal: async () => {}, pageTitleOf, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
   const talkFolder = join(siteDir, slug)
   const snapshot = () => new Map(filesIn(talkFolder).sort().map((file) => [file.slice(talkFolder.length), readFileSync(file)]))
   const publishTalk = async () => {
@@ -876,7 +879,7 @@ const INJECTION = '[click](https://safe "a https://x/onmouseover=alert(1)// z")'
 {
   const evergreen = { ...common, outlineRefused: (p) => outlineRefusal(vault, p),
     resolveImageRefs: (text) => text, resolvePooledRefs: (text) => text, readHandoutUrl: () => null, app: { getPath: () => root },
-    ledgerSeal: async () => {}, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
+    ledgerSeal: async () => {}, pageTitleOf, localHandoutWorkerBaseUrl: () => 'http://127.0.0.1:8787', presenterPublications: { ticket: () => 1, published: () => [] } }
   const talkFolder = join(siteDir, slug)
   const snapshot = () => new Map(filesIn(talkFolder).sort().map((file) => [file.slice(talkFolder.length), readFileSync(file)]))
   const publishTalk = async () => {

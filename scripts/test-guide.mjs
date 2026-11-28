@@ -129,10 +129,10 @@ try {
     assert.ok(app.includes("'tw-guide-open'") && app.includes("'tw-guide-show-button'"))
   })
 
-  await test('the right panel starts with Slide and Talk, then Guide, Research and Images', () => {
-    assert.deepEqual(rightColumnTabs({ guideUp: false, hasTalk: true }), ['inspector', 'talk', 'guide', 'research', 'images'])
-    assert.deepEqual(rightColumnTabs({ guideUp: true, hasTalk: true }), ['inspector', 'talk', 'guide', 'research', 'images'])
-    assert.deepEqual(rightColumnTabs({ guideUp: true, hasTalk: true, shared: true, whatsNewUp: true }), ['inspector', 'talk', 'guide', 'research', 'images', 'feedback', 'whats-new'])
+  await test('the right panel starts with Slide and Talk, and shows Find last while open', () => {
+    assert.deepEqual(rightColumnTabs({ guideUp: false, hasTalk: true }), ['inspector', 'talk', 'guide', 'research'])
+    assert.deepEqual(rightColumnTabs({ guideUp: true, hasTalk: true }), ['inspector', 'talk', 'guide', 'research'])
+    assert.deepEqual(rightColumnTabs({ guideUp: true, hasTalk: true, shared: true, whatsNewUp: true, findOpen: true }), ['inspector', 'talk', 'guide', 'research', 'feedback', 'whats-new', 'find'])
     assert.deepEqual(rightColumnTabs({ guideUp: true, hasTalk: false }), ['guide'])
     assert.deepEqual(rightColumnTabs({ guideUp: false, hasTalk: false }), [])
   })
@@ -173,17 +173,17 @@ const CHAPTERS_STUB = { chapters: [], learn: { version: 1, ran: [], opened: [], 
 const HOW_STUB = { learn: CHAPTERS_STUB.learn, openId: null, onOpen: noop, onBack: noop, onTry: noop }
 const FEATURES_STUB = { learn: CHAPTERS_STUB.learn, onRead: noop, readConnections: async () => [], onAction: noop }
 
-  await test('right panel: Slide and Talk tabs, Guide, Research and Images controls, and a close mark while Guide is open; with no talk and nothing up nothing is drawn', () => {
+  await test('right panel: Slide and Talk tabs, Guide, Research control and optional Find tab, and a close mark while Guide is open; with no talk and nothing up nothing is drawn', () => {
     const base = { hasTalk: true, active: 'guide', onSelect: noop, onCloseGuide: noop }
-    const html = m.tabs({ ...base, guideUp: true })
-    assert.deepEqual([...html.matchAll(/data-rc-tab="([\w-]+)"/g)].map((x) => x[1]), ['inspector', 'talk', 'guide', 'research', 'images'])
-    assert.equal(text(html).replace(/\s+/g, ' ').trim(), 'Slide Talk Guide Research Images')
+    const html = m.tabs({ ...base, guideUp: true, findOpen: true })
+    assert.deepEqual([...html.matchAll(/data-rc-tab="([\w-]+)"/g)].map((x) => x[1]), ['inspector', 'talk', 'guide', 'research', 'find'])
+    assert.equal(text(html).replace(/\s+/g, ' ').trim(), 'Slide Talk Guide Research Find')
     assert.ok(html.includes('data-guide-close') && html.includes('aria-label="Close the Guide"'))
     assert.equal((html.match(/data-guide-close/g) ?? []).length, 1, 'one close mark, on the Guide only')
     assert.ok(/rc-tab rc-tab--on" data-rc-tab="guide"/.test(html), 'the Guide is the one showing')
     assert.ok(/rc-tab rc-tab--on" data-rc-tab="inspector"/.test(m.tabs({ ...base, guideUp: true, active: 'inspector' })))
     const without = m.tabs({ ...base, guideUp: false, active: 'inspector' })
-    assert.deepEqual([...without.matchAll(/data-rc-tab="([\w-]+)"/g)].map((x) => x[1]), ['inspector', 'talk', 'guide', 'research', 'images'])
+    assert.deepEqual([...without.matchAll(/data-rc-tab="([\w-]+)"/g)].map((x) => x[1]), ['inspector', 'talk', 'guide', 'research'])
     assert.ok(!without.includes('data-guide-close'))
     assert.deepEqual([...m.tabs({ ...base, guideUp: true, hasTalk: false }).matchAll(/data-rc-tab="([\w-]+)"/g)].map((x) => x[1]), ['guide'])
     assert.equal(m.tabs({ ...base, guideUp: false, hasTalk: false }), '')

@@ -1082,10 +1082,7 @@ export default function Studio({
                     ) : (
                       <div className="tws-slide-missing">
                         <AlertTriangle className="lt-icon" />
-                        <div>{curEnterIdx >= 0 ? 'This slide has changed since recording' : 'Play, or click a marker'}</div>
-                        {curEnterIdx >= 0 && enters[curEnterIdx]?.slideId ? (
-                          <div className="tws-sid">{enters[curEnterIdx].slideId}</div>
-                        ) : null}
+                        <div>{curEnterIdx >= 0 ? 'This slide has changed since the recording. The recording still plays.' : 'Play, or click a marker'}</div>
                       </div>
                     )}
                   </div>

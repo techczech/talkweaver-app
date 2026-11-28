@@ -9,6 +9,7 @@
 //      (Standard none), through the ordinary option commit and autosave;
 //   3. the written outline round-trips: re-reading it lights the same mode, chips and labels.
 import { _electron as electron } from 'playwright'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { join } from 'path'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
@@ -58,7 +59,7 @@ try {
   await page.waitForTimeout(2500)
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 900))
   await page.waitForTimeout(1000)
-  await page.locator('.tl-row').first().dblclick()
+  await openTalkByTitle(page, 'Reactions in the Inspector')
   await page.waitForTimeout(3000)
   if (!(await page.locator('.tw-inspector').count())) await page.keyboard.press('Meta+p')
   await page.waitForTimeout(1500)

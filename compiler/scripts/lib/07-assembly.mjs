@@ -656,7 +656,7 @@ function oceanTakesTopTitle(slide, rendered) {
   return false;
 }
 
-function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = null, brandLogoColour = "unified", deckFont = "") {
+function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = null, brandLogoColour = "unified", deckFont = "", authoringSlideIndex) {
   // Assign a cycling accent per section (in first-seen order) so each section
   // reads as a distinct movement; every accent-driven CSS device keys off --accent.
   // The deck `palette` ({palette:green}) selects which section-accent cycle to use.
@@ -674,6 +674,8 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
   // distinct. Logos never touch it. See assignFeatureIconsV3 / decideFeatureListStyle.
   // A deck `icons:` block (Layer 2) rides on the vocabulary as an override map.
   const deckUsed = createIconVocabulary(buildDeckIconMap(deckIcons));
+  let needsDeckVocabulary = false;
+  if (authoringSlideIndex !== undefined) deckUsed.onAutomaticIcon = () => { needsDeckVocabulary = true; };
   // The 0.44 look rides on every slide <section> (not only the deck container), so the slide keeps it
   // wherever it is drawn on its own: thumbnails, the handout, exports.
   const oceanLook = deckLookForPalette(palette) === "ocean";
@@ -682,7 +684,9 @@ function renderModelSlides(slides, palette = "", deckIcons = null, deckLinks = n
   const deckLookAttrs = oceanLook ? ` data-look="ocean"${lookPalette ? ` data-palette="${lookPalette}"` : ""} data-companion="${companionLevelForPalette(palette)}"` : "";
   // A section divider in the Ocean look shows its section's number, large (handoff 0.44: "large section number").
   const sectionNumbers = new Map(sectionOrder.filter(Boolean).map((key, at) => [key, at + 1]));
-  const sectionsHtml = slides.map((slide, index) => {
+  const selected = authoringSlideIndex === undefined ? slides : [slides[authoringSlideIndex]];
+  const sectionsHtml = selected.map((slide, at) => {
+    const index = authoringSlideIndex ?? at;
     // The section's lead colour (section-leads.mjs, resolved by the source adapter), on the slide itself so every
     // place that draws the slide alone (thumbnails, handout, export, audience view) shows the same colour.
     const lookAttrs = faceAttrs + (oceanLook ? `${deckLookAttrs} data-lead="${escapeHtml(slide.sectionLead || "blue")}"` : "");
@@ -889,7 +893,7 @@ ${headHtml}${emphasis ? emphasis.html : galleryHtml}${sourceHtml}
 ${cornerQrHtml ? `  ${cornerQrHtml}\n` : ""}${cornerSectionHtml ? `  ${cornerSectionHtml}\n` : ""}  ${notes ? `<aside class="notes">${notes}</aside>` : ""}
 </section>`;
   });
-  return sectionsHtml;
+  return needsDeckVocabulary ? null : sectionsHtml;
 }
 
 function replaceSlideSections(templateHtml, slideMarkup) {
@@ -911,17 +915,21 @@ export function talkQrTemplateTag(handoutUrl) {
 // model slide). This is the markup buildDeckHtmlFromModel puts in the deck; nothing is read from
 // disk. The outline verb setHeadingIcon reads the target slide's own section from it
 // (`data-title-layout`, the title-icon span) instead of keeping a copy of the title rules.
-export function renderSlideSections(model) {
-  return renderModelSlides(model.slides, model.palette || "", model.icons || null, model.deckLinks || null, model.brandLogoColour || "unified", model.deckFont || "");
+export function renderSlideSections(model, authoringSlideIndex) {
+  return renderModelSlides(model.slides, model.palette || "", model.icons || null, model.deckLinks || null, model.brandLogoColour || "unified", model.deckFont || "", authoringSlideIndex);
 }
 
-export async function buildDeckHtmlFromModel(model) {
-  const template = readPresenterTemplate();
-  const face = model.deckFont || "";
-  if (modelHasCodeBlock(model.slides, "svg")) await loadCompilerSvgSanitiser();
-  const slideMarkup = renderSlideSections(model);
+export async function buildDeckHtmlFromModel(model, authoringSlideIndex) {
+  const focused = authoringSlideIndex !== undefined;
+  if (!focused && modelHasCodeBlock(model.slides, "svg")) await loadCompilerSvgSanitiser();
+  const slideMarkup = renderSlideSections(model, authoringSlideIndex);
+  if (!slideMarkup) return null;
+  if (focused) {
+    const slide = model.slides[authoringSlideIndex];
+    model = { ...model, slides: [slide], beats: [{ kind: "slide", slideId: slide.id }] };
+  }
   const allSlides = slideMarkup.join("\n\n");
-  const templateHtml = selectBundledTypefaces(template, face, true);
+  const templateHtml = selectBundledTypefaces(readPresenterTemplate(), model.deckFont || "", true);
   let html = updateDeckTitle(replaceSlideSections(templateHtml, allSlides), model.title);
   // Keep the full export byte-identical for decks that use neither opt-in design.
   if (slideMarkup.some(markup => /class="slide-table[^"]*\btable-row-bands\b|class="slot" data-slot-side="above"/.test(markup))) {
@@ -976,7 +984,7 @@ export async function buildDeckHtmlFromModel(model) {
   // (not a string) so the minified vendor code's `$&`/`$\``/`$'` sequences are inserted verbatim
   // rather than interpreted as String.replace special patterns (which would splice in copies of the
   // surrounding HTML).
-  html = html.replace("<!--MARKMAP_VENDOR-->", () => markmapVendorSource);
+  html = html.replace("<!--MARKMAP_VENDOR-->", () => focused ? "" : markmapVendorSource);
   const hasMermaid = modelHasCodeBlock(model.slides, "mermaid");
   html = html.replace("<!--MERMAID_VENDOR-->", () => hasMermaid ? mermaidVendorSource : "");
   // Heading-is-slide model (Task 5): embed the sequencer's beat list so the presenter runtime
@@ -1036,6 +1044,9 @@ export async function buildDeckHtmlFromModel(model) {
       ? html.slice(0, closeIndex) + tag + html.slice(closeIndex)
       : html + tag;
   }
+  // The editor uses the visible document only. Thumbnail and projection hashes still come
+  // from the complete preparation, as do the author's strip rows.
+  if (focused) return html;
   // Hash the actual rendered slide with the common document shell. This retains section
   // accents, inlined assets, fonts, runtimes and beats, without making an
   // ordinary text edit invalidate every PNG. Navigation changes remain conservative; the phone script is not slide artwork.

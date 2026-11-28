@@ -274,6 +274,7 @@
     "test:vault-paths",
     "test:board-slide",
     "test:slide-video-materialization",
+    "test:widget-travel",
     "test:audio-chip",
     "test:image-steps",
     "test:emphasis-steps",
@@ -326,6 +327,7 @@
     "test:talk-activity",
     "test:conflict-merge",
     "test:conflict-compare",
+    "test:page-title",
     "test:handout-title",
     "test:handout-home",
     "test:live-step",
@@ -479,9 +481,13 @@
     "test:saved-text-adoption-dom",
     "test:save-tidy-up-after-undo-dom",
     "test:slide-text-panel:dom",
+    "test:final-check-polish-dom",
+    "test:final-check-right-panel-dom",
     "test:redesign-right-panel-dom",
+    "test:find-panel:dom",
     "test:design-switch-dom",
     "test:video-markers-dom",
+    "test:crossed-icons-dom",
     "test:video-markers-presenter-dom",
     "test:list-layout-suggestions-dom",
     "test:notes-in-place:dom",
@@ -611,6 +617,7 @@
     "test:plain-view-icon-picker",
     "test:icon-picker-in-markdown",
     "test:plain-view-margin-menus",
+    "test:talk-tab-live-save-dom",
     "test:plain-view-talk-details",
     "test:plain-view-hidden-text-rules",
     "test:plain-view-guarded-keys",
@@ -686,6 +693,7 @@
       "test:redesign-right-panel-dom",
       "test:outline-preview-dom",
       "test:sidebar-current-slide-dom",
+      "test:find-panel:dom",
       "test:scratchpad-panel:dom",
       "test:slide-set-aside-dom",
       "test:outline-merge:dom",
@@ -694,6 +702,7 @@
       "test:offline-page:dom",
       "test:research-panel:dom",
       "test:icon-picker-in-markdown",
+      "test:crossed-icons-dom",
       "test:plain-view-hidden-text-rules",
       "test:plain-view-guarded-keys",
       "test:editor-no-horizontal-scroll-dom",
@@ -806,6 +815,7 @@
           "src/shared/vault-gallery*"
         ],
         "tests": [
+          "test:start-screen:dom",
           "test:vault-gallery:dom",
           "test:vault-gallery:guard:dom",
           "test:vault-gallery:states:dom",
@@ -816,7 +826,7 @@
       {
         "paths": [
           "src/renderer/src/components/**/[Ss]etup*",
-          "src/renderer/src/components/WelcomeTalk.tsx",
+          "src/renderer/src/components/vault-gallery/VaultExplorer.tsx",
           "src/renderer/src/App.tsx"
         ],
         "tests": [
@@ -1003,6 +1013,7 @@
     "test:slide-set-aside:e2e",
     "test:grid-move-continuity:e2e",
     "test:vault-gallery:e2e",
+    "test:vault-explorer:e2e",
     "test:pathways:e2e",
     "test:capture-network:e2e",
     "test:animated-video:e2e",
@@ -1012,6 +1023,7 @@
     "test:heading-protect:e2e",
     "test:outline-disk-guard:e2e",
     "test:large-deck:e2e",
+    "test:slide-preview-speed:e2e",
     "test:audience-widgets:e2e",
     "test:slide-video-seek:e2e",
     "test:video-markers-presenter:e2e",
@@ -1057,6 +1069,7 @@
     "test:vault-gallery:handouts:completion"
   ],
   "serial": [
+    "test:slide-preview-speed:e2e",
     "test:worker-dist",
     "test:performance",
     "test:thumbnail-prewarm:e2e",

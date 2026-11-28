@@ -88,7 +88,11 @@ export function VideoMarkerPage({ panel }: { panel: VideoMarkerPanel }) {
                     const value = event.target.value
                     setDraft(autoNaming ? { t: marker.t, value } : { line: marker.line, field: kind, value })
                   }}
-                  onBlur={cancel}
+                  onBlur={event => {
+                    const value = event.currentTarget.value
+                    if (kind === 'time' && parseMarkerTime(value) === null) cancel()
+                    else commit(marker, kind, value)
+                  }}
                   onKeyDown={event => {
                     if (event.key === 'Escape') { event.stopPropagation(); cancel() }
                     if (event.key === 'Enter' && !event.nativeEvent.isComposing) {

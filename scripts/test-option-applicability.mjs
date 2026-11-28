@@ -356,8 +356,8 @@ assert.deepEqual(
   [
     ['Layout', ['Style', 'Icon treatment', 'Icons on']],
     ['Title', ['Placement', 'Display', 'Icon', 'Size']],
-    ['Slide', ['Background', 'Body size', 'Media', 'Section label', 'Claim style', 'Narrow columns']],
-    ['Steps', ['Arrival', 'Stepping', 'Step through images', 'Emphasis appears on Next']],
+    ['Slide', ['Slide background', 'Body size', 'Media', 'Section label', 'Claim style', 'Narrow columns']],
+    ['Steps', ['Points appear', 'Steps on Next', 'Step through images', 'Emphasis appears on Next']],
     ['Poll', ['Type']],
     ['Audience', ['Reactions']]
   ],

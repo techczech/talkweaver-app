@@ -5,7 +5,7 @@
  *   [--steps=120] [--back=60] [--gap=250] [--launch-epoch=<ms since 1970 when the app was started>] [--ps="ssh air"] [--typing=40]
  *
  * Drives a build that allows a debugging port (the Security Test flavour or `electron .`), never the owner's own app.
- * It opens the talk from the Talks list, starts Present (presenter and audience), steps forward and back with the
+ * It opens the talk from the startup screen, starts Present (presenter and audience), steps forward and back with the
  * arrow keys, then types in the editor. Every time is read inside the windows (event timestamps and
  * requestAnimationFrame), so the ssh tunnel's own latency is not counted. The output names the talk only by --label:
  * no titles, slide text or paths are written.
@@ -14,7 +14,7 @@ import { chromium } from 'playwright'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { execSync } from 'node:child_process'
-import { openTalkByTitle, waitForTalkList } from '../../e2e/lib/talklist.mjs'
+import { openTalkByTitle } from '../../e2e/lib/talklist.mjs'
 
 const opt = Object.fromEntries(process.argv.slice(2).map((s) => { const i = s.indexOf('='); return i < 0 ? [s.replace(/^--/, ''), '1'] : [s.slice(2, i), s.slice(i + 1)] }))
 for (const k of ['cdp', 'talk', 'label', 'out']) if (!opt[k]) throw Error(`--${k} is required`)
@@ -67,10 +67,12 @@ async function heapMB(page) {
 }
 
 try {
-  // 1. Start to usable window: the Talks list is on screen.
+  // 1. Start to usable window: the startup surface is on screen.
   const main = await findPage((u) => /\/renderer\/index\.html|index\.html$/.test(u) && !u.includes('presenter='), 90000)
   if (!main) throw Error('no editor window on the debugging port')
-  await waitForTalkList(main, { timeout: 90000 })
+  const explorer = main.getByRole('region', { name: 'Vault Explorer', exact: true })
+  const talks = main.locator('aside.talk-list.tl-panel .tl-tree')
+  await explorer.or(talks).filter({ visible: true }).first().waitFor({ timeout: 90000 })
   const usable = await epoch(main)
   // First-run offers on a fresh profile (the agent skill step) are answered "Not now", as a new user would.
   for (let i = 0; i < 20; i++) {

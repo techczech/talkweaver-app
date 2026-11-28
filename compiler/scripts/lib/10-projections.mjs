@@ -56,7 +56,7 @@ function sha256Hex(value) {
 // that had a form before that ticket keeps the picture key, and the thumbnail, it had.
 export function pictureKeyForSlide(slide, mediaDigests = []) {
   // The heading line is an address, not artwork; moving a slide keeps its picture key.
-  const { sourceLine: _sourceLine, ...picture } = slide;
+  const { sourceLine: _sourceLine, designContent: _designContent, ...picture } = slide;
   const renderKey = JSON.stringify(picture, (k, v) =>
     k === "id" || k === "sourceMarkdown" || k === "scriptSourceMarkdown" || k === "notes" || k === "tags" || k === "quoteFormSet" ? undefined : v
   );
@@ -199,6 +199,30 @@ function countBlocks(slide, predicate) {
   return (slide.blocks || []).filter(predicate).length;
 }
 
+function widgetTitles(blocks) {
+  return (blocks ?? []).flatMap((block) => [
+    ...(block?.pageTitle ? [block.pageTitle] : []),
+    ...widgetTitles(block?.blocks),
+    ...(block?.cards ?? []).flatMap((card) => widgetTitles(card.blocks))
+  ]);
+}
+
+// Use the content before a layout can turn a list into objects such as icon-row nodes.
+export function hasDesignContent(blocks) {
+  return blocks.some((block) => {
+    switch (block?.type) {
+      case "list":
+      case "feature-list": return Boolean(block.items?.length);
+      case "table": return Boolean(block.header?.length || block.rows?.length);
+      case "image": return true;
+      case "image-row": return Boolean(block.images?.length);
+      case "claim":
+      case "paragraph": return Boolean(block.text?.trim());
+      default: return false;
+    }
+  });
+}
+
 // Build one projection record per slide. `model.slides` is the rich modelled deck
 // (markdown-outline / source-project / canonical-ppt / learnweaver adapters). The
 // static-html adapter has no model, so this returns null and no file is emitted.
@@ -276,11 +300,13 @@ export function buildPerSlideProjections(model, deckSlug) {
       bullet_count: (slide.blocks || []).reduce((sum, b) => sum + ((b?.type === "list" || b?.type === "feature-list") ? flattenListItems(b).length : 0), 0),
       image_count: countBlocks(slide, (b) => b?.type === "image") + (slide.blocks || []).reduce((sum, b) => sum + (b?.type === "image-row" ? (b.images || []).length : 0), 0),
       embed_count: countBlocks(slide, (b) => b?.type === "embed" || b?.type === "video"),
+      has_design_content: slide.designContent ?? hasDesignContent(blocks),
       has_quote: blocks.some((b) => b?.type === "quote"),
       has_table: blocks.some((b) => b?.type === "table"),
       has_code: blocks.some((b) => b?.type === "code"),
       // The slide's VERBATIM outline markdown — the unit of reuse (Copy slide source, [use:]
       // materialisation). Empty for auto-generated slides (deck title, section dividers).
+      widget_titles: widgetTitles(slide.blocks),
       source_markdown: slide.sourceMarkdown || "",
       // 1-based source line of this slide's heading (null for synthesized cover/closing slides) —
       // lets the app map the editor cursor ↔ strip directly, with no heading-walk drift.

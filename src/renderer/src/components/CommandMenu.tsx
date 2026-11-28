@@ -22,11 +22,22 @@ interface Props {
   commands: Command[]
   /** Text handed over by Actions here. */
   initialQuery?: string
+  hideEmptyGroups?: boolean
 }
 
 type Row = { kind: 'group'; group: TaskGroup; count: number } | { kind: 'command'; command: Command; heading?: string }
 
-export default function CommandMenu({ isOpen, onClose, commands, initialQuery = '' }: Props) {
+function matchBand(command: Command, query: string, queryWords: string[]): number {
+  const label = command.title.toLowerCase()
+  if (label.replace(/…$/, '') === query.replace(/…$/, '')) return 0
+  if (label.startsWith(query)) return 1
+  const labelWords = label.split(/[^\p{L}\p{N}]+/u)
+  if (queryWords.every(word => labelWords.some(labelWord => labelWord.startsWith(word)))) return 2
+  const other = [label, command.hint ?? '', command.group ?? '', command.subgroup ?? '', ...(command.keywords ?? [])]
+  return other.some(text => text.toLowerCase().includes(query)) ? 3 : -1
+}
+
+export default function CommandMenu({ isOpen, onClose, commands, initialQuery = '', hideEmptyGroups = false }: Props) {
   const [query, setQuery] = useState(initialQuery)
   const [group, setGroup] = useState<TaskGroup | null>(null)
   const [active, setActive] = useState(0)
@@ -36,17 +47,25 @@ export default function CommandMenu({ isOpen, onClose, commands, initialQuery = 
   const composing = useRef(false)
   const listId = useId()
   const q = query.toLowerCase().trim()
-  const matches = (c: Command): boolean => !q || [c.title, c.hint ?? '', c.group ?? '', c.subgroup ?? '', ...(c.keywords ?? [])].some(text => text.toLowerCase().includes(q))
+  const groups = TASK_GROUPS.map(group => ({ kind: 'group' as const, group, count: commands.filter(c => c.group === group).length }))
+    .filter(row => !hideEmptyGroups || row.count > 0)
   let rows: Row[]
-  if (!group && !q) {
-    rows = TASK_GROUPS.map(group => ({ kind: 'group', group, count: commands.filter(c => c.group === group).length }))
+  if (q) {
+    const words = q.split(/\s+/)
+    const bands: Command[][] = [[], [], [], []]
+    for (const command of commands) {
+      if (group && command.group !== group) continue
+      const band = matchBand(command, q, words)
+      if (band >= 0) bands[band].push(command)
+    }
+    rows = bands.flat().map(command => ({ kind: 'command', command }))
+  } else if (group) {
+    const filtered = commands.filter(c => c.group === group)
+    // The same registry subgroups feed native menus. Preserve their first-declared order.
+    const headings = [...new Set(filtered.map(c => c.subgroup ?? group))]
+    rows = headings.flatMap(heading => filtered.filter(c => (c.subgroup ?? group) === heading).map((command, index) => ({ kind: 'command' as const, command, ...(index === 0 ? { heading } : {}) })))
   } else {
-    const filtered = commands.filter(c => (!group || c.group === group) && matches(c))
-    if (group) {
-      // The same registry subgroups feed native menus. Preserve their first-declared order.
-      const headings = [...new Set(filtered.map(c => c.subgroup ?? group))]
-      rows = headings.flatMap(heading => filtered.filter(c => (c.subgroup ?? group) === heading).map((command, index) => ({ kind: 'command' as const, command, ...(index === 0 ? { heading } : {}) })))
-    } else rows = filtered.map(command => ({ kind: 'command', command }))
+    rows = groups
   }
 
   const restoreFocus = (): void => {
@@ -77,7 +96,7 @@ export default function CommandMenu({ isOpen, onClose, commands, initialQuery = 
     onClose()
   }
   const back = (): void => {
-    setActive(Math.max(0, TASK_GROUPS.indexOf(group!)))
+    setActive(Math.max(0, groups.findIndex(row => row.group === group)))
     setGroup(null)
     setQuery('')
     inputRef.current?.focus()

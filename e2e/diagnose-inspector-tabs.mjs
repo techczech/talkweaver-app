@@ -13,6 +13,7 @@
 // area, or, when the chip row scrolls inside that area (the old sticky row), the chip row's bottom.
 // TW_SHOTS_DIR=<dir> saves a screenshot of the Inspector per state.
 import { _electron as electron } from 'playwright'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
@@ -73,7 +74,7 @@ const shoot = async (name) => {
 }
 
 await setWindow(1512, 945)
-await page.locator('.tl-row').first().dblclick()
+await openTalkByTitle(page, 'TalkWeaver Layout Showcase')
 await page.waitForTimeout(3000)
 // The Inspector is the default tab of the right sidebar (R11a); ⌘P would hide it.
 if (await page.locator('.tw-inspector').count() === 0) await page.keyboard.press('Meta+p')

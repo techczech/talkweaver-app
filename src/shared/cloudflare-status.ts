@@ -40,10 +40,12 @@ export type PublishingRow = {
   customDomain: CustomDomainState
   /**
    * The handout web address itself, as a bare hostname: the custom domain the handouts are served
-   * on (the one in Settings when it is active on the site, else the site's first active custom
-   * domain), or the site's own pages.dev address when it has none active. Null when not known.
+   * on (the one in Settings when active, else the least nested active custom domain),
+   * or the site's own pages.dev address when it has none active. Null when not known.
    */
   address: string | null
+  /** An unanswered lookup is different from a site which has no active custom domains. */
+  domainLookupUnavailable?: true
   /** The last known state, shown greyed, because the latest check got no answer. */
   stale: boolean
 }

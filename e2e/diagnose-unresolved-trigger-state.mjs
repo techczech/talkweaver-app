@@ -5,6 +5,7 @@
 // the join and every main handler; this file exercises the rendered strip, Grid, Inspector and
 // block modal when the driver next runs Electron.
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -56,7 +57,7 @@ const app = (await launchApp({
 try {
   const page = await app.firstWindow()
   await page.waitForLoadState('domcontentloaded')
-  await page.getByText('Unresolved probe', { exact: true }).first().click()
+  await openTalkByTitle(page, 'Unresolved probe')
   await page.waitForSelector('.workspace')
   await page.getByRole('tab', { name: 'Slides', exact: true }).click()
   await page.getByRole('button', { name: 'Show slides as previews' }).click()

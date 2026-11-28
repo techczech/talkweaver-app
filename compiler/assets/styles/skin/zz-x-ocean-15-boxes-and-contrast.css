@@ -39,7 +39,7 @@
   width: 100% !important; height: 100% !important; display: block; color: inherit;
 }
 .slide[data-look="ocean"] :is(.feature-list.fl-cards > li > .fl-icon, .icon-row .ir-item > .ir-icon) svg,
-.slide[data-look="ocean"] :is(.feature-list.fl-cards > li > .fl-icon, .icon-row .ir-item > .ir-icon) svg * {
+.slide[data-look="ocean"] :is(.feature-list.fl-cards > li > .fl-icon, .icon-row .ir-item > .ir-icon) svg *:not([data-icon-cross], [data-icon-cross-halo]) {
   stroke-width: 2.5 !important; vector-effect: none !important;
 }
 
@@ -251,7 +251,7 @@
 }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-head-ico svg { width: 100%; height: 100%; }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid :is(.vs-head-ico, .vs-ico) svg,
-.slide[data-look="ocean"][data-layout="contrast"] .vs-grid :is(.vs-head-ico, .vs-ico) svg * { stroke-width: 2.5 !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid :is(.vs-head-ico, .vs-ico) svg *:not([data-icon-cross], [data-icon-cross-halo]) { stroke-width: 2.5 !important; }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-row {
   display: flex !important; align-items: center; gap: 1.2cqw;
   margin: 0 5.6cqw !important; padding: 1.9cqw 0 !important; background: none !important;

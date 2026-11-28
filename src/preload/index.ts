@@ -8,6 +8,7 @@ import type { OfflinePageInput, OfflinePageSaveResult } from '../shared/offline-
 import type { GalleryHandouts } from '../shared/gallery-handouts'
 import type { InventoryRequest, InventoryResult } from '../shared/vault-gallery-storage'
 import type { GalleryCatalogue, GalleryFacts } from '../shared/vault-gallery'
+import type { OpenInNewWindowTarget, OpenSlideTarget } from '../shared/open-in-new-window'
 import type { ResearchWriteOp, ResearchWriteInput, ResearchWriteResult } from '../shared/research'
 import type { HtmlPageChoice, HtmlPageImport } from '../shared/html-page-import'
 import type { ResearchListInput, ResearchSearchInput, ResearchUsedInput, ResearchListResult, ResearchUsedResult } from '../shared/research'
@@ -296,6 +297,7 @@ export type TimerSettings = {
 }
 
 export type ProjectionRow = {
+  widget_titles?: string[]
   slide_id: string
   deck_slug: string
   order: number
@@ -316,6 +318,7 @@ export type ProjectionRow = {
   /** Embed + video blocks on the slide (the projection counts the two together). Absent
    *  only on pre-v0.15 cached index rows. */
   embed_count?: number
+  has_design_content?: boolean
   has_quote?: boolean
   has_table?: boolean
   has_code?: boolean
@@ -1219,19 +1222,23 @@ const api = {
     // resolve in the destination talk. Returns the rewritten markdown.
     materializeSlideAssets: (
       sourceOutlinePath: string,
-      markdown: string
+      markdown: string,
+      targetOutlinePath?: string
     ): Promise<{ success: boolean; markdown: string; materialized?: number; skipped?: number; error?: string }> =>
-      ipcRenderer.invoke('talk:materialize-slide-assets', sourceOutlinePath, markdown),
+      ipcRenderer.invoke('talk:materialize-slide-assets', sourceOutlinePath, markdown, targetOutlinePath),
     // Slides across vaults (ticket 06): a slide from ANOTHER vault is copied into the target talk's
     // vault (media, a re-stamped id on collision, provenance). `liveIds`: ids in the talk's live text.
     insertFromVault: (sourceOutlinePath: string, targetOutlinePath: string, markdown: string, liveIds: string[]): Promise<InsertFromVaultResult> =>
       ipcRenderer.invoke('talk:insert-from-vault', sourceOutlinePath, targetOutlinePath, markdown, liveIds),
     // Cross-talk reuse for TEXT-PASTED slides (no source path): resolve relative assets/<name> refs
     // by filename across the vault, copy into the pool (img-<hash>), rewrite. Returns rewritten markdown.
+    rememberSlideCopy: (sourceOutlinePath: string, markdown: string): Promise<void> =>
+      ipcRenderer.invoke('talk:remember-slide-copy', sourceOutlinePath, markdown),
     materializePastedAssets: (
-      markdown: string
+      markdown: string,
+      targetOutlinePath?: string
     ): Promise<{ success: boolean; markdown: string; materialized?: number; skipped?: number; error?: string }> =>
-      ipcRenderer.invoke('talk:materialize-pasted-assets', markdown),
+      ipcRenderer.invoke('talk:materialize-pasted-assets', markdown, targetOutlinePath),
     // OCR-index the vault's images (native macOS Vision) so search matches text INSIDE images.
     ocrIndex: (): Promise<{ success: boolean; total?: number; read?: number; known?: number; failed?: number; skipped?: number; cached?: number; added?: number; error?: string }> =>
       ipcRenderer.invoke('talk:ocr-index')
@@ -1275,8 +1282,9 @@ const api = {
   slide: {
     // Compile the full live outline through the presentation pipeline and return its stable
     // twpresent:// document URL. The renderer adds a slide-id hash for navigation.
-    renderPreview: (outlinePath: string, outlineContent: string, surface: import('../shared/slide-preview').SlidePreviewSurface = 'detail'): Promise<string | null> =>
-      ipcRenderer.invoke('slide:render-preview', outlinePath, outlineContent, surface)
+    renderPreview: (outlinePath: string, outlineContent: string, surface: import('../shared/slide-preview').SlidePreviewSurface = 'detail',
+      target?: import('../shared/slide-preview').AuthoringSlideTarget): Promise<string | null> =>
+      ipcRenderer.invoke('slide:render-preview', outlinePath, outlineContent, surface, target)
   },
   publish: {
     history: (): Promise<{ ok: true; attempts: PublishHistoryAttempt[] } | { ok: false; error: string }> => ipcRenderer.invoke('publish:history'),
@@ -1431,9 +1439,11 @@ const api = {
   // Object cards' file status (src/main/object-status.ts): for the talk this window has open only.
   objects: {
     status: (outlinePath: string, refs: string[]): Promise<
-      | { ok: true; statuses: Array<{ ref: string; state: 'present' | 'missing' | 'outside' | 'remote' | 'invalid' | 'unchecked'; path?: string }> }
+      | { ok: true; statuses: Array<{ ref: string; state: 'present' | 'missing' | 'outside' | 'remote' | 'invalid' | 'unchecked'; path?: string; repairTitle?: string; repairCandidates?: string[] }> }
       | { ok: false; reason: string }
     > => ipcRenderer.invoke('object:status', outlinePath, refs),
+    repairWidget: (outlinePath: string, ref: string, expectedTitle: string): Promise<boolean> =>
+      ipcRenderer.invoke('object:repair-widget', outlinePath, ref, expectedTitle),
     staticPreview: (outlinePath: string, ref: string): Promise<string | null> =>
       ipcRenderer.invoke('object:static-preview', outlinePath, ref),
     /** A web page's views saved before {capture} lines existed, for Place earlier views. */
@@ -1637,7 +1647,7 @@ const api = {
     allSlides: (
       query:
         | string
-        | { scope: 'all' | 'title' | 'body' | 'image'; exact: boolean; text: string; terms: string[] },
+        | { scope: 'all' | 'title' | 'body' | 'image' | 'widget'; exact: boolean; text: string; terms: string[] },
       options?: { vaultIds?: string[]; requestId?: number; supersedeKey?: string }
     ): Promise<
       Array<ProjectionRow & { vaultId?: string; talkSlug: string; talkTitle: string; outlinePath: string; titleHit?: boolean }> | null
@@ -1645,8 +1655,8 @@ const api = {
     // The Slide Browser's form of allSlides: each talk once, rows pointing at it, unread fields
     // dropped (shared/slide-search-reply.ts; expandSlideSearchReply restores the row type).
     allSlidesCompact: (
-      query: { scope: 'all' | 'title' | 'body' | 'image'; exact: boolean; text: string; terms: string[] },
-      options: { vaultIds?: string[]; requestId?: number; supersedeKey?: string }
+      query: { scope: 'all' | 'title' | 'body' | 'image' | 'widget'; exact: boolean; text: string; terms: string[] },
+      options: { vaultIds?: string[]; requestId?: number; supersedeKey?: string; includeMatch?: boolean }
     ): Promise<CompactSlideSearchReply | ProjectionRow[] | null> =>
       ipcRenderer.invoke('search:all-slides', query, { ...options, compact: true }),
     // The stamp a whole-index scan of these vaults would carry now (main/search-index-stamp.ts): the
@@ -2084,11 +2094,16 @@ const api = {
     open: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('window:new'),
     // File-list "Open in new window": a talk opens in a new window (or its existing window is
     // focused); a folder opens a new window with the file list scoped to it.
-    openInNewWindow: (target: { kind: 'talk'; outlinePath: string } | { kind: 'folder'; topic: string; vaultId?: string }): Promise<{ ok: boolean; focused?: boolean; reason?: string }> =>
+    openInNewWindow: (target: OpenInNewWindowTarget): Promise<{ ok: boolean; focused?: boolean; reason?: string }> =>
       ipcRenderer.invoke('window:open-in-new-window', target),
     // A window started by openInNewWindow asks, once, what it was opened for (null for a plain ⌘N window).
-    takeOpenRequest: (): Promise<{ kind: 'talk'; outlinePath: string } | { kind: 'folder'; topic: string; vaultId?: string } | null> =>
+    takeOpenRequest: (): Promise<OpenInNewWindowTarget | null> =>
       ipcRenderer.invoke('window:take-open-request'),
+    onOpenSlide: (cb: (jump: { outlinePath: string; slide: OpenSlideTarget }) => void): (() => void) => {
+      const listener = (_event: unknown, jump: { outlinePath: string; slide: OpenSlideTarget }): void => cb(jump)
+      ipcRenderer.on('window:open-slide', listener)
+      return () => ipcRenderer.removeListener('window:open-slide', listener)
+    },
     recoverMovedTalk: (from: string): Promise<{kind:'no-receipt'} | {kind:'recoverable';talk:TalkInfo} | {kind:'revoked';reason:string;retired?:boolean}> => ipcRenderer.invoke('window:recover-moved-talk', from),
     preserveMovedTalk: (from:string, text:string):Promise<{ok:boolean}> => ipcRenderer.invoke('window:preserve-moved-talk', from, text),
     retireMovedTalk: (from:string, text:string):Promise<{ok:boolean}> => ipcRenderer.invoke('window:retire-moved-talk', from, text),

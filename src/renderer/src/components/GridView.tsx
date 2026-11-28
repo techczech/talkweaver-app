@@ -75,7 +75,7 @@ interface Props {
   lineOfSlide?: (index: number) => number | null
   /** Paste after the card at a display index (⌘V, the card menu's Paste); the host checks the card's heading is
    *  still on its line and refuses otherwise. Returns the pasted heading's line, or null. */
-  onPasteAfterCard?: (clip: string, index: number) => number | null
+  onPasteAfterCard?: (clip: string, index: number) => ReturnType<SlideBlockOps['paste']>
   /** After a paste or a "Move … to…" made here: the heading's new source line, to select and reveal. */
   onLanded?: (line: number) => void
   /** The menu's More actions… row: Actions here for the card at this index. */
@@ -614,7 +614,7 @@ export default function GridView({
       const r = rows[i]
       return {
         key: i, level: r.role === 'section-title' ? 2 : headingLevelOfSource(r.source_markdown ?? ''),
-        title: `${r.nav_title || ''}\n${r.title || ''}`, body: r.source_markdown ?? '',
+        title: `${r.nav_title || ''}\n${r.title || ''}`, body: r.source_markdown ?? '', widget: r.widget_titles?.join('\n'),
         image: pictureText.length === blocks.length ? pictureText[i] : ''
       }
     }), query, talk?.title ?? '')
@@ -679,7 +679,6 @@ export default function GridView({
     setRevealTick((n) => n + 1)
   }, [activeIndex]) // eslint-disable-line react-hooks/exhaustive-deps
   const containerRef = useRef<HTMLDivElement>(null)
-  const [barHeight, setBarHeight] = useState(0)
   // dragFrom is the GLOBAL slide index of the source cell; held in a ref too so the
   // synchronous drop handler reads the live value, not a stale render closure.
   const [dragFrom, setDragFrom] = useState<number | null>(null)
@@ -1002,7 +1001,8 @@ export default function GridView({
     e.preventDefault()
     // After the selected card's slide (after its whole block); at the end of the talk when it has no heading of its own.
     const at = onPasteAfterCard(e.clipboardData.getData('text/plain'), activeIndex)
-    if (at != null) onLanded?.(at)
+    if (typeof at === 'number') onLanded?.(at)
+    else if (at) void at.then((line) => { if (line != null) onLanded?.(line) })
   }
   // The card menu's Cut / Copy / Delete / Paste go through the same checked handlers as the keys (a section header's
   // menu keeps the editor's line operations: its line is read from the buffer's own outline, not from a card).
@@ -1344,6 +1344,7 @@ export default function GridView({
   }
 
   return (
+    <div className="grid-with-selection">
     <div
       ref={containerRef}
       className="grid-view"
@@ -1357,12 +1358,11 @@ export default function GridView({
       onPaste={handlePaste}
       style={{
         background: 'var(--panel)',
-        height: '100%',
+        flex: 1,
+        minHeight: 0,
         overflowY: 'auto',
         overflowAnchor: 'none',
         padding: '16px',
-        // While the selection bar shows it sticks over the lowest cards: pad by its height (and its 12px margin plus a gap).
-        paddingBottom: barHeight > 0 ? `${barHeight + 12 + 16}px` : '16px',
         outline: 'none'
       }}
       onDragOver={handleAreaDragOver}
@@ -1387,6 +1387,7 @@ export default function GridView({
           data-grid-search
           ref={searchInputRef}
           placeholder="Search titles, text and pictures…"
+          title="Use widget: to search only widgets"
           aria-label="Search the slides"
           value={query}
           style={{ width: '260px', flex: '0 1 260px' }}
@@ -1565,6 +1566,20 @@ export default function GridView({
           )}
         </div>
       )}
+      <SlideRowMenus
+        request={menu}
+        structureItems={rowStructureItems}
+        rows={menuRows}
+        ops={cardMenuOps}
+        onClose={() => setMenu(null)}
+        onActed={() => containerRef.current?.focus({ preventScroll: true })}
+        onLanded={(line) => { explicitRevealRef.current = true; onLanded?.(line) }}
+        onSetAside={onSetAsideSlides ? () => { const f = menuForRef.current; const ref = f && 'index' in f ? slideRefOfRef.current?.(f.index) : null; if (ref) void asideSelected([ref]) } : undefined}
+        onToggleCollapse={() => { const f = menuForRef.current; if (f && 'group' in f) toggleAt(f.group) }}
+        onExplain={onExplain ? () => { const f = menuForRef.current; if (f && 'index' in f) onExplain(f.index) } : undefined}
+        onMore={onMoreActions ? () => { const f = menuForRef.current; if (f && 'index' in f && menu) onMoreActions(f.index, { x: menu.x, y: menu.y }) } : undefined}
+      />
+    </div>
       {canReorder && onCutSlides && onCopySlides && (
         <BatchBar
           count={sel.count}
@@ -1579,24 +1594,10 @@ export default function GridView({
           onAddToPathway={onAddToPathway ? () => { addSelectedToPathway() } : undefined}
           onCut={() => { void cutSelected('cut') }}
           onSetAside={onSetAsideSlides ? () => { void asideSelected() } : undefined}
-          onHeight={setBarHeight}
           onCopy={copySelected}
           onDelete={() => { void cutSelected('delete') }}
         />
       )}
-      <SlideRowMenus
-        request={menu}
-        structureItems={rowStructureItems}
-        rows={menuRows}
-        ops={cardMenuOps}
-        onClose={() => setMenu(null)}
-        onActed={() => containerRef.current?.focus({ preventScroll: true })}
-        onLanded={(line) => { explicitRevealRef.current = true; onLanded?.(line) }}
-        onSetAside={onSetAsideSlides ? () => { const f = menuForRef.current; const ref = f && 'index' in f ? slideRefOfRef.current?.(f.index) : null; if (ref) void asideSelected([ref]) } : undefined}
-        onToggleCollapse={() => { const f = menuForRef.current; if (f && 'group' in f) toggleAt(f.group) }}
-        onExplain={onExplain ? () => { const f = menuForRef.current; if (f && 'index' in f) onExplain(f.index) } : undefined}
-        onMore={onMoreActions ? () => { const f = menuForRef.current; if (f && 'index' in f && menu) onMoreActions(f.index, { x: menu.x, y: menu.y }) } : undefined}
-      />
     </div>
   )
 }

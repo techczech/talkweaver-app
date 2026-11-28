@@ -1,5 +1,6 @@
 // ADR-0045 ST1 / LO1 / LO2 / GR1: real hidden Electron, synthetic talk, real writer and Undo.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
@@ -115,7 +116,7 @@ try {
     for (const win of BrowserWindow.getAllWindows()) win.setContentSize(1440, 900)
   })
   assert.ok(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(win => !win.isVisible())))
-  await page.locator('[data-talk-slug="garden-structure"]').first().dblclick()
+  await openTalkByTitle(page, 'Garden structure')
   await page.locator('.workspace-view-titlebar').waitFor()
   await page.getByRole('tab', { name: 'Slides', exact: true }).click()
   const panel = page.locator('.tw-structure-panel')
@@ -238,7 +239,8 @@ try {
   await page.keyboard.press(`${primary}+2`)
   await page.locator('[data-view="grid"] [data-selected="true"]').first().waitFor()
   await capture(page, 'GR1-several-selected')
-  await panel.getByRole('button', { name: 'Make a section', exact: true }).click()
+  await page.getByRole('toolbar', { name: 'Selected slides', exact: true })
+    .getByRole('button', { name: 'Make a section', exact: true }).click()
   await changed('Make a section from Repair and Plant', text => {
     const { slides, inserted } = created(text, 'subsection')
     const parent = slides.indexOf(inserted)

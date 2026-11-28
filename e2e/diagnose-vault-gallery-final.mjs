@@ -1,6 +1,8 @@
 // Hidden Electron qualification with production IPC and a disposable vault. Set SHOTS to keep readback evidence.
 import assert from 'node:assert/strict'
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
+import { openVaultStorage } from './lib/vault-storage.mjs'
 import { typeAtOutlineLineEnd } from './lib/outline-typing.mjs'
 import * as fs from 'node:fs'
 import {resolve,join} from 'node:path'
@@ -27,7 +29,7 @@ try{
  assert.equal(await app.evaluate(({app})=>app.getPath('userData')),ud);assert(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().every(w=>!w.isVisible())))
  await app.evaluate(async ({shell},{vault,trash})=>{const fs=process.getBuiltinModule('fs');shell.trashItem=async path=>{if(!path.startsWith(vault+'/'))throw Error('Fixture Trash boundary');fs.renameSync(path,trash+'/'+Date.now()+'-'+path.split('/').pop())}},{vault,trash})
  await page.route('http://**',route=>route.abort());await page.route('https://**',route=>route.abort())
- await page.locator('[data-talk-slug="target"]').first().dblclick();await page.locator('.cm-content').waitFor()
+ await openTalkByTitle(page,'Set aside fixture')
  await typeAtOutlineLineEnd(page, 'Gamma body.', ' FINAL LATEST TYPED TEXT')
  const from=join(vault,'target/target-outline.md');let moved
  await record('actual active move produces recoverable receipt and preserves current editor via production recovery event',async()=>{
@@ -58,9 +60,7 @@ try{
  })
  await record('empty folder and narrow keyboard gallery focus',async()=>{
   assert(await invoke('vault','createFolder','Empty qualification'));assert((await invoke('vault','listFolders')).includes('Empty qualification'))
-  await page.evaluate(()=>window.dispatchEvent(new Event('tw-vault-gallery')))
-  const gallery=page.getByRole('dialog',{name:'Vault Gallery',exact:true})
-  await gallery.waitFor()
+  const gallery=await openVaultStorage(page)
   await page.setViewportSize({width:390,height:844})
   // Wait for ResizeObserver to switch the grid before checking focus and overflow.
   await gallery.and(page.locator('.vg-narrow')).waitFor()

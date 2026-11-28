@@ -3,6 +3,7 @@ import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { publishStageLabel, type PublishHistoryAttempt, type PublishHistoryEvent } from '../shared/publish-history.ts'
 import { publishStepLabels, redactPublishText, type PublishDiagnostic } from '../shared/publish-diagnostic.ts'
+import { isPublicHandoutUrl } from '../shared/publish-status.ts'
 
 type Source = { path: string; key: string }
 export type StoredPublishEvent = PublishHistoryEvent & { sourceOutline?: Source }
@@ -69,6 +70,8 @@ function validEvent(event: PublishHistoryEvent, id: string): boolean {
     && (event.recordPresent === undefined || typeof event.recordPresent === 'boolean')
     && (event.linkStyleChanged === undefined || typeof event.linkStyleChanged === 'boolean')
     && (event.outcome === undefined || outcomes.has(event.outcome))
+    && (event.handoutUrl === undefined || (event.stage === 'finished' && (event.outcome === 'published' || event.outcome === 'unchanged')
+      && isPublicHandoutUrl(event.handoutUrl)))
     && (event.diagnostic === undefined || (event.stage === 'finished' && validDiagnostic(event.diagnostic)))
 }
 /** Damaged existing files are preserved; an optional history failure must not stop publishing. */
@@ -94,6 +97,7 @@ export function createPublishHistory(path: string) {
         ...(event.removed !== undefined ? {removed:event.removed} : {}), ...(event.missing !== undefined ? {missing:event.missing} : {}), ...(event.folders !== undefined ? {folders:event.folders} : {}),
         ...(event.recordPresent !== undefined ? {recordPresent:event.recordPresent} : {}), ...(event.outcome !== undefined ? {outcome:event.outcome} : {}),
         ...(event.linksReconciled !== undefined ? {linksReconciled:event.linksReconciled} : {}), ...(event.linkStyleChanged !== undefined ? {linkStyleChanged:event.linkStyleChanged} : {}),
+        ...(event.handoutUrl ? { handoutUrl: event.handoutUrl } : {}),
         ...(event.diagnostic ? { diagnostic: cleanDiagnostic(event.diagnostic) } : {}),
       })) }))
   }

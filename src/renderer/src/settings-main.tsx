@@ -120,7 +120,7 @@ function SettingsApp(): React.JSX.Element | null {
   const micOptions = microphoneSettingOptions(inputs, typeof savedMic === 'string' ? savedMic : '')
   // The Cloudflare account and site are chosen on the Cloudflare page (Found from the token), not drawn as rows.
   const shown = (update?.source === 'store' ? schema.settings.filter((d) => d.key !== 'updates.checkForNewVersions' && d.key !== 'updates.alphaVersions') : schema.settings)
-    .filter((d) => d.section !== 'cloudflare')
+    .filter((d) => d.section !== 'cloudflare' && !('hidden' in d && d.hidden))
     .map((d) => d.key === 'recording.microphone' ? { ...d, type: 'choice' as const, options: micOptions } : d.key === 'recording.wordsLocale' ? { ...d, help: `${d.help} ${speech}`, ...(languages.length ? { options: languages } : {}) } : d.key === 'recording.wordsEngine' ? { ...d, options: d.options?.filter(o => o.value !== 'parakeet' || parakeetReady) } : d)
   const pages: CustomPage[] = [
     { id: 'updates', label: 'About and updates', icon: 'info', render: () => <>

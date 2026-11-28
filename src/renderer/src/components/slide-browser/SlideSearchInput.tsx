@@ -56,8 +56,8 @@ export function SlideSearchInput({ inputRef, query, onQueryChange, onPendingChan
       }}
       placeholder="Words on slides — all words match"
       autoComplete="off"
-      aria-label="Search slides — t: title · s: slide · e: exact · i: image text"
-      title="t: title · s: slide body · e: exact phrase · i: image text"
+      aria-label="Search slides — t: title · s: slide · e: exact · i: image text · widget: widgets"
+      title="t: title · s: slide body · e: exact phrase · i: image text · widget: widgets"
     />
   )
 }

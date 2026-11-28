@@ -43,6 +43,21 @@ figure.slide-embed[data-embed="local"]:not([data-embed-state="live"]) > .embed-p
   overflow-wrap: anywhere;
 }
 .embed-poster-note { font-size: clamp(11px, 1.3cqw, 22px); color: var(--muted); }
+.embed-media-warning {
+  position: absolute;
+  z-index: 2;
+  inset-inline-start: 0.5em;
+  inset-block-end: 0.5em;
+  max-width: calc(100% - 1em);
+  padding: 0.4em 0.7em;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: clamp(11px, 1.3cqw, 22px);
+  line-height: 1.25;
+}
+@media print { .embed-media-warning { position: static; } }
 /* A page stopped by the focus budget (runtime/embed-focus.js): the placeholder says so. */
 figure.slide-embed[data-embed="local"][data-embed-stopped] > .embed-poster .embed-poster-note { display: none; }
 figure.slide-embed[data-embed="local"][data-embed-stopped] > .embed-poster::after {

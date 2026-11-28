@@ -6,7 +6,7 @@
 import { shortcutsForScope, type ShortcutScope } from './shortcut-registry.ts'
 
 export type ViewKeysId =
-  | 'talks' | 'slide-picker' | 'studio' | 'runs' | 'notes' | 'importer' | 'slide-focus' | 'image-drawer' | 'pathways'
+  | 'talks' | 'vault-explorer' | 'slide-picker' | 'studio' | 'runs' | 'notes' | 'importer' | 'slide-focus' | 'image-drawer' | 'pathways'
 
 export interface ViewKeyRow {
   /** The shortcut id when the row comes from the registry, so a rebound chord shows here too. */
@@ -32,6 +32,7 @@ interface ViewDefinition {
 
 const VIEWS: readonly ViewDefinition[] = [
   { id: 'talks', title: 'Talks list', scopes: ['browser'], extra: [['Actions menu for the focused item', '⌘K']] },
+  { id: 'vault-explorer', title: 'Vault Explorer', scopes: ['vault-explorer'], extra: [['Open a talk in a new window', '⌘ click']] },
   { id: 'slide-picker', title: 'Slide Browser', scopes: ['slide-picker'], extra: [['Select a range of slides', '⇧ click'], ['Scope the rail to a talk or section', 'click'], ['Add to the scope', '⌘ click'], ['All shortcuts', '?']] },
   {
     id: 'studio', title: 'Studio', scopes: ['studio'],

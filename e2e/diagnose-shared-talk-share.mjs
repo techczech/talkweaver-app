@@ -7,6 +7,7 @@
 // the PUT) sends the close at once, closes the sheet, and leaves the talk unshared with no share_url.
 // No production credentials, remote Worker or user vault are used.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
@@ -125,7 +126,7 @@ try {
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.waitForLoadState('domcontentloaded')
-  await page.getByText('Share probe', { exact: true }).first().click()
+  await openTalkByTitle(page, 'Share probe')
   await page.waitForSelector('.workspace')
   await page.waitForSelector('.cm-content')
   await page.evaluate(() => {

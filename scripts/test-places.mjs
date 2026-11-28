@@ -17,6 +17,11 @@ const { placeChipVisibleFrom, PLACE_CHIP_VISIBLE_DEFAULT } = await import(new UR
 const results = []
 const test = (name, fn) => { try { fn(); results.push([true, name]) } catch (error) { results.push([false, `${name}: ${error.message}`]) } }
 
+test('slide and vault folder labels work across views', () => {
+  assert.equal(placeLabel('strip-slide'), 'On a slide')
+  assert.equal(placeLabel('vault'), 'On a vault folder')
+})
+
 // Each fixture line carries the place the caret on it must read. Every place of the outline editor
 // appears, with nested constructs: a list inside a quotation, a quotation inside a list, a heading and
 // a layout line inside a quotation, a heading with a trailing id, a nested list, rules and blanks.
@@ -117,7 +122,7 @@ test('the ten places, with the lock\'s words', () => {
   assert.deepEqual([...PLACES], ['slide-heading', 'talk-title', 'layout-line', 'slide-text', 'list', 'quotation', 'metadata', 'strip-slide', 'talk', 'vault'])
   assert.deepEqual(PLACES.map((place) => PLACE_LABELS[place].toLowerCase()), [
     'on a slide heading', 'on the talk title', 'on a layout line', 'in slide text', 'in a list',
-    'in a quotation', 'in the metadata', 'on a slide in the strip', 'on a talk', 'on a vault'
+    'in a quotation', 'in the metadata', 'on a slide', 'on a talk', 'on a vault folder'
   ])
 })
 

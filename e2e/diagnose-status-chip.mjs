@@ -9,6 +9,7 @@
 // TW_SHOTS_DIR saves one screenshot per state.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -75,7 +76,7 @@ try {
   const chip = page.locator('[data-testid="status-run"]')
   const shot = async (name) => { if (shotsDir) await page.screenshot({ path: join(shotsDir, `${name}.png`) }).catch(() => {}) }
   const openTalk = async (title) => {
-    await page.getByText(title, { exact: true }).first().click()
+    await openTalkByTitle(page, title)
     await page.waitForSelector('.workspace')
     await page.waitForTimeout(1200)
   }

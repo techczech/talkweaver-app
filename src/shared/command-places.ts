@@ -40,9 +40,9 @@ export const PLACE_LABELS: Readonly<Record<Place, string>> = {
   list: 'In a list',
   quotation: 'In a quotation',
   metadata: 'In the metadata',
-  'strip-slide': 'On a slide in the strip',
+  'strip-slide': 'On a slide',
   talk: 'On a talk',
-  vault: 'On a vault'
+  vault: 'On a vault folder'
 }
 
 export const EVERYWHERE = 'everywhere' as const
@@ -97,6 +97,9 @@ export const COMMAND_PLACES: Readonly<Record<string, PlaceDeclaration>> = {
   'set-aside-slides': NOT_BY_PLACE,
   'move-selected-slides-to': NOT_BY_PLACE,
   'search-slides-grid': NOT_BY_PLACE,
+  'find-slides': NOT_BY_PLACE,
+  'find-icons': NOT_BY_PLACE,
+  'go-to-line': NOT_BY_PLACE,
   'search-next': NOT_BY_PLACE,
   'search-previous': NOT_BY_PLACE,
   'editor.title-continue': NOT_BY_PLACE,

@@ -15,7 +15,7 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-sidebar.mjs
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
-import { activeTalkRow, talkRows as mountedTalkRows, openFirstTalk } from './lib/talklist.mjs'
+import { activeTalkRow, talkRows as mountedTalkRows, openFirstTalk, openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, writeFileSync, utimesSync } from 'fs'
@@ -141,7 +141,7 @@ const activeEditorText = () => page.locator('.cm-activeLine').first().textConten
 
 try {
   // On the start screen the shortcut focuses its own search. Open a talk to test the sidebar path.
-  await page.locator('.tw-welcome').getByRole('button', { name: 'C10 Alpha', exact: true }).click()
+  await openTalkByTitle(page, 'C10 Alpha')
   await page.locator('.cm-content').first().waitFor()
   await page.getByRole('tab', { name: 'Slides', exact: true }).click()
 

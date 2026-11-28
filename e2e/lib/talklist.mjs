@@ -1,3 +1,5 @@
+import { plainTalkTitle } from '../../src/shared/plain-title.ts'
+
 const DEFAULT_TIMEOUT = 8000
 // Native FSWatcher.close runs synchronously during a safe talk switch. On macOS
 // it can exceed Playwright's unrelated 5s page default (one close measured at 5.72s on Pro).
@@ -6,6 +8,8 @@ const TALK_OPEN_TIMEOUT = 30_000
 const TALKS_PANEL = 'aside.talk-list.tl-panel'
 const TALKS_TREE = `${TALKS_PANEL} .tl-tree`
 const TALK_ROWS = `${TALKS_TREE} [data-talk-title]`
+const startScreen = page => page.getByRole('region', { name: 'Vault Explorer', exact: true })
+const talkMenu = page => page.getByTitle('Talk menu', { exact: true })
 
 function errorDetail(error) {
   return error instanceof Error ? error.message : String(error)
@@ -57,6 +61,15 @@ export async function waitForTalkList(page, { timeout = DEFAULT_TIMEOUT } = {}) 
     )
   }
   return panel
+}
+
+// The Guide is the workspace entry point when a journey needs the Talks panel without an open talk.
+export async function showTalksBeforeOpening(page, { timeout = DEFAULT_TIMEOUT } = {}) {
+  const start = startScreen(page)
+  await start.waitFor({ timeout })
+  await page.evaluate(() => window.dispatchEvent(new Event('tw-guide-open')))
+  await start.waitFor({ state: 'hidden', timeout })
+  return waitForTalkList(page, { timeout })
 }
 
 async function returnToVaultRoot(page) {
@@ -165,6 +178,21 @@ export async function openTalkByTitle(
   title,
   { timeout = DEFAULT_TIMEOUT, forceReload = false } = {}
 ) {
+  const start = startScreen(page)
+  const menu = talkMenu(page)
+  await start.or(menu).or(page.locator(TALKS_PANEL)).filter({ visible: true }).first().waitFor({ timeout })
+  if (await start.isVisible()) {
+    const label = plainTalkTitle(String(title ?? ''))
+    await start.getByRole('button', { name: 'Titles', exact: true }).click({ timeout })
+    await start.getByRole('combobox', { name: 'Search talks' }).fill(label, { timeout })
+    const result = start.getByRole('group', { name: 'Search results' }).getByRole('button', { name: label, exact: true }).first()
+    await result.click({ timeout, noWaitAfter: true })
+    await start.waitFor({ state: 'hidden', timeout: TALK_OPEN_TIMEOUT })
+    await menu.getByText(label, { exact: true }).waitFor({ timeout: TALK_OPEN_TIMEOUT })
+    await page.locator('.cm-content').first().waitFor({ state: 'visible', timeout })
+    return true
+  }
+
   await waitForTalkList(page, { timeout })
 
   if (forceReload) {
@@ -192,6 +220,17 @@ export async function openTalkByTitle(
 }
 
 export async function openFirstTalk(page, { timeout = DEFAULT_TIMEOUT } = {}) {
+  const start = startScreen(page)
+  await start.or(talkMenu(page)).or(page.locator(TALKS_PANEL)).filter({ visible: true }).first().waitFor({ timeout })
+  if (await start.isVisible()) {
+    const recent = start.getByRole('group', { name: 'Recent talks', exact: true })
+      .locator('button.vx-talk-open:enabled').first()
+    await recent.click({ timeout, noWaitAfter: true })
+    await start.waitFor({ state: 'hidden', timeout: TALK_OPEN_TIMEOUT })
+    await page.locator('.cm-content').first().waitFor({ timeout })
+    return true
+  }
+
   await waitForTalkList(page, { timeout })
   await returnToVaultRoot(page)
   await talkSearchInput(page).fill('')

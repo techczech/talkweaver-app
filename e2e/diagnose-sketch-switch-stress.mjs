@@ -7,6 +7,7 @@
 //   app     Electron started directly with a main-process driver (-r), no Playwright, no debugging port.
 // Counts: TW_SWITCH_PW_LOC, TW_SWITCH_PW_JS, TW_SWITCH_APP (iterations). Exit 0 when nothing crashed.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -64,8 +65,13 @@ try {
   }
   const button = (name) => page.getByRole('button', { name, exact: typeof name === 'string' })
   const editor = page.getByRole('textbox', { name: 'Sketch text' })
-  await page.getByLabel('Name of the talk').fill('Community Garden Update')
-  await button(/Start with an outline/).click()
+  const startScreen = page.getByRole('region', { name: 'Vault Explorer', exact: true })
+  await startScreen.getByRole('button', { name: /Make a vault in Documents/ }).click()
+  const newTalk = startScreen.getByRole('button', { name: 'New talk', exact: true })
+  await newTalk.waitFor()
+  if (await newTalk.getAttribute('aria-expanded') === 'false') await newTalk.click()
+  await startScreen.getByLabel('Name of the talk').fill('Community Garden Update')
+  await startScreen.getByRole('button', { name: /Start with an outline/ }).click()
   await editor.waitFor()
   assert.equal(await editor.inputValue(), '')
   const start = readFileSync(outline)
@@ -186,7 +192,7 @@ try {
   await button('Create').click()
   await page.locator('.workspace-view-titlebar').getByRole('button', { name: 'Garden Supplies', exact: true }).waitFor()
   await page.getByRole('tab', { name: 'Talks', exact: true }).click()
-  await page.locator('[data-talk-slug="community-garden-update"]').first().dblclick()
+  await openTalkByTitle(page, 'Community Garden Update')
   await page.locator('.workspace-view-titlebar').getByRole('button', { name: 'Community Garden Update', exact: true }).waitFor()
   console.log('[switch] setup reached the crash step')
 } catch (error) {
@@ -204,11 +210,17 @@ const STEP = `(async () => {
   const collapse = buttons().find((b) => name(b) === 'Collapse')
   if (collapse) { collapse.click(); await sleep(50) }
   const open = async (slug, title) => {
-    const tab = await wait(() => [...document.querySelectorAll('[role=tab]')].find((t) => name(t) === 'Talks' || (t.textContent || '').trim() === 'Talks'), 'Talks tab')
-    tab.click()
-    const row = await wait(() => document.querySelector('[data-talk-slug="' + slug + '"]'), 'row ' + slug)
-    for (const type of ['mousedown', 'mouseup', 'click', 'mousedown', 'mouseup', 'click']) row.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
-    row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window, detail: 2 }))
+    const start = document.querySelector('.vault-explorer[role=region]')
+    if (start) {
+      const row = await wait(() => [...start.querySelectorAll('.vx-talk-open')].find(button => name(button) === title), 'Explorer talk ' + title)
+      row.click()
+    } else {
+      const tab = await wait(() => [...document.querySelectorAll('[role=tab]')].find((t) => name(t) === 'Talks' || (t.textContent || '').trim() === 'Talks'), 'Talks tab')
+      tab.click()
+      const row = await wait(() => document.querySelector('aside.talk-list .tl-tree [data-talk-slug="' + slug + '"]'), 'row ' + slug)
+      for (const type of ['mousedown', 'mouseup', 'click', 'mousedown', 'mouseup', 'click']) row.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, view: window }))
+      row.dispatchEvent(new MouseEvent('dblclick', { bubbles: true, cancelable: true, view: window, detail: 2 }))
+    }
     await wait(() => [...document.querySelectorAll('.workspace-view-titlebar button')].some((b) => name(b) === title || (b.textContent || '').trim() === title), 'titlebar ' + title)
   }
   await open('garden-supplies', 'Garden Supplies')
@@ -265,8 +277,7 @@ async function stepWithLocators(p) {
   const collapse = btn('Collapse')
   if (await collapse.count()) await collapse.first().click()
   for (const [slug, title] of [['garden-supplies', 'Garden Supplies'], ['community-garden-update', 'Community Garden Update']]) {
-    await p.getByRole('tab', { name: 'Talks', exact: true }).click()
-    await p.locator(`[data-talk-slug="${slug}"]`).first().dblclick()
+    await openTalkByTitle(p, title)
     await p.locator('.workspace-view-titlebar').getByRole('button', { name: title, exact: true }).waitFor()
     await p.waitForTimeout(Math.random() * (slug === 'garden-supplies' ? 800 : 300))
   }

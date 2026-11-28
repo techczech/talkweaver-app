@@ -39,6 +39,7 @@ import { blankHtmlComments } from '../../compiler/scripts/lib/html-comments.mjs'
 import { headingBraceGroups } from '../../compiler/scripts/lib/02-triggers-layout.mjs'
 import { parseOutlineTree, type OutlineTreeNode } from '../../compiler/scripts/lib/14-outline-tree.mjs'
 import { TRIGGER_LINE_RE, tokenizeTriggerBody } from '../../compiler/scripts/lib/trigger-tokenizer.mjs'
+import { iconBaseKey } from '../../compiler/scripts/lib/icon-cross.mjs'
 import { ICON_KEY_RE } from './icon-verbs.ts'
 import { headingLineWith } from './icon-verbs-edits.ts'
 import { linesOf, type IconChange, type Lines } from './icon-verbs-verify.ts'
@@ -96,7 +97,7 @@ function lonelyIconGroup(body: string): { key: string; groupFrom: number; groupT
     if (!icons.length) continue
     if (found || tokens.length !== 1 || !icons[0].raw.startsWith('icon=')) return null
     const key = icons[0].raw.slice(5)
-    if (!ICON_KEY_RE.test(key)) return null
+    if (!ICON_KEY_RE.test(iconBaseKey(key))) return null
     found = { key, groupFrom: group.index, groupTo: group.index + group[0].length }
   }
   return found

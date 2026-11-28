@@ -5,24 +5,26 @@ import { createVariantPictureQueue, isRevealPicture, markSettled, pictureMarkUrl
 import { LayoutVerbError, type SlideRef } from '../../../shared/layout-verbs'
 import { panelEdit, type Design } from './rightPanelDesigns'
 
-export interface PanelTry { text: string; label: string }
+export interface PanelTry { text: string; label: string; whatChanges?: string }
 
-export default function RightPanelPictures({ path, text, slide, layout, group, choices, columns = 3, onTry, onKeep, previewChoice, pendingPicture, checkedPictures, currentLabel = 'Current' }: {
+export default function RightPanelPictures({ path, text, slide, layout, group, choices, columns = 3, onTry, onKeep, previewChoice, pendingPicture, checkedPictures, trying, currentLabel = 'Current' }: {
   path: string
   text: string
   slide: SlideRef
   layout: string
   group: string
   choices: Design[]
-  columns?: number
+  columns?: number | 'auto'
   onTry: (preview: PanelTry | null) => void
   onKeep: (design: Design) => void
   previewChoice?: (design: Design) => string
   pendingPicture?: (design: Design) => ReactNode
   checkedPictures?: VariantPictureMarks
+  trying?: string
   currentLabel?: string
 }) {
   const root = useRef<HTMLDivElement>(null)
+  const showDesignTooltip = group === 'design' || group.startsWith('gallery-')
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [visible, setVisible] = useState(false)
   const [marks, setMarks] = useState<VariantPictureMarks>({})
@@ -71,8 +73,9 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
     timer.current = null
     onTry(null)
   }
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
-  return <div ref={root} className="tw-right-pictures" style={{ gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [text, slideKey])
+  return <div ref={root} className="tw-right-pictures"
+    style={columns === 'auto' ? undefined : { gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))` }}>
     {choices.map((design, index) => {
       const { outline: candidate, reason } = candidates[index]
       const mark = design.check ? checkedPictures?.[design.label] : marks[String(index)]
@@ -81,11 +84,14 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
       const tryIt = (): void => {
         stop()
         if (!design.current && candidate != null && candidate !== text) {
-          timer.current = setTimeout(() => onTry({ text: candidate, label: design.label }), 250)
+          timer.current = setTimeout(() => onTry({ text: candidate, label: design.label, whatChanges: design.structure ? design.why : undefined }), 250)
         }
       }
       return <button type="button" key={design.label} aria-pressed={!!design.current} disabled={candidate == null}
-        className="tw-right-picture" onPointerEnter={tryIt} onPointerLeave={stop} onFocus={tryIt} onBlur={stop}
+        aria-disabled={design.ariaDisabled || undefined}
+        className="tw-right-picture" data-trying={trying === design.label || undefined}
+        title={showDesignTooltip ? [design.label, design.why ?? reason].filter(Boolean).join(' · ') : undefined}
+        onPointerEnter={tryIt} onPointerLeave={stop} onFocus={tryIt} onBlur={stop}
         onClick={() => { stop(); if (!design.current || design.reapply) onKeep(design) }}>
         {design.current && <span className="tw-right-current">{currentLabel}</span>}
         <span className="tw-right-picture-frame" aria-hidden={reveal ? undefined : true}>
@@ -93,7 +99,7 @@ export default function RightPanelPictures({ path, text, slide, layout, group, c
           {reveal && <RevealPreviewBadge count={reveal.revealSteps} />}
         </span>
         <strong>{design.label}</strong>
-        {(reason || mark === null || design.why) && <small>{reason ?? (mark === null ? 'Preview unavailable' : design.why)}</small>}
+        {(!design.ariaDisabled && (reason || mark === null || design.why)) && <small>{reason ?? (mark === null ? 'Preview unavailable' : design.why)}</small>}
       </button>
     })}
   </div>

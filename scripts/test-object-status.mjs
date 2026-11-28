@@ -13,7 +13,7 @@ import { EditorView } from '@codemirror/view'
 import {
   MAX_STATUS_REFS, answerObjectStatus, objectRefStatus, registerObjectStatusIpc
 } from '../src/main/object-status.ts'
-import { installTestDom } from './test-dom.mjs'
+import { installTestDom, TestEvent } from './test-dom.mjs'
 import { gateFsOps, settle } from './fs-op-gate.mjs'
 
 installTestDom()
@@ -206,6 +206,31 @@ await test('a missing page and an outside picture show on the card; the picture 
   assert.equal(resolved, 1, 'a present picture is shown')
   assert.equal(cardFileNote({ state: 'present' }), null)
   assert.equal(cardFileNote({ state: 'unchecked' }), null)
+})
+await test('a recoverable simulation offers its named source and passes the exact file to the repair action', async () => {
+  let copied
+  let state = EditorState.create({
+    doc: '### Reused {from=source}\n\n[Simulation: widgets/sim.html]\n',
+    extensions: [objectBlocksExtension({}), cardMediaFacet.of({ copyPage: async (ref, title) => { copied = [ref, title] } })]
+  })
+  state = state.update({ effects: setObjectStatuses.of(new Map([['widgets/sim.html', { state: 'missing', repairTitle: 'Source talk' }]])) }).state
+  const card = cardWidgets(state)[0].toDOM({ state, dispatch() {}, focus() {} })
+  const action = Array.from(card.querySelectorAll('button')).find((button) => button.textContent === 'Copy it from ‘Source talk’')
+  assert.ok(action)
+  action.dispatchEvent(new TestEvent('click'))
+  assert.deepEqual(copied, ['widgets/sim.html', 'Source talk'])
+})
+await test('different source files are listed on the missing card, without a copy action', async () => {
+  let state = EditorState.create({
+    doc: '### Reused {id=sample}\n\n[Simulation: widgets/sim.html]\n',
+    extensions: [objectBlocksExtension({}), cardMediaFacet.of({ copyPage: async () => { throw new Error('ambiguous copy') } })]
+  })
+  state = state.update({ effects: setObjectStatuses.of(new Map([['widgets/sim.html', {
+    state: 'missing', repairCandidates: ['One talk', 'Another talk']
+  }]])) }).state
+  const card = cardWidgets(state)[0].toDOM({ state, dispatch() {}, focus() {} })
+  assert.deepEqual(Array.from(card.querySelectorAll('li'), node => node.textContent), ['One talk', 'Another talk'])
+  assert.ok(Array.from(card.querySelectorAll('button')).every(button => !button.textContent.includes('Copy it from')))
 })
 await test('a status change redraws only the card it belongs to', async () => {
   let state = EditorState.create({ doc: TALK, extensions: [objectBlocksExtension({})] })

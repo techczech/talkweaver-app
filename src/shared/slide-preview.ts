@@ -198,3 +198,6 @@ export function markSlidePreviewHtml(rawHtml: string, options: { localPages?: bo
 }
 export const SLIDE_PREVIEW_SURFACES = ['workspace', 'detail', 'intro-example', 'review-before', 'review-after'] as const
 export type SlidePreviewSurface = typeof SLIDE_PREVIEW_SURFACES[number]
+
+/** The editor's selected slide, with a current heading for a derived id that changed on edit. */
+export type AuthoringSlideTarget = { slideId: string; headingLine?: number }

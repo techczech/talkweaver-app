@@ -54,13 +54,15 @@ type Props = {
   /** The number the strip shows for the current slide, for the choice's wording. */
   currentSlide: number | null
   onClose: () => void
+  search?: { query: string; tab: DrawerTab; onQueryChange: (query: string) => void; onTabChange: (tab: DrawerTab) => void }
 }
 
 const DEBOUNCE_MS = 200
 
-export default function ImageDrawer({ currentTalkPath, onInsert, onInsertOldSlide, currentSlide, onClose }: Props) {
-  const [query, setQuery] = useState('')
-  const [tab, setTab] = useState<DrawerTab>('images')
+export default function ImageDrawer({ currentTalkPath, onInsert, onInsertOldSlide, currentSlide, onClose, search }: Props) {
+  const [localQuery, setLocalQuery] = useState('')
+  const [localTab, setLocalTab] = useState<DrawerTab>('images')
+  const { query, tab, onQueryChange, onTabChange } = search ?? { query: localQuery, tab: localTab, onQueryChange: setLocalQuery, onTabChange: setLocalTab }
   const [status, setStatus] = useState<ImageSearchStatus | null>(null)
   const [result, setResult] = useState<ImageSearchResult | null>(null)
   const [vaultResult, setVaultResult] = useState<VaultPictureResult | null>(null)
@@ -227,7 +229,7 @@ export default function ImageDrawer({ currentTalkPath, onInsert, onInsertOldSlid
 
   // Another tab shows other results: the highlight (what ⌘↵ inserts) starts again on the first of them.
   function chooseTab(next: DrawerTab): void {
-    setTab(next)
+    onTabChange(next)
     setActive(0)
   }
 
@@ -271,11 +273,6 @@ export default function ImageDrawer({ currentTalkPath, onInsert, onInsertOldSlid
   let running = 0
   return (
     <aside className="image-drawer" data-image-drawer role="complementary" aria-label={DRAWER_COPY.title} onKeyDown={onKeyDown} onBlur={onBlur} onFocus={cancelPendingDismissal} ref={drawerRef}>
-      <div className="image-drawer__head">
-        <b>{DRAWER_COPY.title}</b>
-        <span className="image-drawer__shortcut">⌘⇧I</span>
-        <button type="button" className="image-drawer__close" aria-label="Close" onClick={onClose}>×</button>
-      </div>
       <div className="image-drawer__search">
         <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" /><path d="M15.5 15.5 21 21" /></svg>
         <input
@@ -285,7 +282,7 @@ export default function ImageDrawer({ currentTalkPath, onInsert, onInsertOldSlid
           placeholder={tab === 'in-talks' ? DRAWER_COPY.inTalksPlaceholder : DRAWER_COPY.searchPlaceholder}
           aria-label="Search images"
           spellCheck={false}
-          onChange={(e) => setQuery(e.target.value)}
+          onChange={(e) => onQueryChange(e.target.value)}
         />
         {view.kind === 'results' && <span className="image-drawer__count">{view.count}</span>}
       </div>

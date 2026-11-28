@@ -33,9 +33,9 @@ const bundle = await build({
       function Harness({fixture}) {
         const [open, setOpen] = useState(false)
         const diagnostic = fixture?.row.events.at(-1)?.diagnostic
-        const published = fixture?.row.outcome === 'published'
+        const url = fixture?.row.events.at(-1)?.handoutUrl ?? null
         return <>
-          <StatusBar minimal buildStatus={published ? 'done' : 'idle'} buildPath={published ? 'https://handouts.test/talk-a/' : null}
+          <StatusBar minimal buildStatus={url ? 'done' : 'idle'} buildPath={url}
             publishIssue={diagnostic && {diagnostic, onClick: () => setOpen(true)}} />
           {fixture?.retry && <p role="status">{publishProgressText({
             ...fixture.retry, retry: {...fixture.retry.retry, at: Date.now() + fixture.retry.retry.delayMs}
@@ -90,8 +90,13 @@ try {
     }, fixture)
     const published = fixture.row.outcome === 'published'
     if (published) {
-      await page.getByRole('button', { name: 'Published ✓ handouts.test/talk-a/' }).waitFor()
-      await page.getByText(/TalkWeaver|publish/).first().waitFor()
+      const url = fixture.row.events.at(-1).handoutUrl
+      const fallback = fixture.name.includes('429') ? ' (Cloudflare Pages fallback)' : ''
+      await page.getByRole('button', { name: 'Published ✓ ' + url.replace('https://', '') + fallback }).waitFor()
+      await page.locator('section[aria-label="Publishing history"] summary').click()
+      const link = page.getByRole('link', { name: url + fallback, exact: true })
+      await link.waitFor()
+      assert.equal(await link.getAttribute('href'), url)
       const seconds = fixture.name.includes('429') ? 8 : 1
       await page.getByText(new RegExp('Cloudflare is busy, retrying in ' + seconds + ' s .*attempt 2 of 5')).waitFor()
       assert.equal(await page.getByRole('button', { name: 'Publish failed' }).count(), 0)

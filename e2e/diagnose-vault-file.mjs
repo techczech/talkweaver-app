@@ -20,7 +20,7 @@
 // Screenshots go to ignored artefacts. --record-evidence restores the design evidence destination.
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && TW_E2E=1 node e2e/diagnose-vault-file.mjs
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
-import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle, showTalksBeforeOpening } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
@@ -77,7 +77,8 @@ async function launch() {
   await page.waitForLoadState('domcontentloaded')
   await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
   await page.waitForTimeout(1200)
-  await page.locator('[data-vault-header]').first().waitFor({ state: 'attached', timeout: 10000 })
+  const talks = await showTalksBeforeOpening(page)
+  await talks.locator('[data-vault-header]').first().waitFor({ timeout: 10000 })
   return { app, page }
 }
 /** The next folder or file picker answers with path (the real picker is the system dialog). */

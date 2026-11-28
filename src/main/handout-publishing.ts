@@ -168,7 +168,7 @@ import { PUBLISH_FAILED, PUBLISH_FAILURE_TEXT, buildRedirects, siteFolder } from
 import { SITE_RECORD_PATH, manifestFolders, parseSiteRecord, registryClashes, sameSite, serialiseSiteRecord, type SiteRecord } from './site-record.ts'
 import { siteRecoveryRecord, type SiteRecoveryProof } from './site-adoption.ts'
 import { RegistryOriginUnavailable, type RegistryOrigin } from './registry-origin.ts'
-import { publishedWithoutLiveText, type PublishNotReady } from '../shared/publish-status.ts'
+import { isPublicHandoutUrl, publishedWithoutLiveText, type PublishNotReady } from '../shared/publish-status.ts'
 
 export type PublishEntry = 'talk' | 'run' | 'run-unpublish' | 'talk-unpublish' | 'live-short-link' | 'site-adoption'
 
@@ -477,6 +477,7 @@ export type PublishBuild = {
    * this computer or is not an absolute http(s) address.
    */
   link(url: string): string
+  handoutBase?: PublishAuthorisation['handoutBase']
   /**
    * The folder a job is about to write a handout into: `path` must be a direct child of `dir`. The folder is this publish's: what
    * the live site holds there is replaced whole by what the job writes (spec: the merge removes the talk's prefix and adds what
@@ -539,6 +540,8 @@ export interface PublishJob<Built> {
    * whatever has happened to the connection since. Local and quick: it runs inside the queue.
    */
   record?(built: Built): void | Promise<void>
+  /** The public handout address to keep in history once the deployment is confirmed. */
+  handoutUrl?(built: Built): string
 }
 
 export interface PublishingPorts {
@@ -737,14 +740,15 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
    * Step 1, and the site record: the production deployment as the preservation check read it, and `/_talkweaver/site.json` read
    * through the deployment's own address (its bytes taken only when their hash is the manifest's). No record: the bootstrap rule.
    */
-  async function readLiveSite(inventory: PreservationInventory, blake3: Blake3): Promise<LiveSite> {
+  async function readLiveSite(inventory: PreservationInventory, blake3: Blake3, handoutBase?: string): Promise<LiveSite> {
     const files = inventory.files ?? (inventory.paths.length === 0 ? [] : null)
     if (!files) throw new PreservationRefusal('PUBLISH_INVENTORY_UNAVAILABLE')
     const manifest = new Map(files)
     const revision = inventory.revision
     const recordHash = manifest.get(SITE_RECORD_PATH)
     if (recordHash) {
-      const transport = ports.pages()
+      const pages = ports.pages()
+      const transport = handoutBase ? { ...pages, publicBase: handoutBase } : pages
       const bytes = await readLiveAsset(transport, blake3, siteAssetAddresses(transport, { id: revision, url: inventory.deploymentUrl }, SITE_RECORD_PATH), SITE_RECORD_PATH, recordHash)
       if (!bytes) throw new Stop({ ok: false, error: SITE_RECORD_UNREADABLE })
       const parsed = parseSiteRecord(bytes)
@@ -1063,7 +1067,7 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
           }
           site = { revision: inventory.revision, deploymentUrl: inventory.deploymentUrl, manifest: new Map(inventory.files), record, hadRecord: false }
         } else {
-          site = attempt && blake3 ? await readLiveSite(attempt.live, blake3) : rehearsalSite(dir)
+          site = attempt && blake3 ? await readLiveSite(attempt.live, blake3, authorisation.handoutBase?.()) : rehearsalSite(dir)
         }
       } catch (error) {
         if (error instanceof Stop) return error.failure
@@ -1151,8 +1155,9 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
         observe({ stage: 'building' })
         prepared = await job.prepare({
           dir: root, project: authorisation.project, live: live?.ready ? live.address : '',
+          handoutBase: authorisation.handoutBase,
           // ENTRY FIRST: refused before the job has written anything.
-          link: (url) => { if (!liveAddressForPages(url)) throw new LinkRefused(); return url },
+          link: (url) => { if (!isPublicHandoutUrl(url) || !liveAddressForPages(url)) throw new LinkRefused(); return url },
           redirects: (text) => { const bad = redirectsRefusal(text); if (bad !== null) throw new RedirectsRefused(bad); return text },
           makeFolder, writeSiteFile, claimFile, trustedRegistry, ownShortLinksUnreadable, previewLinks,
         })
@@ -1258,7 +1263,7 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
             if (!authorisation.current() || !inventory?.complete || inventory.site !== siteKey) return 'unknown'
             const possiblyOurs = inventory.revision === id || inventory.revision === baseRevision || inventory.candidateDigest === candidateDigest
             const current = inventory.files?.some(([path]) => path === SITE_RECORD_PATH)
-              ? await readLiveSite(inventory, hasher).catch(() => null) : null
+              ? await readLiveSite(inventory, hasher, authorisation.handoutBase?.()).catch(() => null) : null
             if (!authorisation.current()) return 'unknown'
             if (current) {
               const present = ownFiles.every(file => current.manifest.get(file.path) === file.hash)
@@ -1441,10 +1446,15 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
       return { ...CANCELLED, diagnostic }
     }
     const successfulOutcome = () => confirmed ? sent ? 'published' : 'unchanged' : ports.rehearsal?.() ? 'rehearsed' : 'unchanged'
+    const finished = (result: PublishSuccess<Built>, diagnostic?: PublishDiagnostic): void => {
+      const url = confirmed ? job.handoutUrl?.(result.built) : undefined
+      const handoutUrl = isPublicHandoutUrl(url) && credentialCleaner?.(url) === url ? url : undefined
+      observe({ stage: 'finished', outcome: successfulOutcome(), ...(handoutUrl ? { handoutUrl } : {}), ...(diagnostic ? { diagnostic } : {}) })
+    }
     const localWarning = (result: PublishSuccess<Built>, cause: string): PublishSuccess<Built> => {
       const diagnostic = { ...monitor.diagnostic(), cause, published: true as const }
       delete diagnostic.untouched
-      observe({ stage: 'finished', outcome: successfulOutcome(), diagnostic })
+      finished(result, diagnostic)
       return { ...result, localWarning: 'Cloudflare confirmed the change. TalkWeaver could not finish updating this Mac’s copy.' }
     }
     observe({ stage: 'started' })
@@ -1453,7 +1463,7 @@ export function createHandoutPublishing(ports: PublishingPorts): HandoutPublishi
       const result = await run(job, observe, monitor, confirmedResult => { ready.result = confirmedResult })
       if (result.ok) {
         if (confirmed && localProblem) return localWarning(result, localProblem)
-        observe({ stage: 'finished', outcome: successfulOutcome() })
+        finished(result)
         return result
       }
       if (confirmed && ready.result) return localWarning(ready.result, monitor.unexpected(new Error(result.error)))

@@ -1,7 +1,7 @@
 // What the grid and the outline sidebar share while searching (ticket 2): ONE query string per talk, the slide
 // previews the workspace publishes for the outline, and the picture text the search reads.
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
-import { extractImageRefs } from '../../../shared/slide-handling/image-refs'
+import { authoredPictureText, extractImageRefs } from '../../../shared/slide-handling/image-refs'
 
 // ── The query ──
 let current = { talk: '', query: '' }
@@ -32,6 +32,21 @@ export function publishSlideThumbs(next: ReadonlyArray<string | null> | null): v
 }
 export function useSlideThumbs(): ReadonlyArray<string | null> | null {
   return useSyncExternalStore(subscribeThumbs, () => thumbs)
+}
+
+// Page titles come from the compiler, which resolves local files in main.
+let widgetTitles = new Map<number, string>()
+const widgetListeners = new Set<() => void>()
+const subscribeWidgets = (listener: () => void): (() => void) => { widgetListeners.add(listener); return () => widgetListeners.delete(listener) }
+
+export function publishWidgetTitles(rows: ReadonlyArray<{ widget_titles?: string[] }>, lines: readonly (number | null)[]): void {
+  widgetTitles = new Map(rows.flatMap((row, i) => lines[i] != null && row.widget_titles?.length
+    ? [[lines[i]!, row.widget_titles.join('\n')] as const] : []))
+  widgetListeners.forEach((listener) => listener())
+}
+
+export function useWidgetTitles(): ReadonlyMap<number, string> {
+  return useSyncExternalStore(subscribeWidgets, () => widgetTitles)
 }
 
 // ── Picture text, asked for only while a search is active ──
@@ -86,9 +101,9 @@ export function usePictureText(outlinePath: string | null, blocks: readonly stri
     return () => { cancelled = true; clearTimeout(timer) }
   }, [key, generation]) // eslint-disable-line react-hooks/exhaustive-deps
   return useMemo(() => {
-    if (!got) return [] // the earlier answer stays until the new one arrives, so hits do not flicker
-    return blocks.map((b) => extractImageRefs(b).map((r) => got.byRef.get(r.ref) ?? '').filter(Boolean).join('\n'))
-  }, [got, blocks])
+    if (!active) return []
+    return blocks.map(b => [authoredPictureText(b), ...extractImageRefs(b).map(r => got?.byRef.get(r.ref) ?? '')].filter(Boolean).join('\n'))
+  }, [got, blocks, active])
 }
 
 // ── The surfaces that can take a search command (the grid when it is showing, else the outline) ──

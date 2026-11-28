@@ -15,7 +15,7 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && TW_E2E=1 node e2e/diagnose-conflict-merge.mjs
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
-import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle, showTalksBeforeOpening } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join, relative } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'fs'
@@ -132,7 +132,7 @@ async function tickByTitle(title) {
 }
 
 try {
-  await ensureTalksMode(page)
+  await showTalksBeforeOpening(page)
   await row('Cancel talk').waitFor({ state: 'attached', timeout: 10000 })
 
   // ── (A) keep Mine, the talk open ──

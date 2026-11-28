@@ -216,7 +216,10 @@ try {
     assert.equal(files.kept().length, 3, 'all noted within the last minute: none deleted, though over the limit')
     clock += 61_000
     files.note(made[3])
-    await wait(20)
+    const deletionDeadline = performance.now() + 2_000
+    while ((existsSync(made[0].path) || existsSync(made[1].path)) && performance.now() < deletionDeadline) {
+      await wait(20)
+    }
     assert.deepEqual(files.kept(), [made[2].key, made[3].key], 'past the grace period the older go, the two newest stay')
     assert.ok(!existsSync(made[0].path) && !existsSync(made[1].path) && existsSync(made[2].path) && existsSync(made[3].path))
     assert.equal(regularVariantFile(made[0]), false, 'a pruned file is refused at use (the thumbnail render then loads fullHtml)')

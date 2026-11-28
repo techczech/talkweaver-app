@@ -549,7 +549,7 @@ await test('first join shows what changes and changes nothing until Apply; Not n
   assert.equal(s.state, 'joining')
   assert.deepEqual(s.preview.fromMacs, ['MacBook Air'])
   const labels = s.preview.rows.map((r) => r.label)
-  for (const want of ['Cloudflare account', 'Publishing site', 'Clock turns amber', 'Shortcut: research-panel']) assert.ok(labels.includes(want), want)
+  for (const want of ['Cloudflare account', 'Publishing site', 'Clock turns amber before the end', 'Shortcut: research-panel']) assert.ok(labels.includes(want), want)
   assert.equal(JSON.stringify(b.store.view()), before, 'nothing changed in the settings')
   assert.deepEqual(filesIn(resolveSetupFolder(folder, '/')), [macFileName(a.engine.macId())], 'nothing written to the folder')
   b.engine.notNow()
@@ -870,7 +870,7 @@ await test('finding 6: a kill around a vault change leaves a saved batch that th
       // Read again in the same cycle: both changes made, one batch, listed with Undo.
       assert.deepEqual([b.personal.v.author, b.value('presenting.warnAt')], ['After', 17])
       const entry = s.history[0]
-      assert.deepEqual(entry.rows.map((r) => r.label).sort(), ['Clock turns amber', 'Talks: Author'])
+      assert.deepEqual(entry.rows.map((r) => r.label).sort(), ['Clock turns amber before the end', 'Talks: Author'])
       const u = await b.engine.undo(entry.id)
       assert.ok(u.ok, u.error)
       assert.deepEqual([b.personal.v.author, b.value('presenting.warnAt')], ['Before', 5])

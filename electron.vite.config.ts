@@ -83,6 +83,7 @@ export default defineConfig({
           'handout-pages-worker': resolve(__dirname, 'src/main/handout-pages-worker.ts'),
           // The live compile (prepareTalk) runs in a utility process of its own (prepare-talk-worker.ts).
           'prepare-talk-worker': resolve(__dirname, 'src/main/prepare-talk-worker.ts'),
+          'widget-repair-worker': resolve(__dirname, 'src/main/widget-repair-worker.ts'),
           'directory-watch-worker': resolve(__dirname, 'src/main/directory-watch-worker.ts'),
           // An Insert › HTML page… copy runs in a utility process started in the talk folder (html-page-import-worker.ts).
           'html-page-import-worker': resolve(__dirname, 'src/main/html-page-import-worker.ts'),

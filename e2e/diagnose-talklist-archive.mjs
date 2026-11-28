@@ -6,6 +6,7 @@
 // outside the list (focus not in the talk editor or a field) puts the caret in the search box.
 // Fixture vault and a throwaway --user-data-dir; set TW_SHOTS=<dir> to save screenshots.
 import assert from 'node:assert/strict'
+import { showTalksBeforeOpening } from './lib/talklist.mjs'
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -51,6 +52,7 @@ async function launch() {
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.setViewportSize({ width: 1512, height: 948 }).catch(() => {})
+  await showTalksBeforeOpening(page)
   await page.locator('.tl-tree [data-folder-path]').first().waitFor()
   return { app, page, errors }
 }

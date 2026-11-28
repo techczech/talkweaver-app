@@ -1,28 +1,29 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { X, Ellipsis, SlidersHorizontal, Rows3, BookOpen, Image as ImageIcon, GraduationCap, Inbox, FileText, Sparkles, Archive, type LucideIcon } from 'lucide-react'
+import { X, Ellipsis, SlidersHorizontal, Rows3, BookOpen, Search, GraduationCap, Inbox, FileText, Sparkles, Archive, type LucideIcon } from 'lucide-react'
 import type { SlideTabView } from '../../../shared/workspace-view'
 import { GUIDE_TEXT, rightColumnTabs, type RightColumnTab } from '../../../shared/guide'
 
 // The right sidebar's tab row (house rules R11a, R18): Inspector (the default), Strip, Talk (the talk's details and design), then Guide, Research,
-// Images, and Feedback and What's new while they apply. Always drawn: the sidebar is one place with tabs, and the
-// toolbar's sidebar button is the only way to show or hide the whole of it. The Guide and What's new tabs carry a
+// with Feedback, What's new and Find while they apply. Always drawn: the sidebar is one place with tabs, and the
+// toolbar's sidebar button is the only way to show or hide the whole of it. Guide, What's new and Find carry a
 // close mark (they close that tab, not the sidebar). Every tab shows its word while all of them fit in the row (R11a: the
 // families are readable); when they do not, only the tab that is up keeps its word and the others keep their icon and
 // tooltip. The row measures itself, so the switch happens where the words really stop fitting, not at a guessed width.
 
 const LABELS: Record<RightColumnTab, string> = {
-  inspector: 'Slide', slides: 'Strip', talk: 'Talk', scratchpad: 'Scratchpad', guide: GUIDE_TEXT.button, research: 'Research', images: 'Images', feedback: 'Feedback', 'whats-new': 'What’s new'
+  inspector: 'Slide', slides: 'Strip', talk: 'Talk', scratchpad: 'Scratchpad', guide: GUIDE_TEXT.button, research: 'Research', find: 'Find', feedback: 'Feedback', 'whats-new': 'What’s new'
 }
 const ICONS: Record<RightColumnTab, LucideIcon> = {
-  inspector: SlidersHorizontal, slides: Rows3, talk: FileText, scratchpad: Archive, guide: GraduationCap, research: BookOpen, images: ImageIcon, feedback: Inbox, 'whats-new': Sparkles
+  inspector: SlidersHorizontal, slides: Rows3, talk: FileText, scratchpad: Archive, guide: GraduationCap, research: BookOpen, find: Search, feedback: Inbox, 'whats-new': Sparkles
 }
 
-export default function RightColumnTabs({ guideUp, whatsNewUp = false, hasTalk, shared = false, scratchpad = false, active, onSelect, onCloseGuide, onCloseWhatsNew, slideTabView, onChooseSlideTabView, onDismissPanelOptions }: {
+export default function RightColumnTabs({ guideUp, whatsNewUp = false, hasTalk, shared = false, scratchpad = false, findOpen = false, active, onSelect, onCloseGuide, onCloseWhatsNew, onCloseFind, slideTabView, onChooseSlideTabView, onDismissPanelOptions }: {
   guideUp: boolean
   whatsNewUp?: boolean
   hasTalk: boolean
   shared?: boolean
   scratchpad?: boolean
+  findOpen?: boolean
   active: RightColumnTab
   onSelect: (tab: RightColumnTab) => void
   slideTabView?: SlideTabView
@@ -30,8 +31,9 @@ export default function RightColumnTabs({ guideUp, whatsNewUp = false, hasTalk, 
   onDismissPanelOptions?: () => void
   onCloseGuide: () => void
   onCloseWhatsNew?: () => void
+  onCloseFind?: () => void
 }) {
-  const tabs = rightColumnTabs({ guideUp, whatsNewUp, hasTalk, shared, scratchpad })
+  const tabs = rightColumnTabs({ guideUp, whatsNewUp, hasTalk, shared, scratchpad, findOpen })
   const rowRef = useRef<HTMLDivElement>(null)
   const fullWidth = useRef<number | null>(null)
   const [options, setOptions] = useState(false)
@@ -62,8 +64,8 @@ export default function RightColumnTabs({ guideUp, whatsNewUp = false, hasTalk, 
         const Glyph = ICONS[tab]
         return (
           <div key={tab} className={`rc-tab${active === tab ? ' rc-tab--on' : ''}`} data-rc-tab={tab}>
-            <button type="button" role={hasTalk && ['guide', 'research', 'images'].includes(tab) ? 'button' : 'tab'} aria-selected={hasTalk && ['guide', 'research', 'images'].includes(tab) ? undefined : active === tab}
-              aria-pressed={hasTalk && ['guide', 'research', 'images'].includes(tab) ? active === tab : undefined} aria-label={LABELS[tab]} title={LABELS[tab]} className="rc-tab-btn" onClick={() => onSelect(tab)}>
+            <button type="button" role={hasTalk && ['guide', 'research'].includes(tab) ? 'button' : 'tab'} aria-selected={hasTalk && ['guide', 'research'].includes(tab) ? undefined : active === tab}
+              aria-pressed={hasTalk && ['guide', 'research'].includes(tab) ? active === tab : undefined} aria-label={LABELS[tab]} title={LABELS[tab]} className="rc-tab-btn" onClick={() => onSelect(tab)}>
               <Glyph size={13} strokeWidth={2} aria-hidden />
               <span className="rc-tab-label">{LABELS[tab]}</span>
             </button>
@@ -74,6 +76,11 @@ export default function RightColumnTabs({ guideUp, whatsNewUp = false, hasTalk, 
             )}
             {tab === 'whats-new' && (
               <button type="button" className="rc-tab-close" aria-label="Close What&rsquo;s new" title="Close What&rsquo;s new" data-whats-new-close onClick={() => onCloseWhatsNew?.()}>
+                <X size={11} strokeWidth={2.5} aria-hidden />
+              </button>
+            )}
+            {tab === 'find' && (
+              <button type="button" className="rc-tab-close" aria-label="Close Find" title="Close Find" onClick={onCloseFind}>
                 <X size={11} strokeWidth={2.5} aria-hidden />
               </button>
             )}

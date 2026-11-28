@@ -140,6 +140,12 @@ Remove `{title-icon=above}` to place the heading icon before the title. Remove a
 point's explicit icon to let it be chosen automatically. `{icons=top}` marks top-level
 points, `{icons=all}` includes sub-points, and `{icons=off}` disables the frame's marks.
 
+Append `!` to the icon name inside the braces to draw a single red diagonal across it,
+for example `{icon=lucide:phone!}`. Use the same form for headings, at the end of a
+paragraph, and on top-level bullets, including `{iconlist}` and `{iconrow}`. In the
+app, select **Cross out** in the icon picker or beside the existing icon in the
+right panel. Remove the `!` to show the original icon treatment.
+
 ### Change one section
 
 ```markdown

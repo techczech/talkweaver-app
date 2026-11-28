@@ -5,9 +5,11 @@ import ManagementLayer from './components/vault-gallery/ManagementLayer'
 import { isWorkspaceCovered } from './lib/workspaceCover'
 import { adoptMovedTalk, selectGuardedTalk, type GalleryOpenGuard } from './lib/talkSelection'
 import VaultGallery from './components/vault-gallery/VaultGallery'
+import VaultExplorer, { type ExplorerSlideTarget } from './components/vault-gallery/VaultExplorer'
+import type { ExplorerPlace } from './components/vault-gallery/explorerModel'
+import type { GalleryManagementProps } from './components/vault-gallery/GalleryManagement'
 import { useState, useEffect, useLayoutEffect, useCallback, useRef } from 'react'
 import type { TalkInfo, VaultView } from '../../preload/index'
-import WelcomeTalk from './components/WelcomeTalk'
 import { WELCOME_COMMANDS, type SlideTabView, type SlidesPanelView, type StartingView, type WorkspaceView } from '../../shared/workspace-view'
 import { safeTalkSlug } from '../../shared/vault-gallery-browse'
 import TalkList, { PromptModal } from './components/talklist/TalkList'
@@ -487,7 +489,7 @@ function MainApp() {
   }, [])
   const sidebarShowsTalksRef = useRef(true)
   sidebarShowsTalksRef.current = sidebarMode === 'talks' && !sidebarCollapsed
-  const [researchJump, setResearchJump] = useState<{ file: string; line: number; nonce: number } | null>(null)
+  const [researchJump, setResearchJump] = useState<{ file: string; line?: number; nonce: number; index?: number; slideId?: string } | null>(null)
   const sidebarKeysRef = useRef<Record<SidebarCommandId, string>>({
     'sidebar.talks': effectiveKeys('sidebar.talks'),
     'sidebar.outline': effectiveKeys('sidebar.outline'),
@@ -505,6 +507,8 @@ function MainApp() {
   // outgoing talk's pending typing and, while that talk's file differs from the editor, holds the
   // switch behind the sheet (Reload / Keep mine / Stay here) until the choice has completed.
   const [galleryOpen, setGalleryOpen] = useState(false)
+  const [storageOpen, setStorageOpen] = useState(false)
+  const [explorerPlace, setExplorerPlace] = useState<ExplorerPlace | null>(null)
   const leaveGuardRef = useRef<(() => Promise<boolean>) | null>(null)
   const activeTalkRef = useRef<TalkInfo | null>(activeTalk)
   useLayoutEffect(() => { activeTalkRef.current = activeTalk }, [activeTalk])
@@ -590,6 +594,17 @@ function MainApp() {
   // stale (and is dropped) if a non-panel route changes the active talk before engagement.
   const selectTalkFromPanel = useCallback((talk: TalkInfo | null, movedFrom?: string) =>
     selectTalk(talk, movedFrom, true), [selectTalk])
+
+  const jumpToSlide = useCallback((file: string, slide: ExplorerSlideTarget) => {
+    setResearchJump({ file, ...slide, nonce: Date.now() })
+  }, [])
+  useEffect(() => window.tw.windows.onOpenSlide?.(({ outlinePath, slide }) => {
+    if (activeTalkRef.current?.outlinePath === outlinePath) {
+      setGalleryOpen(false)
+      setStorageOpen(false)
+      jumpToSlide(outlinePath, slide)
+    }
+  }), [jumpToSlide])
   // A window opened by the file list's "Open in new window" asks main once what it was opened for.
   // A talk is selected through the same selectTalk as any open (claim, guard) once the talk list holds
   // it; a folder scopes the new window's file list to that folder (TalkList drill-in).
@@ -613,12 +628,17 @@ function MainApp() {
       return
     }
     const talk = state.talks.find((t) => t.outlinePath === openRequest.outlinePath)
-    if (talk) { setOpenRequest(null); void selectTalk(talk); return }
+    if (talk) {
+      const slide = openRequest.slide
+      setOpenRequest(null)
+      void selectTalk(talk).then(ok => { if (ok && slide) jumpToSlide(talk.outlinePath, slide) })
+      return
+    }
     // Talks arrive in batches: wait for the one that holds it. 15 s in all from the request, not from the last state change.
     const left = Math.max(0, 15000 - (Date.now() - openRequestAtRef.current))
     const timer = window.setTimeout(() => { setOpenRequest(null); void window.tw.windows?.claimTalk?.(null) /* release: this window is no longer "starting" for the talk */; notify('Couldn’t find that talk to open it in this window.', 'error') }, left)
     return () => window.clearTimeout(timer)
-  }, [openRequest, state, selectTalk])
+  }, [openRequest, state, selectTalk, jumpToSlide])
 
   // WorkspaceLayout calls this on the editor's two engagement triggers (see Editor.onEditorEngaged).
   // Talks-panel folder position is untouched: the panel unmounts on the switch and talkFocusPathRef
@@ -652,12 +672,6 @@ function MainApp() {
     else focusSidebarSearch('talks')
   }, [focusSidebarSearch])
 
-  const showAllTalks = useCallback((): void => {
-    setSidebarMode('talks')
-    setSidebarCollapsed(false)
-    requestAnimationFrame(() => window.dispatchEvent(new Event('tw-show-all-talks')))
-  }, [])
-
   const toggleSidebar = useCallback((focusMode: SidebarMode): void => {
     setSidebarCollapsed((collapsed) => {
       if (collapsed && focusMode !== 'pathways') {
@@ -682,19 +696,21 @@ function MainApp() {
       }
     }
     function onKey(e: KeyboardEvent): void {
-      if (isWorkspaceCovered() || (e.target instanceof HTMLElement && e.target.closest('.oe'))) return
+      if (e.target instanceof HTMLElement && e.target.closest('.oe')) return
+      if (isWorkspaceCovered() && !welcomeSearchRef.current) return
       const cmKey = eventToCMKey(e)
-      // CodeMirror's Mod is Control on Windows and Linux. Keep the app-owned Talks search
-      // consistent with that binding while preserving the explicit Control match.
-      const matched = SIDEBAR_COMMAND_IDS.find((id) => sidebarKeysRef.current[id] === cmKey)
-        ?? (e.ctrlKey && !e.metaKey && !/Mac|iPhone|iPad|iPod/.test(navigator.platform) &&
-          cmKey?.replace(/^Ctrl-/, 'Mod-') === sidebarKeysRef.current['sidebar.talks'] ? 'sidebar.talks' : undefined)
+      // CodeMirror's Mod is Control on Windows and Linux. An explicit Control match takes priority.
+      if (!cmKey) return
+      const findSidebarKey = (key: string) => SIDEBAR_COMMAND_IDS.find(id => sidebarKeysRef.current[id] === key)
+      const matched = findSidebarKey(cmKey) ?? (e.ctrlKey && !e.metaKey && !/Mac|iPhone|iPad|iPod/.test(navigator.platform)
+        ? findSidebarKey(cmKey.replace(/^Ctrl-/, 'Mod-')) : undefined)
       if (matched === 'sidebar.talks') {
         e.preventDefault()
         focusTalkSearch()
         commandRan('app.sidebar-talks')
         return
       }
+      if (isWorkspaceCovered()) return
       if (matched === 'sidebar.outline') {
         e.preventDefault()
         focusSidebarSearch('slides')
@@ -726,7 +742,11 @@ function MainApp() {
   // Commands that live deeper in the tree (command palette / toolbar) reach App via window events,
   // so every clickable action also has a keyboard-reachable command. Settings / New talk / New folder.
   useEffect(() => {
-    const openGallery = (): void => setGalleryOpen(true)
+    const openGallery = (): void => {
+      setExplorerPlace(null)
+      setGalleryOpen(true)
+      requestAnimationFrame(() => welcomeSearchRef.current?.focus())
+    }
     const openSettings = (): void => openSettingsWindow()
     const openStudio = (event: Event): void => {
       const detail = (event as CustomEvent<{ sessionId?: string }>).detail
@@ -737,12 +757,16 @@ function MainApp() {
     }
     const openImporter = (): void => { void window.tw.tools.open('importer') }
     const newTalk = (event: Event): void => {
+      if (welcomeSearchRef.current) { window.dispatchEvent(new Event('tw-explorer-new-talk')); return }
       const startingView = (event as CustomEvent<StartingView | undefined>).detail
       setNewTalkStartView(startingView ?? null)
       setNewTalkVaultId(null)
       setNewTalkTopic('')
     }
-    const newFolder = (): void => setNewFolderOpen(true)
+    const newFolder = (): void => {
+      if (welcomeSearchRef.current) { window.dispatchEvent(new Event('tw-explorer-new-folder')); return }
+      setNewFolderOpen(true)
+    }
     const refresh = (): void => { void refreshTalks() }
     // "Add vault…" (palette command id change-vault): the Add vault flow, never a replacement of the
     // first vault (ticket 07). First-run setup still chooses a root through VaultSetup.
@@ -750,6 +774,7 @@ function MainApp() {
     // Palette command open-in-new-window: show the file list first (it is unmounted when the sidebar is
     // collapsed or on Slide outline), then let it act on its focused row.
     const openInNewWindow = (): void => {
+      if (welcomeSearchRef.current) { window.dispatchEvent(new Event('tw-explorer-open-window')); return }
       if (sidebarShowsTalksRef.current) { window.dispatchEvent(new Event('tw-open-in-new-window-run')); return }
       // The list was hidden: show it, but do not act on the row it focuses by itself on mount.
       setSidebarMode('talks'); setSidebarCollapsed(false)
@@ -1026,42 +1051,42 @@ function MainApp() {
     )
   }
 
-  async function startFromWelcome(title: string, view: StartingView, vault?: VaultView): Promise<string | null> {
+  async function startFromWelcome(title: string, view: StartingView, place: ExplorerPlace | null): Promise<string | null> {
     const slug = safeTalkSlug(newTalkSlug(title))
     if (!title || !slug) return 'Give the talk a name with at least one letter or number.'
     commandRan(WELCOME_COMMANDS[view])
-    if (!vault && !await window.tw.vault.useDefaultRoot()) return 'The TalkWeaver folder could not be opened. Choose a folder and try again.'
-    const talk = await window.tw.vault.createTalk({ title, slug, vaultId: vault?.id, startWithSketch: view === 'outline' })
+    if (!place || state.phase !== 'ready' || !state.vaults.some(v => v.id === place.vaultId && v.open && !v.unavailable)) return 'Choose an available vault before creating a talk.'
+    const talk = await window.tw.vault.createTalk({ title, slug, vaultId: place.vaultId, topicFolder: place.folder, startWithSketch: view === 'outline' })
     if (!talk) return 'A folder with that name already exists, or this location is unavailable. Change the name or folder and try again.'
-    if (!vault) await loadVaults({ force: true })
     setWelcomeStart({ path: talk.outlinePath, view })
-    if (!await selectTalk(talk)) return 'The talk was created. Open it from your talks list.'
+    if (!await selectTalk(createdTalk(talk, place.vaultId))) { void refreshTalks(); return 'The talk was created. Open it from your talks list.' }
+    setGalleryOpen(false)
     setSidebarMode('slides')
     setSidebarCollapsed(false)
     void refreshTalks()
     return null
   }
 
-  function welcomeContent(vault?: VaultView) {
-    const choose = () => {
+  const explorerActions = {
+    start: startFromWelcome,
+    examples: () => { commandRan('get-started-show-example'); return openExampleVault() },
+    chooseVault: () => {
+      commandRan('change-vault')
       if (state.phase === 'setup') void window.tw.vault.chooseRoot().then(root => { if (root) void loadVaults({ force: true }) })
       else void pickVaultFolder(true)
-    }
-    const folder = vault?.root
-    const savedIn = !folder || /(?:^|[/\\])Documents[/\\]TalkWeaver[/\\]?$/.test(folder) ? 'Documents/TalkWeaver' : folder
-    return <WelcomeTalk folder={savedIn} folderPath={folder}
-      talks={state.phase === 'ready' ? state.talks : undefined}
-      vaults={state.phase === 'ready' ? state.vaults : undefined}
-      searchRef={welcomeSearchRef}
-      onOpen={selectTalkFromPanel}
-      onStart={(title, view) => startFromWelcome(title, view, vault)}
-      onChangeFolder={() => { commandRan('change-vault'); choose() }}
-      onExamples={() => {
-        commandRan('get-started-show-example')
-        return openExampleVault()
-      }}
-      onOpenTalks={showAllTalks}
-      onImport={() => { commandRan('importer'); window.dispatchEvent(new Event('tw-open-importer')) }} />
+    },
+    importPowerPoint: () => { commandRan('importer'); window.dispatchEvent(new Event('tw-open-importer')) }
+  }
+  const onDefaultVault = async (): Promise<string | null> => {
+    if (!await window.tw.vault.useDefaultRoot()) return 'Couldn’t open the TalkWeaver folder in Documents. Choose another folder.'
+    await loadVaults({ force: true })
+    return null
+  }
+  const openFromExplorer = async (talk: TalkInfo, guard: GalleryOpenGuard<TalkInfo>, slide?: ExplorerSlideTarget): Promise<boolean> => {
+    if (!await selectTalk(talk, guard)) return false
+    if (slide) jumpToSlide(talk.outlinePath, slide)
+    setGalleryOpen(false)
+    return true
   }
 
   function chooseSlidesPanelView(mode: SlidesPanelView): void {
@@ -1074,7 +1099,8 @@ function MainApp() {
   exampleListedRef.current = state.phase === 'ready' && state.vaults.some((v) => v.example === true)
 
   if (state.phase === 'setup') {
-    return <div className="tw-welcome-window"><div className="tw-welcome-titlebar tw-window-drag" />{welcomeContent()}</div>
+    return <VaultExplorer actions={explorerActions} searchRef={welcomeSearchRef} onOpen={openFromExplorer}
+      onDefaultVault={onDefaultVault} onSettings={openSettingsWindow} />
   }
 
   // The vault a talk is in decides which root the editor and panels work against; with no talk open, the
@@ -1147,14 +1173,28 @@ function MainApp() {
     { id: 'pathways', label: 'Pathways' }
   ]
 
+  const galleryManagement: GalleryManagementProps = {
+    talks: state.talks, vaults: state.vaults, foldersByVault: state.foldersByVault, activeTalk,
+    leaveActive: async () => { const guard = leaveGuardRef.current; if (guard) return guard(); await flushSaveRef.current?.(); return true },
+    onRefresh: refreshTalks, onRecheck: () => loadVaults({ force: false }), onSelectTalk: selectTalk,
+    onDeletedTalk: path => { if (activeTalk?.outlinePath === path) { setActiveTalk(null); void window.tw.windows?.claimTalk?.(null) } },
+    onNewTalk: (topic, id) => { setNewTalkVaultId(id); setNewTalkTopic(topic) }, onAddVault: () => void addVault(),
+    onEditVault: id => setVaultSheet({ mode: 'edit', vaultId: id }), onSetVaultOpen: setVaultOpen
+  }
+  const showExplorer = () => { setExplorerPlace(null); setGalleryOpen(true) }
+
   return (
     <div className="app-shell">
-      {galleryOpen && <VaultGallery revision={state.vaults} talkTitle={activeTalk?.title ?? null} onClose={() => setGalleryOpen(false)} onOpen={selectTalk} management={{talks:state.talks,vaults:state.vaults,foldersByVault:state.foldersByVault,activeTalk,
-        leaveActive:async()=>{const guard=leaveGuardRef.current;if(guard)return guard();await flushSaveRef.current?.();return true},
-        onRefresh:refreshTalks,onRecheck:()=>loadVaults({force:false}),onSelectTalk:selectTalk,
-        onDeletedTalk:path=>{if(activeTalk?.outlinePath===path){setActiveTalk(null);void window.tw.windows?.claimTalk?.(null)}},
-        onNewTalk:(topic,id)=>{setNewTalkVaultId(id);setNewTalkTopic(topic)},onAddVault:()=>void addVault(),
-        onEditVault:id=>setVaultSheet({mode:'edit',vaultId:id}),onSetVaultOpen:setVaultOpen}} />}
+      {storageOpen ? <VaultGallery revision={state.vaults} initialLocation={explorerPlace ?? undefined} talkTitle={activeTalk?.title ?? null}
+        onClose={() => setStorageOpen(false)} onOpen={async (talk, guard) => {
+          const opened = await selectTalk(talk, guard)
+          if (opened) setGalleryOpen(false)
+          return opened
+        }} management={galleryManagement} />
+        : (galleryOpen || (!activeTalk && !guideOpen)) && <VaultExplorer management={galleryManagement} actions={explorerActions}
+          searchRef={welcomeSearchRef} preferredVaultId={welcomeVaultId} initialLocation={explorerPlace ?? undefined} activeTitle={activeTalk?.title}
+          onClose={activeTalk ? () => setGalleryOpen(false) : undefined} onOpen={openFromExplorer}
+          onStorage={place => { setExplorerPlace(place); setStorageOpen(true) }} onDefaultVault={onDefaultVault} onSettings={openSettingsWindow} />}
       {sidebarCollapsed ? (
         <div className="sidebar-rail">
           <button
@@ -1166,7 +1206,7 @@ function MainApp() {
           >
             ☰
           </button>
-          <button className="icon-btn vault-gallery-entry" onClick={() => setGalleryOpen(true)} title="Vault Gallery" aria-label="Vault Gallery"><LayoutGrid size={15} aria-hidden /></button>
+          <button className="icon-btn vault-gallery-entry" onClick={showExplorer} title="Vault Explorer" aria-label="Vault Explorer"><LayoutGrid size={15} aria-hidden /></button>
         </div>
       ) : (
         <div
@@ -1202,7 +1242,7 @@ function MainApp() {
                   onClick={() => window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail: 'view-panel-outline' }))}><ListTree size={15} /></button>
               </div>
             )}
-            <button className="icon-btn vault-gallery-entry" onClick={() => setGalleryOpen(true)} title="Vault Gallery" aria-label="Vault Gallery"><LayoutGrid size={15} aria-hidden /></button>
+            <button className="icon-btn vault-gallery-entry" onClick={showExplorer} title="Vault Explorer" aria-label="Vault Explorer"><LayoutGrid size={15} aria-hidden /></button>
             <button
               className="icon-btn"
               onClick={() => setSidebarCollapsed(true)}
@@ -1265,7 +1305,7 @@ function MainApp() {
             setNewTalkStartView(null)
             if (newTalkStartView) setWelcomeStart({ path: talk.outlinePath, view: newTalkStartView })
             await refreshTalks()
-            if (await selectTalk(createdTalk(talk, newTalkVault.id))) { setGalleryOpen(false); setSidebarMode('slides') }
+            if (await selectTalk(createdTalk(talk, newTalkVault.id))) { setGalleryOpen(false); setStorageOpen(false); setSidebarMode('slides') }
           }}
           onClose={() => { setNewTalkTopic(null); setNewTalkStartView(null) }}
         />
@@ -1313,7 +1353,6 @@ function MainApp() {
         startView={welcomeStart?.path === activeTalk?.outlinePath ? welcomeStart?.view : undefined}
         onSketchStarted={() => setWelcomeStart(null)}
         defaultView={openInView}
-        welcome={welcomeContent(state.vaults.find(v => v.id === welcomeVaultId && usableVault(v)) ?? firstUsableVault ?? undefined)}
         leftPreviewsHost={sidebarMode === 'slides' && !sidebarCollapsed ? previewsHost : null}
         leftPathwaysHost={visibleSidebarMode === 'pathways' && !sidebarCollapsed ? pathwaysHost : null}
         onOpenPathways={openPathwaysTab}

@@ -2,8 +2,8 @@
 // headless (TW_E2E=1). The home folder is a stand-in under the system temp folder (TW_E2E_HOME): the
 // app never sees the real ~/Documents, and this script checks the real one is untouched.
 //
-//   (A) FIRST LAUNCH — a fresh profile shows Choose your Vault with the example card under "or look
-//       around first"; Open example vault writes the five talks to <home>/Documents/TalkWeaver/
+//   (A) FIRST LAUNCH — a fresh profile shows the Vault Explorer setup with an examples choice.
+//       Open examples writes the five talks to <home>/Documents/TalkWeaver/
 //       Example vault, lists them under the Example vault section (Example pill, "Removable · local
 //       folder"), and opens the start talk, The Saturday market.
 //   (B) SECOND LAUNCH — no byte or modified time changes in the example folder; the vault is still
@@ -16,7 +16,7 @@
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-example-vault.mjs
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { ensureTalksMode } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'fs'
@@ -73,6 +73,9 @@ async function launch(p) {
   await app.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
   return { app, page }
 }
+const startScreen = page => page.getByRole('region', { name: 'Vault Explorer', exact: true })
+const setupHeading = page => startScreen(page).getByRole('heading', { name: 'Choose where to keep your talks', exact: true })
+const openExamples = page => startScreen(page).getByRole('button', { name: /Open examples$/ })
 const titlesListed = (page) => page.$$eval('[data-talk-title]', (els) => [...new Set(els.map((e) => e.getAttribute('data-talk-title')))])
 async function waitForTitles(page, titles, timeout = 15000) {
   await page.waitForFunction((want) => {
@@ -88,11 +91,10 @@ try {
   const a = profile('first')
   let { app, page } = await launch(a)
   try {
-    const welcome = page.locator('.tw-welcome-window')
-    const examples = welcome.getByRole('button', { name: 'Open the example talks', exact: true })
+    const examples = openExamples(page)
     await examples.waitFor({ state: 'visible', timeout: 10000 })
     record('first launch offers the example talks from the welcome screen',
-      await welcome.getByText('No talks yet', { exact: true }).isVisible() && await examples.isVisible())
+      await setupHeading(page).isVisible() && await examples.isVisible())
     await shot(page, '06-first-launch.png')
     await examples.click()
     await page.getByTitle('Talk menu', { exact: true }).filter({ hasText: 'The Saturday market' }).waitFor({ timeout: 15000 })
@@ -122,8 +124,8 @@ try {
   const before = snapshot(a.root)
   ;({ app, page } = await launch(a))
   try {
-    await page.locator('[data-vault-header][data-vault-example="true"]').waitFor({ state: 'visible', timeout: 15000 })
-    record('second launch: no setup screen, the example vault is listed', await page.locator('.tw-welcome-window').count() === 0)
+    await startScreen(page).getByRole('button', { name: 'Browse Example vault', exact: true }).waitFor({ timeout: 15000 })
+    record('second launch: the example vault is listed in the Explorer', await setupHeading(page).count() === 0)
     await page.waitForTimeout(2500)
   } finally {
     await app.close()
@@ -139,6 +141,7 @@ try {
   const c = profile('own', { vaults: [personal] })
   ;({ app, page } = await launch(c))
   try {
+    await openTalkByTitle(page, 'Alpha Talk')
     await ensureTalksMode(page)
     await waitForTitles(page, ['Alpha Talk'])
     await page.locator('[data-add-vault]').click()
@@ -171,12 +174,12 @@ try {
   const foreignBefore = snapshot(join(d.home, 'Documents'))
   ;({ app, page } = await launch(d))
   try {
-    await page.locator('.tw-welcome-window').waitFor({ state: 'visible', timeout: 10000 })
-    await page.getByRole('button', { name: 'Open the example talks', exact: true }).click()
-    const msg = page.locator('.tw-welcome-window').getByRole('alert')
+    await setupHeading(page).waitFor({ timeout: 10000 })
+    await openExamples(page).click()
+    const msg = startScreen(page).getByRole('alert')
     const warningShown = await msg.waitFor({ state: 'visible', timeout: 8000 }).then(() => true, () => false)
     record('a folder in the way: one sentence, still on the setup screen',
-      warningShown && (await msg.innerText()).includes('is already in Documents › TalkWeaver') && await page.locator('.tw-welcome-window').isVisible())
+      warningShown && (await msg.innerText()).includes('is already in Documents › TalkWeaver') && await setupHeading(page).isVisible())
     await shot(page, '06-in-the-way.png')
   } finally {
     await app.close()

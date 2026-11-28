@@ -79,8 +79,8 @@ export function pagesDeployFailure(output: string): { error: string; details: st
 }
 
 export function resolveBase(opts: { baseUrl?: string; project: string }): string {
-  const raw = opts.baseUrl && opts.baseUrl.trim() ? opts.baseUrl.trim() : `https://${opts.project}.pages.dev`
-  return raw.replace(/\/+$/, '')
+  const raw = (opts.baseUrl?.trim() || `https://${opts.project}.pages.dev`).replace(/\/+$/, '')
+  return /^(?:[a-z0-9-]+\.)+[a-z0-9-]+$/i.test(raw) ? `https://${raw}` : raw
 }
 
 /**

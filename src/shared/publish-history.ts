@@ -7,6 +7,7 @@ export type PublishHistoryEvent = {
   site?: string; revision?: string; files?: number; bytes?: number; removed?: number; missing?: number; folders?: string[]
   recordPresent?: boolean; linksReconciled?: number; linkStyleChanged?: boolean
   outcome?: 'published' | 'unchanged' | 'rehearsed' | 'stopped' | 'unknown' | 'unexpected-error' | 'failed' | 'cancelled'
+  handoutUrl?: string
   diagnostic?: PublishDiagnostic
 }
 export type PublishHistoryAttempt = {

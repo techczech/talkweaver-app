@@ -122,8 +122,16 @@ export function editVideoMarker(text: string, video: AuthoredVideo, edit: VideoM
 
 /** The authoring stage gets marker metadata from the panel. Its video keeps its position
  * while marker-only edits change the canonical outline and the compiled presentation. */
-export function withoutAuthoringVideoMarkers(text: string): string {
+export function authoringVideoPreview(text: string, headingLine: number | null) {
   const { videos, orphans } = scanOutlineVideos(text)
   const markers = new Set([...orphans, ...videos.flatMap(video => video.markers.map(marker => marker.line))])
-  return markers.size ? text.split('\n').filter((_line, index) => !markers.has(index)).join('\n') : text
+  if (!markers.size) return { text, headingLine }
+  const previewText = text.split('\n').filter((_line, index) => !markers.has(index)).join('\n')
+  // Marker lines are zero-based; the compiler's heading line is one-based.
+  const removedBefore = headingLine === null ? 0 : [...markers].filter(line => line < headingLine - 1).length
+  return { text: previewText, headingLine: headingLine === null ? null : headingLine - removedBefore }
+}
+
+export function withoutAuthoringVideoMarkers(text: string): string {
+  return authoringVideoPreview(text, null).text
 }

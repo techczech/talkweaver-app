@@ -4,6 +4,7 @@ dist
 .DS_Store
 *.local
 release/
+!/scripts/release/
 out/
 artefacts/
 # Compiled native helpers — derived from their .swift sources by `npm run build:native` (and dist:mac).

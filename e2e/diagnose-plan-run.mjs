@@ -12,6 +12,7 @@
 //   (i) ticket 26: New pathway… creates a named pathway with selected slides inline; the sheet keeps its draft;
 //       the Run page's "Plan the next Run like this" opens a sheet with the Run's plan, no date, and saves a new planned Run.
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -68,7 +69,7 @@ try {
   const page = await app.firstWindow()
   await page.setViewportSize({ width: 1440, height: 900 }).catch(() => {})
   await page.waitForLoadState('domcontentloaded')
-  await page.getByText('Prework probe', { exact: true }).first().click()
+  await openTalkByTitle(page, 'Prework probe')
   await page.waitForSelector('.workspace')
 
   // (a) the sheet and its defaults

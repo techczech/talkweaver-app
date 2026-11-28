@@ -119,12 +119,21 @@ try {
         const conflict = review.getByRole('article').filter({ has: page.getByRole('heading', { name: 'Where the plot is', exact: true }) })
         const keepSlide = conflict.getByRole('button', { name: "Keep this window's version", exact: true })
         const editorText = () => page.locator('.cm-content').evaluate(el => el.cmTile.root.view.state.doc.toString())
+        const diffEvidence = () => review.locator('article').evaluateAll(cards => cards.map(card => ({
+          slide: card.querySelector('h3')?.textContent,
+          removed: [...card.querySelectorAll('.merge-cards-diff pre del')].map(node => node.textContent),
+          added: [...card.querySelectorAll('.merge-cards-diff pre ins')].map(node => node.textContent),
+        })))
+        const typedLine = text => text.split('\n').find(line => line.includes('STAY_TYPED'))
+        await review.waitFor()
+        record.beforeQuit = { typedLine: typedLine(await editorText()), cards: await diffEvidence() }
         await decideLater.click()
         await review.waitFor({ state: 'hidden' })
         stage('native Quit reopens merge review')
         await quit()
         await keepSlide.waitFor()
         const typedBeforeDismiss = await editorText()
+        record.afterQuit = { typedLine: typedLine(typedBeforeDismiss), cards: await diffEvidence() }
         assert.match(typedBeforeDismiss, /STAY_TYPED/)
         assert.match((await conflict.locator('.merge-cards-diff pre del').allTextContents()).join(''), /STAY_TYPED/)
         assert.match((await conflict.locator('.merge-cards-diff pre ins').allTextContents()).join(''), /DISK_CONFLICT/)

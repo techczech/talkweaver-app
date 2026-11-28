@@ -5,6 +5,7 @@ import {
 } from '../../../shared/transcription-status'
 import { featureList, featureRow, rowDetail, rowState, tone } from './CloudflareSettings'
 import { notify } from '../lib/notify'
+import { speechLanguageName } from '../../../shared/speech-locales'
 
 // Settings → Get started → Transcription: the one status row (spec docs/plans/cloudflare-setup-in-app, D16), a
 // bordered row with the state at the right-hand edge as on the Cloudflare screen, then "Set-up
@@ -44,13 +45,20 @@ export default function TranscriptionStatusRow({ look, version }: Props) {
       .catch(() => notify('The set-up folder could not be opened.', 'error'))
   }
 
+  const installed = new Set([...(native?.installed ?? []), ...(native?.dictationInstalled ?? [])].map(code => code.replaceAll('_', '-')))
+  const downloadable = [...new Set([...(native?.supported ?? []), ...(native?.dictationSupported ?? [])].map(code => code.replaceAll('_', '-')))]
+    .filter(code => !installed.has(code))
   const edge = row ? transcriptionRowEdge(row) : null
   return (<>
     <div style={look.hint} aria-live="polite">
       {!native ? 'Checking this Mac’s speech languages…' : !native.available ? native.error : <>
-        This Mac (built in). Installed: {[...(native.installed ?? []),...(native.dictationInstalled ?? [])].join(', ') || 'none'}.<br />
-        Needs download: {[...(native.supported ?? []),...(native.dictationSupported ?? [])].filter(l=>![...(native.installed ?? []),...(native.dictationInstalled ?? [])].includes(l)).join(', ') || 'none'}.
-        <br />No Python. A language model may download once, with progress on the Run. Offline without a model: connect once and Retry.
+        This Mac (built in). Installed: {installed.size} languages. {downloadable.length} more can be downloaded.
+        <details>
+          <summary>Show languages</summary>
+          <div>Installed: {[...installed].map(speechLanguageName).join(', ') || 'none'}.</div>
+          <div>Needs download: {downloadable.map(speechLanguageName).join(', ') || 'none'}.</div>
+        </details>
+        No Python. A language model may download once, with progress on the Run. Offline without a model: connect once and Retry.
       </>}
     </div>
 

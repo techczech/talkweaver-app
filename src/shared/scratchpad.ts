@@ -103,7 +103,7 @@ export type ScratchReply<T = Record<string, never>> = ({ ok: true } & T) | { ok:
 
 /** What an Insert visual only copy answers: the line to put into the talk (`![](img-…)`, `![](assets/….svg)`,
  *  `[Embed: assets/….html]`); for a page, what Insert › HTML page… says after its insert. */
-export type ScratchVisualImport = ScratchReply<{ line: string; page?: { embedPath: string; how: 'copied' | 'reused' | 'in-talk'; localReferences: string[] } }>
+export type ScratchVisualImport = ScratchReply<{ line: string; page?: { embedPath: string; how: 'copied' | 'reused' | 'in-talk'; localReferences: string[]; dependenciesCopied?: number } }>
 
 export const STATE_FILE_NAME = 'scratchpad-state.json'
 export const SCRATCH_FOLDER_NAME = 'scratchpad'

@@ -393,12 +393,13 @@ export class ObjectEditorWidget extends WidgetType {
         view.focus()
         return { ok: true }
       }
+      const removedNotes = this.block.kind === 'notes' && !inner.trim()
       // Replace ONLY the planner-approved range (the body for fenced objects, the complete block
       // otherwise). The editor update listener then follows the ordinary onContentChange →
       // guarded autosave path; there is no second object-specific writer.
       view.dispatch({
         changes: plan.change,
-        selection: { anchor: this.block.from },
+        selection: { anchor: removedNotes ? plan.change.from : this.block.from },
         effects: setOpenObjectBlock.of(null),
         userEvent: 'input',
         // Each object edit is one undo step, isolated from typing before or after it.
@@ -413,7 +414,7 @@ export class ObjectEditorWidget extends WidgetType {
       }
       const committed = detectObjectBlocks(view.state.doc.toString())
         .find((item) => item.from === this.block.from)
-      if (committed?.kind !== this.block.kind && !options?.wholeBlock) {
+      if (committed?.kind !== this.block.kind && !options?.wholeBlock && !removedNotes) {
         console.error(
           `[warning] ObjectEditor commit no longer detects as ${this.block.kind}.\n`
           + `Before:\n${this.block.source}\nAfter:\n${committed?.source ?? '(missing)'}`

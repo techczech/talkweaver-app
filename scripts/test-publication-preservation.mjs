@@ -3,6 +3,8 @@ import { publicationOutcome } from '../src/main/publication-preservation.ts'
 import { readPublishingInventory } from '../src/main/publishing-inventory.ts'
 import ts from 'typescript'
 import { LiveServiceError } from '../src/main/live-service-deploy.ts'
+import { publishUrl, recoverIdFromUrl, resolveBase } from '../src/main/publishing-logic.ts'
+import { isPublicHandoutUrl } from '../src/shared/publish-status.ts'
 import childProcess from 'node:child_process'
 import policyPromises from 'node:fs/promises'
 import policyFs, { symlinkSync } from 'node:fs'
@@ -364,20 +366,29 @@ test('a deployment Cloudflare refuses is definite and clears the journal for ret
 })
 
 
-test('Go live displays the preservation sentence with its support code', async () => {
+test('Go live displays preservation refusals and uses the authorised handout address', async () => {
   const source = ts.createSourceFile('main-source.ts', readMainSource(), ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
   const declaration = source.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'ensureLiveJoinUrl')
   assert.ok(declaration)
   const compiled = ts.transpileModule(declaration.getText(source), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText
-  let refusal, writes = 0
+  let refusal, writes = 0, cached = false, jobs = 0
+  let authorisedBase = 'https://talks.test'
   const deps = {
-    URL, join, preservationMessage, LiveServiceError,
-    liveLinkFolder: () => 'talk', getConfig: () => 'talks', resolveBase: () => 'https://talks.test',
+    URL, join, preservationMessage, LiveServiceError, isPublicHandoutUrl, liveAddressForPages: url => url,
+    liveLinkFolder: () => 'talk', getConfig: () => 'talks', resolveBase, recoverIdFromUrl, publishUrl,
+    cloudflareConnection: () => ({ handoutBase: () => 'https://talks.test' }),
     publishSiteDir: () => '/synthetic-site', siteFolder: () => '/synthetic-site/talk', existsSync: () => true,
-    readHandoutRegistry: () => ({}), pickShortId: () => ({ id: 'abcd', registry: { talk: 'abcd' } }), recoverIdFromUrl: () => null,
+    readHandoutRegistry: () => cached ? { talk: 'abcd' } : {},
+    pickShortId: ({ recoveredId }) => ({ id: recoveredId ?? 'abcd', registry: { talk: recoveredId ?? 'abcd' } }),
     writeHandoutRegistry() {}, publishedFolders: () => ['talk'], buildRedirects: () => '/abcd /talk/ 302',
-    readFileSync: () => '', publishUrl: () => 'https://talks.test/abcd', writeFileSync: () => { writes++ },
-    handoutPublishing: () => ({ publish: async job => { assert.equal(job.entry, 'live-short-link'); return refusal } }),
+    handoutPublishing: () => ({ publish: async job => {
+      assert.equal(job.entry, 'live-short-link')
+      jobs++
+      return refusal ?? job.prepare({
+        dir: '/synthetic-site', project: 'talks', handoutBase: () => authorisedBase, link: url => url,
+        redirects: text => text, writeSiteFile: () => { writes++ },
+      })
+    } }),
   }
   const ensure = Function(...Object.keys(deps), compiled + '\nreturn ensureLiveJoinUrl')(...Object.values(deps))
   for (const reason of ['PUBLISH_BUSY', 'PUBLISH_OUTCOME_UNKNOWN', 'PUBLISH_INVENTORY_UNAVAILABLE', 'PUBLISH_CANDIDATE_CHANGED']) {
@@ -385,6 +396,16 @@ test('Go live displays the preservation sentence with its support code', async (
     await assert.rejects(ensure({ shortUrl: 'https://talks.test/talk/index.html' }), { message: refusal.details ?? preservationMessage(reason) })
   }
   assert.equal(writes, 0, 'a refused Go-live attempt never prepares redirects')
+
+  refusal = undefined
+  assert.equal(await ensure({ shortUrl: 'https://talks.pages.dev/wxyz' }), 'https://talks.test/wxyz')
+  authorisedBase = 'https://new-talks.test'
+  assert.equal(await ensure({ shortUrl: 'https://talks.pages.dev/talk/' }), 'https://new-talks.test/abcd', 'the queued job uses its current authorised address')
+  const queued = jobs
+  cached = true
+  assert.equal(await ensure({ shortUrl: 'https://talks.pages.dev/talk/' }), 'https://talks.test/abcd')
+  assert.equal(await ensure({ shortUrl: 'https://elsewhere.test/talk/' }), 'https://elsewhere.test/talk/')
+  assert.equal(jobs, queued, 'the existing short code and an unrelated link require no redirect upload')
 })
 
 

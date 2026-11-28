@@ -1,6 +1,7 @@
 // Real-Electron host gate for the Inspector pane (ADR-0011 Stage 4).
 // HOST-RUN ONLY: node e2e/diagnose-inspector.mjs
 import { _electron as electron } from 'playwright'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync, statSync } from 'fs'
@@ -14,9 +15,11 @@ const ud = join(tempRoot, 'userData')
 mkdirSync(ud, { recursive: true })
 const dir = join(vault, 'demo-talk')
 mkdirSync(dir, { recursive: true })
-const probeOutline = `---\ntitle: Demo\n---\n\n## Section A\n{accent=vermilion}\n\n### Contrast slide\n{id=aaaaa}{contrast}\n\n- Old / New\n- Slow / Fast\n\n<!-- from: elsewhere -->\n### Reveal slide\n{id=bbbbb}{reveal}\n\n- One\n- Two\n- Three\n\n## Section B\n\n### Sample question - Which garden bed needs a label?\n{iconlist}\n{id=uyee5} {split=50}\n\n- One\n- Two\n\n### Final question - editor-less\n{iconlist}\n{id=uyef6} {split=50}\n\n- One\n- Two\n\n### Not all garden plots are planted\n{sidebar} {id=hnwcx}\n{layout=media} {id=3plcu}\n\n- One\n- Two\n\n### Image grid slide\n{id=ccccc}{image-grid}\n\n- One\n- Two\n\n### Nested container probe\n{id=nesta}\n\n#### Nested child one\n{id=nestb}\n\n- First\n\n#### Nested child two\n{id=nestc}\n\n- Second\n`
+const probeOutline = `---\ntitle: Demo\n---\n\n## Section A\n{accent=vermilion}\n\n### Contrast slide\n{id=aaaaa}{contrast}\n\n- Old / New\n- Slow / Fast\n\n<!-- from: elsewhere -->\n### Reveal slide\n{id=bbbbb}{reveal}\n\n- One\n- Two\n- Three\n\n## Section B\n\n### Sample question - Which garden bed needs a label?\n{iconlist}\n{id=uyee5} {split=50}\n\n- One\n- Two\n\n### Final question - editor-less\n{iconlist}\n{id=uyef6} {split=50}\n\n- One\n- Two\n\n### Not all garden plots are planted\n{sidebar} {id=hnwcx}\n{layout=media} {id=3plcu}\n\n- One\n- Two\n\n### Image grid slide\n{id=ccccc}{image-grid}\n\n- One\n- Two\n\n### Nested container probe\n{id=nesta}{role=subsection-title}\n\n#### Nested child one\n{id=nestb}\n\n![First garden bed](bed.png)\n\n- First\n\n#### Nested child two\n{id=nestc}\n\n![Second garden bed](bed.png)\n\n- Second\n`
 const outlineFile = join(dir, 'demo-talk-outline.md')
 writeFileSync(outlineFile, probeOutline)
+writeFileSync(join(dir, 'bed.png'), Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP8z8DAwMDAxMDAwMDAAAANHQEDasKb6QAAAABJRU5ErkJggg==', 'base64'))
 const directModel = await prepareSource(outlineFile, probeOutline, 'demo-talk', statSync(outlineFile))
 const directAccent = directModel.fullHtml.match(/<section[^>]*data-id="aaaaa"[^>]*style="[^"]*--sec-accent:\s*([^;\"]+)/)?.[1]?.trim() ?? ''
 writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
@@ -32,10 +35,10 @@ const rec = (n, ok, d) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${n}${d ? ' — ' + d : ''}`)
 }
 
-const inspectorTitle = async () => (await page.locator('.tw-inspector-title').textContent() ?? '').trim()
+const inspectorTitle = async () => (await page.locator('.tw-inspector .tw-right-who strong').textContent() ?? '').trim()
 const walkInspectorToTitle = async (title) => {
   for (let step = 0; step < 10 && await inspectorTitle() !== title; step += 1) {
-    const next = page.locator('.tw-inspector-nav button[aria-label="Next slide"]')
+    const next = page.locator('.tw-inspector').getByRole('button', { name: 'Next slide', exact: true })
     if (await next.isDisabled()) break
     await next.click()
     await page.waitForTimeout(1200)
@@ -66,7 +69,7 @@ const frameStepState = async () => page.frameLocator('.tw-inspector-stage iframe
   }
 }).catch((error) => ({ error: String(error).slice(0, 120) }))
 
-await page.locator('.tl-row').first().dblclick()
+await openTalkByTitle(page, 'Demo')
 await page.waitForTimeout(2500)
 
 // Cheap preload tap: count renderPreview calls if the contextBridge object permits replacement.
@@ -277,14 +280,16 @@ placementOutline = (await import('fs')).readFileSync(outlineFile, 'utf8')
 const imageGridTrigger = placementOutline.split('\n').find((line) => line.includes('ccccc')) ?? ''
 rec('Auto removes explicit title placement', !/\{(?:notitle|split=\d+)\}/.test(imageGridTrigger), imageGridTrigger)
 
-// 8. A child-bearing ### gets the same container controls as a ## section.
+// 8. A subsection with picture slides offers its container modes under Designs.
 rec('navigates to nested ### container probe', await walkInspectorToTitle('Nested container probe'), await inspectorTitle())
-const containerModeGroup = page.locator('.tw-inspector-group[data-group="container-mode"]')
-const containerModeText = await containerModeGroup.textContent().catch(() => '')
-rec('nested ### shows all Container mode options',
-  ['Linear', 'Carousel', 'Contents', 'Grid linear', 'Grid zoom'].every((label) => containerModeText?.includes(label)),
-  containerModeText)
-await containerModeGroup.getByRole('button', { name: 'Carousel', exact: true }).click()
+const sectionDesigns = page.locator('.tw-inspector [data-section="designs"]')
+const showSectionDesigns = sectionDesigns.getByRole('button', { name: /^Show all(?: \d+)? designs$/ })
+if (await showSectionDesigns.isVisible()) await showSectionDesigns.click()
+const containerLabels = await sectionDesigns.locator('.tw-right-picture > strong').allTextContents()
+rec('nested ### shows all section designs',
+  ['One after another', 'Contents', 'Grid', 'Carousel'].every(label => containerLabels.includes(label)),
+  containerLabels.join(' · '))
+await sectionDesigns.getByRole('button', { name: /^Carousel\b/ }).click()
 await page.waitForTimeout(2300)
 const containerOutline = (await import('fs')).readFileSync(outlineFile, 'utf8')
 const containerLines = containerOutline.split('\n')

@@ -62,9 +62,11 @@ const talkDefaults: SettingDef[] = metadataDefaultsViewModel(METADATA_REGISTRY a
  * The two rules of settings-folders.ts laid over the declared settings: a setting that names something
  * to run or somewhere to send data is never applied by import, and the separate folders are checked.
  */
-function withImportRules(defs: SettingDef[]): SettingDef[] {
+type TalkWeaverSettingDef = SettingDef & { hidden?: boolean }
+
+function withImportRules(defs: TalkWeaverSettingDef[]): TalkWeaverSettingDef[] {
   return defs.map((d) => {
-    let out: SettingDef = d
+    let out = d
     if (LOCAL_ONLY_KEYS.includes(d.key)) out = { ...out, canApply: () => LOCAL_ONLY }
     if (d.key === 'presenting.backupFolder' || d.key === SETUP_FOLDER_SETTING) out = { ...out, validate: folderShapeError }
     if (d.key === 'publishing.siteFolder') out = { ...out, validate: siteFolderShapeError }
@@ -96,19 +98,19 @@ export const schema = defineSchema({
     // Writing
     { key: 'writing.openInView', label: 'A talk opens in', section: 'writing', group: 'Views', type: 'choice', default: 'slide', options: WORKSPACE_VIEWS.map(value => ({ value, label: WORKSPACE_VIEW_LABELS[value] })), help: 'Choose the view that opens when you select a talk.' },
     { key: 'writing.slideTabView', label: 'The Slide tab of the right panel shows', section: 'writing', group: 'Views', type: 'choice', default: 'pages', options: [{ value: 'pages', label: 'Pages' }, { value: 'list', label: 'One long list' }] },
-    { key: 'writing.slidesPanelView', label: 'The slides panel shows', section: 'writing', group: 'Views', type: 'choice', default: 'previews', options: [{ value: 'previews', label: 'Previews' }, { value: 'outline', label: 'An outline' }], help: 'The switch at the top of the slides panel changes this too. Pasted pictures are saved in the talk’s assets folder.' },
-    { key: 'writing.plainFont', label: 'Plain view font', section: 'writing', group: 'Plain view', type: 'choice', default: PLAIN_FONT_DEFAULT, options: PLAIN_FONTS.map((f) => ({ value: f.id, label: f.label })), help: 'The typeface of the Plain view of the outline.' },
-    { key: 'writing.plainTextSize', label: 'Plain view text size', section: 'writing', group: 'Plain view', type: 'number', default: PLAIN_TEXT_SIZE_DEFAULT, min: PLAIN_TEXT_SIZE_MIN, max: PLAIN_TEXT_SIZE_MAX, unit: 'px', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'The text size of the Plain view of the outline.' },
-    { key: KEYMAP_SETTING, label: 'Keys changed inside the editor', section: 'writing', group: 'Editor', type: 'text', default: '', validate: appKeysError, help: 'Keys you changed that are not shortcuts of the menu bar: Enter, Tab and single letters inside the outline, and Undo and Redo. Each command with its key; a command with no key has had its key removed. Reset puts every one back to its default.' },
+    { key: 'writing.slidesPanelView', label: 'The slides panel shows', section: 'writing', group: 'Views', type: 'choice', default: 'previews', options: [{ value: 'previews', label: 'Previews' }, { value: 'outline', label: 'A list' }], help: 'The switch at the top of the slides panel changes this too. Pasted pictures are saved in the talk’s assets folder.' },
+    { key: 'writing.plainFont', label: 'Outline view font', section: 'writing', group: 'Outline view', type: 'choice', default: PLAIN_FONT_DEFAULT, options: PLAIN_FONTS.map((f) => ({ value: f.id, label: f.label })), help: 'The typeface of Outline view.' },
+    { key: 'writing.plainTextSize', label: 'Outline view text size', section: 'writing', group: 'Outline view', type: 'number', default: PLAIN_TEXT_SIZE_DEFAULT, min: PLAIN_TEXT_SIZE_MIN, max: PLAIN_TEXT_SIZE_MAX, unit: 'px', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'The text size of Outline view.' },
+    { key: KEYMAP_SETTING, hidden: true, label: 'Keys changed inside the editor', section: 'writing', group: 'Editor', type: 'text', default: '', validate: appKeysError, help: 'Keys you changed that are not shortcuts of the menu bar: Enter, Tab and single letters inside the outline, and Undo and Redo. Each command with its key; a command with no key has had its key removed. Reset puts every one back to its default.' },
     { key: 'writing.actionBar', label: 'Show the action bar', section: 'writing', group: 'Editor', type: 'toggle', default: ACTION_BAR_VISIBLE_DEFAULT, help: 'A row of buttons above the outline for the commands you use most.' },
     // Presenting
-    { key: 'presenting.warnAt', label: 'Clock turns amber', section: 'presenting', group: 'Presenter clock', type: 'number', default: 5, min: 1, max: 600, unit: 'min before the end', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'A talk’s own warn-at in its details wins over this.' },
-    { key: 'presenting.urgentAt', label: 'Clock turns dark amber', section: 'presenting', group: 'Presenter clock', type: 'number', default: 1, min: 1, max: 600, unit: 'min before the end', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'A talk’s own urgent-at in its details wins over this.' },
+    { key: 'presenting.warnAt', label: 'Clock turns amber before the end', section: 'presenting', group: 'Presenter clock', type: 'number', default: 5, min: 1, max: 600, unit: 'min', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'A talk’s own warn-at in its details wins over this.' },
+    { key: 'presenting.urgentAt', label: 'Clock turns dark amber before the end', section: 'presenting', group: 'Presenter clock', type: 'number', default: 1, min: 1, max: 600, unit: 'min', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'A talk’s own urgent-at in its details wins over this.' },
     { key: 'presenting.backup', label: 'Back up talks', section: 'presenting', group: 'Present from anywhere', type: 'toggle', default: false, help: 'Writes each talk as one presenter file to a folder you keep in OneDrive or Dropbox, so a forgotten laptop never stops a talk.' },
     { key: 'presenting.backupFolder', label: 'Backup folder', section: 'presenting', group: 'Present from anywhere', type: 'path', default: '', help: 'Put it inside a synced folder. Empty: not chosen yet.' },
     { key: 'presenting.backupEvery', label: 'Back up every', section: 'presenting', group: 'Present from anywhere', type: 'number', default: 15, min: 5, max: 1440, unit: 'min', validate: (v) => (Number.isInteger(v) ? null : 'Must be a whole number'), help: 'How often changed talks are written again.' },
     // Publishing
-    { key: 'publishing.customDomain', label: 'Handout address', section: 'publishing', group: 'Handouts on the web', type: 'text', default: '', help: 'Your own domain for published handouts, for example https://handouts.example.com. Empty: the Cloudflare Pages address.' },
+    { key: 'publishing.customDomain', label: 'Handout address', section: 'publishing', group: 'Handouts on the web', type: 'text', default: '', help: 'Your own domain for published handouts, for example https://handouts.example.com. Empty: use the site’s active custom domain or its Cloudflare Pages address.' },
     { key: 'publishing.shortLinks', label: 'Short links', section: 'publishing', group: 'Handouts on the web', type: 'toggle', default: false, help: 'Links end in a short code instead of the talk’s name.' },
     { key: 'publishing.siteFolder', label: 'Site folder on this Mac', section: 'publishing', group: 'Advanced', type: 'path', default: '', help: 'Where the published site is assembled. Empty: inside the app’s own folder.' },
     // The Cloudflare account and the Pages site publishing goes to (0.45: settings, so they travel to the other Mac through the set-up

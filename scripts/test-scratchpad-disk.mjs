@@ -324,6 +324,13 @@ try {
     const address=snapshotUrls.scratchSnapshotUrl(image.path)
     assert.ok(address.startsWith('twthumb://scratch/'));assert.ok(address.length<256)
     assert.equal(snapshotUrls.scratchSnapshotFileFor(address),image.path)
+    const hardLink = join(talk, 'linked-snapshot.svg')
+    fs.linkSync(image.path, hardLink)
+    try {
+      assert.equal(fs.statSync(image.path).nlink, 2)
+      assert.equal(snapshotUrls.scratchSnapshotDirectory(image.path), null, 'an importer refuses a hard-linked snapshot')
+      assert.equal(snapshotUrls.scratchSnapshotFileFor(address), null, 'the thumbnail protocol refuses it too')
+    } finally { fs.unlinkSync(hardLink) }
     assert.equal(snapshotUrls.scratchSnapshotUrl(files[0].path),undefined,'HTML cannot enter the image protocol')
     for(const invalid of [address+'?x=1',address+'#x',address.replace('/scratch/','/other/'),'twthumb://scratch/../picture.svg',address.replace('picture.svg','picture.html')])
       assert.equal(snapshotUrls.scratchSnapshotFileFor(invalid),null,invalid)

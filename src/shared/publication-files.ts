@@ -42,6 +42,7 @@ export function publicationMediaReview(check: PublicationFileCheck | undefined, 
 /** Media that disappears during the build is reported with the published handout. */
 export function publicationBuildWarnings(warnings: string[]): string[] {
   return warnings.map(warning => {
+    if (warning.startsWith('widget-media-omitted:')) return 'Some widget files were omitted to keep the published pages within the size limit.'
     const match = /^(missing-asset|missing-image|asset-outside-vault):([^:]+):(.+)$/.exec(warning)
     return match
       ? describe({ slide: match[2], file: match[3], reason: match[1] === 'asset-outside-vault' ? 'outside' : 'missing' })

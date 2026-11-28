@@ -15,7 +15,7 @@ import { testScratchDir } from './lib/test-scratch.mjs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { responsesBadge, runsWithResponses, selectSessionRow, sessionList, sessionLiveKey } from '../src/shared/sessions-list.ts'
-import { collectSessions, showRunConflict } from '../src/main/sessions-list.ts'
+import { collectSessions, registerSessionsListIpc, showRunConflict } from '../src/main/sessions-list.ts'
 
 const TZ = 'Europe/London'
 const NOW = new Date('2026-10-14T10:00:00Z')
@@ -146,6 +146,29 @@ check('collectSessions reads every vault, skips rehearsals, counts people, and m
   const list = sessionList(out.runs, NOW, { live: new Set(out.live) })
   assert.deepEqual(list.rows.map((r) => [r.name, r.live]), [['One', false], ['Two', true]])
 })
+
+{
+  const tmp = testScratchDir(join(tmpdir(), 'tw-sessions-titles-'))
+  const vaults = ['a', 'b'].map(id => ({ id, root: join(tmp, id) }))
+  for (const { root } of vaults) {
+    const folder = join(root, '_PRESENTATIONS', 'allotment')
+    mkdirSync(folder, { recursive: true })
+    writeFileSync(join(folder, 'r1.json'), JSON.stringify({ id: 'r1', talkSlug: 'allotment', kind: 'delivery', status: 'delivered' }))
+  }
+  const handlers = new Map()
+  registerSessionsListIpc({
+    ipcMain: { handle: (channel, handler) => handlers.set(channel, handler) },
+    vaults: () => vaults,
+    liveRuns: () => [],
+    listTalks: async root => root === vaults[0].root ? [{ slug: 'allotment', title: 'Allotment **society** update' }] : []
+  })
+  const result = await handlers.get('sessions:list')()
+  check('the Runs list resolves a missing title only from the Run’s own vault', () => {
+    const rows = sessionList(result.runs, NOW).rows
+    assert.equal(rows.find(row => row.vaultId === 'a').name, 'Allotment society update')
+    assert.equal(rows.find(row => row.vaultId === 'b').name, 'allotment')
+  })
+}
 
 check('collectSessions names a Run file with Git conflict markers (0.45), instead of leaving it out silently', () => {
   const tmp = testScratchDir(join(tmpdir(), 'tw-sessions-conflict-'))

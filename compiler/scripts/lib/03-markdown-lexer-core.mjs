@@ -103,7 +103,8 @@ export function listItemIconTokenAt(text, normalizeIconKey) {
   const explicit = text.match(LIST_ITEM_EXPLICIT_ICON_RE);
   if (explicit) return { index: explicit.index, key: explicit[1], icon: normalizeIconKey(explicit[1]) };
   const bare = text.match(LIST_ITEM_BARE_ICON_RE);
-  if (bare) {
+  // Shorthand still recognises names only. The cross modifier requires an explicit icon value.
+  if (bare && !bare[1].endsWith("!")) {
     const icon = normalizeIconKey(bare[1]);
     if (icon) return { index: bare.index, key: bare[1], icon };
   }

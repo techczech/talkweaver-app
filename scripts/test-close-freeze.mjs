@@ -177,18 +177,11 @@ await test('close: a save that fails does not stop the confirmation (main decide
   assert.equal(t.frozen, 0)
 })
 
-await test('update restart: retained Details and design, Advanced and live object drafts keep the editor; ordinary close is unchanged', async () => {
+await test('update restart: structured metadata and live object drafts keep the editor', async () => {
   assert.equal(typeof drafts.updateRestartDraft, 'function', 'the close must query drafts outside the outline')
   const dom = installTestDom()
   try {
     const root = document.createElement('div')
-    drafts.clearDrafts('/talk')
-    assert.equal(drafts.updateRestartDraft(root), null)
-    for (const [part, label] of [['design', 'Details and design'], ['advanced', 'Advanced metadata']]) {
-      drafts.keepDraft(part, '/talk', { title: 'draft' }, { title: 'saved' }, { title: true })
-      assert.equal(drafts.updateRestartDraft(root), `Save or discard your changes in ${label} to restart.`)
-      drafts.keepDraft(part, '/talk', { title: 'saved' }, { title: 'saved' }, { title: true })
-    }
     let writes = 0
     const editor = textareaEditor('original')
     const shell = mountShell({ kind: 'Test', editor, foot: '', api: { preflight: () => ({ ok: true }), commit: () => { writes++; return { ok: true } } } })
@@ -216,6 +209,12 @@ await test('update restart: retained Details and design, Advanced and live objec
     assert.ok(calls.includes('Save or discard your changes in the object editor to restart.'))
     assert.equal(writes, 0)
     calls.length = 0
+    deps.wiringRef.current.hasMetadataDraft = () => true
+    run({ quit: false, update: true })
+    await new Promise((resolve) => setImmediate(resolve))
+    assert.ok(calls.includes('Save or discard your changes in Talk design to restart.'))
+    assert.ok(calls.some((c) => c?.hasDraft === true))
+    calls.length = 0
     run({ quit: false, update: false })
     await new Promise((resolve) => setImmediate(resolve))
     assert.deepEqual(calls, ['ordinary close'])
@@ -241,7 +240,7 @@ await test('update restart: retained Details and design, Advanced and live objec
     assert.deepEqual(calls, [false], 'a pending sketch also keeps the window when the outline is saved')
     shell.__twCommit()
     assert.equal(drafts.updateRestartDraft(root), null, 'Done releases the object draft')
-  } finally { drafts.clearDrafts(null); dom.restore() }
+  } finally { dom.restore() }
 })
 
 console.log(`close freeze: ${passed} checks passed`)

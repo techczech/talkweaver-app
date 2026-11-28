@@ -20,7 +20,7 @@ import {
 } from '../../../compiler/scripts/lib/simulation-segments.mjs'
 import { readOutlineObjectRegions, type OutlineObjectRegions } from './outline-object-regions.ts'
 import { notesBodyRefusal } from './notes-body.ts'
-import { planNotesInsert, slideAround } from './notes-planner.ts'
+import { blankNotesRemoval, planNotesInsert, slideAround } from './notes-planner.ts'
 
 export type VerbRefusal = { ok: false; code: 'not-found' | 'stale' | 'refused' | 'invalid-input' | 'exists'; message: string; current?: string }
 export type VerbWrite = { ok: true; text: string; before: string; after: string }
@@ -100,11 +100,14 @@ export function notesReplace(text: string, index: number, expectedHash: string, 
 }
 
 /** notes.remove: the whole closed notes block `index`, with its line. */
-export function notesRemove(text: string, index: number, expectedHash: string): VerbWrite | VerbRefusal {
+export function notesRemove(text: string, index: number, expectedHash: string, removeBlankBefore = false): VerbWrite | VerbRefusal {
   const entry = closedNotes(text, index, expectedHash)
   if (!('index' in entry)) return entry
   const from = readOutlineObjectRegions(text).lineStarts[entry.line - 1]
-  return { ok: true, text: removeLines(text, from, from + entry.source.length), before: entry.source, after: '' }
+  const to = from + entry.source.length
+  const blank = removeBlankBefore ? blankNotesRemoval(text, from, to) : null
+  const next = blank ? text.slice(0, blank.from) + text.slice(blank.to) : removeLines(text, from, to)
+  return { ok: true, text: next, before: entry.source, after: '' }
 }
 
 // ── comments ───────────────────────────────────────────────────────────────────────────────────────

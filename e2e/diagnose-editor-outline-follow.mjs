@@ -1,5 +1,6 @@
 // Real built App/Workspace/Editor, hidden Electron, synthetic vault only.
 import assert from 'node:assert/strict'
+import { openTalkByTitle, showTalksBeforeOpening } from './lib/talklist.mjs'
 import { _electron as electron } from 'playwright'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -29,8 +30,15 @@ try{
  assert.equal(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().every(w=>!w.isVisible()&&!w.webContents.getWebPreferences().backgroundThrottling)),true,'fixture windows stay hidden and unthrottled')
  const page=await app.firstWindow();page.setDefaultTimeout(15000)
  const errors=[];page.on('pageerror',e=>errors.push(e.message))
- await page.locator('[data-talk-slug="outline-follow"]').first().click()
+ // The one-shot switch is armed by a Talks panel row, after that route accepts the open.
+ await showTalksBeforeOpening(page)
+ await openTalkByTitle(page, 'Editor follow fixture')
+ await page.locator('[data-guide-close]').click()
+ const slideTab = page.getByRole('tab', { name: 'Slide', exact: true })
+ if (!(await slideTab.isVisible())) await page.getByTestId('sidebar-toggle').click()
+ await slideTab.click()
  const talks = page.getByRole('tab', { name: 'Talks', exact: true })
+ const talksTree = page.getByRole('tree', { name: 'Talks', exact: true })
  const firstBody = page.locator('.cm-line').filter({ hasText: 'First slide body.' })
  const clickBody = text => page.locator('.cm-line').filter({ hasText: text }).click({ position: { x: 30, y: 8 } })
  const dockedOutline = page.locator('[data-slides-mode="outline"]')
@@ -72,7 +80,7 @@ try{
  assert.equal(await page.getByRole('tab',{name:'Talks',exact:true}).getAttribute('aria-selected'),'true','a deliberate return to Talks is preserved until the talk is reopened')
  await capture('return to Talks then editor click: existing one-shot switch rule')
  // Reopening the talk from Talks re-arms the existing switch.
- await page.locator('[data-talk-slug="outline-follow"]').first().click()
+ await talksTree.locator('[data-talk-slug="outline-follow"]').click()
  await clickBody('Second slide body.')
  await page.waitForFunction(()=>document.querySelector('.so-row--current')?.textContent.includes('Second slide'))
  await capture('same talk reopened from Talks: expected second slide')
@@ -97,7 +105,7 @@ try{
      return result
    })
  }, incomingFile)
- await page.locator('[data-talk-slug="incoming"]').first().click()
+ await talksTree.locator('[data-talk-slug="incoming"]').click()
  await app.evaluate(() => Promise.race([
    globalThis.outlineFollowClaimArrived,
    new Promise((_, reject) => {

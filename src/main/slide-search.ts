@@ -13,19 +13,22 @@
 // `titleHit`. The scan yields to the event loop between talks (and every few thousand rows inside
 // one) and stops as soon as `shouldStop()` says the request was superseded.
 
-import { matchFields, matchHay } from '../shared/slide-handling/query.ts'
+import { fieldHits, matchFields, matchHay, parseQuery, prepareFields, type PreparedFields, type SlideMatchEvidence, type SlideScope } from '../shared/slide-handling/query.ts'
+import { authoredPictureText, slideBodyForSearchDisplay } from '../shared/slide-handling/image-refs.ts'
 
-export type SearchScope = 'all' | 'title' | 'body' | 'image'
+export type SearchScope = SlideScope
 // The structured search the renderer sends (mirrors slideBrowserModel.ParsedQuery). A bare
 // string is the legacy all-fields all-words form.
 export type SearchQuery = { scope: SearchScope; exact: boolean; text: string; terms: string[] }
 
 export function normalizeSearchQuery(q: unknown): SearchQuery {
   if (typeof q === 'string') {
+    const { scope, exact, text, terms } = parseQuery(q, { prefixes: false })
+    if (scope === 'widget') return { scope, exact, text, terms }
     return { scope: 'all', exact: false, text: q, terms: q.toLowerCase().split(/\s+/).filter(Boolean) }
   }
   const o = (q ?? {}) as Partial<SearchQuery>
-  const scope = o.scope === 'title' || o.scope === 'body' || o.scope === 'image' ? o.scope : 'all'
+  const scope = o.scope === 'title' || o.scope === 'body' || o.scope === 'image' || o.scope === 'widget' ? o.scope : 'all'
   const text = typeof o.text === 'string' ? o.text : ''
   const terms = Array.isArray(o.terms) ? o.terms.filter((t): t is string => typeof t === 'string' && t !== '') : []
   return { scope, exact: Boolean(o.exact), text, terms }
@@ -38,6 +41,7 @@ export interface SlideRowText {
   nav_title?: unknown
   title?: unknown
   source_markdown?: unknown
+  widget_titles?: string[]
 }
 
 /** What the search needs to know about pictures' text. */
@@ -48,10 +52,10 @@ export interface ImageTextSource {
   textLower(path: string): string
 }
 
-interface PreparedRow {
-  title: string
-  body: string
-  image: string
+interface PreparedRow extends PreparedFields {
+  authoredImage: string
+  resolvedImage: string
+  displayBody?: string
   imageRefs: readonly unknown[]
 }
 interface PreparedTalk {
@@ -75,7 +79,7 @@ export interface LoadedTalk<R extends SlideRowText> {
   resolveImages(refs: readonly unknown[]): string[]
 }
 
-export interface Hit<T, R extends SlideRowText> { talk: T; loaded: LoadedTalk<R>; row: R; titleHit: boolean }
+export interface Hit<T, R extends SlideRowText> { talk: T; loaded: LoadedTalk<R>; row: R; titleHit: boolean; matchEvidence?: SlideMatchEvidence }
 
 export interface SlideSearchOptions { imageText: ImageTextSource }
 
@@ -90,6 +94,7 @@ export interface SlideSearch {
     load(talk: T): Promise<LoadedTalk<R> | null>
     shouldStop?(): boolean
     yieldToLoop?(): Promise<void>
+    includeMatch?: boolean
   }): Promise<Array<Hit<T, R>> | null>
   /** How many times a talk's strings were built (tests). */
   prepareCount(): number
@@ -109,13 +114,11 @@ export function createSlideSearch(options: SlideSearchOptions): SlideSearch {
   let refreshed = 0
 
   function imageString(paths: string[]): string {
-    let text = ''
-    for (const p of paths) {
-      const t = imageText.textLower(p)
-      if (t) text += '\n' + t
-    }
-    return text
+    return paths.map(path => imageText.textLower(path)).filter(Boolean).join('\n')
   }
+
+  const combinedImageText = (authored: string, resolved: string): string =>
+    authored && resolved ? [authored, resolved].join('\n') : authored || resolved
 
   function prepare<R extends SlideRowText>(loaded: LoadedTalk<R>): PreparedTalk {
     const existing = byRows.get(loaded.rows)
@@ -125,11 +128,19 @@ export function createSlideSearch(options: SlideSearchOptions): SlideSearch {
     const imageRows: number[] = []
     const rowsPrepared = loaded.rows.map((row, i): PreparedRow => {
       const imageRefs = loaded.imageRefsFor(row)
+      const body = String(row.source_markdown || '')
+      const authoredImage = authoredPictureText(body).toLowerCase()
+      const resolvedImage = imageRefs.length ? imageString(loaded.resolveImages(imageRefs)) : ''
       if (imageRefs.length) imageRows.push(i)
       return {
-        title: `${row.nav_title || ''}\n${row.title || ''}`.toLowerCase(),
-        body: String(row.source_markdown || '').toLowerCase(),
-        image: imageRefs.length ? imageString(loaded.resolveImages(imageRefs)) : '',
+        ...prepareFields({
+          title: `${row.nav_title || ''}\n${row.title || ''}`,
+          body,
+          image: combinedImageText(authoredImage, resolvedImage),
+          widget: row.widget_titles?.join('\n')
+        }),
+        authoredImage,
+        resolvedImage,
         imageRefs
       }
     })
@@ -143,7 +154,8 @@ export function createSlideSearch(options: SlideSearchOptions): SlideSearch {
     if (talk.imageGeneration === generation) return
     for (const i of talk.imageRows) {
       const row = talk.rowsPrepared[i]
-      row.image = imageString(talk.resolveImages(row.imageRefs))
+      row.resolvedImage = imageString(talk.resolveImages(row.imageRefs))
+      row.image = combinedImageText(row.authoredImage, row.resolvedImage)
       refreshed += 1
     }
     talk.imageGeneration = generation
@@ -152,12 +164,13 @@ export function createSlideSearch(options: SlideSearchOptions): SlideSearch {
   const matches = (row: PreparedRow, q: SearchQuery): boolean => matchFields(row, q)
 
   return {
-    async scan<T, R extends SlideRowText>({ query, talks, load, shouldStop, yieldToLoop }: {
+    async scan<T, R extends SlideRowText>({ query, talks, load, shouldStop, yieldToLoop, includeMatch }: {
       query: SearchQuery
       talks: Iterable<T>
       load(talk: T): Promise<LoadedTalk<R> | null>
       shouldStop?(): boolean
       yieldToLoop?(): Promise<void>
+      includeMatch?: boolean
     }): Promise<Array<Hit<T, R>> | null> {
       const yieldNow = yieldToLoop ?? defaultYield
       const out: Array<Hit<T, R>> = []
@@ -173,8 +186,17 @@ export function createSlideSearch(options: SlideSearchOptions): SlideSearch {
           for (let i = 0; i < rows.length; i++) {
             const pr = p.rowsPrepared[i]
             if (matches(pr, query)) {
-              const titleHit = query.scope === 'title' ? true : matchHay(pr.title, query)
-              out.push({ talk, loaded, row: rows[i], titleHit })
+              const titleHit = query.scope === 'title' || (query.scope !== 'widget' && matchHay(pr.title, query))
+              const row = rows[i]
+              const hit: Hit<T, R> = { talk, loaded, row, titleHit }
+              if (includeMatch) {
+                pr.displayBody ??= slideBodyForSearchDisplay(pr.body)
+                const fields = fieldHits({ title: pr.title, body: pr.displayBody, image: pr.image, widget: pr.widget }, query)
+                const resolvedPictureText = fields.picture && fieldHits({ title: '', body: '', image: pr.resolvedImage }, query).picture
+                  ? pr.resolvedImage : undefined
+                hit.matchEvidence = { fields, resolvedPictureText }
+              }
+              out.push(hit)
             }
             if (++sinceYield >= YIELD_EVERY_ROWS) {
               sinceYield = 0

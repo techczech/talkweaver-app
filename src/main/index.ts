@@ -13,9 +13,9 @@ import { cancelRecordingRefresh, prepareRecordingRefresh, registerPresenterRefre
 import { ImageEditRecipeSizeError, readImageEdit, saveImageEdit } from './image-edit'
 import { captureOfflinePage, offlineSource } from './offline-page-capture'
 import { artwork as embedPreviewArtwork } from './embed-preview-artwork'
-import { scratchSnapshotUrl, scratchSnapshotFileFor } from './scratchpad-disk'
+import { scratchSnapshotDirectory, scratchSnapshotUrl, scratchSnapshotFileFor } from './scratchpad-disk'
 import { preservationMessage, type PreservationReason } from './publication-preservation'
-import type { MediaPublishChoice } from '../shared/publish-status'
+import { isPublicHandoutUrl, type MediaPublishChoice } from '../shared/publish-status'
 import { publicationMediaReview, publicationBuildWarnings } from '../shared/publication-files'
 import { getLibraryFiles } from './publishing-library-sync'
 import type { OutlineSaveIdentity } from '../shared/outline-save-identity'
@@ -301,6 +301,8 @@ import { createVaultFileStore, fileText } from './vault-file'
 import { registerVaultSettingsIpc } from './vault-settings-ipc'
 import { HTML_PAGE_TEXT, createHtmlPageImportRunner, importHtmlPage, registerHtmlPageImportIpc } from './html-page-import'
 import { registerObjectStatusIpc } from './object-status'
+import { repairSlideWidget, type WidgetRepairOffer } from './widget-repair'
+import { copySlideWidgetDependencies } from './slide-local-files'
 import { ExampleVault, resolveExampleHome } from './example-vault'
 import { ExampleVaultRemoval, windowsOnExample, type OpenAppWindow } from './example-vault-removal'
 import { resolveExampleTrash } from './example-trash-harness'
@@ -545,6 +547,7 @@ import { handoutHomeDetails, handoutHomePostwork, handoutHomePrework } from '../
 import { canonicalToolsView, historyResultsRefusal, isOpenableToolsView, parseToolsRunRef, type ToolsRunRef, type ToolsView } from '../shared/tools-views'
 
 const slidePreviewStore = createSlidePreviewStore(8)
+const authoringPreviewStore = createSlidePreviewStore(8)
 
 // Simple JSON config — avoids ESM/CJS issues with electron-store
 type Config = {
@@ -1929,7 +1932,34 @@ registerObjectStatusIpc({
     talkDir: dirname(outlinePath),
     roots: assetRootsFor(outlinePath),
     vaultRoot: talkVaultRoot(vaultRegistry, outlinePath) ?? undefined
-  })
+  }),
+  repairOffers: async (outlinePath, refs) => {
+    const vault = writableRootFor(outlinePath)
+    if (!vault) return new Map()
+    return new Promise<Map<string, WidgetRepairOffer>>((resolve) => {
+      const worker = forkUtilityChild(join(__dirname, 'widget-repair-worker.js'), 'TalkWeaver widget repair')
+      const finish = (offers: Map<string, WidgetRepairOffer>): void => {
+        clearTimeout(timer)
+        resolve(offers)
+        try { worker.kill() } catch { /* already exited */ }
+      }
+      const timer = setTimeout(() => finish(new Map()), 2500)
+      worker.once('message', (offers: Map<string, WidgetRepairOffer>) => finish(offers))
+      worker.once('exit', () => { clearTimeout(timer); resolve(new Map()) })
+      try { worker.postMessage({ vault, outlinePath, refs }) } catch { finish(new Map()) }
+    })
+  },
+  repairWidget: (outlinePath, ref, expectedTitle) => {
+    const root = writableRootFor(outlinePath)
+    const target = root && !outlineRefused(outlinePath) && pathStaysInside(root, outlinePath)
+    if (!root || !target) return false
+    try {
+      if (!repairSlideWidget(root, target, readFileSync(target, 'utf8'), ref, findTalks(root), expectedTitle)) return false
+      preparedTalkCache.evictOutline(outlinePath)
+      invalidateVaultCaches(outlinePath)
+      return true
+    } catch { return false }
+  }
 })
 // The copy runs in its own process, started in the talk folder (html-page-import-worker.ts). The Slide Scratchpad's
 // Insert visual only uses the same copy for an agent's page or SVG (scratchpad-visual-import.ts).
@@ -3296,6 +3326,9 @@ const routePreparation = createPreparationRoute(preparedTalkCache, preparePass)
 // started on the first compile, ended when idle. out/main/prepare-talk-worker.js is its own build entry
 // (electron.vite.config.ts) and ships as a plain file (asar is off in package.json "build").
 const prepareTalkOffThread = createPrepareTalkOffThread(join(__dirname, 'prepare-talk-worker.js'), forkCompileChild)
+// Visible authoring work has its own short-lived utility process. An already running deck or
+// design-tile preparation can take seconds and cannot yield partway through its compile.
+const prepareAuthoringSlide = createPrepareTalkOffThread(join(__dirname, 'prepare-talk-worker.js'), forkCompileChild)
 // The folder the compile's process writes preview variants into (preview-variant.ts): emptied at the
 // first compile of a run, then kept to a few recent files. Made on first use (userData is final by then).
 let previewVariantFilesMade: ReturnType<typeof createPreviewVariantFiles> | null = null
@@ -3488,7 +3521,8 @@ ipcMain.handle('pathways:set-slide-ids', async (_event, outlinePath: string, con
   }
 })
 
-const slidePreviewRequests = new Map<number, Map<SlidePreviewSurface, AbortController>>()
+type SlidePreviewRequest = `${SlidePreviewSurface}:${'deck' | 'slide'}`
+const slidePreviewRequests = new Map<number, Map<SlidePreviewRequest, AbortController>>()
 
 function abortSlidePreviews(owner: number): void {
   const previews = slidePreviewRequests.get(owner)
@@ -3576,19 +3610,40 @@ ipcMain.handle('conflict:pictures', async (_event, token: unknown, side: unknown
   }
 })
 
-// Inspector + Slide Focus compile the SAME full live outline as Present and thumbnails. The
-// content-addressed URL is stable across slide navigation; the renderer changes only its hash.
-ipcMain.handle('slide:render-preview', async (_event, outlinePath: string, outlineContent: string, surface?: unknown) => {
+// The editor's independent slides share the deck compiler and have their own preview document.
+// Other surfaces and slides that need the deck runtime use the full deck and its hash navigation.
+ipcMain.handle('slide:render-preview', async (_event, outlinePath: string, outlineContent: string, surface?: unknown, target?: unknown) => {
   const owner = _event.sender.id
   // Slide view and the inspector can both be visible. A newer request replaces
   // the previous one from its own surface.
   const scope = SLIDE_PREVIEW_SURFACES.find(candidate => candidate === surface) ?? 'detail'
+  // The full navigation document can finish while this revision's selected slide renders.
+  const requestKey: SlidePreviewRequest = `${scope}:${target == null ? 'deck' : 'slide'}`
   const requests = slidePreviewRequests.get(owner) ?? new Map()
   slidePreviewRequests.set(owner, requests)
-  requests.get(scope)?.abort()
+  requests.get(requestKey)?.abort()
   const controller = new AbortController()
-  requests.set(scope, controller)
+  requests.set(requestKey, controller)
   try {
+    if (target != null) {
+      if ((scope !== 'workspace' && scope !== 'detail') || typeof target !== 'object' || outlineRefused(outlinePath)) return null
+      const { slideId, headingLine } = target as { slideId?: unknown; headingLine?: unknown }
+      const compilerDir = getCompilerPath()
+      if (compilerDir && typeof slideId === 'string' && slideId) {
+        const focused = await prepareAuthoringSlide({
+          compilerDir, outlinePath, text: resolvePooledRefs(outlineContent, outlinePath),
+          slug: basename(outlinePath).replace('-outline.md', ''),
+          options: { allowedAssetRoots: assetRootsFor(outlinePath) },
+          authoringSlide: { slideId, ...(typeof headingLine === 'number' && Number.isSafeInteger(headingLine) && headingLine > 0 ? { headingLine } : {}) }
+        }, controller.signal).catch(() => null)
+        if (controller.signal.aborted) return null
+        if (focused?.previewKey && typeof focused.model.fullHtml === 'string' && typeof focused.model.slideId === 'string') {
+          authoringPreviewStore.set(focused.previewKey, focused.model.fullHtml)
+          return slidePreviewUrl(focused.previewKey, focused.model.slideId)
+        }
+      }
+      return null
+    }
     const prepared = await prepareTalk(outlinePath, outlineContent)
     const fullHtml = prepared?.model.fullHtml
     if (controller.signal.aborted || typeof fullHtml !== 'string') return null
@@ -3597,7 +3652,7 @@ ipcMain.handle('slide:render-preview', async (_event, outlinePath: string, outli
     if (!controller.signal.aborted) console.error('[slide:render-preview]', e)
     return null
   } finally {
-    if (requests.get(scope) === controller) requests.delete(scope)
+    if (requests.get(requestKey) === controller) requests.delete(requestKey)
     if (!requests.size && slidePreviewRequests.get(owner) === requests) slidePreviewRequests.delete(owner)
   }
 })
@@ -3730,6 +3785,7 @@ function parseTalkMeta(content: string): string {
   return out.join(' ').toLowerCase()
 }
 interface ProjectionRowMain {
+  widget_titles?: string[]
   slide_id?: string
   nav_title?: string
   title?: string
@@ -4249,18 +4305,16 @@ ipcMain.handle('search:all-slides', async (event, query: string | SearchQuery, o
   if (!vaults.length) return options ? [] : null
   const compilerDir = getCompilerPath()
   if (!compilerDir) return null
-  const opts = (options && typeof options === 'object' ? options : {}) as { requestId?: unknown; supersedeKey?: unknown }
+  const opts = (options && typeof options === 'object' ? options : {}) as { requestId?: unknown; supersedeKey?: unknown; includeMatch?: unknown; compact?: unknown }
   if (typeof opts.requestId === 'number' && typeof opts.supersedeKey === 'string' && opts.supersedeKey) watchSearchSender(event.sender)
   const superseded = searchSupersede.begin(event.sender.id, opts.supersedeKey, opts.requestId)
   try {
     // Scoped, all-words (or exact-phrase) match (slide-search.ts). The searchable fields are the slide
-    // TITLE (nav_title + title), the slide BODY (full source_markdown), and the IMAGE text (cached OCR of
-    // the pictures the slide names) - Section/subsection are deliberately NOT searched (they are a UI
-    // filter; matching them made search far too broad). scope picks which field(s) the query is tested
-    // against; scope 'all' tests all three. Empty query -> every slide.
+    // title, source body, picture text and widget details. Section and subsection names are UI
+    // filters. Scope selects the searchable fields. An empty, unscoped query matches every slide.
     const q = normalizeSearchQuery(query)
-    const compact = (opts as { compact?: unknown }).compact === true
-    const wholeIndex = compact && q.terms.length === 0 && q.text.trim() === ''
+    const compact = opts.compact === true
+    const wholeIndex = compact && q.scope !== 'widget' && q.terms.length === 0 && q.text.trim() === ''
     // Only a held whole-index snapshot needs fresh discovery. Typing queries keeps the 5 s cache.
     const talks = wholeIndex ? searchTalksOf(vaults) : vaults.flatMap(({ id: vaultId, root: vaultRoot }) =>
       findTalks(vaultRoot).map((talk) => ({ vaultId, vaultRoot, talk })))
@@ -4270,6 +4324,7 @@ ipcMain.handle('search:all-slides', async (event, query: string | SearchQuery, o
     const { stamp, result: hits } = await scanWithStartStamp(() => wholeIndex ? browserIndexStamp(talks) : '', () => slideSearch.scan({
       query: q,
       talks,
+      includeMatch: opts.includeMatch === true && (q.terms.length > 0 || q.scope === 'widget'),
       shouldStop: superseded,
       load: async ({ vaultRoot, talk }) => {
         try {
@@ -4293,16 +4348,16 @@ ipcMain.handle('search:all-slides', async (event, query: string | SearchQuery, o
     // The Slide Browser asks for the compact reply: each talk once, rows pointing at it, without
     // the projection fields it never reads (slide-search-reply.ts). Other callers get full rows.
     if (compact) {
-      return compactSlideSearchReply(hits, ({ talk: { vaultId, talk }, row, titleHit }) => {
+      return compactSlideSearchReply(hits, ({ talk: { vaultId, talk }, row, titleHit, matchEvidence }) => {
         const cached = searchCache.get(talk.outlinePath)
         return {
-          row: row as unknown as Record<string, unknown>,
+          row: matchEvidence ? { ...row, matchEvidence } : row as unknown as Record<string, unknown>,
           titleHit,
           talk: { talkSlug: talk.slug, talkTitle: talk.title, outlinePath: talk.outlinePath, vaultId, talkMtimeMs: cached?.mtimeMs ?? 0, talkMeta: cached?.meta ?? '' }
         }
       }, wholeIndex ? stamp : null)
     }
-    return hits.map(({ talk: { vaultId, talk }, row, titleHit }) => {
+    return hits.map(({ talk: { vaultId, talk }, row, titleHit, matchEvidence }) => {
       const cached = searchCache.get(talk.outlinePath)
       return {
         ...row,
@@ -4312,7 +4367,8 @@ ipcMain.handle('search:all-slides', async (event, query: string | SearchQuery, o
         outlinePath: talk.outlinePath,
         talkMtimeMs: cached?.mtimeMs ?? 0,
         talkMeta: cached?.meta ?? '',
-        titleHit
+        titleHit,
+        ...(matchEvidence && { matchEvidence })
       }
     })
   } catch (e) {
@@ -5480,7 +5536,13 @@ ipcMain.handle('window:open-in-new-window', (_event, raw: unknown) => {
     const holder = editorEntryForOutline(editorWindows.values(), target.outlinePath, liveWindow)?.win
       ?? (startingId !== null ? editorWindows.get(startingId)?.win ?? null : null)
     const decision = decideOpenInNewWindow(holder)
-    if (decision.action === 'focus') { bringToFront(decision.window); return { ok: true, focused: true } }
+    if (decision.action === 'focus') {
+      const wc = decision.window.webContents
+      const ownedPath = editorWindows.get(wc.id)?.outlinePath
+      if (target.slide && ownedPath) wc.send('window:open-slide', { outlinePath: ownedPath, slide: target.slide })
+      bringToFront(decision.window)
+      return { ok: true, focused: true }
+    }
   }
   const win = createWindow()
   const wcId = win.webContents.id
@@ -6174,7 +6236,7 @@ ipcMain.handle('publish:check-site', async (): Promise<PublishSiteCheck> => {
     let publisher: { publishedBy?: string; publishedAt?: string; publisherVersion?: string } = {}
     if (hash) {
       const transport = { fetch, apiBase: cloudflareApiBase(cloudflareTestContext()), allowLoopbackForTests: standInApiBase(cloudflareTestContext()) !== null,
-        publicBase: resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined), project: granted.authorisation.project }), contentType: () => 'application/json' }
+        publicBase: granted.authorisation.handoutBase?.(), contentType: () => 'application/json' }
       const bytes = await readLiveAsset(transport, wranglerBlake3 ??= loadWranglerBlake3(app.getAppPath()), siteAssetAddresses(transport, { id: inventory.revision, url: inventory.deploymentUrl }, SITE_RECORD_PATH), SITE_RECORD_PATH, hash)
       const parsed = bytes ? parseSiteRecord(bytes) : null
       if (parsed?.ok) publisher = { publishedBy: parsed.record.publishedBy, publishedAt: parsed.record.publishedAt, publisherVersion: parsed.record.publisherVersion }
@@ -6199,7 +6261,6 @@ function handoutPublishing(): HandoutPublishing {
     bundlingHazard: (siteDir) => pagesBundlingBlock(siteDir),
     pages: () => ({
       fetch, apiBase: cloudflareApiBase(cloudflareTestContext()), allowLoopbackForTests: standInApiBase(cloudflareTestContext()) !== null,
-      publicBase: resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined), project: getConfig('cfPagesProject', undefined) ?? '' }),
       // wrangler's own content types, from the copy of wrangler inside the app.
       contentType: (wranglerContentType ??= loadWranglerMime(app.getAppPath())),
     }),
@@ -6885,8 +6946,13 @@ async function ensureLiveJoinUrl(context: LivePresenterContext): Promise<string>
   if (!linkFolder) return current.toString()
   const project = getConfig('cfPagesProject', undefined)
   if (!project) return current.toString()
-  const base = resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined), project })
-  if (!current.toString().startsWith(`${base}/`)) return current.toString()
+  const currentUrl = current.toString()
+  const connection = cloudflareConnection()
+  const usesSite = (siteBase: string, siteProject: string) =>
+    currentUrl.startsWith(`${siteBase}/`) || currentUrl.startsWith(`${resolveBase({ project: siteProject })}/`)
+  if (!usesSite(connection.handoutBase(), project)) return currentUrl
+  const base = connection.handoutBase(currentUrl)
+  if (!isPublicHandoutUrl(base) || !liveAddressForPages(base)) return currentUrl
   // Already a short link of the site: this computer's copy has the folder and its registry (a cache of the site's own record) has the id.
   const localFolder = siteFolder(publishSiteDir(), linkFolder)
   const known = readHandoutRegistry()[linkFolder]
@@ -6896,18 +6962,23 @@ async function ensureLiveJoinUrl(context: LivePresenterContext): Promise<string>
   // An upload of the site like any other: the same leave, the same one deployment.
   const deployed = await handoutPublishing().publish({
     entry: 'live-short-link',
-    prepare: async ({ dir: siteDir, link, redirects: checked, writeSiteFile }) => {
+    prepare: async ({ dir: siteDir, project, handoutBase, link, redirects: checked, writeSiteFile }) => {
+      // Resolve again with the grant, in case the site or address changed while the job was queued.
+      if (handoutBase && !usesSite(handoutBase(), project)) return { ok: true, built: currentUrl }
+      const joinBase = link(handoutBase?.(currentUrl) ?? base)
       // That folder in the site as this publish sees it, by the one function that makes a name a folder there. Not there: the link as it stands.
       const talkFolder = siteFolder(siteDir, linkFolder)
-      if (!talkFolder || !existsSync(join(talkFolder, 'index.html'))) return { ok: true, built: current.toString() }
+      if (!talkFolder || !existsSync(join(talkFolder, 'index.html'))) return { ok: true, built: currentUrl }
+      const recoveredId = recoverIdFromUrl(currentUrl, joinBase) ?? recoverIdFromUrl(currentUrl, resolveBase({ project }))
       const picked = pickShortId({
         registry: readHandoutRegistry(),
         slug: linkFolder,
-        recoveredId: recoverIdFromUrl(current.toString(), base),
+        // A short-looking folder name would redirect the handout to itself.
+        recoveredId: recoveredId === linkFolder ? null : recoveredId,
         gen: () => generateShortId((n) => Uint8Array.from(randomBytes(n))),
       })
       // ENTRY FIRST: the join link and the whole redirect text are checked before anything is written.
-      const joinUrl = link(publishUrl({ base, slug: linkFolder, id: picked.id, useShortIds: true }))
+      const joinUrl = link(publishUrl({ base: joinBase, slug: linkFolder, id: picked.id, useShortIds: true }))
       const redirects = checked(buildRedirects(picked.registry, publishedFolders(siteDir)))
       writeHandoutRegistry(picked.registry)
       writeSiteFile(join(siteDir, '_redirects'), redirects)
@@ -7077,16 +7148,16 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
         workWarning = plan.warning
         return null
       },
-      prepare: async ({ dir: siteDir, project, live: liveWorkerBaseUrl, link, redirects, makeFolder, writeSiteFile, claimFile, trustedRegistry, ownShortLinksUnreadable }) => {
+      prepare: async ({ dir: siteDir, project, handoutBase, live: liveWorkerBaseUrl, link, redirects, makeFolder, writeSiteFile, claimFile, trustedRegistry, ownShortLinksUnreadable }) => {
         reread()
         if(asked.sourceOutline && !(await qualifiedRunTalk(vault,asked)))return {ok:false,error:'run-source-unavailable'}
-        // ENTRY FIRST: the address every link of this handout starts with, checked before anything is built or written.
-        const base = link(resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined) ?? (process.env.TW_REC_TEST === '1' ? 'https://mock-run-handouts.test' : undefined), project }))
-        // The handouts the site holds: the real names of its own folders (handout-publishing.ts).
-        const existing = publishedFolders(siteDir)
         // The Run as it stands now, at this publish's turn: an earlier publish or unpublish may have changed its link.
         const run = reread()
         if(run.sourceOutline!==asked.sourceOutline)throw Error('run-source-conflict')
+        // ENTRY FIRST: the address every link of this handout starts with, checked before anything is built or written.
+        const base = link(handoutBase?.(run.handoutUrl) ?? resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined) ?? (process.env.TW_REC_TEST === '1' ? 'https://mock-run-handouts.test' : undefined), project }))
+        // The handouts the site holds: the real names of its own folders (handout-publishing.ts).
+        const existing = publishedFolders(siteDir)
         // The Run's folder, decided from the Run's own facts (run-unpublish.ts runSiteFolder, D2): the folder
         // its last publish recorded, when its link names it too; for an older Run, the registry's folder when
         // its link is a registered short id, otherwise the folder its link names. Never a path made from the
@@ -7135,7 +7206,7 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
           const picked = pickShortId({
             registry,
             slug,
-            recoveredId: recoverIdFromUrl(run.handoutUrl, base),
+            recoveredId: recoverIdFromUrl(run.handoutUrl, base) ?? recoverIdFromUrl(run.handoutUrl, resolveBase({ project })),
             gen: () => generateShortId((n) => Uint8Array.from(randomBytes(n)))
           })
           id = picked.id
@@ -7175,6 +7246,7 @@ ipcMain.handle('run:publish-handout', async (_event, payload: { talkSlug: string
       },
       // The Run's link, the folder it was written to (bound to the Run from now on), and when each phase
       // went out, are kept once the pages are up.
+      handoutUrl: built => built.url,
       record: ({ url, folder, phases }) => {
         const current = reread()
         if(current.sourceOutline!==asked.sourceOutline)throw Error('run-source-conflict')
@@ -7754,7 +7826,24 @@ const scratchpadIpc = registerScratchpadIpc({
     copyIntoAssets: async (path, outlinePath, kind) => {
       const root = writableTalkRoot(outlinePath)
       if (!root) return { ok: false, reason: 'vault-unavailable', message: HTML_PAGE_TEXT.vaultUnavailable }
-      return importHtmlPage({ root, outlinePath }, path, htmlPageRunImport, undefined, undefined, { kind, alwaysCopy: true })
+      // Agent files arrive as private snapshots. Picked slide assets still use their source vault.
+      const sourceRootFor = () => scratchSnapshotDirectory(path) ?? vaultRootFor(path)
+      const sourceRoot = sourceRootFor()
+      const source = sourceRoot && pathStaysInside(sourceRoot, path)
+      const target = pathStaysInside(root, outlinePath)
+      if (!sourceRoot || !source || !target) return { ok: false, reason: 'outside-vault', message: 'The source or destination is outside its vault.' }
+      const copied = await importHtmlPage({ root, outlinePath }, path, htmlPageRunImport, undefined, undefined, { kind, alwaysCopy: true })
+      if (!copied.ok) return copied
+      if (sourceRootFor() !== sourceRoot || writableTalkRoot(outlinePath) !== root ||
+          pathStaysInside(sourceRoot, path) !== source || pathStaysInside(root, outlinePath) !== target) {
+        return { ok: false, reason: 'talk-changed', message: 'The source or destination changed during the copy.' }
+      }
+      try {
+        const dependenciesCopied = copySlideWidgetDependencies(source, target, copied.embedPath)
+        return { ...copied, dependenciesCopied }
+      } catch (error) {
+        return { ok: false, reason: 'write-failed', message: error instanceof Error ? error.message : '' }
+      }
     }
   }),
   slideSource: (slide, outlinePath) => {
@@ -9144,6 +9233,7 @@ app.whenReady().then(async () => {
     vaults: () => availableVaults().map((v) => ({ id: v.id, root: v.root })),
     reveal: (path) => { if (!E2E) shell.showItemInFolder(path) },
     liveRuns: () => liveSessions?.liveRuns() ?? [],
+    listTalks: listIndexedTalks,
     // The one sent set (ticket 17, D1): the Unpublish confirmation names exactly what the job withdraws.
     sentPhases: (run, root) => sentPhases(runPrework(), run, root),
     // Responses waiting on the live service (counted on the work timer, never pulled here), for the Run's own vault.
@@ -9420,7 +9510,7 @@ app.whenReady().then(async () => {
       const url = new URL(request.url)
       if (url.hostname === 'preview') {
         const previewId = slidePreviewIdFromUrl(request.url)
-        const html = previewId == null ? undefined : slidePreviewStore.get(previewId) ?? scratchpadPreviewStore.get(previewId)
+        const html = previewId == null ? undefined : slidePreviewStore.get(previewId) ?? authoringPreviewStore.get(previewId) ?? scratchpadPreviewStore.get(previewId)
         const notFound = (): Response => new Response('Preview not found', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } })
         if (html == null) return notFound()
         if (typeof html !== 'string') {

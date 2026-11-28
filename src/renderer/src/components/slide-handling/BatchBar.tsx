@@ -27,8 +27,6 @@ export interface BatchBarProps {
   onDelete: () => void
   onAddToPathway?: () => void
   onSetAside?: () => void
-  /** The bar's height while it shows (0 when it does not): the grid pads its scroll area by it so the last row scrolls clear. */
-  onHeight?: (px: number) => void
 }
 
 function MoveToMenu({ count, rows, selectedLines, onChoose, onClose }: {
@@ -90,36 +88,27 @@ function MoveToMenu({ count, rows, selectedLines, onChoose, onClose }: {
   )
 }
 
-export default function BatchBar({ count, outlineEditable = true, rows, selectedLines, moveOpen: moving, onMoveOpenChange: setMoving, onClear, onMakeSection, makeSectionReason, onMove, onCut, onCopy, onDelete, onSetAside, onAddToPathway, onHeight }: BatchBarProps) {
+export default function BatchBar({ count, outlineEditable = true, rows, selectedLines, moveOpen: moving, onMoveOpenChange: setMoving, onClear, onMakeSection, makeSectionReason, onMove, onCut, onCopy, onDelete, onSetAside, onAddToPathway }: BatchBarProps) {
   const close = useCallback(() => setMoving(false), [setMoving])
   const barRef = useRef<HTMLDivElement>(null)
   const showing = count >= 2
-  useEffect(() => {
-    const el = barRef.current
-    if (!showing || !el) return
-    const report = (): void => onHeight?.(el.offsetHeight)
-    report()
-    const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(report) : null
-    ro?.observe(el)
-    return () => { ro?.disconnect(); onHeight?.(0) }
-  }, [showing, onHeight])
   // The Slide Scratchpad's collapsed pill and its floating panel are fixed over the bottom-right corner; where one
   // overlaps the bar, the bar ends left of it (a right margin), so Delete stays reachable.
   useEffect(() => {
     const el = barRef.current
     if (!showing || !el) return
     const fit = (): void => {
-      const now = el.style.marginRight ? parseFloat(el.style.marginRight) : -4
+      const now = el.style.marginRight ? parseFloat(el.style.marginRight) : 8
       const rect = el.getBoundingClientRect()
-      // The bar's right edge with the default -4px margin (so the measure does not depend on the margin it set).
-      const own = { left: rect.left, top: rect.top, bottom: rect.bottom, right: rect.right + (now + 4) }
+      // The bar's right edge with the default 8px margin (so the measure does not depend on the margin it set).
+      const own = { left: rect.left, top: rect.top, bottom: rect.bottom, right: rect.right + (now - 8) }
       let cut = 0
       document.querySelectorAll<HTMLElement>('.sp-pill, .sp-panel--float').forEach((o) => {
         const r = o.getBoundingClientRect()
         if (r.width === 0 || r.height === 0) return
         if (r.top < own.bottom && r.bottom > own.top && r.left < own.right && r.right > own.left) cut = Math.max(cut, own.right - r.left + 8)
       })
-      const want = cut > 0 ? `${-4 + cut}px` : ''
+      const want = cut > 0 ? `${8 + cut}px` : ''
       if (el.style.marginRight !== want) el.style.marginRight = want
     }
     fit()

@@ -14,7 +14,7 @@ import { IcCollapse, IcExpand } from './talklist/icons'
 import { layoutDisplayName } from '../../../shared/layout-registry/options'
 import { highlightSegments, isEmptyQuery, parseQuery } from '../../../shared/slide-handling/query.ts'
 import { firstHitFrom, hitPosition, outlineBlocks, outlineItems, runSearch, sectionHitCounts, stepHit } from '../lib/slideSearchModel'
-import { registerSearchSurface, useSlideQuery, usePictureText, useSlideThumbs } from '../lib/slideSearch'
+import { registerSearchSurface, useSlideQuery, useWidgetTitles, usePictureText, useSlideThumbs } from '../lib/slideSearch'
 import { releaseSelectionOutside, setOutlineSelection } from '../lib/outlineSelection'
 import { rowAfterEdit } from '../lib/activeOutlineLine'
 import { getOutlineMarks, getStripNumbers, numbersAreCurrent, outlineNumbers, subscribeStripNumbers, type OutlineMark } from '../lib/stripNumbers'
@@ -23,6 +23,8 @@ import type { OutlineOps } from './WorkspaceLayout'
 
 interface Props {
   content: string
+  /** In Previews, show these cards until the search has a query. */
+  idlePreviews?: ReactNode
   structureRows?: ReturnType<typeof structureOf>['nodes']
   dropStructure?: ReturnType<typeof structureOf>
   rowStructureItems?: StructureRowItems
@@ -53,12 +55,17 @@ type DropTarget = { kind: 'before' | 'into'; line: number } | { kind: 'end' }
 /** How long a drag must rest on a collapsed section row before the section opens (ms). */
 export const DRAG_EXPAND_DELAY_MS = 700
 
-export default function SlidesOrganizer({ content, onJump, ops, currentLine, talkKey, talkTitle: talkTitleProp, structureRows, dropStructure, rowStructureItems, selectedLines, onPickStructure, renderAddLine, onStructureMove, cover, closing, currentGenerated, onGenerated }: Props) {
-  const rows = useMemo(() => slideRows(content), [content])
+export default function SlidesOrganizer({ content, idlePreviews, onJump, ops, currentLine, talkKey, talkTitle: talkTitleProp, structureRows, dropStructure, rowStructureItems, selectedLines, onPickStructure, renderAddLine, onStructureMove, cover, closing, currentGenerated, onGenerated }: Props) {
+  const tk = talkKey ?? ''
+  // The grid shares this query; the match rules live in src/shared/slide-handling/query.ts.
+  const [query, setQuery] = useSlideQuery(tk)
+  const widgetTitles = useWidgetTitles()
+  const queryActive = useMemo(() => !isEmptyQuery(parseQuery(query)), [query])
+  const previewsIdle = idlePreviews != null && !queryActive
+  const rows = useMemo(() => previewsIdle ? [] : slideRows(content), [content, previewsIdle])
   const structureAt = useMemo(() => new Map(structureRows?.map(row => [row.line + 1, row])), [structureRows])
   const [structureTarget, setStructureTarget] = useState<{ line: number; side: DropSide; label: string } | null>(null)
   const dragSource = useRef<string | null>(null)
-  const tk = talkKey ?? ''
   // Which sections are collapsed lives in the per-talk store (outlineCollapseStore.ts), by section
   // identity rather than line number, so it survives edits, moves, this panel unmounting, and the
   // grid shares it. `keyed` is this panel's own reading of the text it is showing.
@@ -80,6 +87,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
   // Collapse keys count same-titled occurrences; selection must follow the authored block
   // when those occurrences swap. Use the exact source (including descendants), never a title hash.
   const selectionKeys = useMemo(() => {
+    if (!rows.length) return []
     const lines = content.split('\n')
     return slideKeys(rows.map((row, i) => {
       let end = i + 1
@@ -97,8 +105,6 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     else selection.reset(rows.findIndex(r => r.line === line))
   }
   const [highlightedLine, setHighlightedLine] = useState<number | null>(null)
-  // ONE query shared with the grid (lib/slideSearch.ts); the search itself is src/shared/slide-handling/query.ts.
-  const [query, setQuery] = useSlideQuery(talkKey ?? '')
   const [hitLine, setHitLine] = useState<number | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const searchRef = useRef<HTMLInputElement>(null)
@@ -140,7 +146,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     const el = panelRef.current
     if (!el) return
     function onKey(e: KeyboardEvent): void {
-      if (!e.metaKey || !ops) return
+      if (!e.metaKey || !ops || e.target === searchRef.current) return
       const sel = selectedLine ?? highlightedLine
       if (sel == null) return
       if (selectedLine == null) {
@@ -289,14 +295,16 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     return best
   }, [rows, currentLine])
 
-  // Matching reads titles, the text under each heading and the text in its pictures (picture text only while searching).
-  const queryActive = !isEmptyQuery(parseQuery(query))
+  // Match each heading with its slide text, widget titles and any picture text fetched for the search.
   const baseItems = useMemo(() => outlineItems(content, rows), [content, rows])
   const pictureText = usePictureText(talkKey ?? null, useMemo(() => outlineBlocks(baseItems), [baseItems]), queryActive)
-  const items = useMemo(() => (pictureText.length === baseItems.length ? baseItems.map((it, i) => ({ ...it, image: pictureText[i] })) : baseItems), [baseItems, pictureText])
+  const items = useMemo(() => baseItems.map((it, i) => ({
+    ...it, image: pictureText[i] ?? '', widget: widgetTitles.get(it.key)
+  })), [baseItems, pictureText, widgetTitles])
   const talkTitle = talkTitleProp ?? (rows[0]?.level === 1 ? rows[0].text : '') // the same value the grid's from: reads (the talk's title)
   const run = useMemo(() => runSearch(items, query, talkTitle), [items, query, talkTitle])
   const searching = run.active
+  const filterResults = idlePreviews != null && searching
   const titleScope = run.query.scope === 'all' || run.query.scope === 'title'
   const sectionHits = useMemo(() => sectionHitCounts(rows, run.isHit), [rows, run.isHit])
   const thumbs = useSlideThumbs()
@@ -337,7 +345,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     const hits = panel.querySelector<HTMLElement>('.so-hitbar')
     const inset = hits ? Math.max(search, Number.parseFloat(getComputedStyle(hits).top) || 0) + hits.offsetHeight : search
     sidebarScroll.align(panel, row, heading, inset)
-  }, [structureRows, structureAt, tk, currentRowLine, shownCurrentLine, keyByLine, sidebarScroll, currentGenerated, titleRow])
+  }, [structureRows, structureAt, tk, currentRowLine, shownCurrentLine, keyByLine, sidebarScroll, currentGenerated, titleRow, previewsIdle])
   function selectGenerated(kind: 'cover' | 'closing'): void {
     clickedRow.current = currentGenerated === kind ? null : kind
     onGenerated?.(kind)
@@ -366,7 +374,6 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     const line = keyed.find((r) => r.key === snap.revealKey)?.line
     if (line != null) rowRefs.current.get(line)?.scrollIntoView({ block: 'nearest' })
   }, [snap.revealSeq, snap.revealKey, keyed, structureRows])
-  const visibleRows = rows.filter((r) => !hidden.has(r.line))
   const matchCount = run.order.length
   const renderText = (text: string, marked = true): ReactNode => {
     if (!searching || !marked || !titleScope) return text
@@ -385,6 +392,10 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     return url ? <span className="so-thumb" data-so-thumb><img src={url} alt="" draggable={false} /></span> : null
   }
   const dimmed = (line: number, isSection: boolean): boolean => searching && !run.isHit.has(line) && !(isSection && (sectionHits.get(line) ?? 0) > 0)
+  const isRowVisible = (line: number): boolean => !previewsIdle && (filterResults
+    ? !dimmed(line, sectionLines.has(line))
+    : !hidden.has(line))
+  const visibleRows = rows.filter((row) => isRowVisible(row.line))
 
   // Previous / Next move the editor to the hit (the caret stays in the search box) and open the sections around it. Typing lands on the first hit at or after the caret's row without changing which sections are open.
   function gotoHit(line: number | null, takeFocus: boolean, reveal = true): void {
@@ -455,6 +466,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
 
   function handlePanelKey(e: ReactKeyboardEvent<HTMLElement>): void {
     const modified = e.metaKey || e.ctrlKey || e.altKey || e.shiftKey
+    if (e.target === searchRef.current && e.key !== 'Escape') return
     if (!modified && e.key === 'ArrowDown') {
       e.preventDefault()
       moveHighlight(1)
@@ -532,7 +544,8 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     e.preventDefault()
     // After the selected slide (after the whole section when a section is selected); at the end of the talk when nothing is.
     const at = slideOps.paste(e.clipboardData.getData('text/plain'), selectedLine ?? highlightedLine)
-    if (at != null) landed(at)
+    if (typeof at === 'number') landed(at)
+    else if (at) void at.then((line) => { if (line != null) landed(line) })
   }
 
   // ── Drag and drop ──
@@ -680,7 +693,7 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
       ? dropTarget.kind === 'into' ? 'so-row--dropinto' : 'so-row--dragover'
       : ''
 
-  if (rows.length === 0 && !cover) {
+  if (idlePreviews == null && rows.length === 0 && !cover) {
     return <div className="pres-nav-empty">{content ? 'No headings yet.' : 'Select a talk to see its slides.'}</div>
   }
 
@@ -702,11 +715,12 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
     <div
       className="slides-organizer"
       data-slides-organizer
+      data-sidebar-search-idle={previewsIdle || undefined}
       ref={panelRef}
-      data-sidebar-follow-list={structureRows ? '' : undefined}
+      data-sidebar-follow-list={structureRows && !previewsIdle ? '' : undefined}
       data-multi-selection={(selectedLines?.length ?? 0) > 1 || undefined}
       onScroll={event => sidebarScroll.onScroll(event.currentTarget)}
-      tabIndex={0}
+      tabIndex={previewsIdle ? -1 : 0}
       onFocus={(e) => releaseSelectionOutside(e.currentTarget)}
       onKeyDown={handlePanelKey}
       onContextMenu={handleContextMenu}
@@ -724,13 +738,16 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
           type="search"
           className="so-search-input"
           placeholder="Search titles, text and pictures…"
+          title="Use widget: to search only widgets"
           value={query}
           onChange={(e) => { setQuery(e.target.value); setHighlightedLine(null) }}
           onKeyDown={(e) => { if (e.key === 'Enter' && searching && !e.metaKey && !e.ctrlKey && !e.altKey) { e.preventDefault(); e.stopPropagation(); stepSearch(e.shiftKey ? -1 : 1) } }}
           aria-label="Search the slide outline"
         />
-        <button type="button" className="tl-tbtn" title="Collapse all sections" aria-label="Collapse all sections" data-so-collapse-all onClick={() => { publishOutline(tk, content); collapseAllSections(tk) }}><IcCollapse /></button>
-        <button type="button" className="tl-tbtn" title="Expand all sections" aria-label="Expand all sections" data-so-expand-all onClick={() => { publishOutline(tk, content); expandAllSections(tk) }}><IcExpand /></button>
+        {idlePreviews == null && <>
+          <button type="button" className="tl-tbtn" title="Collapse all sections" aria-label="Collapse all sections" data-so-collapse-all onClick={() => { publishOutline(tk, content); collapseAllSections(tk) }}><IcCollapse /></button>
+          <button type="button" className="tl-tbtn" title="Expand all sections" aria-label="Expand all sections" data-so-expand-all onClick={() => { publishOutline(tk, content); expandAllSections(tk) }}><IcExpand /></button>
+        </>}
       </div>
       {searching && (
         <div className="so-hitbar" data-so-hitbar>
@@ -742,12 +759,12 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
       {searching && matchCount === 0 && (
         <div className="pres-nav-empty">No slides match “{query.trim()}”.</div>
       )}
-      {cover && !titleRow && <><button ref={coverRef} type="button" className={`so-slide tw-structure-generated${currentGenerated === 'cover' ? ' so-row--current' : ''}`} title={cover} onClick={() => selectGenerated('cover')}><span className="so-slide-no">1</span><span className="tw-sidebar-row-title">{cover}</span></button>{renderAddLine?.(null)}</>}
+      {!previewsIdle && !filterResults && cover && !titleRow && <><button ref={coverRef} type="button" className={`so-slide tw-structure-generated${currentGenerated === 'cover' ? ' so-row--current' : ''}`} title={cover} onClick={() => selectGenerated('cover')}><span className="so-slide-no">1</span><span className="tw-sidebar-row-title">{cover}</span></button>{renderAddLine?.(null)}</>}
       {rows.map((r, index) => {
-        if (hidden.has(r.line)) return null
+        if (!isRowVisible(r.line)) return null
         const source = structureAt.get(r.line)
         const isSel = selectedLines ? selectedLines.includes(r.line) : selectedLine === r.line
-        const add = index < rows.length - 1 && !source?.folded ? renderAddLine?.(r.level === 1 ? null : r.line) : null
+        const add = !filterResults && index < rows.length - 1 && !source?.folded ? renderAddLine?.(r.level === 1 ? null : r.line) : null
         const isHighlighted = highlightedLine === r.line
         // Indent by heading depth (##/# flush left) so nesting reads as a tree at any level.
         const indent = { paddingLeft: `${6 + Math.max(0, r.level - 2) * 14}px` }
@@ -772,9 +789,9 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
             >
               {dropLabel(r.line)}
               <span className="so-slide-no" data-so-no>{rowNumber(r)}</span>
-              <button type="button" className="so-caret" onClick={(e) => { e.stopPropagation(); toggle(r.line, e.altKey) }} aria-expanded={!isCollapsed} title="Option-click: this section and all inside it">
+              {!filterResults && <button type="button" className="so-caret" onClick={(e) => { e.stopPropagation(); toggle(r.line, e.altKey) }} aria-expanded={!isCollapsed} title="Option-click: this section and all inside it">
                 {isCollapsed ? '▸' : '▾'}
-              </button>
+              </button>}
               {(!structureRows || source?.section) && markOf(r).sectionNumber && <span className="so-section-no" data-so-section-no title={`Section ${markOf(r).sectionNumber}`}>§{markOf(r).sectionNumber}</span>}
               <button type="button" className="so-section-label" title={title} onClick={e => select(r.line, e)}>
                 <span className="tw-sidebar-row-title">{renderText(title)}</span>
@@ -820,12 +837,13 @@ export default function SlidesOrganizer({ content, onJump, ops, currentLine, tal
           </div>
         )
       })}
-      {closing && <button ref={closingRef} type="button" className={`so-slide tw-structure-generated${currentGenerated === 'closing' ? ' so-row--current' : ''}`} onClick={() => selectGenerated('closing')}>{closing}</button>}
+      {!previewsIdle && !filterResults && closing && <button ref={closingRef} type="button" className={`so-slide tw-structure-generated${currentGenerated === 'closing' ? ' so-row--current' : ''}`} onClick={() => selectGenerated('closing')}>{closing}</button>}
       {/* Always in the tree (adding it at drag start would shift the list under the pointer): the
           drop zone after the last row, which moves the dragged slide to the end of the talk. */}
-      <div className={`so-drop-end ${dropTarget?.kind === 'end' ? 'so-drop-end--active' : ''}`} data-drop-end aria-hidden />
-      {structureRows && <div className="tw-sidebar-follow-tail" aria-hidden />}
+      {!previewsIdle && <div className={`so-drop-end ${dropTarget?.kind === 'end' ? 'so-drop-end--active' : ''}`} data-drop-end aria-hidden />}
+      {structureRows && !previewsIdle && <div className="tw-sidebar-follow-tail" aria-hidden />}
     </div>
+    {previewsIdle && idlePreviews}
     <SlideRowMenus
       request={menu}
       structureItems={rowStructureItems}

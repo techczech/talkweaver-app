@@ -25,12 +25,14 @@
 //
 // No Electron import and erasable TypeScript only: scripts/test-handout-from-buffer.mjs and
 // test-prework-publish.mjs run `buildHandoutPages` in their own process, as the worker does.
+import { pageTitleOf } from '../shared/page-title.ts'
 import type { PublicationFileCheck } from '../shared/publication-files.ts'
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { withoutPreworkSlides, type CompiledPrework } from '../shared/run-prework.ts'
 import type { HandoutHomeDetails } from '../shared/handout-home.ts'
+import { stampHandoutUrl } from '../shared/handout-stamp.ts'
 import { injectPathwayRuntime, resolvePathways, type Pathway, type PathwaySlideRow } from './pathways.ts'
 import { injectRunCoverMetadata } from './runs.ts'
 import { requireAllowedAssetRoots } from './compile-roots.ts'
@@ -195,7 +197,7 @@ export function runHandoutSourceFrom(
   return {
     source: {
       html: injectRunCoverMetadata(html, run.eventTitle ?? run.talkTitle, run.plannedDate ?? run.startedAt.slice(0, 10)),
-      title: String((model.title as string) ?? slug), preworkSlideIds, liveTalkSlug,
+      title: pageTitleOf(model, slug), preworkSlideIds, liveTalkSlug,
     },
     slideIds, missing,
   }
@@ -257,13 +259,14 @@ export async function buildHandoutPages(job: HandoutPagesJob, slim: Slim): Promi
   if (job.kind === 'talk') {
     // Build the handout HTML exactly like talk:export-handout (share-no-notes).
     const { prepareSource } = await load<{ prepareSource: (...args: unknown[]) => Promise<Record<string, unknown>> }>(compilerDir, 'lib/08-source-adapters.mjs')
-    const model = await prepareSource(job.outlinePath, job.text, slug, statSync(job.outlinePath), undefined, { allowedAssetRoots: requireAllowedAssetRoots(job.assetRoots, 'The handout build') })
-    sourceWarnings = Array.isArray(model.warnings) ? model.warnings.filter((warning): warning is string => typeof warning === 'string' && /^(?:missing-asset|missing-image|asset-outside-vault):/.test(warning)) : []
-    // Title for the handout <title> + viewer page: prefer the outline's frontmatter `title:`
-    // (the canonical deck title), like the old publisher did — model.title falls back to the slug
-    // for plain-markdown decks the v1 adapter routes, which would show the slug instead of the title.
-    const fmTitle = (job.outline.match(/^title:\s*["']?(.+?)["']?\s*$/m) || [])[1]
-    const title = (fmTitle && fmTitle.trim()) || (model.title as string) || slug
+    // The worker applies the published QR address to its render copy of the flushed outline.
+    const text = stampHandoutUrl(job.text, url)
+    const model = await prepareSource(job.outlinePath, text, slug, statSync(job.outlinePath), undefined, {
+      allowedAssetRoots: requireAllowedAssetRoots(job.assetRoots, 'The handout build'),
+      limitPublishedWidgets: true,
+    })
+    sourceWarnings = Array.isArray(model.warnings) ? model.warnings.filter((warning): warning is string => typeof warning === 'string' && /^(?:missing-asset|missing-image|asset-outside-vault|widget-media-omitted):/.test(warning)) : []
+    const title = pageTitleOf(model, slug)
     const fullHtml = model.fullHtml as string
     const { extractStyles, extractSlides } = await load<{ extractStyles: (html: string) => unknown; extractSlides: (html: string) => Array<{ id: string; html: string; notes: string }> }>(compilerDir, 'lib/04-html-extraction.mjs')
     const { buildShareHtml } = await load<{ buildShareHtml: (args: Record<string, unknown>) => string }>(compilerDir, 'lib/09-output-builders.mjs')
@@ -295,8 +298,13 @@ export async function buildHandoutPages(job: HandoutPagesJob, slim: Slim): Promi
     const { prepareSource } = await load<{ prepareSource: (...args: unknown[]) => Promise<Record<string, unknown>> }>(compilerDir, 'lib/08-source-adapters.mjs')
     const { buildPerSlideProjections } = await load<{ buildPerSlideProjections: (model: unknown, slug: string) => PathwaySlideRow[] | null }>(compilerDir, 'lib/10-projections.mjs')
     const run = runCompileOption(job.run)
-    const model = await prepareSource(job.outlinePath, job.text, talkFileSlug, statSync(job.outlinePath), job.defaults, { allowedAssetRoots: requireAllowedAssetRoots(job.assetRoots, 'The handout build'), ...(run ? { run } : {}) })
-    sourceWarnings = Array.isArray(model.warnings) ? model.warnings.filter((warning): warning is string => typeof warning === 'string' && /^(?:missing-asset|missing-image|asset-outside-vault):/.test(warning)) : []
+    const text = stampHandoutUrl(job.text, url)
+    const model = await prepareSource(job.outlinePath, text, talkFileSlug, statSync(job.outlinePath), job.defaults, {
+      allowedAssetRoots: requireAllowedAssetRoots(job.assetRoots, 'The handout build'),
+      limitPublishedWidgets: true,
+      ...(run ? { run } : {}),
+    })
+    sourceWarnings = Array.isArray(model.warnings) ? model.warnings.filter((warning): warning is string => typeof warning === 'string' && /^(?:missing-asset|missing-image|asset-outside-vault|widget-media-omitted):/.test(warning)) : []
     const from = runHandoutSourceFrom(model, buildPerSlideProjections(model, talkFileSlug) ?? null, job.run, talkFileSlug, job.talkSlug)
     slideIds = from.slideIds
     missing = from.missing

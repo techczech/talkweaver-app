@@ -32,7 +32,7 @@ import { statSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { createHash } from 'node:crypto'
-import { markSlidePreviewHtml } from '../shared/slide-preview.ts'
+import { markSlidePreviewHtml, type AuthoringSlideTarget } from '../shared/slide-preview.ts'
 import { requireCompileOptionsWithRoots } from './compile-roots.ts'
 import { hasRemoteEmbedFrames, replaceRemoteEmbedFrames } from './embed-preview-policy.ts'
 import { writePreviewVariant, type PreviewVariant, type VariantFolder } from './preview-variant.ts'
@@ -55,6 +55,7 @@ export type PrepareTalkJob = {
   /** Only the per-slide rows are wanted (the search index, with options.projectionsOnly): the reply's
    *  model is empty and no preview is made, so nothing of the deck crosses to the main process. */
   rowsOnly?: boolean
+  authoringSlide?: AuthoringSlideTarget
   /** Write the preview variant (preview-variant.ts) of the deck into this folder: asked for by the
    *  compiles whose deck the Inspector preview or the thumbnails load; a presenter or export compile
    *  does without it. Only the variant's descriptor comes back, never its bytes. */
@@ -84,7 +85,7 @@ export type PrepareTalkReply =
   | { kind: 'marked-preview'; id: number; document: MarkedPreview }
 
 type Compiler = {
-  prepareSource: (...args: unknown[]) => Promise<Record<string, unknown>>
+  prepareSource: (...args: unknown[]) => Promise<Record<string, unknown> | null>
   buildPerSlideProjections: (model: unknown, slug: string) => Array<Record<string, unknown>> | null
 }
 const loaded = new Map<string, Promise<Compiler>>()
@@ -102,16 +103,37 @@ function compiler(dir: string): Promise<Compiler> {
   return found
 }
 
-async function prepare(job: PrepareTalkJob): Promise<CompileReply> {
+async function prepare(job: PrepareTalkJob, signal?: AbortSignal): Promise<CompileReply> {
   // Checked before anything is loaded or read: no roots, no compile.
   const compileOptions = requireCompileOptionsWithRoots(job.options, 'The compile')
   const { prepareSource, buildPerSlideProjections } = await compiler(job.compilerDir)
-  const authority = job.options.galleryReadAuthority as Parameters<typeof galleryAcquiredAssets>[0] | undefined
+  signal?.throwIfAborted()
+  const authority = job.authoringSlide ? undefined : job.options.galleryReadAuthority as Parameters<typeof galleryAcquiredAssets>[0] | undefined
   const acquired = authority ? galleryAcquiredAssets(authority) : undefined
-  let model:Record<string,unknown>
+  let model: Record<string, unknown> | null
   try {
-    model = await prepareSource(job.outlinePath, job.text, job.slug, authority ? {mtimeMs:0,size:Buffer.byteLength(job.text),isDirectory:()=>false,isFile:()=>true} : statSync(job.outlinePath), job.defaults, {...compileOptions,...(acquired ? {galleryAcquiredAssets:acquired} : {})})
-  } finally {await acquired?.close()}
+    const sourceStat = authority
+      ? { mtimeMs: 0, size: Buffer.byteLength(job.text), isDirectory: () => false, isFile: () => true }
+      : statSync(job.outlinePath)
+    model = await prepareSource(job.outlinePath, job.text, job.slug, sourceStat, job.defaults, {
+      ...compileOptions,
+      ...(acquired ? { galleryAcquiredAssets: acquired } : {}),
+      ...(job.authoringSlide ? { authoringSlide: job.authoringSlide, authoringSignal: signal } : {}),
+    })
+  } finally {
+    await acquired?.close()
+  }
+  if (job.authoringSlide) {
+    signal?.throwIfAborted()
+    // Remote frames go through the full preview's artwork replacement policy.
+    if (!model || typeof model.fullHtml !== 'string' || hasRemoteEmbedFrames(model.fullHtml)) {
+      return { id: job.id, ok: true, model: {}, rows: null }
+    }
+    const fullHtml = markSlidePreviewHtml(model.fullHtml, { localPages: true })
+    const previewKey = createHash('sha256').update(fullHtml).digest('hex').slice(0, 24)
+    return { id: job.id, ok: true, model: { fullHtml, slideId: model.slideId }, rows: null, previewKey }
+  }
+  if (!model) throw new Error('The compiler returned no deck')
   const rows = buildPerSlideProjections(model, job.slug) ?? null
   if (job.rowsOnly) return { id: job.id, ok: true, model: {}, rows }
   const fullHtml = typeof model.fullHtml === 'string' ? model.fullHtml : undefined
@@ -130,6 +152,7 @@ const port = process.parentPort
 // policy requests artwork sequentially, so each job can have at most one request waiting on main.
 type Marking = { controller: AbortController; artwork?: (image: string | null) => void }
 const marking = new Map<number, Marking>()
+const authoring = new Map<number, AbortController>()
 async function markPreview(job: MarkPreviewJob): Promise<MarkedPreview> {
   const slot: Marking = { controller: new AbortController() }
   marking.set(job.id, slot)
@@ -164,13 +187,17 @@ port.on('message', (event: { data: PrepareTalkMessage }) => {
     marking.get(job.id)?.artwork?.(job.image)
   } else if (job.kind === 'cancel-preview') {
     marking.get(job.id)?.controller.abort()
+    authoring.get(job.id)?.abort()
   } else if (job.kind === 'mark-preview') {
     void markPreview(job).then(
       (document) => port.postMessage({ id: job.id, kind: 'marked-preview', document }),
       (error) => reportError(job.id, error)
     )
   } else {
-    void prepare(job).then(async (reply) => {
+    const controller = job.authoringSlide ? new AbortController() : undefined
+    if (controller) authoring.set(job.id, controller)
+    void prepare(job, controller?.signal).then(async (reply) => {
+      if (controller?.signal.aborted) return
       try {
         port.postMessage(reply)
       } catch (error) {
@@ -182,8 +209,11 @@ port.on('message', (event: { data: PrepareTalkMessage }) => {
         port.postMessage({ id: job.id, kind: 'variant', preview })
       }
     }, (error: unknown) => {
+      if (controller?.signal.aborted) return
       console.error('[prepare-talk]', error)
       reportError(job.id, error)
+    }).finally(() => {
+      if (controller) authoring.delete(job.id)
     })
   }
 })

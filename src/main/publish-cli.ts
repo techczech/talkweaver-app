@@ -1,5 +1,6 @@
 import { statSync } from 'node:fs'
 import { basename, resolve } from 'node:path'
+import { handoutAddressLabel } from '../shared/publish-status.ts'
 import { interruptedPublishDiagnostic, publishDiagnosticMessage, publishDiagnosticText, publishStepLabel, redactPublishText, type CliPublishUpdate, type PublishDiagnostic, type PublishProgress } from '../shared/publish-diagnostic.ts'
 import type { PublishHistoryAttempt } from '../shared/publish-history.ts'
 import { substringDistance } from '../shared/talk-query.ts'
@@ -208,8 +209,9 @@ export async function runPublishCli(args: readonly string[], deps: PublishCliDep
       if (json) printEvent(io, 'result', { outcome: 'status', attempts })
       else if (!attempts.length) io.stdout('No publishing attempts recorded for this talk.\n')
       else for (const attempt of attempts) {
-        const diagnostic = attempt.events.at(-1)?.diagnostic
+        const { diagnostic, handoutUrl } = attempt.events.at(-1) ?? {}
         io.stdout(`${attempt.startedAt}  ${attempt.outcome ?? 'no final result recorded'}\n`)
+        if (handoutUrl) io.stdout(`${handoutAddressLabel(handoutUrl)}\n`)
         if (diagnostic) io.stdout(`${publishDiagnosticMessage(diagnostic)}\n${publishDiagnosticText(diagnostic)}\n`)
       }
       return 0
@@ -246,7 +248,7 @@ export async function runPublishCli(args: readonly string[], deps: PublishCliDep
       const url = publicUrl(result.url)
       const outcome = result.unchanged ? 'unchanged' : 'published'
       if (json) printEvent(io, 'result', { outcome, url, warnings })
-      else io.stdout(`${result.unchanged ? 'Unchanged' : 'Published'}${url ? ` ${url}` : ''}\n`)
+      else io.stdout(`${result.unchanged ? 'Unchanged' : 'Published'}${url ? ` ${handoutAddressLabel(url)}` : ''}\n`)
     }
     if (!json) for (const warning of warnings) io.stderr(`${warning}\n`)
     return 0

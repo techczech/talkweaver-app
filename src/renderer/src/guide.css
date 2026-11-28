@@ -168,7 +168,6 @@
 .pane--research { overflow: hidden; }
 .pane-tabs-body .research-panel { width: auto; max-width: none; flex: 1 1 auto; border-left: 0; min-width: 0; }
 .pane-tabs-body .image-drawer { width: auto; flex: 1 1 auto; border-left: 0; box-shadow: none; min-width: 0; }
-.pane-tabs-body .image-drawer__head { height: 36px; padding: 0 12px; box-sizing: border-box; -webkit-app-region: no-drag; }
 .pane-tabs-body .research-head { min-height: 36px; padding: 6px 10px; }
 
 /* The Talk tab (house rules R11, R11a): a talk's details and design in the right sidebar. It scrolls itself (the tab body clips). */

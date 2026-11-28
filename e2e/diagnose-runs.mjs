@@ -1,6 +1,7 @@
 // Host gate for ADR-0038 parcel 2. Runs against an isolated temp Vault/userData only.
 // TW_REC_TEST stubs the Cloudflare deploy seam; no network request is made.
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
@@ -38,12 +39,21 @@ const record = (label, pass, detail = '') => {
 
 const { app, page: editor } = await launchApp({ scratch: appScratch, userData, env: { ...process.env, TW_REC_TEST: '1' } })
 await editor.waitForLoadState('domcontentloaded')
-await editor.getByText('Run probe', { exact: true }).first().click()
+await openTalkByTitle(editor, 'Run probe')
 await editor.waitForSelector('.workspace')
 
-const toolsPromise = app.waitForEvent('window')
-await editor.evaluate(() => window.dispatchEvent(new Event('tw-open-history')))
-const history = await toolsPromise
+// Opening a talk can also create thumbnail workers. Wait for the Runs window itself.
+const [history] = await Promise.all([
+  app.waitForEvent('window', {
+    predicate: async candidate => {
+      try {
+        await candidate.waitForURL(url => url.searchParams.get('view') === 'runs', { timeout: 15_000 })
+        return true
+      } catch { return false }
+    },
+  }),
+  editor.evaluate(() => window.dispatchEvent(new Event('tw-open-history'))),
+])
 await history.waitForSelector('[data-tools-view="runs"]')
 await history.locator('[data-sessions-plan]').first().click()
 const sheet = history.locator('[data-testid="plan-run-sheet"]')

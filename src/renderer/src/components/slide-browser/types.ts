@@ -3,6 +3,7 @@ import type { LedgerVersion, ProjectionRow } from '../../../../preload/index'
 import type { AdoptVersion } from '../PropagationChecklist'
 import type { DisplayCard, MergeRequest, SlideCluster } from '../slideBrowserModel'
 import type { SlidePickerCommands } from '../slidePickerCommands'
+import type { SlideMatchEvidence } from '../../../../shared/slide-handling/query'
 
 export type SearchResult = ProjectionRow & {
   talkSlug: string
@@ -14,6 +15,7 @@ export type SearchResult = ProjectionRow & {
   titleHit?: boolean
   /** The vault the slide's talk lives in (main sets it on every search row). */
   vaultId?: string
+  matchEvidence?: SlideMatchEvidence
 }
 
 export interface SlideBrowserProps {

@@ -65,7 +65,7 @@ export function groupBySection(rows: SelRow[]): Array<{ section: string; indices
 // field(s) are matched; `exact` makes it a contiguous phrase match on `text`; otherwise every
 // word in `terms` must appear somewhere in the field (order-independent, as before).
 export interface ParsedQuery {
-  scope: 'all' | 'title' | 'body' | 'image'
+  scope: 'all' | 'title' | 'body' | 'image' | 'widget'
   exact: boolean
   /** Exact search → the contiguous phrase to match (surrounding quotes stripped). Non-exact →
    *  the human-readable remainder; `terms` is what the all-words match actually consumes. */
@@ -86,6 +86,7 @@ export function scopeNoun(q: ParsedQuery): string {
     case 'title': return 'that in the title'
     case 'body': return 'that in the slide text'
     case 'image': return 'that in image text'
+    case 'widget': return 'matching widgets'
     default: return 'that'
   }
 }

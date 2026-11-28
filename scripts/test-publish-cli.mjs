@@ -27,10 +27,11 @@ const root = mkdtempSync(join(tmpdir(), 'tw-cli-publish-'))
 const slug = 'fixture-talk'
 const folder = join(root, 'vault', slug)
 const outlinePath = join(folder, slug + '-outline.md')
-// The compiler puts a saved handout_url into the title slide. Use an already-stamped
-// outline so a repeated publish exercises the unchanged path with identical input.
-const publicLink = 'https://' + project + '.pages.dev/fixture1'
-const original = '---\ntitle: Command line handout\nhandout_url: ' + publicLink + '\n---\n\n# Command line handout\n\n## Opening {id=a001}\n\n- The fixture has one point.\n'
+// A talk previously published on pages.dev keeps its short code when the custom domain takes over.
+const customDomain = 'handouts.test'
+const publicLink = 'https://' + customDomain + '/fixture1'
+const fallbackLink = 'https://' + project + '.pages.dev/fixture1'
+const original = '---\ntitle: Command line handout\nhandout_url: ' + fallbackLink + '\n---\n\n# Command line handout\n\n## Opening {id=a001}\n\n- The fixture has one point.\n'
 mkdirSync(folder, { recursive: true })
 writeFileSync(outlinePath, original)
 configureTalkWriter({ editorBufferFor: () => null })
@@ -68,11 +69,15 @@ try {
     registry: { read: () => registry, write: value => { registry = value } },
     shortLinks: { read: () => true, write: () => assert.fail('the fixture keeps its link style') },
   })
+  let lastHandoutBuild
   const host = {
     assetRootsFor: () => [join(root, 'vault')],
-    buildHandoutPagesOffThread: job => buildHandoutPages(job, html => html),
+    buildHandoutPagesOffThread: job => {
+      if (job.kind === 'talk') lastHandoutBuild = job
+      return buildHandoutPages(job, html => html)
+    },
     getCompilerPath: () => compilerDir,
-    getConfig: key => key === 'publishUseShortIds',
+    getConfig: key => key === 'publishUseShortIds' ? true : key === 'publishBaseUrl' ? settings.baseUrl : undefined,
     handoutPublishing: () => publishing,
     ledgerSeal: async () => {},
     outlineRefused: file => file === outlinePath ? null : 'The talk is outside the vault.',
@@ -140,6 +145,11 @@ try {
 
   await connection.saveToken(token)
   await connection.idle()
+  const fallback = await connection.authorisePublish()
+  assert.equal(fallback.authorisation?.handoutBase(publicLink), 'https://' + project + '.pages.dev', 'a successful lookup found no active custom domains')
+  const domains = api.model.sites.get(account.id).get(project).domains
+  domains.push({ name: 'drafts.' + customDomain, status: 'active' }, { name: customDomain, status: 'active' })
+  await connection.settingsChanged()
   const postCount = posts().length
   const historyBeforePreview = readFileSync(historyPath, 'utf8')
   const preview = await cli(['vault/' + slug, '--dry-run', '--json'])
@@ -158,25 +168,73 @@ try {
   assert.equal(success.code, 0, JSON.stringify(success.last))
   assert.equal(success.last.outcome, 'published')
   assert.equal(success.last.url, publicLink)
+  const stamped = original.replace(fallbackLink, publicLink)
+  assert.equal(readFileSync(outlinePath, 'utf8'), stamped)
+  assert.equal(lastHandoutBuild.url, publicLink)
+  assert.equal(lastHandoutBuild.text, original, 'the worker receives the exact saved outline')
+  const manifest = api.production(account.id, project).files
+  const deck = api.model.assets.get(manifest['/fixture-talk/fixture-talk-download.html']).bytes.toString('utf8')
+  assert.ok(deck.includes('<figcaption class="qr-caption"><a href="' + publicLink + '"'), 'the published slide QR links to the custom domain')
+  assert.ok(!deck.includes(fallbackLink), 'the published slides leave out the old Pages address')
+  const { makeQrSvg } = await import('../compiler/scripts/lib/01-cli-utils.mjs')
+  assert.equal(lastHandoutBuild.qr, makeQrSvg(publicLink), 'the handout home and venue QR encode the public URL')
+  assert.equal(history.list()[0].events.at(-1).handoutUrl, publicLink)
+  assert.equal(JSON.parse(readFileSync(historyPath, 'utf8')).attempts[0].events.at(-1).handoutUrl, publicLink)
+  domains.unshift({ name: 'other.example.test', status: 'active' })
+  settings.baseUrl = customDomain
+  await connection.settingsChanged()
   for (const step of ['building', 'upload', 'confirm']) {
     assert.ok(success.lines.some(event => event.event === 'progress' && event.step === step), step)
   }
   assert.ok(api.production(account.id, project).files['/fixture-talk/index.html'])
+  for (const file of [`${slug}.html`, `${slug}-download.html`]) {
+    assert.ok(api.production(account.id, project).files[`/${slug}/${file}`])
+    const html = readFileSync(join(siteDir, slug, file), 'utf8')
+    assert.ok(html.includes('<title>Command line handout</title>'), `${file}: the outline title is used`)
+    assert.ok(html.includes('<meta name="deck-title" content="Command line handout">'), `${file}: deck title metadata matches`)
+  }
   let revision = api.production(account.id, project).id
   const unchanged = await cli([slug, '--json'])
   assert.equal(unchanged.code, 0, JSON.stringify(unchanged.last))
   assert.equal(unchanged.last.outcome, 'unchanged')
+  assert.equal(unchanged.last.url, publicLink, 'the explicitly configured hostname wins over another active domain')
   assert.equal(api.production(account.id, project).id, revision)
+
+  // The editor calls the same operation with its regular flush mode (no savedOnly option).
+  api.model.answer = request => request.path.endsWith('/domains') ? { status: 503, body: {} } : null
+  settings.baseUrl = 'https://' + customDomain
+  await connection.settingsChanged()
+  writeFileSync(outlinePath, original)
+  const editor = await publishTalkHandout(host, outlinePath, original)
+  assert.equal(editor.success, true)
+  assert.equal(editor.url, publicLink, 'the editor prefers the configured address over an existing Pages address')
+  assert.equal(readFileSync(outlinePath, 'utf8'), stamped)
+
+  // settingsChanged drops the last check, matching a fresh app with no cached domain lookup.
+  settings.baseUrl = ''
+  await connection.settingsChanged()
+  assert.equal(connection.status().publishing.address, null)
+  assert.equal(connection.handoutBase('http://speaker.localhost/fixture1'), 'https://' + project + '.pages.dev',
+    'an earlier local link cannot be reused as a public address')
+  const offlineDomains = await publishTalkHandout(host, outlinePath, stamped)
+  assert.equal(offlineDomains.success, true)
+  assert.equal(offlineDomains.url, publicLink, 'a failed domain lookup keeps the existing handout domain')
+  assert.equal(readFileSync(outlinePath, 'utf8'), stamped)
+  assert.equal(lastHandoutBuild.qr, makeQrSvg(publicLink))
+  assert.equal(history.list()[0].events.at(-1).handoutUrl, publicLink)
+  assert.equal(api.production(account.id, project).id, revision, 'the printed QR and deployed pages need no change')
+  api.model.answer = null
+  await connection.settingsChanged()
 
   const running = typeof process.getuid === 'function'
   const updates = []
   let closeSocket
   let editorText
   let commits = 0
-  let saved = original
+  let saved = stamped
   try {
     if (running) {
-      const base = original.replace('handout_url: ' + publicLink + '\n', '')
+      const base = stamped.replace('handout_url: ' + publicLink + '\n', '')
       saved = base + '\n## Saved checkpoint {id=a002}\n\n- Saved copy reaches Pages.\n'
       editorText = saved + '\n## Private draft {id=a003}\n\n- Unsaved draft stays here.\n'
       const dirty = editorText
@@ -271,7 +329,7 @@ try {
   const requests = api.requests.length
   const status = await cli([outlinePath, '--status', '--json'])
   assert.equal(status.code, 0)
-  assert.deepEqual(status.last.attempts.map(attempt => attempt.outcome), ['unknown', 'cancelled', 'failed', ...(running ? ['published'] : []), 'unchanged', 'published', 'failed'])
+  assert.deepEqual(status.last.attempts.map(attempt => attempt.outcome), ['unknown', 'cancelled', 'failed', ...(running ? ['published'] : []), 'unchanged', 'unchanged', 'unchanged', 'published', 'failed'])
   assert.equal(status.last.attempts[2].events.at(-1).diagnostic.status, 400)
   assert.equal(api.requests.length, requests, 'history is read locally')
   assert.doesNotMatch(status.stdout, /sourceOutline|updatedOutline/)

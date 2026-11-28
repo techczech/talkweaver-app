@@ -17,9 +17,12 @@ import GalleryTree from './GalleryTree'
 import { buildItems, folderKey, isDirectoryKind, listRank, UI, type GalleryItem } from './galleryItems'
 import { rowFacts, sizeCell, type Known } from './galleryValues'
 import { useGalleryFacts } from './useGalleryFacts'
+import { openGalleryTalk } from './openGalleryTalk'
+import type { ExplorerPlace } from './explorerModel'
 import './vault-gallery.css'
 
 interface Props {
+  initialLocation?: ExplorerPlace
   management?: GalleryManagementProps
   revision: unknown
   onClose(): void
@@ -31,15 +34,14 @@ const VIEW_KEY = 'tw.vaultGallery.view', DETAILS_KEY = 'tw.vaultGallery.details'
 const stored = (key: string): string | null => { try { return window.localStorage.getItem(key) } catch { return null } }
 const remember = (key: string, value: string) => { try { window.localStorage.setItem(key, value) } catch { /* not remembered this time */ } }
 const NARROW = 900
-const VAULT_CHANGED = 'The vault changed while opening this talk. Choose it again from the current catalogue.'
 
-export default function VaultGallery({ revision, onClose, onOpen, management, talkTitle }: Props) {
+export default function VaultGallery({ revision, onClose, onOpen, management, talkTitle, initialLocation }: Props) {
   const [managementRevision, setManagementRevision] = useState(0)
   const [reloads, setReloads] = useState(0)
   const [catalogue, setCatalogue] = useState<GalleryCatalogue | null>(null)
-  const [vaultId, setVaultId] = useState<string | null>(null)
-  const [browsing, setBrowsing] = useState(false)
-  const [scope, setScope] = useState<BrowseScope>({ kind: 'folder', path: '' })
+  const [vaultId, setVaultId] = useState<string | null>(initialLocation?.vaultId ?? null)
+  const [browsing, setBrowsing] = useState(!!initialLocation)
+  const [scope, setScope] = useState<BrowseScope>({ kind: 'folder', path: initialLocation?.folder ?? '' })
   const [view, setViewState] = useState<BrowseView>(() => readView(stored(VIEW_KEY)))
   const [detailsOpen, setDetailsState] = useState(() => stored(DETAILS_KEY) === 'open')
   const [drawer, setDrawer] = useState<'details' | 'folders' | null>(null)
@@ -200,30 +202,7 @@ export default function VaultGallery({ revision, onClose, onOpen, management, ta
     if (!release) return
     setError('')
     try {
-      let lost = false
-      const resolve = async () => {
-        const found = await window.tw.vault.galleryTalk(talk.vaultId, talk.relativeOutline, rootGeneration).catch(e => { lost = true; throw e })
-        const same = !!found && (found.vaultId ?? talk.vaultId) === talk.vaultId
-        if (!same) lost = true
-        return same ? found : null
-      }
-      const target = await resolve()
-      if (!isCurrent()) { setError(VAULT_CHANGED); return }
-      if (!target) { setError('This talk is no longer available in the known catalogue.'); return }
-      const opened = await onOpen(target, {
-        settle: async commit => { const result = await window.tw.vault.gallerySettle(commit); if (commit && !result.ok) lost = true; return result },
-        isCurrent,
-        revalidate: resolve,
-        claim: async (path) => {
-          // A cancelled response restores the previous window claim through the existing policy.
-          if (path !== target.outlinePath) return await window.tw.windows.claimTalk(path)
-          const result = await window.tw.vault.galleryClaim(talk.vaultId, talk.relativeOutline, rootGeneration)
-          if (!result.ok && result.reason === 'stale') throw new Error(VAULT_CHANGED)
-          return result
-        }
-      })
-      if (opened && isCurrent()) onClose()
-      else if (!opened && (lost || !isCurrent())) setError(VAULT_CHANGED)
+      if (await openGalleryTalk(talk, rootGeneration, isCurrent, onOpen)) onClose()
     } catch (e) { setError(e instanceof Error ? e.message : String(e)) }
     finally { release() }
   }

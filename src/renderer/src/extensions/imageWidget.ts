@@ -6,6 +6,7 @@ import {
   WidgetType,
   type ViewUpdate
 } from '@codemirror/view'
+import { imageSyntaxIsAudio, imageSyntaxIsVideo } from '../../../../compiler/scripts/lib/image-line-rules.mjs'
 import { inSlideTextPanel } from './focusScope.ts'
 import { outlineObjectsIn } from './objectBlocks/field.ts'
 import { type Extension, RangeSetBuilder, StateEffect, type Text } from '@codemirror/state'
@@ -229,6 +230,39 @@ export class ImageWidget extends WidgetType {
   }
 }
 
+// Film and Volume2 from Lucide (ISC), drawn into the CodeMirror widget without a React root.
+const MEDIA_ICONS = {
+  video: '<rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18M3 7.5h4M3 12h18M3 16.5h4M17 3v18M17 7.5h4M17 16.5h4"/>',
+  audio: '<path d="M11 4.702a.705.705 0 0 0-1.203-.498L6.413 7.587A1.4 1.4 0 0 1 5.416 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.416a1.4 1.4 0 0 1 .997.413l3.383 3.384A.705.705 0 0 0 11 19.298zM16 9a5 5 0 0 1 0 6M19.364 18.364a9 9 0 0 0 0-12.728"/>'
+}
+
+class MediaFileWidget extends WidgetType {
+  private readonly kind: keyof typeof MEDIA_ICONS
+  private readonly name: string
+
+  constructor(kind: keyof typeof MEDIA_ICONS, source: string) {
+    super()
+    this.kind = kind
+    const name = source.split(/[?#]/)[0].split('/').pop() || source
+    try { this.name = decodeURIComponent(name) } catch { this.name = name }
+  }
+
+  eq(other: MediaFileWidget): boolean {
+    return this.kind === other.kind && this.name === other.name
+  }
+
+  toDOM(): HTMLElement {
+    const card = document.createElement('span')
+    card.className = 'cm-media-file-widget'
+    card.innerHTML = `<svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${MEDIA_ICONS[this.kind]}</svg>`
+    const name = document.createElement('span')
+    name.textContent = this.name
+    card.append(name)
+    card.setAttribute('aria-label', `${this.kind === 'video' ? 'Video' : 'Audio'}: ${this.name}`)
+    return card
+  }
+}
+
 function makePlaceholder(): HTMLElement {
   const box = document.createElement('span')
   box.style.cssText = [
@@ -339,8 +373,11 @@ function buildDecorations(view: EditorView, opts: WidgetOpts): DecorationSet {
       const match = IMAGE_LINE_RE.exec(line.text)
       if (match && !markedVideos.has(line.from)) {
         const caption = match[1]
-        const { url, vaultId, isVideo } = resolveSrc(match[2], opts.vaultRoot, talkDir)
-        const widget = new ImageWidget(url, caption, vaultId, opts.onClick, isVideo, opts.placementForLine?.(line.number, view.state.doc) ?? null)
+        const source = match[2].trim().replace(/\s+"[^"]*"$/, '')
+        const kind = imageSyntaxIsVideo(source) ? 'video' : imageSyntaxIsAudio(source) ? 'audio' : null
+        const { url, vaultId, isVideo } = resolveSrc(source, opts.vaultRoot, talkDir)
+        const widget = kind ? new MediaFileWidget(kind, source)
+          : new ImageWidget(url, caption, vaultId, opts.onClick, isVideo, opts.placementForLine?.(line.number, view.state.doc) ?? null)
         builder.add(line.from, line.to, Decoration.replace({ widget, inclusive: false, block: false }))
       }
       pos = line.to + 1

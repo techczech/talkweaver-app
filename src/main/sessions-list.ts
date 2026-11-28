@@ -24,6 +24,8 @@ export interface SessionsListIpcDeps {
   vaults(): Array<{ id: string; root: string }>
   /** Runs with a live session running now, each with the vault its session recorded. */
   liveRuns(): LiveRunRef[]
+  /** Resolve the title for older Runs whose saved title is just the slug. */
+  listTalks?(root: string): Promise<Array<{ slug: string; title: string }>>
   /** The phases Unpublish would withdraw for a Run (the confirmation names their pages). */
   sentPhases?: SentPhasesOf
   /** Responses waiting on the live service for a Run of the vault at `root` (the timer's count; nothing is pulled). */
@@ -115,7 +117,20 @@ export function collectSessions(vaults: Array<{ id: string; root: string }>, liv
 export function registerSessionsListIpc(deps: SessionsListIpcDeps): void {
   // `{ allKinds: true }`: the Runs view also lists rehearsals and recordings (its Kind filter); the status bar chip and the
   // rail badge ask with no argument and still see planned and delivered Runs only.
-  deps.ipcMain.handle('sessions:list', (_event, options?: unknown) => collectSessions(deps.vaults(), deps.liveRuns(), deps.sentPhases, deps.waitingOf, (options as { allKinds?: unknown } | undefined)?.allKinds === true))
+  deps.ipcMain.handle('sessions:list', async (_event, options?: unknown) => {
+    const vaults = deps.vaults()
+    const result = collectSessions(vaults, deps.liveRuns(), deps.sentPhases, deps.waitingOf, (options as { allKinds?: unknown } | undefined)?.allKinds === true)
+    const listTalks = deps.listTalks
+    if (!listTalks) return result
+    await Promise.all(vaults.map(async ({ id, root }) => {
+      const unnamed = result.runs.filter(run => run.vaultId === id && (!run.talkTitle.trim() || run.talkTitle === run.talkSlug))
+      if (!unnamed.length) return
+      const talks = await listTalks(root).catch(() => [])
+      const titles = new Map(talks.map(talk => [talk.slug, talk.title]))
+      for (const run of unnamed) run.talkTitle = titles.get(run.talkSlug)?.trim() || run.talkTitle
+    }))
+    return result
+  })
   // Show a conflicted Run file in Finder: only one this vault's list names as conflicted now, never a path from the renderer.
   deps.ipcMain.handle('sessions:show-conflict', (_event, payload?: unknown) => showRunConflict(deps, payload))
 }

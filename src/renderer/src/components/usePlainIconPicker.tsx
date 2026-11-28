@@ -13,6 +13,7 @@
 //      (PlainIconTools.write), and only if the outline is still the text the verb checked.
 // Nothing is written on any other path: a refusal, a thrown error and a moved-on outline all end
 // in a message and an unchanged outline.
+import { iconBaseKey } from '../../../../compiler/scripts/lib/icon-cross.mjs'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { clearLineIcon, lineIconState, setLineIcon, type IconLineKind, type IconWrite } from '../../../shared/icon-verbs'
 import { notify } from '../lib/notify'
@@ -31,6 +32,7 @@ type Shown =
 export function usePlainIconPicker(tools: React.MutableRefObject<PlainIconTools | null>): {
   /** Command-I: open at the caret (or close, when open). False: there is no editor to open it in. */
   toggle: () => boolean
+  insertAtCaret: (key: string) => void
   isOpen: boolean
   /** The picker or the message, to be rendered once anywhere in the workspace. */
   view: JSX.Element | null
@@ -79,9 +81,15 @@ export function usePlainIconPicker(tools: React.MutableRefObject<PlainIconTools 
     }
     if (!write.ok) notify(write.detail, 'warning', 'plain-icon')
     else if (write.changed && write.change && !editor.write(at.text, write.change)) moved()
-    else if (icon) pushRecent(icon)
+    else if (icon) pushRecent(iconBaseKey(icon))
     editor.focus()
   }, [tools])
+
+  const insertAtCaret = useCallback((key: string): void => {
+    const at = tools.current?.caret()
+    if (!at) { notify('Place the caret on a title, paragraph or list item first.', 'info', 'plain-icon'); return }
+    apply(at.text, text => setLineIcon(text, at.line, key, isKnownIcon), key)
+  }, [apply, tools])
 
   let view: JSX.Element | null = null
   if (shown?.view === 'note') view = <PlainIconNote anchor={shown.anchor} message={NOT_HERE} detail={shown.detail} />
@@ -96,5 +104,5 @@ export function usePlainIconPicker(tools: React.MutableRefObject<PlainIconTools 
       />
     )
   }
-  return { toggle, isOpen: shown?.view === 'picker', view }
+  return { toggle, insertAtCaret, isOpen: shown?.view === 'picker', view }
 }

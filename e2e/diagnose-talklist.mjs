@@ -2,7 +2,7 @@
 // Isolated temp vault with talks nested in topic folders.
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { talkRows, talkSearchInput, waitForTalkList } from './lib/talklist.mjs'
+import { showTalksBeforeOpening, talkRows, talkSearchInput } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { mkdirSync, mkdtempSync, writeFileSync } from 'fs'
@@ -32,7 +32,9 @@ mk('ai-topics/alpha-talk', 'Alpha Talk')
 mk('ai-topics/beta-talk', 'Beta Talk')
 mk('workshops/gamma-talk', 'Gamma Talk')
 mk('root-talk', 'Root Talk')
-writeFileSync(join(ud, 'config.json'), JSON.stringify({ vaultRoot: vault }, null, 2))
+writeFileSync(join(ud, 'config.json'), JSON.stringify({
+  vaultRoot: vault, talkListFolders: { [vault]: { 'ai-topics': true, workshops: true } },
+}, null, 2))
 
 await ensureFreshBuild(REPO)
 const app = await electron.launch({ args: ['.', '--user-data-dir=' + ud], cwd: REPO, env: { ...process.env, TW_E2E: '1' } })
@@ -41,21 +43,22 @@ await page.waitForLoadState('domcontentloaded')
 await page.waitForTimeout(1500)
 
 try {
-  await waitForTalkList(page)
-  const headers = await page.locator('[data-talk-group-header]').count()
+  const panel = await showTalksBeforeOpening(page)
+  const groupHeaders = panel.locator('[data-talk-group-header]')
+  const headers = await groupHeaders.count()
   record('topic group headers render', headers >= 2, `headers=${headers} (expect ai-topics, workshops, root)`)
 
   const itemsBefore = await talkRows(page).count()
   record('all talks listed', itemsBefore === 4, `items=${itemsBefore}`)
 
   // Collapse the first group → its items hide.
-  await page.locator('[data-talk-group-header]').first().click()
+  await groupHeaders.first().click()
   await page.waitForTimeout(300)
   const itemsCollapsed = await talkRows(page).count()
   record('collapsing a topic group hides its talks', itemsCollapsed < itemsBefore, `before=${itemsBefore} after=${itemsCollapsed}`)
 
   // Expand again.
-  await page.locator('[data-talk-group-header]').first().click()
+  await groupHeaders.first().click()
   await page.waitForTimeout(300)
   const itemsExpanded = await talkRows(page).count()
   record('expanding restores talks', itemsExpanded === itemsBefore, `${itemsExpanded}`)

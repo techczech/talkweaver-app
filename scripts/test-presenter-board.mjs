@@ -200,6 +200,38 @@ export const clipboard = { writeText(value) { window.__copied = value }, readTex
   pass(p.chip === '235 new', `D1: the status bar counts the board's cards and new ones (${p.chip})`)
   pass(p.overflow.length === 0, `D1: no header or strip control runs outside the panel (${p.overflow.join(', ')})`)
   await shot(page, 'D1-board-panel-1440x900.png')
+
+  // Restore a real viewport size with the Board open, then reopen it at that size.
+  await page.setViewportSize({ width: 1920, height: 1080 })
+  await page.waitForFunction(() => document.getElementById('presenterBoardPanel').getBoundingClientRect().right >= 1907)
+  const checkRestoredBoard = async label => {
+    const fits = await page.waitForFunction(() => {
+      const board = document.getElementById('presenterBoardPanel').getBoundingClientRect()
+      const popOut = document.getElementById('boardPopOut').getBoundingClientRect()
+      return innerWidth === 1440 && innerHeight === 868 && Math.abs(board.right - (innerWidth - 12)) < 1 &&
+        board.left >= 0 && board.top >= 0 && board.bottom <= innerHeight &&
+        popOut.width > 0 && popOut.right <= board.right && popOut.bottom <= board.bottom
+    }, null, { timeout: 2000 }).then(() => true, () => false)
+    const positions = await page.evaluate(() => ['presenterRoot', 'presenterBoardPanel', 'boardPopOut']
+      .map(id => Math.round(document.getElementById(id).getBoundingClientRect().right)).join(' / '))
+    pass(fits, `${label} (right edges ${positions})`)
+  }
+  await page.setViewportSize({ width: 1440, height: 868 })
+  await checkRestoredBoard('the Board stays in view when the presenter restores to 1440 × 868')
+  await page.locator('#boardClose').click()
+  await page.locator('#presenterBoardPanel').waitFor({ state: 'hidden' })
+  await page.locator('#presenterBoardCount').click()
+  await checkRestoredBoard('opening the Board again uses the restored presenter size')
+  const dragSource = await page.locator(cardSel('More hands-on, less talk')).first().elementHandle()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const keptDragSource = await dragSource.evaluate(card => {
+    // Deliver the resize before the test measures the card for the first drag.
+    window.dispatchEvent(new Event('resize'))
+    return card.isConnected
+  })
+  await dragSource.dispose()
+  pass(keptDragSource, 'resizing the presenter keeps the inbox card available for the first drag')
+
   // ── 2. Drag: merge, move; the toast; ⌘Z ─────────────────────────────────────────────────
   let before = (await calls()).length
   await dragTo(cardSel('More hands-on, less talk'), groupSel(1), page, { hold: true })
@@ -559,6 +591,20 @@ export const clipboard = { writeText(value) { window.__copied = value }, readTex
   pass(p.shown && Math.abs(p.box.width - 520) <= 16 && !p.overSlide, `D1 at 1280x800: the panel is about 520 wide, beside the slide (${Math.round(p.box.width)})`)
   pass(p.overflow.length === 0, `D1 at 1280x800: no header or strip control runs outside the panel (${p.overflow.join(', ')})`)
   await shot(page, 'D1-board-panel-1280x800.png')
+  // In a shorter window the column must scroll inside the viewport-clamped Board.
+  await page.setViewportSize({ width: 1280, height: 500 })
+  const lastCard = page.locator('#presenterBoardPanel .bp-col-list').first().locator('.bp-card').last()
+  await page.waitForFunction(() => {
+    const list = document.querySelector('#presenterBoardPanel .bp-col-list')
+    return innerHeight === 500 && list?.clientHeight > 0 && list.scrollHeight > list.clientHeight
+  })
+  await lastCard.scrollIntoViewIfNeeded()
+  const cardReachable = await lastCard.evaluate(card => {
+    const rect = card.getBoundingClientRect()
+    return card.parentElement.scrollTop > 0 &&
+      card.contains(document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2))
+  })
+  pass(cardReachable, 'D1 at 1280x500: the last card in a column can be scrolled into view and reached')
   pass(errors.length === 0, `no page errors (${errors.join(' | ')})`)
 } catch (error) {
   failures.push(`harness: ${error?.stack || error}`)

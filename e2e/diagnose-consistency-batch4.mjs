@@ -4,7 +4,7 @@
 //        dialog wrote it (editFrontmatterText, the one writer both used);
 //   R7   one number per slide: the Slide outline's, the strip's, the grid's and the presenter's agree for every demo talk, and
 //        the presenter's total is the editor's count; sections read §n and carry the layout mark the strip shows;
-//   R16  Vault Gallery, Slide focus, Pathways and the Slide Browser each show one "Back to <talk>" control, and it and Esc return to the talk.
+//   R16  Vault Explorer, Slide focus, Pathways and the Slide Browser each show one "Back to <talk>" control, and it and Esc return to the talk.
 // Run: node e2e/diagnose-consistency-batch4.mjs   (one Electron run at a time)
 import { strict as assert } from 'node:assert'
 import { readFileSync } from 'node:fs'
@@ -80,76 +80,18 @@ await check('a title edited in the Talk tab lands in the front matter as the old
   const expected = editFrontmatterText(before, [{ key: 'title', aliases: entry.aliases ?? [], value: next, raw: false }])
   await command('metadata'); await sleep(600)
   await page.locator('#deck-title').fill(next)
-  await page.locator('[data-deck-design-save]').click()
-  await sleep(3500)
+  await page.locator('#deck-title').press('Enter')
+  await page.waitForFunction(async ([path, text]) => await window.tw.talk.readOutline(path) === text, [file, expected])
   const after = readFileSync(file, 'utf8')
   assert.equal(after, expected, 'the outline differs from what the dialog\'s writer produces')
   assert.notEqual(after, before)
 })
-await check('unsaved Talk tab edits survive the Advanced disclosure and a sidebar tab change, and never leave their talk', async () => {
-  await command('metadata'); await sleep(700)
-  const draftTalkFile = join(vault, 'layout-showcase', 'layout-showcase-outline.md')
-  const otherTalkFile = join(vault, 'testing-live-polls', 'testing-live-polls-outline.md')
-  const draftTalkBefore = readFileSync(draftTalkFile)
-  const otherTalkBefore = readFileSync(otherTalkFile)
-  const saved = await page.locator('#deck-title').inputValue()
-  await page.locator('#deck-title').fill('Unsaved title')
-  const advanced = page.locator('[data-talk-section="advanced"] > summary')
-  await advanced.click(); await sleep(1500)
-  await page.locator('[data-metadata-embedded] input[type=text]').first().fill('unsaved-new.pdf')
-  await advanced.click(); await sleep(300); await advanced.click(); await sleep(1500)
-  assert.equal(await page.locator('[data-metadata-embedded] input[type=text]').first().inputValue(), 'unsaved-new.pdf', 'the Advanced field reverted after collapse and reopen')
-  await world.rcTab('inspector').click(); await sleep(500)
-  await world.rcTab('talk').click(); await sleep(1200)
-  assert.equal(await page.locator('#deck-title').inputValue(), 'Unsaved title', 'the title was lost after the tab change')
-  // another talk gets none of it, and coming back finds it gone (drafts belong to the open talk only)
-  await world.sideTab(/^Talks$/).click().catch(() => {})
-  await world.openTalk('Testing Live Polls'); await sleep(800)
-  await command('metadata'); await sleep(900)
-  assert.notEqual(await page.locator('#deck-title').inputValue(), 'Unsaved title', 'the draft leaked into another talk')
-  await world.rcTab('inspector').click(); await sleep(300)
-  await openShowcase()
-  await command('metadata'); await sleep(900)
-  assert.equal(await page.locator('#deck-title').inputValue(), saved, 'the draft came back after the talk was left')
-  assert.deepEqual(readFileSync(draftTalkFile), draftTalkBefore, 'unsaved transition changed the original saved outline bytes')
-  assert.deepEqual(readFileSync(otherTalkFile), otherTalkBefore, 'unsaved transition changed the other saved outline bytes')
-  await world.rcTab('inspector').click(); await sleep(300)
-})
-await check('a draft is never restored over a newer saved value: that field is dropped with a notice that stays; other drafts stay', async () => {
-  await openShowcase()
-  await command('metadata'); await sleep(700)
-  await page.locator('#deck-title').fill('Draft title B')
-  await page.locator('#deck-event').fill('Draft event')
-  await world.rcTab('inspector').click(); await sleep(400)
-  // the saved title changes in the editor (the Markdown view's Metadata table) while the Talk tab is away
-  const title = page.locator('.cm-frontmatter-table [data-fm-key="title"] input')
-  await title.fill('Title changed in the editor'); await title.press('Enter'); await sleep(900)
-  await world.rcTab('talk').click(); await sleep(1200)
-  assert.equal(await page.locator('#deck-title').inputValue(), 'Title changed in the editor', 'the old draft masked the newer value')
-  assert.equal(await page.locator('#deck-event').inputValue(), 'Draft event', 'the other draft was lost')
-  const notice = page.locator('[data-talk-design-embedded] [data-draft-notice]')
-  assert.match(await notice.innerText(), /Your unsaved change to Title was discarded because the talk changed\./)
-  assert.ok(await page.locator('[data-deck-design-save]').isEnabled(), 'Event is no longer dirty')
-  // the notice survives a save of the other panel (Advanced)
-  await page.locator('[data-talk-section="advanced"] > summary').click(); await sleep(1500)
-  await page.locator('[data-metadata-embedded] input[type=text]').first().fill('saved-by-advanced.pdf')
-  await page.locator('[data-metadata-embedded]').getByRole('button', { name: 'Save', exact: true }).click(); await sleep(1500)
-  assert.ok(await notice.isVisible(), 'the notice went with the other panel\'s save')
-  // and it outlives the panel: an Inspector round-trip leaves it; Dismiss removes it for good
-  await world.rcTab('inspector').click(); await sleep(500)
-  await world.rcTab('talk').click(); await sleep(1200)
-  assert.ok(await notice.isVisible(), 'the notice was lost on an Inspector round-trip')
-  await notice.getByRole('button', { name: 'Dismiss' }).click(); await sleep(300)
-  assert.equal(await notice.count(), 0, 'Dismiss did not remove the notice')
-  await world.rcTab('inspector').click(); await sleep(500)
-  await world.rcTab('talk').click(); await sleep(1200)
-  assert.equal(await notice.count(), 0, 'a dismissed notice came back')
-  await page.locator('[data-talk-section="advanced"] > summary').click(); await sleep(300)
-  await world.rcTab('inspector').click(); await sleep(300)
-  // put the title back (the Talks list names the talk by it)
+await check('the Talk tab follows the Markdown Metadata card', async () => {
+  await command('metadata')
   const back = page.locator('.cm-frontmatter-table [data-fm-key="title"] input')
   await back.fill(TITLE)
   await back.press('Tab')
+  await page.waitForFunction(title => document.querySelector('#deck-title')?.value === title, TITLE)
   await page.waitForFunction(async ([path, title]) => {
     const text = await window.tw.talk.readOutline(path)
     return text?.split('\n').includes(`title: ${title}`) || text?.split('\n').includes(`title: "${title}"`)
@@ -289,7 +231,7 @@ const authoringView = page.locator('.workspace-centre > :is([data-view], .pane--
 const visibleView = () => authoringView.evaluate(element => element.dataset.view ??
   (element.classList.contains('pane--grid') ? 'grid' : 'strip'))
 const modes = [
-  { name: 'Vault Gallery', open: () => command('vault-gallery'), root: '.vault-gallery' },
+  { name: 'Vault Explorer', open: () => command('vault-gallery'), root: '.vault-explorer[role=dialog]' },
   { name: 'Slide focus', open: async () => { await world.sideTab(/^Slides$/).click()
     await page.getByRole('button', { name: 'Show slides as an outline', exact: true }).click(); await page.locator('button.so-slide').nth(3).click(); await sleep(1000); await command('focus-slide'); await sleep(800); if (!(await page.locator('.lt-focus').count())) { await page.locator('button.so-slide').nth(4).click(); await sleep(800); await command('focus-slide') } }, root: '.lt-focus' },
   { name: 'Pathways', open: () => command('pathways'), root: '[data-pathway-dock]', returnView: 'slide' },

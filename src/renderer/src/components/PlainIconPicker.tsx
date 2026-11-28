@@ -8,6 +8,7 @@
 // shared/icon-verbs.ts. What it lists is plainIconPickerModel.ts's.
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Search, Trash2, TriangleAlert } from 'lucide-react'
+import { crossIconSvg, iconBaseKey, iconIsCrossed, withIconCross } from '../../../../compiler/scripts/lib/icon-cross.mjs'
 import { sanitiseRenderedSvg } from '../../../shared/objects/sanitise-svg'
 import {
   COLUMNS, PAGE, REMOVE, firstStop, gridRows, iconName, iconSet, iconsBridge, knownRecent, loadAllIcons, moveStop, searchIcons, stopKey,
@@ -20,7 +21,7 @@ const DEBOUNCE_MS = 120
 
 // One picture per key for the page's life, sanitised before it is kept.
 const pictures = new Map<string, string | null>()
-function Glyph({ icon }: { icon: string }) {
+function Glyph({ icon, crossed }: { icon: string; crossed: boolean }) {
   const [svg, setSvg] = useState<string | null>(pictures.get(icon) ?? null)
   useEffect(() => {
     if (pictures.has(icon)) { setSvg(pictures.get(icon) ?? null); return }
@@ -34,37 +35,41 @@ function Glyph({ icon }: { icon: string }) {
     return () => { cancelled = true }
   }, [icon])
   // The markup was sanitised by sanitiseRenderedSvg before it was kept.
-  return svg ? <span className="pv-icon-glyph" dangerouslySetInnerHTML={{ __html: svg }} /> : <span className="pv-icon-glyph pv-icon-glyph--none" />
+  return svg ? <span className="pv-icon-glyph" dangerouslySetInnerHTML={{ __html: crossed ? crossIconSvg(svg) : svg }} /> : <span className="pv-icon-glyph pv-icon-glyph--none" />
 }
 
 /** The panel's place: under the caret's line, or above it when there is no room below; inside the window. */
-function usePlaced(anchor: IconAnchor, deps: unknown[]): { ref: React.RefObject<HTMLDivElement>; left: number; top: number } {
+function usePlaced(anchor: IconAnchor | undefined, deps: unknown[]): { ref: React.RefObject<HTMLDivElement>; left: number; top: number } {
   const ref = useRef<HTMLDivElement>(null)
-  const [pos, setPos] = useState({ left: anchor.left, top: anchor.bottom + 4 })
+  const [pos, setPos] = useState({ left: anchor?.left ?? 0, top: (anchor?.bottom ?? 0) + 4 })
   useLayoutEffect(() => {
     const box = ref.current?.getBoundingClientRect()
-    if (!box) return
+    if (!box || !anchor) return
     const below = anchor.bottom + 4
     const top = below + box.height <= window.innerHeight - 8 || anchor.top - 4 - box.height < 8 ? below : anchor.top - 4 - box.height
     setPos({ left: Math.max(8, Math.min(anchor.left, window.innerWidth - box.width - 8)), top: Math.max(8, Math.min(top, window.innerHeight - box.height - 8)) })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [anchor.left, anchor.top, anchor.bottom, ...deps])
+  }, [anchor?.left, anchor?.top, anchor?.bottom, ...deps])
   return { ref, ...pos }
 }
 
 export default function PlainIconPicker({
-  anchor, place, current, onPick, onRemove, onClose
+  anchor, place, current, onPick: pickIcon, onRemove = () => {}, onClose, search
 }: {
-  anchor: IconAnchor
+  /** Omit the anchor to embed the picker in Find. */
+  anchor?: IconAnchor
   /** What the caret's line is: "title", "paragraph" or "list item". */
-  place: string
+  place?: string
   /** The icon the line carries, as written; null when none. */
   current: string | null
   onPick: (key: string) => void
-  onRemove: () => void
+  onRemove?: () => void
   /** Escape, a click outside: the caller returns focus to the editor. */
   onClose: () => void
+  search?: { query: string; onQueryChange: (query: string) => void }
 }) {
+  const [crossed, setCrossed] = useState(() => current !== null && iconIsCrossed(current))
+  const currentKey = current === null ? null : iconBaseKey(current)
   const [query, setQuery] = useState('')
   const [all, setAll] = useState<string[]>([])
   const [recent, setRecent] = useState<string[]>([])
@@ -72,11 +77,15 @@ export default function PlainIconPicker({
   const [shown, setShown] = useState(PAGE)
   const [active, setActive] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const crossRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
   const chosen = useRef(false)
 
-  const q = query.trim()
+  const searchQuery = search?.query ?? query
+  const onQueryChange = search?.onQueryChange ?? setQuery
+  const q = searchQuery.trim()
   const searching = q.length >= 2
+  const docked = anchor === undefined
 
   useEffect(() => {
     let live = true
@@ -134,6 +143,7 @@ export default function PlainIconPicker({
 
   // A click outside closes. Armed on the next task, so the click that opened the panel is not it.
   useEffect(() => {
+    if (docked) return
     let armed = false
     const timer = window.setTimeout(() => { armed = true }, 0)
     const down = (event: MouseEvent): void => {
@@ -141,20 +151,31 @@ export default function PlainIconPicker({
     }
     window.addEventListener('mousedown', down, { capture: true })
     return () => { window.clearTimeout(timer); window.removeEventListener('mousedown', down, { capture: true }) }
-  }, [onClose, ref])
+  }, [docked, onClose, ref])
+
+  const onPick = (key: string): void => {
+    if (docked) chosen.current = false
+    pickIcon(key)
+  }
 
   const choose = (stop: string | null): void => {
     if (!stop || chosen.current) return
     chosen.current = true
-    if (stop === REMOVE) onRemove(); else onPick(stopKey(stop))
+    if (stop === REMOVE) onRemove(); else onPick(withIconCross(stopKey(stop), crossed))
   }
 
   const MOVES: Record<string, Move> = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }
   const onKeyDown = (event: React.KeyboardEvent): void => {
     if (event.nativeEvent.isComposing) return
     if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); onClose(); return }
+    if (event.key === 'Tab') {
+      event.preventDefault()
+      const next = event.target === crossRef.current ? inputRef : crossRef
+      next.current?.focus()
+      return
+    }
+    if (event.target === crossRef.current) return
     if (event.key === 'Enter') { event.preventDefault(); event.stopPropagation(); choose(highlighted); return }
-    if (event.key === 'Tab') { event.preventDefault(); return }
     const move = MOVES[event.key]
     if (!move || event.metaKey || event.ctrlKey || event.altKey) return
     event.preventDefault()
@@ -162,29 +183,40 @@ export default function PlainIconPicker({
     setActive(moveStop(rows, highlighted, move))
   }
 
+  // In Find, the focused control keeps its native keyboard behaviour. Search takes the grid keys.
+  const onDockedKeyDown = (event: React.KeyboardEvent): void => {
+    if (event.target !== inputRef.current || event.key === 'Tab' || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return
+    onKeyDown(event)
+  }
+
   const highlightedKey = highlighted && highlighted !== REMOVE ? stopKey(highlighted) : null
   let row = 0
   return (
-    <div ref={ref} className="pv-icon-picker" style={{ left, top }} role="dialog" aria-label="Insert icon" data-plain-icon-picker onKeyDown={onKeyDown}>
+    <div ref={ref} className={docked ? 'pv-icon-picker pv-icon-picker--docked' : 'pv-icon-picker'} style={docked ? undefined : { left, top }}
+      role={docked ? undefined : 'dialog'} aria-label={docked ? undefined : 'Insert icon'} data-plain-icon-picker onKeyDown={docked ? onDockedKeyDown : onKeyDown}>
       <label className="pv-icon-search">
         <Search size={14} aria-hidden="true" />
         <input
-          ref={inputRef} type="text" value={query} placeholder="Search icons" aria-label="Search icons" spellCheck={false} autoComplete="off"
-          onChange={(event) => { setQuery(event.target.value); setActive(null); if (listRef.current) listRef.current.scrollTop = 0 }}
+          ref={inputRef} type="text" value={searchQuery} placeholder="Search icons" aria-label="Search icons" spellCheck={false} autoComplete="off"
+          onChange={(event) => { onQueryChange(event.target.value); setActive(null); if (listRef.current) listRef.current.scrollTop = 0 }}
           data-plain-icon-search
         />
-        <kbd>⌘I</kbd>
+        {!docked && <kbd>⌘I</kbd>}
+      </label>
+      <label className="tw-icon-cross-toggle">
+        <input ref={crossRef} type="checkbox" checked={crossed} onChange={event => setCrossed(event.target.checked)} />
+        Cross out
       </label>
       <div
         ref={listRef} className="pv-icon-list"
         onScroll={(event) => { const el = event.currentTarget; if (!searching && el.scrollTop + el.clientHeight >= el.scrollHeight - 80) more() }}
       >
-        {withRemove && current !== null && (
+        {withRemove && currentKey !== null && (
           <>
             <div className="pv-icon-label">On this {place}</div>
             <div className="pv-icon-current">
-              <span className="pv-icon-current-box"><Glyph icon={current} /></span>
-              <span className="pv-icon-current-name">{iconName(current)}<small>{[iconSet(current), 'selected'].filter(Boolean).join(' · ')}</small></span>
+              <span className="pv-icon-current-box"><Glyph icon={currentKey} crossed={crossed} /></span>
+              <span className="pv-icon-current-name">{iconName(currentKey)}<small>{[iconSet(currentKey), 'selected'].filter(Boolean).join(' · ')}</small></span>
             </div>
             <button
               type="button" className="pv-icon-remove" data-plain-icon-remove data-active={highlighted === REMOVE ? 'true' : 'false'}
@@ -206,11 +238,11 @@ export default function PlainIconPicker({
                 return (
                   <button
                     key={key} type="button" role="option" aria-selected={on} title={iconName(key)}
-                    className={`pv-icon-cell${key === current ? ' pv-icon-cell--current' : ''}`}
+                    className={`pv-icon-cell${key === currentKey ? ' pv-icon-cell--current' : ''}`}
                     data-active={on ? 'true' : 'false'} data-icon-key={key} data-row={row}
                     onMouseDown={(event) => event.preventDefault()} onMouseEnter={() => setActive(stop)} onClick={() => choose(stop)}
                   >
-                    <Glyph icon={key} />
+                    <Glyph icon={key} crossed={crossed} />
                     <span className="pv-icon-name">{iconName(key)}</span>
                   </button>
                 )
@@ -219,15 +251,15 @@ export default function PlainIconPicker({
           </div>
         ))}
       </div>
-      <div className="pv-icon-foot">
+      {!docked && <div className="pv-icon-foot">
         <div className="pv-icon-foot-name" data-plain-icon-footer>
-          {highlighted === REMOVE ? 'Remove icon' : highlightedKey ? <>{iconName(highlightedKey)} <span>{highlightedKey === current ? 'current' : iconSet(highlightedKey)}</span></> : ''}
+          {highlighted === REMOVE ? 'Remove icon' : highlightedKey ? <>{iconName(highlightedKey)} <span>{highlightedKey === currentKey ? 'current' : iconSet(highlightedKey)}</span></> : ''}
         </div>
         <div className="pv-icon-hint">
           <span><kbd>↵</kbd>{highlighted === REMOVE ? 'Remove' : 'Insert'}</span>
           <span><kbd>esc</kbd>Close</span>
         </div>
-      </div>
+      </div>}
     </div>
   )
 }

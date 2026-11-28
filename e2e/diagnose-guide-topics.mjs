@@ -73,7 +73,6 @@ let exitCode = 0
 try {
   let { app, page } = await launch()
   try {
-    await ensureTalksMode(page)
     await openTalkByTitle(page, 'Alpha Talk')
     await page.waitForSelector('.cm-content', { timeout: 8000 })
     await ensureTalksMode(page)
@@ -186,7 +185,8 @@ try {
   // The marks survive a restart.
   ;({ app, page } = await launch())
   try {
-    await page.waitForSelector('[data-guide-button]', { timeout: 10000 })
+    await openTalkByTitle(page, 'Alpha Talk')
+    await ensureTalksMode(page)
     await page.locator('[data-guide-button]').click()
     await page.locator('[data-guide-segment="how"]').click()
     await page.waitForSelector('[data-guide-how]', { timeout: 6000 })

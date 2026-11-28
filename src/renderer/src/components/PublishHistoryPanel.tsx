@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { handoutAddressLabel } from '../../../shared/publish-status'
 import { publishStageLabel, type PublishHistoryAttempt, type PublishSiteCheck } from '../../../shared/publish-history'
 import { interruptedPublishDiagnostic, publishDiagnosticTitle, type PublishDiagnostic } from '../../../shared/publish-diagnostic'
 import { useHandoutPublishProgress } from '../lib/useHandoutPublishProgress'
@@ -64,13 +65,18 @@ export default function PublishHistoryPanel() {
     {!rows.length && !error && <p style={{ marginTop: 12 }}>No publishing attempts have been recorded on this Mac yet.</p>}
     <div style={{ maxHeight: 430, overflowY: 'auto', marginTop: 12 }}>
       {rows.map(row => {
-        const diagnostic = row.events.at(-1)?.diagnostic
+        const finished = row.events.at(-1)
+        const diagnostic = finished?.diagnostic
+        const url = finished?.handoutUrl
         return <details key={row.id} style={{ borderTop: '1px solid var(--line)', padding: '12px 0' }}>
         <summary>{new Date(row.startedAt).toLocaleString()} — {row.computer} — {row.entry} — {diagnostic
           ? publishDiagnosticTitle(diagnostic) : row.outcome ?? 'not confirmed; check the site'}</summary>
         {diagnostic && <button type="button" className="toolbar-btn" aria-haspopup="dialog"
           onClick={() => setSelected({ diagnostic, retryId: row.canRetry ? row.id : undefined })}>Publish details</button>}
         <p style={{ marginTop: 8 }}>{row.site ?? 'No destination was authorised'} · TalkWeaver {row.appVersion}</p>
+        {url && <p style={{ marginTop: 8, overflowWrap: 'anywhere' }}>
+          <a href={url} onClick={event => { event.preventDefault(); void window.tw.shell.openExternal(url) }}>{handoutAddressLabel(url)}</a>
+        </p>}
         <ol style={{ paddingLeft: 24, marginTop: 10 }}>
           {row.events.map((event, index) => <li key={index} style={{ margin: '7px 0', overflowWrap: 'anywhere' }}>
             {publishStageLabel[event.stage]}

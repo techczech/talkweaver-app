@@ -3,23 +3,24 @@
 //
 // The statement slide has no box and no bars. This drives the app's Inspector and reads the
 // Inspector's live slide preview:
-//   1. The Statement section offers four small segmented controls — Sidebar (With sidebar · No
-//      sidebar), Background (Tinted · Rule · Strong colour · Lower third; the lower third only on a
-//      statement with no painted title), Alignment (Aligned · Centred), Sidebar colour (Section ·
-//      the palette) — and no Bar row and no Claim style row.
+//   1. The Statement section offers segmented controls under More — Side panel (With side panel · No
+//      side panel), Title style (Tinted · Rule · Strong colour · Lower third; the lower third only on a
+//      statement with no painted title), Alignment (Aligned · Centred), Side panel colour (Section ·
+//      the palette, shown only with a side panel) — and no Bar row and no Claim style row.
 //   2. The older one-word option on the slide lights its mapped values ({statement=bar} and
 //      {claim=bar} light Rule); the first click rewrites it as per-dimension tokens.
 //   3. Every value of every control, clicked in the Inspector, changes ONLY its own dimension of
 //      the preview (and of the lit buttons); type size, line height, measure and line breaks stay,
 //      and the paragraph never has a background or a border.
 //   4. The combinations: Rule (a rule above the text), Strong colour (white text), Lower third,
-//      Centred + sidebar, a sidebar colour (rail and tinted slide together), and a titled statement
-//      with No sidebar (title on top).
+//      Centred + sidebar, a side panel colour (rail and tinted slide together), and a titled statement
+//      with No side panel (title on top).
 //   5. The text-size step still scales the statement (XL = 3.9/3.2 of M); no lone last word at the
 //      Inspector's real preview size in three window sizes; {stmt-list} keeps Claim style.
 // TW_STATEMENT_OUTLINE=<path to a COPY of layout-showcase-outline.md> runs it on the real talk (the
 // copy is copied again into a throwaway vault); TW_SHOTS_DIR=<dir> saves a screenshot per state.
 import { _electron as electron } from 'playwright'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { dirname, join } from 'path'
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
@@ -103,30 +104,33 @@ const setWindow = async (width, height) => {
   await page.waitForTimeout(1200)
 }
 await setWindow(1512, 945)
-await page.locator('.tl-row').first().dblclick()
+await openTalkByTitle(page, 'TalkWeaver Layout Showcase')
 await page.waitForTimeout(3000)
 await page.keyboard.press('Meta+p')
 await page.waitForTimeout(1500)
 
-const inspectorTitle = async () => (await page.locator('.tw-inspector-title').textContent() ?? '').trim()
+const inspectorTitle = async () => (await page.locator('.tw-inspector .tw-right-who strong').textContent() ?? '').trim()
 const goTo = async (title) => {
   for (const direction of ['Previous slide', 'Next slide']) {
     for (let step = 0; step < 120 && await inspectorTitle() !== title; step += 1) {
-      const button = page.locator(`.tw-inspector-nav button[aria-label="${direction}"]`)
+      const button = page.locator('.tw-inspector').getByRole('button', { name: direction, exact: true })
       if (await button.isDisabled()) break
       await button.click()
       await page.waitForTimeout(200)
     }
   }
   await page.waitForTimeout(1500)
-  return await inspectorTitle() === title
+  if (await inspectorTitle() !== title) return false
+  const more = page.locator('.tw-inspector .tw-right-adjust').getByRole('button', { name: /^More\b/ })
+  if (await more.isVisible()) await more.click()
+  return true
 }
 // The slide's authored Trigger line as the editor holds it (the file follows on autosave).
 const triggerLine = async (id) => page.evaluate((slideId) => {
   const text = [...document.querySelectorAll('.cm-line')].map((line) => line.textContent ?? '')
   return text.find((line) => line.includes(`{id=${slideId}}`))?.trim() ?? ''
 }, id)
-const G = { sidebar: 'Statement sidebar', bg: 'Statement background', align: 'Statement alignment', colour: 'Sidebar colour' }
+const G = { sidebar: 'Side panel', bg: 'Title style', align: 'Statement alignment', colour: 'Side panel colour' }
 const groupButtons = (label) => page.locator(`.tw-inspector-options [role="group"][aria-label="${label}"] button`)
 const buttonLabels = async (label) => (await groupButtons(label).allTextContents()).map((text) => text.replace(/deck$/, '').trim())
 const litLabel = async (label) => (await page.locator(`.tw-inspector-options [role="group"][aria-label="${label}"] button[aria-pressed="true"]`).allTextContents())
@@ -207,7 +211,7 @@ const shoot = async (name) => {
 }
 // The look a preview shows, one value per dimension (valid with no authored {bg=…}).
 const dimsOf = (shot) => ({
-  sidebar: shot.titleLayout === 'left' ? 'With sidebar' : 'No sidebar',
+  sidebar: shot.titleLayout === 'left' ? 'With side panel' : 'No side panel',
   bg: /\bstatement-bg-rule\b/.test(shot.className) ? 'Rule' : /\bstatement-bg-strong\b/.test(shot.className) ? 'Strong colour'
     : /\bstatement-bg-lower-third\b/.test(shot.className) ? 'Lower third' : 'Tinted',
   align: shot.textAlign === 'center' ? 'Centred' : 'Aligned',
@@ -215,7 +219,7 @@ const dimsOf = (shot) => ({
 })
 
 const ROWS = {
-  sidebar: ['With sidebar', 'No sidebar'],
+  sidebar: ['With side panel', 'No side panel'],
   bg: ['Tinted', 'Rule', 'Strong colour', 'Lower third'],
   align: ['Aligned', 'Centred'],
   colour: ['Section', 'Cobalt', 'Emerald', 'Vermilion', 'Forest']
@@ -224,15 +228,16 @@ const ROWS = {
 // ── 3b2vn: the title-as-statement slide ─────────────────────────────────────────────────────────
 const SPECIMEN = 'This is an important statement slide'
 rec('Inspector reaches 3b2vn', await goTo(SPECIMEN), await inspectorTitle())
-for (const [dim, label] of Object.entries(G)) {
+for (const [dim, label] of Object.entries(G).filter(([dim]) => dim !== 'colour')) {
   rec(`3b2vn offers ${label}: ${ROWS[dim].join(' · ')}`, JSON.stringify(await buttonLabels(label)) === JSON.stringify(ROWS[dim]), JSON.stringify(await buttonLabels(label)))
 }
+rec('3b2vn hides Side panel colour with No side panel', await groupButtons(G.colour).count() === 0)
 rec('3b2vn no longer offers the one five-way Statement treatment row', await groupButtons('Statement treatment').count() === 0)
 rec('3b2vn no longer offers a Bar row', await groupButtons('Statement bar').count() === 0)
 rec('3b2vn does not offer the older Claim style row', await groupButtons('Claim style').count() === 0)
 {
   const start = await litAll()
-  const want = { sidebar: 'No sidebar', bg: 'Tinted', align: realTalk ? 'Aligned' : 'Centred', colour: 'Section' }
+  const want = { sidebar: 'No side panel', bg: 'Tinted', align: realTalk ? 'Aligned' : 'Centred', colour: '' }
   rec(`his line lights ${JSON.stringify(want)}`, JSON.stringify(start) === JSON.stringify(want), `${JSON.stringify(start)} on ${await triggerLine('3b2vn')}`)
 }
 const xl = await preview()
@@ -246,8 +251,8 @@ if (!realTalk) {
   rec('a click rewrites {statement=centred} as {statement-align=centred}', !/statement=centred/.test(line) && /\{statement\}/.test(line) && /statement-align=centred/.test(line), line)
   const after = await preview()
   rec('…and the preview is unchanged', JSON.stringify(after) === JSON.stringify(xl), JSON.stringify([after.className, xl.className]))
-  await choose('Background', 'Auto')
-  rec('Background Auto removes {bg=vermilion}', !(await triggerLine('3b2vn')).includes('bg='), await triggerLine('3b2vn'))
+  await choose('Slide background', 'Auto')
+  rec('Slide background Auto removes {bg=vermilion}', !(await triggerLine('3b2vn')).includes('bg='), await triggerLine('3b2vn'))
 }
 // The text-size step (preview.10): XL is the ladder's 3.9/3.2 of M.
 const xlShot = await preview()
@@ -262,12 +267,13 @@ rec('the starting look reads from the preview', !prev.error && state.bg === 'Tin
 await shoot('3b2vn-02-start-m')
 
 // 3. Every value of every control changes only its own dimension — in the lit buttons and in the
-//    preview. Sidebar colour's own dimension is the tint.
+//    preview. Side panel colour's own dimension is the tint.
 const SWEEP = [
   ['bg', 'Rule'], ['bg', 'Strong colour'], ['bg', 'Lower third'], ['bg', 'Tinted'],
   ['align', state.align === 'Centred' ? 'Aligned' : 'Centred'], ['align', state.align],
-  ['sidebar', 'With sidebar'], ['sidebar', 'No sidebar'],
-  ['colour', 'Emerald'], ['colour', 'Section']
+  ['sidebar', 'With side panel'],
+  ['colour', 'Emerald'], ['colour', 'Section'],
+  ['sidebar', 'No side panel']
 ]
 const TINT = { Section: sectionTint, Emerald: '#e4f3ee', Cobalt: '#e8eefc', Vermilion: '#fcece3', Forest: '#e4f3ee' }
 let litBefore = await litAll()
@@ -281,9 +287,16 @@ for (const [dim, value] of SWEEP) {
   const expected = { ...state, ...(dim === 'colour' ? { tint: TINT[value] } : { [dim]: value }) }
   rec(`${tag}: the preview changes only its own dimension`, JSON.stringify(dimsOf(shot)) === JSON.stringify(expected), `${JSON.stringify(dimsOf(shot))} want ${JSON.stringify(expected)}`)
   const lit = await litAll()
-  rec(`${tag}: only its own row's lit button changes`, JSON.stringify(lit) === JSON.stringify({ ...litBefore, [dim]: value }), JSON.stringify(lit))
+  const expectedLit = { ...litBefore, [dim]: value }
+  if (dim === 'sidebar') {
+    expectedLit.colour = value === 'With side panel' ? 'Section' : ''
+    const options = await buttonLabels(G.colour)
+    const expectedOptions = value === 'With side panel' ? ROWS.colour : []
+    rec(`${tag}: Side panel colour follows side panel visibility`, JSON.stringify(options) === JSON.stringify(expectedOptions), JSON.stringify(options))
+  }
+  rec(`${tag}: the expected rows are lit`, JSON.stringify(lit) === JSON.stringify(expectedLit), JSON.stringify(lit))
   rec(`${tag}: the line carries per-dimension tokens only`, !/\{(statement=|claim=)/.test(line), line)
-  if (dim !== 'sidebar' && dim !== 'colour' && state.sidebar === 'No sidebar') {
+  if (dim !== 'sidebar' && dim !== 'colour' && state.sidebar === 'No side panel') {
     rec(`${tag}: type, line height, measure and breaks unchanged`, Math.abs(shot.fontSize - prev.fontSize) <= 0.05 && shot.lineHeight === prev.lineHeight
       && Math.abs(shot.measure - prev.measure) <= 1 && JSON.stringify(shot.lines) === JSON.stringify(prev.lines),
     `${shot.fontSize}px ${shot.measure}px ${JSON.stringify(shot.lines)} vs ${prev.fontSize}px ${prev.measure}px ${JSON.stringify(prev.lines)}`)
@@ -293,7 +306,7 @@ for (const [dim, value] of SWEEP) {
   if (dim === 'bg' && value === 'Rule') rec(`${tag}: a short accent rule above the text`, shot.ruleHeight > 0, `${shot.ruleHeight}px`)
   if (dim === 'bg' && value === 'Strong colour') rec(`${tag}: white text`, shot.colour === WHITE, shot.colour)
   if (dim === 'bg' && value !== 'Rule') rec(`${tag}: no rule above the text`, shot.ruleHeight === 0, `${shot.ruleHeight}px`)
-  if (dim === 'sidebar' && value === 'With sidebar') {
+  if (dim === 'sidebar' && value === 'With side panel') {
     rec(`${tag}: the rail is painted in the slide's colour, empty`, shot.rail !== '' && shot.headText === '', `${shot.rail} "${shot.headText}"`)
     rec(`${tag}: the statement sits in the content column`, Boolean(shot.column) && shot.box.left >= shot.column.left - 1, `${shot.box.left} vs column ${shot.column?.left}`)
   }
@@ -314,7 +327,7 @@ const combo = async (name, steps, verify) => {
   await shoot(`3b2vn-combo-${name}`)
   return shot
 }
-await combo('rule', [['bg', 'Rule'], ['align', 'Aligned'], ['sidebar', 'No sidebar']], (shot) => {
+await combo('rule', [['bg', 'Rule'], ['align', 'Aligned'], ['sidebar', 'No side panel']], (shot) => {
   rec('Rule: the normal page with a rule above the first line, no box', shot.ruleHeight > 0 && shot.panel === CLEAR && shot.slideBg !== TINT_RGB(sectionTint), `${shot.ruleHeight}px ${shot.panel} ${shot.slideBg}`)
 })
 await combo('strong', [['bg', 'Strong colour']], (shot) => {
@@ -323,20 +336,20 @@ await combo('strong', [['bg', 'Strong colour']], (shot) => {
 await combo('lower-third', [['bg', 'Lower third']], (shot) => {
   rec('Lower third: offered and drawn on a statement with no sidebar', dimsOf(shot).bg === 'Lower third' && shot.titleLayout !== 'left', shot.className)
 })
-await combo('centred-sidebar', [['bg', 'Tinted'], ['sidebar', 'With sidebar'], ['align', 'Centred']], (shot) => {
+await combo('centred-sidebar', [['bg', 'Tinted'], ['sidebar', 'With side panel'], ['align', 'Centred']], (shot) => {
   const centre = (shot.box.left + shot.box.right) / 2
   const column = shot.column ? (shot.column.left + shot.column.right) / 2 : NaN
   rec('Centred + sidebar: centred lines in the content column beside the rail', shot.textAlign === 'center' && shot.titleLayout === 'left' && Math.abs(centre - column) <= 3,
     `${shot.textAlign} ${shot.titleLayout} box centre ${centre.toFixed(0)} column centre ${column.toFixed(0)}`)
 })
 await combo('sidebar-colour', [['colour', 'Emerald']], (shot) => {
-  rec('Sidebar colour Emerald: the rail and the tinted slide change together', shot.rail === EMERALD_TINT && shot.slideBg === EMERALD_TINT, `rail ${shot.rail} slide ${shot.slideBg}`)
+  rec('Side panel colour Emerald: the rail and the tinted slide change together', shot.rail === EMERALD_TINT && shot.slideBg === EMERALD_TINT, `rail ${shot.rail} slide ${shot.slideBg}`)
 })
 await combo('section-colour', [['colour', 'Section']], (shot) => {
-  rec('Sidebar colour Section: back to the section colour', shot.rail === TINT_RGB(sectionTint) && shot.slideBg === TINT_RGB(sectionTint), `rail ${shot.rail} slide ${shot.slideBg}`)
+  rec('Side panel colour Section: back to the section colour', shot.rail === TINT_RGB(sectionTint) && shot.slideBg === TINT_RGB(sectionTint), `rail ${shot.rail} slide ${shot.slideBg}`)
 })
 await choose(G.align, 'Aligned')
-await choose(G.sidebar, 'No sidebar')
+await choose(G.sidebar, 'No side panel')
 
 // 5. No lone last word at the Inspector's real preview size, in three window sizes.
 for (const [width, height] of [[1280, 800], [1728, 1117], [2560, 1440]]) {
@@ -354,19 +367,19 @@ await setWindow(1512, 945)
 rec('Inspector reaches rairt', await goTo('A single strong claim'), await inspectorTitle())
 {
   const start = await litAll()
-  rec('rairt lights With sidebar (the title is in the rail)', start.sidebar === 'With sidebar', JSON.stringify(start))
+  rec('rairt lights With side panel (the title is in the rail)', start.sidebar === 'With side panel', JSON.stringify(start))
   rec('rairt does not offer Lower third beside a title', JSON.stringify(await buttonLabels(G.bg)) === JSON.stringify(['Tinted', 'Rule', 'Strong colour']), JSON.stringify(await buttonLabels(G.bg)))
   const titled = await preview()
   rec('rairt: the title is in the rail', titled.titleLayout === 'left' && titled.headText.includes('A single strong claim'), `${titled.titleLayout} "${titled.headText}"`)
   await shoot('rairt-01-with-sidebar')
-  await choose(G.sidebar, 'No sidebar')
+  await choose(G.sidebar, 'No side panel')
   const top = await preview()
-  rec('rairt No sidebar: the title goes to the top, the statement runs full width below it',
+  rec('rairt No side panel: the title goes to the top, the statement runs full width below it',
     top.titleLayout === 'top' && top.headBottom != null && top.headBottom <= top.box.top && top.rail === '' && Math.abs(top.box.left - (1280 - top.box.right)) <= 3,
     `${top.titleLayout} head ${top.headBottom} box ${JSON.stringify(top.box)} rail ${top.rail}`)
-  rec('rairt No sidebar: only the sidebar changed', dimsOf(top).bg === dimsOf(titled).bg && dimsOf(top).align === dimsOf(titled).align)
+  rec('rairt No side panel: only the sidebar changed', dimsOf(top).bg === dimsOf(titled).bg && dimsOf(top).align === dimsOf(titled).align)
   await shoot('rairt-02-no-sidebar')
-  await choose(G.sidebar, 'With sidebar')
+  await choose(G.sidebar, 'With side panel')
   await choose(G.align, 'Centred')
   const centred = await preview()
   const centre = (centred.box.left + centred.box.right) / 2
@@ -375,7 +388,7 @@ rec('Inspector reaches rairt', await goTo('A single strong claim'), await inspec
   await shoot('rairt-03-centred')
   await choose(G.colour, 'Emerald')
   const colour = await preview()
-  rec('rairt Sidebar colour Emerald: rail and tinted slide change together', colour.rail === EMERALD_TINT && colour.slideBg === EMERALD_TINT, `rail ${colour.rail} slide ${colour.slideBg}`)
+  rec('rairt Side panel colour Emerald: rail and tinted slide change together', colour.rail === EMERALD_TINT && colour.slideBg === EMERALD_TINT, `rail ${colour.rail} slide ${colour.slideBg}`)
   await shoot('rairt-04-emerald')
   await choose(G.bg, 'Strong colour')
   const strong = await preview()
@@ -387,7 +400,7 @@ rec('Inspector reaches rairt', await goTo('A single strong claim'), await inspec
 if (!realTalk) {
   rec('Inspector reaches the {claim=bar} statement', await goTo('This is an important claim slide'), await inspectorTitle())
   const start = await litAll()
-  rec('{claim=bar} lights Background Rule', start.bg === 'Rule', JSON.stringify(start))
+  rec('{claim=bar} lights Title style Rule', start.bg === 'Rule', JSON.stringify(start))
   const before = await preview()
   rec('{claim=bar} draws the rule and no box', before.ruleHeight > 0 && before.panel === CLEAR && before.bars.left === 0, `${before.ruleHeight}px ${before.panel} ${JSON.stringify(before.bars)}`)
   await choose(G.bg, 'Strong colour')

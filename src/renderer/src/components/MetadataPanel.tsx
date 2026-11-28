@@ -5,7 +5,7 @@
 // unregistered keys found in THIS outline (remove them, or keep-and-ignore).
 //
 // Design lock: docs/design/2026-07-11-v015-tags-metadata/direction-a-rail.html (stage 2).
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { AlertTriangle, CheckCircle2, ChevronDown, ChevronUp, Lock, Unlock, Plus } from 'lucide-react'
 import type { TalkInfo, MetadataVocabulary } from '../../../preload/index'
 import {
@@ -16,28 +16,14 @@ import {
   type MetadataEntry
 } from '../../../shared/metadata-registry'
 import { notify } from '../lib/notify'
-import { discardedNotice, keepDraft, restoreDraft, setStoredNotice, storedNotice } from '../lib/talkDrafts'
+import { parseFrontmatterPairs, type FrontmatterEdit } from '../../../shared/frontmatter-editor'
+import type { TalkMetadata } from './useTalkMetadata'
 
 interface Props {
-  talk: TalkInfo | null
-  isOpen: boolean
-  /** Awaited before the panel reads the outline from disk, so a live editor buffer's autosave lands first. */
-  flushBeforeIO?: () => Promise<void>
-  /** Called with the outline's new full text after every write. An open talk's write already went
-   *  into its editor buffer (main routes it there, one-writer spec D1), so nothing needs adopting. */
-  onSaved?: (outlinePath: string, content: string) => void
-}
-
-// Parse the outline's top-level frontmatter pairs (same shape the main process reads).
-function parsePairs(text: string): Array<{ key: string; value: string }> {
-  const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---/)
-  if (!fm) return []
-  const pairs: Array<{ key: string; value: string }> = []
-  for (const line of fm[1].split(/\r?\n/)) {
-    const m = line.match(/^([A-Za-z0-9_-]+):[ \t]*(.*)$/)
-    if (m) pairs.push({ key: m[1], value: m[2].trim().replace(/^["']|["']$/g, '').trim() })
-  }
-  return pairs
+  talk: TalkInfo
+  outlineContent: string
+  metadata: TalkMetadata
+  onEdit: (edits: FrontmatterEdit[]) => boolean
 }
 
 /** The value an entry currently holds in the outline, under any accepted spelling. */
@@ -49,21 +35,13 @@ function valueFor(entry: MetadataEntry, pairs: Array<{ key: string; value: strin
 
 type DoctorRowState = 'open' | 'removed' | 'kept'
 
-export default function MetadataPanel({ talk, isOpen, flushBeforeIO, onSaved }: Props) {
-  const [content, setContent] = useState<string | null>(null)
-  const [draft, setDraft] = useState<Record<string, string>>({})
-  const [baseline, setBaseline] = useState<Record<string, string>>({})
+export default function MetadataPanel({ talk, outlineContent, metadata, onEdit }: Props) {
   const [vocab, setVocab] = useState<MetadataVocabulary>({})
   const [doctorRows, setDoctorRows] = useState<Array<{ key: string; value: string; state: DoctorRowState }>>([])
   const [doctorOpen, setDoctorOpen] = useState(false)
   const [sysOpen, setSysOpen] = useState(false)
   const [confirmKey, setConfirmKey] = useState<string | null>(null)
-  const [saving, setSaving] = useState(false)
-  const [notice, setNotice] = useState('')
-  const presenceRef = useRef<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
-  const [savedFlash, setSavedFlash] = useState(false)
-  const firstFieldRef = useRef<HTMLInputElement>(null)
 
   // The Advanced part of the Talk tab (house rule R11): the design fields (Talk design) are already above it, so only the keys
   // outside the deck are here, with the notice about keys TalkWeaver does not know and the managed (System) keys.
@@ -80,150 +58,50 @@ export default function MetadataPanel({ talk, isOpen, flushBeforeIO, onSaved }: 
     return order.map((g) => ({ name: g, entries: byGroup.get(g)! }))
   }, [userEntries])
 
-  const pairs = useMemo(() => (content ? parsePairs(content) : []), [content])
-  const idStampCount = useMemo(() => (content ? (content.match(/\{id=/g) ?? []).length : 0), [content])
-  const dirty = useMemo(
-    () => Object.keys(draft).some((k) => (draft[k] ?? '') !== (baseline[k] ?? '')),
-    [draft, baseline]
-  )
-
-  // Kept per talk while the disclosure or the tab is away (lib/talkDrafts.ts); not before the first read has set the baseline.
+  const pairs = useMemo(() => parseFrontmatterPairs(outlineContent), [outlineContent])
+  const idStampCount = (outlineContent.match(/\{id=/g) ?? []).length
+  const path = talk.outlinePath
   useEffect(() => {
-    if (isOpen && talk && content !== null) keepDraft('advanced', talk.outlinePath, draft, baseline, presenceRef.current)
-  }, [isOpen, talk, content, draft, baseline])
-
-  // Load everything when the panel opens: flush the live buffer, then read disk truth.
-  useEffect(() => {
-    if (!isOpen || !talk) return
     let cancelled = false
-    setContent(null)
-    setError(null)
-    setSavedFlash(false)
-    setConfirmKey(null)
-    setSysOpen(false)
-    setDoctorOpen(false)
-    ;(async () => {
+    void (async () => {
       try {
-        await flushBeforeIO?.()
-        const [text, doctor, vocabulary] = await Promise.all([
-          window.tw.talk.readOutline(talk.outlinePath),
-          window.tw.metadata.doctor(),
-          window.tw.metadata.vocabulary()
-        ])
+        const [doctor, vocabulary] = await Promise.all([window.tw.metadata.doctor(), window.tw.metadata.vocabulary()])
         if (cancelled) return
-        if (text == null) { setError('The outline could not be read.'); return }
-        setContent(text)
         setVocab(vocabulary ?? {})
-        const mine = doctor?.find((d) => d.outlinePath === talk.outlinePath)
-        setDoctorRows((mine?.unregistered ?? []).map((k) => ({ ...k, state: 'open' as const })))
-        const parsed = parsePairs(text)
-        const values: Record<string, string> = {}
-        for (const e of userEntries) values[e.key] = valueFor(e, parsed)
-        const present: Record<string, boolean> = {}
-        for (const e of userEntries) present[e.key] = [e.key, ...(e.aliases ?? [])].some((name) => parsed.some((p) => p.key === name))
-        presenceRef.current = present
-        const restored = restoreDraft('advanced', talk.outlinePath, values, present)
-        setDraft(restored.draft)
-        const fresh = discardedNotice(restored.discarded.map((key) => findEntry(key)?.label ?? key))
-        if (fresh) setStoredNotice('advanced', talk.outlinePath, fresh)
-        setNotice(fresh || storedNotice('advanced', talk.outlinePath))
-        setBaseline(values)
-      } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load metadata.')
+        const mine = doctor?.find(row => row.outlinePath === path)
+        setDoctorRows((mine?.unregistered ?? []).map(key => ({ ...key, state: 'open' })))
+      } catch {
+        if (!cancelled) setError('Couldn’t load vault-wide metadata. You can still edit this talk’s fields.')
       }
     })()
     return () => { cancelled = true }
-  }, [isOpen, talk, userEntries])
+  }, [path])
 
-  // One write path for everything (fields, doctor removals, system deletes).
-  const writeEdits = useCallback(
-    async (edits: Array<{ key: string; value: string | null; aliases?: string[] }>): Promise<boolean> => {
-      if (!talk) return false
-      // No flush first: main edits the open talk's BUFFER (talk-writer.ts), not the file behind it.
-      const res = await window.tw.metadata.editFrontmatter(talk.outlinePath, edits)
-      if (!res.ok) {
-        // Human-readable failure + recovery, never a raw code (Gate-5). Nothing was written.
-        const why: Record<string, string> = {
-          'bad-request': 'the request was malformed — close and reopen this panel',
-          'bad-key': 'one of the keys was not a valid frontmatter name — close and reopen this panel',
-          'bad-value': 'one of the values could not be written — check for unusual characters',
-          unreadable: 'the outline file could not be read — check it still exists on disk',
-          'write-failed': 'the outline file could not be written — check disk space and permissions, then try again'
-        }
-        setError(`Couldn’t save: ${why[res.error] ?? res.error}. The outline on disk is unchanged.`)
-        return false
-      }
-      setContent(res.content)
-      if (res.changed) onSaved?.(talk.outlinePath, res.content)
-      return true
-    },
-    [talk, onSaved]
-  )
-
-  function dismissNotice() {
-    setNotice('')
-    if (talk) setStoredNotice('advanced', talk.outlinePath, '')
-  }
-
-  async function handleSave() {
-    if (!talk || saving) return
-    const edits: Array<{ key: string; value: string | null; aliases?: string[] }> = []
-    for (const e of userEntries) {
-      const now = (draft[e.key] ?? '').trim()
-      const was = (baseline[e.key] ?? '').trim()
-      if (now === was) continue
-      edits.push({ key: e.key, value: now === '' ? null : now, aliases: e.aliases })
-    }
-    if (edits.length === 0) return
-    setSaving(true)
-    setError(null)
-    try {
-      if (await writeEdits(edits)) {
-        dismissNotice()
-        setBaseline({ ...draft })
-        setSavedFlash(true)
-        setTimeout(() => setSavedFlash(false), 2500)
-      }
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  async function handleDoctorRemove(key: string) {
-    if (!(await writeEdits([{ key, value: null }]))) return
-    setDoctorRows((rows) => rows.map((r) => (r.key === key ? { ...r, state: 'removed' } : r)))
+  function handleDoctorRemove(key: string) {
+    if (!onEdit([{ key, value: null }])) return
+    setDoctorRows(rows => rows.map(row => row.key === key ? { ...row, state: 'removed' } : row))
   }
 
   async function handleDoctorKeep(key: string) {
-    if (!talk) return
     const res = await window.tw.metadata.ignoreKey(talk.outlinePath, key)
     if (!res?.ok) { notify(`Couldn’t record “${key}” in the ignore list.`, 'error'); return }
     setDoctorRows((rows) => rows.map((r) => (r.key === key ? { ...r, state: 'kept' } : r)))
   }
 
-  async function handleSystemDelete(key: string) {
+  function handleSystemDelete(key: string) {
     const entry = findEntry(key)
-    if (!(await writeEdits([{ key, value: null, aliases: entry?.aliases }]))) return
+    if (!onEdit([{ key, value: null, aliases: entry?.aliases }])) return
     setConfirmKey(null)
     notify(`${key} removed from the frontmatter.`, 'success')
   }
 
-  if (!isOpen || !talk) return null
-
   const openDoctorRows = doctorRows.filter((r) => r.state === 'open')
   const presentSystem = systemEntries.filter((e) => valueFor(e, pairs) !== '')
 
-  const bodyEl = (
-    <div style={S.bodyEmbedded}>
-      {error && <div style={S.errorBox}>{error}</div>}
-      {notice && (
-        <div role="status" style={S.errorBox} data-draft-notice="true">
-          {notice} <button type="button" style={{ border: 0, background: 'transparent', color: OXFORD, cursor: 'pointer', textDecoration: 'underline' }} onClick={dismissNotice}>Dismiss</button>
-        </div>
-      )}
-      {content === null && !error && <div style={S.loading}>Loading…</div>}
-      {content !== null && (
-        <>
+  return (
+    <div style={S.embeddedRoot} data-metadata-embedded>
+      <div style={S.bodyEmbedded}>
+        {error && <div style={S.errorBox}>{error}</div>}
           {/* Doctor status is ALWAYS visible — a clean bill of health is a designed state
               (Gate-5), not an absence. Green check + "Everything declared" when there is
               nothing to report; amber review row when unregistered keys were found. */}
@@ -282,7 +160,7 @@ export default function MetadataPanel({ talk, isOpen, flushBeforeIO, onSaved }: 
                             type="button"
                             style={{ ...S.dkeyBtn, color: CRIMSON, borderColor: CRIMSON }}
                             title="Delete this key’s line from the outline’s frontmatter"
-                            onClick={() => void handleDoctorRemove(r.key)}
+                            onClick={() => handleDoctorRemove(r.key)}
                           >
                             Remove from outline
                           </button>
@@ -303,24 +181,26 @@ export default function MetadataPanel({ talk, isOpen, flushBeforeIO, onSaved }: 
               instead of presenting a wall of blank fields with no explanation. */}
           {pairs.length === 0 && (
             <div style={S.noFm}>
-              This talk has no frontmatter yet. Fill in any field below and press Save —
-              TalkWeaver will create the frontmatter block at the top of the outline for you.
+              TalkWeaver will create frontmatter when you edit a field.
             </div>
           )}
           {groups.map((group) => (
             <div key={group.name}>
               <div style={S.groupHead}>{group.name}</div>
-              {group.entries.map((entry, i) => (
-                <Field
+              {group.entries.map(entry => {
+                const present = pairs.some(pair => [entry.key, ...(entry.aliases ?? [])].includes(pair.key))
+                const field = { ...entry, value: valueFor(entry, pairs), present }
+                return <Field
                   key={entry.key}
                   entry={entry}
-                  value={draft[entry.key] ?? ''}
-                  onChange={(v) => { setDraft((d) => ({ ...d, [entry.key]: v })); setSavedFlash(false) }}
+                  value={metadata.value(field)}
+                  onType={value => metadata.type(field, value)}
+                  onChoose={value => metadata.choose(field, value)}
+                  onCommit={retry => { metadata.commitText(entry.key, retry ? field : undefined) }}
                   vocabValues={vocab[entry.key] ?? []}
-                  mapPresent={pairs.some((p) => [entry.key, ...(entry.aliases ?? [])].includes(p.key))}
-                  inputRef={group.name === groups[0].name && i === 0 ? firstFieldRef : undefined}
+                  mapPresent={present}
                 />
-              ))}
+              })}
             </div>
           ))}
 
@@ -364,7 +244,7 @@ export default function MetadataPanel({ talk, isOpen, flushBeforeIO, onSaved }: 
                           <button
                             type="button"
                             style={{ ...S.confirmBtn, color: CRIMSON, borderColor: CRIMSON }}
-                            onClick={() => void handleSystemDelete(entry.key)}
+                            onClick={() => handleSystemDelete(entry.key)}
                           >
                             Delete anyway
                           </button>
@@ -384,35 +264,7 @@ export default function MetadataPanel({ talk, isOpen, flushBeforeIO, onSaved }: 
               </div>
             )}
           </div>
-        </>
-      )}
-    </div>
-  )
-  const footerEl = (
-        <div style={S.footer}>
-          <div style={{ flex: 1, fontSize: '0.8rem' }}>
-            {savedFlash ? (
-              <span style={{ color: GREEN }}>Saved</span>
-            ) : dirty ? (
-              <span style={{ color: AMBER }}>Unsaved changes</span>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            onClick={() => void handleSave()}
-            disabled={saving || !dirty || content === null}
-            style={{ ...S.btn, ...S.btnPrimary, ...(saving || !dirty || content === null ? S.btnDisabled : {}) }}
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
-        </div>
-  )
-  // One Save and one status line in the Talk tab (R10): the Design part above owns the always-visible Save and its
-  // "All changes saved" line, so Advanced shows its own only while it has something to save (or has just saved).
-  return (
-    <div style={S.embeddedRoot} data-metadata-embedded>
-      {bodyEl}
-      {(dirty || saving || savedFlash) && footerEl}
+      </div>
     </div>
   )
 }
@@ -421,18 +273,20 @@ export default function MetadataPanel({ talk, isOpen, flushBeforeIO, onSaved }: 
 function Field({
   entry,
   value,
-  onChange,
+  onType,
+  onChoose,
+  onCommit,
   vocabValues,
-  mapPresent,
-  inputRef
+  mapPresent
 }: {
   entry: MetadataEntry
   value: string
-  onChange: (v: string) => void
+  onType: (value: string) => void
+  onChoose: (value: string) => void
+  onCommit: (retry?: boolean) => void
   vocabValues: Array<{ value: string; count: number }>
   /** For 'map' entries: whether the key exists in the outline (its value line may be empty). */
   mapPresent?: boolean
-  inputRef?: React.RefObject<HTMLInputElement>
 }) {
   const badge =
     entry.vocabulary.kind === 'open' ? (
@@ -454,15 +308,16 @@ function Field({
           outline{entry.key === 'defaults' ? ' or in Talk design' : ''} — not on this form.
         </div>
       ) : entry.vocabulary.kind === 'closed' ? (
-        <ClosedField options={entry.vocabulary.options} value={value} onChange={onChange} label={entry.label} />
+        <ClosedField options={entry.vocabulary.options} value={value} onChange={onChoose} label={entry.label} />
       ) : entry.vocabulary.kind === 'open' ? (
-        <OpenVocabField value={value} onChange={onChange} options={vocabValues} label={entry.label} inputRef={inputRef} />
+        <OpenVocabField value={value} onType={onType} onChoose={onChoose} onCommit={onCommit} options={vocabValues} label={entry.label} />
       ) : (
         <input
-          ref={inputRef}
           type="text"
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={event => onType(event.target.value)}
+          onBlur={() => onCommit()}
+          onKeyDown={event => { if (event.key === 'Enter' && !event.nativeEvent.isComposing) onCommit(true) }}
           style={{ ...S.textInput, ...(entry.type === 'number' ? { width: 140, fontFamily: MONO } : {}) }}
           aria-label={entry.label}
         />
@@ -521,21 +376,22 @@ function ClosedField({
 // row that states the vault-wide consequence of choosing it. ↑↓ move, ↵ picks, Esc closes.
 function OpenVocabField({
   value,
-  onChange,
+  onType,
+  onChoose,
+  onCommit,
   options,
-  label,
-  inputRef
+  label
 }: {
   value: string
-  onChange: (v: string) => void
+  onType: (value: string) => void
+  onChoose: (value: string) => void
+  onCommit: (retry?: boolean) => void
   options: Array<{ value: string; count: number }>
   label: string
-  inputRef?: React.RefObject<HTMLInputElement>
 }) {
   const [open, setOpen] = useState(false)
   const [active, setActive] = useState(0)
-  const localRef = useRef<HTMLInputElement>(null)
-  const ref = inputRef ?? localRef
+  const ref = useRef<HTMLInputElement>(null)
 
   const q = value.trim().toLowerCase()
   const rows: Array<{ kind: 'existing' | 'new'; value: string; count?: number }> = options
@@ -547,7 +403,7 @@ function OpenVocabField({
   const clampedActive = Math.min(active, Math.max(0, rows.length - 1))
 
   function pick(v: string) {
-    onChange(v)
+    onChoose(v)
     setOpen(false)
     ref.current?.blur()
   }
@@ -562,13 +418,17 @@ function OpenVocabField({
         autoComplete="off"
         style={S.textInput}
         onFocus={() => { setActive(0); setOpen(true) }}
-        onChange={(e) => { onChange(e.target.value); setActive(0); setOpen(true) }}
-        onBlur={() => setTimeout(() => setOpen(false), 120)}
+        onChange={(e) => { onType(e.target.value); setActive(0); setOpen(true) }}
+        onBlur={() => { onCommit(); setOpen(false) }}
         onKeyDown={(e) => {
           if (!open && (e.key === 'ArrowDown' || e.key === 'ArrowUp')) { setOpen(true); return }
           if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(rows.length - 1, a + 1)) }
           else if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(0, a - 1)) }
-          else if (e.key === 'Enter') { e.preventDefault(); if (rows[clampedActive]) pick(rows[clampedActive].value) }
+          else if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+            e.preventDefault()
+            if (open && rows[clampedActive]) pick(rows[clampedActive].value)
+            else onCommit(true)
+          }
           else if (e.key === 'Escape' && open) { e.preventDefault(); e.stopPropagation(); setOpen(false) }
         }}
       />

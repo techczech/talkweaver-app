@@ -42,7 +42,7 @@ import SlidesOrganizer from './src/renderer/src/components/SlidesOrganizer.tsx'
 import GridView from './src/renderer/src/components/GridView.tsx'
 import { publishStripNumbers } from './src/renderer/src/lib/stripNumbers.ts'
 import { publishOutline, resetOutlineCollapseForTests } from './src/renderer/src/lib/outlineCollapseStore.ts'
-import { publishSlideThumbs, setSlideQuery, pictureTextByRef } from './src/renderer/src/lib/slideSearch.ts'
+import { publishSlideThumbs, publishWidgetTitles, setSlideQuery, pictureTextByRef } from './src/renderer/src/lib/slideSearch.ts'
 
 const TALK_KEY = ${JSON.stringify(TALK_KEY)}
 const PICTURE = ${JSON.stringify(PICTURE)}
@@ -75,7 +75,8 @@ function cardsOf(text) {
     let body = l
     for (let j = i + 1; j < lines.length && !/^#{1,6}\\s/.test(lines[j]); j += 1) body += '\\n' + lines[j]
     if (m[1].length === 2) { section = title; rows.push({ slide_id: 'sec-' + i, title, nav_title: title, section, role: 'section-title', layout: 'section', source_markdown: '', render_hash: 'sec' + i, content_hash: 'sec' + i, warnings: [], line: i + 1 }) }
-    else rows.push({ slide_id: 's' + title.split(' ')[1], title, nav_title: title, section, role: 'content', layout: 'default', source_markdown: body, render_hash: 'h' + i, content_hash: 'h' + i, warnings: [], line: i + 1 })
+    else rows.push({ slide_id: 's' + title.split(' ')[1], title, nav_title: title, section, role: 'content', layout: 'default', source_markdown: body, render_hash: 'h' + i, content_hash: 'h' + i, warnings: [], line: i + 1,
+      widget_titles: title === 'Slide 4' ? ['Interactive Decision Map'] : undefined })
   })
   return rows
 }
@@ -91,6 +92,7 @@ window.mountBoth = () => {
   publishOutline(TALK_KEY, doc)
   publishStripNumbers(new Map(cards.map((c, i) => [c.line, i + 2])))
   publishSlideThumbs([null, ...cards.map(() => PIX)])
+  publishWidgetTitles(cards, cards.map((card) => card.line))
   function Host() {
     const [active, setActive] = useState(1)
     const [d, setD] = useState(doc)
@@ -250,6 +252,13 @@ try {
   await sleep(450)
   assert.deepEqual(await oLit(), ['Slide 1', 'Slide 6'], 'slide: keeps slides')
   pass('operators t: s: i: e: and the slide: / svg: prefixes work in the outline')
+
+  await oSearch.fill('widget:decision map')
+  await page.locator(`${ORG} [data-so-snippet] mark`).filter({ hasText: /^Decision$/ }).waitFor()
+  assert.deepEqual(await oLit(), ['Slide 4'], 'the outline finds the compiled widget title')
+  assert.equal(await gSearch.inputValue(), 'widget:decision map')
+  assert.deepEqual(await gLit(), ['4'], 'the grid finds the same slide')
+  pass('both: the shared widget query matches a compiled widget title')
 
   // ── a search never moves the selection or the caret after the content changes (review round 1, F1) ──
   await gSearch.fill('')

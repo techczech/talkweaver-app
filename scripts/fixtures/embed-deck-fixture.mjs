@@ -18,6 +18,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { prepareSource } from '../../compiler/scripts/lib/08-source-adapters.mjs'
 import { buildShareHtml } from '../../compiler/scripts/lib/09-output-builders.mjs'
 import { buildHandoutHomePageHtml } from '../../compiler/scripts/lib/handout-home-page.mjs'
+import { copySlideLocalFiles } from '../../src/main/slide-local-files.ts'
 import { extractSlides, extractStyles } from '../../compiler/scripts/lib/04-html-extraction.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -342,7 +343,7 @@ const FOCUS_SLIDES = [
  *   of GRAB_PAIRS, with two pages on `grab`: a page that puts the focus on the next frame
  *   (cross-next) or on every frame (cross-all), or a 40 ms loop (two40), and then the ordinary page.
  */
-export async function serveEmbedFixture({ focusPages = false } = {}) {
+export async function serveEmbedFixture({ focusPages = false, reusedSimulation = false } = {}) {
   const outline = focusPages ? `${OUTLINE}\n${FOCUS_SLIDES}` : OUTLINE
   const runs = new Map()
   const pages = {}
@@ -363,7 +364,15 @@ export async function serveEmbedFixture({ focusPages = false } = {}) {
 
   const dir = await mkdtemp(join(tmpdir(), 'tw-embed-fixture-'))
   await mkdir(join(dir, 'assets'), { recursive: true })
-  await writeFile(join(dir, 'assets', 'sim.html'), simPage(origin), 'utf8')
+  if (reusedSimulation) {
+    const source = join(dir, 'source-talk')
+    await mkdir(join(source, 'assets'), { recursive: true })
+    await writeFile(join(source, 'assets', 'sim.html'), simPage(origin).replace('</body>', '<script src="marker.js"></script></body>'))
+    await writeFile(join(source, 'assets', 'marker.js'), 'document.body.dataset.copiedScript = "ran";')
+    copySlideLocalFiles(source, dir, '[Simulation: assets/sim.html]')
+  } else {
+    await writeFile(join(dir, 'assets', 'sim.html'), simPage(origin), 'utf8')
+  }
   await writeFile(join(dir, 'assets', 'hostile.html'), hostilePage(origin), 'utf8')
   await writeFile(join(dir, 'assets', 'flood.html'), floodPage(origin), 'utf8')
   await writeFile(join(dir, 'assets', 'autofocus.html'), autofocusPage(origin), 'utf8')

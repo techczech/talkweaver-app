@@ -38,8 +38,13 @@ const page = await app.firstWindow()
 await page.waitForLoadState('domcontentloaded')
 
 const button = page.locator('[data-guide-button]')
-const tabs = page.locator('[data-right-column-tabs] [data-rc-tab]')
-const tabNames = async () => (await tabs.evaluateAll((els) => els.map((e) => e.getAttribute('data-rc-tab')))).join(',')
+const expectedTabs = 'inspector,talk,guide,research,find'
+const tabNames = async (target = page) => (await target.locator('[data-right-column-tabs] [data-rc-tab]')
+  .evaluateAll(els => els.map(el => el.getAttribute('data-rc-tab')))).join(',')
+async function openFind(target) {
+  await target.evaluate(() => window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail: 'find-icons' })))
+  await target.locator('[data-find-panel="icons"]').waitFor()
+}
 async function gone(selector, timeout = 3000) {
   try { await page.waitForSelector(selector, { state: 'detached', timeout }); return true } catch { return false }
 }
@@ -48,12 +53,14 @@ try {
   await openTalkByTitle(page, 'Guide Fixture')
   await page.waitForSelector('.cm-content', { timeout: 8000 })
 
+  await openFind(page)
+  await page.getByRole('tab', { name: 'Slide', exact: true }).click()
   await button.waitFor({ timeout: 5000 })
-  record('the sidebar foot has Add vault… and a Guide button (closed)', (await page.locator('[data-add-vault]').count()) === 1 && /^Guide$/.test((await button.innerText()).trim()) && (await tabNames()) === 'inspector,talk,guide,research,images')
+  record('the sidebar foot has Add vault… and a Guide button (closed)', (await page.locator('[data-add-vault]').count()) === 1 && /^Guide$/.test((await button.innerText()).trim()) && (await tabNames()) === expectedTabs)
 
   await button.click()
   await page.waitForSelector('[data-guide]', { timeout: 4000 })
-  record('click the button: the Guide opens in the right panel', (await tabNames()) === 'inspector,talk,guide,research,images' && (await page.locator('[data-rc-tab="guide"].rc-tab--on').count()) === 1, await tabNames())
+  record('click the button: the Guide opens in the right panel', (await tabNames()) === expectedTabs && (await page.locator('[data-rc-tab="guide"].rc-tab--on').count()) === 1, await tabNames())
   record('the button reads "Guide open" while the tab is up', /Guide\s*open/.test((await button.innerText()).replace(/\s+/g, ' ')))
   const steps = await page.locator('[data-guide-step]').evaluateAll((els) => els.map((e) => e.getAttribute('data-guide-step') + ':' + e.getAttribute('data-done')))
   record('First steps shows three steps, a talk exists but only in the one vault, so step 1 is ticked and step 2 too', steps.join(',') === 'own-vault:true,first-talk:true,example-talk:false', steps.join(','))
@@ -69,7 +76,7 @@ try {
   record('the segments switch (How it works selected)', (await page.locator('[data-guide-slot="how-it-works"]').count()) === 1)
 
   await button.click()
-  record('click the button again: the Guide closes and the sidebar keeps its other tabs', await gone('[data-guide]') && (await tabNames()) === 'inspector,talk,guide,research,images' && !/open/.test(await button.innerText()))
+  record('click the button again: the Guide closes and the sidebar keeps its other tabs', await gone('[data-guide]') && (await tabNames()) === expectedTabs && !/open/.test(await button.innerText()))
 
   // Settings → Get started: the switch.
   // A hidden thumbnail window can open at the same time as Settings. Force that ordering
@@ -123,14 +130,19 @@ try {
       const p2 = await second.firstWindow()
       await p2.waitForLoadState('domcontentloaded')
       await second.evaluate(({ BrowserWindow }) => { for (const w of BrowserWindow.getAllWindows()) w.setSize(1440, 900) })
-      await p2.getByRole('button', { name: 'Open the example talks', exact: true }).click()
+      await p2.getByRole('region', { name: 'Vault Explorer', exact: true })
+        .getByRole('button', { name: /Open examples$/ }).click()
       await p2.getByRole('button', { name: 'The Saturday market', exact: true }).and(p2.getByTitle('Talk menu', { exact: true })).waitFor({ timeout: 15000 })
       if (buttonOn) {
         await p2.waitForSelector('[data-guide]', { timeout: 8000 })
-        const names = (await p2.locator('[data-right-column-tabs] [data-rc-tab]').evaluateAll((els) => els.map((e) => e.getAttribute('data-rc-tab')))).join(',')
+        const guideTab = p2.locator('[data-rc-tab="guide"]')
+        const autoOpened = await guideTab.evaluate(tab => tab.classList.contains('rc-tab--on'))
+        await openFind(p2)
+        await guideTab.getByRole('button', { name: 'Guide', exact: true }).click()
+        const names = await tabNames(p2)
         await p2.waitForSelector('[data-guide-step="example-talk"][data-done="true"]', { timeout: 8000 }).catch(() => {})
         const done = await p2.locator('[data-guide-step]').evaluateAll((els) => els.map((e) => e.getAttribute('data-done')))
-        record('Open example vault: the Guide opens as a tab of the right sidebar, with only the example talk step ticked', names === 'inspector,talk,guide,research,images' && done.join(',') === 'false,false,true', `${names} ${done}`)
+        record('Open example vault: the Guide opens as a tab of the right sidebar, with only the example talk step ticked', autoOpened && names === expectedTabs && done.join(',') === 'false,false,true', `${names} ${done}`)
         await shot(p2, 'guide-example-open.png')
         record('the progress is kept in app config, outside the vault', JSON.parse(readFileSync(join(userData, 'config.json'), 'utf8')).guideProgress?.exampleTalkOpened === true)
       } else {

@@ -117,7 +117,9 @@ import {
   type CloudflareAccount, type CloudflareConnection, type CloudflareStatus, type CustomDomainState,
   type LiveServiceRow, type PublishingRow, type ShareLinkRow,
 } from '../shared/cloudflare-status.ts'
-import { publishNotReady, type PublishNotReady } from '../shared/publish-status.ts'
+import { resolveBase } from './publishing-logic.ts'
+import { classifyHost } from './local-address-filter.ts'
+import { isPublicHandoutUrl, publishNotReady, type PublishNotReady } from '../shared/publish-status.ts'
 
 export const CLOUDFLARE_API_BASE = 'https://api.cloudflare.com/client/v4'
 /** How long one request may take. */
@@ -374,13 +376,13 @@ type AttachedDomain = { name: string; active: boolean }
 /**
  * The handout web address (spec "Publishing handouts"; Dominik, 10 Oct: the row shows the address
  * itself). From GET …/pages/projects/<site>/domains: the custom domain in Settings when it is active
- * on the site, else the first active custom domain Cloudflare lists, else the site's own pages.dev
+ * on the site, else prefer the least nested active custom domain, else the site's own pages.dev
  * address. Null when neither question was answered. Pure.
  */
 export function siteAddress(domains: Answer<AttachedDomain[]> | undefined, project: Answer<FoundProject> | undefined, preferred: string): string | null {
   const active = domains?.kind === 'ok' ? (domains.result ?? []).filter((domain) => domain.active && !domain.name.endsWith('.pages.dev')).map((domain) => domain.name) : []
   if (preferred && active.includes(preferred)) return preferred
-  if (active.length) return active[0]
+  if (active.length) return active.sort((a, b) => a.split('.').length - b.split('.').length || a.length - b.length)[0]
   if (domains?.kind !== 'ok') return null
   return project?.kind === 'ok' ? project.result?.subdomain ?? null : null
 }
@@ -517,6 +519,24 @@ export type ConnectionSettings = {
   shareDomain?: string
 }
 
+function resolveHandoutBase(settings: ConnectionSettings, status: CloudflareStatus | null, existingUrl?: string | null): string {
+  const project = settings.project || DEFAULT_PAGES_PROJECT
+  const configured = settings.baseUrl.trim()
+  if (configured) return resolveBase({ baseUrl: configured, project })
+
+  const row = status?.connection.state === 'connected' && status.connection.account?.id === settings.accountId
+    && status.publishing.project === project && status.publishing.state === 'ready' && !status.publishing.stale
+    ? status.publishing : null
+  if ((!row || row.domainLookupUnavailable) && isPublicHandoutUrl(existingUrl)) {
+    const { hostname, origin } = new URL(existingUrl)
+    // Keep an existing custom host or this project's own Pages host. A local link or a
+    // different Pages project is no evidence of this publication's previous address.
+    if (validHostname(hostname) && classifyHost(hostname) === 'name'
+      && (!hostname.endsWith('.pages.dev') || hostname === `${project}.pages.dev`)) return origin
+  }
+  return resolveBase({ baseUrl: row?.address ?? undefined, project })
+}
+
 export type AccountChoice =
   | { kind: 'one'; account: CloudflareAccount }
   | { kind: 'several'; accounts: CloudflareAccount[] }
@@ -639,11 +659,14 @@ export function connectionCheck(input: CheckInput): CloudflareStatus {
   } else if (activeCustom) customDomain = 'set'
   // The handout web address. Unanswered domains: the address last shown, kept.
   const address = siteAddress(answers.domains, answers.project, host)
-    ?? (answers.project?.kind === 'ok' && previous?.publishing.project === project ? previous.publishing.address : null)
+    ?? (answers.project?.kind === 'ok' && before?.id === account.id && previous?.publishing.project === project ? previous.publishing.address : null)
 
   let publishing: PublishingRow
   let notice: string | null = null
-  const row = (state: PublishingRow['state'], permission: string | null = null): PublishingRow => ({ state, project, permission, customDomain, address, stale: false })
+  const row = (state: PublishingRow['state'], permission: string | null = null): PublishingRow => ({
+    state, project, permission, customDomain, address, stale: false,
+    ...(answers.domains?.kind !== 'ok' ? { domainLookupUnavailable: true } : {}),
+  })
   if (!validProjectName(project)) { publishing = row('unknown'); notice = SITE_NAME_NOTICE }
   else if (answers.project?.kind === 'ok') publishing = row('ready')
   else if (answers.project?.kind === 'missing') publishing = row('no-site')
@@ -715,6 +738,8 @@ export interface LiveDeployAuthorisation {
 export interface PublishAuthorisation extends LiveDeployAuthorisation {
   /** The Pages site the check found. */
   readonly project: string
+  /** Handout address for this authorised site, absent in rehearsal or test grants. */
+  handoutBase?(existingUrl?: string | null): string
   readonly productionBranch: string
   /** Cloudflare refused this publish for permission. Changes the row only while this authorisation is current. */
   refusedForPermission(): void
@@ -779,6 +804,8 @@ export interface CloudflareConnectionService {
    * missing, in every other state.
    */
   authorisePublish(): Promise<PublishGrant>
+  /** The current address selection, for a live join link before it needs a publish grant. */
+  handoutBase(existingUrl?: string | null): string
   /** Everything queued has finished (tests). */
   idle(): Promise<void>
 }
@@ -1048,6 +1075,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
 
   return {
     status,
+    handoutBase: existingUrl => resolveHandoutBase(settings.read(), known, existingUrl),
     check,
 
     saveToken(text) {
@@ -1199,6 +1227,7 @@ export function createCloudflareConnection(options: CloudflareConnectionOptions)
           authorisation: {
             ...leave,
             project,
+            handoutBase: existingUrl => resolveHandoutBase(current, checked, existingUrl),
             productionBranch: current.productionBranch || 'main',
             refusedForPermission() {
               if (!leave.current() || publishRefused) return

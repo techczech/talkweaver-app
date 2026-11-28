@@ -1,5 +1,6 @@
 // Hidden Electron, isolated copy of a checked-in synthetic talk; real disk + renderer history + IPC stores.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -20,7 +21,7 @@ try {
  const errors=[];page.on('pageerror',e=>errors.push(e.message))
  const saved=()=>readFileSync(outline,'utf8')
  const waitSaved=async(want)=>{for(let i=0;i<150&&saved()!==want;i++)await page.waitForTimeout(100);assert.equal(saved(),want)}
- await page.locator('[data-talk-slug="target"]').first().dblclick();await page.locator('.cm-content').waitFor();await page.waitForTimeout(2000)
+ await openTalkByTitle(page, 'Set aside fixture');await page.waitForTimeout(2000)
  const original=saved();const ref=heading=>({line:original.split('\n').indexOf(heading)+1,headingText:heading})
  const refs=['## First section','### Alpha','### Beta'].map(ref)
  const cut=cutBlocks(original,refs);assert(!('refused'in cut))

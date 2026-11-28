@@ -4,6 +4,7 @@
 // ⌘⏎ follows it; Esc closes; the drag payload carries only the drawer's own type (the editor never pastes it
 // as text); no results; the SlideWell-not-installed state (quiet line, groups, no error styling); the Old slides
 // tab shell; a failed search reads as a quiet line.
+// The Find panel's close button is exercised in test:find-panel:dom.
 // Usage: node scripts/test-image-drawer-dom.mjs     SHOTS=<dir> saves the three states.
 import { build } from 'esbuild'
 import { mkdir, readFile } from 'node:fs/promises'
@@ -102,7 +103,6 @@ const events = () => page.evaluate(() => window.__events)
 await setup({ provider: 'slidewell', answers: WITH_SLIDEWELL })
 await page.waitForTimeout(150)
 check(await page.evaluate(() => document.activeElement?.closest('[data-image-drawer]') !== null && document.activeElement.tagName === 'INPUT'), 'opening puts the cursor in the search box')
-check((await drawer.locator('.image-drawer__head').innerText()).includes('Find images') && (await drawer.locator('.image-drawer__head').innerText()).includes('⌘⇧I'), 'header names the drawer and its shortcut')
 check((await page.locator('[data-quiet]').innerText()) === 'From your SlideWell library: screenshots, added images and the pictures in your talks, plus images from your old PowerPoints', 'source line for SlideWell')
 check((await drawer.locator('.image-drawer__grid').innerText()).includes('Type to search'), 'nothing typed: says what to do')
 await page.keyboard.type('parakeet transcript')
@@ -161,8 +161,6 @@ check(!(await page.locator('.image-drawer__card[data-key="well:1"]').innerText()
 await page.evaluate(() => { window.__events = [] })
 await page.keyboard.press('Escape')
 check((await events()).join() === 'close', 'Esc closes')
-await page.locator('.image-drawer__close').click()
-check((await events()).join() === 'close,close', 'the × closes')
 // Esc while the editor has the cursor is not the drawer's
 await page.locator('#ed').focus(); await page.evaluate(() => { window.__events = [] })
 await page.keyboard.press('Escape'); await page.keyboard.press('Meta+Enter')
@@ -397,20 +395,6 @@ await page.getByRole('tab', { name: 'PowerPoint Imports' }).click()
 await cards.first().waitFor()
 check((await focused()) === 'old-slide:a', 'switching back starts on the first old slide')
 
-// ── 7 · ⌘⇧I closes through the drawer's own close (review P2) ───────────────────
-// The ⌘⇧I branch lives in WorkspaceLayout's window keydown listener, which this harness does not mount:
-// this reads that its closing half is the same handler the drawer's onClose uses, and that it focuses the editor.
-{
-  const layout = await readFile(join(root, 'src/renderer/src/components/WorkspaceLayout.tsx'), 'utf8')
-  const branch = layout.match(/\) && e\.shiftKey && \(e\.key === 'i' \|\| e\.key === 'I'\)\) \{([\s\S]*?)\n {6}\}/)
-  check(!!branch && branch[1].includes('toggleImageDrawerRef.current()') && !branch[1].includes('setImageDrawerOpen'), '⌘⇧I goes through the drawer toggle, not a bare state flip')
-  const toggle = layout.match(/toggleImageDrawerRef\.current = \(\) => \{([\s\S]*?)\n {2}\}/)
-  check(!!toggle && /if \(imageDrawerOpen\) closeImageDrawer\(\)/.test(toggle[1]), 'the closing half of ⌘⇧I is closeImageDrawer')
-  const close = layout.match(/function closeImageDrawer\(\): void \{([\s\S]*?)\n {2}\}/)
-  check(!!close && close[1].includes("closeTab('images')") && close[1].includes('focusEditor()'), 'closeImageDrawer closes the drawer (the Images tab goes back to the Inspector tab) and gives the editor the keyboard')
-  check(/<ImageDrawer[\s\S]*?onClose=\{closeImageDrawer\}/.test(layout), 'the drawer’s own Esc and × use the same closeImageDrawer')
-}
-
 // ── 8 · no archive chosen: the Old slides tab says so; nothing to search at all ─────────────
 await setup({ provider: 'slidewell', answers: WITH_SLIDEWELL, archive: false })
 await page.locator('[data-quiet]').waitFor()
@@ -493,19 +477,6 @@ check((await page.locator('[data-quiet]').innerText()).endsWith('there is nothin
   await page.getByRole('tab', { name: 'TalkWeaver Vaults' }).click()
   await page.waitForFunction(() => document.querySelector('.image-drawer__message')?.textContent?.includes('not available'))
   check(true, 'a failed read reads as a quiet line')
-}
-
-// ── 9 · opening the drawer closes the Inspector (read from WorkspaceLayout, which this harness does not mount) ──
-{
-  const layout = await readFile(join(root, 'src/renderer/src/components/WorkspaceLayout.tsx'), 'utf8')
-  const show = layout.match(/function showImageDrawer\(\): void \{([\s\S]*?)\n {2}\}/)
-  check(!!show && show[1].includes("showTab('images')"), 'showImageDrawer brings the sidebar up on the Images tab (R11a)')
-  const open = layout.match(/function openImageDrawer\(\): void \{([\s\S]*?)\n {2}\}/)
-  check(!!open && open[1].includes('showImageDrawer()') && !open[1].includes("showTab('images')"), 'the menu and palette entry open the drawer through showImageDrawer')
-  const toggle = layout.match(/toggleImageDrawerRef\.current = \(\) => \{([\s\S]*?)\n {2}\}/)
-  check(!!toggle && toggle[1].includes('showImageDrawer()') && !toggle[1].includes("showTab('images')"), '⌘⇧I opens the drawer through showImageDrawer')
-  const close = layout.match(/function closeImageDrawer\(\): void \{([\s\S]*?)\n {2}\}/)
-  check(!!close && !close[1].includes("showTab('inspector')"), 'closing the drawer only drops its tab; it does not run the Inspector\'s opening')
 }
 
 check(errors.length === 0, 'no page errors' + (errors.length ? ': ' + errors.join('; ') : ''))

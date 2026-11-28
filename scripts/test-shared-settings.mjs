@@ -973,3 +973,10 @@ await test('review r2 new: recording setup against a newer-format settings file 
 })
 
 console.log(`shared settings: ${passed} passed`)
+
+await test('Writing settings distinguish Outline view from the slides list', () => {
+  assert.ok(schema.settings.every(({ label, group }) => !label.includes('Plain view') && !group?.includes('Plain view')))
+  assert.equal(schema.def('writing.plainFont').group, 'Outline view')
+  assert.equal(schema.def('writing.plainTextSize').label, 'Outline view text size')
+  assert.equal(schema.def('writing.slidesPanelView').options.find(option => option.value === 'outline').label, 'A list')
+})

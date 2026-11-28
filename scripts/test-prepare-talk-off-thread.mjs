@@ -30,6 +30,23 @@ const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const request = { path: 'x' }
 const outcome = (promise) => promise.then((v) => ({ ok: true, v }), (e) => ({ ok: false, e }))
 
+// Cancelling a superseded selected picture leaves the same child available for its replacement.
+{
+  made.length = 0
+  const compile = createPrepareTalkOffThread('w.js', spawn)
+  const controller = new AbortController()
+  const previous = compile(request, controller.signal)
+  const [child] = made
+  controller.abort()
+  await assert.rejects(previous, /Preview cancelled/)
+  assert.deepEqual(child.posted[1], { kind: 'cancel-preview', id: child.posted[0].id })
+  const next = compile(request)
+  child.answer(child.posted[0], 'obsolete')
+  child.answer(child.posted[2], 'newest')
+  assert.equal((await next).model.value, 'newest')
+  assert.equal(child.killed, false)
+}
+
 // 1. Child A retired by the idle end; B starts; A's exit fires late; B's job still resolves.
 {
   made.length = 0

@@ -7,6 +7,7 @@
 // fixture let through only by the test-only allowance; no real browser, no real talk.
 // Run: node e2e/live-page-capture-embed-window.mjs   (LIVE_PAGE_TRACE=1 prints main's capture log lines)
 import { _electron as electron } from 'playwright'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { createCheckLedger } from './lib/check-ledger.mjs'
 import { fileURLToPath } from 'node:url'
@@ -65,7 +66,7 @@ try {
   page.setDefaultTimeout(15000)
   await page.waitForLoadState('domcontentloaded')
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 900))
-  await page.locator('.tl-row').first().dblclick()
+  await openTalkByTitle(page, 'Capture embed')
   await page.locator('.cm-content').waitFor()
   await page.waitForTimeout(2500)
   await page.keyboard.press('Meta+p') // Inspector

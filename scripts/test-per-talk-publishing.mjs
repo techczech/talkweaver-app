@@ -906,6 +906,7 @@ for (const scenario of [
     }
     const result = await w.service.publish({
       ...w.talkJob('talk-a', { 'index.html': 'A', 'two.html': 'B' }), signal: controller.signal,
+      handoutUrl: () => scenario.name.includes('429') ? 'https://talks.pages.dev/talk-a/' : 'https://handouts.test/talk-a/',
       onProgress: event => progress.push(event),
       sourceOutline: { path: join(w.root, 'test-outline.md'), key: '1:2' },
     })

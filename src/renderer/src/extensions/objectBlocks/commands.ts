@@ -139,7 +139,8 @@ export function changedStatuses(held: ReadonlyMap<string, CardFileStatus>, answe
   const changed = new Map<string, CardFileStatus>()
   for (const [ref, status] of answer) {
     const was = held.get(ref)
-    if (!was || was.state !== status.state || was.path !== status.path) changed.set(ref, status)
+    if (!was || was.state !== status.state || was.path !== status.path || was.repairTitle !== status.repairTitle ||
+        JSON.stringify(was.repairCandidates) !== JSON.stringify(status.repairCandidates)) changed.set(ref, status)
   }
   return changed.size ? changed : null
 }

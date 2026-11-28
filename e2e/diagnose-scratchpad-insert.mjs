@@ -4,6 +4,7 @@
 // slide count and the editor's slide labels agree; the card says where the slide went, and after the Undo that it
 // is no longer in the talk. Change place closes when a place is picked.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { _electron as electron } from 'playwright'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -87,7 +88,7 @@ try {
       .catch(async () => { throw new Error(`${what}: the status bar never settled at ${n} slides`) })
   }
 
-  await page.locator('[data-talk-slug="target"]').first().dblclick()
+  await openTalkByTitle(page, 'Target talk')
   await page.locator('.cm-content').waitFor()
   await settledCount(3, 'after opening')
   await page.getByRole('tab', { name: 'Slides', exact: true }).click()
@@ -172,8 +173,46 @@ try {
   await page.locator('.grid-view').waitFor()
   await page.getByLabel('Select What is an agent?', { exact: true }).check()
   await page.getByLabel('Select Chart', { exact: true }).check()
+  await app.evaluate(({ ipcMain }) => {
+    globalThis.scratchpadBatchTrace = []
+    for (const channel of ['scratchpad:prepare-insert', 'talk:insert-from-vault', 'talk:materialize-slide-assets', 'talk:write-outline', 'scratchpad:mark-inserted-many']) {
+      const original = ipcMain._invokeHandlers.get(channel)
+      if (!original) throw new Error('Expected IPC handler is missing: ' + channel)
+      ipcMain.removeHandler(channel)
+      ipcMain.handle(channel, async (...args) => {
+        const [event, ...input] = args
+        const step = { channel, ms: Date.now(), sender: event.sender.id }
+        if (channel === 'scratchpad:prepare-insert') step.ids = input[0]
+        if (channel === 'talk:write-outline') step.headings = input[1].split('\n').filter(line => /^#{2,6} /.test(line))
+        globalThis.scratchpadBatchTrace.push(step)
+        try {
+          const reply = await original(...args)
+          Object.assign(step, { elapsed: Date.now() - step.ms, ok: reply?.ok ?? reply?.success, error: reply?.error, refused: reply?.refused, crossVault: reply?.crossVault, entries: reply?.entries?.map(({ id, line, title }) => ({ id, line, title })) })
+          return reply
+        } catch (error) {
+          step.threw = String(error)
+          throw error
+        }
+      })
+    }
+  })
+  await page.evaluate(() => {
+    globalThis.scratchpadBatchEvents = { clicks: [], notices: [] }
+    document.addEventListener('click', event => {
+      const button = event.target.closest('.sp-batchbar button')
+      if (button?.textContent === 'Insert selection as slides') globalThis.scratchpadBatchEvents.clicks.push(event.detail)
+    }, { capture: true })
+    window.addEventListener('tw-toast', event => globalThis.scratchpadBatchEvents.notices.push(event.detail.message))
+  })
   await page.getByRole('button', { name: 'Insert selection as slides', exact: true }).dblclick()
-  await waitSaved(t => t.includes('### Chart') && t.includes('What is an agent?'), 'the whole batch is saved')
+  await waitSaved(t => t.includes('### Chart') && t.includes('What is an agent?'), 'the whole batch is saved').catch(async error => {
+    const headings = saved().split('\n').filter(line => /^#{2,6} /.test(line))
+    const checked = await page.locator('.sp-card input:checked').evaluateAll(boxes => boxes.map(box => box.getAttribute('aria-label')))
+    const events = await page.evaluate(() => globalThis.scratchpadBatchEvents)
+    const ipc = await app.evaluate(() => globalThis.scratchpadBatchTrace)
+    console.log('Scratchpad batch after save timeout', JSON.stringify({ headings, checked, events, ipc, errors }))
+    throw error
+  })
   const batchText = saved()
   assert.equal([...batchText.matchAll(/^#{2,6} What is an agent\?/gm)].length, 1, 'a double-click inserts the batch only once')
   assert.equal([...batchText.matchAll(/^#{2,6} Chart/gm)].length, 1)
@@ -272,7 +311,7 @@ try {
   app = await launch()
   assert.equal(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(w => !w.isVisible())), true)
   const reopened = await app.firstWindow()
-  await reopened.locator('[data-talk-slug="target"]').first().dblclick()
+  await openTalkByTitle(reopened, 'Target talk')
   await reopened.getByRole('tab', { name: 'Scratchpad', exact: true }).click()
   await reopened.getByLabel('Select Chart', { exact: true }).waitFor()
   assert.deepEqual(await candidateOrder(reopened), arranged, 'the docked Scratchpad restores manual order after an app relaunch')

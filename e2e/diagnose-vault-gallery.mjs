@@ -1,6 +1,7 @@
 // Hidden source Electron; every runtime write is confined to the integration fixture.
 import assert from 'node:assert/strict'
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
+import { openVaultStorage } from './lib/vault-storage.mjs'
 import {mkdirSync, cpSync, writeFileSync, readFileSync} from 'node:fs'
 import {resolve,join} from 'node:path'
 // Screenshots and results go to the git-ignored artefacts/ folder, never over tracked files; to refresh the
@@ -20,19 +21,28 @@ try {
  const env={...process.env,HOME:home,TMPDIR:join(fixture,'tmp'),NODE_COMPILE_CACHE:join(fixture,'compile-cache'),TW_E2E:'1',TW_REC_TEST:'1',TW_E2E_TRASH_DIR:join(fixture,'trash')};delete env.ELECTRON_RUN_AS_NODE
  app=(await launchApp({ scratch: appScratch, userData, env, args: ['.', '--use-mock-keychain'] })).app
  assert.equal(await app.evaluate(({app})=>app.getPath('userData')),userData);assert(await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows().every(w=>!w.isVisible())));pass('fixture config confirmed before launch; actual userData path and hidden windows confirmed')
- const page=await app.firstWindow();await page.locator('.vault-gallery-entry').waitFor()
- const menuEntry=await app.evaluate(({Menu})=>{const find=items=>{for(const item of items){if(item.label==='Vault Gallery')return item;const nested=item.submenu&&find(item.submenu.items);if(nested)return nested}};const item=find(Menu.getApplicationMenu().items);if(!item)return false;item.click();return true});assert(menuEntry);await page.getByRole('dialog',{name:'Vault Gallery',exact:true}).waitFor();await page.getByRole('button',{name:/^Back( to .+)?$/}).click();pass('actual registry-derived native menu opens gallery before a talk is selected')
- await page.locator('[data-talk-slug="target"]').first().dblclick();await page.locator('.cm-content').waitFor()
+ const page=await app.firstWindow()
+ const start=page.getByRole('region',{name:'Vault Explorer',exact:true})
+ const initialTalk=start.getByRole('button',{name:'Set aside fixture',exact:true});await initialTalk.waitFor()
+ const menuEntry=await app.evaluate(({Menu})=>{const find=items=>{for(const item of items){if(item.label==='Vault Explorer')return item;const nested=item.submenu&&find(item.submenu.items);if(nested)return nested}};const item=find(Menu.getApplicationMenu().items);if(!item)return false;item.click();return true})
+ assert(menuEntry)
+ await page.waitForFunction(()=>document.activeElement?.getAttribute('aria-label')==='Search talks')
+ pass('actual registry-derived native menu focuses Explorer search before a talk is selected')
+ await initialTalk.click();await page.locator('.cm-content').waitFor()
  await page.locator('.cm-content').click();await page.keyboard.press('Meta+End');await page.keyboard.type(' gallery continuity');await page.keyboard.press('Shift+ArrowLeft');await page.keyboard.press('Shift+ArrowLeft')
  const before=await page.locator('.cm-content').evaluate(el=>{window.galleryEditor=el;const selection=getSelection();return {text:el.textContent,anchor:selection.anchorOffset,focus:selection.focusOffset,scroll:el.closest('.cm-scroller').scrollTop}})
- await page.evaluate(()=>window.dispatchEvent(new Event('tw-vault-gallery')));await page.getByRole('dialog',{name:'Vault Gallery',exact:true}).waitFor();await page.getByRole('button',{name:'Show all talks'}).waitFor()
- await page.getByRole('button',{name:/^Back( to .+)?$/}).click()
+ const explorer=page.getByRole('dialog',{name:'Vault Explorer',exact:true})
+ await page.getByRole('button',{name:'Vault Explorer',exact:true}).click()
+ await explorer.getByRole('combobox',{name:'Search talks'}).waitFor()
+ await explorer.locator('[data-mode-back]').click()
+ await explorer.waitFor({state:'detached'})
  await page.evaluate(()=>new Promise(requestAnimationFrame))
  const after=await page.locator('.cm-content').evaluate(el=>({same:el===window.galleryEditor,text:el.textContent,scroll:el.closest('.cm-scroller').scrollTop,selection:[getSelection().anchorOffset,getSelection().focusOffset]}))
  assert(after.same);assert.equal(after.text,before.text);assert.equal(after.scroll,before.scroll);assert.deepEqual(after.selection,[before.anchor,before.focus]);pass('real CodeMirror node, edited text and scroll survive gallery roundtrip')
- await page.evaluate(()=>window.dispatchEvent(new Event('tw-vault-gallery')));await page.getByRole('button',{name:'Show all talks'}).waitFor()
-  await page.setViewportSize({width:1440,height:1000});await page.screenshot({path:join(evidence,'electron-overview-1440.png')})
- const gallery=page.getByRole('dialog',{name:'Vault Gallery',exact:true}),bar=gallery.getByRole('toolbar',{name:'Actions'})
+ const gallery=await openVaultStorage(page)
+ await gallery.getByRole('button',{name:'Show all talks'}).waitFor()
+ await page.setViewportSize({width:1440,height:1000});await page.screenshot({path:join(evidence,'electron-overview-1440.png')})
+ const bar=gallery.getByRole('toolbar',{name:'Actions'})
  await page.getByRole('button',{name:'Show all talks'}).click();const rows=gallery.getByRole('grid',{name:'Talks and folders'}).locator('.vg-row[data-identity]');await rows.first().waitFor();await page.screenshot({path:join(evidence,'electron-list-1440.png')})
  await rows.first().click();await bar.getByRole('button',{name:'Details',exact:true}).click();await gallery.getByRole('complementary',{name:'Details'}).waitFor();await page.screenshot({path:join(evidence,'electron-details-1440.png')})
  await bar.getByRole('button',{name:'Handouts',exact:true}).click();await page.getByRole('dialog',{name:/Published handouts:/}).waitFor();await page.screenshot({path:join(evidence,'electron-handouts-1440.png')});await page.getByRole('button',{name:'Close handouts'}).click();pass('real selected-talk Details and publication-status sheet open and close')
@@ -48,7 +58,11 @@ try {
  const moving=page.getByRole('dialog',{name:'Move talk within this vault'});await moving.getByRole('option',{name:/^Integration folder/}).click();await moving.getByRole('button',{name:'Move here',exact:true}).click()
  const moved=join(vault,'Integration folder/target/target-outline.md')
  await page.waitForFunction(()=>[...document.querySelectorAll('.vault-gallery [data-identity]')].some(el=>el.getAttribute('data-identity').includes('Integration folder/target/target-outline.md')))
- assert(readFileSync(moved,'utf8').includes('gallery continuity'));await page.getByRole('button',{name:/^Back( to .+)?$/}).click()
+ assert(readFileSync(moved,'utf8').includes('gallery continuity'))
+ await gallery.locator('[data-mode-back]').click()
+ await gallery.waitFor({state:'detached'})
+ await explorer.locator('[data-mode-back]').click()
+ await explorer.waitFor({state:'detached'})
  await page.locator('.cm-content').click();await page.keyboard.press('Meta+End');await page.keyboard.type(' post move typing')
  await page.waitForFunction(()=>document.querySelector('.cm-content')?.textContent.includes('post move typing'))
  await page.keyboard.press('Meta+s')

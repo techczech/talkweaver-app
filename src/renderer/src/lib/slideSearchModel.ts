@@ -5,7 +5,7 @@ import {
 } from '../../../shared/slide-handling/query.ts'
 
 /** One slide as the search sees it; `key` names it in the caller's own terms (a source line, a card index). */
-export interface SearchItem { key: number; title: string; body: string; image: string
+export interface SearchItem { key: number; title: string; body: string; image: string; widget?: string
   /** Heading depth when known (isSearchedSlide in query.ts): the cover title and closing are not searched. */
   level?: number }
 

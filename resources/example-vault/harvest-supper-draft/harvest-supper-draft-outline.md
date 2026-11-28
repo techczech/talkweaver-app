@@ -43,7 +43,7 @@ The picture for this slide has not been added yet.
 
 > **Try it.** In the Talks panel, <kbd>⌘D</kbd> copies Harvest supper (draft); <kbd>⌘⌫</kbd> moves the copy to the Bin once you confirm.
 
-> **Try it.** **Add vault…** (<kbd>⌘⇧P</kbd>) adds a folder of your own talks; **Vault Gallery** shows the talks in your vaults.
+> **Try it.** **Add vault…** (<kbd>⌘⇧P</kbd>) adds a folder of your own talks; **Vault Explorer** shows the talks in your vaults.
 
 > **Try it.** <kbd>N</kbd>, <kbd>S</kbd>, <kbd>R</kbd> and <kbd>C</kbd> work in Manage notes, from a recording in Studio (this vault has none).
 

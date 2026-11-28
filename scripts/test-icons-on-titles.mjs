@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { JSDOM } from 'jsdom'
 import { lexMarkdownBlocks, takeParagraphIcon } from '../compiler/scripts/lib/03-markdown-lexer.mjs'
 import { renderBlock } from '../compiler/scripts/lib/06-block-renderers.mjs'
-import { iconSvg } from '../compiler/scripts/lib/05-icons.mjs'
+import { applySlideMonochrome, iconSvg } from '../compiler/scripts/lib/05-icons.mjs'
 import { parseHeadingAttrs, headingIconIsAuthored } from '../compiler/scripts/lib/02-triggers-layout.mjs'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
 import { extractSlides, extractStyles } from '../compiler/scripts/lib/04-html-extraction.mjs'
@@ -281,6 +281,45 @@ const rawTokens = (root) => (root.textContent.match(/\{(?:icon|title-icon)=[^}]*
   ok(!none.slide('deck-title').querySelector('.title-with-icon'), 'B3: braces glued to the talk title draw no icon')
   const plain = await compileText('---\ntitle: T\n---\n\n# The talk\n\n### A {id=a1}\n\nBody.\n')
   ok(plain.slide('deck-title').querySelector('h2.tp-title') && !plain.slide('deck-title').querySelector('.title-with-icon'), 'a poster with no icon has the title markup it always had')
+}
+
+// A single token spelling across every icon carrier, with the same generated markup in the audience export.
+{
+  const { model: m, doc } = await compileText([
+    '---', 'title: Phone etiquette', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+    '### Where to call {icon=lucide:phone! title-icon=above}', '{id=call}', '',
+    'Keep phones silent. {icon=bell!}', '', '- Take a call in the room {icon=lucide:phone!}', '',
+    '### Studio rules', '{id=rules}{iconlist}', '',
+    '- Do not call while recording {icon=lucide:phone!}', '- Use headphones {icon=lucide:headphones}', '',
+    '### What to silence', '{id=silence}{iconrow}', '',
+    '- Phone calls {icon=tabler:phone!}', '- GitHub notifications {icon=svgl:github!}', ''
+  ].join('\n'))
+  const handout = buildShareHtml({
+    title: m.title, slides: extractSlides(m.fullHtml), styles: extractStyles(m.fullHtml),
+    includeNotes: false, slug: 'phone-etiquette'
+  })
+  const [literal] = lex('- Ask again {help!}\n- Wait {zzz!}\n- Call {phone}\n- Silence {icon=phone!}')
+  eq(literal.items, ['Ask again {help!}', 'Wait {zzz!}', 'Call', 'Silence'], 'only an explicit icon value takes the modifier')
+  eq(literal.iconOverrides, [null, null, 'lucide:phone', 'lucide:phone!'], 'a known shorthand still draws its original icon')
+  const mixedBrands = new JSDOM(applySlideMonochrome(`${iconSvg('svgl:github!')}<i data-mono></i>`)).window.document
+  eq(mixedBrands.querySelectorAll('svg line[data-icon-cross][stroke="#e03131"]').length, 1, 'brand monochrome keeps one red slash')
+  eq(mixedBrands.querySelectorAll('svg line[data-icon-cross-halo][stroke="#fff"]').length, 1, 'brand monochrome keeps one pale halo')
+  const selectors = [
+    '[data-id=call] .title-icon', '[data-id=call] .para-icon', '[data-id=call] .fl-inline-cross',
+    '[data-id=rules] li:first-child .fl-icon',
+    '[data-id=silence] .ir-item:first-child .ir-icon', '[data-id=silence] .ir-item:nth-child(2) .ir-icon'
+  ]
+  for (const output of [doc, new JSDOM(handout).window.document]) {
+    for (const selector of selectors) {
+      const glyph = output.querySelector(`${selector} > svg`)
+      const line = glyph?.querySelectorAll(':scope > line[data-icon-cross]')
+      eq(line?.length, 1, `one slash in the original SVG at ${selector}`)
+      eq(line[0].getAttribute('stroke'), '#e03131', 'the slash has its own red stroke')
+      eq(line[0].previousElementSibling?.getAttribute('stroke'), '#fff', 'the light halo is drawn under the slash')
+    }
+    ok(!output.querySelector('[data-id=rules] li:nth-child(2) [data-icon-cross]'), 'an adjacent ordinary icon stays unchanged')
+    eq([...output.querySelectorAll('section.slide')].flatMap(rawTokens), [], 'no raw authoring tokens are visible')
+  }
 }
 
 // ── Styles: only the new markup is selected ─────────────────────────────────

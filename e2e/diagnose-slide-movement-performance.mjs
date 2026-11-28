@@ -1,5 +1,6 @@
 // Hidden Electron, synthetic large deck only. No real vault or installed app is opened.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { _electron as electron } from 'playwright'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -80,7 +81,7 @@ try {
     return true
   }, outlinePath), 'real compile IPC handler is available for fault injection')
   const openingAt = Date.now()
-  await page.getByText('Movement performance fixture',{exact:true}).first().dblclick()
+  await openTalkByTitle(page, 'Movement performance fixture')
   const editor = page.locator('[data-view="outline"] .cm-content[contenteditable="true"]')
   await editor.waitFor()
   await page.getByText('Couldn’t compile this talk', {exact:false}).waitFor()

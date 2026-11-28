@@ -6238,6 +6238,7 @@
   .slide-content > .feature-list.fl-has-children:not(:has(.fl-icon)) > li:last-child {
     border-bottom: 1px solid var(--hairline);
   }
+/* An authored crossed-out mark beside a regular bullet or number. */
   /* === Ticket 21 — SLOT BULLETS (Dominik: "bullet formatting needs to be better visually").
      A plain list beside media renders as the list layout's rows (mockup .icon-list .item:
      hairline-separated rows, no card chrome) instead of bare text lines: hairline above every
@@ -6792,6 +6793,21 @@ figure.slide-embed[data-embed="local"]:not([data-embed-state="live"]) > .embed-p
   overflow-wrap: anywhere;
 }
 .embed-poster-note { font-size: clamp(11px, 1.3cqw, 22px); color: var(--muted); }
+.embed-media-warning {
+  position: absolute;
+  z-index: 2;
+  inset-inline-start: 0.5em;
+  inset-block-end: 0.5em;
+  max-width: calc(100% - 1em);
+  padding: 0.4em 0.7em;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: clamp(11px, 1.3cqw, 22px);
+  line-height: 1.25;
+}
+@media print { .embed-media-warning { position: static; } }
 /* A page stopped by the focus budget (runtime/embed-focus.js): the placeholder says so. */
 figure.slide-embed[data-embed="local"][data-embed-stopped] > .embed-poster .embed-poster-note { display: none; }
 figure.slide-embed[data-embed="local"][data-embed-stopped] > .embed-poster::after {
@@ -8665,6 +8681,13 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
   --bp-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", system-ui, sans-serif; font: 400 14px/1.3 var(--bp-ui);
   -webkit-font-smoothing: antialiased; --bp-accent: #c2410c; --bp-blue: #5b9bd5; --bp-yellow: #e9c46a; overflow: hidden; }
 .bp[hidden] { display: none !important; }
+/* Keep the presenter Board in the viewport while native fullscreen bounds settle. */
+#presenterBoardPanel {
+  right: min(var(--bp-right, 12px), 100dvw);
+  top: min(var(--bp-top, 0px), 100dvh);
+  max-width: max(0px, calc(100dvw - var(--bp-right, 12px)));
+  max-height: max(0px, calc(100dvh - var(--bp-top, 0px)));
+}
 .bp *, .bp *::before, .bp *::after { box-sizing: border-box; }
 .bp svg { width: 16px; height: 16px; flex: none; }
 .bp button { font: inherit; color: inherit; }
@@ -8830,20 +8853,14 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
    the centre, centred on the window, with Return and the media and gallery controls after them
    when a slide has them; Quick poll, Instant slide, a divider, Focus and Highlight (amber and
    pressed while on), "…" More, a divider and the edit pencil on the right. Controls are 32px
-   high (Skip next 32px square; More and the pencil 26px wide), labels 14px, icons 16px (the chrome type scale, ADR-0031 §5). The More menu opens upward
+   high (Skip next 32px square), labels 14px, icons 16px (the chrome type scale, ADR-0031 §5). The More menu opens upward
    and takes the top-bar menus' card and item styles (presenter-top-menus.css).
-   When the row runs short, fitBottomBar() in the template adds n1-n3 in order until it fits:
-   n1 centres the centre group between the side groups instead of on the window; n2 makes Focus
-   and Highlight icon-only; n3 makes Quick poll and Instant slide icon-only. */
-/* The frame's side padding is the drawn 12px (round-2 overrides: .presenter-root padding 10px
-   12px): with it the three groups fit side by side at 1440x900 with nothing collapsed, as drawn;
-   with the older 18px the right group ran 6px short and n1 applied at 1440 too. */
+   When the row runs short, fitBottomBar() makes the mode buttons and then the tools icon-only. */
 .presenter-root { padding-left: 12px; padding-right: 12px; }
 #presenterBottomBar {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
   height: 40px;
   min-height: 40px;
   box-sizing: border-box;
@@ -8863,8 +8880,10 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
 #presenterBottomBar .tw-nav-left,
 #presenterBottomBar .tw-nav-mid,
 #presenterBottomBar .tw-nav-right { display: flex; align-items: center; gap: 6px; min-width: 0; }
+#presenterBottomBar :is(.tw-nav-left, .tw-nav-right) { flex: 1 1 0; min-width: max-content; }
+#presenterBottomBar .tw-nav-mid { flex: 0 0 auto; }
 #presenterBottomBar .tw-nav-right { justify-content: flex-end; }
-#presenterBottomBar .tw-nav-sep { width: 1px; height: 22px; margin: 0 4px; flex: none; background: #ffffff1a; }
+#presenterBottomBar .tw-nav-sep { width: 1px; height: 22px; flex: none; background: #ffffff1a; }
 #presenterBottomBar .tw-nav-edit { display: inline-flex; flex: none; }
 #presenterBottomBar .tw-nav-edit:empty { display: none; }
 #presenterBottomBar .tw-nav-sep:has(+ .tw-nav-edit:empty) { display: none; }
@@ -8872,7 +8891,7 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
 /* A control: icon and label, 32px high; icon-only controls are 32px square. */
 #presenterBottomBar button,
 #presenterBottomBar .btn {
-  display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex: none;
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px; flex: 0 0 auto; min-width: 30px;
   height: 32px; padding: 0 12px; margin: 0; box-sizing: border-box;
   border: 1px solid var(--tb-line); border-radius: 7px; background: var(--tb-ctl); color: var(--tb-text);
   font: 500 14px/1 var(--tb-ui); white-space: nowrap; cursor: pointer;
@@ -8883,9 +8902,9 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
 #presenterBottomBar .tw-ico.tw-btn-ico { width: 16px; height: 16px; margin: 0; flex: none; vertical-align: middle; opacity: 1; }
 #presenterBottomBar button:has(> .tw-btn-label[hidden]),
 #presenterBottomBar #presenterMore { width: 32px; padding: 0; }
-/* More and the pencil are narrower, as drawn (26px wide, 32px high). */
+/* More and the pencil are icon-only. */
 #presenterBottomBar #presenterMore,
-#presenterBottomBar #twedit-btn { width: 26px; }
+#presenterBottomBar #twedit-btn { width: 30px; }
 #presenterBottomBar .tw-nav-wide { min-width: 120px; }
 #presenterBottomBar button.primary { background: #2f6db5; border-color: #2f6db5; color: #fff; font-weight: 600; }
 #presenterBottomBar button.primary:hover { background: #3a7cc6; border-color: #3a7cc6; }
@@ -8912,9 +8931,6 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
 #presenterBottomBar .tw-menu .tw-mi:disabled { cursor: default; }
 
 /* Collapse steps (fitBottomBar). */
-#presenterBottomBar.n1 { display: flex; }
-#presenterBottomBar.n1 .tw-nav-left,
-#presenterBottomBar.n1 .tw-nav-right { flex: 1 1 0; min-width: max-content; }
 #presenterBottomBar.n2 .tw-nav-mode,
 #presenterBottomBar.n3 .tw-nav-tool { width: 32px; padding: 0; }
 #presenterBottomBar.n2 .tw-nav-mode > .tw-btn-label,
@@ -8973,6 +8989,14 @@ figure.slide-figure.slide-video > .media-step-tap { position: absolute; left: 50
 .tw-tip.below { transform: translate(-50%, 0); }
 .tw-tip-key { color: #c9d6e2; }
 .tw-tip-key[hidden] { display: none; }
+
+@media (width < 1100px) {
+  #presenterBottomBar #twguide-chipwrap { display: none; }
+}
+@media (width < 900px) {
+  #presenterBottomBar :is(#outlineBtn, #presenterPrev, #presenterNext) { min-width: 30px; width: 32px; padding: 0; }
+  #presenterBottomBar :is(#outlineBtn, #presenterPrev, #presenterNext) > .tw-btn-label { display: none; }
+}
 /* End live with a board still open (feedback-boards ticket 06; drawn in
    docs/design/2026-09-28-feedback-boards/round-2/shots/D20-end-live-keep-open-1440x900.png):
    "End the live session?" with two choices, "Close the board now" and "Keep it open for late
@@ -10506,6 +10530,15 @@ body.presenter-mode.tw-predrawing .deck { display: block !important; position: f
     line-height: .9;
     letter-spacing: -.04em;
   }
+.feature-list .fl-inline-cross {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-inline-end: .35em;
+  vertical-align: -.12em;
+  color: var(--accent);
+}
+.feature-list .fl-inline-cross > svg { display: block; width: 100%; height: 100%; }
 
 /* ADR-0033 §5 (slide design round 2, ticket 07): columns too narrow for their words change shape.
    compiler/scripts/lib/narrow-columns.mjs decides and stamps the classes read here; nothing below
@@ -13586,7 +13619,7 @@ body.presenter-mode.tw-predrawing .deck { display: block !important; position: f
   width: 100% !important; height: 100% !important; display: block; color: inherit;
 }
 .slide[data-look="ocean"] :is(.feature-list.fl-cards > li > .fl-icon, .icon-row .ir-item > .ir-icon) svg,
-.slide[data-look="ocean"] :is(.feature-list.fl-cards > li > .fl-icon, .icon-row .ir-item > .ir-icon) svg * {
+.slide[data-look="ocean"] :is(.feature-list.fl-cards > li > .fl-icon, .icon-row .ir-item > .ir-icon) svg *:not([data-icon-cross], [data-icon-cross-halo]) {
   stroke-width: 2.5 !important; vector-effect: none !important;
 }
 
@@ -13798,7 +13831,7 @@ body.presenter-mode.tw-predrawing .deck { display: block !important; position: f
 }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-head-ico svg { width: 100%; height: 100%; }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid :is(.vs-head-ico, .vs-ico) svg,
-.slide[data-look="ocean"][data-layout="contrast"] .vs-grid :is(.vs-head-ico, .vs-ico) svg * { stroke-width: 2.5 !important; }
+.slide[data-look="ocean"][data-layout="contrast"] .vs-grid :is(.vs-head-ico, .vs-ico) svg *:not([data-icon-cross], [data-icon-cross-halo]) { stroke-width: 2.5 !important; }
 .slide[data-look="ocean"][data-layout="contrast"] .vs-grid .vs-row {
   display: flex !important; align-items: center; gap: 1.2cqw;
   margin: 0 5.6cqw !important; padding: 1.9cqw 0 !important; background: none !important;
@@ -15658,14 +15691,14 @@ figure.slide-video:has(> .tw-video-seek) > .video-enlarge { display: none; }
        Quick poll, Instant slide, Focus, and the Pointer / Highlight group (pressed while on), "…" More (opens upward;
        items keep the ids of the bar buttons they replaced, so their listeners run the command),
        and the edit pencil, which the edit bridge mounts in #presenterEditSlot. Every button runs
-       the function its key runs. The bar collapses by steps n1-n3 (fitBottomBar below). -->
+       the function its key runs. The bar collapses by steps n2-n3 (fitBottomBar below). -->
   <div class="presenter-controls tw-bottombar" id="presenterBottomBar" role="toolbar" aria-label="Presenter controls">
     <div class="tw-nav-left">
-      <button type="button" class="btn" id="outlineBtn">Outline</button>
+      <button type="button" class="btn" id="outlineBtn" aria-label="Outline">Outline</button>
     </div>
     <div class="tw-nav-mid">
-      <button type="button" class="btn tw-nav-wide" id="presenterPrev">Previous</button>
-      <button type="button" class="btn primary tw-nav-wide" id="presenterNext">Next</button>
+      <button type="button" class="btn tw-nav-wide" id="presenterPrev" aria-label="Previous">Previous</button>
+      <button type="button" class="btn primary tw-nav-wide" id="presenterNext" aria-label="Next">Next</button>
       <button type="button" class="btn" id="skipNextBtn">Skip next</button>
       <button type="button" class="btn" id="returnBtn" hidden>Return</button>
       <div class="presenter-media" id="presenterMedia" hidden>
@@ -20833,7 +20866,17 @@ figure.slide-video:has(> .tw-video-seek) > .video-enlarge { display: none; }
     boardUi = { controller, panel: null, pollId: null, dismissed: null, mode: "beside", child: null, childPanel: null, pinned: null, lastSlide: null };
     boardUi.panel = createBoardPanel({ doc: document, host, controller, icon: boardIcon, keys: boardKeysText(), mode: "beside", actions: boardActions(false) });
     controller.subscribe(() => { boardUi.panel.render(); boardUi.childPanel?.render(); syncBoardChrome(); });
-    window.addEventListener("resize", () => { if (boardUi.panel.isOpen()) boardUi.panel.render(); });
+    // Keep cards, focus and scroll positions in place while updating geometry.
+    window.addEventListener("resize", boardUi.panel.reposition);
+    // The fixed-position Board follows the presenter layout, including fullscreen restore,
+    // even when a window resize event hasn't updated its bounds.
+    const presenter = host.closest("#presenterRoot");
+    if (presenter && "ResizeObserver" in window) {
+      const layout = new ResizeObserver(boardUi.panel.reposition);
+      for (const node of [presenter, presenter.querySelector(".presenter-main"), els.presenterDivider]) {
+        if (node) layout.observe(node);
+      }
+    }
     window.addEventListener("pagehide", () => closeBoardWindow());
     const chip = document.getElementById("presenterBoardCount");
     if (chip) {
@@ -20892,6 +20935,7 @@ figure.slide-video:has(> .tw-video-seek) > .video-enlarge { display: none; }
       // The layout makes room first (the slide gives the right column to the panel), then the panel
       // is drawn and placed over it, and placed again once the grid has settled.
       document.getElementById("presenterRoot")?.setAttribute("data-board", show ? ui.mode : ui.mode === "window" && poll ? "window" : "");
+      if (show) placeBoardPanel(ui.panel.el, ui.mode);
       ui.panel.show(show);
       if (show) requestAnimationFrame(() => { if (ui.panel.isOpen()) placeBoardPanel(ui.panel.el, ui.mode); });
       syncBoardChrome();
@@ -20904,14 +20948,19 @@ figure.slide-video:has(> .tw-video-seek) > .video-enlarge { display: none; }
     const main = document.querySelector(".presenter-main")?.getBoundingClientRect();
     const divider = document.getElementById("presenterDivider")?.getBoundingClientRect();
     const bar = document.getElementById("presenterBottomBar")?.getBoundingClientRect();
-    const right = (presenter ? presenter.right : window.innerWidth) - 12;
-    const top = main ? main.top : 60;
-    const bottom = bar && bar.top > top + 200 ? bar.top - 14 : (main ? main.bottom : window.innerHeight - 70);
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const right = Math.max(0, Math.min(presenter?.right ?? width, width) - 12);
+    const top = Math.max(0, Math.min(main?.top ?? 60, height));
+    const bottom = Math.min(height, bar && bar.top > top + 200 ? bar.top - 14 : (main?.bottom ?? height - 70));
     let left;
     if (mode === "full") left = main ? main.left : 12;
     else if (divider && divider.width > 0 && divider.right < right - 300) left = divider.right + 14;
-    else left = right - Math.min(600, Math.max(360, window.innerWidth * 0.42));
-    Object.assign(root.style, { left: `${Math.round(left)}px`, top: `${Math.round(top)}px`, width: `${Math.round(right - left)}px`, height: `${Math.round(bottom - top)}px` });
+    else left = right - Math.min(600, Math.max(360, width * 0.42));
+    root.style.setProperty("--bp-right", `${Math.round(width - right)}px`);
+    root.style.setProperty("--bp-top", `${Math.round(top)}px`);
+    root.style.width = `${Math.round(Math.max(0, right - Math.max(0, left)))}px`;
+    root.style.height = `${Math.round(Math.max(0, bottom - top))}px`;
   }
   function setBoardMode(mode) {
     const ui = ensureBoardUi();
@@ -23510,7 +23559,7 @@ figure.slide-video:has(> .tw-video-seek) > .video-enlarge { display: none; }
   }
   if (document.readyState === "complete") predrawDiagrams();
   else window.addEventListener("load", predrawDiagrams, { once: true });
-  window.addEventListener("hashchange", () => {
+  function showSlideFromHash() {
     const id = location.hash.replace("#", "");
     if (!id) return;
     const beatIndex = beatIndexForHash(id, beats);
@@ -23520,7 +23569,11 @@ figure.slide-video:has(> .tw-video-seek) > .video-enlarge { display: none; }
     }
     const index = slides.findIndex((slide) => slide.dataset.id === id);
     if (index >= 0 && index !== state.index) goTo(index, 0);
-  });
+  }
+  window.addEventListener("hashchange", showSlideFromHash);
+  // The browser can paint between committing the frame's fragment and delivering hashchange.
+  // Update the active slide during the same-document commit in the editor preview.
+  if (isEditorPreview) window.addEventListener("popstate", showSlideFromHash);
   if (isReplay) {
     try { window.parent?.postMessage({ type: "tw-replay-ready" }, "*"); } catch {}
   }
@@ -24719,18 +24772,16 @@ figure.slide-video:has(> .tw-video-seek) > .video-enlarge { display: none; }
     topBarKey = topBarSignature(els.presenterTopBar);
   }
 
-  // What gives way when the bottom bar runs short (surfaces-drawn.md, "Bottom bar"): by default
-  // the centre group (Previous, Next, Skip next) is centred on the window; then, one step at a
-  // time until the three groups sit side by side at least 12px apart inside the bar, n1 centres
-  // it between the side groups instead, n2 makes Focus and the marking tools icon-only, n3 Quick poll and
-  // Instant slide. The CSS for each step is in compiler/assets/styles/presenter-bottom-bar.css.
+  // The side groups grow evenly while there is room to centre navigation. When the three groups
+  // can no longer fit with a 6px gap, n2 makes Focus and the marking tools icon-only, then n3 does
+  // the same for Quick poll and Instant slide. See compiler/assets/styles/presenter-bottom-bar.css.
   // Re-run when the window resizes or what the bar shows changes (Return, media or gallery
   // controls, the edit pencil arriving).
-  const BOTTOMBAR_STEPS = ["n1", "n2", "n3"];
+  const BOTTOMBAR_STEPS = ["n2", "n3"];
   function bottomBarFits(bar) {
     const box = bar.getBoundingClientRect();
     const extents = [...bar.children].map(barExtent).filter(Boolean);
-    for (let i = 1; i < extents.length; i++) if (extents[i - 1].right > extents[i].left - 12) return false;
+    for (let i = 1; i < extents.length; i++) if (extents[i - 1].right > extents[i].left - 5.5) return false;
     return extents.every((e) => e.left >= box.left - 0.5 && e.right <= box.right + 0.5);
   }
   function fitBottomBar() {

@@ -1,8 +1,9 @@
 import { readVideoMarker } from "./video-markers.mjs";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, realpath, stat } from "node:fs/promises";
 import { createReadStream } from "node:fs";
 import { createHash } from "node:crypto";
-import { basename, dirname, extname, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, resolve, sep } from "node:path";
+import { inlineWidgetDependencies, WIDGET_MAX_BYTES } from "./widget-dependencies.mjs";
 import { args, slugify, parseGridDims, escapeHtml } from "./01-cli-utils.mjs";
 import { titleRegimeForLayout, parseHeadingAttrs, parseTriggerLine, resolveAuthoredMode, parseCountdownDuration, timelineBlockFieldsFromStops, renderInline, accentForSectionName, accentForDeckColour, backgroundTintForName, resolveClaimStyle, CLAIM_STYLES, DECK_ACCENT_NAMES, VALID_SPLITS, deckLookForPalette, lookPaletteFor, sectionAccentMapForPalette } from "./02-triggers-layout.mjs";
 import { lexMarkdownBlocks, takeParagraphIcon } from "./03-markdown-lexer.mjs";
@@ -43,7 +44,7 @@ import { SECTION_ONLY_TRIGGER_KEYS } from "../triggers.mjs";
 import { readSectionColours, resolveSectionLeads, sectionLeadName } from "./section-leads.mjs";
 import { resolveStatementOptions } from "./statement-options.mjs";
 import { LIST_STYLES, cardsLayoutDecision, deckTriggerDefaultsFrom, foldChildLayoutNodes, impliedListStyle, nodeContentLinesAndAttrs, sectionDividerDecision, slideLayoutPlan } from "./authored-layout.mjs";
-import { pictureKeyForSlide } from "./10-projections.mjs";
+import { hasDesignContent, pictureKeyForSlide } from "./10-projections.mjs";
 import { checkPublicationFiles } from './publication-files.mjs';
 import { createAssetContainment, remoteReferenceUrl } from "./asset-containment.mjs";
 import { referenceFileName, shownReference } from "./shown-reference.mjs";
@@ -270,6 +271,7 @@ function adaptMarkdownOutline(markdown, fallbackTitle) {
       title: current.title,
       navTitle: current.title,
       html: markdownLinesToHtml(current.body, { stripParagraphIcons: true }),
+      designContent: hasDesignContent(lexMarkdownBlocks(current.body)),
       notes: markdownLinesToHtml(current.notes)
     });
   }
@@ -1222,6 +1224,7 @@ export function adaptMarkdownOutlineV2(markdown, fallbackTitle, defaults, run = 
       iconlistVariant,
       statementOptions,
       backgroundTint,
+      designContent: hasDesignContent(rawBlocks),
       sourceLine: slide.sourceLine, // 1-based line of this slide's heading (cursor↔strip sync)
       // Quote forms, ticket 10: the slide's `form` names a form (its own token or the talk's `triggers:`). Only then
       // does the phone text read a quoted paragraph and its source as a quote and its attribution (slide-script.mjs).
@@ -2110,7 +2113,13 @@ export function createMediaInlineBudget(options = {}) {
   const perVideo = positive(options.videoInlineLimitBytes) ?? VIDEO_INLINE_LIMIT_BYTES;
   const deckCap = positive(options.mediaInlineBudgetBytes) ?? Infinity;
   const largeMediaMode = options.largeMediaMode === "poster" ? "poster" : "asset-only";
+  // Published pages retain nested widget URIs even when ordinary slide media is externalised.
+  // Leave headroom below the 25 MiB page limit for the page, its scripts and its other content.
+  const widgetCap = options.limitPublishedWidgets ? 8 * 1024 * 1024 : Infinity;
+  const widgetMediaLimit = options.limitPublishedWidgets ? Math.min(perVideo, 4 * 1024 * 1024) : perVideo;
   let spent = 0;
+  let widgetSpent = 0;
+  const widgetAllowance = (reserve) => Math.max(0, Math.min(deckCap - spent - reserve, widgetCap - widgetSpent));
   return {
     largeMediaMode,
     // Unbounded decks skip the extra stat() the budget would otherwise need per image.
@@ -2120,7 +2129,15 @@ export function createMediaInlineBudget(options = {}) {
     // A per-video limit of 0 means "never inline video", which is what a backup export sets.
     allowsVideo(size) { return perVideo > 0 && size <= perVideo && spent + size <= deckCap; },
     allowsImage(size) { return spent + size <= deckCap; },
-    spend(size) { spent += size; }
+    spend(size) { spent += size; },
+    widgetAllowance,
+    allowsWidgetMedia(size) { return widgetMediaLimit > 0 && size <= widgetMediaLimit; },
+    spendWidget(size, reserve = 0) {
+      if (spent + reserve + size > deckCap || size > widgetCap - widgetSpent) return false;
+      spent += size + reserve;
+      widgetSpent += size;
+      return true;
+    }
   };
 }
 
@@ -2293,6 +2310,29 @@ async function inlineDataUri(absolute, mime) {
 export const EMBED_PAGE_POLICY = "default-src data: blob: http: https: 'unsafe-inline' 'unsafe-eval'; form-action http: https:";
 const EMBED_PAGE_POLICY_META = `<meta http-equiv="Content-Security-Policy" content="${EMBED_PAGE_POLICY}">`;
 
+// The search-row build needs only the title text, without inlining any media.
+async function readWidgetTitles(slides, sourceDir, containment) {
+  const titles = new Map();
+  async function locate(block) {
+    if (block?.type === "embed" && !remoteReferenceUrl(block.src) && /\.html?$/i.test(block.src ?? "")) {
+      let reading = titles.get(block.src);
+      if (!reading) {
+        reading = (async () => {
+          const file = await containment.reference(sourceDir, block.src);
+          if (!file.ok || (await stat(file.path)).size > 512 * 1024) return "";
+          return embedPageTitle(await readFile(file.path, "utf8"));
+        })().catch(() => "");
+        titles.set(block.src, reading);
+      }
+      const title = await reading;
+      if (title) block.pageTitle = title;
+    }
+    for (const child of block?.blocks ?? []) await locate(child);
+    for (const card of block?.cards ?? []) for (const child of card.blocks ?? []) await locate(child);
+  }
+  for (const slide of slides) for (const block of slide.blocks ?? []) await locate(block);
+}
+
 async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInlineBudget(), containment = createAssetContainment([sourceDir])) {
   const collected = []; // { absolute, name }
   if (!sourceDir) return collected;
@@ -2417,6 +2457,44 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
   // The policy is the first element of the lead embed-frame.mjs writes there (policy, referrer,
   // `about:srcdoc` base, the agent script).
   const withEmbedPolicy = (html) => withEmbedLead(html, EMBED_PAGE_POLICY_META);
+  let widgetRoot;
+  async function bundleWidget(source, location, slideId, svg = false) {
+    const folder = await (widgetRoot ??= realpath(sourceDir).then((path) => ({
+      lexical: resolve(sourceDir) + sep, real: path + sep
+    }), () => null));
+    const reserve = svg ? Buffer.byteLength(source) : 0;
+    if (!folder || Buffer.byteLength(source) > WIDGET_MAX_BYTES) {
+      return { text: source, omitted: false, charged: budget.spendWidget(0, reserve) };
+    }
+    const growthFactor = svg ? 4 / 3 : 1;
+    const attempt = async (allowance) => {
+      const skipped = new Set();
+      const missing = new Set();
+      const text = await inlineWidgetDependencies(source, location, containment, folder, {
+        maxBytes: Math.floor(allowance / growthFactor),
+        allowsMedia: (size) => budget.allowsWidgetMedia(size),
+        warn: (ref) => missing.add(containment.label(ref)),
+        omit: (ref) => skipped.add(containment.label(ref)),
+      });
+      return { text, skipped, missing };
+    };
+    const growth = (text) => Math.max(0, Math.ceil((Buffer.byteLength(text) - Buffer.byteLength(source)) * growthFactor));
+    let result = await attempt(budget.widgetAllowance(reserve));
+    // Two widgets on one slide can finish together. Claim against the current budget before returning
+    // either document; a losing attempt retries with the remaining allowance, then strips its deps.
+    let charged = budget.spendWidget(growth(result.text), reserve);
+    if (!charged) {
+      result = await attempt(budget.widgetAllowance(reserve));
+      charged = budget.spendWidget(growth(result.text), reserve);
+      if (!charged) {
+        result = await attempt(0);
+        charged = budget.spendWidget(0, reserve);
+      }
+    }
+    for (const ref of result.missing) model.warnings.push(`missing-widget-dependency:${slideId}:${ref}`);
+    for (const ref of result.skipped) model.warnings.push(`widget-media-omitted:${slideId}:${ref}`);
+    return { text: result.text, omitted: result.skipped.size > 0, charged };
+  }
   // Every block that has been through the visitor (pass 2 below skips these).
   const finished = new WeakSet();
   async function visitBlock(block, slideId) {
@@ -2472,23 +2550,32 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
       }
       const absolute = found?.real;
       if (mime) {
-        // Once the per-deck budget is spent every FURTHER media file stays a reference, images
-        // included: a talk can carry two hundred screenshots whose sum is the problem even when
-        // no single one is large enough to trip a per-file limit.
+        const assetOnly = () => {
+          const name = uniqueName(written);
+          collected.push({ absolute, name });
+          model.warnings.push(`media-budget-exhausted:${slideId}:${basename(written)}`);
+          return { ...block, src: `assets/${name}`, assetOnly: true };
+        };
+        // Test before the read to skip work, then check again when claiming the bytes. Other
+        // media on the same slide may have claimed some of the budget while this read was pending.
         if (budget.bounded) {
           let size = 0;
           try { size = (await stat(absolute)).size; } catch { /* a miss is reported by inlineDataUri below */ }
-          if (size && !budget.allowsImage(size)) {
-            const name = uniqueName(written);
-            collected.push({ absolute, name });
-            model.warnings.push(`media-budget-exhausted:${slideId}:${basename(written)}`);
-            return { ...block, src: `assets/${name}`, assetOnly: true };
-          }
+          if (!budget.allowsImage(size)) return assetOnly();
         }
         try {
           // The bytes are inlined VERBATIM — base64 of the exact file, never re-encoded. The
           // dimensions are read from the same buffer purely to cap display size at 1x.
+          if (mime === "image/svg+xml" && (await stat(absolute)).size <= WIDGET_MAX_BYTES) {
+            const raw = await readFile(absolute);
+            const source = raw.toString("utf8");
+            const bundled = await bundleWidget(source, found.lexical, slideId, true);
+            if (!bundled.charged) return assetOnly();
+            const bytes = bundled.text === source ? raw : Buffer.from(bundled.text);
+            return { ...block, src: `data:${mime};base64,${bytes.toString("base64")}`, widgetMediaOmitted: bundled.omitted };
+          }
           const { uri, dims, size } = await inlineDataUri(absolute, mime);
+          if (!budget.allowsImage(size)) return assetOnly();
           budget.spend(size);
           return { ...block, src: uri, ...(dims || {}) };
         } catch {
@@ -2544,8 +2631,10 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
       if (budget.allowsVideo(info.size)) {
         const inlined = await inlineDataUri(absolute, mime).catch(() => null);
         if (!inlined) return missing();
-        budget.spend(info.size);
-        return { ...out, src: inlined.uri };
+        if (budget.allowsVideo(inlined.size)) {
+          budget.spend(inlined.size);
+          return { ...out, src: inlined.uri };
+        }
       }
       const name = uniqueName(block.src);
       collected.push({ absolute, name });
@@ -2583,8 +2672,10 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
       if (budget.allowsVideo(info.size)) {
         const inlined = await inlineDataUri(absolute, AUDIO_MIME_TYPES.get(extname(found.lexical).toLowerCase()) || "audio/mpeg").catch(() => null);
         if (!inlined) return missing();
-        budget.spend(info.size);
-        return { ...out, src: inlined.uri };
+        if (budget.allowsVideo(inlined.size)) {
+          budget.spend(inlined.size);
+          return { ...out, src: inlined.uri };
+        }
       }
       const name = uniqueName(block.src);
       collected.push({ absolute, name });
@@ -2619,9 +2710,10 @@ async function inlineAndCollectAssets(model, sourceDir, budget = createMediaInli
         model.warnings.push(`missing-asset:${slideId}:${containment.label(block.src)}`);
         return { ...block, src: shownName(block.src), missing: true };
       }
-      const srcdoc = withEmbedPolicy(page);
+      const bundled = await bundleWidget(page, found.lexical, slideId);
+      const srcdoc = withEmbedPolicy(bundled.text);
       const pageTitle = embedPageTitle(page);
-      return { ...block, srcdoc, ...(pageTitle ? { pageTitle } : {}), shownName: shownName(block.src) };
+      return { ...block, srcdoc, ...(bundled.omitted ? { widgetMediaOmitted: true } : {}), ...(pageTitle ? { pageTitle } : {}), shownName: shownName(block.src) };
     }
     if (block.type === "image-claim") return { ...block, image: await visitBlock(block.image, slideId) };
     if (block.type === "cta-screenshots") {
@@ -2777,15 +2869,43 @@ export function withoutVideoRefs(root) {
   return root;
 }
 
+const AUTHORING_BLOCKS = new Set(["paragraph", "claim", "list", "feature-list", "table", "image"]);
+const AUTHORING_LAYOUTS = new Set(["list", "iconrow", "table", "text", "statement", "media", "copy-visual"]);
+
+async function prepareAuthoringSlide(model, sourcePath, target, options) {
+  const byId = model.slides.findIndex(slide => slide.id === target.slideId);
+  const index = byId >= 0 ? byId : target.headingLine == null ? -1
+    : model.slides.findIndex(slide => slide.sourceLine === target.headingLine);
+  const slide = model.slides[index];
+  if (!slide || !slide.sourceLine || !AUTHORING_LAYOUTS.has(slide.layout) || slide.html || slide.carousel ||
+      slide.containerMode || slide.poll || slide.preparesFor || slide.mode === "reveal" || slide.mode === "focus" ||
+      slide.imageSteps || slide.emphasisSteps || slide.countdownSeconds ||
+      !slide.blocks.every(block => AUTHORING_BLOCKS.has(block.type))) return null;
+
+  // Containers, transitions and generated continuation pictures can depend on other slides'
+  // DOM. Simple authored beats can use exactly the same art in a one-slide document.
+  const beats = model.beats.filter(beat => beat.slideId === slide.id);
+  if (beats.length !== 1 || beats[0].kind !== "slide" || Object.keys(beats[0]).length !== 2) return null;
+  if (model.slides.some(other => other !== slide && other.sourceLine === slide.sourceLine)) return null;
+
+  const sourceDir = dirname(resolve(sourcePath));
+  const containment = createAssetContainment(options.allowedAssetRoots ?? [sourceDir]);
+  await inlineAndCollectAssets({ slides: [slide], warnings: model.warnings }, sourceDir, createMediaInlineBudget(options), containment);
+  options.authoringSignal?.throwIfAborted();
+  const fullHtml = await buildDeckHtmlFromModel(model, index);
+  return fullHtml === null ? null : { slideId: slide.id, fullHtml };
+}
+
 async function prepareSourceModel(sourcePath, sourceText, explicitTitle, sourceStat, defaults, options = {}) {
   const fallbackTitle = explicitTitle || basename(sourcePath, extname(sourcePath));
+  const extension = extname(sourcePath).toLowerCase();
+  if (options.authoringSlide && (sourceStat?.isDirectory() || ![".md", ".markdown"].includes(extension))) return null;
   if (sourceStat?.isDirectory()) {
     const projectRoots = Array.isArray(options?.allowedAssetRoots) ? options.allowedAssetRoots : [resolve(sourcePath)];
     const model = await adaptSourceProject(sourcePath, explicitTitle, createAssetContainment(projectRoots, options.galleryAcquiredAssets));
     const fullHtml = await buildDeckHtmlFromModel(model);
     return { ...model, fullHtml };
   }
-  const extension = extname(sourcePath).toLowerCase();
   if (extension === ".html" || extension === ".htm") {
     const title = explicitTitle || extractTitle(sourceText, fallbackTitle);
     return {
@@ -2821,6 +2941,7 @@ async function prepareSourceModel(sourcePath, sourceText, explicitTitle, sourceS
       || pollDirectivesFor(sourceText.split(/\r?\n/)).directives.length > 0;
     const model = isV2 ? adaptMarkdownOutlineV2(sourceText, fallbackTitle, defaults, run) : adaptMarkdownOutline(sourceText, fallbackTitle);
     if (explicitTitle) model.title = explicitTitle;
+    if (options.authoringSlide) return isV2 ? prepareAuthoringSlide(model, sourcePath, options.authoringSlide, options) : null;
     // v1 (legacy, no frontmatter support) never sets warnAtMinutes/urgentAtMinutes itself — but the
     // Settings global default should still apply to it, so apply defaults here rather than leaving
     // v1 decks stuck on the hardcoded 5/1 fallback in buildDeckHtmlFromModel.
@@ -2874,6 +2995,7 @@ async function prepareSourceModel(sourcePath, sourceText, explicitTitle, sourceS
     // searching a large media vault never loads video/image Buffers into the MAIN process. This was
     // the whole-vault-compile that OOM-crashed the browser process (2026-07-20, [[talkweaver-vault-scale]]).
     if (options.projectionsOnly) {
+      await readWidgetTitles(model.slides, sourceDir, containment);
       return { ...model, assets: [], fullHtml: "", sourceDir: dirname(resolve(sourcePath)) };
     }
     const assets = await inlineAndCollectAssets(model, sourceDir, createMediaInlineBudget(options), containment);

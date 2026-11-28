@@ -1,5 +1,6 @@
 // ADR-0045 MD1/ST1/PA1. Hidden Electron, real outline writer and one shared history.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { chromium, _electron as electron } from 'playwright'
@@ -101,7 +102,7 @@ try {
     for (const win of BrowserWindow.getAllWindows()) win.setContentSize(1440, 900)
   })
   assert.ok(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(win => !win.isVisible())))
-  await page.locator('[data-talk-slug="markdown-garden"]').first().dblclick()
+  await openTalkByTitle(page, 'Garden')
   await page.getByRole('tab', { name: 'Slides', exact: true }).click()
   const panel = page.locator('.tw-structure-panel')
   const inspector = page.locator('.tw-inspector .tw-right-who')

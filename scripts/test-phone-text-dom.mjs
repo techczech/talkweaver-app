@@ -120,6 +120,36 @@ const handoutPath = await buildHandout(outline, 'phone-text')
 const RAW = [/\*\*/, /\{icon=/i, /\[qr:/i, /\\\*/, /\{w=/]
 const browser = await chromium.launch({ headless: true })
 try {
+  const sizedHandout = await buildHandout([
+    '---', 'title: Slide type sizes', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+    '### Everyone is welcome {statement}{id=welcome}', '', 'Everyone is welcome', '',
+    '### Meeting agenda {list}{id=agenda}', '', '- Pick a date', '- Find a room', '',
+  ].join('\n'), 'slide-sizes')
+  const desktopStage = await browser.newPage({ viewport: { width: 1280, height: 900 } })
+  const phoneCards = await browser.newPage({ viewport: { width: 390, height: 800 } })
+  await phoneCards.goto(pathToFileURL(sizedHandout).href)
+
+  async function textToSlideWidth(slide, selector) {
+    const text = slide.locator(selector).first()
+    await text.waitFor({ state: 'visible' })
+    return text.evaluate(el => {
+      const slide = el.closest('.slide')
+      const drawnWidth = slide.getBoundingClientRect().width
+      const ancestorScale = drawnWidth / slide.offsetWidth
+      return parseFloat(getComputedStyle(el).fontSize) * ancestorScale / drawnWidth
+    })
+  }
+
+  for (const [id, selector] of [['welcome', '.layout-statement > p'], ['agenda', '.slide-head h1']]) {
+    await desktopStage.goto(pathToFileURL(sizedHandout).href + '#' + id)
+    const desktop = await textToSlideWidth(desktopStage.locator(`.stage > .slide.active[data-id="${id}"]`), selector)
+    const phone = await textToSlideWidth(phoneCards.locator(`.pslide-inner > .slide[data-id="${id}"]`), selector)
+    assert.ok(Math.abs(phone / desktop - 1) <= 0.1, `${id}: phone ${phone} vs desktop ${desktop} of slide width`)
+    console.log(`${id}: phone and desktop text take ${(phone * 100).toFixed(2)}% and ${(desktop * 100).toFixed(2)}% of slide width`)
+  }
+  await desktopStage.close()
+  await phoneCards.close()
+
   const page = await browser.newPage({ viewport: { width: 360, height: 740 } })
   const errors = []
   page.on('pageerror', (e) => errors.push(String(e)))

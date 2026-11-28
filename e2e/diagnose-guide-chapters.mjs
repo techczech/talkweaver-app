@@ -11,7 +11,7 @@
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-guide-chapters.mjs
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle, showTalksBeforeOpening } from './lib/talklist.mjs'
 import { deriveChapters } from '../src/shared/guide-chapters.ts'
 import { chapterHistory, chapterHistoryText, guideLearnFrom } from '../src/shared/guide-learn.ts'
 import { fileURLToPath } from 'url'
@@ -68,7 +68,6 @@ let exitCode = 0
 try {
   let { app, page } = await launch()
   try {
-    await ensureTalksMode(page)
     await openTalkByTitle(page, 'Alpha Talk')
     await page.waitForSelector('.cm-content', { timeout: 8000 })
     await page.locator('[data-guide-button]').click()
@@ -169,8 +168,7 @@ try {
   // The record survives a restart.
   ;({ app, page } = await launch())
   try {
-    await page.waitForSelector('[data-guide-button]', { timeout: 10000 })
-    await page.locator('[data-guide-button]').click()
+    await showTalksBeforeOpening(page)
     await page.waitForSelector('[data-chapter-row]', { timeout: 6000 })
     const saved = learnOnDisk()
     const expected = chapterHistoryText(chapterHistory(saved, write))

@@ -13,7 +13,7 @@ import { reportTriggerMergeWarnings } from '../../../shared/trigger-line'
 import { defaultTitlePlacementForLayout } from '../../../shared/deck-frame'
 
 export type PanelEdit = { layout?: string; options?: readonly LayoutOptionChoice[]; reset?: readonly string[]; clearRow?: boolean; structure?: ListLayoutStructure }
-export type Design = PanelEdit & { label: string; why?: string; unavailable?: string; current?: boolean; reapply?: boolean; check?: LayoutPreviewCheck }
+export type Design = PanelEdit & { label: string; why?: string; unavailable?: string; ariaDisabled?: boolean; current?: boolean; reapply?: boolean; check?: LayoutPreviewCheck }
 
 export const option = (group: string, token: string): LayoutOptionChoice => ({ group, token })
 export type PictureSide = 'left' | 'right' | 'above'
@@ -94,6 +94,14 @@ export const DESIGN_PAGES: Readonly<Record<string, string>> = {
   terminal: 'Terminal simulation', 'terminal-agent': 'Terminal simulation', carousel: 'Subslides'
 }
 
+const POINT_DESIGN_NAMES: Readonly<Record<string, string>> = {
+  list: 'Title and points', iconlist: 'Icon list', numbered: 'Numbered'
+}
+
+export function designName(layout: string, registryLabel: string): string {
+  return POINT_DESIGN_NAMES[layout] ?? DESIGN_PAGES[layout] ?? registryLabel
+}
+
 export const OWN_LABELS: Readonly<Record<string, string>> = {
   'quote-form': 'Quote form', variant: 'Variant', form: 'Form', 'cards-icons': 'Icons on the cards',
   'timeline-mode': 'Shape', direction: 'Direction', 'chart-shape': 'Chart shape',
@@ -102,7 +110,7 @@ export const OWN_LABELS: Readonly<Record<string, string>> = {
   'poll-type': 'Type', 'poll-results': 'Results', 'poll-skip': 'People who skip a row'
 }
 
-export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, model: InspectorModel, block: string,
+export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, model: InspectorModel,
   hasLogos: boolean, pictureSide: PictureSide | null): Design[] {
   const layout = row.has_table && !model.layoutName ? 'table' : model.layoutName ?? 'list'
   const tokens = model.selectedTokens
@@ -133,13 +141,13 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
     ? listLayoutCandidates(text, slide, hasLogos) : null
   if (own && !candidates && layout !== 'carousel') return [
     { label: own, why: 'What this slide is now', current: true },
-    { label: 'Title and points', unavailable: 'Would lose what makes this a ' + own.toLowerCase() }
+    { label: 'Title and points', unavailable: 'Needs a list of points' }
   ]
   if (layout === 'carousel') return [
     { label: 'Carousel', why: 'One subslide at a time', current: row.title_layout !== 'left' },
     { label: 'Title at the side', why: 'A coloured panel for the title', options: titlePlace('side'), current: row.title_layout === 'left' }
   ]
-  if (!block.split('\n').slice(1).some(line => line.trim() && !/^\s*\{/.test(line))) return []
+  if (!(row.has_design_content ?? (row.bullet_count || row.image_count || row.has_table))) return []
 
   const hasPicture = row.image_count > 0
   const pictureAbove: Design = {
@@ -164,18 +172,18 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
       (!hasPicture || (pictureSide !== null && `image=${pictureSide}` === side))
   })
   const designs: Design[] = [
-    list('Title and points', 'The plain start', 'plainlist'),
+    list(POINT_DESIGN_NAMES.list, 'The plain start', 'plainlist'),
     ...(hasLogos ? [
       list('Logo list', 'These names have logos', 'logolist', 'iconlist=list'),
       list('Logo boxes', 'One box per name', 'logolist', 'iconlist=boxes')
     ] : []),
-    list(hasPicture ? 'Icon bands, picture right' : 'Icon boxes', 'One box per point', 'iconlist', 'iconlist=boxes'),
-    list('Icon list', 'An icon beside each point', 'iconlist', 'iconlist=list'),
+    list(hasPicture ? 'Icon bands + picture' : 'Icon boxes', 'One box per point', 'iconlist', 'iconlist=boxes'),
+    list(POINT_DESIGN_NAMES.iconlist, 'An icon beside each point', 'iconlist', 'iconlist=list'),
     ...(hasPicture ? [
       list('Picture on the left', 'Picture first, then points', 'iconlist', 'iconlist=list', 'top', 'image=left'),
       ...(row.bullet_count > 0 || layout === 'iconrow' ? [pictureAbove] : [])
     ] : []),
-    list('Numbered', 'When the order matters', 'numbered'),
+    list(POINT_DESIGN_NAMES.numbered, 'When the order matters', 'numbered'),
     ...(!hasPicture ? [{ label: 'Row of icons', why: 'Light, no boxes', layout: 'iconrow', current: layout === 'iconrow' }] : []),
     list('Title at the side', 'A coloured panel for the title', 'plainlist', '', 'side')
   ]
@@ -185,7 +193,7 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
       'Title and points': { layout: 'list', selector: '.fl-plain', title: 'top' },
       'Icon boxes': { layout: 'list', selector: '.fl-cards:not(.fl-numbered)', title: 'top' },
       'Icon list': { layout: 'list', selector: '.fl-iconlist-list', title: 'top' },
-      'Icon bands, picture right': { layout: 'list', selector: '.fl-cards:not(.fl-numbered)', title: 'top' },
+      'Icon bands + picture': { layout: 'list', selector: '.fl-cards:not(.fl-numbered)', title: 'top' },
       'Picture on the left': { layout: 'list', selector: '.fl-iconlist-list', title: 'top' },
       'Picture above': { layout: 'iconrow' },
       'Logo list': { layout: 'list', selector: '.feature-list:not(.fl-plain)' },
@@ -194,17 +202,19 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
       'Title at the side': { layout: 'list', selector: '.fl-plain', title: 'left' }
     }
     const words = candidates[0].check.words
-    const refused = new Set(candidates.filter(candidate => candidate.reason).map(candidate => candidate.label))
-    const inherited = designs.filter(design => pointChecks[design.label] && !refused.has(design.label)).map(design => ({
-      ...design, check: design.current ? undefined : { ...pointChecks[design.label], words }
+    const refusals = new Map(candidates.filter(candidate => candidate.reason).map(candidate => [candidate.label, candidate.reason]))
+    const inherited = designs.filter(design => pointChecks[design.label]).map(design => ({
+      ...design, unavailable: design.current ? undefined : refusals.get(design.label),
+      check: design.current || refusals.has(design.label) ? undefined : { ...pointChecks[design.label], words }
     }))
     const other = candidates.flatMap((candidate): Design[] => {
-      if (candidate.reason || (byName.has(candidate.label) && candidate.layout !== 'iconrow') || candidate.layout === 'plainlist') return []
-      const current = candidate.layout === layout && !candidate.structure
+      if ((byName.has(candidate.label) && candidate.layout !== 'iconrow') || candidate.layout === 'plainlist') return []
+      const current = candidate.layout === layout && !candidate.structure && !candidate.reason
         && (candidate.options ?? []).every(choice => choice.token === (tokens[choice.group] ?? ''))
         && (candidate.layout !== 'annotated' || listStyle === 'annotated')
       return [{ label: candidate.label, layout: candidate.layout, options: candidate.options,
-        structure: candidate.structure, why: candidate.whatChanges, current, check: current ? undefined : candidate.check }]
+        structure: candidate.structure, why: candidate.whatChanges, current, unavailable: candidate.reason,
+        check: current || candidate.reason ? undefined : candidate.check }]
     })
     const all = [...inherited, ...other]
     if (!all.some(design => design.current)) {
@@ -223,11 +233,11 @@ export function designsFor(text: string, slide: SlideRef, row: ProjectionRow, mo
   for (const candidate of suggested) {
     if (represented.has(candidate.layout)) continue
     const entry = LAYOUTS.find(item => item.name === candidate.layout)
-    if (entry) designs.push({ label: DESIGN_PAGES[entry.name] ?? entry.label, why: candidate.why, layout: entry.name })
+    if (entry) designs.push({ label: designName(entry.name, entry.label), why: candidate.why, layout: entry.name })
   }
   if (!designs.some(design => design.current)) {
     const entry = LAYOUTS.find(item => item.name === layout)
-    if (entry) designs.unshift({ label: DESIGN_PAGES[entry.name] ?? entry.label, why: 'What this slide is now', current: true })
+    if (entry) designs.unshift({ label: designName(entry.name, entry.label), why: 'What this slide is now', current: true })
   }
   for (const [name, label, reason] of [['timeline', 'Timeline', 'Needs dates in the points'], ['table', 'Table', 'Needs rows and columns']]) {
     if (!designs.some(design => design.label === label)) {

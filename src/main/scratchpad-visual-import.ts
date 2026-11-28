@@ -54,7 +54,7 @@ export function createScratchVisualImporter(deps: ScratchVisualImportDeps): (req
     try { copied = await deps.copyIntoAssets(path, outlinePath, kind === 'svg' ? 'svg' : 'html') } catch { copied = { ok: false, reason: 'write-failed', message: '' } }
     if (!copied.ok) return { ok: false, error: VISUAL_TEXT.copy(kind === 'svg' ? 'SVG' : 'page', copied.reason === 'not-html' ? '' : copied.message) }
     if (kind === 'svg') return { ok: true, line: `![](${copied.embedPath})` }
-    return { ok: true, line: `[Embed: ${copied.embedPath}]`, page: { embedPath: copied.embedPath, how: copied.how, localReferences: copied.localReferences } }
+    return { ok: true, line: `[Embed: ${copied.embedPath}]`, page: { embedPath: copied.embedPath, how: copied.how, localReferences: copied.localReferences, ...(copied.dependenciesCopied ? { dependenciesCopied: copied.dependenciesCopied } : {}) } }
   }
 }
 

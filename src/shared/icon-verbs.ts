@@ -32,6 +32,7 @@
 //   (c) the line's visible text is the same: the slide's title, and the block's text.
 // Otherwise the outline comes back unchanged with a reason. If the facts throw, the same.
 // (The line edits are icon-verbs-edits.ts; the check is icon-verbs-verify.ts.)
+import { iconBaseKey } from '../../compiler/scripts/lib/icon-cross.mjs'
 import { listItemIconTokenAt } from '../../compiler/scripts/lib/03-markdown-lexer-core.mjs'
 import { headingLineWith, lineWithNewToken, spliceOf, tokenLineWith } from './icon-verbs-edits.ts'
 import { isTalkTitle, linesOf, slideOf, verified, type Check, type IconChange, type IconLineKind, type Lines } from './icon-verbs-verify.ts'
@@ -231,11 +232,23 @@ function write(outline: string, line: number, icon: string | null): IconWrite {
 export function setLineIcon(outline: string, line: number, icon: string, known: (key: string) => boolean): IconWrite {
   const text = String(outline ?? '')
   try {
-    if (typeof icon !== 'string' || !ICON_KEY_RE.test(icon) || !known(icon)) return refuse(text, 'unknown-icon')
+    if (typeof icon !== 'string') return refuse(text, 'unknown-icon')
+    const key = iconBaseKey(icon)
+    if (!ICON_KEY_RE.test(key) || !known(key)) return refuse(text, 'unknown-icon')
     return write(text, line, icon)
   } catch {
     return refuse(text, 'facts-failed')
   }
+}
+
+/** Change the treatment of an already-authored icon, including a bare name. */
+export function setExistingLineIconCross(outline: string, line: number, icon: string): IconWrite {
+  const state = lineIconState(outline, line)
+  const key = iconBaseKey(icon)
+  if (!state.ok || !state.key || iconBaseKey(state.key) !== key || !/^[A-Za-z0-9:._-]+$/.test(key)) {
+    return refuse(outline, 'unknown-icon')
+  }
+  return write(outline, line, icon)
 }
 
 /** Remove the line's icon token and the one space before it. */

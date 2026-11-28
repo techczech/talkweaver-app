@@ -48,7 +48,6 @@ try {
     await page.waitForTimeout(400)
   }
   await size(1440, 900)
-  await ensureTalksMode(page)
   await openTalkByTitle(page, 'Alpha Talk')
   await page.waitForSelector('.cm-content', { timeout: 8000 })
   await ensureTalksMode(page)

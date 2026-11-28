@@ -10,6 +10,7 @@
 //      appears when the session is live".
 // TW_SHOTS_DIR=<dir> saves a screenshot of the window per state.
 import { _electron as electron } from 'playwright'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { join } from 'path'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
@@ -89,7 +90,7 @@ try {
   const settle = async (ms = 2600) => { await page.waitForTimeout(ms) }
 
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 900))
-  await page.locator('.tl-row').first().dblclick()
+  await openTalkByTitle(page, 'Board authoring')
   await page.waitForTimeout(3000)
   if (!(await page.locator('.tw-inspector').count())) await page.keyboard.press('Meta+p') // the Inspector is the sidebar's default tab
   await page.waitForTimeout(1500)

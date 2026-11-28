@@ -6,7 +6,7 @@ import ts from "typescript";
 import { SECTION_ONLY_TRIGGER_KEYS, TRIGGER_DICTIONARY, VALUE_TRIGGER_DICTIONARY, resolveDynamicTrigger } from "../compiler/scripts/triggers.mjs";
 import { parseHeadingAttrs } from "../compiler/scripts/lib/02-triggers-layout.mjs";
 import { prepareSource } from "../compiler/scripts/lib/08-source-adapters.mjs";
-import { LAYOUTS, isPickerEligible } from "../src/shared/layout-registry/entries.ts";
+import { GLOBAL_OPTION_GROUPS, LAYOUTS, isPickerEligible } from "../src/shared/layout-registry/entries.ts";
 
 const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const registryPath = join(root, "src/shared/layout-registry/entries.ts");
@@ -68,6 +68,20 @@ function compilerAcceptsTrigger(trigger) {
     warning.startsWith("unknown-trigger:") || warning.startsWith("unresolved-trigger:")
   );
 }
+
+// More page wording is independent of the trigger strings.
+const retiredLabels = new Set(['Deck default', 'Nostep', 'Arrival', 'Stepping']);
+for (const group of [...GLOBAL_OPTION_GROUPS, ...LAYOUTS.flatMap(layout => layout.options ?? [])]) {
+  for (const label of [group.label, group.sectionLabel, ...group.values.map(value => value.label)]) {
+    assert(!retiredLabels.has(label), `retired option label: ${label}`);
+  }
+}
+const statementGroups = LAYOUTS.find(layout => layout.name === 'statement').options;
+const moreLabels = [
+  ...statementGroups,
+  ...GLOBAL_OPTION_GROUPS.filter(group => ['background', 'arrival-mode', 'stepping', 'image-steps'].includes(group.key))
+].map(group => group.sectionLabel ?? group.label);
+assert.equal(new Set(moreLabels).size, moreLabels.length, 'the statement More page has distinct group names');
 
 const entries = extractLayouts();
 const sampler = readFileSync(samplerPath, "utf8");

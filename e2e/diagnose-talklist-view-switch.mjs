@@ -10,6 +10,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync, realpathSync } from 'nod
 import { join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
+import { showTalksBeforeOpening } from './lib/talklist.mjs'
 
 const root = mkdtempSync(join(realpathSync(tmpdir()), 'tw-talklist-view-switch-'))
 const userData = join(root, 'userData'), vault = join(root, 'vault')
@@ -44,6 +45,7 @@ async function launch() {
   page.on('pageerror', (error) => errors.push(`pageerror: ${error.message}`))
   page.on('console', (msg) => { if (msg.type() === 'error') errors.push(`console: ${msg.text()}`) })
   await page.setViewportSize({ width: 1512, height: 948 }).catch(() => {})
+  await showTalksBeforeOpening(page)
   await page.locator('.tl-tree [data-talk-slug]').first().waitFor()
   return { app, page, errors }
 }

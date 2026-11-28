@@ -86,8 +86,8 @@ async function waitFor(page, fn, arg, timeout = 15000) {
 /** Window 1 on Alpha Talk with the example listed; window 2 on The Saturday market. */
 async function setUp(p) {
   const { app, page } = await launch(p)
-  await ensureTalksMode(page)
   await openTalkByTitle(page, 'Alpha Talk')
+  await ensureTalksMode(page)
   const opened = await page.evaluate(() => window.tw.vault.openExample())
   if (!opened.ok) throw new Error(`open example: ${opened.message}`)
   await exampleHeader(page).waitFor({ state: 'visible', timeout: 15000 })

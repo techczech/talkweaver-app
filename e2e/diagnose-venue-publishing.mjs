@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { _electron as electron } from 'playwright'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -39,7 +40,7 @@ try {
   })
   const editor = await app.firstWindow()
   await editor.waitForLoadState('domcontentloaded')
-  await editor.getByText('Venue publish probe', { exact: true }).first().click()
+  await openTalkByTitle(editor, 'Venue publish probe')
   await editor.waitForSelector('.workspace')
   await editor.evaluate(() => {
     window.__copiedVenueLink = ''

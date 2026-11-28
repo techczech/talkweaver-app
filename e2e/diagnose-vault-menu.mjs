@@ -26,7 +26,7 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && TW_E2E=1 node e2e/diagnose-vault-menu.mjs
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
-import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle, showTalksBeforeOpening } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, writeFileSync } from 'fs'
@@ -84,7 +84,7 @@ const toFolderPicker = async () => {
 }
 
 try {
-  await ensureTalksMode(page)
+  await showTalksBeforeOpening(page)
   await header('Personal').waitFor({ state: 'attached', timeout: 10000 })
 
   // ── (A) hidden with one open vault ──
@@ -121,8 +121,7 @@ try {
   record('the choice is remembered', stored === oxfordId)
   await page.reload()
   await page.waitForLoadState('domcontentloaded')
-  await page.waitForTimeout(1500)
-  await ensureTalksMode(page)
+  await showTalksBeforeOpening(page)
   await header('Oxford AICC').waitFor({ state: 'attached', timeout: 10000 })
   record('…across a reload', (await showBtn().getAttribute('data-show-value')) === oxfordId && !(await hasTalk('Metaphor talk 2026')))
   await page.locator('[data-show-clear]').click()

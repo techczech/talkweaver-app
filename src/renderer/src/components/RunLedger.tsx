@@ -3,6 +3,7 @@
 // whether its page is still reachable, the polls, the feedback board, the instant slides, the questions and the
 // reactions. Read and write paths are History's, unchanged: the same window.tw.history / window.tw.recording calls,
 // the same Run files. Nothing here writes a Run that History did not.
+import { handoutAddressLabel } from '../../../shared/publish-status'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Clock, Copy, ExternalLink, FileText, HardDrive, Image as ImageIcon, Laptop, Link2, ListPlus, Mic, Pencil, Play, Timer, Type, VolumeX, Zap } from 'lucide-react'
 import type { HistoryLiveCheck, RecordingKind, RecordingSession, RunInstantSlide } from '../../../preload/index'
@@ -469,7 +470,7 @@ export function RunLedger({ source, version, onOpenStudio, onOpenNotes, onChange
             <span className="rl-ctl rl-ho">
               {handoutUrl ? (
                 <>
-                  <button type="button" className="tw-btn tw-btn--text rl-url" data-run-open-handout title={`${handoutUrl} (O)`} onClick={() => { void window.tw.shell.openExternal(handoutUrl); flash('Opening handout in your browser') }}>{displayUrl(handoutUrl)}</button>
+                  <button type="button" className="tw-btn tw-btn--text rl-url" data-run-open-handout title={`${handoutAddressLabel(handoutUrl)} (O)`} onClick={() => { void window.tw.shell.openExternal(handoutUrl); flash('Opening handout in your browser') }}>{displayUrl(handoutAddressLabel(handoutUrl))}</button>
                   <button type="button" className="tw-btn tw-btn--quiet tw-btn--sm tw-btn--icon" data-run-copy-handout aria-label="Copy handout link" title="Copy handout link (C)" onClick={() => { void navigator.clipboard?.writeText(handoutUrl); flash('Handout link copied') }}><Copy aria-hidden /></button>
                   <LiveBadge live={live} onRecheck={() => { void checkLive(handoutUrl, true).then((res) => flash(`Handout re-checked — ${res.status === 'live' ? 'still live' : 'offline'}`)) }} />
                 </>

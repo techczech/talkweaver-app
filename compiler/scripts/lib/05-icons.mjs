@@ -1,3 +1,4 @@
+import { crossIconSvg, iconBaseKey, iconIsCrossed, withIconCross } from "./icon-cross.mjs";
 import { readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { scriptDir, escapeHtml } from "./01-cli-utils.mjs";
@@ -1140,7 +1141,12 @@ export const ICON_FALLBACK_PREFIX = "fallback:";
 //     ordinary trailing braces ("- the set {a, b}") as literal text, and a bare typo falls through
 //     to Layer 1 auto-assignment as before.
 export function normalizeIconOverrideKey(raw) {
-  const v = String(raw).trim();
+  const key = String(raw).trim();
+  const resolved = normalizePlainIconKey(iconBaseKey(key));
+  return resolved ? withIconCross(resolved, iconIsCrossed(key)) : null;
+}
+
+function normalizePlainIconKey(v) {
   if (!v) return null;
   if (v.startsWith("lucide:")) return _lucide[v.slice(7)] ? v : `${ICON_FALLBACK_PREFIX}${v}`;
   if (v.startsWith("svgl:")) return isBrandRenderable(v.slice(5)) ? v : `${ICON_FALLBACK_PREFIX}${v}`;
@@ -1231,6 +1237,9 @@ function assignFeatureIconsV3(items, vocab, sources = null, overrides = null) {
     }
     const conceptKey = conceptKeyForItem(items[idx], sources);
     if (conceptKey == null) { assigned[idx] = null; continue; }
+    // A focused preview can draw authored pins with an empty vocabulary, but automatic
+    // assignments depend on the concepts and glyphs used by earlier slides.
+    lex.onAutomaticIcon?.();
     // Concept already in the lexicon → REUSE its icon (deck-wide consistency) — unless that
     // glyph is already showing on this slide for a different item (→ pass 2 diversifies).
     if (lex.byConcept.has(conceptKey)) {
@@ -1694,8 +1703,10 @@ export function applySlideMonochrome(html) {
     (svg) => {
       if (/\bdata-mono\b/.test(svg)) return svg; // already a silhouette — do not re-process
       const key = (svg.match(/\bdata-brand\s*=\s*"([^"]*)"/i) || [])[1];
-      if (key && simpleIconsTwin(key)) return simpleIconsBrandSvg(key);
-      return stripBrandColour(svg);
+      const crossed = /<line data-icon-cross\b/.test(svg);
+      const mark = crossed ? svg.replace(/<line data-icon-cross(?:-halo)?\s[^>]*\/>/g, "") : svg;
+      const mono = key && simpleIconsTwin(key) ? simpleIconsBrandSvg(key) : stripBrandColour(mark);
+      return crossed ? crossIconSvg(mono) : mono;
     }
   );
 }
@@ -1709,6 +1720,11 @@ export function applySlideMonochrome(html) {
 // "fallback:<name>"     → neutral placeholder for an explicit-but-unknown author pin
 export function iconSvg(key, opts = {}) {
   if (!key) return "";
+  if (iconIsCrossed(key)) return crossIconSvg(renderIconSvg(iconBaseKey(key), opts));
+  return renderIconSvg(key, opts);
+}
+
+function renderIconSvg(key, opts) {
   if (key.startsWith("monogram:")) {
     // Honest fallback: a neutral rounded-square chip holding the company's first letter.
     // Sits in the same .fl-icon box as a real logo (.fl-svg-brand). Pure render, no network.

@@ -1,5 +1,6 @@
 // ADR-0045 SK1–SK4, SP1 and CA1. Synthetic vault only, real hidden Electron and disk bytes.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -55,8 +56,13 @@ try {
   }
   const button = (name) => page.getByRole('button', { name, exact: typeof name === 'string' })
   const editor = page.getByRole('textbox', { name: 'Sketch text' })
-  await page.getByLabel('Name of the talk').fill('Community Garden Update')
-  await button(/Start with an outline/).click()
+  const startScreen = page.getByRole('region', { name: 'Vault Explorer', exact: true })
+  await startScreen.getByRole('button', { name: /Make a vault in Documents/ }).click()
+  const newTalk = startScreen.getByRole('button', { name: 'New talk', exact: true })
+  await newTalk.waitFor()
+  if (await newTalk.getAttribute('aria-expanded') === 'false') await newTalk.click()
+  await startScreen.getByLabel('Name of the talk').fill('Community Garden Update')
+  await startScreen.getByRole('button', { name: /Start with an outline/ }).click()
   await editor.waitFor()
   assert.equal(await editor.inputValue(), '')
   const start = readFileSync(outline)
@@ -177,7 +183,7 @@ try {
   await button('Create').click()
   await page.locator('.workspace-view-titlebar').getByRole('button', { name: 'Garden Supplies', exact: true }).waitFor()
   await page.getByRole('tab', { name: 'Talks', exact: true }).click()
-  await page.locator('[data-talk-slug="community-garden-update"]').first().dblclick()
+  await openTalkByTitle(page, 'Community Garden Update')
   await page.locator('.workspace-view-titlebar').getByRole('button', { name: 'Community Garden Update', exact: true }).waitFor()
   await button(/^Slide Scratchpad, \d+\. Expand/).click()
   await button('Dock to the right').click()

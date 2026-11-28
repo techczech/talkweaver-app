@@ -98,13 +98,13 @@ function bogusCommentEnd(text, at) {
 }
 
 /**
- * Visit each HTML start tag of a document's text, in order: `visit({ name, attributes, contentStart,
+ * Visit each HTML start tag of a document's text, in order: `visit({ name, attributes, attributeLocations, contentStart,
  * contentEnd })` with the tag name in lower case, its attribute names (lower case) mapped to their
  * raw values, and, for an element whose content is not markup, where that content starts and ends.
  * Comments, the doctype, end tags and the content of those elements are skipped. A visitor that
  * returns true stops the scan.
  */
-function scanStartTags(html, visit) {
+export function scanStartTags(html, visit, scanSvg = false) {
   const text = String(html ?? "");
   const lower = text.toLowerCase();
   let i = 0;
@@ -123,6 +123,7 @@ function scanStartTags(html, visit) {
     while (j < text.length && !HTML_SPACE.includes(text[j]) && text[j] !== "/" && text[j] !== ">") j += 1;
     const name = lower.slice(lt + 1, j);
     const attributes = new Map();
+    const attributeLocations = new Map();
     for (;;) {
       while (j < text.length && (HTML_SPACE.includes(text[j]) || text[j] === "/")) j += 1;
       if (j >= text.length) break;
@@ -132,31 +133,37 @@ function scanStartTags(html, visit) {
       while (j < text.length && !HTML_SPACE.includes(text[j]) && text[j] !== "/" && text[j] !== ">" && text[j] !== "=") j += 1;
       const attribute = lower.slice(nameStart, j);
       let value = "";
+      let start = j;
       while (j < text.length && HTML_SPACE.includes(text[j])) j += 1;
       if (text[j] === "=") {
         j += 1;
         while (j < text.length && HTML_SPACE.includes(text[j])) j += 1;
         if (text[j] === '"' || text[j] === "'") {
           const close = text.indexOf(text[j], j + 1);
+          start = j + 1;
           value = text.slice(j + 1, close < 0 ? text.length : close);
           j = close < 0 ? text.length : close + 1;
         } else {
           const valueStart = j;
+          start = j;
           while (j < text.length && !HTML_SPACE.includes(text[j]) && text[j] !== ">") j += 1;
           value = text.slice(valueStart, j);
         }
       }
-      if (attribute && !attributes.has(attribute)) attributes.set(attribute, value); // the first one counts
+      if (attribute && !attributes.has(attribute)) {
+        attributes.set(attribute, value); // the first one counts
+        if (value) attributeLocations.set(attribute, { start, end: start + value.length });
+      }
     }
-    if (name === "plaintext") { visit({ name, attributes, contentStart: j, contentEnd: text.length }); return; }
-    if (NOT_MARKUP_INSIDE.has(name)) {
+    if (name === "plaintext") { visit({ name, attributes, attributeLocations, contentStart: j, contentEnd: text.length }); return; }
+    if (NOT_MARKUP_INSIDE.has(name) && !(scanSvg && name === "svg")) {
       const close = lower.indexOf(`</${name}`, j);
       const contentEnd = close < 0 ? text.length : close;
-      if (visit({ name, attributes, contentStart: j, contentEnd }) === true) return;
+      if (visit({ name, attributes, attributeLocations, contentStart: j, contentEnd }) === true) return;
       i = close < 0 ? text.length : close + 2;
       continue;
     }
-    if (visit({ name, attributes, contentStart: -1, contentEnd: -1 }) === true) return;
+    if (visit({ name, attributes, attributeLocations, contentStart: -1, contentEnd: -1 }) === true) return;
     i = j;
   }
 }
@@ -255,13 +262,17 @@ export function embedPageTitle(html) {
     return true;
   });
   if (raw === null) return "";
-  const named = { lt: "<", gt: ">", quot: '"', apos: "'", amp: "&", nbsp: " " };
-  const text = withoutTags(raw)
-    .replace(/&(?:#x([0-9a-f]{1,8})|#([0-9]{1,8})|(lt|gt|quot|apos|amp|nbsp));/gi, (whole, hex, decimal, name) =>
-      (hex ? fromCodePoint(Number.parseInt(hex, 16)) : decimal ? fromCodePoint(Number.parseInt(decimal, 10)) : named[name.toLowerCase()]))
+  const text = decodeHtmlEntities(withoutTags(raw))
     .replace(/[\s ]+/g, " ")
     .trim();
   return Array.from(text).slice(0, EMBED_TITLE_MAX).join("");
+}
+
+export function decodeHtmlEntities(raw) {
+  const named = { lt: "<", gt: ">", quot: '"', apos: "'", amp: "&", nbsp: " " };
+  return raw
+    .replace(/&(?:#x([0-9a-f]{1,8})|#([0-9]{1,8})|(lt|gt|quot|apos|amp|nbsp));/gi, (whole, hex, decimal, name) =>
+      (hex ? fromCodePoint(Number.parseInt(hex, 16)) : decimal ? fromCodePoint(Number.parseInt(decimal, 10)) : named[name.toLowerCase()]));
 }
 
 /**
@@ -286,11 +297,14 @@ export function embedPosterMarkup({ kind, title, note, icon = "" }) {
  * whatever follows the frame (the Interact chip). `figureAttrs` and `after` are markup the caller
  * has already built; `doc` and `title` are escaped here.
  */
-export function embedLocalFigureMarkup({ doc, title, simulation = false, figureAttrs = "", icon = "", after = "" }) {
+export const WIDGET_MEDIA_OMITTED_NOTE = "Some widget files were left out to keep this copy within its size limit.";
+
+export function embedLocalFigureMarkup({ doc, title, simulation = false, figureAttrs = "", icon = "", after = "", mediaOmitted = false }) {
   const shown = String(title ?? "");
   return `<figure class="slide-embed${simulation ? " slide-simulation" : ""}" data-embed="local" data-embed-state="idle"${figureAttrs}>`
     + embedPosterMarkup({ kind: EMBED_POSTER_KIND_LOCAL, title: shown, note: EMBED_POSTER_NOTE_LOCAL, icon })
     + `<iframe ${EMBED_DOC_ATTRIBUTE}="${escapeHtml(doc)}"${embedFrameAttributes("local")} title="${escapeHtml(`${EMBED_POSTER_KIND_LOCAL}: ${shown}`)}"></iframe>`
+    + (mediaOmitted ? `<figcaption class="embed-media-warning">${escapeHtml(WIDGET_MEDIA_OMITTED_NOTE)}</figcaption>` : "")
     + after
     + `</figure>`;
 }

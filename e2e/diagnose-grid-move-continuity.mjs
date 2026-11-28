@@ -1,5 +1,6 @@
 // Hidden real workspace, synthetic 160-slide deck. Assert DOM continuity, not compile time.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { _electron as electron } from 'playwright'
 import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync, readFileSync, readdirSync, statSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -51,7 +52,7 @@ try {
     const decode=HTMLImageElement.prototype.decode;let queue=Promise.resolve()
     HTMLImageElement.prototype.decode=function(){const image=this;const work=queue.then(()=>decode.call(image));queue=work.catch(()=>{});return work}
   })
-  await page.getByText('Grid continuity fixture',{exact:true}).first().dblclick()
+  await openTalkByTitle(page, 'Grid continuity fixture')
   await page.locator('.cm-content').waitFor()
   await page.getByTestId('grid-toggle').click()
   await page.waitForFunction(()=>document.querySelectorAll('.grid-cell img').length===166)

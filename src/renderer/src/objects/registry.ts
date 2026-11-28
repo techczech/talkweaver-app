@@ -35,6 +35,7 @@ import {
 } from '../../../../compiler/scripts/lib/03-object-token.mjs'
 import { closedHtmlComments } from '../../../../compiler/scripts/lib/outline-regions.mjs'
 import { cardKind } from '../../../shared/objects/card-kinds.ts'
+import { blankNotesRemoval } from '../../../shared/objects/notes-planner.ts'
 import { notesBodyRefusal } from '../../../shared/objects/notes-body.ts'
 import { restoreLineEndings } from '../../../shared/objects/line-endings.ts'
 import { mountCardEditor } from './card-editors.ts'
@@ -218,6 +219,12 @@ function planObjectEditorChange(
 ): ObjectEditorCommitPlan {
   if (options?.wholeBlock !== undefined && options.wholeBlock !== block.source) {
     return planWholeBlockCommit(block, currentDoc, options.wholeBlock)
+  }
+  if (block.kind === 'notes' && !inner.trim()) {
+    if (currentDoc.slice(block.from, block.to) !== block.source) {
+      return { ok: false, reason: 'the editor shell was stale and no longer matched the active document' }
+    }
+    return { ok: true, change: blankNotesRemoval(currentDoc, block.from, block.to) }
   }
   if (inner !== innerSource(block)) {
     const cardRefusal = cardBodyRefusal(block, inner)

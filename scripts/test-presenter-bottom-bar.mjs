@@ -13,9 +13,8 @@
 //     button (or Reveal checked in More); × leaves the mode; Highlight's chip clears;
 //  4. fit, headless at three sizes in the L1 state (timer, recording, live, reactions): the bar
 //     holds the drawn controls in the drawn order; no control overlaps another, wraps or leaves the
-//     window; at 1280x800 step n1 applies and every label stays, at 1440x900 and 1728x1117 nothing
-//     collapses; the More menu opens upward inside the window; a narrow window reaches n2 / n3 and
-//     the top bar's c10 (the chip drops its words, keeps × ).
+//     window; every label stays at the three larger sizes, and the More menu opens inside the window.
+//     Check the compact row at 1000px, navigation icons at 840px, and the top bar's c10.
 // Every check is collected and all failures are reported together.
 // Usage: node scripts/test-presenter-bottom-bar.mjs
 //   SHOTS=<dir> also saves L1 at 1280x800, 1440x900 and 1728x1117, the More menu open, and Focus,
@@ -278,7 +277,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
     check(p.inBar && p.last, `pencil: a button at the right end of the bottom bar (${JSON.stringify(p)})`)
     check(p.position === 'static' || p.position === 'relative', `pencil: not floating over the window (position ${p.position})`)
     check(p.tip === 'Edit this slide in TalkWeaver' && p.key === keysOf('twedit-btn') && !p.title && p.icon === 'lucide-pencil', `pencil: lucide pencil, the presenter tooltip "Edit this slide in TalkWeaver  ⌘E", no native title (${JSON.stringify(p)})`)
-    check(same(p.rect, [26, 32]), `pencil: 26px wide and 32px high, as drawn (${p.rect})`)
+    check(same(p.rect, [30, 32]), `pencil: 30px wide and 32px high (${p.rect})`)
     // Refresh with latest edits: shown by the bridge, asks main to run ⌘R's refresh.
     await moreItem(page, 'moreRefresh')
     const after = await probe(page)
@@ -478,8 +477,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
       check(m.floating.length === 0, `${at}: nothing floats over the window (${m.floating.join(', ')})`)
       check(m.fits === 'true', `${at}: the bar reports that it fits (${m.fits})`)
       check(m.topFits === 'true', `${at}: the top bar still fits (${m.topFits}, ${m.topCollapse})`)
-      // With the Pen in the mark group (0.38 ticket 08) n1 is the normal step at every drawn size.
-      check(m.collapse === 'n1', `${at}: tools stay labelled and the layout uses its normal fit step (${m.collapse})`)
+      check(m.collapse === '', `${at}: tools stay labelled (${m.collapse})`)
       // 90, not 70: the right group's label is Spotlight (a word wider than Focus), which moves the centre group a few pixels left.
       if (size[0] >= 1600) check(Math.abs(m.nextCentre - (size[0] / 2 + 60)) <= 90, `${at}: the centre group is centred on the window (${m.nextCentre})`)
       // The More menu: opens upward from "…", inside the window, items unclipped, drawn order.
@@ -529,15 +527,31 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
     await context.close()
   })
   // Narrow windows: the bar's later steps and the top bar's c10 (mode chip without words).
-  await guard('collapse n2 n3 c10', async () => {
-    const { page, context } = await open([960, 700], 'two')
+  await guard('bottom bar at 1000px and 840px', async () => {
+    const { page, context } = await open([1000, 631], 'pic')
     await L1(page)
     let m = await measure(page)
-    check(m.collapse.split(' ').includes('n2') && m.fits === 'true' && m.overlaps.length === 0, `960x700: the bar reaches n2 and fits (${m.collapse}; overlaps ${m.overlaps.join(', ')})`)
-    check(m.labels.presenterFocus === '' && m.labels.presenterHighlight === '', `n2: Focus and Highlight are icon-only (${m.labels.presenterFocus} / ${m.labels.presenterHighlight})`)
+    const geometry = await page.locator('#presenterBottomBar').evaluate(bar => {
+      const box = bar.getBoundingClientRect()
+      const buttons = [...bar.querySelectorAll('button')].filter(button =>
+        button.getClientRects().length && getComputedStyle(button).visibility !== 'hidden')
+      return buttons.map(button => {
+        const r = button.getBoundingClientRect()
+        return { id: button.id, inside: r.left >= box.left - 0.5 && r.right <= box.right + 0.5 &&
+          r.top >= box.top && r.bottom <= box.bottom, width: r.width }
+      })
+    })
+    check(geometry.length >= 11 && geometry.every(b => b.inside && b.width >= 30) && !m.overlaps.length,
+      `1000×631: all bottom buttons fit (${m.overlaps.join(', ')}; ${JSON.stringify(geometry)})`)
+    check(m.labels.outlineBtn === 'Outline' && m.labels.presenterPrev === 'Previous' && m.labels.presenterNext === 'Next',
+      'navigation labels are visible at 1000px')
     await page.setViewportSize({ width: 840, height: 700 }); await settle(page, 400)
     m = await measure(page)
-    check(m.collapse === 'n1 n2 n3' && m.labels.navQuickPoll === '' && m.labels.navInstant === '', `840x700: n3 makes Quick poll and Instant slide icon-only (${m.collapse}; ${m.labels.navQuickPoll} / ${m.labels.navInstant})`)
+    check(m.fits === 'true' && m.overlaps.length === 0, `840x700: buttons still fit (${m.collapse})`)
+    for (const id of ['outlineBtn', 'presenterPrev', 'presenterNext']) {
+      check(m.labels[id] === '' && !!m.icons[id], `840x700: ${id} is icon-only`)
+      check(!!await page.locator('#' + id).getAttribute('aria-label'), `840x700: ${id} is still named`)
+    }
     await page.keyboard.press('h'); await settle(page, 400)
     const c = await page.evaluate(() => {
       const bar = document.getElementById('presenterTopBar')
@@ -575,7 +589,7 @@ if (window === window.top && window.twLivePollBridge) window.twLivePollBridge.on
   }
 
   assert.deepEqual(failures, [], `presenter bottom bar:\n  ${failures.join('\n  ')}`)
-  console.log('presenter bottom bar: Outline · Previous, Next, Skip next · Quick poll, Instant slide, Focus, Pointer, Pen, Highlight, More, pencil; every button, More item and chip × runs the same function as its key; the pencil opens editing through the edit bridge; a mode chip for Reveal, Focus and Highlight, × leaves it; no overlap at 1280/1440/1728, n1 at 1280, 1440 and 1728 with labels kept; n2, n3 and c10 in narrow windows')
+  console.log('presenter bottom bar: Outline · Previous, Next, Skip next · Quick poll, Instant slide, Focus, Pointer, Pen, Highlight, More, pencil; every button, More item and chip × runs the same function as its key; the pencil opens editing through the edit bridge; a mode chip for Reveal, Focus and Highlight, × leaves it; no overlap at 1000/1280/1440/1728, labels kept at wide sizes, navigation icons below 900, and c10 in narrow windows')
 } finally {
   await browser?.close()
   await rm(scratch, { recursive: true, force: true })

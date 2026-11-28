@@ -79,3 +79,5 @@ html, body, #root { height: 100%; margin: 0; }
 .recording-settings-page button { background: var(--hover); cursor: pointer; }
 .recording-settings-page button:hover { background: var(--active); }
 .recording-settings-page details { margin-top: 18px; color: var(--muted); }
+
+.bsw-root .bsw-num .bsw-u { white-space: nowrap; flex: 0 0 auto; }

@@ -17,4 +17,6 @@ export type HtmlPageImport = {
   how: 'copied' | 'reused' | 'in-talk'
   /** Local files the page refers to (script, stylesheet, picture…), which a sealed embed cannot load. At most 5. */
   localReferences: string[]
+  /** Scratchpad imports also place the discovered local dependencies. */
+  dependenciesCopied?: number
 } | HtmlPageRefusal

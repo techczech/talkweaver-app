@@ -1,5 +1,6 @@
 // ADR-0045 IN1, IN2, TD1, CA1 and CA2. Hidden Electron, synthetic talk and real writer.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -21,7 +22,10 @@ const source = [
   '', '- Repair the beds {icon=lucide:hammer}', '- Share the tools', '- Welcome new growers', '',
   ':::notes', '- PRIVATE: client fee is 40k', ':::', '',
   '### Volunteer shifts {id=p2}', '{table}', '', '| Day | Volunteers |', '| --- | --- |', '| Monday | 4 |', '',
-  '### Garden photographs {id=p3}', '', '- The garden at the start of the year', '', '![The beds](beds.png)', ''
+  '### Garden photographs {id=p3}', '', '- The garden at the start of the year', '', '![The beds](beds.png)', '',
+  '### Two ways to water the garden', '{contrast}{id=water}', '',
+  '- By hand', '  - Fill the can', '  - Water the young plants',
+  '- With a hose', '  - Unroll the hose', '  - Water the beds', ''
 ].join('\n')
 mkdirSync(talk, { recursive: true })
 mkdirSync(profile)
@@ -62,7 +66,7 @@ try {
     for (const win of BrowserWindow.getAllWindows()) win.setContentSize(1440, 900)
   })
   assert.ok(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().every(win => !win.isVisible())))
-  await page.locator('[data-talk-slug="garden"]').first().dblclick()
+  await openTalkByTitle(page, 'Garden meeting')
   const inspector = page.locator('.tw-inspector')
   await inspector.waitFor()
 
@@ -70,7 +74,7 @@ try {
   const sidebarToggle = page.locator('.workspace-view-titlebar').getByTestId('sidebar-toggle')
   const slideTab = sidebar.getByRole('tab', { name: 'Slide', exact: true })
   const researchTab = sidebar.getByRole('button', { name: 'Research', exact: true })
-  const imagesTab = sidebar.getByRole('button', { name: 'Images', exact: true })
+  const findTab = sidebar.getByRole('tab', { name: 'Find', exact: true })
   const researchPanel = page.locator('.research-panel')
   const imageDrawer = page.locator('[data-image-drawer]')
   assert.equal(await sidebar.count(), 1)
@@ -87,25 +91,25 @@ try {
   await sidebar.locator('.research-panel').waitFor()
   assert.equal(await researchPanel.count(), 1, 'Research has one host in the right sidebar')
   assert.equal(await researchTab.getAttribute('aria-pressed'), 'true')
-  await imagesTab.click()
+  await page.keyboard.press('ControlOrMeta+Shift+I')
   await sidebar.locator('[data-image-drawer]').waitFor()
   await researchPanel.waitFor({ state: 'detached' })
   assert.equal(await imageDrawer.count(), 1, 'Images has one host in the right sidebar')
-  assert.equal(await imagesTab.getAttribute('aria-pressed'), 'true')
+  assert.equal(await findTab.getAttribute('aria-selected'), 'true')
 
   await sidebarToggle.click()
   await sidebar.waitFor({ state: 'detached' })
   await imageDrawer.waitFor({ state: 'detached' })
   await page.keyboard.press('ControlOrMeta+p')
   await sidebar.locator('[data-image-drawer]').waitFor()
-  assert.equal(await imagesTab.getAttribute('aria-pressed'), 'true', 'the shortcut restores the active panel')
+  assert.equal(await findTab.getAttribute('aria-selected'), 'true', 'the shortcut restores the active panel')
   await page.keyboard.press('ControlOrMeta+p')
   await sidebar.waitFor({ state: 'detached' })
   await page.keyboard.press('ControlOrMeta+p')
   await sidebar.locator('[data-image-drawer]').waitFor()
   await slideTab.click()
   await inspector.waitFor()
-  console.log('Right sidebar: Research and Images share one host, and the toolbar and shortcut restore the active panel.')
+  console.log('Right sidebar: Research and Find share one host, and the toolbar and shortcut restore the active panel.')
 
   await inspector.locator('.tw-right-who').getByText(/In the garden|Three priorities/).first().waitFor()
   if (!(await inspector.locator('.tw-right-who').textContent()).includes('Three priorities')) {
@@ -235,6 +239,31 @@ try {
   await page.locator('.tw-right-bar').getByRole('button', { name: 'Undo', exact: true }).click()
   await until(() => disk() === pictureRight, 'Undo restores the saved right placement and bytes')
   await until(async () => (await side('On the right').getAttribute('aria-pressed')) === 'true', 'Undo restores the right Current tile')
+  await inspector.getByRole('button', { name: 'Next slide', exact: true }).click()
+  await currentSlide.filter({ hasText: 'Two ways to water the garden' }).waitFor()
+  const contrast = inspector.locator('.tw-right-adjust').getByRole('button', { name: /^Contrast\b/ })
+  await contrast.click()
+  const moreLayouts = inspector.getByRole('button', { name: 'More layouts', exact: true })
+  const beforeGallery = disk()
+  await moreLayouts.click()
+  const gallery = page.getByRole('region', { name: 'Layouts for this slide' })
+  await gallery.waitFor()
+  assert.equal(await page.locator('.workspace-slide-text').isVisible(), false)
+  await gallery.getByRole('button', { name: /^Fits as is/ }).click()
+  const tint = gallery.getByRole('button', { name: 'Contrast, tinted', exact: true })
+  await tint.hover()
+  await page.getByText('Trying: Contrast, tinted. Not applied. Click it to keep', { exact: true }).waitFor()
+  await page.frameLocator('.workspace-slide-stage iframe').locator('section.slide.active[data-id="water"] .contrast-tint').waitFor()
+  assert.equal(disk(), beforeGallery, 'trying a verified layout leaves the file byte for byte')
+  await tint.click()
+  await until(() => disk().includes('{contrast=tint}'), 'the gallery layout did not save')
+  assert.equal(disk(), beforeGallery.replace('{contrast}{id=water}', '{contrast}{contrast=tint}{id=water}'))
+  await page.keyboard.press('ControlOrMeta+z')
+  await until(() => disk() === beforeGallery, 'one Undo restores the original file')
+  await page.keyboard.press('Escape')
+  await gallery.waitFor({ state: 'detached' })
+  await page.locator('.workspace-slide-text').waitFor()
+  console.log('More layouts opens from the Contrast options, tries without writing, saves the layout and restores the original file with one Undo.')
   await page.getByRole('tab', { name: 'Talk', exact: true }).click()
   await page.getByRole('button', { name: 'Design', exact: true }).click()
   await page.getByRole('heading', { name: 'Titles', exact: true }).waitFor()

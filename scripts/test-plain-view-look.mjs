@@ -69,7 +69,7 @@ try {
   const text = (html) => html.replace(/<[^>]+>/g, ' ').replace(/&minus;|−/g, '-').replace(/\s+/g, ' ').trim()
   const html = m.rows({ look: { font: 'sans', size: 16 }, onChange: () => {} })
   const t = text(html)
-  assert.ok(t.includes('Plain view font'), 'font row label')
+  assert.ok(t.includes('Outline view font'), 'font row label')
   assert.ok(t.includes('The font used in the Plain tab. The Markdown tab always uses the code font.'), 'font row note')
   assert.ok(t.includes('Text size') && t.includes('16 px'), 'size row')
   assert.ok(t.includes('Steepest rises: 2018 , the station opens; 2022, e-bikes arrive .'.replace(' ,', ',').replace(' .', '.')) || t.includes('Steepest rises:'), 'sample line')

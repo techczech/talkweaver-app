@@ -113,9 +113,9 @@ export function pasteSlidesAt(view: EditorView, clip: string, place: PastePlace)
  * Only text this app last wrote with a whole-slide cut or copy is pasted; for anything else nothing
  * changes and the toast says so.
  */
-export function pasteSlidesAfter(view: EditorView, clip: string, afterLine: number | null): number | null {
+export function pasteSlidesAfter(view: EditorView, clip: string, afterLine: number | null, clipboardText = clip): number | null {
   if (view.state.readOnly) return null
-  if (!isOwnSlideClip(clip)) {
+  if (!isOwnSlideClip(clipboardText)) {
     notify(NOTHING_TO_PASTE, 'info', TOAST_KEY)
     return null
   }
@@ -211,7 +211,7 @@ function widenedMessage(verb: 'Cut' | 'Copied', titles: readonly string[]): stri
     : `${verb} ${titles.length} whole slides: their titles were in the selection.`
 }
 
-function onCutOrCopy(event: ClipboardEvent, view: EditorView, cut: boolean): boolean {
+function onCutOrCopy(event: ClipboardEvent, view: EditorView, cut: boolean, record?: (clip: string) => void): boolean {
   const sel = view.state.selection
   if (sel.ranges.length !== 1 || !event.clipboardData) return false
   if (cut && view.state.readOnly) return false
@@ -222,7 +222,10 @@ function onCutOrCopy(event: ClipboardEvent, view: EditorView, cut: boolean): boo
     if (heading == null) return false
     const clip = cut ? cutSlideAt(view, heading) : copySlideAt(view, heading)
     event.preventDefault()
-    if (clip != null) event.clipboardData.setData('text/plain', clip)
+    if (clip != null) {
+      event.clipboardData.setData('text/plain', clip)
+      record?.(clip)
+    }
     return true
   }
   // A selection holding an entire heading line takes that slide's whole block. A selection that
@@ -255,14 +258,15 @@ function onCutOrCopy(event: ClipboardEvent, view: EditorView, cut: boolean): boo
   }
   event.clipboardData.setData('text/plain', text.slice(wide.from, wide.to))
   rememberSlideClip(text.slice(wide.from, wide.to))
+  record?.(text.slice(wide.from, wide.to))
   notify(widenedMessage(cut ? 'Cut' : 'Copied', wide.titles), 'info', TOAST_KEY)
   return true
 }
 
 /** The editor's whole-slide cut and copy. Paste is called from the editor's one paste handler (Editor.tsx). */
-export function slideCutCopyExtension(): Extension {
+export function slideCutCopyExtension(record?: (clip: string) => void): Extension {
   return EditorView.domEventHandlers({
-    cut: (event, view) => onCutOrCopy(event, view, true),
-    copy: (event, view) => onCutOrCopy(event, view, false)
+    cut: (event, view) => onCutOrCopy(event, view, true, record),
+    copy: (event, view) => onCutOrCopy(event, view, false, record)
   })
 }

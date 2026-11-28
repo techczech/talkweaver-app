@@ -1,3 +1,4 @@
+import { slideFiles } from '../../../shared/slide-handling/query'
 declare const __TW_SECURITY_TEST__: boolean
 import { scratchDropExtension } from '../extensions/scratchDrop'
 import type { SlidePlace } from '../../../shared/slide-handling/place'
@@ -7,7 +8,7 @@ import { useEffect, useRef, useCallback } from 'react'
 import { imageWidgetExtension, imagePlacementsChanged, editorImageUrl } from '../extensions/imageWidget'
 import { cardMediaFacet } from '../extensions/objectBlocks/cardWidgets'
 import { insertSpeakerNotes, objectDeletionNotices, objectStatusRequests } from '../extensions/objectBlocks/commands'
-import { objectStatusSource, type CardFileStatus } from '../extensions/objectBlocks/status'
+import { objectStatusSource, setObjectStatuses, type CardFileStatus } from '../extensions/objectBlocks/status'
 import { cardActionHost } from '../extensions/objectBlocks/cardActions'
 import { HTML_PAGE_INSERT_TEXT } from '../lib/insertHtmlPage'
 import { imagePlacementForLine, type PlacementRow } from '../../../shared/image-placement.ts'
@@ -56,7 +57,7 @@ import { Decoration, EditorView, type DecorationSet, keymap, highlightActiveLine
 import { ChangeSet, EditorState, EditorSelection, Prec, Compartment, Annotation, StateEffect, StateField, Transaction } from '@codemirror/state'
 import { history, isolateHistory } from '@codemirror/commands'
 import { editorBaseKeymap } from '../extensions/editorBaseKeymap'
-import { search, highlightSelectionMatches, openSearchPanel } from '@codemirror/search'
+import { search, highlightSelectionMatches, openSearchPanel, gotoLine } from '@codemirror/search'
 import { commandRan } from '../commands/command-ran'
 import { viewModeExtension, type PlainViewOptions } from '../extensions/plainView'
 import { plainTypeExtension } from '../extensions/plainView/theme'
@@ -178,7 +179,7 @@ export interface SlideBlockOps {
   cut: (line: number) => string | null
   copy: (line: number) => string | null
   /** After the slide or section on `afterLine`; at the end of the talk when null. */
-  paste: (clip: string, afterLine: number | null) => number | null
+  paste: (clip: string, afterLine: number | null) => number | null | Promise<number | null>
   /** `cardRef`: a grid card's heading (slideRefOf), checked against the buffer by the move core. */
   moveTo: (fromLine: number, target: MoveTarget, cardRef?: SlideRef) => number | null
   delete: (line: number) => void
@@ -301,6 +302,7 @@ interface Props {
     // cut/copy return the Markdown for the clipboard; paste/moveTo return the heading's new line.
     slides: SlideBlockOps
     runFormat: (id: 'bold' | 'italic' | 'inline-code' | 'highlight' | 'strikethrough' | 'underline' | 'link') => void
+    goToLine: () => void
   }) => void
   // Icon picker (ADR-0021): on mount Editor registers a reader that returns the CURRENT caret's
   // list-row context ({slideHeading, itemLine}) — or null when the caret is not
@@ -607,6 +609,12 @@ export default function Editor({
   const onInsertObjectMenuRef = useRef(onInsertObjectMenu)
   useEffect(() => { onInsertObjectMenuRef.current = onInsertObjectMenu }, [onInsertObjectMenu])
   const currentTalkRef = useRef<string>('')
+  function recordSlideCopy(clip: string | null): string | null {
+    if (clip && slideFiles(clip).some(({ ref }) => ref)) {
+      void window.tw.talk.rememberSlideCopy?.(currentTalkRef.current, clip).catch(() => {})
+    }
+    return clip
+  }
   // Data-loss guard (2026-07-05): the path whose REAL content is loaded and live in the doc, or null
   // while a load is in flight. The editor is remounted on every talk switch (and nothing else), so a
   // fresh instance starts with `doc: ''`; autosave must stay OFF during that transient (and during the
@@ -879,7 +887,7 @@ export default function Editor({
                 pasteBlockAtSelection(v, '```svg\n' + result.svg + '\n```\n')
                 return true
               }
-              const carriesPastedAssets = /!\[[^\]]*\]\(assets\/[^)]+\.(?:png|jpe?g|gif|webp)\)/i.test(text)
+              const carriesPastedAssets = (text && slideFiles(text).some(({ ref }) => ref)) || /!\[[^\]]*\]\(assets\/[^)]+\.(?:png|jpe?g|gif|webp)\)/i.test(text)
               const pasteTableKind = carriesPastedAssets || asSlides ? null : tablePasteKind(text)
               if (text && pasteTableKind) {
                 event.preventDefault()
@@ -902,12 +910,14 @@ export default function Editor({
                 event.preventDefault()
                 // Whole slides pasted on a heading line or between slides go in as whole slides
                 // (slideCutPaste.ts); anywhere else the text replaces the selection as before.
+                const pasteTarget = currentTalkRef.current
                 const put = (markdown: string): void => {
+                  if (currentTalkRef.current !== pasteTarget) return
                   const v = viewRef.current
                   if (v && !pasteSlideTextAtCaret(v, markdown, pastedText)) pasteTextAtSelection(v, markdown)
                 }
                 window.tw.talk
-                  .materializePastedAssets(pastedText)
+                  .materializePastedAssets(pastedText, pasteTarget)
                   .then((res) => put(res?.markdown ?? pastedText))
                   .catch(() => put(pastedText))
                 return true
@@ -1041,7 +1051,7 @@ export default function Editor({
           tokenProtectExtension(() => onProtectedTokenClickRef.current ?? null),
           // ⌘X / ⌘C with the caret on a slide's heading take the whole slide; a selection holding a
           // whole title takes its slide with it (extensions/slideCutPaste.ts).
-          slideCutCopyExtension(),
+          slideCutCopyExtension(recordSlideCopy),
           // Slide Focus scoped view (ADR-0032, Task 8). Inert until a range is set (via the
           // focusRange prop / setFocusRange effect); then hides every line outside the focused
           // block, guards edits from touching outside it, and keeps the caret inside — composing
@@ -1085,7 +1095,7 @@ export default function Editor({
               if (!outlinePath) return null
               const answer = await window.tw.objects.status(outlinePath, refs)
               if (!answer?.ok || currentTalkRef.current !== outlinePath) return null
-              return new Map(answer.statuses.map((s): [string, CardFileStatus] => [s.ref, { state: s.state, path: s.path }]))
+              return new Map(answer.statuses.map((s): [string, CardFileStatus] => [s.ref, { state: s.state, path: s.path, repairTitle: s.repairTitle, repairCandidates: s.repairCandidates }]))
             }
           }),
           objectStatusRequests,
@@ -1119,6 +1129,17 @@ export default function Editor({
           }),
           // Saved-view thumbnails on a web page card: the image widget's own local resolver; never remote.
           cardMediaFacet.of({
+            copyPage: async (ref, expectedTitle) => {
+              const outlinePath = currentTalkRef.current
+              try {
+                if (!await window.tw.objects.repairWidget(outlinePath, ref, expectedTitle)) throw new Error('Copy refused')
+                if (currentTalkRef.current !== outlinePath) return
+                viewRef.current?.dispatch({ effects: setObjectStatuses.of(new Map([[ref, { state: 'present' }]])) })
+                window.dispatchEvent(new CustomEvent('tw:widget-repaired', { detail: outlinePath }))
+              } catch {
+                notify('Couldn’t copy the widget into this talk.', 'warning', 'copy-widget')
+              }
+            },
             readPage: async (src) => {
               const outlinePath = currentTalkRef.current
               if (!outlinePath) return null
@@ -1137,7 +1158,7 @@ export default function Editor({
           // ⌘F opens CodeMirror's find panel (Find in outline, app.find); the Guide counts it when it opened.
           keymap.of([{ key: 'Mod-f', run: (view) => { const opened = openSearchPanel(view); if (opened) commandRan('app.find'); return opened }, scope: 'editor search-panel' }]),
           // One list (extensions/editorBaseKeymap.ts): the Plain view's guard is built from the same one.
-          keymap.of([...editorBaseKeymap]),
+          keymap.of(editorBaseKeymap.filter(binding => binding.run !== gotoLine)),
           markdownEditingKeymap('outline'),
           goToSectionChild.of(line => onSectionChildRef.current?.(line)),
           viewCompartment.of([sourceObjectPreviews.of(showSourceObjectPreviews), startBodyWithBullet.of(startWithBullet), slideTextInput.of(slideTextPanel), viewModeExtension(viewModeRef.current, plainViewOptions(marginMenuHandlers))]),
@@ -1798,22 +1819,37 @@ export default function Editor({
         navigator.clipboard.readText().then(async (text) => {
           if (!text) return
           const clipboardText = text
+          const pasteTarget = currentTalkRef.current
           // Same source-talk asset rule as the DOM paste handler: relative image refs are
           // materialised into the vault pool so a pasted slide's images resolve here too.
-          if (/!\[[^\]]*\]\(assets\/[^)]+\.(?:png|jpe?g|gif|webp)\)/i.test(text)) {
+          if (slideFiles(text).some(({ ref }) => ref) || /!\[[^\]]*\]\(assets\/[^)]+\.(?:png|jpe?g|gif|webp)\)/i.test(text)) {
             try {
-              const res = await window.tw.talk.materializePastedAssets(text)
+              const res = await window.tw.talk.materializePastedAssets(text, pasteTarget)
               text = res?.markdown ?? text
             } catch { /* fall back to the raw text */ }
           }
+          if (currentTalkRef.current !== pasteTarget) return
           const view = viewRef.current
           if (view && !pasteSlideTextAtCaret(view, text, clipboardText)) pasteTextAtSelection(view, text)
         }).catch(() => notify('Couldn’t read the clipboard — paste with ⌘V instead.', 'warning'))
       },
       slides: {
-        cut: (line) => { const v = viewRef.current; return v ? cutSlideAt(v, line) : null },
-        copy: (line) => { const v = viewRef.current; return v ? copySlideAt(v, line) : null },
-        paste: (clip, afterLine) => { const v = viewRef.current; return v ? pasteSlidesAfter(v, clip, afterLine) : null },
+        cut: (line) => { const v = viewRef.current; return v ? recordSlideCopy(cutSlideAt(v, line)) : null },
+        copy: (line) => { const v = viewRef.current; return v ? recordSlideCopy(copySlideAt(v, line)) : null },
+        paste: (clip, afterLine) => {
+          const view = viewRef.current
+          if (!view) return null
+          if (!slideFiles(clip).some(({ ref }) => ref)) return pasteSlidesAfter(view, clip, afterLine)
+          const target = currentTalkRef.current
+          const doc = view.state.doc
+          return window.tw.talk.materializePastedAssets(clip, target).then((answer) => {
+            if (!answer?.success || viewRef.current !== view || view.state.doc !== doc || currentTalkRef.current !== target) {
+              notify('The slide files could not be pasted into this talk.', 'warning', 'slide-clipboard')
+              return null
+            }
+            return pasteSlidesAfter(view, answer.markdown, afterLine, clip)
+          }).catch(() => { notify('The slide files could not be pasted into this talk.', 'warning', 'slide-clipboard'); return null })
+        },
         moveTo: (fromLine, target, cardRef) => { const v = viewRef.current; return v ? moveSlideTo(v, fromLine, target, cardRef) : null },
         delete: (line) => { const v = viewRef.current; if (v) deleteSlideAt(v, line) }
       },
@@ -1823,6 +1859,10 @@ export default function Editor({
         if (!canRunInlineFormatting(v.state)) return
         EDITOR_COMMANDS.find((command) => command.id === id)?.run(v)
         v.focus()
+      },
+      goToLine: () => {
+        const v = viewRef.current
+        if (v?.dom.isConnected) gotoLine(v)
       },
     }
     registerEditorCommands?.(cmds)

@@ -147,14 +147,14 @@ assert.equal(
 const statementGroups = optionGroupsForSlide({ layoutName: 'statement', headingLevel: 3, hasChildren: false })
   .filter(({ source }) => source === 'entry').map(({ group }) => group)
 assert.deepEqual(statementGroups.map((group) => [group.key, group.sectionLabel ?? group.label, group.preview]), [
-  ['statement-sidebar', 'Sidebar', 'segmented'],
-  ['statement-bg', 'Background', 'segmented'],
+  ['statement-sidebar', 'Side panel', 'segmented'],
+  ['statement-bg', 'Title style', 'segmented'],
   ['statement-align', 'Alignment', 'segmented'],
-  ['statement-colour', 'Sidebar colour', 'segmented']
+  ['statement-colour', 'Side panel colour', 'segmented']
 ], 'four separate statement choices, each a segmented control')
 const statementGroup = (key) => statementGroups.find((group) => group.key === key)
 assert.deepEqual(statementGroups.map((group) => group.values.map(({ token, label }) => `${label}${token ? `=${token}` : ''}`)), [
-  ['Auto', 'With sidebar=statement-sidebar=on', 'No sidebar=statement-sidebar=off'],
+  ['Auto', 'With side panel=statement-sidebar=on', 'No side panel=statement-sidebar=off'],
   ['Tinted', 'Rule=statement-bg=rule', 'Strong colour=statement-bg=strong', 'Lower third=statement-bg=lower-third'],
   ['Aligned', 'Centred=statement-align=centred'],
   ['Section', 'Cobalt=accent=cobalt', 'Emerald=accent=emerald', 'Vermilion=accent=vermilion', 'Forest=accent=forest']
@@ -241,11 +241,11 @@ const nestedGroups = optionGroupsForSlide({ layoutName: 'statement', headingLeve
 const containerMode = nestedGroups.find(({ group }) => group.key === 'container-mode')?.group
 assert.ok(containerMode, 'a ### slide with #### children exposes Container mode')
 assert.deepEqual(containerMode.values.map(({ token, label }) => [token, label]), [
-  ['', 'Linear'],
+  ['', 'One after another'],
   ['carousel', 'Carousel'],
   ['contents', 'Contents'],
-  ['grid-linear', 'Grid linear'],
-  ['grid-zoom', 'Grid zoom']
+  ['grid-linear', 'Grid'],
+  ['grid-zoom', 'Grid, zooming in']
 ], 'Container mode offers the five mutually-exclusive modes from the spec')
 assert.equal(
   commitOptionSelection('{statement}{contents}', containerMode, 'carousel'),

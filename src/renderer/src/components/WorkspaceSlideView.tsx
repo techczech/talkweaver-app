@@ -4,7 +4,7 @@ import type { ProjectionRow } from '../../../preload/index'
 import type { NotesEntry } from '../../../shared/objects/object-verbs'
 import FixedDeckPreview from './FixedDeckPreview'
 import { useLiveSlidePreview } from './useLiveSlidePreview'
-import { withoutAuthoringVideoMarkers } from '../../../shared/video-marker-edits'
+import { authoringVideoPreview } from '../../../shared/video-marker-edits'
 import { markerPreviewUrl, useMarkerPreviewRead, type useMarkerPreview } from './useMarkerPreview'
 import type { PanelTry } from './RightPanelPictures'
 
@@ -14,6 +14,7 @@ interface Props {
   markerPreview?: Pick<ReturnType<typeof useMarkerPreview>, 'frame' | 'available'>
   trying?: PanelTry | null
   applied?: string | null
+  layoutGallerySlot?: (element: HTMLDivElement | null) => void
   onUndoDesign?: () => void
   onOpenReveal: () => void
   row: ProjectionRow | undefined
@@ -26,7 +27,7 @@ interface Props {
   notesKey: string
   notesOpen: boolean
   onToggleNotes: () => void
-  onNotesChange: (body: string, position: number, expectedHash?: string) => string | null
+  onNotesChange: (body: string, position: number, expectedHash?: string, leaving?: boolean) => string | null
   onNotesEngaged: () => void
   attachEditor: (el: HTMLDivElement | null) => void
   onTalkDetails: () => void
@@ -37,15 +38,18 @@ interface Props {
   subslides?: { title: string; notes?: string; select: () => void }[]
   addSubslide?: () => void
   subslide?: { title: string; thumb?: string }
+  headingLine?: number | null
 }
 
 // WN1 / NT1 use Slide Focus's stage and the same scoped editor, with the editor under the stage.
 export default function WorkspaceSlideView({
-  path, outline, markerPreview, trying, applied, onUndoDesign, onOpenReveal, row, index, count, pathwayNavigation, navigationShortcuts, place, notes, notesKey, notesOpen, onToggleNotes, onNotesChange, onNotesEngaged,
-  attachEditor, onTalkDetails, editable, emptySlide, sourceRecovery, section, subslides, addSubslide, subslide
+  path, outline, markerPreview, trying, applied, layoutGallerySlot, onUndoDesign, onOpenReveal, row, index, count, pathwayNavigation, navigationShortcuts, place, notes, notesKey, notesOpen, onToggleNotes, onNotesChange, onNotesEngaged,
+  attachEditor, onTalkDetails, editable, emptySlide, sourceRecovery, section, subslides, addSubslide, subslide, headingLine
 }: Props) {
-  const previewText = useMemo(() => withoutAuthoringVideoMarkers(trying?.text ?? outline), [trying?.text, outline])
-  const { previewUrl, previewErr, compiling } = useLiveSlidePreview(path, previewText, row?.slide_id ?? '', 'workspace')
+  const preview = useMemo(() => authoringVideoPreview(trying?.text ?? outline, headingLine ?? null), [trying?.text, outline, headingLine])
+  const { previewUrl, previewErr, compiling } = useLiveSlidePreview(
+    path, preview.text, row?.slide_id ?? '', 'workspace', subslide ? undefined : { headingLine: preview.headingLine }
+  )
   const frame = useRef<HTMLIFrameElement>(null)
   const previewFrame = markerPreview?.frame ?? frame
   const readPlayback = useMarkerPreviewRead(previewFrame)
@@ -54,9 +58,9 @@ export default function WorkspaceSlideView({
   const slideView = useRef<HTMLDivElement>(null)
   useLayoutEffect(() => {
     if (slideView.current) slideView.current.scrollTop = 0
-  }, [path])
+  }, [path, layoutGallerySlot])
   return (
-    <div className="workspace-slide-view" data-view="slide" ref={slideView}>
+    <div className="workspace-slide-view" data-view="slide" data-layout-gallery={!!layoutGallerySlot || undefined} ref={slideView}>
       <div className="workspace-slide-content">
         <div className="workspace-slide-crumb">{place && `${place} · `}{subslide ? <strong>Subslide of “{subslide.title}”</strong> : index >= 0 && count > 0 && <strong>Slide {index + 1} of {count}</strong>}
           {pathwayNavigation && count > 0 && <div className="pathway-slide-nav" role="group" aria-label="Pathway slides">
@@ -80,12 +84,15 @@ export default function WorkspaceSlideView({
               <span>First point</span>
             </div>
           )}
-          {trying && <div className="tw-right-bar is-trying tw-try-chip" role="status">Trying: {trying.label}. Not applied.</div>}
+          {trying && <div className="tw-right-bar is-trying tw-try-chip" role="status">
+            Trying: {trying.label}. {trying.whatChanges && 'Changes the structure. '}Not applied.{layoutGallerySlot && ' Click it to keep'}
+          </div>}
         </div>
         {applied && <div className="tw-right-bar" role="status"><Check size={15} />Applied: {applied}
             <button type="button" className="toolbar-btn" onClick={onUndoDesign}><Undo2 size={14} />Undo</button>
           </div>}
-        <div className="workspace-slide-text">
+        {layoutGallerySlot && <div className="workspace-layout-gallery-slot" ref={layoutGallerySlot} />}
+        <div className="workspace-slide-text" hidden={!!layoutGallerySlot}>
           <div className="workspace-slide-text-label">
             <strong>{sourceRecovery ? 'Talk text' : section?.label ?? (subslide ? 'Subslide text' : 'Slide text')}</strong>
             {editable && !sourceRecovery && <span>{section ? 'Type its name. The slide above follows.' : 'Type here. The slide above follows.'}</span>}
@@ -142,15 +149,27 @@ function SlideNote({ note, index, count, onChange, onEngaged }: {
   onEngaged: Props['onNotesEngaged']
 }) {
   const [refused, setRefused] = useState<{ body: string; error: string } | null>(null)
-  useLayoutEffect(() => { setRefused(null) }, [note?.hash])
+  const [blankDraft, setBlankDraft] = useState('')
+  useLayoutEffect(() => { setRefused(null); setBlankDraft('') }, [note?.hash])
+  const removeEmptyNote = () => {
+    setBlankDraft('')
+    if (!note?.closed || note.body.trim() || refused) return
+    const error = onChange('', index, note.hash, true)
+    if (error) setRefused({ body: note.body, error })
+  }
   return (
     <>
       <textarea aria-label={count > 1 ? `Speaker notes ${index + 1} of ${count}` : 'Speaker notes'}
-        placeholder="What you want to say on this slide" value={refused?.body ?? note?.body ?? ''}
+        placeholder="What you want to say on this slide" value={refused?.body ?? note?.body ?? blankDraft}
         disabled={note?.closed === false} onClick={onEngaged}
+        onBlur={removeEmptyNote}
+        onKeyDown={event => {
+          if (event.key === 'Escape' && !event.currentTarget.value.trim()) event.currentTarget.blur()
+        }}
         onChange={event => {
           onEngaged()
           const body = event.currentTarget.value
+          setBlankDraft(body.trim() ? '' : body)
           const error = onChange(body, index, note?.hash)
           setRefused(error ? { body, error } : null)
         }} />

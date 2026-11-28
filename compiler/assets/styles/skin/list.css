@@ -240,3 +240,15 @@
     line-height: .9;
     letter-spacing: -.04em;
   }
+
+/* @order 1989 */
+/* An authored crossed-out mark beside a regular bullet or number. */
+.feature-list .fl-inline-cross {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  margin-inline-end: .35em;
+  vertical-align: -.12em;
+  color: var(--accent);
+}
+.feature-list .fl-inline-cross > svg { display: block; width: 100%; height: 100%; }

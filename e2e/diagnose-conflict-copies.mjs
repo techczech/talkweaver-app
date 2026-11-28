@@ -20,7 +20,7 @@
 //
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && TW_E2E=1 node e2e/diagnose-conflict-copies.mjs
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
-import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle, showTalksBeforeOpening } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join, relative } from 'path'
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'fs'
@@ -126,11 +126,11 @@ async function openInInspector(title) {
   await page.getByRole('tab', { name: 'Slide', exact: true }).click()
   const inspector = page.locator('.tw-inspector')
   await inspector.getByRole('button', { name: 'Next slide', exact: true }).click()
-  await inspector.getByRole('button', { name: /^More\b/ }).click()
+  await inspector.locator('.tw-right-adjust').getByRole('button', { name: /^More Steps\b/ }).click()
 }
 
 try {
-  await ensureTalksMode(page)
+  await showTalksBeforeOpening(page)
   await row('Clean talk').waitFor({ state: 'attached', timeout: 10000 })
 
   // ── (A) identical copy ──

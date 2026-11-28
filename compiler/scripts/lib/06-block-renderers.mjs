@@ -1,3 +1,4 @@
+import { iconIsCrossed } from "./icon-cross.mjs";
 import { audioChipTitle } from "./audio-chip-title.mjs";
 import { referenceFileName, shownReference } from "./shown-reference.mjs";
 import { imageAspect, takesScreenshotRow } from "./screenshot-row.mjs";
@@ -9,7 +10,7 @@ import { withoutScripts } from "./04-html-extraction.mjs";
 import { resolveIconOverrides, decideFeatureListStyle, iconSvg } from "./05-icons.mjs";
 import { parseChartItems, renderChartBlock } from "./06-chart-renderer.mjs";
 import { plainListForcedIcons } from "./11-frame.mjs";
-import { embedLocalFigureMarkup, embedSandboxValue } from "./embed-frame.mjs";
+import { embedLocalFigureMarkup, embedSandboxValue, WIDGET_MEDIA_OMITTED_NOTE } from "./embed-frame.mjs";
 import { workPagePlayerUrl } from "../../assets/runtime/work-page-parts.js";
 import { stripWrappingQuoteMarks } from "./quote-layout.mjs";
 import { renderQuoteForm, shortenAddressLinks } from "./quote-forms.mjs";
@@ -248,7 +249,7 @@ function savedViewDate(iso) {
 function renderImageFigure(block) {
   // SD-4: figure.fig gives the centred-caption flex column; slide-figure is kept for the
   // lightbox selector (figure.slide-figure img) and all existing CSS that targets it.
-  return `<figure class="slide-figure fig"${mediaAspectAttrs(block)}><img src="${escapeHtml(block.src)}"${imageSizeAttrs(block)} alt="${escapeHtml(block.alt)}">${block.caption ? `<figcaption>${shortenAddressLinks(renderInline(block.caption))}</figcaption>` : ""}</figure>`;
+  return `<figure class="slide-figure fig"${mediaAspectAttrs(block)}><img src="${escapeHtml(block.src)}"${imageSizeAttrs(block)} alt="${escapeHtml(block.alt)}">${block.caption ? `<figcaption>${shortenAddressLinks(renderInline(block.caption))}</figcaption>` : ""}${block.widgetMediaOmitted ? `<figcaption class="widget-media-warning">${WIDGET_MEDIA_OMITTED_NOTE}</figcaption>` : ""}</figure>`;
 }
 
 // G5: collapse each run of 2+ consecutive image blocks into one synthetic `image-row` block so
@@ -578,7 +579,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
       // The title: the one written in the outline, else the page's own <title>, else the file name
       // as it may be shown (never a folder outside the talk's).
       const title = block.title || block.pageTitle || block.shownName || shownReference(block.src || "");
-      return embedLocalFigureMarkup({ doc: block.srcdoc, title, simulation: block.variant === "simulation", figureAttrs: `${aspectAttrs} data-resource-title="${escapeHtml(block.title || block.pageTitle || referenceFileName(block.shownName || block.src) || "HTML page")}"`, icon: iconSvg("lucide:mouse-pointer-click"), after: interactChip });
+      return embedLocalFigureMarkup({ doc: block.srcdoc, title, simulation: block.variant === "simulation", figureAttrs: `${aspectAttrs} data-resource-title="${escapeHtml(block.title || block.pageTitle || referenceFileName(block.shownName || block.src) || "HTML page")}"`, icon: iconSvg("lucide:mouse-pointer-click"), after: interactChip, mediaOmitted: block.widgetMediaOmitted });
     }
     // A local embed whose source file was missing: show a visible placeholder, never a broken iframe.
     if (block.missing) {
@@ -1655,6 +1656,12 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
     // synthesise the liststyle so decideFeatureListStyle applies the icon path.
     const resolvedListstyle = effectiveIcons !== "off" ? (block.liststyle || "icons") : (block.liststyle || "");
     const { style, icons } = decideFeatureListStyle(block.items, block.ordered, deckUsed, resolvedListstyle, overrides);
+    // A crossed-out mark is authored content even when the list keeps its own bullets or numbers.
+    const inlineCross = (index) => {
+      const key = block.iconOverrides?.[index];
+      if (style === "icons" || !key || !iconIsCrossed(key)) return "";
+      return `<span class="fl-inline-cross">${iconSvg(key)}</span>`;
+    };
     const plainClass = style === "plain" ? " fl-plain" : "";
     // T28 (Dominik, 2026-09-17): icon-list treatment. An explicit {iconlist=boxes} /
     // {iconlist=list} value always wins. With NO value token on the slide, an icon list
@@ -1771,7 +1778,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
           // Multiple children: render as a proper stepped sub-list in col 2
           annHtml = renderSubList(childNodes, 1, resolveSubIcons);
         }
-        return `<li><span class="fl-lead">${iconHtml}<span class="fl-text">${renderInline(item)}</span></span>${annHtml}</li>`;
+        return `<li><span class="fl-lead">${iconHtml}<span class="fl-text">${inlineCross(itemIndex)}${renderInline(item)}</span></span>${annHtml}</li>`;
       }).join("")}</ul>`;
     }
     return `<ul class="feature-list${wide}${plainClass}${hasKids}${annotatedClass}${iconlistVariantClass}${shortLines}${numberedClass}${cardsClass}${subsStack}"${groupAttr}${densityAttr}>${block.items.map((item, itemIndex) => {
@@ -1785,7 +1792,7 @@ export function renderBlock(block, deckUsed = null, frameIcons = "off") {
           : `<span class="fl-icon fl-num">${itemIndex + 1}</span>`;
       } else if (style === "numbers") icon = `<span class="fl-icon fl-num">${itemIndex + 1}</span>`;
       const sub = renderSubList(children[itemIndex], 1, resolveSubIcons);
-      return `<li${boxCards && sub ? ' class="fl-card-pts"' : ""}>${icon}<span class="fl-text">${renderInline(item)}</span>${sub}</li>`;
+      return `<li${boxCards && sub ? ' class="fl-card-pts"' : ""}>${icon}<span class="fl-text">${inlineCross(itemIndex)}${renderInline(item)}</span>${sub}</li>`;
     }).join("")}</ul>`;
   }
   if (block.type === "list" && Array.isArray(block.items)) {

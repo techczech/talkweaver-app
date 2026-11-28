@@ -40,6 +40,8 @@ export interface ObjectRefStatus {
   state: ObjectStatusState
   /** For a present local file: its absolute path inside the allowed folders (for Open and Reveal). */
   path?: string
+  repairTitle?: string
+  repairCandidates?: string[]
 }
 
 export type ObjectStatusAnswer =
@@ -179,6 +181,8 @@ export interface ObjectStatusDeps {
   currentTalkOf: (senderId: number) => string | null
   /** The status context for a talk; undefined when its folders are not available. */
   contextFor: (outlinePath: string) => ObjectStatusContext | undefined
+  repairOffers?: (outlinePath: string, refs: string[]) => Promise<Map<string, Pick<ObjectRefStatus, 'repairTitle' | 'repairCandidates'>>>
+  repairWidget?: (outlinePath: string, ref: string, expectedTitle: string) => boolean
   fs?: ObjectStatusFs
   /** The time budget in ms (tests); STATUS_BUDGET_MS otherwise. */
   budgetMs?: number
@@ -204,6 +208,12 @@ export async function answerObjectStatus(senderId: number, outlinePath: unknown,
     }
   } finally { budget.end() }
   if (deps.currentTalkOf(senderId) !== outlinePath) return { ok: false, reason: 'not-current-talk' }
+  const missingPages = statuses.filter(({ ref, state }) => state === 'missing' && /\.html?$/i.test(ref))
+  if (missingPages.length && deps.repairOffers) {
+    const offers = await deps.repairOffers(outlinePath, missingPages.map(({ ref }) => ref)).catch(() => null)
+    if (deps.currentTalkOf(senderId) !== outlinePath) return { ok: false, reason: 'not-current-talk' }
+    for (const status of missingPages) Object.assign(status, offers?.get(status.ref))
+  }
   return { ok: true, statuses }
 }
 
@@ -341,6 +351,10 @@ async function readEarlierViews(ctx: ObjectStatusContext, page: string, fs: Earl
 }
 
 export function registerObjectStatusIpc(deps: ObjectStatusDeps): void {
+  if (deps.repairWidget) deps.ipcMain.handle('object:repair-widget', (event, outlinePath: unknown, ref: unknown, expectedTitle: unknown) =>
+    typeof outlinePath === 'string' && typeof ref === 'string' && ref.length <= MAX_STATUS_REF_LENGTH &&
+    typeof expectedTitle === 'string' && expectedTitle.length <= MAX_STATUS_REF_LENGTH &&
+    deps.currentTalkOf(event.sender.id) === outlinePath && deps.repairWidget?.(outlinePath, ref, expectedTitle) === true)
   deps.ipcMain.handle('object:status', (event, outlinePath: unknown, refs: unknown): Promise<ObjectStatusAnswer> =>
     answerObjectStatus(event.sender.id, outlinePath, refs, deps))
   deps.ipcMain.handle('object:static-preview', (event, outlinePath: unknown, ref: unknown): Promise<string | null> =>

@@ -1,5 +1,6 @@
 // Look review of PR 469 (redesign slice 4). Hidden Electron, synthetic talks.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { _electron as electron } from 'playwright'
@@ -148,7 +149,7 @@ async function run(kind, body) {
       return shown
     }
 
-    await page.locator('[data-talk-slug="garden"]').first().dblclick()
+    await openTalkByTitle(page, 'Community garden update')
     await inspector.waitFor({ timeout: 30000 })
     await who.first().waitFor()
     await sleep(1200)

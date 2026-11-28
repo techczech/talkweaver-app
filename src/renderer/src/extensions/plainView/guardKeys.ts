@@ -92,6 +92,7 @@ import { EditorView, keymap, type Command, type KeyBinding } from '@codemirror/v
 import { EditorSelection, Prec, Transaction, findClusterBreak, type EditorState, type Extension, type TransactionSpec } from '@codemirror/state'
 import { isolateHistory } from '@codemirror/commands'
 import { editorBaseKeymap, editorHistoryKeymap, lineCommandOf } from '../editorBaseKeymap'
+import { gotoLine } from '@codemirror/search'
 import { runLineCommand } from '../objectBlocks/field'
 import { enterFromHeading, headingEnterOwners } from '../outliner'
 import { lineEndCarets } from '../headingEndInsert'
@@ -386,6 +387,8 @@ const guardBinding = (command: Command): Command => {
 
 /** A binding of the base keymap that this guard stands in front of. */
 function guarded(binding: KeyBinding): boolean {
+  // Go to line is registered separately. The old key opens Find in the workspace.
+  if (binding.run === gotoLine) return false
   if (editorHistoryKeymap.includes(binding)) return false
   if (binding.scope && !binding.scope.split(' ').includes('editor')) return false
   // Enter has its own rules (see the head of this file).

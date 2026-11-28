@@ -13,6 +13,8 @@ import { createHash, randomUUID } from 'crypto'
 import { resolve as resolvePath } from 'path'
 import { thumbCacheDir } from './vault-paths'
 import { pathStaysInside } from './path-containment'
+import { copySlideLocalFiles, hasSlideLocalFile } from './slide-local-files'
+import { copyPastedSlideFiles } from './widget-repair'
 import { extractImageRefs, resolveImagePaths } from './slide-image-refs'
 import { convertibleImageRefs, planOptimisation, rewriteConvertedRefs, writeNewFile, type AssetContainment } from './optimise-images'
 import { preparedTalkGroup } from './prepared-talk-cache'
@@ -37,6 +39,9 @@ import { deckWindowKeyAction, deckWindowMode } from './deck-window-keys'
 import { presentWindowPreferences } from './present-window-prefs'
 import { followRemotePages } from './remote-page-follow'
 import { pairLivePageHosts } from './live-page-host'
+import { pageTitleOf } from '../shared/page-title.ts'
+import { plainInlineText } from '../../compiler/scripts/lib/00-inline-render.mjs'
+import { withTalkTitle } from './present-title'
 import { publishTalkHandout } from './talk-handout-publish'
 import type { TalkIpcHost, EmbedStatus, ProjectionRowMain } from './index'
 
@@ -703,7 +708,7 @@ export function registerTalkIpc(host: TalkIpcHost): void {
       }, 'variant')
       if (!prepared) return { success: false, error: 'Compiler not found' }
       const { slug, model } = prepared
-      const html = model.fullHtml as string
+      const html = withTalkTitle(model.fullHtml as string, plainInlineText(pageTitleOf(model, slug)))
       const talkDir = dirname(outlinePath)
       const distDir = join(talkDir, 'dist')
       if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
@@ -733,8 +738,8 @@ export function registerTalkIpc(host: TalkIpcHost): void {
       const distDir = join(talkDir, 'dist')
       if (!existsSync(distDir)) mkdirSync(distDir) // only inside a talk folder that is there (a vanished vault is never re-created)
 
-      const title = (model.title as string) ?? slug
-      const fullHtml = model.fullHtml as string
+      const title = pageTitleOf(model, slug)
+      const fullHtml = withTalkTitle(model.fullHtml as string, plainInlineText(title))
       const outPaths: string[] = []
 
       const fullPath = join(distDir, slug + '-full.html')
@@ -811,7 +816,7 @@ export function registerTalkIpc(host: TalkIpcHost): void {
       if (!prepared) return { success: false, error: 'Compiler not found' }
       const { slug, model } = prepared
       const talkDir = dirname(outlinePath)
-      const title = (model.title as string) ?? slug
+      const title = pageTitleOf(model, slug)
       const fullHtml = model.fullHtml as string
 
       const { extractStyles, extractSlides } = await import(
@@ -945,7 +950,10 @@ export function registerTalkIpc(host: TalkIpcHost): void {
   // `_assets/<img-or-vid>-<hash>.<ext>`, which resolves from ANY talk. Images may be WebP-normalised;
   // videos retain their bytes. Rewrite refs to the pool id; leave pool / http / data refs alone. Returns the
   // rewritten markdown (the renderer inserts THAT). `sourceOutlinePath` locates the source assets.
-  ipcMain.handle('talk:materialize-slide-assets', async (_event, sourceOutlinePath: string, markdown: string) => {
+  ipcMain.handle('talk:materialize-slide-assets', async (event, sourceOutlinePath: string, markdown: string, targetOutlinePath?: string) => {
+    if (targetOutlinePath && editorWindows.get(event.sender.id)?.outlinePath !== targetOutlinePath) {
+      return { success: false, error: 'The target talk changed.', markdown }
+    }
     const refusal = outlineRefused(sourceOutlinePath) // writes beside the outline: refuse one outside the vault
     if (refusal) return { success: false, error: refusal, markdown }
     const vaultRoot = writableRootFor(sourceOutlinePath)
@@ -1030,6 +1038,12 @@ export function registerTalkIpc(host: TalkIpcHost): void {
           materialized += 1
         } catch (e) { console.warn('[materialize-slide-assets] failed for', ref, e) }
       }
+      if (targetOutlinePath) {
+        const target = editorWindows.get(event.sender.id)?.outlinePath !== targetOutlinePath || outlineRefused(targetOutlinePath) ? null : pathStaysInside(vaultRoot, targetOutlinePath)
+        const source = pathStaysInside(vaultRoot, sourceOutlinePath)
+        if (!target || !source) return { success: false, error: 'The slide’s talk or its destination is outside the vault.', markdown }
+        out = copySlideLocalFiles(dirname(source), dirname(target), out)
+      }
       return { success: true, markdown: out, materialized, skipped }
     } catch (e) {
       console.error('[materialize-slide-assets]', e)
@@ -1037,10 +1051,11 @@ export function registerTalkIpc(host: TalkIpcHost): void {
     }
   })
 
-  ipcMain.handle('talk:insert-from-vault', async (_event, sourceOutlinePath: unknown, targetOutlinePath: unknown, markdown: unknown, liveIds?: unknown) => {
+  ipcMain.handle('talk:insert-from-vault', async (event, sourceOutlinePath: unknown, targetOutlinePath: unknown, markdown: unknown, liveIds?: unknown) => {
     if (typeof sourceOutlinePath !== 'string' || typeof targetOutlinePath !== 'string' || typeof markdown !== 'string') {
       return { ok: false as const, error: 'Nothing to insert.' }
     }
+    if (editorWindows.get(event.sender.id)?.outlinePath !== targetOutlinePath) return { ok: false as const, error: 'The target talk changed.' }
     const from = vaultRegistry.resolve(resolvePath(sourceOutlinePath))
     const to = vaultRegistry.resolve(resolvePath(targetOutlinePath))
     if (!from || !to || !from.vault.open || !to.vault.open) return { ok: false as const, error: 'The slide’s vault or this talk’s vault is not open.' }
@@ -1058,16 +1073,20 @@ export function registerTalkIpc(host: TalkIpcHost): void {
         ...(Array.isArray(liveIds) ? liveIds.filter((id): id is string => typeof id === 'string') : []),
         ...(pending ? pending.keys() : [])
       ]
+      const tools = await crossVaultTools()
+      if (editorWindows.get(event.sender.id)?.outlinePath !== targetOutlinePath) return { ok: false as const, error: 'The target talk changed.' }
       const result = await prepareCrossVaultInsert({
         source: { id: from.vault.id, name: vaultNameOf(from.vault.id), root: from.vault.root },
         target: { id: to.vault.id, name: vaultNameOf(to.vault.id), root: to.vault.root },
         sourceOutlinePath,
+        targetOutlinePath,
+        canCopyLocalFiles: () => editorWindows.get(event.sender.id)?.outlinePath === targetOutlinePath && !outlineRefused(targetOutlinePath),
         sourceTalkTitle: sourceTalk?.title || basename(sourceOutlinePath).replace(/-outline\.md$/, ''),
         markdown,
         extraTaken,
         // Who inserts it: their "Just for me" author for the target vault, else the Settings author.
         insertedBy: vaultRegistry.personal(to.vault.id).author?.trim() || String(metadataDefaults().author ?? '').trim()
-      }, await crossVaultTools(), { toWebp: normaliseToWebp })
+      }, tools, { toWebp: normaliseToWebp })
       if (!result.ok) return result
       const hints = pendingOrigins.get(to.vault.root) ?? new Map<string, SlideOrigin>()
       for (const slide of result.slides) {
@@ -1086,13 +1105,27 @@ export function registerTalkIpc(host: TalkIpcHost): void {
     }
   })
 
+  // Keep the origin of our own clipboard text in memory only. The system clipboard stays Markdown.
+  let slideClipboard: { digest: string; source: string } | undefined
+  const clipboardDigest = (text: string): string =>
+    createHash('sha256').update(text.replace(/\r\n/g, '\n')).digest('hex')
+  ipcMain.handle('talk:remember-slide-copy', (event, source: unknown, markdown: unknown) => {
+    if (typeof source !== 'string' || typeof markdown !== 'string' || markdown.length > 1_000_000 ||
+        editorWindows.get(event.sender.id)?.outlinePath !== source || outlineRefused(source)) return
+    slideClipboard = { source, digest: clipboardDigest(markdown) }
+  })
+
   // Cross-talk reuse via TEXT PASTE: the picker materialises a slide's relative images using its
   // source path, but pasted markdown has none. Resolve each relative `assets/<name>` ref by FILENAME
   // across the vault, copy it into the content-addressed pool (img-<hash>, WebP-normalised), and
   // rewrite the ref — so a pasted sequence's images resolve from any talk. Pool/http/data refs and
   // names not found anywhere are left untouched. Returns the rewritten markdown.
-  ipcMain.handle('talk:materialize-pasted-assets', async (_event, markdown: string) => {
-    const vaultRoot = writableVaultRoot()
+  ipcMain.handle('talk:materialize-pasted-assets', async (event, markdown: string, targetOutlinePath?: string) => {
+    if (typeof markdown !== 'string') return { success: false, error: 'Invalid slide text', markdown }
+    if (targetOutlinePath && (editorWindows.get(event.sender.id)?.outlinePath !== targetOutlinePath || outlineRefused(targetOutlinePath))) {
+      return { success: false, error: 'The target talk changed.', markdown }
+    }
+    const vaultRoot = targetOutlinePath ? writableRootFor(targetOutlinePath) : writableVaultRoot()
     if (!vaultRoot) return { success: false, error: 'No vault root', markdown }
     try {
       const assetsDir = join(vaultRoot, '_assets')
@@ -1105,6 +1138,17 @@ export function registerTalkIpc(host: TalkIpcHost): void {
         if (/^(https?:|data:|img-|vid-)/.test(raw)) continue
         if (!/\.(png|jpe?g|gif|webp|mp4|mov|m4v|webm)$/i.test(raw)) continue // images AND videos (2026-07-20: videos were silently dropped)
         refs.add(raw)
+      }
+      if (targetOutlinePath) {
+        const target = pathStaysInside(vaultRoot, targetOutlinePath)
+        if (target) {
+          const recorded = slideClipboard?.digest === clipboardDigest(markdown) ? slideClipboard?.source : undefined
+          const readRoot = recorded && !outlineRefused(recorded) ? writableRootFor(recorded) : undefined
+          const source = readRoot && recorded && pathStaysInside(readRoot, recorded)
+          markdown = source
+            ? copySlideLocalFiles(dirname(source), dirname(target), markdown)
+            : copyPastedSlideFiles(vaultRoot, target, markdown, findTalks(vaultRoot))
+        }
       }
       if (refs.size === 0) return { success: true, markdown, materialized: 0, skipped: 0 }
       if (!host.vaultAssetIndex) host.vaultAssetIndex = buildVaultAssetIndex(vaultRoot)

@@ -49,7 +49,11 @@ export const SURFACE_KEYS = {
   'research-scope-everything': 'research.scope-everything',
   'research-retry': 'research.retry',
   'find-talk': 'app.find-talk',
+  'image': 'app.image-search',
+  'find-slides': 'app.find-slides',
+  'find-icons': 'app.find-icons',
   'add-beside': 'slide-picker.add-beside',
+  'vault-explorer.open-window': 'vault-explorer.open-window',
   'talk-beside': 'slide-picker.talk-beside',
   'close-beside': 'slide-picker.close-beside',
   'select-whole-section': 'slide-picker.select-whole-section'

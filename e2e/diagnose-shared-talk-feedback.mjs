@@ -13,6 +13,7 @@
 // marker opens the rail on its slide beside the pane; the ghost's Accept inserts the section and slide
 // right after the named slide.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { _electron as electron } from 'playwright'
 import { createServer, connect } from 'node:net'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -99,7 +100,7 @@ try {
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.waitForLoadState('domcontentloaded')
-  await page.getByText('Feedback probe', { exact: true }).first().click()
+  await openTalkByTitle(page, 'Feedback probe')
   await page.waitForSelector('.workspace')
   await page.getByRole('group', { name: 'View' }).getByRole('button', { name: 'Outline', exact: true }).click()
   await page.waitForSelector('[data-view="outline"] .cm-content')
@@ -228,7 +229,7 @@ try {
   assert.equal(await page.getByTestId('feedback-paused').count(), 0)
   await until(async () => (await items.count()) === 5, 'the late item after reconnect')
   // Clicking into the editor moved the sidebar to the slide outline; the talk row is on Talks.
-  await page.getByText('Talks', { exact: true }).first().click()
+  await page.getByRole('tab', { name: 'Talks', exact: true }).click()
   await page.locator('.tl-row').first().waitFor()
   assert.equal(await items.first().getAttribute('data-item-id'), 'e2e-late')
   await until(async () => JSON.stringify(await counts()) === JSON.stringify({ toolbar: '3', row: '3', rail: '3 new' }), 'counts of 3', 20_000, dump)

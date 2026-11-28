@@ -10,6 +10,7 @@
 //   3. "Change ⌘L" in the layout section opens the layout picker;
 //   4. a slide with another layout (a statement) keeps its buttons: no pictures.
 import { _electron as electron } from 'playwright'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { join } from 'path'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
@@ -64,7 +65,7 @@ try {
   await page.waitForTimeout(2500)
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 900))
   await page.waitForTimeout(1000)
-  await page.locator('.tl-row').first().dblclick()
+  await openTalkByTitle(page, 'Option pictures in the Inspector')
   await page.waitForTimeout(3000)
   await page.keyboard.press('Meta+p')
   await page.waitForTimeout(1500)

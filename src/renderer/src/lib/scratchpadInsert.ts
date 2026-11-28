@@ -164,7 +164,9 @@ async function visualOnly(host: ScratchInsertHost, talk: string, request: Extrac
     outcome = { ok: true, slideTitle: placed.title, newSlide: placed.place }
   }
   // A page: what Insert › HTML page… always says after its insert (only this file is used).
-  if (got.page) {
+  if (got.page?.dependenciesCopied) {
+    host.notify('Copied the page and its local files into this talk.', 'success', 'scratchpad-insert-page')
+  } else if (got.page) {
     const named = got.page.localReferences.length ? ` ${HTML_PAGE_INSERT_TEXT.namedFiles(got.page.localReferences)}` : ''
     host.notify(`${HTML_PAGE_INSERT_TEXT.inserted(got.page.embedPath, got.page.how)} ${HTML_PAGE_INSERT_TEXT.onlyThisFile}${named}`, got.page.localReferences.length ? 'warning' : 'success', 'scratchpad-insert-page')
   }
@@ -183,7 +185,7 @@ export async function prepareScratchBatchSlide(
   const copied = await api.insertFromVault(source, talk, markdown, reservedIds)
   if (!copied.ok) throw new Error(copied.error)
   if (copied.crossVault) return { markdown: copied.markdown, idsAssigned: true }
-  const materialized = await api.materializeSlideAssets(source, markdown)
+  const materialized = await api.materializeSlideAssets(source, markdown, talk)
   if (!materialized?.success) throw new Error('The selected slide media could not be prepared.')
   return materialized.markdown
 }
@@ -202,6 +204,10 @@ export async function runScratchBatch(host: ScratchBatchHost, ids: string[], pla
 > {
   const talk = host.talk(); const editor = host.editor()
   if (!talk || !editor || editor.path !== talk || !ids.length || new Set(ids).size !== ids.length) return FAIL
+  const refuse = (why: string): typeof FAIL => {
+    host.notify(`Couldn’t add ${ids.length} slide${ids.length === 1 ? '' : 's'}. ${why}`, 'error', 'scratchpad-insert')
+    return FAIL
+  }
   const unchanged = (): boolean => host.talk() === talk && host.editor()?.path === talk && host.editor()?.text === editor.text
   try {
     const prepared = await host.api.prepareInsert(ids, talk)
@@ -221,7 +227,7 @@ export async function runScratchBatch(host: ScratchBatchHost, ids: string[], pla
       if (!unchanged() || current !== editor.text) throw new Error('The talk changed. Nothing was inserted.')
       return planned.text
     })
-    if (!result.ok && !result.applied) return FAIL
+    if (!result.ok && !result.applied) return refuse(result.error)
     const saved = 'saved' in result ? result.saved : null
     const sourceText = saved && typeof saved === 'object' && 'content' in saved && typeof saved.content === 'string' ? saved.content : planned.text
     const beforeRows = placeRows(planned.text); const afterRows = placeRows(sourceText)
@@ -240,7 +246,6 @@ export async function runScratchBatch(host: ScratchBatchHost, ids: string[], pla
     }
     return { ok: true, newSlide, lines, selectionLines, sourceText }
   } catch (error) {
-    host.notify(INSERT_TEXT.failed(error instanceof Error ? error.message : String(error)), 'warning', 'scratchpad-insert')
-    return FAIL
+    return refuse(error instanceof Error ? error.message : 'Check the selected cards and try again.')
   }
 }

@@ -12,6 +12,7 @@
 // text with includeNotes:false. Each slide's source text is read off the same tree (heading,
 // Trigger line, content lines — never notes lines). scripts/test-shared-talk-build.mjs asserts the
 // pushed HTML (SLIDE_SCRIPT included) and the pushed slide text on every awkward case.
+import { pageTitleOf } from '../shared/page-title.ts'
 import { statSync } from 'fs'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
@@ -144,9 +145,13 @@ export async function buildSharedTalkPayload(input: BuildSharedTalkInput): Promi
   // them the compiler allows the talk's own folder only.
   const compileOptions = input.allowedAssetRoots ? { allowedAssetRoots: input.allowedAssetRoots } : {}
   check()
-  const model = await prepareSource(outlinePath, shareSafeOutline(tree, input.compileContent ?? content), slug, statSync(outlinePath), undefined, compileOptions)
+  // Widget resources remain inside the sandboxed HTML that is sent in the Worker push.
+  const model = await prepareSource(outlinePath, shareSafeOutline(tree, input.compileContent ?? content), slug, statSync(outlinePath), undefined, {
+    ...compileOptions,
+    limitPublishedWidgets: true,
+  })
   check()
-  const title = frontmatterValue(content, 'title') || String(model.title || '') || slug
+  const title = pageTitleOf(model, slug)
   const fullHtml = String(model.fullHtml)
   // A {prework} section's slides are not part of a shared talk (they are not presented or published).
   const compiled = withoutPreworkSlides(extractSlides(fullHtml) as Array<{ id?: unknown; html: string }>, model.prework as CompiledPrework | undefined)

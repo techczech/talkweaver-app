@@ -21,6 +21,20 @@ const row = (id, title, md, nav) => ({ slide_id: id, nav_title: nav ?? title, ti
 const mkTalk = (key, rows, freshness = '1|t', pics = {}, exists = () => true) => ({ key, freshness, rows, imageRefsFor: (r) => pics[r.slide_id] || [], resolveImages: (refs) => refs.filter(exists) })
 const run = (search, query, talks, extra = {}) => search.scan({ query: normalizeSearchQuery(query), talks, load: async (t) => t, yieldToLoop: async () => {}, ...extra })
 
+await test('image search includes authored names and descriptions with the indexed OCR', async () => {
+  const search = createSlideSearch({ imageText: imageStore({ '/p/pond.png': 'Seasonal waterline' }) })
+  const talk = mkTalk('/t/one', [row('1', 'Survey maps', '![Amphibian habitat](pond-outline.png "Water depth")')], '1|t', { 1: ['/p/pond.png'] })
+  for (const text of ['pond-outline', 'amphibian habitat', 'water depth', 'seasonal waterline']) {
+    const query = { scope: 'image', exact: true, text, terms: text.split(' ') }
+    const hits = await run(search, query, [talk], { includeMatch: true })
+    assert.equal(hits.length, 1, text)
+    assert.deepEqual(hits[0].matchEvidence.fields, { title: false, text: false, picture: true })
+    assert.equal(hits[0].matchEvidence.resolvedPictureText, text === 'seasonal waterline' ? text : undefined)
+  }
+  const joined = await run(search, { scope: 'image', exact: true, text: 'depth\nseasonal', terms: ['depth', 'seasonal'] }, [talk])
+  assert.equal(joined.length, 1, 'authored descriptions and resolved text are separated by a newline')
+})
+
 // Verbatim copy of the match step the handler ran per row before the module (index.ts, 2026-10-20).
 function legacyMatches(r, imageHay, q) {
   const titleHay = `${r.nav_title || ''}\n${r.title || ''}`.toLowerCase()

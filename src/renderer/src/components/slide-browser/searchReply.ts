@@ -14,7 +14,7 @@ export interface BrowserRowsReply {
 /** null = search unavailable (main answered null or the call failed outright). */
 export async function fetchBrowserRows(
   query: ReturnType<typeof parseSearchQuery>,
-  options: { vaultIds?: string[]; requestId?: number; supersedeKey?: string }
+  options: { vaultIds?: string[]; requestId?: number; supersedeKey?: string; includeMatch?: boolean }
 ): Promise<BrowserRowsReply | null> {
   const search = window.tw.search
   const reply = typeof search.allSlidesCompact === 'function'

@@ -6,6 +6,7 @@ import { once } from 'node:events'
 import { join, resolve } from 'node:path'
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { chromeCollisions } from './lib/window-chrome-geometry.mjs'
+import { openVaultStorage } from './lib/vault-storage.mjs'
 
 const repo = resolve(import.meta.dirname, '..')
 const baseline = process.argv.includes('--baseline')
@@ -80,7 +81,7 @@ async function state(win) {
   }))
 }
 
-async function check(page, win, name, mode, titles, native) {
+async function check(page, win, name, mode, titles, native, explorer) {
   const info = await state(win)
   assert.equal(info.visible, false, name + ' must stay hidden')
   await page.waitForFunction(([w, h]) => innerWidth === w && innerHeight === h, info.content)
@@ -91,6 +92,23 @@ async function check(page, win, name, mode, titles, native) {
   if (!baseline && name === 'vault-gallery-overview') {
     const box = await page.locator('.vg-crumb.here.top').boundingBox()
     if (!box || box.width <= 45) collisions.push('All vaults must remain readable beside Back and Search')
+  }
+  if (explorer) {
+    const bar = explorer.locator('.vx-titlebar')
+    const toggle = bar.getByRole('button', { name: 'Folders sidebar', exact: true })
+    const [header, sidebar] = await Promise.all([bar.boundingBox(), toggle.boundingBox()])
+    if (!header || !sidebar || sidebar.x < header.x || sidebar.x + sidebar.width > header.x + header.width ||
+        sidebar.y < header.y || sidebar.y + sidebar.height > header.y + header.height) {
+      collisions.push('Explorer top bar must contain its visible Folders sidebar toggle')
+    }
+    if (native && header && header.y < native.bottom && header.y + header.height > native.top) {
+      const contentLeft = await bar.evaluate(el => el.getBoundingClientRect().left + parseFloat(getComputedStyle(el).paddingLeft))
+      if (contentLeft < native.right - 0.5) collisions.push('Explorer top-bar content enters the native controls area')
+    }
+    if (native && sidebar && sidebar.x < native.right - 0.5 && sidebar.x + sidebar.width > native.left &&
+        sidebar.y < native.bottom && sidebar.y + sidebar.height > native.top) {
+      collisions.push('Explorer Folders sidebar toggle intersects the native controls')
+    }
   }
   if (name === 'slide-browser') {
     for (const button of await page.locator('.lt-topbar .lt-tool-btn, .lt-topbar .lt-steps button').all()) {
@@ -121,17 +139,18 @@ async function nativeControls(page, info, custom) {
   return { left: x, top: y, right: overlay.right - x, bottom: overlay.height - y }
 }
 
-async function inspect(page, name, { custom = true, titles = '[data-window-title]', fullscreen = true } = {}) {
+async function inspect(page, name, { custom = true, titles = '[data-window-title]', fullscreen = true, explorer } = {}) {
   const win = await app.browserWindow(page)
   const normal = await state(win)
   if (!baseline && custom) assert.equal(await page.evaluate(() => window.twMacInset), mac, name + ' preload and native chrome flag')
   const native = await nativeControls(page, normal, custom)
   const minimum = normal.minimum.every(n => n > 0) ? normal.minimum : normal.bounds
   try {
-    await check(page, win, name, 'default', titles, native)
+    await check(page, win, name, 'default', titles, native, explorer)
     if (normal.minimum.every(n => n > 0)) {
       await win.evaluate((w, size) => w.setSize(...size), minimum)
-      await check(page, win, name, 'minimum', titles, native)
+      if (explorer) assert.deepEqual((await state(win)).bounds, minimum, name + ' reached the minimum size')
+      await check(page, win, name, 'minimum', titles, native, explorer)
     } else {
       console.log('N/A ' + name + ' / minimum (host has no app-defined minimum)')
     }
@@ -156,14 +175,14 @@ async function inspect(page, name, { custom = true, titles = '[data-window-title
     }, true)
     const full = await state(win)
     assert.ok(full.simpleFullScreen || full.fullScreen, name + ' did not enter Electron fullscreen')
-    await check(page, win, name, 'fullscreen', titles, native)
+    await check(page, win, name, 'fullscreen', titles, native, explorer)
   } finally {
     await win.evaluate((w, size) => {
       if (process.platform === 'darwin' && w.isSimpleFullScreen()) w.setSimpleFullScreen(false)
       else if (w.isFullScreen()) w.setFullScreen(false)
       w.setSize(...size)
     }, normal.bounds)
-    await check(page, win, name, 'restored', titles, native)
+    await check(page, win, name, 'restored', titles, native, explorer)
     await win.dispose()
   }
 }
@@ -184,27 +203,38 @@ async function openWindow(action, urlMatches) {
 }
 
 try {
+  const explorerTitles = '.vx-crumbs [aria-current="page"], .workspace-title, [data-window-title]'
   if (!baseline) {
     await startSite()
     const setup = await launch('setup', false)
-    await setup.locator('.tw-welcome-window').waitFor()
-    await inspect(setup, 'first-run-setup')
+    const firstRun = setup.getByRole('region', { name: 'Vault Explorer', exact: true })
+    await firstRun.getByRole('heading', { name: 'Choose where to keep your talks', exact: true }).waitFor()
+    await inspect(setup, 'first-run-setup', { explorer: firstRun, titles: explorerTitles })
     await closeApp()
   }
   const editor = await launch('editor', true)
-  await editor.locator('.tw-welcome-new').waitFor()
+  const start = editor.getByRole('region', { name: 'Vault Explorer', exact: true })
+  await start.getByRole('heading', { name: 'Start a new talk', exact: true }).waitFor()
   if (!baseline) {
-    await inspect(editor, 'editor-welcome', { titles: '.workspace-title' })
-    // Crossing the narrow breakpoint collapses the Talks sidebar until the user reopens it.
-    const expand = editor.locator('[data-sidebar-expand]')
-    if (await expand.isVisible()) await expand.click()
+    const win = await app.browserWindow(editor)
+    const geometry = await state(win)
+    await win.dispose()
+    assert.deepEqual(geometry.minimum, [800, 600], 'the Explorer uses the editor window minimum')
+    assert.ok(geometry.bounds[0] >= 1000, 'the Explorer launches at a full-width size')
+    await inspect(editor, 'editor-start-explorer', { explorer: start, titles: explorerTitles })
   }
-  await editor.locator('[data-talk-slug="fixture"]').first().dblclick()
+  await start.getByRole('button', { name: title, exact: true }).click()
   await editor.locator('.workspace-view-titlebar').waitFor()
   await editor.locator('.cm-content').waitFor()
+  // Crossing the narrow breakpoint can collapse the editor sidebar.
+  const expand = editor.locator('[data-sidebar-expand]')
+  if (!baseline && await expand.isVisible()) await expand.click()
 
-  await editor.evaluate(() => window.dispatchEvent(new Event('tw-vault-gallery')))
-  const gallery = editor.getByRole('dialog', { name: 'Vault Gallery', exact: true })
+  await editor.getByRole('button', { name: 'Vault Explorer', exact: true }).click()
+  const explorer = editor.getByRole('dialog', { name: 'Vault Explorer', exact: true })
+  await explorer.waitFor()
+  if (!baseline) await inspect(editor, 'vault-explorer', { explorer, titles: explorerTitles })
+  const gallery = await openVaultStorage(editor)
   await gallery.locator('.vg-crumb.here.top').waitFor()
   const galleryTitles = { titles: '.vg-crumb.here' }
   await inspect(editor, 'vault-gallery-overview', galleryTitles)
@@ -217,6 +247,8 @@ try {
     await inspect(editor, 'vault-gallery-all-talks', galleryTitles)
     await gallery.locator('[data-mode-back]').click()
     await gallery.waitFor({ state: 'detached' })
+    await explorer.locator('[data-mode-back]').click()
+    await explorer.waitFor({ state: 'detached' })
 
     const titleBarLabels = '.workspace-view-titlebar .toolbar-btn-content > span'
     const pathwaySwitch = editor.locator('.workspace-pathway-switch')

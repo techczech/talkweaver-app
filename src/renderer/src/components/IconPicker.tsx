@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { crossIconSvg, withIconCross } from '../../../../compiler/scripts/lib/icon-cross.mjs'
 import { sanitiseIconSvg } from '../../../shared/objects/sanitise-icon-svg'
 
 /**
@@ -41,6 +42,7 @@ const DEBOUNCE_MS = 200
 const COLUMNS = 6
 
 export default function IconPicker({ isOpen, onClose, onIconSelected }: Props) {
+  const [crossed, setCrossed] = useState(false)
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<IconHit[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
@@ -56,6 +58,7 @@ export default function IconPicker({ isOpen, onClose, onIconSelected }: Props) {
   // Reset + focus on open.
   useEffect(() => {
     if (!isOpen) return
+    setCrossed(false)
     setQuery('')
     setResults([])
     setActiveIndex(0)
@@ -98,10 +101,10 @@ export default function IconPicker({ isOpen, onClose, onIconSelected }: Props) {
     (hit: IconHit) => {
       if (pickLockRef.current) return
       pickLockRef.current = true
-      onIconSelected(hit.key)
+      onIconSelected(withIconCross(hit.key, crossed))
       onClose()
     },
-    [onIconSelected, onClose]
+    [onIconSelected, onClose, crossed]
   )
 
   // Keyboard navigation (capture so we intercept before editor handlers).
@@ -115,6 +118,7 @@ export default function IconPicker({ isOpen, onClose, onIconSelected }: Props) {
         onClose()
         return
       }
+      if (e.target instanceof HTMLInputElement && e.target.type === 'checkbox') return
       if (results.length === 0) return
       if (e.key === 'ArrowRight') {
         e.preventDefault()
@@ -163,6 +167,11 @@ export default function IconPicker({ isOpen, onClose, onIconSelected }: Props) {
           data-icon-search
         />
 
+        <label className="tw-icon-cross-toggle">
+          <input type="checkbox" checked={crossed} onChange={event => setCrossed(event.target.checked)} />
+          Cross out
+        </label>
+
         <div ref={gridRef} style={bodyStyle}>
           {results.length === 0 ? (
             <div style={messageStyle}>
@@ -178,6 +187,7 @@ export default function IconPicker({ isOpen, onClose, onIconSelected }: Props) {
                 <IconCard
                   key={hit.key}
                   hit={hit}
+                  crossed={crossed}
                   active={idx === activeIndex}
                   onHover={() => setActiveIndex(idx)}
                   onSelect={() => pick(hit)}
@@ -205,12 +215,13 @@ export default function IconPicker({ isOpen, onClose, onIconSelected }: Props) {
 
 interface CardProps {
   hit: IconHit
+  crossed: boolean
   active: boolean
   onHover: () => void
   onSelect: () => void
 }
 
-function IconCard({ hit, active, onHover, onSelect }: CardProps) {
+function IconCard({ hit, crossed, active, onHover, onSelect }: CardProps) {
   const [svg, setSvg] = useState<string | null>(null)
   // The bare name after the `lucide:` / `svgl:` / `tabler:` prefix — the human-readable label.
   const label = hit.key.replace(/^(lucide|svgl|tabler):/, '')
@@ -254,7 +265,7 @@ function IconCard({ hit, active, onHover, onSelect }: CardProps) {
     >
       <div style={glyphWrapStyle}>
         {svg ? (
-          <span style={glyphStyle} dangerouslySetInnerHTML={{ __html: svg }} />
+          <span style={glyphStyle} dangerouslySetInnerHTML={{ __html: crossed ? crossIconSvg(svg) : svg }} />
         ) : (
           <span style={glyphFallbackStyle}>{label.slice(0, 2).toUpperCase()}</span>
         )}

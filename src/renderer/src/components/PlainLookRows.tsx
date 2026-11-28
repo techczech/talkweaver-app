@@ -1,5 +1,5 @@
 // The two Settings rows for the Plain tab (plain editing view, spec T13; drawing state-s11):
-// "Plain view font" (Sans · Serif), "Text size" (− 16 px +), and a sample line that follows both.
+// "Outline view font" (Sans · Serif), "Text size" (− 16 px +), and a sample line that follows both.
 import React from 'react'
 import {
   PLAIN_FONTS, PLAIN_TEXT_SIZE_MAX, PLAIN_TEXT_SIZE_MIN, plainFontStack, stepPlainTextSize,
@@ -16,10 +16,10 @@ export default function PlainLookRows({ look, onChange }: PlainLookRowsProps): R
     <div data-plain-look-rows>
       <div style={row}>
         <div style={{ minWidth: 0 }}>
-          <div style={label}>Plain view font</div>
+          <div style={label}>Outline view font</div>
           <div style={sub}>The font used in the Plain tab. The Markdown tab always uses the code font.</div>
         </div>
-        <div role="radiogroup" aria-label="Plain view font" style={segmented}>
+        <div role="radiogroup" aria-label="Outline view font" style={segmented}>
           {PLAIN_FONTS.map((f) => {
             const on = f.id === look.font
             return (

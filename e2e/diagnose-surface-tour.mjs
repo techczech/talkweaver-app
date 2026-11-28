@@ -66,7 +66,7 @@ if (flag('report-only')) {
 }
 
 await ensureFreshBuild(root)
-// The Vault Gallery and presenting need the small native helper (macOS); build it once if it is missing.
+// The storage browser and presenting need the small native helper (macOS); build it once if it is missing.
 if (process.platform === 'darwin' && !existsSync(join(root, 'native/vault-gallery'))) {
   console.log('[tour] building the native gallery helper (npm run build:gallery-native:host)')
   spawnSync('npm', ['run', 'build:gallery-native:host'], { cwd: root, stdio: 'inherit' })
@@ -591,7 +591,7 @@ report.extra_surfaces = [
   { note: 'Guide progress toast "✓ Ticked · <command name>" appears whenever a Guide-listed command is run (seen after Guide, Settings, Plan a Run); not listed as a surface of its own', shot: 'shots/guide.png' },
   { note: 'Hover flyout card on a Talks row (title, slides, dates, handout, warnings, "Click to open") appears whenever the pointer rests on a talk in any Talks view (listed only for the Ledger view)', shot: 'shots/talk-flyout.png' },
   { note: 'Inline validation toast "Choose a date." in the Plan a Run sheet when Save is pressed without a date', shot: null },
-  { note: 'Gallery measuring toast "0 of 12 sizes measured" appears in the Vault Gallery while sizes are being counted', shot: 'shots/gallery-details.png' },
+  { note: 'Gallery measuring toast "0 of 12 sizes measured" appears in Details and storage while sizes are being counted', shot: 'shots/gallery-details.png' },
   { note: 'Settings shortcut recorder shows a Swap / Replace / Cancel row when a chord is already used (listed) and a separate refused notice for reserved chords (listed); both live in the same list row', shot: 'shots/settings-key-conflict.png' },
   { note: 'Refusal toast "Present failed: Gallery source helper unavailable" appeared when the native gallery helper (npm run build:gallery-native:host) had not been built; the script now builds it', shot: null }
 ]

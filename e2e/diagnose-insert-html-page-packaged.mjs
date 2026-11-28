@@ -7,6 +7,7 @@
 // copied byte for byte into the talk's assets folder and its Embed line lands at the caret without
 // losing unsaved typing; one Undo takes back only the line; the slide compiles the page.
 import assert from 'node:assert/strict'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { _electron as electron } from 'playwright'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -68,7 +69,7 @@ for (const mode of process.env.TW_TEST_EDITOR_MODE ? [process.env.TW_TEST_EDITOR
       await page.getByRole('menuitem', { name: /HTML page…/ }).click()
     }
 
-    await page.locator('[data-talk-slug="html-page"]').first().dblclick()
+    await openTalkByTitle(page, 'HTML page fixture')
     await page.locator('.cm-content').waitFor()
     assert.equal(typeof await editorText(), 'string')
     await page.evaluate(() => {

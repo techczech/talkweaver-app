@@ -35,6 +35,8 @@ export interface OutlineDiskChangeWiring {
   /** Writes the editor's current text even when it looks saved (Editor forceSave). */
   forceSave(signal?: AbortSignal): Promise<boolean>
   cancelDebouncedSave?(outlinePath: string): void
+  beforeClose?(signal: AbortSignal): boolean | Promise<boolean>
+  hasMetadataDraft?(): boolean
   hasPendingSketch?(): boolean
   saveSketch?(): Promise<boolean>
   /** The talk was discarded (removed on disk): let it go from this window. */
@@ -475,11 +477,18 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
     }
   }
   const unfreezeAllRef = useRef<Set<() => void>>(new Set())
+  const metadataCloseRef = useRef<AbortController | null>(null)
   // The update's restart was called off: every frozen close of this window is released at once, with nothing lost.
-  useEffect(() => window.tw.talk.onCloseCancelled?.(() => { for (const release of [...unfreezeAllRef.current]) release() }), [])
+  useEffect(() => window.tw.talk.onCloseCancelled?.(() => {
+    metadataCloseRef.current?.abort()
+    for (const release of [...unfreezeAllRef.current]) release()
+  }), [])
   useEffect(() => window.tw.talk.onCloseRequested?.(({ quit, update }) => {
     // Freezing blurs an object editor (which can commit it): ask before doing either.
-    const draft = update === true ? updateRestartDraft(document) : null
+    const restartDraft = () => wiringRef.current.hasMetadataDraft?.()
+      ? 'Save or discard your changes in Talk design to restart.'
+      : updateRestartDraft(document)
+    const draft = update === true ? restartDraft() : null
     if (draft) {
       notify(draft, 'warning')
       void window.tw.talk.confirmClose({ quit, revision: editorRevision.current(), hasDraft: true })
@@ -489,7 +498,7 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
     unfreezeAllRef.current.add(freezing.unfreeze)
     const from = wiringRef.current.activeOutlinePath
     const confirm = (revision: number) => {
-      const draft = update === true ? updateRestartDraft(document) : null
+      const draft = update === true ? restartDraft() : null
       if (draft) notify(draft, 'warning')
       return window.tw.talk.confirmClose({ quit, revision, hasDraft: draft !== null })
     }
@@ -506,6 +515,24 @@ export function useOutlineDiskChange(wiring: OutlineDiskChangeWiring): OutlineDi
     }
     void (async () => {
       try {
+        // Metadata must be committed or discarded before CodeMirror is frozen for close.
+        const beforeClose = wiringRef.current.beforeClose
+        if (beforeClose) {
+          if (metadataCloseRef.current) {
+            // A second click on Close still refers to the pending choice.
+            if (update !== true) void window.tw.talk.ackCloseRequest?.()
+            return
+          }
+          const choice = new AbortController()
+          metadataCloseRef.current = choice
+          try {
+            const allowed = await beforeClose(choice.signal)
+            if (choice.signal.aborted) return
+            if (!allowed) { await kept(); return }
+          } finally {
+            metadataCloseRef.current = null
+          }
+        }
         if (from) {
           const receipt = await window.tw.windows.recoverMovedTalk(from)
           if (wiringRef.current.activeOutlinePath !== from) { await kept(); return }

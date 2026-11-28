@@ -6,6 +6,7 @@ import { readFile } from 'node:fs/promises'
 import { decideOpenInNewWindow, parseOpenInNewWindowTarget } from '../src/shared/open-in-new-window.ts'
 import { createOpenRequests, refuseOpenTarget } from '../src/main/open-requests.ts'
 import { COMMAND_REGISTRY } from '../src/shared/command-registry.ts'
+import { shortcutById } from '../src/shared/shortcut-registry.ts'
 
 let passed = 0
 const test = async (name, fn) => { await fn(); passed += 1; console.log(`ok  ${name}`) }
@@ -27,6 +28,10 @@ await test('payloads: talk and folder accepted, junk refused', () => {
   for (const bad of [null, undefined, 'x', {}, { kind: 'talk' }, { kind: 'talk', outlinePath: '' }, { kind: 'folder', topic: '' }, { kind: 'vault', topic: 'x' }]) {
     assert.equal(parseOpenInNewWindowTarget(bad), null)
   }
+  const target = { kind: 'talk', outlinePath: '/v/a/a-outline.md' }
+  const slide = { index: 2, line: 14, slideId: 'notes' }
+  assert.deepEqual(parseOpenInNewWindowTarget({ ...target, slide }), { ...target, slide })
+  assert.equal(parseOpenInNewWindowTarget({ ...target, slide: { index: -1 } }), null)
 })
 
 const talk = (outlinePath) => ({ kind: 'talk', outlinePath })
@@ -87,10 +92,12 @@ await test('the talk right-click menu offers Open in new window', () => {
 await test('the folder right-click menu offers Open in new window', () => {
   assert.match(block('FOLDER_MENU_ITEMS'), /action: 'open-new-window'[^\n]*label: 'Open in new window'/)
 })
-await test('it is a palette command with no new chord', () => {
+await test('it is a palette command with an Explorer-only chord', () => {
   const cmd = COMMAND_REGISTRY.find((c) => c.id === 'open-in-new-window')
   assert.ok(cmd, 'registered')
   assert.equal(cmd.palette.visible, true)
-  assert.equal(cmd.shortcutId, undefined)
+  const shortcut = shortcutById(cmd.shortcutId)
+  assert.equal(shortcut.scope, 'vault-explorer')
+  assert.deepEqual(shortcut.codes, ['Mod-Enter'])
 })
 console.log(`${passed} passed`)

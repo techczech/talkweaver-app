@@ -1,3 +1,4 @@
+import { handoutAddressLabel } from '../../../shared/publish-status'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { ArrowUpRight, CalendarCheck, CalendarDays, Copy, EyeOff, FileText, Globe, Link as LinkIcon, RotateCw, TriangleAlert } from 'lucide-react'
 import { LIST_LOAD_ERROR, publishedPages, shownLink, type PublishedPageRow, type PublishedPagesInput } from '../../../shared/published-pages'
@@ -157,7 +158,7 @@ function PageDetail({ row, notice, onCopy, onOpenRun }: { row: PublishedPageRow;
           {row.links.map((link) => (
             <div className="tw-pub-r1" key={link.kind} data-published-link={link.kind}>
               <LinkIcon className="soft" aria-hidden />
-              <div className="t"><b>{link.label}</b><small className="mono">{shownLink(link.url)}</small></div>
+              <div className="t"><b>{link.label}</b><small className="mono">{shownLink(handoutAddressLabel(link.url))}</small></div>
               <button type="button" className="tw-btn tw-btn--sm" title="Copy link" onClick={() => onCopy(link.url)}><Copy aria-hidden />Copy</button>
             </div>
           ))}

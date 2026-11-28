@@ -629,9 +629,9 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
   assert.equal(layoutSection.heading, 'Layout', 'the layout section comes first, headed Layout')
   assert.deepEqual(layoutSection.bindings.map((binding) => binding.group.key), KEYS, 'the Statement section holds the four choices, in order')
   assert.deepEqual(layoutSection.bindings.map((binding) => binding.group.sectionLabel ?? binding.group.label),
-    ['Sidebar', 'Background', 'Alignment', 'Sidebar colour'], 'each choice carries its short label')
+    ['Side panel', 'Title style', 'Alignment', 'Side panel colour'], 'each choice carries its short label')
   assert.deepEqual(layoutSection.bindings.map((binding) => binding.values.map(({ label }) => label)), [
-    ['With sidebar', 'No sidebar'], ['Tinted', 'Rule', 'Strong colour', 'Lower third'], ['Aligned', 'Centred'],
+    ['With side panel', 'No side panel'], ['Tinted', 'Rule', 'Strong colour', 'Lower third'], ['Aligned', 'Centred'],
     ['Section', 'Cobalt', 'Emerald', 'Vermilion', 'Forest']
   ], 'the Inspector offers the ticket\'s values (Sidebar without its Auto)')
   const titledValues = bindingsOf(at('titled'), '{id=titled}{statement=poster}').filter((binding) => KEYS.includes(binding.group.key))
@@ -640,9 +640,9 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
   assert.equal(bindingsOf(at('untitled'), '{id=untitled}{statement}').some((binding) => binding.group.key === 'claim-style'), false,
     'a statement slide does not offer the older Claim style row')
 
-  const DEFAULTS = { sidebar: 'No sidebar', bg: 'Tinted', align: 'Aligned', colour: 'Section' }
+  const DEFAULTS = { sidebar: 'No side panel', bg: 'Tinted', align: 'Aligned', colour: 'Section' }
   assert.deepEqual(lit('untitled', '{id=untitled}{statement}'), DEFAULTS, 'an untokened statement without a title: no sidebar, Tinted, Aligned, section colour')
-  assert.deepEqual(lit('titled', '{id=titled}{statement=poster}'), { ...DEFAULTS, sidebar: 'With sidebar' }, 'beside a title the sidebar is lit; a former Poster is the Default')
+  assert.deepEqual(lit('titled', '{id=titled}{statement=poster}'), { ...DEFAULTS, sidebar: 'With side panel' }, 'beside a title the sidebar is lit; a former Poster is the Default')
   // The five older options light their mapped values (untitled slide).
   const PRESETS = {
     '{statement}{statement=default}': DEFAULTS,
@@ -661,7 +661,7 @@ assert.equal(sectionIdAtScrollTop([], 0), null, 'no sections, no lit pill')
     '{statement}{statement-bg=none}': { ...DEFAULTS, bg: 'Rule' },
     '{statement}{statement-bg=strong}{statement-align=centred}{accent=vermilion}': { ...DEFAULTS, bg: 'Strong colour', align: 'Centred', colour: 'Vermilion' },
     '{statement}{statement-bg=lower-third}': { ...DEFAULTS, bg: 'Lower third' },
-    '{statement}{statement-sidebar=on}': { ...DEFAULTS, sidebar: 'With sidebar' }
+    '{statement}{statement-sidebar=on}': { ...DEFAULTS, sidebar: 'With side panel' }
   }
   for (const [tokens, want] of Object.entries(PRESETS)) {
     assert.deepEqual(lit('untitled', `{id=untitled}${tokens}`), want, `${tokens} lights ${JSON.stringify(want)}`)

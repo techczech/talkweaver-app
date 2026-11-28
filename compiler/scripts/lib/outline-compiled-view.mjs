@@ -13,7 +13,7 @@ import { normalizeIconOverrideKey, titleIconOfNode } from "./05-icons.mjs";
 import { parseOutlineTree, classifyContentLines } from "./14-outline-tree.mjs";
 import { scanLines } from "./slide-blocks.mjs";
 
-export const ICON_KEY_RE = /^[A-Za-z0-9:._-]+$/;
+export const ICON_KEY_RE = /^[A-Za-z0-9:._-]+!?$/;
 
 export function assertIconKey(iconKey) {
   if (iconKey == null) return;

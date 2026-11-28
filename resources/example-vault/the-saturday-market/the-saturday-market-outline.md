@@ -111,7 +111,7 @@ Saturdays, eight until one.
 - Bread
 - Flowers
 
-> **Try it.** On Flowers, press <kbd>⌘I</kbd> to pick an icon. <kbd>⌘⇧I</kbd> searches pictures recovered from earlier PowerPoint files.
+> **Try it.** On Flowers, press <kbd>⌘I</kbd> to pick an icon or <kbd>⌘⌥⇧I</kbd> to search for one in Find. <kbd>⌘⇧I</kbd> opens Images in Find.
 
 > **Try it.** Place the caret on an image, then choose **Crop and mark up image…** in All commands (<kbd>⌘⇧P</kbd>) to save an edited copy.
 
@@ -180,4 +180,4 @@ Tomatoes, beans and courgettes go out after the last frost.
 
 > **Try it.** <kbd>⌘⇧O</kbd> searches the slide outline, <kbd>⌘⇧[</kbd> hides or shows the sidebar, and <kbd>⌘F</kbd> finds words.
 
-> **Try it.** <kbd>⌘⌥F</kbd> searches slides in the grid. <kbd>⌘⌥J</kbd> goes to the next result and <kbd>⌘⌥⇧J</kbd> to the previous one.
+> **Try it.** <kbd>⌥⌘G</kbd> finds slides here. <kbd>⌘⌥F</kbd> searches the grid. Step with <kbd>⌘⌥J</kbd> or <kbd>⌘⌥⇧J</kbd>. Choose **Go to line** in All commands.

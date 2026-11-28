@@ -49,6 +49,8 @@ const now = () => performance.timeOrigin + performance.now()
 const timeout = 30_000
 const editable = '[data-view="slide"] .cm-content[contenteditable="true"]'
 const row = slug => `.tl-tree [data-talk-slug="${slug}"]`
+const explorerVault = '.vault-explorer .vx-vault-heading[aria-label="Browse vault"]'
+const explorerTalk = size => `.vx-talk-open[aria-label="Synthetic talk ${size}"]`
 const views = { slide: editable, grid: '[data-view="grid"] .grid-section-cells [data-slide-index]',
   outline: '[data-view="outline"] .cm-content[contenteditable="true"]',
   markdown: '[data-view="markdown"] .cm-content[contenteditable="true"]' }
@@ -259,19 +261,24 @@ async function run(fixture, record, warm, profiling) {
     page = await app.firstWindow({ timeout })
     page.setDefaultTimeout(timeout)
     const id = warm ? 'Warm' : 'Cold'
-    const listReady = await ready(page, row(slug(size)))
-    spans[`Start ${id.toLowerCase()} → Talks list`] = { start, end: listReady }
+    const explorer = page.getByRole('region', { name: 'Vault Explorer', exact: true })
+    await explorer.or(page.locator(row(slug(size)))).filter({ visible: true }).first().waitFor({ timeout })
+    const fromExplorer = await explorer.isVisible()
+    const listReady = await ready(page, fromExplorer ? explorerVault : row(slug(size)))
+    const startupSurface = fromExplorer ? 'Vault Explorer' : 'Talks list'
+    spans[`Start ${id.toLowerCase()} → ${startupSurface}`] = { start, end: listReady }
     report.host.electron = await app.evaluate(installDiagnostics, profileDir)
     const stopProfiles = profiling ? await startProfiles(app, page) : null
     if (warm) {
       // The profile was used by the preceding cold launch. The browser quit receipt belongs to that process.
       writeFileSync(join(profileDir, 'terminal-quit.json'), '')
     }
-    const open = target => measureClick(page, row(slug(target)),
-      () => page.locator(row(slug(target))).first().click({ noWaitAfter: true }),
+    const open = (target, selector = row(slug(target))) => measureClick(page, selector,
+      () => page.locator(selector).first().click({ noWaitAfter: true }),
       () => ready(page, editable, marker(target)))
     phase = 'select first talk'
-    const opening = await open(size)
+    if (fromExplorer) await page.locator(explorerVault).click()
+    const opening = await open(size, fromExplorer ? explorerTalk(size) : row(slug(size)))
     spans[`Start ${id.toLowerCase()} → first editable slide`] = { start, end: opening.end }
     record[`${id.toLowerCase()}Startup`] = {
       attached,
@@ -295,6 +302,7 @@ async function run(fixture, record, warm, profiling) {
       const initial = await compile(size, false, opening.start)
       spans['Open talk → first compile'] = { start: opening.start, end: initial.end }
       phase = 'switch talks'
+      await ensureTalksMode(page)
       const switchedAway = await open(other)
       await compile(other, false, switchedAway.start)
       const switchedBack = await open(size)

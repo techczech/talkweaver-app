@@ -8,7 +8,7 @@ import { taskGroupFields, type TaskGroupFields } from './task-groups.ts'
 // explanation; the rule behind all of them is that a chord already held anywhere in the app, by a reserved
 // chord (ADR-0011) or by the OS or Electron's default menu is not taken, even though the Tools window is a
 // window of its own and would not clash in practice. ⌘⇧R belongs to Research; Force Reload is removed.
-export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'slide-picker', 'image-drawer', 'layout-picker', 'inspector', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer', 'tools', 'research'] as const
+export const SHORTCUT_SCOPES = ['app', 'editor', 'browser', 'vault-explorer', 'slide-picker', 'image-drawer', 'layout-picker', 'inspector', 'presenter', 'picker', 'pathway', 'studio', 'talktext', 'importer', 'tools', 'research'] as const
 export type ShortcutScope = (typeof SHORTCUT_SCOPES)[number]
 
 export interface ShortcutEntry extends TaskGroupFields {
@@ -76,6 +76,8 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['app.edit-image', '— · ⌘⇧P', [], 'Crop and mark up image', 'Opens the editor for the pooled image at the cursor. No default key; rebindable.', 'Find & insert', true],
     ['app.icon-picker', '⌘I', ['Mod-i'], 'Insert icon', 'Places an icon beside a title, paragraph or list item at the cursor, in Plain or Markdown view.', 'Find & insert'],
     ['app.image-search', '⌘⇧I', ['Mod-Shift-i'], 'Find images', 'Opens or closes the image drawer beside the editor: screenshots, images from old PowerPoints and pictures from your talks.', 'Find & insert'],
+    ['app.find-slides', '⌥⌘G', ['Mod-Alt-g'], 'Find slides in this talk', 'Opens Find in the sidebar to go to a slide in the current talk.', 'Find & insert'],
+    ['app.find-icons', '⌘⌥⇧I', ['Mod-Alt-Shift-i'], 'Find icons', 'Opens Find in the sidebar to search for and insert an icon at the caret.', 'Find & insert'],
     ['app.set-aside', '⌘⌥S', ['Mod-Alt-s'], 'Set aside in Slide Scratchpad', 'Copies selected slides to the Slide Scratchpad before removing them from the talk. Undo restores the outline.', 'Slides'],
     ['app.grid-search', '⌘⌥F', ['Mod-Alt-f'], 'Search slides in the grid', 'Shows the grid and moves focus to its search box. The outline search and the grid search are one query.', 'Slides'],
     ['app.search-next', '⌘⌥J', ['Mod-Alt-j'], 'Next search result', 'Moves to the next slide that matches the search in the grid or the outline.', 'Slides'],
@@ -107,6 +109,7 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
   ...entries('editor', [
     ['editor.undo', '⌘Z', ['Mod-z'], 'Undo', 'Reverses the last outline editor change.', 'Editing'],
     ['editor.redo', '⇧⌘Z', ['Mod-Shift-z'], 'Redo', 'Reapplies the last outline editor change.', 'Editing'],
+    ['editor.go-to-line', '—', [], 'Go to line', 'Jumps to a line number in the outline. No default key; rebindable.', 'Navigate', true],
     ['editor.new-slide', '⌃⌘N', ['Ctrl-Mod-n'], 'New slide', 'Inserts an empty slide after the current slide.', 'Headings'],
     ['editor.new-section', '⌃⌘S', ['Ctrl-Mod-s'], 'New section', 'Starts a section after this slide.', 'Headings'],
     ['editor.new-subsection', '⌃⇧⌘S', ['Ctrl-Mod-Shift-s'], 'New subsection', 'Starts a subsection inside the current section.', 'Headings'],
@@ -149,6 +152,9 @@ export const SHORTCUT_REGISTRY: ShortcutEntry[] = [
     ['editor.object-row-down', '⌃⌘↓', ['Ctrl-Mod-ArrowDown'], 'Move row down', 'In a chat, terminal or trace editor, moves the focused row down one place.', 'Objects'],
     ['editor.delete-comment', '—', [], 'Delete comment at caret', 'Deletes the whole HTML comment the caret is in, including one that shares its lines with text. Undo restores it.', 'Objects', true],
     ['editor.insert-notes', '—', [], 'Insert speaker notes', 'Adds a speaker-notes block at the end of the slide, or opens the slide’s existing notes.', 'Objects', true]
+  ]),
+  ...entries('vault-explorer', [
+    ['vault-explorer.open-window', '⌘↵', ['Mod-Enter'], 'Open selected talk in a new window', 'Opens the selected talk or slide result in another window. If the talk is already open, its window comes to the front.', 'Vault Explorer']
   ]),
   ...entries('browser', [
     ['browser.move', '↑ ↓ ← →', ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'], 'Move selection', 'Moves keyboard focus through slide cards, strip items, or talk rows.', 'Navigation'],

@@ -138,20 +138,19 @@ export async function publishTalkHandout(host: TalkPublishHost, outlinePath: str
         return null
       },
       // The flushed string below is the compiler's selected input; no mutable-source recheck is claimed.
-      prepare: async ({ dir: siteDir, project, live, link, redirects, makeFolder, writeSiteFile, claimFile, previewLinks }) => {
+      prepare: async ({ dir: siteDir, project, handoutBase, live, link, redirects, makeFolder, writeSiteFile, claimFile, previewLinks }) => {
         if (!prepared.ok) return prepared
         const { compilerDir, published } = prepared
-        const baseUrl = getConfig('publishBaseUrl', undefined)
+        const previousUrl = readHandoutUrl(published)
         const useShortIds = previewLinks?.shortLinks ?? getConfig('publishUseShortIds', false) ?? false
         // ENTRY FIRST: the address every link of this handout starts with is checked before anything is
         // built or written (handout-publishing.ts). An address on this computer stops the publish here.
-        const base = link(resolveBase({ baseUrl: baseUrl as string | undefined, project }))
+        const base = link(handoutBase?.(previousUrl) ?? resolveBase({ baseUrl: getConfig('publishBaseUrl', undefined), project }))
         const slug = basename(outlinePath).replace('-outline.md', '')
         // The talk's folder in the site: by the one function that makes a name a folder there
         // (publishing-logic.ts siteFolder, and never through a link). A name that would not stay inside the site folder is refused here.
         const talkOutDir = writableSiteFolder(siteDir, slug)
         if (!talkOutDir) return { ok: false, error: SITE_FOLDER_REFUSED }
-        const resolved = resolvePooledRefs(published, outlinePath)
 
         // Publish output: each handout
         // folder gets the slimmed handout as <slug>.html PLUS a viewer/landing index.html (Open +
@@ -164,7 +163,7 @@ export async function publishTalkHandout(host: TalkPublishHost, outlinePath: str
         let registryToKeep: Record<string, string> | null = null
         if (useShortIds) {
           const registry = previewLinks?.registry ?? readHandoutRegistry()
-          const recoveredId = recoverIdFromUrl(readHandoutUrl(published), base)
+          const recoveredId = recoverIdFromUrl(previousUrl, base) ?? recoverIdFromUrl(previousUrl, resolveBase({ project }))
           const gen = (): string => generateShortId((n) => Uint8Array.from(randomBytes(n)))
           const picked = pickShortId({ registry, slug, recoveredId, gen })
           id = picked.id
@@ -189,7 +188,7 @@ export async function publishTalkHandout(host: TalkPublishHost, outlinePath: str
         const pagesWritten = await buildHandoutPagesOffThread({
           kind: 'talk', compilerDir, talkOutDir: outDir, siteDir, slug, live, url, qr,
           downloadFile: `${slug}-download.html`, handoutFile: `${slug}.html`,
-          outlinePath, text: resolved, outline: published, assetRoots: assetRootsFor(outlinePath),
+          outlinePath, text: resolvePooledRefs(published, outlinePath), outline: published, assetRoots: assetRootsFor(outlinePath),
           homeDetails: handoutHomeDetails({ outline: published }),
         })
 
@@ -198,6 +197,7 @@ export async function publishTalkHandout(host: TalkPublishHost, outlinePath: str
         if (redirectsText !== null) writeSiteFile(join(siteDir, '_redirects'), redirectsText)
         return { ok: true, built: { url, warnings: [...mediaNotices, ...publicationBuildWarnings(pagesWritten.warnings)] } }
       },
+      handoutUrl: built => built.url,
     })
     // A publish that did not go up, or that the connection changed under, records nothing below.
     if (!outcome.ok && outcome.reply) return { ...(outcome.reply as { success: false; error: string }), diagnostic: outcome.diagnostic }
@@ -256,7 +256,8 @@ export async function publishTalkHandout(host: TalkPublishHost, outlinePath: str
       ...(outcome.earlierNotice ? { earlierNotice: outcome.earlierNotice, ...(outcome.earlierDetails ? { earlierDetails: outcome.earlierDetails } : {}) } : {}),
     }
   } catch (failure) {
-    if (!diagnostic && !options.pinSource) console.error(`[publish-handout] ${redactPublishException(failure)}`)
+    // Prefer the service's cause, which also removes credentials known only to the service.
+    console.error(`[publish-handout] ${diagnostic?.cause ?? redactPublishException(failure)}`)
     if (publishedUrl) return { success: true, url: publishedUrl, unchanged, warning: 'The handout went live. TalkWeaver could not finish saving its link on this Mac.' }
     const error = 'TalkWeaver could not finish publishing the handout.'
     return { success: false, error, diagnostic }

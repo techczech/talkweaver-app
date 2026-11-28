@@ -377,7 +377,7 @@ const PLAIN_TITLE_LOOK_TOKENS = ['titlelook=default', 'titlelook=full', 'titlelo
 export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
   {
     key: 'background',
-    label: 'Background',
+    label: 'Slide background',
     preview: 'segmented',
     section: 'slide',
     // Every slide has a paper, structural posters included.
@@ -399,11 +399,11 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     // heading with child slides can sequence them.
     appliesTo: { anyOf: [{ headingLevels: [2] }, { requiresChildren: true }] },
     values: [
-      { token: '', label: 'Linear', description: 'Show child slides in outline order' },
+      { token: '', label: 'One after another', description: 'Show child slides in outline order' },
       { token: 'carousel', label: 'Carousel', description: 'Step through child slides one at a time' },
       { token: 'contents', label: 'Contents', description: 'Show child slides as a contents rail' },
-      { token: 'grid-linear', label: 'Grid linear', description: 'Show the child grid and step through it in order' },
-      { token: 'grid-zoom', label: 'Grid zoom', description: 'Show the child grid and zoom into each child' }
+      { token: 'grid-linear', label: 'Grid', description: 'Show the child grid and step through it in order' },
+      { token: 'grid-zoom', label: 'Grid, zooming in', description: 'Show the child grid and zoom into each child' }
     ]
   },
   {
@@ -576,7 +576,7 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     appliesTo: { titleRegimes: TITLED_REGIMES },
     dictionaryTokens: ['section=on', 'section=show', 'section=none', 'section=hide'],
     values: [
-      { token: '', label: 'Auto', description: 'Use the section or deck frame default' },
+      { token: '', label: 'Auto', description: 'Use the section or talk default' },
       { token: 'section=corner', label: 'Corner', description: 'Show the section name in the top-right corner' },
       { token: 'section=off', label: 'Off', description: 'Hide the section name on this slide' }
     ]
@@ -589,7 +589,7 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     // body renders authored paragraphs.
     appliesTo: { layouts: PROSE_BODY_LAYOUTS },
     values: [
-      { token: '', label: 'Deck default', description: 'Use the deck’s claim style (plain unless the frontmatter sets one)' },
+      { token: '', label: 'Follows the talk', description: 'Use the talk’s claim style (plain unless the frontmatter sets one)' },
       { token: 'claim=plain', label: 'Plain', description: 'Set a wholly bold paragraph one type step larger, in ink, with no bar' },
       { token: 'claim=bar', label: 'Bar', description: 'Keep the claim at body size and mark it with a section-accent bar at the left' }
     ]
@@ -604,7 +604,7 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     // does: an image grid, or a media-only slide (its consecutive images form the row).
     appliesTo: { layouts: ['image-grid', 'media'] },
     values: [
-      { token: '', label: 'Deck default', description: 'Use the deck’s screenshot treatment (window frames unless the frontmatter sets one)' },
+      { token: '', label: 'Follows the talk', description: 'Use the talk’s screenshot treatment (window frames unless the frontmatter sets one)' },
       { token: 'screenshots=frames', label: 'Window frames', description: 'Each image in a light app window, cropped from its top-left so it stays crisp' },
       { token: 'screenshots=fanned', label: 'Fanned', description: 'Prints with a white border, turned a few degrees and overlapping' }
     ]
@@ -618,7 +618,7 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     // ADR-0033 §4: a list whose lines each carry a screenshot (two or three, one short line each).
     appliesTo: { layouts: ['list-visual'] },
     values: [
-      { token: '', label: 'Deck default', description: 'Use the deck’s arrangement (beside lines unless the frontmatter sets one)' },
+      { token: '', label: 'Follows the talk', description: 'Use the talk’s arrangement (beside lines unless the frontmatter sets one)' },
       { token: 'shotlist=beside', label: 'Beside lines', description: 'Each screenshot as an equal thumbnail beside its line, cropped from its top-left and framed' },
       { token: 'shotlist=stacked', label: 'Stacked', description: 'Each screenshot above its caption, side by side in one row' }
     ]
@@ -632,15 +632,15 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     // 22cqw and change shape. Every other layout draws its columns as authored.
     appliesTo: { layouts: ['list', 'iconrow'] },
     values: [
-      { token: '', label: 'Deck default', description: 'Use the deck’s setting (on unless the frontmatter says narrow_columns: off)' },
+      { token: '', label: 'Follows the talk', description: 'Use the talk’s setting (on unless the frontmatter says narrow_columns: off)' },
       { token: 'narrowcols=on', label: 'Reshape', description: 'Columns under 22cqw change shape: icon rows wrap to rows of three, cards become icon rows' },
       { token: 'narrowcols=off', label: 'Keep', description: 'Keep the columns as they are, however narrow' }
     ]
   },
   {
     key: 'arrival-mode',
-    label: 'Arrival mode',
-    sectionLabel: 'Arrival',
+    label: 'Points appear',
+    sectionLabel: 'Points appear',
     preview: 'segmented',
     section: 'steps',
     // Beats are made of blocks, list items or child slides, and any heading can carry them —
@@ -648,15 +648,15 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     appliesTo: {},
     dictionaryTokens: ['mode=reveal', 'mode=focus', 'reveal=steps'],
     values: [
-      { token: '', label: 'None' },
-      { token: 'reveal', label: 'Reveal', description: 'Reveal content one beat at a time' },
+      { token: '', label: 'All at once' },
+      { token: 'reveal', label: 'One by one', description: 'Reveal content one beat at a time' },
       { token: 'focus', label: 'Focus', description: 'Focus each beat, dimming the rest' },
-      { token: 'group', label: 'Group', description: 'Reveal a list as one beat' }
+      { token: 'group', label: 'In groups', description: 'Reveal a list as one beat' }
     ]
   },
   {
     key: 'stepping',
-    label: 'Stepping',
+    label: 'Steps on Next',
     preview: 'segmented',
     section: 'steps',
     // {nostep} answers arrival mode and a sticky presenter mode alike; universal for the same
@@ -664,7 +664,7 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     appliesTo: {},
     values: [
       { token: '', label: 'Auto' },
-      { token: 'nostep', label: 'Nostep', description: 'Disable stepping on this slide' }
+      { token: 'nostep', label: 'No steps', description: 'Disable stepping on this slide' }
     ]
   },
   {
@@ -676,7 +676,7 @@ export const GLOBAL_OPTION_GROUPS: OptionGroup[] = [
     // mode is. The runtime decides whether there is anything to step through.
     appliesTo: {},
     values: [
-      { token: '', label: 'Deck default', description: 'Use the talk’s setting (off unless the frontmatter says image_steps: true)' },
+      { token: '', label: 'Follows the talk', description: 'Use the talk’s setting (off unless the frontmatter says image_steps: true)' },
       { token: 'image-steps', label: 'On', description: 'Next shows each image on this slide enlarged in turn, then the whole slide again' },
       { token: 'no-image-steps', label: 'Off', description: 'Next goes straight on; Z still enlarges an image by hand' }
     ]
@@ -1055,22 +1055,22 @@ The registry is the product contract.`,
     options: [
       {
         key: 'statement-sidebar',
-        label: 'Statement sidebar',
-        sectionLabel: 'Sidebar',
+        label: 'Side panel',
+        sectionLabel: 'Side panel',
         preview: 'segmented',
         // With no token the sidebar follows the title (a rail beside a painted title, none
         // without). The Inspector offers only the two explicit choices and lights the one the
         // slide renders; the typed surfaces (⌘L, the inline palette) keep Auto to clear the token.
         values: [
           { token: '', label: 'Auto', description: 'Follow the title: a sidebar beside a title, none without' },
-          { token: 'statement-sidebar=on', label: 'With sidebar', description: 'The coloured title sidebar, with the title in it when there is one' },
-          { token: 'statement-sidebar=off', label: 'No sidebar', description: 'No sidebar: the statement runs the full width (a title goes to the top)' }
+          { token: 'statement-sidebar=on', label: 'With side panel', description: 'The coloured title sidebar, with the title in it when there is one' },
+          { token: 'statement-sidebar=off', label: 'No side panel', description: 'No sidebar: the statement runs the full width (a title goes to the top)' }
         ]
       },
       {
         key: 'statement-bg',
-        label: 'Statement background',
-        sectionLabel: 'Background',
+        label: 'Title style',
+        sectionLabel: 'Title style',
         preview: 'segmented',
         // The older one-word options and the retired background and bar values stay registered
         // vocabulary (old talks must not start warning); they map onto the four choices
@@ -1082,7 +1082,7 @@ The registry is the product contract.`,
           'statement=tint', 'statement=bar', 'statement=full'
         ],
         values: [
-          { token: '', label: 'Tinted', description: 'The whole slide in the sidebar colour (or the Background you set)', altTokens: ['statement-bg=tinted'] },
+          { token: '', label: 'Tinted', description: 'The whole slide in the sidebar colour (or the slide background you set)', altTokens: ['statement-bg=tinted'] },
           { token: 'statement-bg=rule', label: 'Rule', description: 'The normal page, with a short accent rule above the text' },
           { token: 'statement-bg=strong', label: 'Strong colour', description: 'The whole slide in the sidebar colour at full strength, with white text' },
           // Beside a title panel the lower third is not offered: such a slide renders as Tinted.
@@ -1104,7 +1104,7 @@ The registry is the product contract.`,
         // The section-accent vocabulary pinned on this one slide: its rail, tint, strong colour and
         // rule take the named palette colour. Swatches as the Section accent choice draws them.
         key: 'statement-colour',
-        label: 'Sidebar colour',
+        label: 'Side panel colour',
         preview: 'segmented',
         values: [
           { token: '', label: 'Section', description: "The section's own colour" },

@@ -9,6 +9,7 @@ import { macWindowChromeFallback } from '../src/shared/window-chrome.ts'
 
 const scratch = mkdtempSync(join(tmpdir(), 'tw-workspace-pathways-'))
 const look = process.argv.includes('--look')
+const searchShot = process.env.TW_SIDEBAR_SEARCH_SHOT
 let browser
 try {
   await build({
@@ -50,9 +51,11 @@ const slides = titles.map((title, i) => ({
   role: 'content', source_line: 9 + i * 4, render_hash: title, content_hash: title,
   source_markdown: '### ' + title
 }))
+const searchFixture = new URLSearchParams(location.search).has('sidebar-search')
 const source = ['---', 'outline_version: 2', 'title: Garden notes',
   'auto_title_slide: false', 'auto_thanks_slide: false', '---', '', '## Garden {id=garden}',
-  ...slides.flatMap(row => ['### ' + row.title + ' {id=' + row.slide_id + '}', '', '- Garden notes', '']),
+  ...slides.flatMap((row, i) => ['### ' + row.title + ' {id=' + row.slide_id + '}', '',
+    searchFixture ? ['- Loosen compacted soil', '- Water the trays', '![Beans](harvest-photo.png)'][i] : '- Garden notes', '']),
   '| Crop | Count |', '| --- | --- |', '| Beans | 12 |', ''
 ].join('\\n')
 const sets = [
@@ -99,6 +102,12 @@ createRoot(document.getElementById('root')).render(<WindowChrome><App /></Window
   const html = join(scratch, 'fixture.html')
   writeFileSync(html, '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="fixture.js"></script>')
   browser = await chromium.launch({ headless: true })
+  const searchPage = await browser.newPage({ viewport: { width: 1000, height: 631 }, reducedMotion: 'reduce' })
+  await searchPage.route(/^https?:/, route => route.abort())
+  await searchPage.goto(pathToFileURL(html).href + '?sidebar-search')
+  await checkSidebarSearch(searchPage)
+  await searchPage.close()
+
   const page = await browser.newPage({ viewport: { width: 1000, height: 631 }, reducedMotion: 'reduce' })
   await page.route(/^https?:/, route => route.abort())
   page.setDefaultTimeout(12000)
@@ -330,4 +339,42 @@ createRoot(document.getElementById('root')).render(<WindowChrome><App /></Window
 } finally {
   await browser?.close()
   rmSync(scratch, { recursive: true, force: true })
+}
+
+async function checkSidebarSearch(page) {
+  await page.locator('.workspace-pathway-switch').getByText('Full talk').waitFor()
+  const expand = page.getByRole('button', { name: 'Show sidebar', exact: true })
+  if (await expand.isVisible()) await expand.click()
+  await page.getByRole('tab', { name: 'Slides', exact: true }).click()
+  const sidebar = page.locator('[data-sidebar]')
+  const search = sidebar.getByRole('searchbox', { name: 'Search the slide outline' })
+  const previewButton = sidebar.getByRole('button', { name: 'Show slides as previews' })
+  assert.equal(await previewButton.getAttribute('aria-pressed'), 'true')
+  await search.waitFor({ timeout: 5000 })
+  await page.getByRole('tab', { name: 'Talks', exact: true }).click()
+  await page.keyboard.press('ControlOrMeta+Shift+O')
+  await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Search the slide outline')
+  for (const [query, expected] of [
+    ['t: seedlings', 'Planting the seedlings'],
+    ['compacted soil', 'Preparing the beds'],
+    ['harvest-photo.png', 'Counting the harvest']
+  ]) {
+    await search.fill(query)
+    await sidebar.locator('[data-so-hitcount]').getByText('1 of 1').waitFor()
+    const matches = sidebar.locator('.so-slide .so-slide-title')
+    await matches.getByText(expected, { exact: false }).waitFor()
+    assert.deepEqual(await matches.allTextContents(), [expected])
+  }
+  await sidebar.getByRole('button', { name: 'Show slides as an outline' }).click()
+  assert.equal(await search.inputValue(), 'harvest-photo.png', 'Outline reads the Previews query')
+  await previewButton.click()
+  assert.equal(await search.inputValue(), 'harvest-photo.png', 'Previews reads the Outline query')
+  await search.fill('')
+  await sidebar.locator('.tw-slide-card').first().waitFor()
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await sidebar.evaluate(el => { el.style.width = '252px' })
+  assert.deepEqual(await sidebar.locator('[role=tab] span').evaluateAll(labels => labels.map(label => getComputedStyle(label).display)),
+    ['none', 'none', 'none'], 'the three narrow tabs display complete icons')
+  if (searchShot) await sidebar.screenshot({ path: searchShot, animations: 'disabled' })
+  console.log('PASS Slides Previews search focuses with the shortcut and filters by title, body and picture filename')
 }

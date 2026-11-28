@@ -31,6 +31,7 @@ function usage(message) {
     'usage: node scripts/run-tests.mjs [--tier unit|dom|e2e|e2e-release|e2e-extended|all] [--jobs N] [--tail LINES] [--timeout SECONDS] [--check] [script ...]',
   )
   console.error('  --allow-dirty-tree   allow this run to change the checkout')
+  console.error('  --show-output        also print the output of passing scripts')
   process.exit(2)
 }
 
@@ -41,6 +42,7 @@ function parseArgs(argv) {
     tail: 40,
     timeout: 900,
     check: false,
+    showOutput: false,
     allowDirtyTree: false,
     names: [],
   }
@@ -58,6 +60,7 @@ function parseArgs(argv) {
     else if (flag === '--tail') opts.tail = int()
     else if (flag === '--timeout') opts.timeout = int()
     else if (flag === '--check') opts.check = true
+    else if (flag === '--show-output') opts.showOutput = true
     else if (flag === '--allow-dirty-tree') opts.allowDirtyTree = true
     else if (flag === '--help' || flag === '-h') usage()
     else if (flag.startsWith('-')) usage(`unknown flag ${flag}`)
@@ -308,8 +311,8 @@ const started = Date.now()
 const results = await runAll(names, opts.jobs, opts.timeout, new Set(tiers.serial ?? []), scratch)
 const failed = results.filter((result) => !result.ok)
 
-for (const result of failed) {
-  console.log(`\n----- FAIL ${result.name} (exit ${result.code ?? 'none'}) -- last ${opts.tail} lines -----`)
+for (const result of opts.showOutput ? results : failed) {
+  console.log(`\n----- ${result.ok ? 'PASS' : 'FAIL'} ${result.name} (exit ${result.code ?? 'none'}) -- last ${opts.tail} lines -----`)
   console.log(tail(result.output, opts.tail))
 }
 

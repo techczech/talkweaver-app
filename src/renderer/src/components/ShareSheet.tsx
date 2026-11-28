@@ -137,13 +137,13 @@ export default function ShareSheet({ talk, title, onClose }: { talk: TalkInfo; t
               </div>
             ) : (
               <div className="sh-btnrow">
-                <button type="button" className="sh-btn" disabled={!view.canCopy} onClick={() => { void copyLink() }} data-testid="share-copy">{view.copyLabel}</button>
+                <button type="button" className="sh-btn" disabled={!view.canCopy} title={view.setupPrompt ? "There is no link until sharing is set up" : undefined} onClick={() => { void copyLink() }} data-testid="share-copy">{view.copyLabel}</button>
                 {view.showPasteHint && <span className="sh-hint" data-testid="share-paste-hint">Paste it into Teams or an email.</span>}
               </div>
             )}
             {view.setupPrompt && (
               <div className="sh-replace" role="status" data-testid="share-live-setup" data-prompt={view.setupPrompt.prompt}>
-                <div>{view.setupPrompt.title}</div>
+                <div>Sharing needs going live to be set up.</div>
                 <div className="sh-btnrow">
                   <button type="button" className="sh-btn" onClick={openSettings} data-testid="share-live-setup-action">{view.setupPrompt.action}</button>
                 </div>
@@ -151,7 +151,7 @@ export default function ShareSheet({ talk, title, onClose }: { talk: TalkInfo; t
             )}
             {view.localNote && <div className="sh-status sh-local" data-testid="share-local-note">{view.localNote}</div>}
             <div className="sh-hint sh-promise">They see the slides as they are in your outline now, one slide at a time, with space beside each to reply.</div>
-            {view.status && (
+            {view.status && !view.setupPrompt && (
               <div className={`sh-status ${view.statusTone === 'error' ? 'is-error' : ''}`} role="status" data-testid="share-status">{view.status}</div>
             )}
           </div>

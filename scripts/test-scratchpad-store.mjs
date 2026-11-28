@@ -8,7 +8,8 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync, existsSync, utimesSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { scratchSnapshotDirectory } from '../src/main/scratchpad-disk.ts'
 import { createScratchpadStore } from '../src/main/scratchpad-store.ts'
 import { watchScratchFolder } from '../src/main/scratchpad-watch.ts'
 
@@ -375,6 +376,11 @@ try {
     assert.deepEqual({ name: copy?.name, kind: copy?.kind }, { name: 'a.html', kind: 'html' })
     assert.notEqual(copy.path, join(scratch(talk), 'a.html'), 'consumers get a private snapshot')
     assert.equal(readFileSync(copy.path, 'utf8'), '<p>hi</p>')
+    assert.equal(scratchSnapshotDirectory(copy.path), dirname(copy.path), 'the importer can use the checked private HTML snapshot')
+    assert.equal(scratchSnapshotDirectory(join(scratch(talk), 'a.html')), null, 'the agent-writable file is not a private snapshot')
+    const linkedCopy = join(dirname(copy.path), 'link.svg')
+    symlinkSync(outside, linkedCopy)
+    assert.equal(scratchSnapshotDirectory(linkedCopy), null, 'a link is not trusted even in the private snapshot cache')
     assert.equal(await store.fileFor('sp-nope'), null)
     rmSync(join(scratch(talk), 'a.html'))
     assert.equal(await store.fileFor(a.id), null)

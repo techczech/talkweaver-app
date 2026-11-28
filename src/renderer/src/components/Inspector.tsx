@@ -2,7 +2,8 @@ import { markerCountLabel } from '../../../shared/video-marker-edits'
 import { VideoMarkerPage, type VideoMarkerPanel } from './VideoMarkerPage'
 import { offlinePageCandidates, type OfflinePageSelection } from '../lib/offlinePage'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { AlertTriangle, Check, ChevronDown, ChevronUp, Undo2 } from 'lucide-react'
+import { createPortal } from 'react-dom'
+import { AlertTriangle, Check, ChevronDown, ChevronUp, LayoutGrid, Undo2 } from 'lucide-react'
 import type { ProjectionRow, TalkInfo } from '../../../preload/index'
 import type { LayoutDoctorFinding } from '../../../shared/layout-doctor'
 import type { OptionGroup } from '../data/layouts'
@@ -30,9 +31,11 @@ import VaultOrigin from './VaultOrigin'
 import SlideProvenance from './SlideProvenance'
 import TalkActivity from './TalkActivity'
 import { DESIGN_PAGES, designsFor, option, OWN_LABELS, pageForBinding, type Design } from './rightPanelDesigns'
-import { AdjustRows, ColourPage, DesignsBlock, IconRows, IconsPage, PageHead, PicturePage, PointsPage, sectionDesigns, TablePage, TitlePage, type PanelPage, type PanelSurface } from './RightPanelPages'
+import { AdjustRows, ColourPage, DesignsBlock, IconRows, IconsPage, PageHead, PicturePage, PointsPage, sectionDesigns, TablePage, TitlePage, useCheckedDesignPictures, type PanelPage, type PanelSurface } from './RightPanelPages'
+import LayoutGallery from './LayoutGallery'
 import RightPanelPictures, { type PanelTry } from './RightPanelPictures'
 import './rightPanel.css'
+import { plainViewFactsOf } from '../../../shared/plain-view-icon-items'
 import { editInlinePicture, pooledImageOnLine } from '../../../shared/image-edit'
 import { readOutlineSlides, slidePointLines } from '../../../shared/feedback-accept'
 import { slideIdOf } from './slideFocusModel'
@@ -75,7 +78,14 @@ interface Props {
   onChangeLayout?: () => void
   long?: boolean
   centrePreview?: boolean
+  layoutGallery?: {
+    open: boolean
+    target: HTMLElement | null
+    toggle: (opener: HTMLButtonElement) => void
+    close: () => void
+  }
   multiCount?: number
+  gridSelection?: boolean
   preview?: PanelTry | null
   applied?: string | null
   onTry: (preview: PanelTry | null) => void
@@ -85,7 +95,7 @@ interface Props {
   onCopy?: (aspect: string) => void
   page: string
   onPageChange: (page: string) => void
-  onIcon: (line: number, icon: string | null, base: string) => void
+  onIcon: (line: number, icon: string | null, base: string, edit?: 'cross') => void
   onCropPicture: (line: number, id: string) => void
   onReplacePicture: (line: number) => void
   onRemovePicture: (line: number) => void
@@ -105,7 +115,7 @@ function triggerLineOf(outline: string, headingLine: number | null): string {
 export default function Inspector({
   talk, compiledSlides, outlineContent, triggerFindings, activeIndex, headingLine,
   onPrev, onNext, navigationShortcuts, onEdit, onExplain, onOpenLayoutDoctor, onCaptureEmbed, onSaveOffline, offlineSaving, onRemoveSavedView, videoMarkers, onCommitOption, onBoardEdit, picker = null,
-  long = false, centrePreview = false, multiCount = 0, preview, applied, onTry, onKeep, onUndo, onTalk, onCopy, onIcon, onMarkdown, structure,
+  long = false, centrePreview = false, layoutGallery, multiCount = 0, gridSelection = false, preview, applied, onTry, onKeep, onUndo, onTalk, onCopy, onIcon, onMarkdown, structure,
   onCropPicture, onReplacePicture, onRemovePicture, page, onPageChange
 }: Props) {
   const row = compiledSlides?.[activeIndex] ?? null
@@ -156,9 +166,10 @@ export default function Inspector({
       token: finding.token,
       text: unresolvedWarnings[index]?.text ?? finding.detail ?? finding.token
     }))
-  // Trigger-line changes are option commits: bypass the ordinary typing debounce so every
-  // selection recompiles the stage immediately, as locked in ADR-0011.
-  const { previewUrl, compiling, previewErr } = useLiveSlidePreview(talk.outlinePath, centrePreview && !picker ? '' : picker?.tryOutline ?? preview?.text ?? outlineContent, row?.slide_id ?? '')
+  const { previewUrl, compiling, previewErr } = useLiveSlidePreview(
+    talk.outlinePath, (centrePreview && !picker) || multiCount > 1 ? '' : picker?.tryOutline ?? preview?.text ?? outlineContent,
+    slideId, 'detail', { headingLine }
+  )
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const [fallbackStep, setFallbackStep] = useState(0)
   const [revealed, setRevealed] = useState<RevealPreviewStep>()
@@ -325,7 +336,7 @@ export default function Inspector({
   const returnHome = (): void => changePage('home')
   const onKeyDown = (event: React.KeyboardEvent<HTMLElement>): void => {
     if (event.key === 'Escape' && !event.defaultPrevented && !event.nativeEvent.isComposing &&
-        !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && !picker && !long && pageInfo) {
+        !event.metaKey && !event.ctrlKey && !event.altKey && !event.shiftKey && !picker && !long && pageInfo && !layoutGallery?.open) {
       event.preventDefault()
       event.stopPropagation()
       returnHome()
@@ -384,10 +395,12 @@ export default function Inspector({
       stepsControl.current.focus({ preventScroll: true })
     }
   }, [page, arrival != null])
+  const titleFillsSlide = row?.layout === 'statement' && !row.word_count && !row.image_count && !row.embed_count &&
+    !row.has_quote && !row.has_table && !row.has_code
   const pages: PanelPage[] = [
     ...(section ? [{ id: 'colour', label: 'Colour', summary: 'Section colour' }] : []),
-    { id: 'title', label: 'Title', summary: section ? 'Section name, large' : row?.title_layout === 'left' ? 'At the side' : row?.title_layout === 'hidden' ? 'Not shown' : 'On top' },
-    ...(table ? [{ id: 'table', label: 'Table', summary: 'Style and text size' }] : own ? [{ id: 'own', label: own, summary: structure?.panes ? `${structure.panes.length} subslides` : 'Options for this design' }] : !section ? [
+    { id: 'title', label: 'Title', summary: section ? 'Section name, large' : titleFillsSlide ? 'Fills the slide' : row?.title_layout === 'left' ? 'At the side' : row?.title_layout === 'hidden' ? 'Not shown' : 'On top' },
+    ...(table ? [{ id: 'table', label: 'Table', summary: 'Style and text size' }] : own ? [{ id: 'own', label: own, summary: structure?.panes ? `${structure.panes.length} subslides` : 'Options for this design' }] : !section && (row?.bullet_count ?? 0) > 0 ? [
       { id: 'points', label: 'Points', summary: model.selectedTokens['list-style'] === 'numbered' ? 'Numbers' : 'Arrangement and size' },
       { id: 'icons', label: 'Icons', summary: 'Marks beside the points' }
     ] : []),
@@ -422,9 +435,13 @@ export default function Inspector({
     if (!pictureSlide || !row || model.unresolved || titleSlide) return []
     try {
       return section && structure ? sectionDesigns({ modes: true, carousel: structure.carousel, childCount: structure.childCount, trigger: triggerLine })
-        : designsFor(outlineContent, pictureSlide, row, {...model, layoutName: layout}, block, hasBrands, pictureSide)
+        : designsFor(outlineContent, pictureSlide, row, {...model, layoutName: layout}, hasBrands, pictureSide)
     } catch { return [] }
   }, [outlineContent, slideKey, row, model, block, section, structure?.carousel, structure?.childCount, titleSlide, triggerLine, hasBrands, layout, pictureSide]) // eslint-disable-line react-hooks/exhaustive-deps
+  const showDesigns = !picker && multiCount <= 1 && (long || !pageInfo)
+  const designCount = section ? designs.length : centrePreview ? 4 : 2
+  const ready = designs.filter(design => !design.unavailable && !design.check && !design.structure).length
+  const checkedPictures = useCheckedDesignPictures(surface, designs, showDesigns ? Math.max(0, designCount - ready) : 0, !!layoutGallery?.target)
   const pageGroups = (id: string, omit: readonly string[] = []): React.ReactNode =>
     bindings.filter(binding => pageForBinding(binding, own, table) === id && !omit.includes(binding.group.key))
       .map(binding => {
@@ -447,6 +464,18 @@ export default function Inspector({
     {bindings.filter(binding => binding.group.key === 'title-icon').map(binding => renderGroup(binding))}
   </>
   const linePoints = points.map(point => ({ line: point.line, name: point.text.replace(/\s*\{icon=[^}]+\}\s*$/, '') }))
+  const authoredIcons = useMemo(() => {
+    if ((!long && page !== 'icons') || headingLine == null) return []
+    const end = headingLine - 1 + block.split('\n').length
+    return plainViewFactsOf(outlineContent).compiler.iconTokens.filter(token =>
+      token.top && token.line >= headingLine && token.line < end)
+  }, [block, headingLine, long, outlineContent, page])
+  const listStyle = model.selectedTokens['list-style']
+  const showAllIcons = layout === 'iconrow' || listStyle === 'iconlist' || listStyle === 'logolist'
+  const pointIcons = showAllIcons ? linePoints : linePoints.filter(point =>
+    authoredIcons.some(token => token.kind === 'item' && token.line === point.line))
+  const paragraphIcons = authoredIcons.filter(token => token.kind === 'paragraph').map((token, index) =>
+    ({ line: token.line, name: `Paragraph icon ${index + 1}`, place: 'paragraph' as const }))
   const pictureLine = useMemo(() => {
     if (headingLine == null || row?.image_count !== 1) return null
     const { notes, blanked } = read
@@ -459,14 +488,16 @@ export default function Inspector({
   }, [block, headingLine, row?.image_count, outlineContent, read])
   const pictureId = pictureLine == null ? null : pooledImageOnLine(outlineContent.split('\n')[pictureLine], outlineContent, pictureLine)
 
-  const inspectorTitle = multiCount > 1 ? `${multiCount} slides selected` : model.title
+  const chooseOne = 'Choose one slide to see its designs'
+  const gridMulti = gridSelection && multiCount > 1
+  const inspectorTitle = gridMulti ? chooseOne : multiCount > 1 ? `${multiCount} slides selected` : model.title
 
   return (
     <aside ref={inspectorRef} className="tw-inspector" aria-label="Inspector" tabIndex={-1} onKeyDown={onKeyDown}>
       <div className="tw-inspector-preview-head">
         <div className="tw-right-who">
           <div><strong title={inspectorTitle}>{inspectorTitle}</strong>
-            <small>{multiCount > 1 ? 'Choose one slide to see its designs' : `${section ? 'Section · slide' : 'Slide'} ${activeIndex + 1} of ${compiledSlides?.length ?? 0}${slidePlace ? ' · ' + slidePlace : ''}`}</small></div>
+            {!gridMulti && <small>{multiCount > 1 ? chooseOne : `${section ? 'Section · slide' : 'Slide'} ${activeIndex + 1} of ${compiledSlides?.length ?? 0}${slidePlace ? ' · ' + slidePlace : ''}`}</small>}</div>
           {multiCount <= 1 && <>
             <button type="button" className="toolbar-btn" onClick={onPrev} disabled={activeIndex <= 0} aria-label="Previous slide"
               title={navigationShortcuts && `Previous slide (${navigationShortcuts.previous})`}><ChevronUp size={16} /></button>
@@ -540,17 +571,24 @@ export default function Inspector({
           <button type="button" className="toolbar-btn" onClick={() => onTalk('details')}>Edit talk details</button><button type="button" className="toolbar-btn" onClick={() => onTalk('design')}>Talk design</button>
           <VaultOrigin key={talk.outlinePath} outlinePath={talk.outlinePath} outlineContent={outlineContent} />
         </> : surface && <>
-          {(long || !pageInfo) && <section className="tw-inspector-section" data-section="designs"
+          {showDesigns && <section className="tw-inspector-section" data-section="designs"
             ref={element => { if (element) sectionRefs.current.set('designs', element); else sectionRefs.current.delete('designs') }}>
-            <DesignsBlock key={slideKey} surface={surface} designs={designs} long={long} compact={!centrePreview} section={section} hasSubslides={!!structure?.hasSubslides} />
+            <DesignsBlock key={slideKey} surface={surface} designs={designs} checkedPictures={checkedPictures}
+              count={designCount} section={section} hasSubslides={!!structure?.hasSubslides} />
           </section>}
+          {layoutGallery && <button type="button" className="toolbar-btn tw-more-layouts"
+            aria-expanded={layoutGallery.open} aria-controls={layoutGallery.open ? 'tw-layout-gallery' : undefined}
+            onClick={event => layoutGallery.toggle(event.currentTarget)}><LayoutGrid size={14} />More layouts</button>}
+          {layoutGallery?.open && layoutGallery.target && createPortal(
+            <LayoutGallery key={slideKey} surface={surface} designs={designs} marks={checkedPictures}
+              headingLine={headingLine} preview={preview} section={section} onClose={layoutGallery.close} />, layoutGallery.target)}
           {!long && !pageInfo && <AdjustRows pages={pages} choose={changePage} />}
           {pages.filter(item => showPage(item.id)).map(item => <section key={item.id} data-section={item.id}
             ref={element => { if (element) sectionRefs.current.set(item.id, element); else sectionRefs.current.delete(item.id) }}
             className="tw-inspector-section tw-right-page" aria-label={item.label}>
             <PageHead label={item.label} aspect={item.id === 'own' ? item.label : item.id} back={long ? undefined : () => changePage('home')} onCopy={onCopy} />
             {item.id === 'title' && <TitlePage surface={surface} where={row?.title_layout ?? 'top'} trigger={triggerLine} pictureAbove={hasAbovePicture}
-              tokens={model.selectedTokens} pointCount={points.length}
+              tokens={model.selectedTokens} pointCount={points.length} titleFillsSlide={titleFillsSlide}
               inheritedLook={inheritedTitleLook} inheritedTone={inheritedTitleTone} onTalk={() => onTalk('design')} section={section} icon={titleIcon}>
               {bindings.filter(binding => binding.group.key === 'font-title').map(binding => renderGroup(binding))}
             </TitlePage>}
@@ -558,8 +596,10 @@ export default function Inspector({
               onTalk={() => onTalk('design')} deckStyle={deckListStyle} hasSubpoints={/^ {2,}[-*+] /m.test(block)} pointCount={points.length}>
               {bindings.filter(binding => binding.group.key === 'font-body').map(binding => renderGroup(binding))}
             </PointsPage>}
-            {item.id === 'icons' && <IconsPage surface={surface} hasLogos={hasBrands} tokens={model.selectedTokens}>
-              <IconRows key={slideKey} text={outlineContent} lines={linePoints} onIcon={onIcon} onEscape={returnHome} />
+            {item.id === 'icons' && <IconsPage surface={surface} hasLogos={hasBrands} tokens={model.selectedTokens}
+              paragraphs={paragraphIcons.length > 0 && <IconRows key={slideKey} text={outlineContent} lines={paragraphIcons} onIcon={onIcon} onEscape={returnHome} />}>
+              {pointIcons.length > 0 && <IconRows key={slideKey} text={outlineContent} lines={pointIcons} onIcon={onIcon} onEscape={returnHome} />}
+              {!showAllIcons && <p>{listStyle === 'numbered' ? 'Numbers are showing. Choose Icons to replace them.' : 'Choose Icons or Logos to pick a mark for each point.'}</p>}
               {/^ {2,}[-*+] /m.test(block) && pageGroups('icons')}
             </IconsPage>}
             {item.id === 'picture' && <PicturePage surface={surface} side={pictureSide}
@@ -594,7 +634,10 @@ export default function Inspector({
                 aria-label={revealAction.accessibleLabel}>{revealAction.label}</button>
             </div>}
             {item.id === 'more' && <>
-              {pageGroups('more')}
+              {pageGroups('more', [
+                ...(section ? ['container-mode'] : []),
+                ...(model.selectedTokens['statement-sidebar'] === 'statement-sidebar=off' ? ['statement-colour'] : [])
+              ])}
               {model.prework && <InspectorPrework model={model.prework} onResults={token => { if (model.prework) onCommitOption(model.prework.results.group, token) }} />}
               <h4>About this slide</h4><button type="button" className="toolbar-btn" onClick={onExplain}>Explain how this slide was made</button>
               {warnings.length > 0 && <p>{warnings.map(warning => warning.text).join(' · ')}</p>}

@@ -32,11 +32,11 @@ await page.waitForTimeout(1200)
 
 try {
   // ── select first talk ──
+  await openFirstTalk(page)
   await waitForTalkList(page)
   const items = talkRows(page)
   const count = await items.count()
   record('talk list renders items', count > 0, `${count} items`)
-  await openFirstTalk(page)
 
   // editor mounts
   await page.waitForSelector('.cm-content', { timeout: 8000 })

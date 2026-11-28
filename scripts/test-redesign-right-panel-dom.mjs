@@ -7,6 +7,7 @@ import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { chromium } from 'playwright'
 import { markSlidePreviewHtml } from '../src/shared/slide-preview.ts'
+import { iconSvg } from '../compiler/scripts/lib/05-icons.mjs'
 import { authoredLayoutDecision } from '../compiler/scripts/lib/authored-layout.mjs'
 import { parseHeadingAttrs } from '../compiler/scripts/lib/02-triggers-layout.mjs'
 import { prepareSource } from '../compiler/scripts/lib/08-source-adapters.mjs'
@@ -16,14 +17,18 @@ import { measureLayoutPreview } from '../src/shared/layout-preview-measurement.t
 import { preferredIdsFromText, stampMissingIds } from '../compiler/scripts/lib/12-outline-edit.mjs'
 
 const root = join(import.meta.dirname, '..')
+const findPanel = process.argv.includes('--find-panel')
+const finalCheckPolish = process.argv.includes('--final-check-polish')
 const polish = process.argv.includes('--polish')
-const videoMarkers = process.argv.includes('--video-markers')
+const videoMarkers = process.argv.includes('--video-markers') || process.argv.includes('--video')
+const crossedIcons = process.argv.includes('--crossed-icons')
+const iconShot = process.env.TW_CROSSED_ICON_SHOT
 const slideText = process.argv.includes('--slide-text')
 const notes = process.argv.includes('--notes')
 const outlinePreview = process.argv.includes('--outline-preview')
 const sidebarFollow = process.argv.includes('--sidebar-follow')
 const designSwitch = process.argv.includes('--design-switch')
-const checkResearch = !designSwitch && !videoMarkers && !polish && !slideText && !notes && !outlinePreview && !sidebarFollow
+const checkResearch = !finalCheckPolish && !designSwitch && !crossedIcons && !videoMarkers && !polish && !slideText && !notes && !outlinePreview && !sidebarFollow
 const scratch = mkdtempSync(join(tmpdir(), 'tw-right-panel-dom-'))
 const outline = join(scratch, 'garden-outline.md')
 const followTitle = number => ({
@@ -38,7 +43,15 @@ const followSlides = Array.from({ length: 50 }, (_, i) => {
   return `${heading} ${followTitle(number)} {id=s${number}}\n\n${number === 43 ? '' : `- Observation ${number}\n\n`}`
 })
 const originalAttributes = '{id=design-switch}  {tags=workbench} {font-title=l} {table-bands=on}'
-const source = designSwitch ? [
+const source = finalCheckPolish ? [
+  '---', 'outline_version: 2', 'title: Garden meeting', 'auto_title_slide: false', 'auto_thanks_slide: false', '---',
+  '', '## In the garden {id=g1}', '',
+  '### The garden {id=list}', '', '- Soil {icon=lucide:sprout}', '- Water {icon=lucide:droplet}', '- Sun {icon=lucide:sun}',
+  '', '![The beds](beds.png)', '',
+  '### Only a title {id=only-title}', '',
+  '### Big claim {id=claim}', '{statement} {statement-sidebar=off}', '',
+  '### Media files {id=media}', '', '![The clip](watering.mp4)', '', '![The audio](bird-song.wav)', ''
+].join('\n') : designSwitch ? [
   '---', 'outline_version: 2', 'title: Layout history', 'auto_title_slide: false', 'auto_thanks_slide: false', '---',
   '', '### Workshop supplies {mindmap}{from=sample#original}', originalAttributes, '',
   '- Soil', '  - Carry bags', '  - Open bags',
@@ -46,7 +59,14 @@ const source = designSwitch ? [
 ].join('\n') : sidebarFollow ? [
   '---\noutline_version: 2\ntitle: Garden meeting\nauto_title_slide: false\nauto_thanks_slide: false\n---\n\n',
   ...followSlides
-].join('') : (videoMarkers ? [
+].join('') : (crossedIcons ? [
+  '---', 'outline_version: 2', 'title: Studio etiquette', 'auto_title_slide: false', 'auto_thanks_slide: false', '---', '',
+  '### While recording', '{id=studio}{iconlist}{iconlist=boxes}', '',
+  '- Take a phone call {icon=phone}', '- Keep the door closed {icon=lucide:door-closed}', '',
+  'Use the quiet room for calls. {icon=bell}', '',
+  '### Notifications', '{id=brand-row}{iconrow}', '',
+  '- GitHub {icon=svgl:github!}', '- Slack {icon=svgl:slack!}', ''
+] : videoMarkers ? [
   '---', 'outline_version: 2', 'title: Community garden update', 'auto_title_slide: false', 'auto_thanks_slide: false', '---',
   '', '### How the watering rota works', '{id=watering}', '',
   '![Watering rota demo](watering-rota-demo.webm)', '', '### Three priorities', '{id=priorities}', '',
@@ -66,7 +86,9 @@ const source = designSwitch ? [
   ':::notes', 'First note with trailing spaces  ', 'Private second line', ':::', '',
   ':::notes', 'Second block', ':::', '', '- Water the bulbs', '',
   '### Weekend', '{id=weekend}{carousel}', '', ':::notes', 'Parent notes', ':::', '',
-  '#### Saturday', '{id=sat}', '', '- Morning', '', ':::notes', 'Subslide notes', ':::', ''
+  '#### Saturday', '{id=sat}', '', '- Morning', '', ':::notes', 'Subslide notes', ':::', '',
+  '### Only a title', '{id=only-title}', '',
+  '### Old empty notes', '{statement}{id=old-empty-notes}', '', ':::notes', '  ', ':::', ''
 ] : polish ? [
   '---', 'outline_version: 2', 'title: Garden meeting', 'auto_title_slide: false', 'auto_thanks_slide: false', '---',
   '', '## In the garden {id=g1}', '', '### Priorities {id=p1}', '', '- Repair the beds',
@@ -77,7 +99,9 @@ const source = designSwitch ? [
   'defaults: { title: side }', 'sections:', '  Greenhouse: { title: top }',
   '  Examples: { title: top, titlelook: kicker }', '---',
   '', '## In the garden {id=g1}', '', '### Priorities {id=p1}', '', '- Repair the beds',
-  '', '### Volunteer shifts {id=p2}', '', '- Monday', '', '### Garden photographs {id=p3}',
+  '', '### Volunteer shifts {id=p2}', '', '- Monday',
+  ...(findPanel ? ['', '[Simulation: garden-planner.html]'] : []),
+  '', '### Garden photographs {id=p3}',
   '', '- Soil {icon=lucide:sprout}', '- Water {icon=lucide:droplet}', '- Sun {icon=lucide:sun}',
   '', '![The beds](beds.png)',
   '', '## Greenhouse {id=g2}', '', '### Seedlings {id=p4} {sidebar}',
@@ -87,6 +111,7 @@ const source = designSwitch ? [
   `### Field notes ${index + 1} {id=field-${index + 1}}\n\n- Record the first observations\n`) : []).join('\n')
 writeFileSync(outline, source)
 copyFileSync(join(root, 'demo-vault/layout-sampler/assets/sample-image.png'), join(scratch, 'beds.png'))
+if (findPanel) writeFileSync(join(scratch, 'garden-planner.html'), '<title>Watering schedule</title><p>Pick a day</p>')
 
 if (videoMarkers) copyFileSync(join(root, 'e2e/fixtures/video-playback-12s.webm'), join(scratch, 'watering-rota-demo.webm'))
 
@@ -123,7 +148,8 @@ import { EditorView } from '@codemirror/view'
 import { GalleryThumbnails, LayoutGrid, Library, ListTree, Route } from 'lucide-react'
 import { installMock } from './src/renderer/src/tw-mock.ts'
 import WorkspaceLayout from './src/renderer/src/components/WorkspaceLayout.tsx'
-import WelcomeTalk from './src/renderer/src/components/WelcomeTalk.tsx'
+import VaultExplorer from './src/renderer/src/components/vault-gallery/VaultExplorer.tsx'
+import { NO_MANAGEMENT } from './src/renderer/src/components/vault-gallery/GalleryManagement.tsx'
 import Toasts from './src/renderer/src/components/Toasts.tsx'
 import { notify } from './src/renderer/src/lib/notify.ts'
 import './src/renderer/src/styles.css'
@@ -166,7 +192,14 @@ window.tw.asset.pasteTalkPictures = async () => window.acceptPicturePaste ? ['be
 })
 window.tw.workFiles = { list: async () => null }
 window.tw.pathways = { read: async () => ({ slides: [], pathways: [] }), onChanged: empty }
-window.tw.icons = { names: async () => [], svg: async () => null, search: async () => [] }
+const iconKeys = ['lucide:phone', 'lucide:door-closed', 'lucide:bell']
+window.tw.icons = {
+  names: async () => window.crossedIconFixture ? iconKeys : [],
+  svg: async key => window.crossedIconFixture ? window.drawFixtureIcon(key) : null,
+  search: async query => window.crossedIconFixture
+    ? iconKeys.filter(key => key.includes(query)).map(key => ({ key, source: 'lucide' }))
+    : []
+}
 window.tw.research = {
   list: async () => ({ ok: true, items: [], skipped: 0, limited: false }),
   cancelUsage: () => {},
@@ -182,7 +215,8 @@ window.centerFixtureCaret = () => {
   const view = window.editorView()
   view.dispatch({ effects: EditorView.scrollIntoView(view.state.selection.main.head, { y: 'center' }) })
 }
-function Fixture({ path, outlinePath, polish, slideText, videoMarkers, outlinePreview, checkResearch }) {
+function Fixture({ path, outlinePath, polish, slideText, videoMarkers, outlinePreview: showOutlinePreview, checkResearch }) {
+  const outlinePreview = showOutlinePreview || __TW_FIND_PANEL_FIXTURE__
   const [hasTalk, setHasTalk] = useState(!checkResearch)
   const [outlineHost, setOutlineHost] = useState(null)
   const [slidesPanelView, setSlidesPanelView] = useState(outlinePreview ? 'previews' : 'outline')
@@ -203,16 +237,16 @@ function Fixture({ path, outlinePath, polish, slideText, videoMarkers, outlinePr
           <button aria-label="Show slides as previews" aria-pressed={slidesPanelView === 'previews'} onClick={() => setSlidesPanelView('previews')}><GalleryThumbnails size={15} /></button>
           <button aria-label="Show slides as an outline" aria-pressed={slidesPanelView === 'outline'} onClick={() => setSlidesPanelView('outline')}><ListTree size={15} /></button>
         </div>
-        <button className="icon-btn vault-gallery-entry" aria-label="Vault Gallery"><LayoutGrid size={15} /></button>
+        <button className="icon-btn vault-gallery-entry" aria-label="Vault Explorer"><LayoutGrid size={15} /></button>
         <button className="icon-btn" data-sidebar-collapse aria-label="Hide sidebar">⟨</button>
       </div>
       <div className="sidebar-nav-body" ref={setOutlineHost} />
     </aside>}
     <WorkspaceLayout activeTalk={hasTalk ? talk : null}
-      welcome={<WelcomeTalk folder={path} talks={[talk]} vaults={[{ id: 'fixture', root: path, open: true }]}
-        searchRef={welcomeSearchRef} onOpen={async () => { setHasTalk(true); return true }}
-        onStart={async () => { setHasTalk(true); return null }}
-        onChangeFolder={() => {}} onExamples={async () => null} onOpenTalks={() => {}} onImport={() => {}} />}
+      welcome={<VaultExplorer searchRef={welcomeSearchRef}
+        management={{ ...NO_MANAGEMENT, talks: [talk], vaults: [{ id: 'fixture', root: path, open: true, name: 'Fixture', initial: 'F', service: 'Local' }] }}
+        onOpen={async () => { setHasTalk(true); return true }} onDefaultVault={async () => null} onSettings={() => {}}
+        actions={{ start: async () => { setHasTalk(true); return null }, chooseVault() {}, examples: async () => null, importPowerPoint() {} }} />}
       vaultRoot={path} startView={polish || outlinePreview ? 'markdown' : undefined} leftPreviewsHost={outlineHost}
       leftSidebarShown={outlinePreview} slidesPanelView={slidesPanelView}
       slideTabView={slideTabView} onChooseSlideTabView={setSlideTabView} /><Toasts /></div>
@@ -223,42 +257,49 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
       sourcefile: 'right-panel-fixture.tsx', loader: 'tsx', resolveDir: root
     },
     bundle: true, platform: 'browser', format: 'iife', jsx: 'automatic', loader: { '.svg': 'dataurl' },
-    define: { __TW_SECURITY_TEST__: 'false', 'import.meta.env.DEV': 'false' },
+    define: { __TW_SECURITY_TEST__: 'false', 'import.meta.env.DEV': 'false', __TW_FIND_PANEL_FIXTURE__: JSON.stringify(findPanel) },
     outfile: join(scratch, 'fixture.js'), logLevel: 'warning'
   })
   const html = join(scratch, 'fixture.html')
   writeFileSync(html, '<!doctype html><meta charset="utf-8"><link rel="stylesheet" href="fixture.css"><div id="root"></div><script src="fixture.js"></script>')
   browser = await chromium.launch({ headless: true, ignoreDefaultArgs: ['--hide-scrollbars'], args: ['--disable-overlay-scrollbar'] })
-  const context = await browser.newContext({ viewport: polish ? { width: 1340, height: 740 } : { width: 1000, height: 631 } })
+  const context = await browser.newContext({ viewport: polish || crossedIcons ? { width: 1340, height: 740 } : { width: 1000, height: 631 } })
   const page = await context.newPage()
   const mod = process.platform === 'darwin' ? 'Meta' : 'Control'
   await page.route(/^https?:/, route => route.abort())
   const errors = []
   page.on('pageerror', error => { errors.push(error.message); console.error(error) })
   page.setDefaultTimeout(20000)
+  if (crossedIcons) await page.exposeFunction('drawFixtureIcon', key => iconSvg(key))
   await page.exposeFunction('readFixture', () => readFileSync(outline, 'utf8'))
   await page.exposeFunction('writeFixture', text => {
     const { text: stamped } = stampMissingIds(text, undefined, { preferred: preferredIdsFromText(readFileSync(outline, 'utf8')) })
     writeFileSync(outline, stamped)
     return { ok: true, content: stamped }
   })
-  await page.exposeFunction('compileFixture', async text =>
-    buildPerSlideProjections(await prepareSource(outline, text, 'Garden meeting', statSync(outline), undefined,
-      { projectionsOnly: designSwitch }), 'garden'))
+  await page.exposeFunction('compileFixture', async text => {
+    try {
+      return buildPerSlideProjections(await prepareSource(outline, text, 'Garden meeting', statSync(outline), undefined,
+        { projectionsOnly: designSwitch }), 'garden')
+    } catch (error) {
+      console.error('Could not compile the right-panel fixture:', error)
+      throw error
+    }
+  })
   let renderSequence = 0
   await page.exposeFunction('renderFixture', async text => {
-    if (designSwitch || !videoMarkers && !slideText && !notes && !outlinePreview && !/image=above|table-bands=on|id=title-loop|\{[^}]*\bannotated\b/.test(text)) return 'about:blank'
+    if (designSwitch || (!finalCheckPolish && !crossedIcons && !videoMarkers && !slideText && !notes && !outlinePreview && !/image=above|table-bands=on|id=title-loop|\{[^}]*\bannotated\b/.test(text))) return 'about:blank'
     const model = await prepareSource(outline, text, 'Garden meeting', statSync(outline))
     const file = join(scratch, `preview-${++renderSequence}.html`)
     writeFileSync(file, videoMarkers ? markSlidePreviewHtml(model.fullHtml) : model.fullHtml)
     return pathToFileURL(file).href
   })
   await page.goto(pathToFileURL(html).href)
-  const props = { path: scratch, outlinePath: outline, polish, slideText, videoMarkers, outlinePreview: outlinePreview || sidebarFollow, checkResearch }
-  await page.evaluate(props => window.mountFixture(props), props)
+  const props = { path: scratch, outlinePath: outline, polish, slideText, videoMarkers, outlinePreview: outlinePreview || sidebarFollow || finalCheckPolish, checkResearch }
+  await page.evaluate(({ props, crossedIcons }) => { window.crossedIconFixture = crossedIcons; window.mountFixture(props) }, { props, crossedIcons })
 
-  if (checkResearch) {
-    await page.getByRole('heading', { name: 'Open a talk', exact: true }).waitFor()
+  if (checkResearch && !findPanel) {
+    await page.getByRole('heading', { name: 'Start a new talk', exact: true }).waitFor()
     assert.equal(await page.getByRole('button', { name: /^Research\b/ }).count(), 0, 'Research requires an open talk')
     const titleField = page.getByRole('textbox', { name: 'Name of the talk' })
     await titleField.evaluate(input => input.addEventListener('keydown', event => {
@@ -289,9 +330,168 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     console.log('Research is absent on the welcome screen and opens with a talk via the shortcut, sidebar and palette.')
   }
 
-  if (designSwitch) {
+  if (finalCheckPolish) {
+    const command = detail => page.evaluate(detail => window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail })), detail)
     const inspector = page.locator('.tw-inspector')
-    const designs = inspector.locator('[data-section="designs"]')
+    const adjust = inspector.locator('.tw-right-adjust')
+    const outlineMode = page.getByRole('button', { name: 'Show slides as an outline' })
+    await outlineMode.click()
+    const organizer = page.locator('[data-slides-organizer]')
+    const select = async name => {
+      await organizer.getByText(name, { exact: true }).first().click()
+      await page.waitForFunction(name => document.querySelector('.tw-right-who strong')?.textContent === name, name)
+    }
+    const back = () => inspector.getByRole('button', { name: 'Back', exact: true }).click()
+    const more = () => adjust.getByRole('button', { name: /^More\b/ }).click()
+
+    await select('Only a title')
+    await inspector.getByText('This slide shows only its title. Add a point under the title to see designs.').waitFor()
+    assert.equal(await adjust.getByRole('button', { name: /^(Points|Icons)\b/ }).count(), 0)
+
+    await select('Big claim')
+    await adjust.getByRole('button', { name: /^Title.*Fills the slide/ }).click()
+    await inspector.getByText('On this design the title is the slide. Choose another design to place it.', { exact: true }).waitFor()
+    const disabledTiles = inspector.locator('[data-section="title"] button.tw-right-picture[aria-disabled="true"]:disabled')
+    assert.equal(await disabledTiles.count(), 3)
+    assert.deepEqual(await disabledTiles.evaluateAll(tiles => tiles.map(tile => getComputedStyle(tile).opacity)), ['0.5', '0.5', '0.5'])
+    await back()
+    await more()
+    const morePage = inspector.locator('[data-section="more"]')
+    assert.equal(await morePage.getByText('Side panel colour', { exact: true }).count(), 0)
+    await morePage.getByText('Slide background', { exact: true }).waitFor()
+    await back()
+
+    await select('In the garden')
+    await more()
+    assert.equal(await morePage.getByText('Container mode', { exact: true }).count(), 0)
+    await back()
+
+    await select('The garden')
+    await command('view-plain')
+    await command('change-slide-layout')
+    const menu = page.getByRole('menu', { name: 'Slide design' })
+    await menu.waitFor()
+    assert.equal(await menu.locator('.pv-menu-title').textContent(), 'Design')
+    assert.equal(await menu.locator('.pv-menu-note').innerText(), 'TalkWeaver picks the design')
+    const labels = await menu.locator('.pv-menu-label').allTextContents()
+    assert.equal(labels.at(-1), 'All designs in the side panel…')
+    await page.keyboard.press('Escape')
+    const designs = page.getByRole('region', { name: 'Layouts for this slide' })
+    await inspector.getByRole('button', { name: 'More layouts', exact: true }).click()
+    await designs.getByText('Icon bands + picture', { exact: true }).waitFor()
+    await designs.getByText('Numbered', { exact: true }).waitFor()
+    await designs.getByText('Checking which layouts fit…', { exact: true }).waitFor({ state: 'hidden' })
+    const names = await designs.locator('.tw-right-picture > strong').allTextContents()
+    const registryOnly = ['Cards', 'Compare', 'Image grid']
+    for (const label of labels.slice(1, -1)) assert(names.includes(label) || registryOnly.includes(label), label)
+    const heights = await designs.locator('.tw-right-picture').evaluateAll(tiles => {
+      const rows = {}
+      for (const tile of tiles) {
+        const { top, height } = tile.getBoundingClientRect()
+        ;(rows[top] ??= []).push(height)
+      }
+      return Object.values(rows)
+    })
+    assert(heights.some(row => row.length > 1) && heights.every(row => new Set(row).size === 1))
+    assert.match(await designs.getByText('Icon bands + picture', { exact: true }).locator('..').getAttribute('title'), /Icon bands \+ picture · One box per point/)
+    await designs.getByRole('button', { name: 'Close', exact: true }).click()
+
+    await select('Media files')
+    for (const view of ['view-plain', 'view-markdown']) {
+      await command(view)
+      for (const name of ['watering.mp4', 'bird-song.wav']) {
+        const widget = page.locator('.cm-media-file-widget').filter({ hasText: name }).first()
+        await widget.waitFor()
+        assert.equal(await widget.locator('svg').count(), 1, view + ' ' + name)
+      }
+    }
+
+    await command('view-grid')
+    const ticks = page.locator('.grid-tick')
+    await ticks.nth(0).check({ force: true })
+    await ticks.nth(1).check({ force: true })
+    await page.locator('[data-batch-bar]').waitFor()
+    assert.equal(await page.getByText(/^2 (slides )?selected$/, { exact: true }).count(), 1)
+    await inspector.getByText('Choose one slide to see its designs', { exact: true }).waitFor()
+    console.log('Final check polish: design names, title and section choices, tile heights, media cards and Grid selection pass.')
+  } else if (crossedIcons) {
+    const command = detail => page.evaluate(detail => window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail })), detail)
+    await command('view-slides')
+    await command('view-slide-panel')
+    const stage = page.frameLocator('.workspace-slide-stage iframe')
+    const mark = stage.locator('[data-id="studio"] .feature-list > li:first-child .fl-icon')
+    const line = mark.locator('svg > line[data-icon-cross]')
+    await mark.locator('svg').waitFor({ state: 'attached' })
+    await page.locator('.tw-right-adjust').getByRole('button', { name: /^Icons/ }).click()
+    const options = page.getByRole('region', { name: 'Icons', exact: true })
+    const crossed = options.getByRole('checkbox', { name: 'Cross out icon for Take a phone call' })
+
+    await crossed.check()
+    await page.waitForFunction(() => window.editorView()?.state.doc.toString().includes('{icon=phone!}'))
+    await line.waitFor({ state: 'attached' })
+    assert.equal(await line.evaluate(node => getComputedStyle(node).stroke), 'rgb(224, 49, 49)')
+
+    await crossed.uncheck()
+    await page.waitForFunction(() => window.editorView()?.state.doc.toString().includes('{icon=phone}'))
+    await line.waitFor({ state: 'detached' })
+
+    await options.getByRole('button', { name: 'Choose an icon for Take a phone call' }).click()
+    const picker = page.getByRole('dialog', { name: 'Insert icon' })
+    const search = picker.getByRole('textbox', { name: 'Search icons' })
+    const cross = picker.getByRole('checkbox', { name: 'Cross out' })
+    await search.fill('phone')
+    await search.press('Tab')
+    await page.waitForFunction(() => document.activeElement?.getAttribute('type') === 'checkbox')
+    await cross.press('Space')
+    const choice = picker.getByRole('option', { name: 'phone', exact: true })
+    await choice.locator('line[data-icon-cross]').waitFor({ state: 'attached' })
+    await cross.press('Tab')
+    await search.press('Enter')
+
+    await picker.waitFor({ state: 'detached' })
+    await page.waitForFunction(() => window.editorView()?.state.doc.toString().includes('{icon=lucide:phone!}'))
+    await line.waitFor({ state: 'attached' })
+    const paragraphCross = options.getByRole('checkbox', { name: 'Cross out icon for Paragraph icon 1' })
+    await paragraphCross.check()
+    await page.waitForFunction(() => window.editorView()?.state.doc.toString().includes('{icon=bell!}'))
+    await stage.locator('[data-id="studio"] .para-icon [data-icon-cross]').waitFor({ state: 'attached' })
+    if (iconShot) await stage.locator('[data-id="studio"]').screenshot({ path: iconShot, animations: 'disabled' })
+    await paragraphCross.uncheck()
+    await page.waitForFunction(() => window.editorView()?.state.doc.toString().includes('{icon=bell}'))
+    await stage.locator('[data-id="studio"] .para-icon [data-icon-cross]').waitFor({ state: 'detached' })
+    console.log('PASS Icon picker keyboard toggle and bare-name Inspector toggles update the slide preview')
+
+    await page.locator('.tw-inspector').getByRole('button', { name: 'Next slide', exact: true }).click()
+    const oceanRow = stage.locator('[data-id="brand-row"][data-look="ocean"].active .icon-row')
+    await oceanRow.waitFor()
+    for (const brand of ['GitHub', 'Slack']) {
+      const glyph = oceanRow.locator('.ir-item').filter({ hasText: brand })
+      const measurements = await glyph.locator('.ir-icon svg > line[data-icon-cross]').evaluate(stroke => {
+        const svg = stroke.ownerSVGElement
+        const halo = stroke.previousElementSibling
+        const { a, b, c, d } = stroke.getScreenCTM()
+        const scale = Math.min(Math.hypot(a, b), Math.hypot(c, d))
+        const { width, height } = svg.viewBox.baseVal
+        return {
+          glyphViewBox: Math.min(width, height),
+          glyphPx: Math.min(width, height) * scale,
+          strokePx: parseFloat(getComputedStyle(stroke).strokeWidth) * scale,
+          haloPx: parseFloat(getComputedStyle(halo).strokeWidth) * scale,
+          haloColour: getComputedStyle(halo).stroke
+        }
+      })
+      const { glyphViewBox, glyphPx, strokePx, haloPx, haloColour } = measurements
+      assert.ok(glyphViewBox > 100 && glyphPx > 20, `${brand} uses a large viewBox at visible size`)
+      assert.ok(strokePx >= 2 && strokePx >= glyphPx * 0.09, `${brand} retains a visible stroke in rendered pixels: ${JSON.stringify(measurements)}`)
+      assert.ok(haloPx > strokePx && haloPx < strokePx * 1.6, `${brand} has a thin rendered halo: ${JSON.stringify(measurements)}`)
+      assert.equal(haloColour, 'rgb(255, 255, 255)')
+      console.log(`PASS ${brand} in an Ocean icon row: ${strokePx.toFixed(2)} px stroke, ${haloPx.toFixed(2)} px halo`)
+    }
+  } else if (designSwitch) {
+    const inspector = page.locator('.tw-inspector')
+    const moreLayouts = inspector.getByRole('button', { name: 'More layouts', exact: true })
+    const gallery = page.getByRole('region', { name: 'Layouts for this slide' })
+    const closeGallery = gallery.getByRole('button', { name: 'Close', exact: true })
     const adjust = inspector.locator('.tw-right-adjust')
     const tile = (section, label) => section.getByRole('button').filter({ has: page.getByText(label, { exact: true }) })
     const buffer = () => page.evaluate(() => window.editorView()?.state.doc.toString())
@@ -320,18 +520,18 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     }
     await page.waitForFunction(() => window.compiledRows?.some(row => row.slide_id === 'design-switch'))
     await inspector.locator('.tw-right-who strong').filter({ hasText: 'Workshop supplies' }).waitFor()
-    await change(designs, 'Title and points', 'list', [], ['table-bands=on'])
-    await designs.getByRole('button', { name: /^Show all(?: \d+)? designs$/ }).click()
-    await change(designs, 'Icon boxes', 'list', ['iconlist', 'iconlist=boxes'])
+    await moreLayouts.click()
+    await change(gallery, 'Title and points', 'list', [], ['table-bands=on'])
+    await change(gallery, 'Icon boxes', 'list', ['iconlist', 'iconlist=boxes'])
+    await closeGallery.click()
     await adjust.getByRole('button', { name: /^Points\b/ }).click()
     const points = inspector.locator('[data-section="points"]')
     await change(points, 'Numbers', 'list', ['numbered'], ['iconlist', 'iconlist=boxes'])
     await change(points, 'Large', 'list', ['numbered=styled'])
     await inspector.getByRole('button', { name: 'Back', exact: true }).click()
-    if (await designs.getByRole('button', { name: /^Show all(?: \d+)? designs$/ }).isVisible()) {
-      await designs.getByRole('button', { name: /^Show all(?: \d+)? designs$/ }).click()
-    }
-    await change(designs, 'Table from outline', 'table', [], ['numbered', 'numbered=styled'])
+    await moreLayouts.click()
+    await change(gallery, 'Table from outline', 'table', [], ['numbered', 'numbered=styled'])
+    await closeGallery.click()
     await adjust.getByRole('button', { name: /^Table\b/ }).click()
     await change(inspector.locator('[data-section="table"]'), 'Rows only', 'table', ['table-header=off', 'table-columns=off'])
     await page.locator('.tw-right-bar').getByRole('button', { name: 'Undo', exact: true }).click()
@@ -346,7 +546,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     for (const previous of history.slice(0, -1).reverse()) await replay('ControlOrMeta+z', previous)
     assert.equal(attributes(await buffer()), attributes(source))
     assert.equal(readFileSync(outline, 'utf8'), source)
-    console.log('PASS six right-panel changes keep one layout, drop orphan options and preserve source tags; Undo and Redo restore each saved outline byte for byte.')
+    console.log('PASS six gallery and right-panel changes keep one layout, drop orphan options and preserve source tags; Undo and Redo restore each saved outline byte for byte.')
   } else if (videoMarkers) {
     const sourceLine = '![Watering rota demo](watering-rota-demo.webm)'
     const command = detail => page.evaluate(detail => window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail })), detail)
@@ -362,6 +562,33 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     })
     await page.locator('.tw-right-adjust').getByRole('button', { name: /Video.*No markers/ }).click()
     const panel = page.getByRole('region', { name: 'Video', exact: true })
+    const markerName = panel.getByRole('textbox', { name: 'Marker name' })
+    const panelHeading = page.locator('.tw-right-who')
+    await panel.getByRole('button', { name: 'Add marker at 0:00', exact: true }).click()
+    await markerName.fill('Demo')
+    await panelHeading.click()
+    const namedAtZero = source.replace(sourceLine, sourceLine + '\n[Marker: 0:00 Demo]')
+    await waitForText(namedAtZero)
+    await page.waitForFunction(async expected => await window.readFixture() === expected, namedAtZero)
+    const invalidTime = panel.getByRole('textbox', { name: 'Marker time' })
+    await panel.getByTitle('Change the time', { exact: true }).click()
+    await invalidTime.fill('invalid')
+    await panelHeading.click()
+    await invalidTime.waitFor({ state: 'hidden' })
+    await waitForText(namedAtZero)
+
+    await panel.getByRole('button', { name: 'Remove marker at 0:00', exact: true }).click()
+    await waitForText(source)
+    await panel.getByRole('button', { name: 'Add marker at 0:00', exact: true }).click()
+    await markerName.fill('Discard this')
+    await markerName.press('Escape')
+    await markerName.waitFor({ state: 'hidden' })
+    const unnamedAtZero = source.replace(sourceLine, sourceLine + '\n[Marker: 0:00]')
+    await waitForText(unnamedAtZero)
+    await page.waitForFunction(async expected => await window.readFixture() === expected, unnamedAtZero)
+    await panel.getByRole('button', { name: 'Remove marker at 0:00', exact: true }).click()
+    await waitForText(source)
+    console.log('PASS clicking away saves the marker name; invalid time and Escape leave the saved marker intact.')
     const add = panel.getByRole('button', { name: 'Add marker at 0:03', exact: true })
     await player.evaluate(video => { video.currentTime = 3.75 })
     await add.waitFor()
@@ -444,7 +671,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
       const text = source.replace(sourceLine, [sourceLine, ...markers].join('\n'))
       writeFileSync(outline, text)
       await page.reload()
-      await page.evaluate(props => window.mountFixture(props), props)
+      await page.evaluate(({ props, crossedIcons }) => { window.crossedIconFixture = crossedIcons; window.mountFixture(props) }, { props, crossedIcons })
       await command('view-slides')
       await command('view-slide-panel')
       await player.waitFor()
@@ -474,7 +701,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     const withoutVideo = textWithComment.replace(sourceLine + '\n', '').replace(marker + '\n', '')
     writeFileSync(outline, textWithComment)
     await page.reload()
-    await page.evaluate(props => window.mountFixture(props), props)
+    await page.evaluate(({ props, crossedIcons }) => { window.crossedIconFixture = crossedIcons; window.mountFixture(props) }, { props, crossedIcons })
     await command('view-slides')
     await command('view-slide-panel')
     await page.locator('.tw-right-adjust').getByRole('button', { name: /Video.*1 marker/ }).click()
@@ -509,7 +736,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
       .replace(sourceLine, sourceLine + '\n' + intro)
     writeFileSync(outline, inlineIdSource)
     await page.reload()
-    await page.evaluate(props => window.mountFixture(props), props)
+    await page.evaluate(({ props, crossedIcons }) => { window.crossedIconFixture = crossedIcons; window.mountFixture(props) }, { props, crossedIcons })
     await waitForText(inlineIdSource)
     await command('view-slides')
     await command('view-slide-panel')
@@ -582,21 +809,32 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
       view.focus()
     }, lineText)
     await placeCaret(body)
+    // Model a pause between the newline, hash and suffix so CodeMirror records three separate edits.
+    const typingAt = Date.now()
+    await page.clock.setFixedTime(typingAt)
     await page.keyboard.press('Enter')
     const beforeTyping = await buffer()
+    await page.clock.setFixedTime(typingAt + 1000)
     await page.keyboard.press('Shift+Digit3')
+    const afterHash = beforeTyping.replace(body + '\n', body + '\n\\#')
+    await waitForBuffer(afterHash)
+    await page.clock.setFixedTime(typingAt + 2000)
     await page.keyboard.type(' Foo')
+    await page.clock.setSystemTime(Date.now())
     const typed = beforeTyping.replace(body + '\n', body + '\n\\# Foo')
     await waitForBuffer(typed)
     await panel.getByText("# Foo", { exact: true }).waitFor()
-    await page.waitForFunction(text => window.compiledFixture === text, typed)
+    await page.waitForFunction(text => window.compiledFixture === text && window.savedFixture === text, typed)
     const stage = page.frameLocator('.workspace-slide-stage iframe')
     await stage.locator('section.slide.active').getByText(/#\s+Foo/).waitFor()
     assert.doesNotMatch(await stage.locator('section.slide.active').innerText(), /\\# Foo/)
     assert.equal(await stage.locator('section.slide').count(), 3)
-    await page.keyboard.press(undoKey)
-    if (await buffer() === beforeTyping) await page.keyboard.press(undoKey)
-    await waitForBuffer(before)
+    for (const previous of [afterHash, beforeTyping, before]) {
+      await page.keyboard.press(undoKey)
+      await waitForBuffer(previous)
+    }
+    await page.waitForFunction(text => window.savedFixture === text, before)
+    assert.equal(readFileSync(outline, 'utf8'), before, 'undo restores the original outline on disk')
 
     const paste = text => page.evaluate(text => {
       const data = new DataTransfer()
@@ -1041,6 +1279,16 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
         }
       }
     }
+    const originalFirstNote = 'First note with trailing spaces  \nPrivate second line'
+    await first.fill('')
+    assert.equal(await first.inputValue(), '')
+    await waitForBuffer(source.replace(originalFirstNote, ''))
+    await first.fill('Retyped in the same block')
+    await waitForBuffer(source.replace(originalFirstNote, 'Retyped in the same block'))
+    await first.fill(originalFirstNote)
+    await waitForBuffer(source)
+    console.log('PASS clearing and retyping a note keeps its block between the same parts of the slide.')
+
     await second.fill('The second note changed.')
     await waitForBuffer(source.replace('Second block', 'The second note changed.'))
     const inspectorNext = page.locator('.tw-inspector').getByRole('button', { name: 'Next slide', exact: true })
@@ -1050,7 +1298,32 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     await subnote.waitFor()
     assert.equal(await subnote.inputValue(), 'Subslide notes')
     await subnote.fill('Subslide revised')
-    await waitForBuffer(source.replace('Second block', 'The second note changed.').replace('Subslide notes', 'Subslide revised'))
+    const notesEdited = source.replace('Second block', 'The second note changed.').replace('Subslide notes', 'Subslide revised')
+    await waitForBuffer(notesEdited)
+
+    const who = page.locator('.tw-right-who strong')
+    await inspectorNext.click()
+    await who.getByText('Only a title', { exact: true }).waitFor()
+    await switchNotes.click()
+    const emptyNote = page.getByRole('textbox', { name: 'Speaker notes', exact: true })
+    await emptyNote.fill('x')
+    await page.waitForFunction(() => /### Only a title[\s\S]*?:::notes\nx\n:::/.test(window.editorView()?.state.doc.toString()))
+    await emptyNote.press('Backspace')
+    await emptyNote.press('Escape')
+    await waitForBuffer(notesEdited)
+    await page.waitForFunction(async expected => await window.readFixture() === expected, notesEdited)
+
+    await inspectorNext.click()
+    await who.getByText('Old empty notes', { exact: true }).waitFor()
+    const designs = page.locator('.tw-right-designs')
+    await designs.getByText('This slide shows only its title. Add a point under the title to see designs.', { exact: true }).waitFor()
+    assert.equal(await designs.locator('.tw-right-picture').count(), 0)
+    await emptyNote.focus()
+    await who.click()
+    const cleaned = notesEdited.replace('{statement}{id=old-empty-notes}\n\n:::notes\n  \n:::\n', '{statement}{id=old-empty-notes}\n')
+    await waitForBuffer(cleaned)
+    await page.waitForFunction(async expected => await window.readFixture() === expected, cleaned)
+    console.log('PASS deleting the only note restores the source, and existing blank notes offer no designs and are removed when left.')
     console.log('PASS note collapse is byte-exact, moves are atomic and undoable, Markdown shows the whole block, and Slide edits the selected block or subslide.')
   } else if (sidebarFollow) {
     await page.setViewportSize({ width: 1440, height: 900 })
@@ -1298,7 +1571,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
   } else if (outlinePreview) {
     const sidebar = page.locator('[data-right-column]')
     const sidebarToggle = page.getByTestId('sidebar-toggle')
-    const organizer = page.locator('[data-slides-organizer]')
+    const organizer = page.locator('[data-slides-organizer]:not([data-sidebar-search-idle])')
     const pinned = page.locator('.tw-structure-pinned')
     const header = pinned.getByRole('button', { name: /Current slide preview/ })
     const picture = pinned.locator('img, .tw-structure-pinned-placeholder')
@@ -1317,6 +1590,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     await sidebar.locator('.tw-inspector-stage').waitFor()
     await page.waitForFunction(text => window.compiledFixture === text && window.editorView()?.state.doc.toString() === text, source)
     assert.equal(await organizer.count(), 0, 'Previews mode is the initial sidebar mode')
+    await page.getByRole('searchbox', { name: 'Search the slide outline' }).waitFor()
     const checkSidebarHitTargets = async (state) => {
       const blockedControls = await page.locator('.sidebar-modebar').evaluate(bar => {
         const bounds = bar.getBoundingClientRect()
@@ -1428,7 +1702,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     await header.waitFor()
     await header.click()
     await page.reload()
-    await page.evaluate(props => window.mountFixture(props), props)
+    await page.evaluate(({ props, crossedIcons }) => { window.crossedIconFixture = crossedIcons; window.mountFixture(props) }, { props, crossedIcons })
     await outlineMode.click()
     await header.waitFor()
     assert.equal(await header.getAttribute('aria-expanded'), 'false', 'Page reload keeps the choice in this window')
@@ -1714,7 +1988,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     await page.keyboard.press('Enter')
     await page.waitForFunction(() => window.editorView()?.state.doc.toString().includes('{sub}{role=subsection-title}'))
     console.log('PASS Markdown caret reads, outline row focus, picture feedback, section Undo, menu and notice themes')
-  } else {
+  } else if (!findPanel) {
     const inspector = page.locator('.tw-inspector')
     const title = inspector.locator('.tw-right-who strong')
     const next = inspector.getByRole('button', { name: 'Next slide', exact: true })
@@ -1898,19 +2172,21 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     assert.match(seedlings, /\{[^}]*\blist\b/)
     assert.doesNotMatch(seedlings, /\b(?:titletop|sidebar|title=show)\b/)
     const originalList = await page.evaluate(() => window.editorView().state.doc.toString())
-    const allDesigns = inspector.getByRole('button', { name: /^Show all(?: \d+)? designs$/ })
-    await allDesigns.click()
-    const addNotes = inspector.getByRole('button', { name: /Add notes to points/ })
+    const moreLayouts = inspector.getByRole('button', { name: 'More layouts', exact: true })
+    const gallery = page.getByRole('region', { name: 'Layouts for this slide' })
+    await moreLayouts.click()
+    await gallery.getByRole('button', { name: /^Changes the structure/ }).click()
+    const addNotes = gallery.getByRole('button', { name: /Add notes to points/ })
     await addNotes.hover()
     await page.waitForFunction(() => {
-      const url = document.querySelector('.tw-inspector-stage iframe')?.src.split('#')[0]
+      const url = document.querySelector('.workspace-slide-stage iframe')?.src.split('#')[0]
       return /\n  -  (?:\n|$)/.test(window.fixturePreviewText.get(url) ?? '')
     })
     const tried = await page.evaluate(() => {
-      const url = document.querySelector('.tw-inspector-stage iframe').src.split('#')[0]
+      const url = document.querySelector('.workspace-slide-stage iframe').src.split('#')[0]
       return window.fixturePreviewText.get(url)
     })
-    const annotated = inspector.frameLocator('.tw-inspector-stage iframe').locator('.slide.active .fl-annotated')
+    const annotated = page.frameLocator('.workspace-slide-stage iframe').locator('.slide.active .fl-annotated')
     await annotated.waitFor()
     const measured = await annotated.evaluate(`(() => {
       const list = document.querySelector('.slide.active .fl-annotated');
@@ -1932,7 +2208,10 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     await page.locator('.tw-right-bar').getByRole('button', { name: 'Undo', exact: true }).click()
     await waitForBuffer(originalList)
     await page.waitForFunction(text => window.savedFixture === text && window.compiledFixture === text, originalList)
-    await inspector.getByRole('button', { name: 'Show fewer' }).click()
+    await page.keyboard.press('Escape')
+    await gallery.waitFor({ state: 'detached' })
+    await page.locator('.workspace-slide-text').waitFor()
+    await page.getByTestId('markdown-toggle').click()
     console.log('A structure tile previews the exact text it writes, and one Undo restores the outline.')
     await home.getByRole('button', { name: /^Title\b/ }).click()
     await inspector.getByText(/Follows the talk: on top/).waitFor()
@@ -1983,11 +2262,9 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     }
     await page.emulateMedia({ colorScheme: 'light' })
     await back.click()
-    await inspector.getByRole('button', { name: /^Show all(?: \d+)? designs$/ }).click()
-    const designs = inspector.locator('[data-section="designs"]')
-    const aboveDesign = designs.getByRole('button', { name: /Picture above/ })
-    const stage = inspector.locator('.tw-inspector-stage')
-    const preview = stage.frameLocator('iframe')
+    await moreLayouts.click()
+    const aboveDesign = gallery.getByRole('button', { name: /Picture above/ })
+    const galleryStage = page.locator('.workspace-slide-stage')
     // The Picture page shows the compiled buffer before autosave necessarily reaches disk.
     await page.waitForFunction(() => {
       const text = window.editorView()?.state.doc.toString()
@@ -1997,22 +2274,26 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     assert.match(beforeTry, /^### Garden photographs\n\{id=p3\}\{image=above\}$/m)
     const writesBeforeTry = await page.evaluate(() => window.fixtureWrites)
     await aboveDesign.hover()
-    await stage.locator('xpath=self::*[@data-panel-trying="true"]').waitFor()
-    await preview.locator('section.slide.active[data-id="p3"] .icon-row').waitFor()
+    await galleryStage.locator('xpath=self::*[@data-panel-trying="true"]').waitFor()
+    await galleryStage.frameLocator('iframe').locator('section.slide.active[data-id="p3"] .icon-row').waitFor()
     assert.equal(await page.evaluate(() => window.fixtureWrites), writesBeforeTry, 'trying the design leaves the write queue alone')
     assert.equal(await page.evaluate(() => window.editorView().state.doc.toString()), beforeTry)
     assert.equal(readFileSync(outline, 'utf8'), beforeTry)
     await aboveDesign.click()
-    await designs.getByRole('button', { name: /Current.*Picture above/ }).waitFor()
+    await gallery.getByRole('button', { name: /Current.*Picture above/ }).waitFor()
     // Current can update while the iframe still shows the hover preview. Wait for the
     // committed source and the matching preview URL before decoding or measuring its image.
     await page.waitForFunction(before => {
       const text = window.editorView()?.state.doc.toString()
-      const stage = document.querySelector('.tw-inspector-stage')
+      const stage = document.querySelector('.workspace-slide-stage')
       const url = stage?.querySelector('iframe')?.src.split('#')[0]
       return text !== before && text === window.savedFixture && text === window.compiledFixture &&
         !stage?.hasAttribute('data-panel-trying') && url && window.fixturePreviewText.get(url) === text
     }, beforeTry)
+    await gallery.getByRole('button', { name: 'Close', exact: true }).click()
+    await page.getByTestId('markdown-toggle').click()
+    const stage = inspector.locator('.tw-inspector-stage')
+    const preview = stage.frameLocator('iframe')
 
     async function checkLooks(label, slide, geometry) {
       for (const theme of ['light', 'dark']) {
@@ -2147,7 +2428,15 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
           await tile.scrollIntoViewIfNeeded()
           await tile.hover()
           await stage.locator('xpath=self::*[@data-panel-trying="true"]').waitFor()
-          await active.locator(painted).waitFor({ state: 'attached' })
+          await active.locator(painted).waitFor({ state: 'attached' }).catch(async error => {
+            const preview = await stage.evaluate((element, id) => {
+              const url = element.querySelector('iframe')?.src.split('#')[0]
+              const slideText = window.fixturePreviewText.get(url)?.split('### ').find(slide => slide.includes('id=' + id))
+              return { trying: element.dataset.panelTrying, url, options: slideText?.split('\n').filter(line => line.startsWith('{')) }
+            }, id)
+            console.error('Preview after hovering ' + label + ':', preview)
+            throw error
+          })
           await page.waitForFunction(({ id, key, token }) => window.titleVariantInputs?.[key]?.split('### ').some(
             slide => slide.includes('{id=' + id + '}') && slide.includes('{' + token + '}')
           ), { id, key, token })
@@ -2193,7 +2482,7 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     await page.emulateMedia({ colorScheme: 'light' })
     console.log('Title tiles keep the cycle, boxed list, icon row and statement in light and dark; thumbnail inputs match the saved outline.')
   }
-  if (checkResearch) {
+  if (checkResearch && !findPanel) {
     const sidebar = page.getByRole('tablist', { name: 'Sidebar' })
     const talkTab = page.locator('[data-talk-tab]')
     const theme = name => talkTab.locator('.tw-right-picture').filter({ has: page.getByText(name, { exact: true }) })
@@ -2238,6 +2527,185 @@ window.showFixtureNotice = level => notify('Fixture ' + level, level, 'fixture-t
     })
     assert.equal(await theme('Ocean').getAttribute('aria-pressed'), 'true')
     console.log('Talk Design offers six palettes. Forest and Slate save and compile, show their section colour labels, and can be reset to Ocean.')
+
+    await page.setViewportSize({ width: 1000, height: 631 })
+    const insert = page.getByRole('button', { name: 'Insert', exact: true })
+    await insert.click()
+    const insertMenu = page.locator('.toolbar-menu')
+    const notesItem = insertMenu.getByText('Speaker notes', { exact: true })
+    await notesItem.waitFor()
+    await insertMenu.evaluate(menu => Promise.all(menu.getAnimations().map(animation => animation.finished)))
+    const bounds = await insertMenu.evaluate(menu => ({
+      bottom: menu.getBoundingClientRect().bottom, scrollHeight: menu.scrollHeight, clientHeight: menu.clientHeight,
+    }))
+    assert.ok(bounds.bottom <= 619, `Insert menu bottom: ${bounds.bottom}`)
+    assert.ok(bounds.scrollHeight > bounds.clientHeight, 'the tall Insert menu scrolls')
+    await insert.press('ArrowUp')
+    assert.equal(await notesItem.evaluate(label => label.parentElement === document.activeElement), true)
+    assert.ok(await insertMenu.evaluate(menu => menu.scrollTop > 0), 'keyboard focus scrolls the last row into view')
+    await insertMenu.evaluate(menu => { menu.scrollTop = menu.scrollHeight })
+    const row = await notesItem.boundingBox()
+    assert.ok(row.y + row.height <= 619)
+    await notesItem.click()
+    await insertMenu.waitFor({ state: 'detached' })
+    console.log('The Insert menu fits at 1000×631 and its last row is reachable by key and click.')
+
+    const countSlides = () => window.editorView()?.state.doc.toString().match(/^### /gm)?.length ?? 0
+    const beforeNewSlide = await page.evaluate(countSlides)
+    await page.keyboard.press('ControlOrMeta+Shift+P')
+    const palette = page.getByRole('dialog', { name: 'Command palette', exact: true })
+    const query = palette.getByRole('combobox', { name: 'Command query' })
+    await query.fill('New slide')
+    assert.equal(await palette.getByRole('option').first().locator('.command-menu-title').textContent(), 'New slide')
+    await query.press('Enter')
+    await page.waitForFunction(expected => {
+      const text = window.editorView()?.state.doc.toString()
+      return (text?.match(/^### /gm)?.length ?? 0) === expected
+    }, beforeNewSlide + 1)
+    console.log('The palette ranks New slide first and Return adds a slide heading.')
+
+
+  }
+
+  if (findPanel) {
+    await page.setViewportSize({ width: 1340, height: 740 })
+    const { iconSvg } = await import('../compiler/scripts/lib/05-icons.mjs')
+    await page.exposeFunction('drawFindFixtureIcon', key => iconSvg(key))
+    const slideThumb = 'data:image/svg+xml,' + encodeURIComponent(
+      '<svg xmlns="http://www.w3.org/2000/svg" width="160" height="90"><rect width="160" height="90" fill="#f6f8ff"/><path d="M15 25h130M15 46h55M15 56h74" stroke="#0b3a6b" stroke-width="4"/></svg>'
+    )
+    await page.evaluate(thumb => {
+      window.tw.images = {
+        status: async () => ({ provider: 'slidewell', archive: true }),
+        search: async () => ({ provider: 'slidewell', meaning: 'off', hits: [] })
+      }
+      window.tw.talk.thumbnails = async () => Object.fromEntries((window.compiledRows ?? []).map(row =>
+        [row.render_hash || row.content_hash, thumb]))
+      window.tw.talk.slidePictureText = async (_path, pictures) => pictures.map(() => '')
+      window.tw.icons.search = async query => ['phone', 'star'].includes(query) ? [{ key: 'lucide:' + query, source: 'lucide' }] : []
+      window.tw.icons.svg = key => window.drawFindFixtureIcon(key)
+    }, slideThumb)
+    await page.getByRole('textbox', { name: 'Name of the talk' }).fill('Garden meeting')
+    await page.getByRole('button', { name: /Start with a slide/ }).click()
+    const editor = page.locator('.cm-content')
+    await page.getByRole('button', { name: 'Show slides as an outline' }).click()
+    const outlineSearch = page.getByRole('searchbox', { name: 'Search the slide outline' })
+    const caret = () => page.evaluate(() => window.editorView().state.selection.main.head)
+    const sidebar = page.getByRole('tablist', { name: 'Sidebar' })
+    const findTab = sidebar.getByRole('tab', { name: 'Find', exact: true })
+    const find = page.getByRole('complementary', { name: 'Find', exact: true })
+    const shot = async mode => {
+      if (process.env.TW_FIND_SCREENSHOTS !== '1') return
+      const png = await page.locator('[data-right-column]').screenshot({ animations: 'disabled' })
+      console.log(`FIND_SCREENSHOT ${mode} ${png.toString('base64')}`)
+    }
+    assert.equal(await findTab.count(), 0, 'Find starts closed')
+    await editor.press('ControlOrMeta+Shift+I')
+    const imageSearch = page.getByRole('textbox', { name: 'Search images', exact: true })
+    await imageSearch.waitFor()
+    assert.equal(await find.locator('kbd').innerText(), '⌘⇧I')
+    await shot('images')
+    assert.equal(await find.getByRole('button', { name: 'Close Find' }).count(), 0)
+    await sidebar.locator('[data-rc-tab="find"]').getByRole('button', { name: 'Close Find' }).click()
+    assert.equal(await findTab.count(), 0, 'closing Find removes its tab')
+    await page.evaluate(() => window.dispatchEvent(new CustomEvent('tw-workspace-command', { detail: 'whats-new' })))
+    await sidebar.locator('[data-rc-tab="whats-new"]').waitFor()
+    await editor.press('ControlOrMeta+Shift+I')
+    await imageSearch.waitFor()
+    assert.equal(await sidebar.locator('[data-rc-tab]').last().getAttribute('data-rc-tab'), 'find', 'Find comes after temporary tabs')
+    await find.getByRole('tab', { name: 'PowerPoint Imports' }).click()
+    await imageSearch.fill('earlier lecture')
+    await outlineSearch.fill('Priorities')
+    await page.waitForFunction(() => {
+      const view = window.editorView()
+      return view?.state.doc.lineAt(view.state.selection.main.head).text.includes('Priorities')
+    })
+    const beforeFind = await caret()
+
+    await imageSearch.press('ControlOrMeta+Alt+G')
+    const slideSearch = page.getByRole('searchbox', { name: 'Search slides in this talk' })
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === 'Search slides in this talk')
+    await slideSearch.fill('widget:watering schedule')
+    const matches = find.getByRole('list', { name: 'Matching slides' }).getByRole('button')
+    await matches.getByText('Volunteer shifts', { exact: true }).waitFor()
+    assert.equal(await matches.count(), 1, 'Find matches the compiled widget title')
+    await slideSearch.fill('Monday')
+    const thumb = page.getByRole('button', { name: 'Volunteer shifts', exact: true }).locator('img')
+    await thumb.evaluate(image => image.decode())
+    assert.equal(await caret(), beforeFind, 'typing into Find leaves the editor at its original position')
+    assert.equal(await outlineSearch.inputValue(), 'Priorities', 'Find keeps its own query')
+    await slideSearch.press('Escape')
+    await findTab.waitFor({ state: 'detached' })
+    assert.equal(await caret(), beforeFind, 'Escape leaves the editor at its original position')
+    assert.equal(await outlineSearch.inputValue(), 'Priorities', 'Escape leaves the outline query intact')
+
+    await editor.press('ControlOrMeta+Shift+I')
+    await find.getByRole('tab', { name: 'PowerPoint Imports' }).click()
+    await imageSearch.fill('earlier lecture')
+    await imageSearch.press('ControlOrMeta+Alt+G')
+    await slideSearch.fill('Monday')
+    await thumb.evaluate(image => image.decode())
+    await shot('slides')
+    await slideSearch.press('Enter')
+    await page.waitForFunction(() => {
+      const view = window.editorView()
+      return view?.state.doc.lineAt(view.state.selection.main.head).text.includes('Volunteer shifts')
+    })
+    await slideSearch.fill('Repair the beds')
+    await page.getByRole('button', { name: 'Priorities', exact: true }).click()
+    await page.waitForFunction(() => {
+      const view = window.editorView()
+      return view?.state.doc.lineAt(view.state.selection.main.head).text.includes('Priorities')
+    })
+
+    await page.evaluate(() => {
+      const view = window.editorView()
+      view.dispatch({ selection: { anchor: view.state.doc.toString().indexOf('Repair the beds') } })
+      view.focus()
+    })
+    await page.keyboard.press('ControlOrMeta+Alt+Shift+I')
+    const iconSearch = page.getByRole('textbox', { name: 'Search icons', exact: true })
+    await iconSearch.fill('phone')
+    const phone = page.getByRole('option', { name: 'phone', exact: true })
+    await phone.locator('svg').waitFor()
+    await find.getByRole('button', { name: 'Images', exact: true }).click()
+    assert.equal(await imageSearch.inputValue(), 'earlier lecture')
+    assert.equal(await find.getByRole('tab', { name: 'PowerPoint Imports' }).getAttribute('aria-selected'), 'true')
+    await find.getByRole('button', { name: 'Slides', exact: true }).click()
+    assert.equal(await slideSearch.inputValue(), 'Repair the beds')
+    await find.getByRole('button', { name: 'Icons', exact: true }).click()
+    assert.equal(await iconSearch.inputValue(), 'phone')
+    await phone.locator('svg').waitFor()
+    await iconSearch.press('Enter')
+    await page.waitForFunction(() => /- Repair the beds\s*\{icon=lucide:phone\}/.test(window.editorView()?.state.doc.toString() ?? ''))
+    const cross = find.getByRole('checkbox', { name: 'Cross out' })
+    await cross.press('Space')
+    assert.equal(await cross.isChecked(), true)
+    await phone.locator('svg line[data-icon-cross]').waitFor()
+    await shot('icons')
+    await iconSearch.press('Enter')
+    await page.waitForFunction(() => /- Repair the beds\s*\{icon=lucide:phone!\}/.test(window.editorView()?.state.doc.toString() ?? ''))
+    await iconSearch.fill('star')
+    const star = page.getByRole('option', { name: 'star', exact: true })
+    await star.locator('svg line[data-icon-cross]').waitFor()
+    await star.click()
+    await page.waitForFunction(() => /- Repair the beds\s*\{icon=lucide:star!\}/.test(window.editorView()?.state.doc.toString() ?? ''))
+    await cross.uncheck()
+    await star.locator('svg line[data-icon-cross]').waitFor({ state: 'detached' })
+    await star.click()
+    await page.waitForFunction(() => /- Repair the beds\s*\{icon=lucide:star\}/.test(window.editorView()?.state.doc.toString() ?? ''))
+    await find.getByRole('button', { name: 'Images', exact: true }).click()
+    await imageSearch.waitFor()
+    await imageSearch.press('ControlOrMeta+Shift+I')
+    await findTab.waitFor({ state: 'detached' })
+    await editor.press('ControlOrMeta+Shift+P')
+    await page.getByRole('combobox', { name: 'Command query' }).fill('Go to line')
+    await page.locator('[data-command="go-to-line"]').click()
+    const lineField = page.locator('.cm-dialog input[name="line"]')
+    await lineField.fill('1')
+    await lineField.press('Enter')
+    await page.waitForFunction(() => window.editorView().state.selection.main.head === 0)
+    console.log('Find preserves its three queries and the Images source tab, moves the editor only on slide selection, and closes from its final sidebar tab. Cross out applies to keyboard and click insertions. Go to line runs from the palette.')
   }
   assert.deepEqual(errors, [])
 } finally {

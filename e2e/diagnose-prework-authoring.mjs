@@ -7,6 +7,7 @@
 //   2. Presenting the talk shows no pre-work slide; present from a step starts after the section.
 // TW_SHOTS_DIR=<dir> saves a screenshot of the window per state.
 import { _electron as electron } from 'playwright'
+import { openTalkByTitle } from './lib/talklist.mjs'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
 import { join } from 'path'
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'fs'
@@ -126,7 +127,7 @@ try {
   const chips = async () => (await page.locator('.tw-inspector-jumplist button').allTextContents()).map((chip) => chip.trim())
 
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setSize(1440, 900))
-  await page.locator('.tl-row').first().dblclick()
+  await openTalkByTitle(page, 'The current state of AI agents')
   await page.waitForTimeout(3000)
   await page.keyboard.press('Meta+p') // Inspector mode
   await page.waitForTimeout(1500)

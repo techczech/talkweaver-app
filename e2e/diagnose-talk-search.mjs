@@ -5,6 +5,7 @@
 // the no-results suggestions (L8).
 // Fixture vault and a throwaway --user-data-dir; set TW_SHOTS=<dir> to save screenshots.
 import assert from 'node:assert/strict'
+import { showTalksBeforeOpening } from './lib/talklist.mjs'
 import { createAppScratch, launchApp } from './lib/launch-app.mjs'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -65,6 +66,7 @@ try {
   const errors = []
   page.on('pageerror', (error) => errors.push(error.message))
   await page.setViewportSize({ width: 1512, height: 948 }).catch(() => {})
+  await showTalksBeforeOpening(page)
   const box = page.locator('[aria-label="Filter talks"]')
   // Folders start closed in the file list, so at rest the tree may show only folder rows.
   await page.locator('.tl-tree [data-folder-path], .tl-tree [data-talk-slug]').first().waitFor()

@@ -70,7 +70,8 @@ class MarginMarker extends GutterMarker {
       layout.type = 'button'
       layout.className = 'cm-plain-margin-layout'
       layout.setAttribute('aria-haspopup', 'menu')
-      layout.setAttribute('aria-label', `Layout: ${layoutLabel}. Change this slide's layout`)
+      layout.title = `Design: ${layoutLabel}. Change this slide's design`
+      layout.setAttribute('aria-label', layout.title)
       const name = document.createElement('span')
       name.textContent = layoutLabel
       const chevron = document.createElement('span')

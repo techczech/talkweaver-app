@@ -36,7 +36,7 @@ await test('batch flow prepares every candidate before one exact-buffer apply an
     talk: () => talk, editor: () => ({ path: talk, text, caret: 0 }),
     apply: async (path, mutate) => { applies++; text = mutate(text).replace('## B\n', '## B\n{id=stamp}\n'); return { ok: true, saved: { content: text } } },
     prepareSlide: async markdown => markdown,
-    notify: message => notices.push(message),
+    notify: (...notice) => notices.push(notice),
     api: {
       prepareInsert: async () => ({ ok: true, entries: [{ id: 'a', title: 'A', markdown: '### A {id=a}', sourceOutlinePath: 'source' }, { id: 'b', title: 'B', line: '![](img-abcdef1)' }] }),
       markInsertedMany: async () => { marks++; return { ok: true } }
@@ -48,6 +48,13 @@ await test('batch flow prepares every candidate before one exact-buffer apply an
   assert.deepEqual(headings(text).map(headingTitle), ['Talk', 'A', 'B', 'Anchor'])
   assert.match(headings(text)[1], /\{id=[a-z0-9]{5}\}/, 'the batch gives a copied slide a fresh ID even when its source ID is free')
   const before = text
+  const prepareInsert = host.api.prepareInsert
+  host.api.prepareInsert = async () => ({ ok: false, error: 'A picture couldn’t be copied into this talk. Nothing was added.' })
+  assert.equal((await runScratchBatch(host, ['a', 'b'], { kind: 'start' })).ok, false)
+  assert.deepEqual(notices.at(-1), ['Couldn’t add 2 slides. A picture couldn’t be copied into this talk. Nothing was added.', 'error', 'scratchpad-insert'])
+  assert.equal(text, before)
+  assert.equal(applies, 1); assert.equal(marks, 1)
+  host.api.prepareInsert = prepareInsert
   host.prepareSlide = async markdown => { text += '\nEdited while preparing'; return markdown }
   assert.equal((await runScratchBatch(host, ['a', 'b'], { kind: 'start' })).ok, false)
   assert.equal(applies, 1); assert.equal(marks, 1)
@@ -391,12 +398,18 @@ try {
     const handlers = new Map()
     const asked = []
     let duringImport = async () => {}
+    let refuseCopy = false
     registerScratchpadIpc({
       ipc: { handle: (channel, fn) => handlers.set(channel, fn) },
       outlinePathFor: () => outline,
       htmlPreview: async () => ({ error: 'none' }),
       revealFolder: () => {},
-      importVisual: async (req) => { asked.push(req); await duringImport(); return { ok: true, line: req.kind === 'pic' ? '![](img-0000001)' : '![](assets/flow.svg)' } },
+      importVisual: async (req) => {
+        asked.push(req)
+        await duringImport()
+        return refuseCopy ? { ok: false, error: 'Internal copy failure' }
+          : { ok: true, line: req.kind === 'pic' ? '![](img-0000001)' : '![](assets/flow.svg)' }
+      },
       slideSource: (slide) => ({ outlinePath: slideSourceOutline(slide, [vault]), root: vault })
     })
     const sender = { id: 1, isDestroyed: () => false, send: () => {}, once: () => {} }
@@ -422,6 +435,11 @@ try {
     assert.deepEqual(prepared.entries.map(item => item.id), [slide.id, file.id])
     assert.equal(prepared.entries[0].markdown, slide.slide.markdown)
     assert.equal(prepared.entries[1].line, '![](img-0000001)')
+    refuseCopy = true
+    assert.deepEqual(await call('scratchpad:prepare-insert', [slide.id, file.id], outline), {
+      ok: false, error: 'A picture couldn’t be copied into this talk. Nothing was added.'
+    })
+    refuseCopy = false
     assert.equal((await call('scratchpad:prepare-insert', [file.id, 'gone'], outline)).ok, false)
     assert.equal((await call('scratchpad:prepare-insert', [file.id], 'other-outline')).ok, false)
     assert.equal((await call('scratchpad:mark-inserted-many', [{ id: file.id, title: 'Batch picture' }, { id: 'gone', title: 'Gone' }], outline)).ok, false)

@@ -25,7 +25,7 @@ import { chromium } from 'playwright'
 import { serveEmbedFixture, embedFrames } from './fixtures/embed-deck-fixture.mjs'
 import { presenterSelectors, audienceSelectors } from './lib/mode-selectors.mjs'
 
-const fx = await serveEmbedFixture()
+const fx = await serveEmbedFixture({ reusedSimulation: true })
 const browser = await chromium.launch({ headless: true })
 let failures = 0
 const check = async (name, fn) => {
@@ -117,7 +117,7 @@ try {
 
     await goTo(page, 'sim')
     const live = await liveFrame(page)
-    await live.frame.waitForFunction(() => window.storage)
+    await live.frame.waitForFunction(() => window.storage && document.body.dataset.copiedScript === 'ran')
     assert.equal(fx.ran('sim'), 1, 'the page ran once, on its slide')
     assert.deepEqual([live.slide, live.sandbox, live.hasSrc, live.visible], ['sim', 'allow-scripts allow-forms', false, true])
     assert.deepEqual(await live.frame.evaluate(() => [self.origin, document.compatMode, document.querySelector('base').getAttribute('href')]), ['null', 'CSS1Compat', 'about:srcdoc'], 'an opaque origin, standards mode, the srcdoc base')

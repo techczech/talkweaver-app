@@ -63,6 +63,7 @@ html, body, #root {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 41; min-width: 240px;
   background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 6px;
   box-shadow: var(--popover-shadow);
+  overflow-y: auto; overscroll-behavior: contain;
   animation: tw-menu-in 110ms ease-out;
 }
 @keyframes tw-menu-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
@@ -581,6 +582,11 @@ html, body, #root {
 .pv-icon-search kbd, .pv-icon-hint kbd {
   font: 600 10.5px var(--font-mono); color: var(--faint); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; background: var(--panel);
 }
+.tw-icon-cross-toggle {
+  display: inline-flex; align-items: center; gap: 6px; width: fit-content;
+  padding: 5px 8px; color: var(--ink); cursor: pointer; font-size: .8125rem;
+}
+.tw-icon-cross-toggle > input { margin: 0; accent-color: var(--accent); }
 .pv-icon-list { max-height: 292px; overflow-y: auto; margin: 0 -8px; padding: 0 8px 8px; }
 .pv-icon-label { font-size: 10px; letter-spacing: .09em; font-weight: 700; color: var(--faint); padding: 9px 2px 4px; text-transform: uppercase; }
 .pv-icon-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 2px; }
@@ -884,6 +890,7 @@ button.tw-reveal-badge:focus-visible { outline: 2px solid var(--focus); outline-
    cells, section headers). These rules cover the container shell and
    the toolbar column selector. */
 .grid-view { background: var(--bg-1); }
+.grid-with-selection { display: flex; flex-direction: column; height: 100%; min-height: 0; }
 .grid-section-header:hover { background: var(--bg-2); }
 .grid-cell:hover { border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
 /* Select many slides in the grid (slide handling 1b; mockup H01/H02): tick box, selected card, batch bar. */
@@ -891,7 +898,7 @@ button.tw-reveal-badge:focus-visible { outline: 2px solid var(--focus); outline-
 .grid-cell:hover .grid-tick, .grid-cell .grid-tick:checked, .grid-cell .grid-tick:focus-visible { opacity: 1; }
 .grid-cell[data-selected="true"] { outline: 3px solid var(--focus); outline-offset: -1px; box-shadow: 0 4px 14px rgba(27, 45, 87, 0.25); }
 .grid-select-section { margin-left: auto; font-size: 10px; color: var(--accent-text); text-decoration: underline; background: none; border: 0; cursor: pointer; padding: 0 2px; flex-shrink: 0; }
-.batch-bar { flex-wrap: wrap; position: sticky; bottom: 0; margin: 12px -4px 0; background: #1b2d57; color: #fff; border-radius: 12px; padding: 9px 12px; display: flex; align-items: center; gap: 8px; box-shadow: 0 10px 30px rgba(20, 25, 40, 0.35); z-index: 20; }
+.batch-bar { box-sizing: border-box; flex: none; flex-wrap: wrap; position: relative; min-height: 44px; margin: 6px 8px; background: #1b2d57; color: #fff; border-radius: 12px; padding: 5px 12px; display: flex; align-items: center; gap: 8px; box-shadow: 0 10px 30px rgba(20, 25, 40, 0.35); z-index: 20; }
 .batch-bar-n { font-weight: 600; }
 .batch-bar-link { background: none; border: 0; color: #c9d2f3; text-decoration: underline; cursor: pointer; font-size: 12px; margin-right: 6px; }
 .batch-bar-btn { background: rgba(255, 255, 255, 0.12); color: #fff; border: 1px solid rgba(255, 255, 255, 0.28); border-radius: 7px; padding: 6px 11px; font-size: 12.5px; cursor: pointer; white-space: nowrap; }
@@ -2534,3 +2541,10 @@ button.tw-reveal-badge:focus-visible { outline: 2px solid var(--focus); outline-
   border-radius: 4px;
   font: 600 11px/1.4 var(--font-ui);
 }
+
+.cm-media-file-widget {
+  display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 6px; width: 160px; max-width: 100%; height: 90px; box-sizing: border-box; padding: 6px;
+  vertical-align: middle; background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+}
+.cm-media-file-widget > span { max-width: 100%; font-size: .6875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

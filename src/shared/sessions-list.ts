@@ -169,10 +169,10 @@ const kindOf = (source: Pick<SessionSource, 'kind'>): RunKind => (source.kind ==
  * The title and date of a Run as the Runs view names them: the event title (else the talk's), and "Fri 6 Nov · 14:00". Studio's
  * recorded Runs read these too, so one Run has one name and one date wherever it is listed (R5).
  */
-export function runTitleAndWhen(source: Pick<SessionSource, 'eventTitle' | 'talkTitle' | 'plannedDate' | 'startTime' | 'startedAt' | 'timeZone'>): { name: string; when: string } {
+export function runTitleAndWhen(source: Pick<SessionSource, 'eventTitle' | 'talkTitle' | 'talkSlug' | 'plannedDate' | 'startTime' | 'startedAt' | 'timeZone'>): { name: string; when: string } {
   const start = startLocal(source)
   return {
-    name: talkTitleText(source.eventTitle || source.talkTitle),
+    name: talkTitleText(source.eventTitle ?? '') || talkTitleText(source.talkTitle) || source.talkSlug,
     when: start ? `${dayLabel(start.slice(0, 10))}${source.plannedDate && !source.startTime ? '' : ` · ${start.slice(11, 16)}`}` : 'No date'
   }
 }

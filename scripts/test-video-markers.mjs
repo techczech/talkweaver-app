@@ -6,7 +6,7 @@ import { collectDeckLinks, prepareSource } from '../compiler/scripts/lib/08-sour
 import { renderBlock } from '../compiler/scripts/lib/06-block-renderers.mjs'
 import { parseSlideScript } from '../compiler/scripts/lib/slide-script.mjs'
 import { formatMarkerTime, parseMarkerTime, readVideoMarker } from '../compiler/scripts/lib/video-markers.mjs'
-import { editVideoMarker, scanOutlineVideos, withoutAuthoringVideoMarkers } from '../src/shared/video-marker-edits.ts'
+import { authoringVideoPreview, editVideoMarker, scanOutlineVideos, withoutAuthoringVideoMarkers } from '../src/shared/video-marker-edits.ts'
 import { detectObjectBlocks, detectOutlineObjects } from '../src/renderer/src/extensions/objectBlocks/detect.ts'
 import { adjacentVideoMarker, videoMarkerRows } from '../compiler/assets/runtime/video-markers.js'
 import { actionRowsAt } from '../src/shared/actions-here.ts'
@@ -48,6 +48,8 @@ const editorPreview = withoutAuthoringVideoMarkers(source)
 assert.doesNotMatch(editorPreview, /The same time|Orphan|External/)
 assert.match(editorPreview, /Example/)
 assert.match(editorPreview, /Note/)
+const following = authoringVideoPreview(source + '\n### Following slide\n', source.split('\n').length + 1)
+assert.equal(following.text.split('\n')[following.headingLine - 1], '### Following slide')
 for (const includePictures of [false, true]) {
   const cards = detectObjectBlocks(source, includePictures).filter(block => block.video)
   assert.equal(cards.length, 3)

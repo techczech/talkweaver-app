@@ -43,3 +43,11 @@
 .tw-tip.below { transform: translate(-50%, 0); }
 .tw-tip-key { color: #c9d6e2; }
 .tw-tip-key[hidden] { display: none; }
+
+@media (width < 1100px) {
+  #presenterBottomBar #twguide-chipwrap { display: none; }
+}
+@media (width < 900px) {
+  #presenterBottomBar :is(#outlineBtn, #presenterPrev, #presenterNext) { min-width: 30px; width: 32px; padding: 0; }
+  #presenterBottomBar :is(#outlineBtn, #presenterPrev, #presenterNext) > .tw-btn-label { display: none; }
+}

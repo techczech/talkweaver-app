@@ -214,7 +214,7 @@ try {
     await pause(1500)
     const body = await main.locator('body').innerText()
     const known2 = new Set(app.windows())
-    await main.getByRole('button', { name: 'Tools', exact: true }).click()
+    await main.locator('.workspace-view-titlebar').getByRole('button', { name: 'Tools', exact: true }).click()
     const sessions = main.getByRole('menuitem', { name: /^Sessions with an audience\b/ })
     await sessions.waitFor()
     await dumpControls(main, 'tools-menu.txt')

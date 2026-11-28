@@ -1,7 +1,7 @@
 import ManagementLayer from './ManagementLayer'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
-import { Clipboard, CopyPlus, Copy, Ellipsis, FileText, FolderInput, FolderPlus, Globe, Pencil, Plus, Presentation, Trash2, Check } from 'lucide-react'
+import { Clipboard, CopyPlus, Copy, Ellipsis, FileText, FolderInput, FolderPlus, Globe, ExternalLink, Pencil, Plus, Presentation, Trash2, Check } from 'lucide-react'
 import type { TalkInfo, VaultView } from '../../../../preload'
 import { useTalkActions, type Prompt, type Confirm } from '../talklist/actions'
 import { PromptModal, ConfirmModal } from '../talklist/modals'
@@ -9,6 +9,7 @@ import { topicOf } from '../talkTreeNav'
 import type { GalleryTalk } from '../../../../shared/vault-gallery'
 import { inspectOnlyPath } from '../../../../shared/vault-gallery-browse'
 import { UI } from './galleryItems'
+import { surfaceKey } from '../../keymap/surfaceKeys'
 
 export interface GalleryManagementProps {
   talks: TalkInfo[]
@@ -33,6 +34,7 @@ export interface MenuRequest { id: number; key: string; x: number; y: number }
 export type FolderOperation = { kind: 'rename' | 'delete'; path: string }
 interface Props {
   busy?: boolean
+  compact?: boolean
   /** The toolbar group shows only while the vault is browsable; the dialogs below it stay mounted through reloads. */
   toolbar?: boolean
   /** A right-click: opens the actions menu for the row at the pointer. `key` names the row and scope it was asked for. */
@@ -45,6 +47,8 @@ interface Props {
   folder: string
   selection: ManagementSelection
   openTalk(talk: GalleryTalk): void
+  openTalkInNewWindow?(talk: GalleryTalk): void
+  newWindowHint?: string
   openFolder(path: string): void
   showHandouts(talk: GalleryTalk): void
   canPreview: boolean
@@ -60,7 +64,7 @@ interface BtnProps { label: string; icon: ReactNode; onClick(): void; danger?: b
 const Btn = ({ busy, label, icon, onClick, danger, primary, secondary, disabled }: BtnProps & { busy: boolean }) =>
   <button className={`vg-tbtn ${primary ? 'primary' : ''} ${danger ? 'danger' : ''} ${secondary ? 'sec' : ''}`} disabled={busy || disabled} onClick={onClick}>{icon}{label}</button>
 /** The contextual toolbar group and the management sheets. Every command goes through the existing guarded talk actions. */
-export default function GalleryManagement({ management: m, vaultId, folder, selection, resolve, reconcile, run, busy = false, toolbar = true, menuRequest = null, menuKey = null, openTalk, openFolder, showHandouts, canPreview, preview, copyLocation }: Props) {
+export default function GalleryManagement({ management: m, vaultId, folder, selection, resolve, reconcile, run, busy = false, compact = false, toolbar = true, menuRequest = null, menuKey = null, openTalk, openTalkInNewWindow, newWindowHint, openFolder, showHandouts, canPreview, preview, copyLocation }: Props) {
   const [prompt, setPrompt] = useState<Prompt | null>(null)
   const [confirm, setConfirm] = useState<Confirm | null>(null)
   const [moving, setMoving] = useState<TalkInfo | null>(null)
@@ -111,7 +115,7 @@ export default function GalleryManagement({ management: m, vaultId, folder, sele
   })() : undefined
   return <>
     {toolbar && <>
-    {selection?.kind === 'talk' && <>
+    {!compact && selection?.kind === 'talk' && <>
       <Btn busy={busy} primary label={UI.openTalk} icon={<FileText size={16} />} onClick={() => openTalk(selection.talk)} />
       <Btn busy={busy} secondary label={UI.handouts} icon={<Globe size={16} />} onClick={() => showHandouts(selection.talk)} />
       {writable && <>
@@ -122,7 +126,7 @@ export default function GalleryManagement({ management: m, vaultId, folder, sele
         <Btn busy={busy} secondary danger label={UI.bin} icon={<Trash2 size={16} />} onClick={() => act('delete', selection.talk)} />
       </>}
     </>}
-    {selection?.kind === 'folder' && <>
+    {!compact && selection?.kind === 'folder' && <>
       <Btn busy={busy} primary label={UI.openFolder} icon={<FolderInput size={16} />} onClick={() => openFolder(selection.path)} />
       {folderManaged && <>
         <span className="vg-vsep sec" />
@@ -130,17 +134,19 @@ export default function GalleryManagement({ management: m, vaultId, folder, sele
         <Btn busy={busy} secondary danger label={UI.bin} icon={<Trash2 size={16} />} onClick={() => folderAction(selection.path, 'delete')} />
       </>}
     </>}
-    {!selection && writable && category && vault && <>
+    {!compact && !selection && writable && category && vault && <>
       <Btn busy={busy} primary label={UI.newTalk} icon={<Plus size={16} />} onClick={() => m.onNewTalk(folder, vault.id)} />
       <Btn busy={busy} label={UI.newFolder} icon={<FolderPlus size={16} />} onClick={() => setPrompt({ label: `New folder`, kind: `folder`, mode: `new`, initial: '', cta: 'Create', onSubmit: async name => { await actions.doNewFolder(name, folder, vault.id); reconcile({}) } })} />
     </>}
     {/* Nothing inspect-only has a menu: its one action is in the toolbar and Copy location is in Details. */}
-    {selection && selection.kind !== 'entry' && !(selection.kind === 'folder' && inspectOnlyPath(selection.path)) ? <span className="vg-menuwrap">
+    {selection && selection.kind !== 'entry' && !(selection.kind === 'folder' && inspectOnlyPath(selection.path)) ? <span className={`vg-menuwrap${compact ? " vx-menu-anchor" : ""}`}>
       <button ref={moreRef} className="vg-tbtn more" aria-label={UI.more} aria-haspopup="menu" aria-expanded={shown} disabled={busy} onClick={() => setMenu(v => v ? null : { key: menuKey ?? '', x: null, y: 0 })}><Ellipsis size={16} /></button>
       {shown && panel && createPortal(<>
       <div className="vg-menu" role="menu" aria-label={selection.kind === 'talk' ? 'Actions for this talk' : 'Actions for this folder'} style={place} onKeyDown={e => {
         // SCAN_IGNORE: local menu keyboard handling, not an app command.
-        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu() }
+        if (selection.kind === 'talk' && openTalkInNewWindow && surfaceKey(e.nativeEvent, 'vault-explorer.open-window')) {
+          e.preventDefault(); e.stopPropagation(); closeMenu(false); openTalkInNewWindow(selection.talk)
+        } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closeMenu() }
         // Tab leaves the menu: closed, focus on ⋯, and the key then moves on from there as usual.
         else if (e.key === 'Tab') closeMenu()
         else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -153,6 +159,7 @@ export default function GalleryManagement({ management: m, vaultId, folder, sele
         <h4>{selection.kind === 'talk' ? 'Actions for this talk' : 'Actions for this folder'}</h4>
         {selection.kind === 'talk' && <>
           {item(UI.openTalk, <FileText size={16} aria-hidden />, () => openTalk(selection.talk), { hint: '↩' })}
+          {openTalkInNewWindow && item('Open in new window', <ExternalLink size={16} aria-hidden />, () => openTalkInNewWindow(selection.talk), { hint: newWindowHint })}
           {item('View handouts', <Globe size={16} aria-hidden />, () => showHandouts(selection.talk))}
           {item(UI.previewTitle, <Presentation size={16} aria-hidden />, preview, { disabled: !canPreview, hint: 'Space' })}
           {item(UI.copyLocation, <Clipboard size={16} aria-hidden />, copyLocation)}

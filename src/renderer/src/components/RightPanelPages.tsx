@@ -1,3 +1,4 @@
+import { iconBaseKey, iconIsCrossed, withIconCross } from '../../../../compiler/scripts/lib/icon-cross.mjs'
 import { Fragment, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactNode } from 'react'
 import { ChevronLeft, ChevronRight, Copy, Crop, Film, GalleryHorizontal, Heading, Image, Layers, LayoutGrid, Link2, List, ListOrdered, Palette, Pin, Replace, RotateCcw, SlidersHorizontal, SmilePlus, Trash2 } from 'lucide-react'
 import { GLOBAL_OPTION_GROUPS, LAYOUTS, sectionColourChoices } from '../../../shared/layout-registry/entries'
@@ -61,117 +62,89 @@ export function AdjustRows({ pages, choose }: { pages: PanelPage[]; choose: (pag
 }
 
 // Each check can compile the whole talk. Wait for the selected slide and text to settle.
-// Expanding Designs is an explicit request and can start the batch immediately.
 const FIT_PREVIEW_SETTLE_MS = 500
 
-function useCheckedDesignPictures(surface: PanelSurface, designs: Design[], automaticCount: number) {
-  const { path, text, slide, layout } = surface
-  const slideKey = typeof slide === 'string' ? slide : `line:${slide.headingLine}`
-  const candidates = useMemo(() => designs.filter(design => design.check), [designs])
+export function useCheckedDesignPictures(surface: PanelSurface | null, designs: Design[], automaticCount: number, expanded: boolean) {
+  const { path, text, slide, layout } = surface ?? {}
+  const slideKey = typeof slide === 'string' ? slide : slide ? `line:${slide.headingLine}` : ''
+  const candidates = useMemo(() => [
+    ...designs.filter(design => design.check && !design.structure),
+    ...designs.filter(design => design.check && design.structure)
+  ], [designs])
   const [result, setResult] = useState<{ path: string; text: string; slide: string; candidates: Design[]; marks: VariantPictureMarks }>()
-  const startNow = useRef<(() => void) | undefined>(undefined)
-  const showAllRef = useRef(false)
+  const changeScope = useRef<((expanded: boolean) => void) | undefined>(undefined)
   useEffect(() => {
-    if (!candidates.length || !window.tw?.talk?.layoutVariantThumbnail) return
+    if (!path || text === undefined || slide === undefined || !layout || !candidates.length || !window.tw?.talk?.layoutVariantThumbnail) return
     const batchId = crypto.randomUUID()
     const keys = candidates.map((_, index) => String(index))
-    let next = 0
-    let needed = automaticCount
-    let expanded = false
+    const compactKeys = keys.filter((_, index) => !candidates[index].structure)
+    let marks: VariantPictureMarks = {}
+    let open = false
     let queue: VariantPictureQueue<Design[]> | undefined
-    // Check only as many pictures as the compact panel can show. A refusal moves on
-    // to the next candidate. Expanding the panel asks for the rest in the same batch.
-    const askNext = () => {
-      if (needed > 0 && next < keys.length) queue?.want([keys[next++]])
+    // A refusal moves on to the next fit. Closing the gallery drops its queued work.
+    const want = () => {
+      const accepted = compactKeys.filter(key => pictureMarkUrl(marks[candidates[Number(key)].label])).length
+      const next = accepted < automaticCount ? compactKeys.find(key => !(candidates[Number(key)].label in marks)) : undefined
+      queue?.want(open ? keys : next === undefined ? [] : [next])
     }
     const start = () => {
-      window.clearTimeout(timer)
-      expanded ||= showAllRef.current || automaticCount >= candidates.length
-      if (queue) {
-        if (expanded) queue.want(keys)
-        return
-      }
-      if (!expanded && needed <= 0) return
-      queue = createVariantPictureQueue<Design[]>(
-        (key, options) => {
-          const design = options[Number(key)]
-          const outline = panelEdit(text, slide, design, layout, true)
-          return window.tw.talk.layoutVariantThumbnail(path, outline, slide, '', undefined, `panel:check:${key}`, batchId, design.check)
-        },
-        (key, mark) => {
-          setResult(previous => ({
-            path, text, slide: slideKey, candidates, marks: markSettled(
-              previous?.path === path && previous.text === text && previous.slide === slideKey && previous.candidates === candidates
-                ? previous.marks : {}, candidates[Number(key)].label, mark
-            )
-          }))
-          if (!expanded) {
-            if (pictureMarkUrl(mark)) needed--
-            askNext()
+      if (!queue && (open || automaticCount > 0)) {
+        queue = createVariantPictureQueue<Design[]>(
+          (key, options) => {
+            const design = options[Number(key)]
+            const outline = panelEdit(text, slide, design, layout, true)
+            return window.tw.talk.layoutVariantThumbnail(path, outline, slide, '', undefined, `panel:check:${key}`, batchId, design.check)
+          },
+          (key, mark) => {
+            marks = markSettled(marks, candidates[Number(key)].label, mark)
+            setResult({ path, text, slide: slideKey, candidates, marks })
+            if (!open) want()
           }
-        }
-      )
-      queue.reset(slideKey + text, candidates, slideKey)
-      if (expanded) queue.want(keys)
-      else askNext()
+        )
+        queue.reset(slideKey + text, candidates, slideKey)
+      }
+      want()
     }
     const timer = window.setTimeout(start, FIT_PREVIEW_SETTLE_MS)
-    startNow.current = start
+    changeScope.current = expanded => {
+      open = expanded
+      if (open || queue) {
+        window.clearTimeout(timer)
+        start()
+      }
+    }
     return () => {
-      startNow.current = undefined
+      changeScope.current = undefined
       window.clearTimeout(timer)
       if (!queue) return
       queue.dispose()
       window.tw.talk.releaseLayoutVariantBatch?.(batchId)
     }
   }, [path, text, slideKey, layout, candidates, automaticCount]) // eslint-disable-line react-hooks/exhaustive-deps
-  const marks = result?.path === path && result.text === text && result.slide === slideKey && result.candidates === candidates ? result.marks : {}
-  return {
-    marks,
-    pending: candidates.filter(design => !(design.label in marks)).length,
-    setExpanded: (expanded: boolean) => {
-      showAllRef.current = expanded
-      if (expanded) startNow.current?.()
-    }
-  }
+  useEffect(() => { changeScope.current?.(expanded) }, [expanded, path, text, slideKey, layout, candidates, automaticCount])
+  return result?.path === path && result?.text === text && result?.slide === slideKey && result?.candidates === candidates ? result.marks : {}
 }
 
-export function DesignsBlock({ surface, designs, long, compact, section, hasSubslides }: {
+export function DesignsBlock({ surface, designs, checkedPictures, count, section, hasSubslides }: {
   surface: PanelSurface
   designs: Design[]
-  long: boolean
-  compact: boolean
+  checkedPictures: VariantPictureMarks
+  count: number
   section: boolean
   hasSubslides: boolean
 }) {
-  const [all, setAll] = useState(false)
-  const count = compact ? 2 : 4
-  const readyWithoutCheck = designs.filter(design => !design.unavailable && !design.check).length
-  const { marks: checkedPictures, pending, setExpanded } = useCheckedDesignPictures(surface, designs,
-    long ? designs.length : Math.max(0, count - readyWithoutCheck))
-  const fit = designs.filter(design => !design.unavailable && (!design.check || pictureMarkUrl(checkedPictures[design.label])))
-  const unavailable = designs.filter(design => design.unavailable)
+  const fit = designs.filter(design => !design.structure && !design.unavailable &&
+    (!design.check || pictureMarkUrl(checkedPictures[design.label])))
   const current = fit.find(design => design.current)
-  const shown = long || all ? fit : current && fit.indexOf(current) >= count
+  const shown = current && fit.indexOf(current) >= count
     ? [current, ...fit.slice(0, count - 1)] : fit.slice(0, count)
   return <div className="tw-right-designs">
     <PageHead label={section ? 'Slides in this section' : fit.length ? 'Designs for this slide' : 'Designs'} aspect="design" onCopy={fit.length ? surface.onCopy : undefined} />
     {!fit.length ? <p className="tw-right-origin">{hasSubslides
       ? 'This slide has two sides. Select one in the sidebar to change it.'
-      : 'Designs appear here when the slide has a title and at least one point.'}</p> : <>
+      : 'This slide shows only its title. Add a point under the title to see designs.'}</p> :
       <RightPanelPictures {...surface} group="design" choices={shown} columns={2}
-        pendingPicture={section ? sectionModePicture : undefined} checkedPictures={checkedPictures} />
-      {(all || long || fit.length <= count) && unavailable.length > 0 && <ul className="tw-right-no-fit">
-        {unavailable.map(design => <li key={design.label}><strong>{design.label}</strong> · {design.unavailable}</li>)}
-      </ul>}
-      {!long && (all || fit.length + pending > count) && <button type="button" className="toolbar-btn" onClick={() => {
-        surface.onTry(null)
-        setExpanded(!all)
-        setAll(!all)
-      }}>
-        <LayoutGrid size={14} />{all ? 'Show fewer' : pending ? 'Show all designs' : `Show all ${fit.length} designs`}
-      </button>}
-    </>}
+        pendingPicture={section ? sectionModePicture : undefined} checkedPictures={checkedPictures} />}
   </div>
 }
 
@@ -220,7 +193,7 @@ export function sectionDesigns({ modes, carousel, childCount, trigger }: { modes
     : { label, why, options: [option(group.key, token)], current: current === token })
 }
 
-function sectionModePicture(design: Design) {
+export function sectionModePicture(design: Design) {
   const mode = design.options?.find(choice => choice.group === 'container-mode')?.token
   const Icon = mode === 'contents' ? List : mode === 'carousel' ? GalleryHorizontal
     : mode?.startsWith('grid-') ? LayoutGrid : ListOrdered
@@ -258,7 +231,7 @@ function IntroPicture({ surface }: { surface: PanelSurface }) {
   </div><p>Every slide in this section follows the section slide without a title of its own. A slide before the section keeps a plain title.</p></>
 }
 
-export function TitlePage({ surface, where: compiledWhere, trigger, inheritedLook, inheritedTone, onTalk, children, section = false, icon, pictureAbove, tokens, pointCount }: {
+export function TitlePage({ surface, where: compiledWhere, trigger, inheritedLook, inheritedTone, onTalk, children, section = false, icon, pictureAbove, tokens, pointCount, titleFillsSlide }: {
   surface: PanelSurface
   trigger: string
   where: string
@@ -271,6 +244,7 @@ export function TitlePage({ surface, where: compiledWhere, trigger, inheritedLoo
   pictureAbove: boolean
   tokens: Readonly<Record<string, string>>
   pointCount: number
+  titleFillsSlide: boolean
 }) {
   const look = GLOBAL_OPTION_GROUPS.find(group => group.key === 'title-look')!
   const tone = GLOBAL_OPTION_GROUPS.find(group => group.key === 'title-look-tone')!
@@ -302,12 +276,21 @@ export function TitlePage({ surface, where: compiledWhere, trigger, inheritedLoo
       : surface.layout === 'cycle' ? 'The title would take room from the cycle and its labels'
         : surface.layout === 'iconrow' || boxedPoints ? 'The points need the full width to keep their arrangement' : ''
   const placement = [['top', 'On top'], ['left', 'At the side'], ['hidden', 'Not shown']] as const
+  if (titleFillsSlide) {
+    const reason = 'On this design the title is the slide. Choose another design to place it.'
+    return <>
+      <p className="tw-right-origin">{reason}</p>
+      <RightPanelPictures {...surface} group="title-placement" choices={placement.map(([, label]) => ({ label, unavailable: reason, ariaDisabled: true }))} />
+      {children}
+      {icon}
+    </>
+  }
   return <>
     <ResetOrigin changed={changed} reset={() => surface.onKeep({ label: 'Talk title settings', reset: TITLE_GROUPS })} talk={onTalk}
       note={defaultPlacement === 'left' && pictureAbove && where === 'top'
         ? 'On top while the picture is above the points. The talk puts titles at the side.'
         : undefined}
-      inherited={where === 'left' ? 'at the side' : where === 'hidden' ? 'title hidden' : `on top, ${inherited?.[0] ?? 'Plain'}`} />
+      inherited={where === 'left' ? 'at the side' : where === 'hidden' ? 'not shown' : `on top, ${inherited?.[0] ?? 'Plain'}`} />
     <h4>Where</h4>
     <RightPanelPictures {...surface} group="title-placement" choices={placement.map(([value, label]) => {
       const unavailable = value === where ? '' : value === 'left' ? sideReason
@@ -407,8 +390,8 @@ function iconKeyOnLine(text: string, line: number): string | null {
 
 export function IconRows({ text, lines, onIcon, onEscape, title = false }: {
   text: string
-  lines: { line: number; name: string }[]
-  onIcon: (line: number, icon: string | null, base: string) => void
+  lines: { line: number; name: string; place?: 'paragraph' }[]
+  onIcon: (line: number, icon: string | null, base: string, edit?: 'cross') => void
   onEscape: () => void
   title?: boolean
 }) {
@@ -423,12 +406,18 @@ export function IconRows({ text, lines, onIcon, onEscape, title = false }: {
   return <>
     {lines.map(({ line, name }) => {
       const key = iconKeyOnLine(text, line)
+      const crossed = key !== null && iconIsCrossed(key)
       return <div className="tw-right-icon-row" key={line}>
         <button type="button" className="toolbar-btn" onClick={event => open(event, line)} aria-label={title ? undefined : `Choose an icon for ${name}`}>
           <SmilePlus size={16} />{title && (key ? 'Change icon' : 'Choose an icon')}
         </button>
         {!title && <span>{name}</span>}
-        {key ? <><small>{key}</small><button type="button" className="toolbar-btn" onClick={() => onIcon(line, null, text)}>
+        {key ? <><small>{iconBaseKey(key)}</small>
+          <label className="tw-icon-cross-toggle">
+            <input type="checkbox" checked={crossed} aria-label={title ? 'Cross out' : `Cross out icon for ${name}`}
+              onChange={event => onIcon(line, withIconCross(key, event.target.checked), text, 'cross')} />
+            Cross out
+          </label><button type="button" className="toolbar-btn" onClick={() => onIcon(line, null, text)}>
           <RotateCcw size={14} />{title ? 'Remove' : 'Back to automatic'}</button></> : !title && <small>Automatic</small>}
       </div>
     })}
@@ -439,15 +428,16 @@ export function IconRows({ text, lines, onIcon, onEscape, title = false }: {
       setPicker(null)
       onEscape()
     }}>
-      <PlainIconPicker anchor={picker.anchor} place={title ? 'title' : 'list item'}
+      <PlainIconPicker anchor={picker.anchor} place={title ? 'title' : lines.find(row => row.line === picker.line)?.place ?? 'list item'}
         current={iconKeyOnLine(picker.text, picker.line)} onPick={choose} onRemove={() => choose(null)} onClose={close} />
     </div>}
   </>
 }
 
-export function IconsPage({ surface, hasLogos, tokens, children }: {
+export function IconsPage({ surface, hasLogos, tokens, children, paragraphs }: {
   surface: PanelSurface
   hasLogos: boolean
+  paragraphs?: ReactNode
   tokens: Readonly<Record<string, string>>
   children: ReactNode
 }) {
@@ -457,8 +447,8 @@ export function IconsPage({ surface, hasLogos, tokens, children }: {
     options: [option('list-style', token)], ...(token === 'logolist' && !hasLogos ? { unavailable: 'No names with a known logo' } : {})
   }))
   return <><h4>Marks beside the points</h4><RightPanelPictures {...surface} group="icons" choices={choices} />
-    <h4>Each point</h4>{style === 'iconlist' || style === 'logolist' ? children
-      : <p>{style === 'numbered' ? 'Numbers are showing. Choose Icons to replace them.' : 'Choose Icons or Logos to pick a mark for each point.'}</p>}
+    <h4>Each point</h4>{children}
+    {paragraphs && <><h4>Paragraph icons</h4>{paragraphs}</>}
   </>
 }
 

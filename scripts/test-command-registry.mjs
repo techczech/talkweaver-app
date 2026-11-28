@@ -40,6 +40,11 @@ const futureObject = {
   sample: '### Future object\n{future-object}\n\n- Value',
 }
 
+assert.equal(COMMAND_REGISTRY.find(command => command.id === 'view-panel-outline').label, 'Show slides as a list')
+
+assert.equal(COMMAND_REGISTRY.find(command => command.id === 'layout').label, 'Design…')
+assert.equal(COMMAND_REGISTRY.find(command => command.id === 'change-slide-layout').label, "Change this slide's design…")
+
 const ids = new Set()
 for (const command of COMMAND_REGISTRY) {
   assert(command.id?.trim(), 'command id is required')
@@ -76,7 +81,7 @@ const expectedPaletteIds = [
   'present-from-here', 'present-presenter', 'present-slide-window', 'present-window',
   'plan-run', 'present-audience', 'handout', 'build', 'publish-handout', 'share-for-comments', 'copy-venue-screen-link', 'layout',
   'quote-form-auto', 'quote-form-plain', 'quote-form-tweet', 'quote-form-video', 'quote-form-book', 'quote-form-paper', 'quote-form-web',
-  'image', 'search', 'insert-board-slide', 'edit-image', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
+  'image', 'find-slides', 'find-icons', 'search', 'insert-board-slide', 'edit-image', 'icon-picker', 'insert-object-table', 'insert-object-mindmap',
   'insert-object-chart', 'insert-object-mermaid', 'insert-object-diagram', 'insert-object-svg',
   'insert-component-code', 'insert-component-qr', 'insert-component-action', 'insert-component-embed', 'insert-component-auto-embed', 'insert-component-countdown', 'insert-component-notes',
   'insert-html-page', 'save-offline-page', 'capture-embed',
@@ -86,7 +91,7 @@ const expectedPaletteIds = [
   'edit-speaker-notes', 'view-slide-panel', 'welcome-slide', 'welcome-outline', 'welcome-markdown',
   'view-slides', 'view-plain', 'view-markdown', 'previous-slide', 'next-slide', 'change-heading-level', 'change-slide-layout', 'view-strip', 'view-grid', 'fold-all', 'unfold-all', 'outline-collapse-all', 'outline-expand-all',
   'move-slide-to', 'move-section-to', 'select-section', 'clear-slide-selection', 'set-aside-slides', 'move-selected-slides-to',
-  'search-slides-grid', 'search-next', 'search-previous',
+  'search-slides-grid', 'go-to-line', 'search-next', 'search-previous',
   'normalize-triggers', 'undo', 'redo', 'new-slide', 'new-section', 'new-subsection', 'make-section', 'select-several-slides', 'promote-heading', 'demote-heading', 'bulleted-list', 'numbered-list', 'delete-slide', 'app.command-palette', 'help', 'settings-setup-folder', 'settings', 'check-for-updates', 'whats-new',
   'get-started-show-example', 'get-started-open-guide', 'get-started-show-guide-button'
 ]
@@ -227,7 +232,7 @@ assert.deepEqual(
   menuCommands().map((command) => [command.menu.path.join('/'), command.id]),
   [
     ['Edit', 'split-pasted-picture-row'], ['Edit', 'paste-picture'], ['Edit', 'duplicate-slide'], ['Edit', 'move-current-slide-up'], ['Edit', 'move-current-slide-down'],
-    ['File', 'welcome-slide'], ['File', 'welcome-outline'], ['File', 'welcome-markdown'],
+    ['File', 'open-in-new-window'], ['File', 'welcome-slide'], ['File', 'welcome-outline'], ['File', 'welcome-markdown'],
     ['Help', 'check-for-updates'], ['Help', 'whats-new'], ['Help', 'help'], ['Insert', 'edit-image'], ['Insert', 'new-sketch'],
     ['Present', 'present-from-here'], ['Present', 'present-presenter'], ['Present', 'present-slide-window'],
     ['Present', 'present-window'], ['Present', 'plan-run'], ['Present', 'present-audience'],
@@ -558,7 +563,11 @@ try {
       ['research-scope-everything', 'research.scope-everything', 'Shape the talk'],
       ['research-retry', 'research.retry', 'Shape the talk'],
       ['find-talk', 'app.find-talk', 'Reuse slides'],
+      ['image', 'app.image-search', 'Build a slide'],
+      ['find-slides', 'app.find-slides', 'See the talk'],
+      ['find-icons', 'app.find-icons', 'Build a slide'],
       ['add-beside', 'slide-picker.add-beside', 'Reuse slides'],
+      ['vault-explorer.open-window', 'vault-explorer.open-window', 'Manage talks'],
       ['talk-beside', 'slide-picker.talk-beside', 'Reuse slides'],
       ['close-beside', 'slide-picker.close-beside', 'Reuse slides'],
       ['select-whole-section', 'slide-picker.select-whole-section', 'Reuse slides']
@@ -574,12 +583,14 @@ try {
   for (const key of ['o', 'Mod-Shift-Enter', 'Mod-Shift-s']) {
     assert.equal(editorKeys.includes(key), false, `a surface key (${key}) is never an editor binding, so O still types in the editor`)
   }
+  assert.equal(editorKeys.filter(key => key === 'Mod-Enter').length, 1, 'Mod-Enter keeps its existing editor owner')
   const press = (key, modifiers = {}) => new window.KeyboardEvent('keydown', { key, ...modifiers })
   assert.equal(shortcutUi.surfaceKey(press('o'), 'talk-beside'), true, 'O is talk beside by default')
   assert.equal(shortcutUi.surfaceKey(press('Enter', { metaKey: true, shiftKey: true }), 'select-whole-section'), true, '⇧⌘↵ is select whole section by default')
   assert.equal(shortcutUi.surfaceKey(press('Enter', { metaKey: true }), 'select-whole-section'), false, '⌘↵ alone is not select whole section (it inserts the selected slides)')
   assert.equal(shortcutUi.surfaceKey(press('s', { metaKey: true, shiftKey: true }), 'find-talk'), true, '⇧⌘S is Find a talk by default')
   assert.equal(shortcutUi.surfaceKey(press('Enter', { metaKey: true }), 'add-beside'), true, '⌘↵ is add beside by default')
+  assert.equal(shortcutUi.surfaceKey(press('Enter', { metaKey: true }), 'vault-explorer.open-window'), true, '⌘↵ opens the selected Explorer result in a new window')
   assert.equal(shortcutUi.surfaceKey(press('Escape'), 'close-beside'), true, 'Esc closes the talk beside by default')
   assert.equal(shortcutUi.isTypingKey(press('o')), true, 'a plain O is typing in a field')
   assert.equal(shortcutUi.isTypingKey(press('Enter', { metaKey: true })), false, 'a chord is never typing')

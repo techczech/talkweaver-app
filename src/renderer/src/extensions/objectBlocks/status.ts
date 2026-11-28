@@ -6,7 +6,7 @@ import { Facet, StateEffect, StateField } from '@codemirror/state'
 import type { ObjectBlock } from './detect.ts'
 
 export type CardFileState = 'present' | 'missing' | 'outside' | 'remote' | 'invalid' | 'unchecked'
-export type CardFileStatus = { state: CardFileState; path?: string }
+export type CardFileStatus = { state: CardFileState; path?: string; repairTitle?: string; repairCandidates?: string[] }
 
 /**
  * How this editor asks main for statuses; null (the default) asks nothing. `scope` names what the

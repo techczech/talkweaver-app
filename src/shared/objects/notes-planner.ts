@@ -148,6 +148,15 @@ export function planNotesClose(text: string, start: number): NotesPlan {
   return { ok: true, text: next, from: at, to: at, insert, start, close }
 }
 
+/** Delete the closed block and its preceding blank line, keeping the rest of the slide as written. */
+export function blankNotesRemoval(text: string, from: number, to: number): { from: number; to: number; insert: string } {
+  const before = from > 0 ? text.lastIndexOf('\n', from - 2) + 1 : -1
+  if (before >= 0 && !text.slice(before, from - 1).trim()) from = before
+  if (text[to] === '\r') to += 1
+  if (text[to] === '\n') to += 1
+  return { from, to, insert: '' }
+}
+
 /** Move a closed notes block before a line on its own slide, preserving its authored bytes. */
 export function planNotesMove(text: string, from: number, source: string, beforeLine: number):
   { from: number; to: number; insert: string; at: number } | null {

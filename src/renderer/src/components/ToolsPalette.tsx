@@ -99,5 +99,5 @@ export function ToolsPalette({ active }: { active: boolean }): JSX.Element | nul
   })), [open])
 
   if (!active) return null
-  return <CommandMenu isOpen={open} onClose={() => setOpen(false)} commands={rows} />
+  return <CommandMenu isOpen={open} onClose={() => setOpen(false)} commands={rows} hideEmptyGroups />
 }

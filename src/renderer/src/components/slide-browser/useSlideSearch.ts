@@ -10,7 +10,7 @@ import type { SearchResult } from './types'
 // reload, and main must never compare them with the previous load's ids (search-supersede.ts).
 const SEARCH_LOAD_TOKEN = Math.random().toString(36).slice(2) + Date.now().toString(36)
 
-const isEmptyQuery = (q: ReturnType<typeof parseSearchQuery>): boolean => q.terms.length === 0 && q.text.trim() === ''
+const isEmptyQuery = (q: ReturnType<typeof parseSearchQuery>): boolean => q.scope !== 'widget' && q.terms.length === 0 && q.text.trim() === ''
 
 export function useSlideSearch({ isOpen, parsedQuery, refreshNonce, onLanded, vaultIds }: {
   isOpen: boolean

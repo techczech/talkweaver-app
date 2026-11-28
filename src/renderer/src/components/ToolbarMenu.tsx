@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { createPortal } from 'react-dom'
 
 // ── Inline icon set (Lucide-derived, 24×24 stroke paths, currentColor) ───────────────────────────
@@ -137,20 +137,41 @@ export default function ToolbarMenu({
 }) {
   const [open, setOpen] = useState(false)
   const buttonRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+
+  function moveFocus(event: ReactKeyboardEvent): void {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    const rows = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>(
+      '.toolbar-menu-item:not(:disabled)'
+    ) ?? [])
+    if (!rows.length) return
+    event.preventDefault()
+    event.stopPropagation()
+    const current = rows.findIndex(row => row === document.activeElement)
+    const down = event.key === 'ArrowDown'
+    const next = down ? (current + 1) % rows.length : (current <= 0 ? rows.length - 1 : current - 1)
+    rows[next].focus({ preventScroll: true })
+    rows[next].scrollIntoView({ block: 'nearest' })
+  }
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setOpen(false) }
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      if (menuRef.current?.contains(document.activeElement)) buttonRef.current?.focus()
+      setOpen(false)
+    }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [open])
-  const anchor = open && opensUp ? buttonRef.current?.getBoundingClientRect() : undefined
+  const anchor = open ? buttonRef.current?.getBoundingClientRect() : undefined
   const popup = open ? <>
     <div className="toolbar-menu-backdrop" onClick={() => setOpen(false)} />
-    <div className="toolbar-menu" role="menu" style={anchor ? {
+    <div ref={menuRef} className="toolbar-menu" role="menu" onKeyDown={moveFocus} style={anchor && opensUp ? {
       position: 'fixed', top: 'auto', right: 'auto', width: 272,
       left: Math.max(8, Math.min(window.innerWidth - 280, anchor.right - 272)),
-      bottom: window.innerHeight - anchor.top + 5
-    } : undefined}>
+      bottom: window.innerHeight - anchor.top + 5,
+      maxHeight: anchor.top - 5 - 12
+    } : anchor ? { maxHeight: window.innerHeight - anchor.bottom - 6 - 12 } : undefined}>
       {items.map((it, i) => (
         <Fragment key={i}>
           {it.separatorBefore && <div className="toolbar-menu-separator" role="separator" />}
@@ -184,6 +205,7 @@ export default function ToolbarMenu({
         ref={buttonRef}
         className={`toolbar-btn ${primary ? 'toolbar-btn--primary' : ''}`}
         onClick={() => setOpen((o) => !o)}
+        onKeyDown={open ? moveFocus : undefined}
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={defaultAction ? 'Other ways to present' : label}
@@ -195,7 +217,7 @@ export default function ToolbarMenu({
           {(!iconOnly || defaultAction) && <Icon name="chevron-down" size={12} />}
         </span>
       </button>
-      {anchor ? createPortal(popup, document.body) : popup}
+      {anchor && opensUp ? createPortal(popup, document.body) : popup}
     </div>
   )
 }

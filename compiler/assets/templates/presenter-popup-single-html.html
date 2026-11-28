@@ -470,14 +470,14 @@
        Quick poll, Instant slide, Focus, and the Pointer / Highlight group (pressed while on), "…" More (opens upward;
        items keep the ids of the bar buttons they replaced, so their listeners run the command),
        and the edit pencil, which the edit bridge mounts in #presenterEditSlot. Every button runs
-       the function its key runs. The bar collapses by steps n1-n3 (fitBottomBar below). -->
+       the function its key runs. The bar collapses by steps n2-n3 (fitBottomBar below). -->
   <div class="presenter-controls tw-bottombar" id="presenterBottomBar" role="toolbar" aria-label="Presenter controls">
     <div class="tw-nav-left">
-      <button type="button" class="btn" id="outlineBtn">Outline</button>
+      <button type="button" class="btn" id="outlineBtn" aria-label="Outline">Outline</button>
     </div>
     <div class="tw-nav-mid">
-      <button type="button" class="btn tw-nav-wide" id="presenterPrev">Previous</button>
-      <button type="button" class="btn primary tw-nav-wide" id="presenterNext">Next</button>
+      <button type="button" class="btn tw-nav-wide" id="presenterPrev" aria-label="Previous">Previous</button>
+      <button type="button" class="btn primary tw-nav-wide" id="presenterNext" aria-label="Next">Next</button>
       <button type="button" class="btn" id="skipNextBtn">Skip next</button>
       <button type="button" class="btn" id="returnBtn" hidden>Return</button>
       <div class="presenter-media" id="presenterMedia" hidden>
@@ -5645,7 +5645,17 @@
     boardUi = { controller, panel: null, pollId: null, dismissed: null, mode: "beside", child: null, childPanel: null, pinned: null, lastSlide: null };
     boardUi.panel = createBoardPanel({ doc: document, host, controller, icon: boardIcon, keys: boardKeysText(), mode: "beside", actions: boardActions(false) });
     controller.subscribe(() => { boardUi.panel.render(); boardUi.childPanel?.render(); syncBoardChrome(); });
-    window.addEventListener("resize", () => { if (boardUi.panel.isOpen()) boardUi.panel.render(); });
+    // Keep cards, focus and scroll positions in place while updating geometry.
+    window.addEventListener("resize", boardUi.panel.reposition);
+    // The fixed-position Board follows the presenter layout, including fullscreen restore,
+    // even when a window resize event hasn't updated its bounds.
+    const presenter = host.closest("#presenterRoot");
+    if (presenter && "ResizeObserver" in window) {
+      const layout = new ResizeObserver(boardUi.panel.reposition);
+      for (const node of [presenter, presenter.querySelector(".presenter-main"), els.presenterDivider]) {
+        if (node) layout.observe(node);
+      }
+    }
     window.addEventListener("pagehide", () => closeBoardWindow());
     const chip = document.getElementById("presenterBoardCount");
     if (chip) {
@@ -5704,6 +5714,7 @@
       // The layout makes room first (the slide gives the right column to the panel), then the panel
       // is drawn and placed over it, and placed again once the grid has settled.
       document.getElementById("presenterRoot")?.setAttribute("data-board", show ? ui.mode : ui.mode === "window" && poll ? "window" : "");
+      if (show) placeBoardPanel(ui.panel.el, ui.mode);
       ui.panel.show(show);
       if (show) requestAnimationFrame(() => { if (ui.panel.isOpen()) placeBoardPanel(ui.panel.el, ui.mode); });
       syncBoardChrome();
@@ -5716,14 +5727,19 @@
     const main = document.querySelector(".presenter-main")?.getBoundingClientRect();
     const divider = document.getElementById("presenterDivider")?.getBoundingClientRect();
     const bar = document.getElementById("presenterBottomBar")?.getBoundingClientRect();
-    const right = (presenter ? presenter.right : window.innerWidth) - 12;
-    const top = main ? main.top : 60;
-    const bottom = bar && bar.top > top + 200 ? bar.top - 14 : (main ? main.bottom : window.innerHeight - 70);
+    const width = window.innerWidth;
+    const height = window.innerHeight;
+    const right = Math.max(0, Math.min(presenter?.right ?? width, width) - 12);
+    const top = Math.max(0, Math.min(main?.top ?? 60, height));
+    const bottom = Math.min(height, bar && bar.top > top + 200 ? bar.top - 14 : (main?.bottom ?? height - 70));
     let left;
     if (mode === "full") left = main ? main.left : 12;
     else if (divider && divider.width > 0 && divider.right < right - 300) left = divider.right + 14;
-    else left = right - Math.min(600, Math.max(360, window.innerWidth * 0.42));
-    Object.assign(root.style, { left: `${Math.round(left)}px`, top: `${Math.round(top)}px`, width: `${Math.round(right - left)}px`, height: `${Math.round(bottom - top)}px` });
+    else left = right - Math.min(600, Math.max(360, width * 0.42));
+    root.style.setProperty("--bp-right", `${Math.round(width - right)}px`);
+    root.style.setProperty("--bp-top", `${Math.round(top)}px`);
+    root.style.width = `${Math.round(Math.max(0, right - Math.max(0, left)))}px`;
+    root.style.height = `${Math.round(Math.max(0, bottom - top))}px`;
   }
   function setBoardMode(mode) {
     const ui = ensureBoardUi();
@@ -8322,7 +8338,7 @@
   }
   if (document.readyState === "complete") predrawDiagrams();
   else window.addEventListener("load", predrawDiagrams, { once: true });
-  window.addEventListener("hashchange", () => {
+  function showSlideFromHash() {
     const id = location.hash.replace("#", "");
     if (!id) return;
     const beatIndex = beatIndexForHash(id, beats);
@@ -8332,7 +8348,11 @@
     }
     const index = slides.findIndex((slide) => slide.dataset.id === id);
     if (index >= 0 && index !== state.index) goTo(index, 0);
-  });
+  }
+  window.addEventListener("hashchange", showSlideFromHash);
+  // The browser can paint between committing the frame's fragment and delivering hashchange.
+  // Update the active slide during the same-document commit in the editor preview.
+  if (isEditorPreview) window.addEventListener("popstate", showSlideFromHash);
   if (isReplay) {
     try { window.parent?.postMessage({ type: "tw-replay-ready" }, "*"); } catch {}
   }
@@ -9520,18 +9540,16 @@
     topBarKey = topBarSignature(els.presenterTopBar);
   }
 
-  // What gives way when the bottom bar runs short (surfaces-drawn.md, "Bottom bar"): by default
-  // the centre group (Previous, Next, Skip next) is centred on the window; then, one step at a
-  // time until the three groups sit side by side at least 12px apart inside the bar, n1 centres
-  // it between the side groups instead, n2 makes Focus and the marking tools icon-only, n3 Quick poll and
-  // Instant slide. The CSS for each step is in compiler/assets/styles/presenter-bottom-bar.css.
+  // The side groups grow evenly while there is room to centre navigation. When the three groups
+  // can no longer fit with a 6px gap, n2 makes Focus and the marking tools icon-only, then n3 does
+  // the same for Quick poll and Instant slide. See compiler/assets/styles/presenter-bottom-bar.css.
   // Re-run when the window resizes or what the bar shows changes (Return, media or gallery
   // controls, the edit pencil arriving).
-  const BOTTOMBAR_STEPS = ["n1", "n2", "n3"];
+  const BOTTOMBAR_STEPS = ["n2", "n3"];
   function bottomBarFits(bar) {
     const box = bar.getBoundingClientRect();
     const extents = [...bar.children].map(barExtent).filter(Boolean);
-    for (let i = 1; i < extents.length; i++) if (extents[i - 1].right > extents[i].left - 12) return false;
+    for (let i = 1; i < extents.length; i++) if (extents[i - 1].right > extents[i].left - 5.5) return false;
     return extents.every((e) => e.left >= box.left - 0.5 && e.right <= box.right + 0.5);
   }
   function fitBottomBar() {

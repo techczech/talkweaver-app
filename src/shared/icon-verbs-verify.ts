@@ -1,7 +1,7 @@
 // Plain view, ticket 13: the check the icon verbs (icon-verbs.ts) make before they answer ok.
 // The outline is read with the plain view's facts before and after the one edit, and the edit is
 // kept only when conditions (a), (b) and (c) of the note in icon-verbs.ts hold. Pure.
-import { type CompilerIconToken } from './plain-view-compiler-facts.ts'
+import { editorIconKey, type CompilerIconToken } from './plain-view-compiler-facts.ts'
 import { type IconItem, type PlainViewFacts } from './plain-view-icon-items.ts'
 
 export type IconLineKind = 'heading' | 'paragraph' | 'item'
@@ -89,7 +89,7 @@ export function verified(before: PlainViewFacts, after: PlainViewFacts, linesBef
   if (!same(elsewhere(b.iconTokens), elsewhere(a.iconTokens))) return false
   const here = a.iconTokens.filter((token) => token.line === carrier)
   if (kind === 'heading' || !icon) { if (here.length) return false }
-  else if (here.length !== 1 || here[0].kind !== kind || here[0].key !== icon || here[0].icon !== icon || !here[0].top || here[0].firstLine > line) return false
+  else if (here.length !== 1 || here[0].kind !== kind || here[0].key !== icon || here[0].icon !== editorIconKey(icon) || !here[0].top || here[0].firstLine > line) return false
 
   // (a) and (b) on what the plain view hides: every other item is where it was, moved by the edit's length.
   const shift = change.insert.length - (change.to - change.from)

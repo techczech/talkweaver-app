@@ -181,8 +181,10 @@ try {
   const shot = async (name, target = page) => { if (shots) await target.screenshot({ path: join(shots, `${name}.png`) }).catch(() => {}) }
 
   // ---- Connect Cloudflare and set up going live through Settings, as a person does.
-  await page.getByRole('button', { name: 'Tools', exact: true }).click()
-  await page.getByRole('menuitem', { name: /^Settings\b/ }).click()
+  const start = page.getByRole('region', { name: 'Vault Explorer', exact: true })
+  await start.getByRole('button', { name: 'Tools', exact: true }).click()
+  await start.getByRole('group', { name: 'Explorer tools', exact: true })
+    .getByRole('button', { name: 'Settings', exact: true }).click()
   const settingsPage = await until(() => findSettingsWindow(app), Boolean, 15_000, 'the Settings window')
   await settingsPage.waitForLoadState('domcontentloaded')
   await gotoSection(settingsPage, 'cloudflare')
@@ -266,8 +268,12 @@ try {
     unpublishHere: await publishStep.locator('[data-run-action="unpublish"]').count(),
   }
   record(3, liveReady && beforePublish.pill === 'Not published' && beforePublish.publishHere && beforePublish.unpublishHere === 0, JSON.stringify(beforePublish))
-  const publishOutcome = () => until(async () => (await tools.locator('[data-run-published-block]').count()) > 0 ? 'published' : (await tools.locator('[data-run-notice]').innerText().catch(() => '')).trim(),
-    (state) => state === 'published' || state !== '', 300_000, 'the Published block or a notice')
+  // Successful fallback publishing can show a notice while Runs reloads the checklist.
+  const publishOutcome = () => until(() => tools.evaluate(() => {
+    if (document.querySelector('[data-run-published-block]')) return 'published'
+    const notice = document.querySelector('[data-run-notice]')?.textContent?.trim() ?? ''
+    return notice.startsWith('Published: ') ? '' : notice
+  }), Boolean, 300_000, 'the Published block or an error notice')
   const deploys = () => api.requests.filter((request) => request.method === 'POST' && request.path.endsWith('/deployments')).length
   // Per-talk publishing (spec 2026-11-05): the site on Cloudflare holds an earlier page this computer's site folder does not.
   // The publish sends only the Run's folder; the earlier page keeps its live hash and nothing of it is fetched here.

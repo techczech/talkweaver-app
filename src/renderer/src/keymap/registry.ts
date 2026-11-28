@@ -1,4 +1,5 @@
 import { EditorView } from '@codemirror/view'
+import { gotoLine } from '@codemirror/search'
 import { redoWithSave, undoWithSave } from '../extensions/savedTextAdoption'
 import { runActionBarEditing } from '../components/actionBar/editing-command'
 import { EditorSelection, type StateCommand } from '@codemirror/state'
@@ -344,6 +345,7 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   // A save's step goes with the user's change it was made for (extensions/savedTextAdoption.ts).
   command('undo', undoWithSave),
   command('redo', redoWithSave),
+  command('go-to-line', gotoLine),
   command('new-slide', (view) => runActionBarEditing(view, 'new-slide')),
   surfaceCommand('new-section', 'editor.new-section'),
   surfaceCommand('new-subsection', 'editor.new-subsection'),
@@ -423,7 +425,11 @@ export const EDITOR_COMMANDS: EditorCommand[] = [
   surfaceCommand('research-scope-everything', 'research.scope-everything'),
   surfaceCommand('research-retry', 'research.retry'),
   surfaceCommand('find-talk', 'app.find-talk'),
+  surfaceCommand('image', 'app.image-search'),
+  surfaceCommand('find-slides', 'app.find-slides'),
+  surfaceCommand('find-icons', 'app.find-icons'),
   surfaceCommand('add-beside', 'slide-picker.add-beside'),
+  surfaceCommand('vault-explorer.open-window', 'vault-explorer.open-window'),
   surfaceCommand('talk-beside', 'slide-picker.talk-beside'),
   surfaceCommand('close-beside', 'slide-picker.close-beside'),
   surfaceCommand('select-whole-section', 'slide-picker.select-whole-section')

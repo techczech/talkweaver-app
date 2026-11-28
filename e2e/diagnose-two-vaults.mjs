@@ -15,7 +15,7 @@
 // Run: cd talk-weaver && npm run build >/dev/null 2>&1 && node e2e/diagnose-two-vaults.mjs
 import { _electron as electron } from 'playwright'
 import { ensureFreshBuild } from './lib/ensure-fresh-build.mjs'
-import { ensureTalksMode, openTalkByTitle } from './lib/talklist.mjs'
+import { ensureTalksMode, openTalkByTitle, showTalksBeforeOpening } from './lib/talklist.mjs'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'fs'
@@ -69,6 +69,7 @@ async function typeInto(lineText, marker) {
 
 try {
   // ── (A) ADD ──
+  await showTalksBeforeOpening(page)
   await page.locator('aside.talk-list .tl-tree').first().waitFor({ state: 'visible', timeout: 10000 })
   await headers().first().waitFor({ state: 'attached', timeout: 10000 })
   record('one vault at first: one section header named after the folder', await headers().count() === 1 && await header('Personal').count() === 1)

@@ -280,7 +280,9 @@ export function registerScratchpadIpc(deps: ScratchpadIpcDeps): { closeAll(): vo
       const source = deps.slideSource?.(slide, outlineOf(event)) ?? null
       const file = source?.root ? slideVisualFile(source.outlinePath, visual.ref, source.root) : null
       if (!file) throw new Error(`The file ${visual.label} could not be found in the talk “${slide.talkTitle}”, so nothing was inserted.`)
-      return visualReply(await deps.importVisual({ kind: visual.kind === 'page' ? 'html' : 'svg', path: file, outlinePath: outlineOf(event), from: `${slide.talkTitle}: ${visual.ref}` }))
+      const imported = await deps.importVisual({ kind: visual.kind === 'page' ? 'html' : 'svg', path: file, outlinePath: outlineOf(event), from: `${slide.talkTitle}: ${visual.ref}` })
+      if (imported.ok && /^\[Simulation:/i.test(visual.markdown)) imported.line = imported.line.replace('[Embed:', '[Simulation:')
+      return visualReply(imported)
     })
   })
   deps.ipc.handle('scratchpad:prepare-insert', (event, ids: unknown, expectedOutline: unknown) => {
@@ -304,8 +306,11 @@ export function registerScratchpadIpc(deps: ScratchpadIpcDeps): { closeAll(): vo
           const file = await store.fileFor(item.id); check()
           if (!file) throw new Error(`The file for “${item.title}” is unavailable. Nothing was inserted.`)
           const imported = await deps.importVisual({ kind: file.kind, path: file.path, outlinePath: outline, from: `${store.folder.split(/[\\/]/).slice(-2).join('/')}/${file.name}` }); check()
-          const visual = visualReply(imported)
-          entries.push({ id: item.id, title: item.title, line: visual.line })
+          if (!imported.ok) {
+            const fileType = file.kind === 'html' ? 'web page' : 'picture'
+            throw new Error(`A ${fileType} couldn’t be copied into this talk. Nothing was added.`)
+          }
+          entries.push({ id: item.id, title: item.title, line: imported.line })
         }
       }
       // Imports yield to other windows: revalidate the complete selection after the last await.

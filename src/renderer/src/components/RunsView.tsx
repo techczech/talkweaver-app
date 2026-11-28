@@ -3,7 +3,7 @@ import { CalendarDays, CalendarPlus, Inbox, Mic, Radio, RefreshCw, Search, Setti
 import type { RecordingSession } from '../../../preload/index'
 import {
   DEFAULT_RUN_KINDS, RUN_KINDS, RUN_KIND_LABELS, SESSION_FILTERS, SESSION_FILTER_LABELS, SESSION_GROUPS, SESSION_GROUP_LABELS, SESSION_SORTS, SESSION_SORT_LABELS,
-  responsesBadge, selectSessionRow, sessionList, sessionLiveKey, sessionRunKey,
+  responsesBadge, runTitleAndWhen, selectSessionRow, sessionList, sessionLiveKey, sessionRunKey,
   type RunKind, type SessionFilter, type SessionGroupBy, type SessionRow, type SessionSort, type SessionSource
 } from '../../../shared/sessions-list'
 import { runActionEffect, runPageChecklist, unpublishConfirmText, type RunPageEffect } from '../../../shared/run-page'
@@ -26,7 +26,7 @@ import { RunLedger } from './RunLedger'
 import { StateBadge, badgeStateOfPill } from './StateBadge'
 import { UnpublishRunConfirm } from './UnpublishRunConfirm'
 import PublishNotReadySheet from './PublishNotReadySheet'
-import type { MediaPublishChoice, PublishNotReady } from '../../../shared/publish-status'
+import { handoutAddressLabel, type MediaPublishChoice, type PublishNotReady } from '../../../shared/publish-status'
 import { ConfirmCard, BIN_CONSEQUENCE } from './cards'
 import KeyboardHelp from './KeyboardHelp'
 import '../ui-kit.css'
@@ -284,8 +284,12 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
             setPublishRecovery({ key, notReady: result.notReady, outlinePath: result.recoveryOutlinePath })
             say(result.notReady.title)
           } else if (!result.success) say(result.error === 'run-not-found' ? 'That Run is no longer there.' : result.error ?? 'Publishing did not finish.')
-          else if (result.warning) say(result.warning)
-          else if (result.liveNotice) say(result.liveNotice)
+          else {
+            const address = result.url ? handoutAddressLabel(result.url) : undefined
+            const fallback = address && address !== result.url ? `Published: ${address}` : undefined
+            const notice = [fallback, result.warning || result.liveNotice].filter(Boolean).join(' ')
+            if (notice) say(notice)
+          }
         } finally {
           setPublishing((current) => { const next = new Set(current); next.delete(key); return next })
           await load()
@@ -432,7 +436,7 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
     if (source.kept === 'app-data' || !checklist) {
       return (
         <div className="tw-sess-detail" data-sessions-detail={`${source.talkSlug}/${source.runId}`}>
-          <div className="tw-sess-dhead"><div className="tw-sess-dtitle"><h1>{plainTalkTitle(source.eventTitle || source.talkTitle)}</h1><div className="sub"><span>{plainTalkTitle(source.talkTitle)}</span><StateBadge state="notset">Kept on this Mac</StateBadge></div></div></div>
+          <div className="tw-sess-dhead"><div className="tw-sess-dtitle"><h1>{runTitleAndWhen(source).name}</h1><div className="sub">{selected?.talk && selected.talk !== selected.name && <span>{selected.talk}</span>}<StateBadge state="notset">Kept on this Mac</StateBadge></div></div></div>
           <div className="tw-run-cols"><div className="tw-run-main">{ledger}</div></div>
         </div>
       )
@@ -550,7 +554,7 @@ export function RunsView({ run, onSelect, planPending, onPlanHandled, resultsReq
                         onClick={() => choose(row.ref)}>
                         <span className="l1"><span className="nm">{row.name}</span><RowBadge row={row} />{row.responses > 0 && <span className="tw-sess-new" data-sessions-new>{responsesBadge(row)}</span>}</span>
                         <span className="l2"><span>{row.when}</span>{row.progress ? <span className="rt">{row.progress}</span> : row.lengthMs > 0 ? <span className="rt">{fmtLength(row.lengthMs)}</span> : null}</span>
-                        <span className="l3"><span className="tk">{row.talk}</span>{row.boardBadge && <StateBadge state="notset" small data-board-badge>{row.boardBadge}</StateBadge>}{row.kind !== 'delivery' && <span className="kd">{RUN_KIND_LABELS[row.kind]}</span>}{row.recorded && <Mic className="rec" aria-label="Recorded" />}</span>
+                        <span className="l3">{row.talk && row.talk !== row.name && <span className="tk">{row.talk}</span>}{row.boardBadge && <StateBadge state="notset" small data-board-badge>{row.boardBadge}</StateBadge>}{row.kind !== 'delivery' && <span className="kd">{RUN_KIND_LABELS[row.kind]}</span>}{row.recorded && <Mic className="rec" aria-label="Recorded" />}</span>
                       </button>
                     )
                   })}
