@@ -85,8 +85,8 @@ function htmlResponse(html: string, status: number): Response {
       'referrer-policy': 'no-referrer',
       'x-content-type-options': 'nosniff',
       'x-robots-tag': 'noindex',
-      // No script, no form, no frame, nothing fetched: the page is text and inline style only.
-      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+      // The embeddable page is text and inline style only. It runs no script and fetches nothing.
+      'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors *",
     },
   })
 }
